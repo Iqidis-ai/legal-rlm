@@ -126,12 +126,14 @@ class RLMEngine:
         config: Optional[RLMConfig] = None,
         on_step: Optional[Callable[[ThinkingStep], None]] = None,
         on_citation: Optional[Callable[[Citation], None]] = None,
+        on_fact: Optional[Callable[[str], None]] = None,
         on_progress: Optional[Callable[[dict], None]] = None,
     ):
         self.client = gemini_client
         self.config = config or RLMConfig()
         self.on_step = on_step
         self.on_citation = on_citation
+        self.on_fact = on_fact
         self.on_progress = on_progress
         # Initialize external search manager (enabled by default)
         self.external_search = ExternalSearchManager() if self.config.enable_external_search else None
@@ -1053,9 +1055,12 @@ class RLMEngine:
             client=self.client,
         )
 
-        # Store facts
+        # Store facts and emit callbacks
         facts = analysis.get("facts", [])
         state.add_facts(facts)
+        if self.on_fact:
+            for fact in facts:
+                self.on_fact(fact)
 
         # Add citations from relevant hits
         relevant_hits = analysis.get("relevant_hits", [])
@@ -1189,6 +1194,9 @@ class RLMEngine:
                     f"Facts ({len(facts)}) from {doc.filename}: {_fmt_list(facts, 2, 60)}",
                 )
             state.add_facts(facts)
+            if self.on_fact:
+                for fact in facts:
+                    self.on_fact(fact)
 
             # Accumulate external research triggers
             triggers = extraction.get("external_triggers", {})
