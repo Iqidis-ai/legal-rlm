@@ -85,6 +85,8 @@ class RLMApp:
     ) -> str:
         """Upload files to S3 and return the S3 prefix.
 
+        Files are uploaded with their DISPLAY names (original filenames) directly.
+
         Args:
             files: List of (display_name, content, actual_filename) tuples
             session_id: Unique session identifier
@@ -93,30 +95,19 @@ class RLMApp:
             S3 prefix where files were uploaded
         """
         from ..service.s3_repository import S3Repository
-        import json
 
         s3_repo = S3Repository(
             bucket=self.config.s3_bucket,
             config=self.config,
         )
 
-        # Build filename mapping and prepare files for upload
-        filename_mapping = {}
+        # Upload files with their DISPLAY names (original filenames)
         upload_files = []
-
         for display_name, content, actual_filename in files:
-            upload_files.append((actual_filename, content))
-            filename_mapping[actual_filename] = {
-                "display_name": display_name,
-                "size_bytes": len(content),
-            }
-
-        # Add mapping file to upload
-        mapping_content = json.dumps(filename_mapping, indent=2).encode('utf-8')
-        upload_files.append(("_filename_mapping.json", mapping_content))
+            upload_files.append((display_name, content))
 
         prefix = await s3_repo.upload_files(session_id, upload_files)
-        logger.info(f"Uploaded {len(files)} files + mapping to S3: {prefix}")
+        logger.info(f"Uploaded {len(files)} files to S3: {prefix}")
         return prefix
 
     async def _download_s3_to_temp(self, s3_prefix: str, session_id: str) -> Path:
@@ -147,7 +138,9 @@ class RLMApp:
         files: list[tuple[str, bytes, str]],
         session_id: str,
     ) -> Path:
-        """Save uploaded files to local temp directory with filename mapping.
+        """Save uploaded files to local temp directory.
+
+        Files are saved with their DISPLAY names (original filenames) directly.
 
         Args:
             files: List of (display_name, content, actual_filename) tuples
@@ -156,30 +149,15 @@ class RLMApp:
         Returns:
             Path to temp directory with files
         """
-        import json
-
         temp_dir = Path(self.config.temp_dir) / session_id
         temp_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build filename mapping: actual_filename -> display_name
-        filename_mapping = {}
-
         for display_name, content, actual_filename in files:
-            file_path = temp_dir / actual_filename
+            # Save with DISPLAY name (original filename)
+            file_path = temp_dir / display_name
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
-
-            # Store mapping (relative paths)
-            filename_mapping[actual_filename] = {
-                "display_name": display_name,
-                "size_bytes": len(content),
-            }
-            logger.debug(f"Saved file: {file_path} (display: {display_name})")
-
-        # Save the filename mapping
-        mapping_path = temp_dir / "_filename_mapping.json"
-        mapping_path.write_text(json.dumps(filename_mapping, indent=2))
-        logger.info(f"Saved filename mapping with {len(filename_mapping)} entries")
+            logger.debug(f"Saved file: {file_path}")
 
         self._temp_dirs[session_id] = temp_dir
         logger.info(f"Saved {len(files)} files to temp: {temp_dir}")
