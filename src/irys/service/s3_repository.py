@@ -159,10 +159,33 @@ class S3Repository:
             )
 
         # Download each document
+        downloaded_count = 0
+        skipped_count = 0
         for doc_key in documents:
-            await self._download_file(doc_key, temp_dir)
+            result = await self._download_file(doc_key, temp_dir)
+            if result:
+                downloaded_count += 1
+            else:
+                skipped_count += 1
 
-        logger.info(f"Downloaded {len(documents)} documents to {temp_dir}")
+        # Verify files actually exist in temp directory
+        actual_files = list(temp_dir.glob("**/*"))
+        actual_file_count = sum(1 for f in actual_files if f.is_file())
+
+        logger.info(
+            f"Download complete for job {job_id}: "
+            f"{downloaded_count}/{len(documents)} downloaded, {skipped_count} skipped, "
+            f"{actual_file_count} files verified on disk at {temp_dir}"
+        )
+
+        # Raise error if no files were downloaded
+        if actual_file_count == 0:
+            raise ValueError(
+                f"Failed to download any documents. Listed: {len(documents)}, "
+                f"Downloaded: {downloaded_count}, Verified on disk: {actual_file_count}. "
+                f"Temp dir: {temp_dir}"
+            )
+
         return temp_dir
 
     async def _download_file(self, key: str, dest_dir: Path) -> Path:
@@ -350,12 +373,26 @@ class S3Repository:
                 logger.warning(error_msg)
                 errors.append(error_msg)
 
-        logger.info(f"Downloaded {downloaded}/{len(url_inputs)} documents to {temp_dir}")
+        # Verify files actually exist in temp directory
+        actual_files = list(temp_dir.glob("**/*"))
+        actual_file_count = sum(1 for f in actual_files if f.is_file())
+
+        logger.info(
+            f"Download complete for job {job_id}: "
+            f"{downloaded}/{len(url_inputs)} downloaded, {actual_file_count} files verified on disk at {temp_dir}"
+        )
 
         # Raise error if no files were downloaded
         if downloaded == 0:
             raise ValueError(
                 f"Failed to download any documents. Errors: {'; '.join(errors)}"
+            )
+
+        # Raise error if files reported downloaded but not on disk (indicates bug)
+        if downloaded > 0 and actual_file_count == 0:
+            raise ValueError(
+                f"Downloaded {downloaded} documents but 0 files found on disk at {temp_dir}. "
+                f"This may indicate a path or storage issue."
             )
 
         return temp_dir
