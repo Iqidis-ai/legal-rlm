@@ -1367,13 +1367,8 @@ class RLMEngine:
         evidence = "\n".join(f"- {fact}" for fact in facts[:20])
         # Note: Citations tracked in state for UI/downstream, not passed to synthesis
 
-<<<<<<< HEAD
         # SOURCE 4: Pinned content - either from small repo (all docs) or DECISIVE docs
         # (small_repo_content already fetched above for the guard check)
-=======
-        # SOURCE 2: Pinned content - either from small repo (all docs) or DECISIVE docs
-        small_repo_content = state.findings.get("small_repo_content")
->>>>>>> 6473b334d4ddd77036d4fa5f791cdf6b0d90ee97
         if small_repo_content:
             # Small repo mode - all content already loaded
             pinned_content = f"=== ALL REPOSITORY DOCUMENTS ===\n{small_repo_content}"
