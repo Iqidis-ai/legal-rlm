@@ -784,15 +784,23 @@ class RLMEngine:
                     client=self.client,
                 )
 
-                # Check sufficiency
-                if checkpoint_result.get("sufficient"):
-                    docs_read = state.documents_read
+                # Check sufficiency - MUST have read at least 1 document
+                # Facts from 0 docs is logically impossible for document investigation
+                docs_read = state.documents_read
+                if checkpoint_result.get("sufficient") and docs_read > 0:
                     self._emit_step(
                         state,
                         StepType.THINKING,
                         f"Sufficient: {facts_count} facts from {docs_read} docs - proceeding to synthesis",
                     )
                     break
+                elif checkpoint_result.get("sufficient") and docs_read == 0:
+                    # LLM claims sufficient but no docs read - this is a bug state
+                    self._emit_step(
+                        state,
+                        StepType.ERROR,
+                        f"Checkpoint claims sufficient but 0 documents read - continuing investigation",
+                    )
 
                 # Handle replanning if needed
                 if checkpoint_result.get("should_replan") and pending_leads:
