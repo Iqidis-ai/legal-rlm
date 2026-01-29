@@ -122,9 +122,15 @@ class S3Repository:
             for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
                 for obj in page.get("Contents", []):
                     key = obj["Key"]
+                    rel_key = key[len(prefix):] if prefix else key
+
+                    # Always include the filename mapping file
+                    if rel_key == "_filename_mapping.json":
+                        documents.append(rel_key)
+                        continue
+
+                    # Filter by extension for other files
                     if any(key.lower().endswith(ext) for ext in extensions):
-                        # Return key relative to prefix
-                        rel_key = key[len(prefix):] if prefix else key
                         documents.append(rel_key)
 
             return documents
