@@ -107,6 +107,14 @@ class MatterRepository:
         result = {"actual_to_display": {}, "display_to_actual": {}}
 
         if not mapping_path.exists():
+            logger.debug(f"No filename mapping found at {mapping_path}")
+            # List files in directory to help debug
+            try:
+                files_in_dir = list(self.base_path.glob("*"))[:10]
+                file_names = [f.name for f in files_in_dir]
+                logger.debug(f"Files in {self.base_path}: {file_names}")
+            except Exception:
+                pass
             return result
 
         try:
@@ -120,6 +128,7 @@ class MatterRepository:
                 result["display_to_actual"][display_name] = actual_name
 
             logger.info(f"Loaded filename mapping with {len(raw_mapping)} entries")
+            logger.debug(f"Sample mappings: {list(result['display_to_actual'].items())[:3]}")
         except Exception as e:
             logger.warning(f"Failed to load filename mapping: {e}")
 
@@ -230,28 +239,29 @@ class MatterRepository:
             if path.name.startswith("~$"):
                 continue
 
-            if path.is_file() and path.suffix.lower() in file_types:
-                # Get display name from mapping (falls back to actual name)
-                actual_name = path.name
-                display_name = self._get_display_name(actual_name)
+            if not path.is_file():
+                continue
 
-                # For display name, also check extension from mapping
-                # (hash files may not have proper extensions on disk)
-                display_ext = Path(display_name).suffix.lower()
-                actual_ext = path.suffix.lower()
+            # Get display name from mapping FIRST (before extension filtering)
+            actual_name = path.name
+            display_name = self._get_display_name(actual_name)
 
-                # Use display extension for filtering if available
-                effective_ext = display_ext if display_ext else actual_ext
-                if effective_ext not in file_types:
-                    continue
+            # Determine extension - prefer display name extension for hash files
+            display_ext = Path(display_name).suffix.lower()
+            actual_ext = path.suffix.lower()
+            effective_ext = display_ext if display_ext else actual_ext
 
-                files.append(FileInfo(
-                    path=path,
-                    filename=display_name,  # Use display name for user/LLM
-                    file_type=effective_ext,
-                    size_bytes=path.stat().st_size,
-                    relative_path=str(path.relative_to(self.base_path)),
-                ))
+            # Filter by extension
+            if effective_ext not in file_types:
+                continue
+
+            files.append(FileInfo(
+                path=path,
+                filename=display_name,  # Use display name for user/LLM
+                file_type=effective_ext,
+                size_bytes=path.stat().st_size,
+                relative_path=str(path.relative_to(self.base_path)),
+            ))
 
         return sorted(files, key=lambda f: f.relative_path)
 
