@@ -102,7 +102,17 @@ class DocumentReader:
         path = Path(path)
 
         if not path.exists():
-            raise FileNotFoundError(f"Document not found: {path}")
+            # Provide detailed diagnostic info
+            parent = path.parent
+            parent_exists = parent.exists()
+            siblings = list(parent.glob("*"))[:5] if parent_exists else []
+            sibling_names = [s.name for s in siblings]
+
+            raise FileNotFoundError(
+                f"Document not found: {path}. "
+                f"Parent dir exists: {parent_exists}. "
+                f"Sample files in parent: {sibling_names if sibling_names else 'none/empty'}"
+            )
 
         suffix = path.suffix.lower()
 
