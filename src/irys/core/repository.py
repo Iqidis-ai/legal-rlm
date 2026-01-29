@@ -7,6 +7,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Iterator
 import os
+import json
 import logging
 
 from .reader import DocumentReader, DocumentContent
@@ -89,7 +90,52 @@ class MatterRepository:
         self.search_engine._doc_cache = self._doc_cache  # Share cache
         self._file_cache: Optional[list[FileInfo]] = None
         self._metadata: Optional["RepositoryMetadata"] = None
+
+        # Load filename mapping if it exists (for S3/upload mode)
+        self._filename_mapping = self._load_filename_mapping()
         logger.info(f"Initialized repository: {base_path}")
+
+    def _load_filename_mapping(self) -> dict:
+        """Load filename mapping from _filename_mapping.json if it exists.
+
+        Returns:
+            Dict with two sub-dicts:
+            - 'actual_to_display': actual_filename -> display_name
+            - 'display_to_actual': display_name -> actual_filename
+        """
+        mapping_path = self.base_path / "_filename_mapping.json"
+        result = {"actual_to_display": {}, "display_to_actual": {}}
+
+        if not mapping_path.exists():
+            return result
+
+        try:
+            with open(mapping_path) as f:
+                raw_mapping = json.load(f)
+
+            # Build bidirectional mappings
+            for actual_name, info in raw_mapping.items():
+                display_name = info.get("display_name", actual_name)
+                result["actual_to_display"][actual_name] = display_name
+                result["display_to_actual"][display_name] = actual_name
+
+            logger.info(f"Loaded filename mapping with {len(raw_mapping)} entries")
+        except Exception as e:
+            logger.warning(f"Failed to load filename mapping: {e}")
+
+        return result
+
+    def _get_display_name(self, actual_filename: str) -> str:
+        """Get display name for an actual filename."""
+        return self._filename_mapping["actual_to_display"].get(
+            actual_filename, actual_filename
+        )
+
+    def _get_actual_filename(self, display_name: str) -> str:
+        """Get actual filename from a display name."""
+        return self._filename_mapping["display_to_actual"].get(
+            display_name, display_name
+        )
 
     @property
     def is_small_repo(self) -> bool:
@@ -171,22 +217,38 @@ class MatterRepository:
             file_types: Filter by extensions (e.g., [".pdf", ".docx"])
 
         Returns:
-            List of FileInfo objects
+            List of FileInfo objects with display names (if mapping exists)
         """
         files = []
         file_types = file_types or list(self.SUPPORTED_EXTENSIONS)
         file_types = [ft.lower() if ft.startswith(".") else f".{ft.lower()}" for ft in file_types]
 
         for path in self.base_path.glob(pattern):
+            # Skip mapping file and temp files
+            if path.name == "_filename_mapping.json":
+                continue
+            if path.name.startswith("~$"):
+                continue
+
             if path.is_file() and path.suffix.lower() in file_types:
-                # Skip temp files
-                if path.name.startswith("~$"):
+                # Get display name from mapping (falls back to actual name)
+                actual_name = path.name
+                display_name = self._get_display_name(actual_name)
+
+                # For display name, also check extension from mapping
+                # (hash files may not have proper extensions on disk)
+                display_ext = Path(display_name).suffix.lower()
+                actual_ext = path.suffix.lower()
+
+                # Use display extension for filtering if available
+                effective_ext = display_ext if display_ext else actual_ext
+                if effective_ext not in file_types:
                     continue
 
                 files.append(FileInfo(
                     path=path,
-                    filename=path.name,
-                    file_type=path.suffix.lower(),
+                    filename=display_name,  # Use display name for user/LLM
+                    file_type=effective_ext,
                     size_bytes=path.stat().st_size,
                     relative_path=str(path.relative_to(self.base_path)),
                 ))
@@ -360,6 +422,20 @@ class MatterRepository:
 
     # === SEARCHING ===
 
+    def _map_search_results_to_display_names(self, results: SearchResults) -> SearchResults:
+        """Map filenames in search results to display names."""
+        if not self._filename_mapping["actual_to_display"]:
+            return results  # No mapping, return as-is
+
+        # Update filenames in hits to use display names
+        for hit in results.hits:
+            actual_name = Path(hit.file_path).name
+            display_name = self._get_display_name(actual_name)
+            if display_name != actual_name:
+                hit.filename = display_name
+
+        return results
+
     def search(
         self,
         query: str,
@@ -383,7 +459,7 @@ class MatterRepository:
             max_workers: Max parallel workers for search (default scales with file count)
 
         Returns:
-            SearchResults with all matches
+            SearchResults with all matches (filenames mapped to display names)
         """
         # Get files to search
         if folder:
@@ -397,7 +473,7 @@ class MatterRepository:
         if max_workers is None:
             max_workers = min(10, max(1, len(files)))
 
-        return self.search_engine.search(
+        results = self.search_engine.search(
             query=query,
             files=files,
             regex=regex,
@@ -405,6 +481,9 @@ class MatterRepository:
             context_lines=context_lines,
             max_workers=max_workers,
         )
+
+        # Map filenames to display names
+        return self._map_search_results_to_display_names(results)
 
     def smart_search(
         self,
@@ -428,13 +507,16 @@ class MatterRepository:
 
         files = [f.path for f in self.list_files(pattern, file_types)]
 
-        return self.search_engine.smart_search(
+        results = self.search_engine.smart_search(
             query=query,
             files=files,
             regex=regex,
             case_sensitive=case_sensitive,
             context_lines=context_lines,
         )
+
+        # Map filenames to display names
+        return self._map_search_results_to_display_names(results)
 
     def search_multi(
         self,
@@ -454,10 +536,52 @@ class MatterRepository:
     # === UTILITIES ===
 
     def _resolve_path(self, path: str | Path) -> Path:
-        """Resolve path relative to repository or absolute."""
+        """Resolve path relative to repository or absolute.
+
+        Handles filename mapping: if a display name is provided and doesn't exist,
+        tries to resolve it to the actual filename using the mapping.
+        """
         path = Path(path)
+
+        # If absolute path, use it directly
         if path.is_absolute():
-            return path
+            if path.exists():
+                return path
+            # Try resolving via filename mapping
+            actual_name = self._get_actual_filename(path.name)
+            if actual_name != path.name:
+                resolved = path.parent / actual_name
+                if resolved.exists():
+                    return resolved
+            return path  # Return original even if not found (error will be raised later)
+
+        # Relative path - try direct resolution first
+        resolved = self.base_path / path
+        if resolved.exists():
+            return resolved
+
+        # Try using filename mapping (display_name -> actual_filename)
+        path_str = str(path)
+        actual_name = self._get_actual_filename(path_str)
+        if actual_name != path_str:
+            resolved = self.base_path / actual_name
+            if resolved.exists():
+                logger.debug(f"Resolved display name '{path_str}' to actual '{actual_name}'")
+                return resolved
+
+        # Also try just the filename portion (in case path has directory prefix)
+        if '/' in path_str or os.sep in path_str:
+            filename_only = Path(path_str).name
+            actual_name = self._get_actual_filename(filename_only)
+            if actual_name != filename_only:
+                # Reconstruct path with actual filename
+                parent = Path(path_str).parent
+                resolved = self.base_path / parent / actual_name
+                if resolved.exists():
+                    logger.debug(f"Resolved display name '{filename_only}' to actual '{actual_name}'")
+                    return resolved
+
+        # Fall back to original path (may not exist - let caller handle error)
         return self.base_path / path
 
     def get_file_info(self, path: str | Path) -> FileInfo:
