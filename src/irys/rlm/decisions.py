@@ -13,7 +13,7 @@ import logging
 import time
 from typing import Optional, Any
 
-from ..core.models import GeminiClient, ModelTier
+from ..core.models import GeminiClient, ModelTier, SYSTEM_PROMPT_PRO
 from ..core.search import SearchHit, SearchResults
 from . import prompts
 
@@ -503,6 +503,111 @@ async def decide_next_action(
 # MID TIER DECISIONS (FLASH model)
 # =============================================================================
 
+async def assess_small_repo(
+    query: str,
+    content: str,
+    client: GeminiClient,
+) -> dict:
+    """Unified assessment for small repositories.
+
+    Determines:
+    1. Query complexity (simple vs complex) for synthesis tier selection
+    2. Whether external search is needed (with specific searches if so)
+
+    Uses FLASH model for better judgment on external search decisions.
+    The FLASH system prompt already includes guidance on being selective
+    about external research.
+    """
+    start_time = time.time()
+    content_preview = f"{len(content):,} chars"
+    logger.info(f"📊 assess_small_repo: evaluating query against {content_preview}")
+
+    prompt = prompts.P_ASSESS_SMALL_REPO.format(
+        query=query,
+        content=content,
+    )
+
+    _log_llm_call("assess_small_repo", ModelTier.FLASH, prompt, start_time)
+    # No timeout - let the model take as long as needed for full document assessment
+    response = await client.complete(prompt, tier=ModelTier.FLASH, timeout=0)
+    result = parse_json_safe(response)
+
+    if result:
+        # Filter out template-style external queries if any were generated
+        if "case_law_searches" in result:
+            result["case_law_searches"] = filter_external_queries(result.get("case_law_searches", []))
+        if "web_searches" in result:
+            result["web_searches"] = filter_external_queries(result.get("web_searches", []))
+
+        # Ensure consistency: if can_answer_from_docs is True, searches must be empty
+        if result.get("can_answer_from_docs", True):
+            result["case_law_searches"] = []
+            result["web_searches"] = []
+
+        complexity = result.get("complexity", "complex")
+        can_answer = result.get("can_answer_from_docs", True)
+        searches = len(result.get("case_law_searches", [])) + len(result.get("web_searches", []))
+        logger.info(f"   Assessment: complexity={complexity}, can_answer_from_docs={can_answer}, searches={searches}")
+        _log_llm_result("assess_small_repo", result, time.time() - start_time)
+        return result
+
+    # Fallback: assume complex, can answer from docs (conservative - no external search)
+    logger.warning("   JSON parsing failed, using conservative fallback (no external search)")
+    return {
+        "complexity": "complex",
+        "can_answer_from_docs": True,
+        "reasoning": "Fallback assessment",
+        "gap": "",
+        "case_law_searches": [],
+        "web_searches": [],
+    }
+
+
+async def check_search_sufficiency(
+    query: str,
+    original_gap: str,
+    results_summary: str,
+    client: GeminiClient,
+) -> dict:
+    """Check if external search results are sufficient or if more search is needed.
+
+    Uses FLASH model to evaluate whether the search results fill the identified gap.
+    Only recommends additional search if there's a critical missing piece.
+    """
+    start_time = time.time()
+    logger.info(f"🔍 check_search_sufficiency: evaluating search results against gap")
+
+    prompt = prompts.P_CHECK_SEARCH_SUFFICIENCY.format(
+        query=query,
+        original_gap=original_gap,
+        results_summary=results_summary,
+    )
+
+    _log_llm_call("check_search_sufficiency", ModelTier.FLASH, prompt, start_time)
+    response = await client.complete(prompt, tier=ModelTier.FLASH)
+    result = parse_json_safe(response)
+
+    if result:
+        # Filter additional search if present
+        if "additional_search" in result and result["additional_search"]:
+            filtered = filter_external_queries([result["additional_search"]])
+            result["additional_search"] = filtered[0] if filtered else ""
+
+        sufficient = result.get("sufficient", True)
+        logger.info(f"   Sufficiency: {sufficient}")
+        _log_llm_result("check_search_sufficiency", result, time.time() - start_time)
+        return result
+
+    # Fallback: assume sufficient (conservative - no more searching)
+    logger.warning("   JSON parsing failed, assuming sufficient")
+    return {
+        "sufficient": True,
+        "reasoning": "Fallback - proceeding with available results",
+        "if_not_sufficient_what_missing": "",
+        "additional_search": "",
+    }
+
+
 async def create_plan(
     query: str,
     file_list: str,
@@ -652,16 +757,15 @@ async def replan(
 async def synthesize(
     query: str,
     evidence: str,
-    citations: str,
     client: GeminiClient,
     external_research: str = "",
     pinned_content: str = "",
-    tier: ModelTier = ModelTier.PRO,  # Can use FLASH for simple queries - only model changes
+    tier: ModelTier = ModelTier.PRO,
 ) -> str:
     """Synthesize final answer.
 
-    Uses PRO model by default. For simple queries, can use FLASH tier but
-    all other parameters (prompt, max_tokens, system prompt) stay the same.
+    Uses PRO model by default. For simple queries, can use FLASH model
+    but ALWAYS uses PRO system prompt for synthesis quality.
     """
     start_time = time.time()
     evidence_lines = evidence.count('\n') + 1 if evidence else 0
@@ -671,45 +775,17 @@ async def synthesize(
 
     prompt = prompts.P_SYNTHESIZE.format(
         query=query,
-        evidence=evidence,
+        evidence=evidence or "No specific findings accumulated.",
         external_research=external_research or "No external research conducted.",
-        citations=citations,
         pinned_content=pinned_content or "No decisive documents identified.",
     )
 
     _log_llm_call("synthesize", tier, prompt, start_time)
-    response = await client.complete(prompt, tier=tier)
+    # ALWAYS use PRO system prompt for synthesis, regardless of model tier
+    response = await client.complete(prompt, tier=tier, system_prompt=SYSTEM_PROMPT_PRO)
 
     logger.info(f"✨ Synthesis complete: {len(response)} chars")
     _log_llm_result("synthesize", f"{len(response)} char response", time.time() - start_time)
-    return response
-
-
-async def synthesize_simple(
-    query: str,
-    evidence: str,
-    citations: str,
-    client: GeminiClient,
-    pinned_content: str = "",
-) -> str:
-    """Synthesize simple factual answer. Uses FLASH model for speed."""
-    start_time = time.time()
-    evidence_lines = evidence.count('\n') + 1 if evidence else 0
-    pinned_info = f", {len(pinned_content)} chars pinned" if pinned_content else ""
-    logger.info(f"📝 synthesize_simple: quick answer from {evidence_lines} evidence lines{pinned_info} [FLASH]")
-
-    prompt = prompts.P_SYNTHESIZE_SIMPLE.format(
-        query=query,
-        evidence=evidence,
-        citations=citations,
-        pinned_content=pinned_content or "",
-    )
-
-    _log_llm_call("synthesize_simple", ModelTier.FLASH, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.FLASH)
-
-    logger.info(f"✨ Simple synthesis complete: {len(response)} chars")
-    _log_llm_result("synthesize_simple", f"{len(response)} char response", time.time() - start_time)
     return response
 
 

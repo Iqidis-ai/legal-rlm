@@ -8,32 +8,46 @@ Organized by model tier: WORKER (cheap/fast), MID (balanced), HIGH (expensive/th
 # WORKER TIER PROMPTS (LITE model - quick decisions)
 # =============================================================================
 
-P_PICK_FILES = """Given this query and list of files, which files are most likely to contain relevant information?
+P_PICK_FILES = """Select files most likely to answer this query.
 
 Query: {query}
 
-Files in repository:
+Files:
 {file_list}
 
-Pick the 3-5 most relevant files. Consider:
-- Filename matches query terms
-- Document type (contracts, agreements, reports are usually important)
-- Likely to contain the answer
+Select 3-5 files. Prioritize:
+- Pleadings, briefs, statements (define disputes, contain positions)
+- Contracts, agreements (primary source documents)
+- Correspondence, emails (actual party communications)
+- Expert reports (specialized analysis)
+- Documents with names/terms matching the query
 
-Reply with just the filenames, one per line. No explanations."""
+Deprioritize:
+- Generic reference materials (statutes, manuals, guidelines)
+- Template documents
+
+Reply with filenames only, one per line."""
 
 
-P_PICK_HITS = """Given this query and search results, which results are most relevant?
+P_PICK_HITS = """Select the most relevant search hits for this query.
 
 Query: {query}
 
 Search Results:
 {hits}
 
-Pick the 5-10 most relevant results by their number (e.g., [1], [5], [8]).
-Consider which ones directly answer or relate to the query.
+Select 5-10 hits by number. Prioritize:
+- Direct answers to the query
+- Specific facts, figures, dates relevant to the issue
+- Key contractual provisions or legal conclusions
+- Party admissions or positions
 
-Reply with just the numbers, comma-separated. Example: 1, 3, 5, 8"""
+Deprioritize:
+- Boilerplate language
+- Generic definitions
+- Tangential references
+
+Reply with numbers only, comma-separated. Example: 1, 3, 5, 8"""
 
 
 P_CLASSIFY_QUERY = """Classify this legal query for synthesis complexity.
@@ -104,44 +118,43 @@ DO NOT INCLUDE:
 Reply with just the search terms, one per line. No explanations."""
 
 
-P_PRIORITIZE_DOCUMENTS = """You are ranking candidate documents for relevance to a legal query.
+P_PRIORITIZE_DOCUMENTS = """Rank these documents for relevance to the query.
 
 Query: {query}
 
-Key issues identified:
-{key_issues}
+Key issues: {key_issues}
 
-Candidate files (from search results):
+Candidates:
 {candidate_files}
 
-Already read documents:
-{already_read}
+Already read: {already_read}
 
-Score each candidate from 0-100 for likely relevance to the query and key issues.
+SCORING (0-100):
+- 90-100: Directly answers the query (pleadings, key contracts, party briefs on point)
+- 70-89: Contains key supporting evidence
+- 40-69: Relevant context
+- 10-39: Tangentially related
+- 0-9: Not useful for this query
 
-CRITICAL PRIORITY RULES:
-1. For actual damages/costs/figures: CLAIMANT documents have the real numbers (Claimant briefs, Statements of Claim)
-2. DEFENDANT/RESPONDENT briefs contain arguments but often NOT the actual figures
-3. When BOTH party briefs exist, READ BOTH - they contain different information
+DOCUMENT VALUE HIERARCHY:
+- Opening/Closing statements: Synthesized positions, final figures
+- Party briefs: Claimant briefs have damages; Defendant briefs have defenses
+- Pleadings (complaints, answers): Define the dispute
+- Contracts/agreements: Primary source terms
+- Correspondence: Actual party communications
+- Expert reports: Specialized analysis
+- Reference materials: Low priority unless specifically needed
 
-PRIORITY ORDER (score higher):
-1. Opening Statements, Closing Arguments (95-100) - BEST SOURCE: synthesized key facts, final figures
-2. Claimant/Plaintiff Pre-Hearing Briefs (95-100) - have actual damage figures and evidence tables
-3. Statements of Claim, Amended Claims (90-95) - primary allegations with amounts
-4. Expert Reports from CLAIMANT side (85-90) - damage calculations
-5. Defendant/Respondent briefs (70-80) - arguments but not actual figures
+RULES:
+- Unread documents > already read (unless essential)
+- When BOTH party briefs exist, prioritize both - they contain different information
+- For damages/figures: look for claimant/plaintiff sources
+- Match document type to query type
 
-Consider:
-- Document type as above
-- "Claimant" or "CITIOM" in filename = higher priority for damage queries
-- "Gulfstream" or "Respondent" in filename = lower priority for actual figures
-- Prefer files NOT already read unless clearly essential
-
-Reply with JSON only:
+Reply JSON only:
 {{
     "ranked_files": [
-        {{"file": "path/to/file.pdf", "score": 95, "reason": "brief reason"}},
-        {{"file": "path/to/file2.docx", "score": 72, "reason": "brief reason"}}
+        {{"file": "exact_filename.pdf", "score": 95, "reason": "brief reason"}}
     ]
 }}"""
 
@@ -150,78 +163,121 @@ Reply with JSON only:
 # MID TIER PROMPTS (FLASH model - analysis and planning)
 # =============================================================================
 
-P_CREATE_PLAN = """You are investigating a legal query against a document repository.
+P_ASSESS_SMALL_REPO = """Query: {query}
 
-Query: {query}
+=== MATTER DOCUMENTS ===
+{content}
 
-=== DOCUMENTS IN REPOSITORY ({total_files} files) ===
+═══════════════════════════════════════════════════════════════════════════════
+STRATEGIC ASSESSMENT
+═══════════════════════════════════════════════════════════════════════════════
+
+You have the complete document set. Make two calls:
+
+1. COMPLEXITY: Does this need sophisticated legal reasoning (multi-doc synthesis,
+   legal analysis, strategic thinking) or is it straightforward (fact lookup,
+   single-doc answer, basic summary)?
+
+2. EXTERNAL RESEARCH: Does the QUERY itself ask for case law, precedents, or
+   legal standards we'd need to look up?
+
+   NOTE: Just because documents mention laws/jurisdictions doesn't mean we search.
+   Search only if the QUERY requires external authority to answer properly.
+
+=== OUTPUT (JSON only) ===
+{{
+  "complexity": "simple" | "complex",
+  "can_answer_from_docs": true | false,
+  "reasoning": "Your strategic assessment",
+  "gap": "If external research needed: what specific authority",
+  "case_law_searches": [],
+  "web_searches": []
+}}"""
+
+
+P_CHECK_SEARCH_SUFFICIENCY = """Query: {query}
+
+=== GAP WE WERE FILLING ===
+{original_gap}
+
+=== SEARCH RESULTS ===
+{results_summary}
+
+═══════════════════════════════════════════════════════════════════════════════
+SUFFICIENCY CHECK
+═══════════════════════════════════════════════════════════════════════════════
+
+Do these results fill the gap?
+
+Default to YES unless there's a CRITICAL missing piece—something that would
+make our answer wrong or misleading without it.
+
+"More would be nice" = sufficient. Proceed with what we have.
+
+=== OUTPUT (JSON only) ===
+{{
+  "sufficient": true | false,
+  "reasoning": "Brief explanation",
+  "if_not_sufficient_what_missing": "Only if false: specific critical gap",
+  "additional_search": ""
+}}"""
+
+
+P_CREATE_PLAN = """Query: {query}
+
+=== REPOSITORY ({total_files} files) ===
 {file_list}
 
-=== DOCUMENT PRIORITIZATION ===
-Based on the filenames above, categorize and prioritize:
+═══════════════════════════════════════════════════════════════════════════════
+INVESTIGATION PLAN
+═══════════════════════════════════════════════════════════════════════════════
 
-READ FIRST (case-specific, high value):
-- Emails, correspondence, letters (contain actual communications)
-- Pleadings, complaints, answers, motions (define the dispute)
-- Contracts, agreements (primary source documents)
-- Witness statements, declarations, affidavits
+Scan the filenames. Identify:
+- Case-specific documents (correspondence, pleadings, contracts, party materials)
+- Generic reference materials (statutes, acts, manuals) - deprioritize these
 
-READ LATER (supporting):
-- Expert reports, analyses
-- Invoices, receipts, financial records
+Design your approach:
+- Which 2-3 files to read first? (Pick case-specific, not generic acts)
+- What search terms will find relevant passages?
+- Does the query require external authority (case law, regulations)?
 
-SKIP OR DEPRIORITIZE (generic reference):
-- Generic legal acts, statutes, codes (e.g., "Business Corporations Act")
-- Manuals, handbooks, guidelines (unless specifically relevant)
-- Template documents, forms
-
-=== YOUR TASK ===
-1. Look at the FILENAMES above and identify which documents are likely case-specific vs generic reference
-2. Select 2-3 PRIORITY FILES to read first (emails, correspondence, pleadings - NOT generic acts)
-3. Generate search terms only AFTER identifying priority files
-4. Plan external searches (case law, web) based on the query type
-
-=== EXTERNAL SEARCH CAPABILITIES ===
-- CASE LAW (CourtListener): U.S. court opinions, precedents
-- WEB SEARCH (Tavily): Regulations, statutes, standards, company info
-
-Reply in JSON:
+=== OUTPUT (JSON only) ===
 {{
-    "reasoning": "Brief analysis of what files look case-specific vs generic, and your strategy",
-    "key_issues": ["issue1", "issue2"],
-    "priority_files": ["exact_filename_from_list.pdf", "another_file.pdf"],
-    "skip_files": ["generic_act.pdf", "reference_manual.pdf"],
+    "reasoning": "Strategy and file categorization",
+    "key_issues": ["legal issue 1", "legal issue 2"],
+    "priority_files": ["exact_filename.pdf"],
+    "skip_files": ["generic_reference.pdf"],
     "search_terms": ["term1", "term2"],
     "case_law_searches": [],
     "web_searches": [],
-    "success_criteria": "What we need to find",
-    "potential_challenges": "What might be difficult"
-}}
-
-CRITICAL:
-- priority_files must be EXACT filenames from the list above
-- DO NOT prioritize generic legal acts or reference documents
-- Emails and correspondence almost always contain the most relevant case-specific information"""
+    "success_criteria": "What finding would answer this query",
+    "potential_challenges": "Anticipated difficulties"
+}}"""
 
 
-P_ANALYZE_RESULTS = """You are analyzing search results for a legal investigation.
+P_ANALYZE_RESULTS = """Query: {query}
 
-Query: {query}
-
-Search Results:
+=== SEARCH RESULTS ===
 {results}
 
-Extract the key information:
-1. What facts are directly relevant to the query?
-2. What documents should we read more deeply?
-3. What additional searches might help?
+═══════════════════════════════════════════════════════════════════════════════
+STRATEGIC ANALYSIS
+═══════════════════════════════════════════════════════════════════════════════
 
-Reply in JSON:
+Evaluate what we found:
+- Facts that advance the query (exact values, dates, names)
+- Quotes worth preserving (verbatim, with source)
+- Documents that need full read (promising but need more context)
+- Gaps remaining (what's still missing?)
+- Strategy adjustment (pivot needed? different terms?)
+
+=== OUTPUT (JSON only) ===
 {{
-    "facts": ["fact1", "fact2"],
-    "citations": [{{"text": "quote", "source": "filename", "page": 1}}],
-    "read_deeper": ["file1.pdf", "file2.docx"],
-    "additional_searches": ["term1", "term2"]
+    "facts": ["specific fact with exact values"],
+    "citations": [{{"text": "verbatim quote", "source": "filename", "page": 1}}],
+    "read_deeper": ["file.pdf"],
+    "additional_searches": ["refined term"],
+    "assessment": "Strategic assessment - progress and next moves"
 }}"""
 
 
@@ -274,32 +330,32 @@ Reply in JSON:
 }}"""
 
 
-P_REPLAN = """The current investigation approach needs adjustment.
+P_REPLAN = """Query: {query}
 
-Query: {query}
+=== PREVIOUS APPROACH ===
+{previous_approach}
 
-What we tried: {previous_approach}
+=== FINDINGS SO FAR ===
+{findings}
 
-What we found: {findings}
+═══════════════════════════════════════════════════════════════════════════════
+COURSE CORRECTION
+═══════════════════════════════════════════════════════════════════════════════
 
-Reassess and create a new approach:
-1. What's working? What's not working?
-2. What should we try differently?
-3. What new search terms might help?
-4. Are there specific documents we should read?
-5. Do the findings suggest we need EXTERNAL research?
-   - Case law: if we need legal precedents or judicial interpretations
-   - Web search: if we need regulations, statutes, or industry standards
+The current approach isn't working. Diagnose and redirect:
+- What's yielding results vs. dead ends?
+- What should we try differently?
+- Do we need external authority (case law, regulations)?
 
-Reply in JSON:
+=== OUTPUT (JSON only) ===
 {{
     "diagnosis": "What's working and what's not",
-    "new_approach": "What to try now",
-    "search_terms": ["term1", "term2"],
-    "files_to_check": ["file1.pdf"],
-    "needs_external_research": true/false,
-    "case_law_searches": ["legal issue to search"],
-    "web_searches": ["regulation or standard to look up"]
+    "new_approach": "Adjusted strategy",
+    "search_terms": ["new term"],
+    "files_to_check": ["file.pdf"],
+    "needs_external_research": true | false,
+    "case_law_searches": [],
+    "web_searches": []
 }}"""
 
 
@@ -307,53 +363,17 @@ Reply in JSON:
 # HIGH TIER PROMPTS (PRO model - final synthesis)
 # =============================================================================
 
-P_SYNTHESIZE = """You are a senior legal analyst preparing a response to a query.
+P_SYNTHESIZE = """Query: {query}
 
-Query: {query}
-
-=== DECISIVE DOCUMENTS (Full Content) ===
+=== DECISIVE DOCUMENTS ===
 {pinned_content}
 
-=== CASE-SPECIFIC EVIDENCE ===
+=== EVIDENCE GATHERED ===
 {evidence}
 
-=== EXTERNAL LEGAL RESEARCH ===
+=== EXTERNAL RESEARCH ===
 {external_research}
-
-=== CITATIONS ===
-{citations}
-
-IMPORTANT: PRIORITIZE information from the DECISIVE DOCUMENTS section - these are the most critical sources for answering this query. They have been identified as directly relevant and their full content is provided above.
-
-Write a clear, well-organized response that:
-1. Directly answers the query, prioritizing DECISIVE document content
-2. Supports legal conclusions with relevant case law and regulations when available
-3. Cites specific sources for each claim (both case documents AND external sources)
-4. Distinguishes between case facts and general legal principles
-5. Notes any gaps or uncertainties
-6. Is appropriate in length for the complexity of the question
-
-When citing:
-- Case documents: [Document Name, p. X]
-- Case law: [Case Name, Citation]
-- Regulations/Web: [Source Name]
-
-Format your response with clear sections if the answer is complex."""
-
-
-P_SYNTHESIZE_SIMPLE = """Answer this factual question concisely based on the evidence.
-
-Query: {query}
-{pinned_content}
-Evidence:
-{evidence}
-
-Sources:
-{citations}
-
-Provide a brief, direct answer (2-4 sentences). Include the key facts and cite sources.
-If DECISIVE document content is provided above, prioritize that information.
-Do not elaborate unnecessarily - just answer the question directly."""
+"""
 
 
 P_RESOLVE_CONTRADICTIONS = """You are analyzing potentially contradictory evidence.
@@ -410,47 +430,51 @@ Reply in JSON:
 # EXTERNAL SEARCH PROMPTS
 # =============================================================================
 
-P_ANALYZE_CASE_LAW = """You found these case law results from CourtListener.
+P_ANALYZE_CASE_LAW = """Query: {query}
 
-Query context: {query}
-
-Case Law Results:
+=== CASE LAW RESULTS ===
 {case_law_results}
 
-Extract the key legal principles and precedents:
-1. What legal standards or tests do these cases establish?
-2. How might they apply to the current query?
-3. Are there any directly applicable holdings?
+═══════════════════════════════════════════════════════════════════════════════
+PRECEDENT ANALYSIS
+═══════════════════════════════════════════════════════════════════════════════
 
-Reply in JSON:
+Extract what matters for our query:
+- Legal standards or tests established
+- Holdings that apply to our situation
+- How these precedents inform our analysis
+
+=== OUTPUT (JSON only) ===
 {{
     "key_precedents": [
-        {{"case": "Case Name", "citation": "citation", "holding": "relevant holding", "applicability": "how it applies"}}
+        {{"case": "Name", "citation": "cite", "holding": "relevant holding", "applicability": "how it applies"}}
     ],
-    "legal_standards": ["standard 1", "standard 2"],
-    "summary": "Brief summary of how this case law informs the query"
+    "legal_standards": ["standard 1"],
+    "summary": "How this case law informs the query"
 }}"""
 
 
-P_ANALYZE_WEB_RESULTS = """You found these web search results about legal regulations/standards.
+P_ANALYZE_WEB_RESULTS = """Query: {query}
 
-Query context: {query}
-
-Web Results:
+=== WEB SEARCH RESULTS ===
 {web_results}
 
-Extract the key regulatory information:
-1. What regulations or standards are relevant?
-2. What are the key requirements or thresholds?
-3. How do they apply to the current situation?
+═══════════════════════════════════════════════════════════════════════════════
+REGULATORY ANALYSIS
+═══════════════════════════════════════════════════════════════════════════════
 
-Reply in JSON:
+Extract relevant regulatory/standards information:
+- Which regulations or standards apply
+- Key requirements or thresholds
+- How they inform our situation
+
+=== OUTPUT (JSON only) ===
 {{
     "regulations": [
-        {{"name": "Regulation Name", "source": "source URL", "key_requirements": "relevant requirements"}}
+        {{"name": "Regulation Name", "source": "source", "key_requirements": "requirements"}}
     ],
-    "standards": ["industry standard 1", "legal standard 2"],
-    "summary": "Brief summary of the regulatory context"
+    "standards": ["standard 1"],
+    "summary": "Regulatory context for the query"
 }}"""
 
 
@@ -479,87 +503,64 @@ Reply in JSON:
 }}"""
 
 
-P_GENERATE_EXTERNAL_QUERIES = """You are analyzing case facts to determine if external legal research is needed.
+P_GENERATE_EXTERNAL_QUERIES = """Determine if this query requires external legal research.
 
 Query: {query}
 
-Facts found from documents:
-{facts}
+Facts found: {facts}
 
-Entities identified:
-{entities}
+Entities: {entities}
 
-Research triggers identified from documents:
-{triggers}
+Triggers found in documents: {triggers}
 
-Based on the facts AND the research triggers, generate SPECIFIC external search queries.
+═══════════════════════════════════════════════════════════════════════════════
+DECISION FRAMEWORK
+═══════════════════════════════════════════════════════════════════════════════
 
-=== WHEN TO USE EACH SOURCE ===
+READ THE QUERY CAREFULLY. What is being asked?
 
-CASE LAW (CourtListener) - Use when:
-- Query involves US legal precedent, judicial interpretations, or standards of proof
-- US jurisdictions are mentioned (e.g., "Michigan", "Delaware", federal courts)
-- Legal doctrines need authority (breach of warranty, negligence, fiduciary duty, etc.)
-- Need to support legal arguments with US case citations
-- LIMITATION: CourtListener is US-focused. DO NOT use for international matters.
+YES - SEARCH EXTERNALLY when query asks for:
+- "What cases should we study?" / "Find relevant precedents" → CASE LAW SEARCH
+- "What does the law say about X?" → CASE LAW or WEB SEARCH
+- "What are the legal standards for X?" → CASE LAW SEARCH
+- "Is this compliant with [regulation]?" → WEB SEARCH
+- Legal analysis requiring authority beyond the documents
+- Research on specific legal doctrines mentioned in documents
 
-WEB SEARCH (Tavily) - Use when:
-- Query asks about regulations, statutes, or industry standards
-- User provides a URL/link to look up
-- Need to verify regulatory compliance requirements
-- Triggers include specific regulations (FAA, SEC, OSHA, state codes)
-- International matters - use web for non-US jurisdictions
-- Company/entity research (background, public records, news)
+NO - DON'T SEARCH when query asks about:
+- "What is the main issue?" → Answer from documents
+- "What happened?" / "Summarize facts" → Answer from documents
+- "What does the contract say?" → Answer from documents
+- "Who are the parties?" → Answer from documents
+- Pure document-based questions with no legal research component
 
-RETURN EMPTY ARRAYS when:
-- That source type is not relevant to this specific query
-- Local documents already have sufficient information
-- No meaningful triggers for that source type
-- The query asks only about case-specific facts (no external authority needed)
+KEY INSIGHT: Triggers (jurisdictions, doctrines found in docs) are CLUES, not commands.
+- If query asks for CASE LAW and triggers mention Delaware → Search Delaware case law
+- If query asks "what's the issue" and triggers mention Delaware → DON'T search
 
-=== HOW TO USE TRIGGERS ===
-- If US jurisdictions found (e.g., "Michigan") → case_law_queries
-- If international jurisdictions found → web_queries (NOT case law)
-- If regulations/statutes found (e.g., "FAA Part 91") → web_queries
-- If US legal doctrines found → case_law_queries
-- If industry standards found → web_queries
-- If specific case references found → case_law_queries (to find those cases)
+═══════════════════════════════════════════════════════════════════════════════
+SOURCES
+═══════════════════════════════════════════════════════════════════════════════
 
-=== EXAMPLES ===
+CASE LAW (CourtListener) - US jurisdictions only:
+- Delaware corporate/LLC law (very common for entity matters)
+- Federal courts, state courts
+- Legal doctrine precedents
 
-Query about US case law:
-  case_law_queries: ["Michigan breach of warranty aircraft maintenance"]
-  web_queries: []
+WEB SEARCH (Tavily):
+- International jurisdictions (Marshall Islands, UK, etc.)
+- Regulations, statutes, standards
+- Company background research
 
-Query about regulations:
-  case_law_queries: []
-  web_queries: ["FAA Part 91 inspection requirements"]
+═══════════════════════════════════════════════════════════════════════════════
+OUTPUT
+═══════════════════════════════════════════════════════════════════════════════
 
-Query about international matter (e.g., UK, EU):
-  case_law_queries: []
-  web_queries: ["UK aviation maintenance regulations", "EASA inspection standards"]
-
-Query needing both (US legal + regulatory):
-  case_law_queries: ["Delaware fiduciary duty directors"]
-  web_queries: ["SEC disclosure requirements public companies"]
-
-Query about case facts only:
-  case_law_queries: []
-  web_queries: []
-  reasoning: "Query asks only about facts in documents, no external authority needed"
-
-Reply in JSON only:
+Reply JSON:
 {{
-    "case_law_queries": ["specific query 1", "specific query 2"],
-    "web_queries": ["specific regulation/standard query"],
-    "reasoning": "Brief explanation of source selection and which triggers informed searches"
-}}
-
-If no external research is needed, reply:
-{{
-    "case_law_queries": [],
-    "web_queries": [],
-    "reasoning": "Reason why external research not needed"
+    "case_law_queries": ["specific query if case law needed"],
+    "web_queries": ["specific query if web search needed"],
+    "reasoning": "Why search is or is not needed based on WHAT THE QUERY ASKS"
 }}"""
 
 
@@ -594,84 +595,72 @@ Reply in JSON only:
 
 P_CHECKPOINT = """Query: {query}
 
-Evidence gathered so far:
+=== EVIDENCE GATHERED ===
 {findings}
 
-Current approach: {plan}
+=== CURRENT APPROACH ===
+{plan}
 
-Evaluate the investigation status:
+═══════════════════════════════════════════════════════════════════════════════
+CHECKPOINT
+═══════════════════════════════════════════════════════════════════════════════
 
-1. SUFFICIENCY: Do we have enough evidence to answer the query?
-   - Is there direct evidence addressing the question?
-   - Are there citations from source documents?
-   - Is there enough detail for a useful answer?
+Quick assessment:
+1. SUFFICIENT? Do we have enough to answer the query with citations?
+2. PROGRESS? Is current approach finding relevant info or stalled?
+3. NEXT? If not sufficient, what specific actions?
 
-2. PROGRESS: Is the current approach working?
-   - Are we finding relevant information?
-   - Are we stalled or making progress?
-
-3. NEXT STEPS: If not sufficient, what should we do?
-   - Different search terms?
-   - Specific documents to read?
-   - Change strategy entirely?
-
-Reply in JSON:
+=== OUTPUT (JSON only) ===
 {{
-    "sufficient": true/false,
-    "should_replan": true/false,
-    "progress_assessment": "brief assessment of what's working/not working",
-    "next_steps": ["specific action 1", "specific action 2"],
-    "new_search_terms": ["term1", "term2"],
-    "files_to_check": ["file1.pdf", "file2.pdf"]
+    "sufficient": true | false,
+    "should_replan": true | false,
+    "progress_assessment": "brief assessment",
+    "next_steps": ["action"],
+    "new_search_terms": ["term"],
+    "files_to_check": ["file.pdf"]
 }}"""
 
 
-P_ANALYZE_SEARCH = """You are analyzing search results for a legal investigation.
+P_ANALYZE_SEARCH = """Query: {query}
+Key issues: {key_issues}
+Already read: {already_read}
 
-Query: {query}
-
-Key issues identified:
-{key_issues}
-
-Search Results:
+=== SEARCH RESULTS ===
 {results}
 
-Already read documents:
-{already_read}
+═══════════════════════════════════════════════════════════════════════════════
+DOCUMENT CRITICALITY (memory management)
+═══════════════════════════════════════════════════════════════════════════════
 
-Perform a COMPLETE analysis in ONE pass:
+DECISIVE (loaded in full for synthesis):
+- Case-specific docs that DIRECTLY answer the query
+- Contracts, correspondence, pleadings, expert reports specific to THIS matter
 
-1. RELEVANT HITS: Which search results are most relevant? (by number)
-2. KEY FACTS: What facts are directly relevant to the query?
-3. DOCUMENT PRIORITY: Rank candidate documents for deeper reading.
-   - Score 0-100 for relevance
-   - CRITICAL: Pleadings, correspondence, party briefs > reference materials
-   - Prioritize unread documents
-4. ADDITIONAL NEEDS: What else might help?
+NEVER DECISIVE:
+- Statutes, acts, codes, regulations
+- Manuals, handbooks, templates
+- Generic reference materials
 
-DOCUMENT CRITICALITY:
-- Mark any document as "DECISIVE" if it appears to directly answer the query
-- Mark as "IRRELEVANT" if clearly not useful for this specific query
-- Mark as "SUPPORTING" for useful context
+SUPPORTING: Useful context, don't need full text
+IRRELEVANT: Skip entirely
 
-Reply in JSON:
+═══════════════════════════════════════════════════════════════════════════════
+
+=== OUTPUT (JSON only) ===
 {{
     "relevant_hit_numbers": [1, 3, 5],
-    "facts": ["fact1 with exact values", "fact2"],
-    "citations": [{{"text": "quote", "source": "filename", "page": 1}}],
+    "facts": ["fact with exact values"],
+    "citations": [{{"text": "quote", "source": "file", "page": 1}}],
     "ranked_documents": [
-        {{"file": "path/file.pdf", "score": 95, "criticality": "DECISIVE", "reason": "brief reason"}},
-        {{"file": "path/file2.pdf", "score": 70, "criticality": "SUPPORTING", "reason": "brief reason"}},
-        {{"file": "path/file3.pdf", "score": 10, "criticality": "IRRELEVANT", "reason": "brief reason"}}
+        {{"file": "path/file.pdf", "score": 95, "criticality": "DECISIVE|SUPPORTING|IRRELEVANT", "reason": "why"}}
     ],
-    "additional_searches": ["term1"],
-    "read_deeper": ["file1.pdf"]
+    "additional_searches": ["term"],
+    "read_deeper": ["file.pdf"],
+    "assessment": "Strategic assessment and gaps"
 }}"""
 
 
-P_ANALYZE_EXTERNAL = """You are analyzing external legal research results.
-
-Query context: {query}
+P_ANALYZE_EXTERNAL = """Query: {query}
 
 === CASE LAW RESULTS ===
 {case_law_results}
@@ -679,32 +668,24 @@ Query context: {query}
 === WEB/REGULATORY RESULTS ===
 {web_results}
 
-Analyze ALL external research in ONE pass:
+═══════════════════════════════════════════════════════════════════════════════
+UNIFIED EXTERNAL ANALYSIS
+═══════════════════════════════════════════════════════════════════════════════
 
-1. CASE LAW ANALYSIS:
-   - What legal standards or tests do these cases establish?
-   - Are there directly applicable holdings?
-   - How do they apply to our situation?
+Synthesize all external research:
+- Precedents: standards, tests, applicable holdings
+- Regulations: requirements, thresholds
+- Combined framework: how they interact for our situation
 
-2. REGULATORY ANALYSIS:
-   - What regulations or standards are relevant?
-   - What are the key requirements or thresholds?
-   - How do they apply to the current situation?
-
-3. SYNTHESIS:
-   - How do case law and regulations interact?
-   - What's the combined legal framework?
-
-Reply in JSON:
+=== OUTPUT (JSON only) ===
 {{
     "key_precedents": [
-        {{"case": "Case Name", "citation": "citation", "holding": "relevant holding", "applicability": "how it applies"}}
+        {{"case": "Name", "citation": "cite", "holding": "holding", "applicability": "application"}}
     ],
-    "legal_standards": ["standard 1", "standard 2"],
+    "legal_standards": ["standard"],
     "regulations": [
-        {{"name": "Regulation Name", "source": "source", "key_requirements": "requirements"}}
+        {{"name": "Name", "source": "source", "key_requirements": "requirements"}}
     ],
-    "regulatory_standards": ["standard 1", "standard 2"],
-    "combined_framework": "How case law and regulations together inform this situation",
-    "summary": "Brief unified summary of external legal context"
+    "combined_framework": "How case law + regulations together inform this situation",
+    "summary": "Unified external legal context"
 }}"""

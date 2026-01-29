@@ -92,6 +92,7 @@ class ChatApp:
         # Current turn state
         self.current_thinking: list[str] = []
         self.current_citations: list[str] = []
+        self.current_facts: list[str] = []
 
     def on_thinking_step(self, step: ThinkingStep):
         """Callback for thinking steps."""
@@ -106,6 +107,13 @@ class ChatApp:
             citation_text += f"\n    {citation.context}"
         self.current_citations.append(citation_text)
         self.update_queue.put(("citation", citation_text))
+
+    def on_fact(self, fact: str):
+        """Callback for extracted facts."""
+        if fact and fact not in self.current_facts:  # Deduplicate
+            fact_text = f"• {fact}"
+            self.current_facts.append(fact_text)
+            self.update_queue.put(("fact", fact_text))
 
     def _generate_session_id(self) -> str:
         """Generate a unique session/job ID."""
@@ -317,6 +325,7 @@ class ChatApp:
                     config=RLMConfig(),
                     on_step=self.on_thinking_step,
                     on_citation=self.on_citation,
+                    on_fact=self.on_fact,
                 )
 
                 # Build query with context if we have conversation history
@@ -365,6 +374,7 @@ class ChatApp:
                     config=RLMConfig(),
                     on_step=self.on_thinking_step,
                     on_citation=self.on_citation,
+                    on_fact=self.on_fact,
                 )
 
                 # Build query with context if we have conversation history
@@ -432,6 +442,7 @@ class ChatApp:
         # Reset current turn state
         self.current_thinking = []
         self.current_citations = []
+        self.current_facts = []
         self.update_queue = queue.Queue()
         self.is_running = True
         self.stop_requested = False  # Reset stop flag
@@ -459,25 +470,28 @@ class ChatApp:
                 if update_type == "thinking":
                     elapsed = time.time() - start_time
                     status = f"Investigating... ({elapsed:.1f}s) - {len(self.current_thinking)} steps"
-                    # Show all steps - they're now more informative so we want to see them all
                     thinking_display = "\n".join(self.current_thinking)
                     citations_display = "\n".join(self.current_citations) or "Finding sources..."
+                    facts_display = "\n".join(self.current_facts) or "Extracting facts..."
 
-                    # Update assistant placeholder with progress
                     history = history[:-1] + [{"role": "assistant", "content": f"*Investigating... ({len(self.current_thinking)} steps)*"}]
-                    yield history, thinking_display, citations_display, status
+                    yield history, thinking_display, citations_display, facts_display, status
 
                 elif update_type == "citation":
-                    # Update citations display
                     citations_display = "\n".join(self.current_citations)
-                    yield history, "\n".join(self.current_thinking), citations_display, f"Found {len(self.current_citations)} citations"
+                    facts_display = "\n".join(self.current_facts) or "Extracting facts..."
+                    yield history, "\n".join(self.current_thinking), citations_display, facts_display, f"Found {len(self.current_citations)} citations"
+
+                elif update_type == "fact":
+                    facts_display = "\n".join(self.current_facts)
+                    citations_display = "\n".join(self.current_citations) or "Finding sources..."
+                    yield history, "\n".join(self.current_thinking), citations_display, facts_display, f"Extracted {len(self.current_facts)} facts"
 
                 elif update_type == "complete":
                     self.is_running = False
                     final_output = data
                     elapsed = time.time() - start_time
 
-                    # Store in session
                     self.session.add_turn(
                         user_msg=message,
                         ai_msg=final_output,
@@ -485,14 +499,14 @@ class ChatApp:
                         citations=self.current_citations.copy()
                     )
 
-                    # Update history with final response
                     history = history[:-1] + [{"role": "assistant", "content": final_output}]
 
                     status = f"Complete ({elapsed:.1f}s) - Turn {len(self.session.conversation)}"
                     thinking_display = "\n".join(self.current_thinking)
                     citations_display = "\n".join(self.current_citations) or "No citations found"
+                    facts_display = "\n".join(self.current_facts) or "No facts extracted"
 
-                    yield history, thinking_display, citations_display, status
+                    yield history, thinking_display, citations_display, facts_display, status
                     return
 
                 elif update_type == "stopped":
@@ -500,23 +514,23 @@ class ChatApp:
                     elapsed = time.time() - start_time
                     stop_msg = f"*Investigation stopped after {elapsed:.1f}s*\n\nPartial findings:\n" + "\n".join(self.current_thinking[-5:])
                     history = history[:-1] + [{"role": "assistant", "content": stop_msg}]
-                    yield history, "\n".join(self.current_thinking), "\n".join(self.current_citations), "Stopped by user"
+                    yield history, "\n".join(self.current_thinking), "\n".join(self.current_citations), "\n".join(self.current_facts), "Stopped by user"
                     return
 
                 elif update_type == "error":
                     self.is_running = False
                     error_msg = f"Error: {data}"
                     history = history[:-1] + [{"role": "assistant", "content": error_msg}]
-                    yield history, "\n".join(self.current_thinking), "\n".join(self.current_citations), f"Error: {data}"
+                    yield history, "\n".join(self.current_thinking), "\n".join(self.current_citations), "\n".join(self.current_facts), f"Error: {data}"
                     return
 
             except queue.Empty:
-                # Keep UI responsive
                 if self.current_thinking:
                     elapsed = time.time() - start_time
                     thinking_display = "\n".join(self.current_thinking)
                     citations_display = "\n".join(self.current_citations) or "Finding sources..."
-                    yield history, thinking_display, citations_display, f"Investigating... ({elapsed:.1f}s)"
+                    facts_display = "\n".join(self.current_facts) or "Extracting facts..."
+                    yield history, thinking_display, citations_display, facts_display, f"Investigating... ({elapsed:.1f}s)"
 
         thread.join()
 
@@ -602,6 +616,7 @@ class ChatApp:
         # Reset current turn state
         self.current_thinking = []
         self.current_citations = []
+        self.current_facts = []
         self.update_queue = queue.Queue()
         self.is_running = True
         self.stop_requested = False
@@ -631,20 +646,26 @@ class ChatApp:
                     status = f"Investigating... ({elapsed:.1f}s) - {len(self.current_thinking)} steps"
                     thinking_display = "\n".join(self.current_thinking)
                     citations_display = "\n".join(self.current_citations) or "Finding sources..."
+                    facts_display = "\n".join(self.current_facts) or "Extracting facts..."
 
                     history = history[:-1] + [{"role": "assistant", "content": f"*Investigating... ({len(self.current_thinking)} steps)*"}]
-                    yield history, thinking_display, citations_display, status
+                    yield history, thinking_display, citations_display, facts_display, status
 
                 elif update_type == "citation":
                     citations_display = "\n".join(self.current_citations)
-                    yield history, "\n".join(self.current_thinking), citations_display, f"Found {len(self.current_citations)} citations"
+                    facts_display = "\n".join(self.current_facts) or "Extracting facts..."
+                    yield history, "\n".join(self.current_thinking), citations_display, facts_display, f"Found {len(self.current_citations)} citations"
+
+                elif update_type == "fact":
+                    facts_display = "\n".join(self.current_facts)
+                    citations_display = "\n".join(self.current_citations) or "Finding sources..."
+                    yield history, "\n".join(self.current_thinking), citations_display, facts_display, f"Extracted {len(self.current_facts)} facts"
 
                 elif update_type == "complete":
                     self.is_running = False
                     final_output = data
                     elapsed = time.time() - start_time
 
-                    # Store in session
                     self.session.add_turn(
                         user_msg=message,
                         ai_msg=final_output,
@@ -657,8 +678,9 @@ class ChatApp:
                     status = f"Complete ({elapsed:.1f}s) - Turn {len(self.session.conversation)}"
                     thinking_display = "\n".join(self.current_thinking)
                     citations_display = "\n".join(self.current_citations) or "No citations found"
+                    facts_display = "\n".join(self.current_facts) or "No facts extracted"
 
-                    yield history, thinking_display, citations_display, status
+                    yield history, thinking_display, citations_display, facts_display, status
                     return
 
                 elif update_type == "stopped":
@@ -666,14 +688,14 @@ class ChatApp:
                     elapsed = time.time() - start_time
                     stop_msg = f"*Investigation stopped after {elapsed:.1f}s*\n\nPartial findings:\n" + "\n".join(self.current_thinking[-5:])
                     history = history[:-1] + [{"role": "assistant", "content": stop_msg}]
-                    yield history, "\n".join(self.current_thinking), "\n".join(self.current_citations), "Stopped by user"
+                    yield history, "\n".join(self.current_thinking), "\n".join(self.current_citations), "\n".join(self.current_facts), "Stopped by user"
                     return
 
                 elif update_type == "error":
                     self.is_running = False
                     error_msg = f"Error: {data}"
                     history = history[:-1] + [{"role": "assistant", "content": error_msg}]
-                    yield history, "\n".join(self.current_thinking), "\n".join(self.current_citations), f"Error: {data}"
+                    yield history, "\n".join(self.current_thinking), "\n".join(self.current_citations), "\n".join(self.current_facts), f"Error: {data}"
                     return
 
             except queue.Empty:
@@ -681,7 +703,8 @@ class ChatApp:
                     elapsed = time.time() - start_time
                     thinking_display = "\n".join(self.current_thinking)
                     citations_display = "\n".join(self.current_citations) or "Finding sources..."
-                    yield history, thinking_display, citations_display, f"Investigating... ({elapsed:.1f}s)"
+                    facts_display = "\n".join(self.current_facts) or "Extracting facts..."
+                    yield history, thinking_display, citations_display, facts_display, f"Investigating... ({elapsed:.1f}s)"
 
         thread.join()
 
@@ -693,12 +716,13 @@ class ChatApp:
             return "Stopping..."
         return "No investigation running"
 
-    def clear_chat(self) -> tuple[list, str, str, str]:
+    def clear_chat(self) -> tuple[list, str, str, str, str]:
         """Clear the current chat session."""
         self.session = None
         self.current_thinking = []
         self.current_citations = []
-        return [], "", "", "Chat cleared. Start a new conversation."
+        self.current_facts = []
+        return [], "", "", "", "Chat cleared. Start a new conversation."
 
     def get_turn_details(self, turn_number: int) -> str:
         """Get detailed thinking logs for a specific turn."""
@@ -813,7 +837,7 @@ def create_chat_app(api_key: Optional[str] = None) -> gr.Blocks:
                 # Chat interface (Gradio 6.x uses messages format by default)
                 chatbot = gr.Chatbot(
                     label="Conversation",
-                    height=500,
+                    height=650,  # Increased for better viewing/copying
                 )
 
                 with gr.Row():
@@ -829,7 +853,7 @@ def create_chat_app(api_key: Optional[str] = None) -> gr.Blocks:
                 with gr.Row():
                     clear_btn = gr.Button("Clear Chat")
 
-            # Right column: Status and thinking
+            # Right column: Status, thinking, citations, facts
             with gr.Column(scale=1):
                 status = gr.Textbox(
                     label="Status",
@@ -841,7 +865,7 @@ def create_chat_app(api_key: Optional[str] = None) -> gr.Blocks:
                     thinking = gr.Textbox(
                         label="Investigation Steps",
                         interactive=False,
-                        lines=15,
+                        lines=12,
                         autoscroll=True,
                     )
 
@@ -849,7 +873,15 @@ def create_chat_app(api_key: Optional[str] = None) -> gr.Blocks:
                     citations = gr.Textbox(
                         label="Sources Found",
                         interactive=False,
-                        lines=10,
+                        lines=8,
+                        autoscroll=True,
+                    )
+
+                with gr.Accordion("Facts Extracted (Current Turn)", open=True):
+                    facts = gr.Textbox(
+                        label="Key Facts",
+                        interactive=False,
+                        lines=8,
                         autoscroll=True,
                     )
 
@@ -878,7 +910,7 @@ def create_chat_app(api_key: Optional[str] = None) -> gr.Blocks:
             submit_btn.click(
                 fn=app.chat,
                 inputs=[msg, chatbot, repo_path],
-                outputs=[chatbot, thinking, citations, status],
+                outputs=[chatbot, thinking, citations, facts, status],
             ).then(
                 fn=lambda: "",  # Clear input after submit
                 outputs=[msg],
@@ -888,7 +920,7 @@ def create_chat_app(api_key: Optional[str] = None) -> gr.Blocks:
             msg.submit(
                 fn=app.chat,
                 inputs=[msg, chatbot, repo_path],
-                outputs=[chatbot, thinking, citations, status],
+                outputs=[chatbot, thinking, citations, facts, status],
             ).then(
                 fn=lambda: "",
                 outputs=[msg],
@@ -898,7 +930,7 @@ def create_chat_app(api_key: Optional[str] = None) -> gr.Blocks:
             submit_btn.click(
                 fn=app.chat_with_upload,
                 inputs=[msg, chatbot, file_upload, folder_upload],
-                outputs=[chatbot, thinking, citations, status],
+                outputs=[chatbot, thinking, citations, facts, status],
             ).then(
                 fn=lambda: "",  # Clear input after submit
                 outputs=[msg],
@@ -908,7 +940,7 @@ def create_chat_app(api_key: Optional[str] = None) -> gr.Blocks:
             msg.submit(
                 fn=app.chat_with_upload,
                 inputs=[msg, chatbot, file_upload, folder_upload],
-                outputs=[chatbot, thinking, citations, status],
+                outputs=[chatbot, thinking, citations, facts, status],
             ).then(
                 fn=lambda: "",
                 outputs=[msg],
@@ -917,7 +949,7 @@ def create_chat_app(api_key: Optional[str] = None) -> gr.Blocks:
         # Clear chat (same for both modes)
         clear_btn.click(
             fn=app.clear_chat,
-            outputs=[chatbot, thinking, citations, status],
+            outputs=[chatbot, thinking, citations, facts, status],
         )
 
         # Stop investigation (same for both modes)
