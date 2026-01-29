@@ -73,6 +73,19 @@ class InvestigationCache:
     extracted_docs: set = field(default_factory=set)  # Docs we've extracted facts from
     searched_terms: set = field(default_factory=set)  # Search terms we've used
     irrelevant_docs: set = field(default_factory=set)  # Docs marked IRRELEVANT by LLM
+    consecutive_read_failures: int = 0  # Track consecutive read failures
+    total_read_failures: int = 0  # Track total read failures
+    MAX_CONSECUTIVE_FAILURES: int = 5  # Abort after this many consecutive failures
+
+    def record_read_success(self):
+        """Record a successful document read."""
+        self.consecutive_read_failures = 0
+
+    def record_read_failure(self) -> bool:
+        """Record a failed document read. Returns True if should abort."""
+        self.consecutive_read_failures += 1
+        self.total_read_failures += 1
+        return self.consecutive_read_failures >= self.MAX_CONSECUTIVE_FAILURES
 
     def has_extracted(self, filepath: str) -> bool:
         """Check if we've already extracted facts from this doc."""
@@ -769,6 +782,18 @@ class RLMEngine:
             tasks = [self._investigate_lead(state, repo, lead, cache) for lead in leads_to_process]
             await asyncio.gather(*tasks, return_exceptions=True)
 
+            # Check for critical read failure state
+            if cache.consecutive_read_failures >= cache.MAX_CONSECUTIVE_FAILURES:
+                self._emit_step(
+                    state,
+                    StepType.ERROR,
+                    f"Aborting: {cache.consecutive_read_failures} consecutive document read failures. "
+                    f"Total failures: {cache.total_read_failures}. Documents may be inaccessible.",
+                )
+                # Set a failure flag so synthesis can check
+                state.findings["critical_read_failures"] = True
+                break
+
             iteration += 1
             facts_count = len(state.findings.get("accumulated_facts", []))
             findings_summary = self._format_findings(state)
@@ -1120,12 +1145,16 @@ class RLMEngine:
         repo: MatterRepository,
         file_path: str,
         cache: InvestigationCache,
-    ):
-        """Read and extract facts from a document."""
+    ) -> bool:
+        """Read and extract facts from a document.
+
+        Returns:
+            True if document was read successfully, False otherwise.
+        """
         # OPTIMIZATION: Skip if already extracted
         if cache.has_extracted(file_path):
             logger.debug(f"Skipping already extracted: {file_path}")
-            return
+            return True  # Already extracted = success
 
         self._emit_step(state, StepType.READING, f"Reading: {Path(file_path).name}")
 
@@ -1133,6 +1162,7 @@ class RLMEngine:
             doc = repo.read(file_path)
             state.documents_read += 1
             cache.mark_extracted(file_path)  # Mark as extracted
+            cache.record_read_success()  # Reset consecutive failure counter
 
             # Dynamic excerpt limit based on query complexity
             excerpt_limit = (
@@ -1209,9 +1239,18 @@ class RLMEngine:
                         self.on_citation(citation)
 
             # Skip adding reference leads - reduces iteration depth
+            return True  # Success
 
         except Exception as e:
             self._emit_step(state, StepType.ERROR, f"Failed to read {file_path}: {e}")
+            should_abort = cache.record_read_failure()
+            if should_abort:
+                self._emit_step(
+                    state,
+                    StepType.ERROR,
+                    f"CRITICAL: {cache.consecutive_read_failures} consecutive read failures - document access broken",
+                )
+            return False  # Failure
 
     async def _synthesize(self, state: InvestigationState, is_simple: bool = False):
         """Phase 3: Final synthesis using ALL sources.
