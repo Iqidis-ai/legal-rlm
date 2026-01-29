@@ -5,6 +5,7 @@ with automatic cleanup to keep disk usage low.
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -102,16 +103,29 @@ class S3Repository:
     async def list_documents(
         self,
         extensions: Optional[list[str]] = None,
+        include_hash_files: bool = True,
     ) -> list[str]:
         """List documents in S3 prefix.
 
         Args:
             extensions: Filter by file extensions (e.g., ['.pdf', '.txt'])
+            include_hash_files: If True, also include files that look like content hashes
+                               (no extension, 32+ hex chars). These are typically hash-named
+                               files that need mapping to display names.
 
         Returns:
             List of S3 keys (relative to prefix)
         """
         extensions = extensions or [".txt", ".pdf", ".docx", ".md"]
+
+        def _is_hash_filename(name: str) -> bool:
+            """Check if filename looks like a content hash (hex string, no extension)."""
+            # Hash filenames are typically 32+ hex chars without extension
+            if '.' in name:
+                return False  # Has extension, not a hash
+            if len(name) < 32:
+                return False
+            return all(c in '0123456789abcdef' for c in name.lower())
 
         def _list():
             documents = []
@@ -132,6 +146,12 @@ class S3Repository:
                     # Filter by extension for other files
                     if any(key.lower().endswith(ext) for ext in extensions):
                         documents.append(rel_key)
+                        continue
+
+                    # Include hash-named files (they may have display names in mapping)
+                    if include_hash_files and _is_hash_filename(rel_key):
+                        documents.append(rel_key)
+                        logger.debug(f"Including hash-named file: {rel_key}")
 
             return documents
 
@@ -139,6 +159,12 @@ class S3Repository:
 
     async def download_to_temp(self, job_id: str) -> Path:
         """Download all documents to temp directory.
+
+        If a _filename_mapping.json exists in S3, it will be used to:
+        1. Identify hash-named files that should be downloaded
+        2. Save those files with their display names (not hash names)
+
+        This ensures the repository can read files by their human-readable names.
 
         Args:
             job_id: Unique job identifier for tracking
@@ -153,7 +179,7 @@ class S3Repository:
         # Track for cleanup
         self._temp_dirs[job_id] = (temp_dir, time.time())
 
-        # List and download documents
+        # List all documents (including hash-named files)
         documents = await self.list_documents()
         logger.info(f"Downloading {len(documents)} documents for job {job_id}")
 
@@ -164,11 +190,37 @@ class S3Repository:
                 f"Max: {self.config.max_documents_per_job}"
             )
 
+        # Download mapping file FIRST if it exists, to get hash -> display name mapping
+        filename_mapping = {}  # hash_name -> display_name
+        if "_filename_mapping.json" in documents:
+            mapping_path = await self._download_file("_filename_mapping.json", temp_dir)
+            if mapping_path and mapping_path.exists():
+                try:
+                    with open(mapping_path) as f:
+                        raw_mapping = json.load(f)
+                    # Build hash -> display_name mapping
+                    for hash_name, info in raw_mapping.items():
+                        if isinstance(info, dict):
+                            display_name = info.get("display_name", hash_name)
+                        else:
+                            display_name = str(info)
+                        filename_mapping[hash_name] = display_name
+                    logger.info(f"Loaded filename mapping with {len(filename_mapping)} entries")
+                except Exception as e:
+                    logger.warning(f"Failed to load filename mapping: {e}")
+
         # Download each document
         downloaded_count = 0
         skipped_count = 0
         for doc_key in documents:
-            result = await self._download_file(doc_key, temp_dir)
+            # Skip the mapping file (already downloaded)
+            if doc_key == "_filename_mapping.json":
+                continue
+
+            # Determine the save name: use display name if available
+            save_name = filename_mapping.get(doc_key, doc_key)
+
+            result = await self._download_file(doc_key, temp_dir, save_as=save_name)
             if result:
                 downloaded_count += 1
             else:
@@ -194,10 +246,24 @@ class S3Repository:
 
         return temp_dir
 
-    async def _download_file(self, key: str, dest_dir: Path) -> Path:
-        """Download a single file from S3."""
+    async def _download_file(
+        self, key: str, dest_dir: Path, save_as: Optional[str] = None
+    ) -> Optional[Path]:
+        """Download a single file from S3.
+
+        Args:
+            key: S3 key (relative to prefix) to download
+            dest_dir: Destination directory
+            save_as: Optional filename to save as (instead of the S3 key name).
+                    Use this to save hash-named files with their display names.
+
+        Returns:
+            Path to downloaded file, or None if skipped
+        """
         s3_key = f"{self.prefix}/{key}" if self.prefix else key
-        dest_path = dest_dir / key
+        # Use save_as name if provided, otherwise use the original key
+        dest_filename = save_as if save_as else key
+        dest_path = dest_dir / dest_filename
 
         # Create parent directories
         dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -212,6 +278,8 @@ class S3Repository:
                 return None
 
             self._s3.download_file(self.bucket, s3_key, str(dest_path))
+            if save_as and save_as != key:
+                logger.debug(f"Downloaded {key} -> {save_as}")
             return dest_path
 
         return await asyncio.to_thread(_download)
