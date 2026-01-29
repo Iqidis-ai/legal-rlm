@@ -242,11 +242,31 @@ class ChatApp:
             Returns:
                 Tuple of (original_name or None, actual_disk_name)
             """
-            actual_name = Path(file_obj.name).name
+            # Debug: log file object type and attributes
+            logger.debug(f"File object type: {type(file_obj)}")
+            logger.debug(f"File object value: {file_obj}")
+
+            # Handle string path (type="filepath" returns strings in some Gradio versions)
+            if isinstance(file_obj, str):
+                actual_name = Path(file_obj).name
+                logger.debug(f"String path, actual_name: {actual_name}")
+                # For string paths, the filename is just the path name
+                if '.' in actual_name and not _is_hash_filename(actual_name):
+                    return actual_name, actual_name
+                return None, actual_name
+
+            # Handle file-like objects
+            if hasattr(file_obj, 'name'):
+                actual_name = Path(file_obj.name).name
+            else:
+                actual_name = str(file_obj)
+
+            logger.debug(f"actual_name: {actual_name}")
 
             # Method 1: Try orig_name (Gradio 4.x+)
             if hasattr(file_obj, 'orig_name') and file_obj.orig_name:
                 orig = file_obj.orig_name
+                logger.debug(f"Found orig_name: {orig}")
                 if os.path.sep in str(orig) or '/' in str(orig):
                     return Path(orig).name, actual_name
                 return str(orig), actual_name
@@ -254,15 +274,18 @@ class ChatApp:
             # Method 2: Try path attribute (some Gradio versions)
             if hasattr(file_obj, 'path') and file_obj.path:
                 path_name = Path(file_obj.path).name
+                logger.debug(f"Found path attribute: {path_name}")
                 # Check if it looks like a real filename (has extension)
                 if '.' in path_name and not _is_hash_filename(path_name):
                     return path_name, actual_name
 
             # Method 3: Check if actual_name looks like a real filename
             if '.' in actual_name and not _is_hash_filename(actual_name):
+                logger.debug(f"Using actual_name as original: {actual_name}")
                 return actual_name, actual_name
 
             # No original name found
+            logger.warning(f"Could not extract original filename from {file_obj}, using {actual_name}")
             return None, actual_name
 
         def _is_hash_filename(name: str) -> bool:
@@ -299,11 +322,23 @@ class ChatApp:
             file_info.append((f, temp_path, orig_name, actual_name, idx))
 
         # Check if this looks like a folder upload (paths have common parent structure)
+        # NOTE: We need to be careful with Gradio's temp structure where each file
+        # is in its own hash-named directory: /tmp/gradio/<hash>/original_filename.docx
+        # We should NOT preserve these hash directories as folder structure.
         all_paths = [info[1] for info in file_info]
         common_prefix = None
+        is_gradio_temp = False
+
         if len(all_paths) > 1:
             try:
                 common_prefix = Path(os.path.commonpath([str(p) for p in all_paths]))
+                # Check if this is Gradio's temp directory structure
+                # Each file has its own unique parent dir (hash-named)
+                unique_parents = set(p.parent for p in all_paths)
+                if len(unique_parents) == len(all_paths):
+                    # Each file has a unique parent - this is Gradio's structure, not user folders
+                    is_gradio_temp = True
+                    logger.debug("Detected Gradio temp structure - ignoring hash directories")
             except ValueError:
                 common_prefix = None
 
@@ -328,7 +363,11 @@ class ChatApp:
                     )
 
                 # Determine relative path for folder structure
-                if common_prefix and common_prefix != file_path:
+                # If it's Gradio's temp structure, don't preserve the hash directories
+                if is_gradio_temp:
+                    relative_display = display_name
+                    relative_actual = actual_name
+                elif common_prefix and common_prefix != file_path:
                     rel_dir = file_path.parent.relative_to(common_prefix)
                     relative_display = str(rel_dir / display_name)
                     relative_actual = str(rel_dir / actual_name)

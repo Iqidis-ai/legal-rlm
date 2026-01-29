@@ -341,12 +341,24 @@ class RLMApp:
             orig_name, actual_name = get_original_filename(f)
             file_info.append((f, temp_path, orig_name, actual_name, idx))
 
-        # Check if this looks like a folder upload
+        # Check if this looks like a folder upload (paths have common parent structure)
+        # NOTE: We need to be careful with Gradio's temp structure where each file
+        # is in its own hash-named directory: /tmp/gradio/<hash>/original_filename.docx
+        # We should NOT preserve these hash directories as folder structure.
         all_paths = [info[1] for info in file_info]
         common_prefix = None
+        is_gradio_temp = False
+
         if len(all_paths) > 1:
             try:
                 common_prefix = Path(os.path.commonpath([str(p) for p in all_paths]))
+                # Check if this is Gradio's temp directory structure
+                # Each file has its own unique parent dir (hash-named)
+                unique_parents = set(p.parent for p in all_paths)
+                if len(unique_parents) == len(all_paths):
+                    # Each file has a unique parent - this is Gradio's structure, not user folders
+                    is_gradio_temp = True
+                    logger.debug("Detected Gradio temp structure - ignoring hash directories")
             except ValueError:
                 common_prefix = None
 
@@ -371,7 +383,11 @@ class RLMApp:
                     )
 
                 # Determine relative path for folder structure
-                if common_prefix and common_prefix != file_path:
+                # If it's Gradio's temp structure, don't preserve the hash directories
+                if is_gradio_temp:
+                    relative_display = display_name
+                    relative_actual = actual_name
+                elif common_prefix and common_prefix != file_path:
                     rel_dir = file_path.parent.relative_to(common_prefix)
                     relative_display = str(rel_dir / display_name)
                     relative_actual = str(rel_dir / actual_name)
