@@ -213,12 +213,36 @@ class ChatApp:
 
         files: list[tuple[str, bytes]] = []
 
-        # Find common prefix to determine folder structure
-        # When uploading a folder, Gradio preserves the path structure
-        all_paths = [Path(f.name) for f in uploaded_files]
+        def get_original_filename(file_obj) -> str:
+            """Extract original filename from Gradio file object.
+
+            Gradio stores uploaded files in temp directories with hash-based names.
+            The original filename is available via:
+            - file.orig_name (Gradio 4.x+)
+            - Falling back to extracting from the temp path basename
+            """
+            # Try orig_name first (available in Gradio 4.x+)
+            if hasattr(file_obj, 'orig_name') and file_obj.orig_name:
+                orig = file_obj.orig_name
+                # orig_name might be full path in some versions, extract basename
+                if os.path.sep in str(orig) or '/' in str(orig):
+                    return Path(orig).name
+                return str(orig)
+
+            # Fallback: extract from the temp path
+            # This may be a hash-based name if Gradio uses content hashing
+            return Path(file_obj.name).name
+
+        # Build mapping of temp paths to original names for folder structure detection
+        file_info = []
+        for f in uploaded_files:
+            temp_path = Path(f.name)
+            orig_name = get_original_filename(f)
+            file_info.append((f, temp_path, orig_name))
 
         # Check if this looks like a folder upload (paths have common parent structure)
         # Folder uploads typically have paths like: /tmp/gradio/.../folder_name/subdir/file.pdf
+        all_paths = [info[1] for info in file_info]
         common_prefix = None
         if len(all_paths) > 1:
             # Find the common ancestor directory
@@ -228,17 +252,17 @@ class ChatApp:
                 # No common path (different drives on Windows, etc.)
                 common_prefix = None
 
-        for file in uploaded_files:
+        for file, file_path, orig_name in file_info:
             try:
-                file_path = Path(file.name)
-
                 # Determine relative path for folder structure preservation
                 if common_prefix and common_prefix != file_path:
                     # This is a folder upload - preserve structure relative to common prefix
-                    relative_path = file_path.relative_to(common_prefix)
+                    # Use the directory structure from temp path but with original filename
+                    rel_dir = file_path.parent.relative_to(common_prefix)
+                    relative_path = rel_dir / orig_name
                 else:
-                    # Single file or no common structure - just use filename
-                    relative_path = Path(file_path.name)
+                    # Single file or no common structure - just use original filename
+                    relative_path = Path(orig_name)
 
                 # Skip hidden files and system files
                 if any(part.startswith('.') for part in relative_path.parts):
@@ -249,7 +273,7 @@ class ChatApp:
                     content = f.read()
 
                 files.append((str(relative_path), content))
-                logger.debug(f"Extracted file: {relative_path}")
+                logger.debug(f"Extracted file: {relative_path} (from {file_path.name})")
 
             except Exception as e:
                 logger.error(f"Error reading file {file.name}: {e}")
