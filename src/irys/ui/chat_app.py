@@ -121,13 +121,13 @@ class ChatApp:
 
     async def _upload_files_to_s3(
         self,
-        files: list[tuple[str, bytes]],
+        files: list[tuple[str, bytes, str]],
         session_id: str,
     ) -> str:
         """Upload files to S3 and return the S3 prefix.
 
         Args:
-            files: List of (filename, content) tuples
+            files: List of (display_name, content, actual_filename) tuples
             session_id: Unique session identifier
 
         Returns:
@@ -140,8 +140,23 @@ class ChatApp:
             config=self.config,
         )
 
-        prefix = await s3_repo.upload_files(session_id, files)
-        logger.info(f"Uploaded {len(files)} files to S3: {prefix}")
+        # Build filename mapping and prepare files for upload
+        filename_mapping = {}
+        upload_files = []
+
+        for display_name, content, actual_filename in files:
+            upload_files.append((actual_filename, content))
+            filename_mapping[actual_filename] = {
+                "display_name": display_name,
+                "size_bytes": len(content),
+            }
+
+        # Add mapping file to upload
+        mapping_content = json.dumps(filename_mapping, indent=2).encode('utf-8')
+        upload_files.append(("_filename_mapping.json", mapping_content))
+
+        prefix = await s3_repo.upload_files(session_id, upload_files)
+        logger.info(f"Uploaded {len(files)} files + mapping to S3: {prefix}")
         return prefix
 
     async def _download_s3_to_temp(self, s3_prefix: str, session_id: str) -> Path:
@@ -169,13 +184,13 @@ class ChatApp:
 
     def _save_files_to_temp(
         self,
-        files: list[tuple[str, bytes]],
+        files: list[tuple[str, bytes, str]],
         session_id: str,
     ) -> Path:
-        """Save uploaded files to local temp directory.
+        """Save uploaded files to local temp directory with filename mapping.
 
         Args:
-            files: List of (relative_path, content) tuples - path can include subdirectories
+            files: List of (display_name, content, actual_filename) tuples
             session_id: Unique session identifier
 
         Returns:
@@ -184,12 +199,25 @@ class ChatApp:
         temp_dir = Path(self.config.temp_dir) / session_id
         temp_dir.mkdir(parents=True, exist_ok=True)
 
-        for relative_path, content in files:
-            file_path = temp_dir / relative_path
-            # Create parent directories if they don't exist (for folder uploads)
+        # Build filename mapping: actual_filename -> display_name
+        filename_mapping = {}
+
+        for display_name, content, actual_filename in files:
+            file_path = temp_dir / actual_filename
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
-            logger.debug(f"Saved file: {file_path}")
+
+            # Store mapping (relative paths)
+            filename_mapping[actual_filename] = {
+                "display_name": display_name,
+                "size_bytes": len(content),
+            }
+            logger.debug(f"Saved file: {file_path} (display: {display_name})")
+
+        # Save the filename mapping
+        mapping_path = temp_dir / "_filename_mapping.json"
+        mapping_path.write_text(json.dumps(filename_mapping, indent=2))
+        logger.info(f"Saved filename mapping with {len(filename_mapping)} entries")
 
         self._temp_dirs[session_id] = temp_dir
         logger.info(f"Saved {len(files)} files to temp: {temp_dir}")
@@ -207,81 +235,133 @@ class ChatApp:
     def _extract_files_from_upload(
         self,
         uploaded_files: list,
-    ) -> tuple[list[tuple[str, bytes]], str | None]:
+    ) -> tuple[list[tuple[str, bytes, str]], str | None]:
         """Extract files from Gradio upload, preserving folder structure.
 
         Args:
             uploaded_files: List of Gradio file objects (can be files or folder contents)
 
         Returns:
-            Tuple of (list of (relative_path, content) tuples, error message or None)
+            Tuple of (list of (display_name, content, actual_filename) tuples, error message or None)
+            - display_name: The original filename to show to users/LLM
+            - content: File bytes
+            - actual_filename: The filename to use on disk (may be hash-based)
         """
         if not uploaded_files:
             return [], None
 
-        files: list[tuple[str, bytes]] = []
+        files: list[tuple[str, bytes, str]] = []
 
-        def get_original_filename(file_obj) -> str:
+        def get_original_filename(file_obj) -> tuple[str | None, str]:
             """Extract original filename from Gradio file object.
 
-            Gradio stores uploaded files in temp directories with hash-based names.
-            The original filename is available via:
-            - file.orig_name (Gradio 4.x+)
-            - Falling back to extracting from the temp path basename
+            Returns:
+                Tuple of (original_name or None, actual_disk_name)
             """
-            # Try orig_name first (available in Gradio 4.x+)
+            actual_name = Path(file_obj.name).name
+
+            # Method 1: Try orig_name (Gradio 4.x+)
             if hasattr(file_obj, 'orig_name') and file_obj.orig_name:
                 orig = file_obj.orig_name
-                # orig_name might be full path in some versions, extract basename
                 if os.path.sep in str(orig) or '/' in str(orig):
-                    return Path(orig).name
-                return str(orig)
+                    return Path(orig).name, actual_name
+                return str(orig), actual_name
 
-            # Fallback: extract from the temp path
-            # This may be a hash-based name if Gradio uses content hashing
-            return Path(file_obj.name).name
+            # Method 2: Try path attribute (some Gradio versions)
+            if hasattr(file_obj, 'path') and file_obj.path:
+                path_name = Path(file_obj.path).name
+                # Check if it looks like a real filename (has extension)
+                if '.' in path_name and not _is_hash_filename(path_name):
+                    return path_name, actual_name
+
+            # Method 3: Check if actual_name looks like a real filename
+            if '.' in actual_name and not _is_hash_filename(actual_name):
+                return actual_name, actual_name
+
+            # No original name found
+            return None, actual_name
+
+        def _is_hash_filename(name: str) -> bool:
+            """Check if filename looks like a content hash."""
+            # Hash filenames are typically 32+ hex chars without extension
+            base = Path(name).stem
+            if len(base) >= 32 and all(c in '0123456789abcdef' for c in base.lower()):
+                return True
+            return False
+
+        def _detect_extension(content: bytes) -> str:
+            """Detect file extension from content magic bytes."""
+            if content.startswith(b'%PDF'):
+                return '.pdf'
+            if content.startswith(b'PK\x03\x04'):
+                return '.docx'  # ZIP-based (could be docx, xlsx, etc.)
+            if content.startswith(b'\xd0\xcf\x11\xe0'):
+                return '.doc'  # OLE compound document
+            if content.startswith(b'{\\rtf'):
+                return '.rtf'
+            # Try to detect text
+            try:
+                content[:1000].decode('utf-8')
+                return '.txt'
+            except UnicodeDecodeError:
+                pass
+            return ''
 
         # Build mapping of temp paths to original names for folder structure detection
         file_info = []
-        for f in uploaded_files:
+        for idx, f in enumerate(uploaded_files):
             temp_path = Path(f.name)
-            orig_name = get_original_filename(f)
-            file_info.append((f, temp_path, orig_name))
+            orig_name, actual_name = get_original_filename(f)
+            file_info.append((f, temp_path, orig_name, actual_name, idx))
 
         # Check if this looks like a folder upload (paths have common parent structure)
-        # Folder uploads typically have paths like: /tmp/gradio/.../folder_name/subdir/file.pdf
         all_paths = [info[1] for info in file_info]
         common_prefix = None
         if len(all_paths) > 1:
-            # Find the common ancestor directory
             try:
                 common_prefix = Path(os.path.commonpath([str(p) for p in all_paths]))
             except ValueError:
-                # No common path (different drives on Windows, etc.)
                 common_prefix = None
 
-        for file, file_path, orig_name in file_info:
+        for file, file_path, orig_name, actual_name, idx in file_info:
             try:
-                # Determine relative path for folder structure preservation
-                if common_prefix and common_prefix != file_path:
-                    # This is a folder upload - preserve structure relative to common prefix
-                    # Use the directory structure from temp path but with original filename
-                    rel_dir = file_path.parent.relative_to(common_prefix)
-                    relative_path = rel_dir / orig_name
-                else:
-                    # Single file or no common structure - just use original filename
-                    relative_path = Path(orig_name)
-
-                # Skip hidden files and system files
-                if any(part.startswith('.') for part in relative_path.parts):
-                    logger.debug(f"Skipping hidden file: {relative_path}")
-                    continue
-
                 with open(file.name, "rb") as f:
                     content = f.read()
 
-                files.append((str(relative_path), content))
-                logger.debug(f"Extracted file: {relative_path} (from {file_path.name})")
+                # Determine the display name (what users/LLM see)
+                if orig_name:
+                    display_name = orig_name
+                else:
+                    # Generate a display name from hash + detected extension
+                    ext = _detect_extension(content)
+                    if ext:
+                        display_name = f"document_{idx + 1}{ext}"
+                    else:
+                        display_name = f"document_{idx + 1}"
+                    logger.warning(
+                        f"Could not get original filename for {actual_name}, "
+                        f"using generated name: {display_name}"
+                    )
+
+                # Determine relative path for folder structure
+                if common_prefix and common_prefix != file_path:
+                    rel_dir = file_path.parent.relative_to(common_prefix)
+                    relative_display = str(rel_dir / display_name)
+                    relative_actual = str(rel_dir / actual_name)
+                else:
+                    relative_display = display_name
+                    relative_actual = actual_name
+
+                # Skip hidden files
+                if any(part.startswith('.') for part in Path(relative_display).parts):
+                    logger.debug(f"Skipping hidden file: {relative_display}")
+                    continue
+
+                files.append((relative_display, content, relative_actual))
+                logger.debug(
+                    f"Extracted file: display={relative_display}, "
+                    f"actual={relative_actual}"
+                )
 
             except Exception as e:
                 logger.error(f"Error reading file {file.name}: {e}")
