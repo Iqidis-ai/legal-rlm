@@ -1261,12 +1261,52 @@ class RLMEngine:
         3. Web search (Tavily - regulations/standards)
         4. Pinned DECISIVE documents OR small repo full content
         """
+        # CRITICAL: Block synthesis if no documents were read
+        # This prevents hallucinated responses from external search alone
+        small_repo_content = state.findings.get("small_repo_content")
+        if state.documents_read == 0 and not small_repo_content:
+            self._emit_step(
+                state,
+                StepType.ERROR,
+                "Cannot synthesize: 0 documents were successfully read. Check document paths and access.",
+            )
+            error_msg = (
+                "**Investigation Failed**\n\n"
+                "Unable to read any documents from the repository. This may indicate:\n"
+                "- Documents were not downloaded correctly\n"
+                "- File paths do not match between search index and storage\n"
+                "- Files were cleaned up before investigation completed\n\n"
+                f"Total read attempts that failed: multiple\n"
+                f"Query: {state.query}"
+            )
+            state.findings["final_output"] = error_msg
+            return
+
+        # Check if we aborted due to critical read failures
+        if state.findings.get("critical_read_failures"):
+            self._emit_step(
+                state,
+                StepType.ERROR,
+                "Synthesis blocked due to critical document access failures",
+            )
+            error_msg = (
+                "**Investigation Aborted**\n\n"
+                "Too many consecutive document read failures. The documents may be:\n"
+                "- Located at incorrect paths\n"
+                "- Already cleaned up from temporary storage\n"
+                "- Inaccessible due to permissions or S3 issues\n\n"
+                f"Documents successfully read before failure: {state.documents_read}\n"
+                f"Query: {state.query}"
+            )
+            state.findings["final_output"] = error_msg
+            return
+
         # Count sources for informative message
         facts = state.findings.get("accumulated_facts", [])
         case_law_count = len(self._external_research.get("case_law", []))
         web_count = len(self._external_research.get("web", []))
         pinned_count = len(state.findings.get("pinned_documents", []))
-        small_repo = bool(state.findings.get("small_repo_content"))
+        small_repo = bool(small_repo_content)
 
         source_parts = [f"{len(facts)} facts"]
         if case_law_count:
@@ -1286,7 +1326,7 @@ class RLMEngine:
         citations = state.get_citations_formatted()
 
         # SOURCE 4: Pinned content - either from small repo (all docs) or DECISIVE docs
-        small_repo_content = state.findings.get("small_repo_content")
+        # (small_repo_content already fetched above for the guard check)
         if small_repo_content:
             # Small repo mode - all content already loaded
             pinned_content = f"=== ALL REPOSITORY DOCUMENTS ===\n{small_repo_content}"
