@@ -164,7 +164,7 @@ Reply JSON only:
 # =============================================================================
 
 P_ASSESS_SMALL_REPO = """Query: {query}
-
+{cached_facts_section}
 === MATTER DOCUMENTS ===
 {content}
 
@@ -172,13 +172,17 @@ P_ASSESS_SMALL_REPO = """Query: {query}
 STRATEGIC ASSESSMENT
 ═══════════════════════════════════════════════════════════════════════════════
 
-You have the complete document set. Make two calls:
+You have the complete document set{cached_facts_note}. Make these calls:
 
-1. COMPLEXITY: Does this need sophisticated legal reasoning (multi-doc synthesis,
+1. CACHED FACTS CHECK: Can the cached facts (if any) already answer this query
+   WITHOUT needing to read the documents? Be strict - only say yes if the facts
+   directly and completely answer the query.
+
+2. COMPLEXITY: Does this need sophisticated legal reasoning (multi-doc synthesis,
    legal analysis, strategic thinking) or is it straightforward (fact lookup,
    single-doc answer, basic summary)?
 
-2. EXTERNAL RESEARCH: Does the QUERY itself ask for case law, precedents, or
+3. EXTERNAL RESEARCH: Does the QUERY itself ask for case law, precedents, or
    legal standards we'd need to look up?
 
    NOTE: Just because documents mention laws/jurisdictions doesn't mean we search.
@@ -186,6 +190,8 @@ You have the complete document set. Make two calls:
 
 === OUTPUT (JSON only) ===
 {{
+  "can_answer_from_facts": true | false,
+  "relevant_facts": ["list facts from cache that help answer this query"],
   "complexity": "simple" | "complex",
   "can_answer_from_docs": true | false,
   "reasoning": "Your strategic assessment",

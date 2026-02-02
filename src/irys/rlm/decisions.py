@@ -507,24 +507,43 @@ async def assess_small_repo(
     query: str,
     content: str,
     client: GeminiClient,
+    cached_facts: str = "",
 ) -> dict:
     """Unified assessment for small repositories.
 
     Determines:
-    1. Query complexity (simple vs complex) for synthesis tier selection
-    2. Whether external search is needed (with specific searches if so)
+    1. Whether cached facts can answer the query (skip doc reading)
+    2. Query complexity (simple vs complex) for synthesis tier selection
+    3. Whether external search is needed (with specific searches if so)
 
     Uses FLASH model for better judgment on external search decisions.
     The FLASH system prompt already includes guidance on being selective
     about external research.
+
+    Args:
+        query: The investigation query
+        content: Full document content (concatenated)
+        client: GeminiClient instance
+        cached_facts: Pre-formatted fact sheet from FactStore.format_for_llm()
     """
     start_time = time.time()
     content_preview = f"{len(content):,} chars"
-    logger.info(f"📊 assess_small_repo: evaluating query against {content_preview}")
+    facts_preview = f", {len(cached_facts):,} chars of cached facts" if cached_facts else ""
+    logger.info(f"📊 assess_small_repo: evaluating query against {content_preview}{facts_preview}")
+
+    # Build cached facts section for prompt
+    if cached_facts:
+        cached_facts_section = f"\n{cached_facts}\n"
+        cached_facts_note = " and cached facts from previous investigations"
+    else:
+        cached_facts_section = ""
+        cached_facts_note = ""
 
     prompt = prompts.P_ASSESS_SMALL_REPO.format(
         query=query,
         content=content,
+        cached_facts_section=cached_facts_section,
+        cached_facts_note=cached_facts_note,
     )
 
     _log_llm_call("assess_small_repo", ModelTier.FLASH, prompt, start_time)
@@ -545,15 +564,18 @@ async def assess_small_repo(
             result["web_searches"] = []
 
         complexity = result.get("complexity", "complex")
-        can_answer = result.get("can_answer_from_docs", True)
+        can_answer_docs = result.get("can_answer_from_docs", True)
+        can_answer_facts = result.get("can_answer_from_facts", False)
         searches = len(result.get("case_law_searches", [])) + len(result.get("web_searches", []))
-        logger.info(f"   Assessment: complexity={complexity}, can_answer_from_docs={can_answer}, searches={searches}")
+        logger.info(f"   Assessment: complexity={complexity}, can_answer_from_facts={can_answer_facts}, can_answer_from_docs={can_answer_docs}, searches={searches}")
         _log_llm_result("assess_small_repo", result, time.time() - start_time)
         return result
 
     # Fallback: assume complex, can answer from docs (conservative - no external search)
     logger.warning("   JSON parsing failed, using conservative fallback (no external search)")
     return {
+        "can_answer_from_facts": False,
+        "relevant_facts": [],
         "complexity": "complex",
         "can_answer_from_docs": True,
         "reasoning": "Fallback assessment",

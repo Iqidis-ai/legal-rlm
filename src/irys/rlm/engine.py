@@ -18,6 +18,7 @@ from ..core.models import GeminiClient, ModelTier
 from ..core.repository import MatterRepository
 from ..core.search import SearchResults
 from ..core.external_search import ExternalSearchManager
+from ..core.fact_store import FactStore
 from .state import InvestigationState, StepType, ThinkingStep, Citation, Lead, classify_query
 from . import decisions
 
@@ -163,6 +164,12 @@ class RLMEngine:
         self.repo = repo  # Store for methods that need repo access (e.g., _load_pinned_documents)
         self._external_research = {"case_law": [], "web": [], "analysis": {}}  # Reset with proper structure
         state = InvestigationState.create(query, str(repository_path))
+
+        # Load fact store for this repository
+        self.fact_store = FactStore(Path(repository_path))
+        facts_loaded = self.fact_store.load()
+        if facts_loaded > 0:
+            logger.info(f"📚 Loaded {facts_loaded} cached facts from previous investigations")
         cache = InvestigationCache()
 
         # Get repo info for informative step message
@@ -245,6 +252,7 @@ class RLMEngine:
         Direct answer mode for small repositories.
 
         Intelligent flow that only searches externally when genuinely needed:
+        0. Check cached facts - maybe we can answer without reading docs
         1. Load all documents (small enough to fit in context)
         2. Unified assessment (FLASH): complexity + external search decision
         3. If external search needed: execute specific searches
@@ -267,6 +275,18 @@ class RLMEngine:
             f"Loaded {state.documents_read} documents ({len(all_content):,} chars total)",
         )
 
+        # Step 1.5: Get cached facts for this query
+        cached_facts_str = ""
+        if self.fact_store and len(self.fact_store) > 0:
+            relevant_facts = self.fact_store.get_relevant(state.query)
+            if relevant_facts:
+                cached_facts_str = self.fact_store.format_for_llm(relevant_facts)
+                self._emit_step(
+                    state,
+                    StepType.THINKING,
+                    f"Found {len(relevant_facts)} potentially relevant cached facts",
+                )
+
         # Step 2: Unified assessment - determines complexity AND external search need
         self._emit_step(state, StepType.THINKING, "Assessing query against documents...")
 
@@ -274,6 +294,7 @@ class RLMEngine:
             query=state.query,
             content=all_content,
             client=self.client,
+            cached_facts=cached_facts_str,
         )
 
         # Store complexity for synthesis tier selection
@@ -284,6 +305,23 @@ class RLMEngine:
             "complexity": 2 if is_simple else 4,
             "llm_classified": True,
         }
+
+        # Check if we can answer directly from cached facts
+        can_answer_from_facts = assessment.get("can_answer_from_facts", False)
+        relevant_facts_used = assessment.get("relevant_facts", [])
+
+        if can_answer_from_facts and relevant_facts_used:
+            self._emit_step(
+                state,
+                StepType.FINDING,
+                f"Can answer from {len(relevant_facts_used)} cached facts - skipping document analysis",
+            )
+            # Store the relevant facts as evidence for synthesis
+            state.findings["accumulated_facts"] = relevant_facts_used
+            state.findings["answered_from_cache"] = True
+            # Proceed directly to synthesis
+            await self._synthesize(state, is_simple)
+            return
 
         can_answer_from_docs = assessment.get("can_answer_from_docs", True)
         gap = assessment.get("gap", "")
