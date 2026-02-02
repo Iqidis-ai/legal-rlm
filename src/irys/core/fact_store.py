@@ -211,9 +211,8 @@ class FactStore:
 
     def get_relevant(self, query: str, max_facts: int = 50) -> list[StoredFact]:
         """
-        Get facts relevant to a query using simple keyword matching.
-        Falls back to returning all facts if keyword matching returns nothing
-        (e.g., for generic queries like "summarize this").
+        Get all cached facts for context.
+        Always returns all facts - the LLM decides what's relevant.
         """
         if not self._loaded:
             self.load()
@@ -221,18 +220,13 @@ class FactStore:
         if not self._facts:
             return []
 
-        query_lower = query.lower()
-        relevant = [f for f in self._facts if f.matches_query(query_lower)]
-
-        # Fallback: if keyword matching returns nothing, return all facts
-        # This handles generic queries like "summarize" or "what's the main issue"
-        if not relevant:
-            relevant = self._facts.copy()
+        # Return all facts - they provide useful context regardless of query
+        facts = self._facts.copy()
 
         # Sort by source to group facts from same document
-        relevant.sort(key=lambda f: (f.source, f.page or 0))
+        facts.sort(key=lambda f: (f.source, f.page or 0))
 
-        return relevant[:max_facts]
+        return facts[:max_facts]
 
     def format_for_llm(
         self,
