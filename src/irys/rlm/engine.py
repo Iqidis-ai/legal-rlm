@@ -331,7 +331,7 @@ class RLMEngine:
                 f"Extracting facts from {len(repo.list_files())} documents for future reference...",
             )
             for doc in repo.list_files():
-                await self._read_document(state, doc, cache)
+                await self._read_document(state, repo, doc.path, cache)
 
         # Step 1.6: Get cached facts for this query
         cached_facts_str = ""
