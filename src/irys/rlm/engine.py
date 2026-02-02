@@ -169,8 +169,7 @@ class RLMEngine:
         # Load fact store for this repository
         self.fact_store = FactStore(Path(repository_path))
         facts_loaded = self.fact_store.load()
-        if facts_loaded > 0:
-            logger.info(f"📚 Loaded {facts_loaded} cached facts from previous investigations")
+        logger.info(f"📚 FactStore initialized at {self.fact_store.facts_file}, loaded {facts_loaded} facts")
         cache = InvestigationCache()
 
         # Get repo info for informative step message
@@ -255,10 +254,14 @@ class RLMEngine:
             raise
         finally:
             # Save fact store to persist extracted facts for future queries
-            if self.fact_store and len(self.fact_store) > 0:
-                saved = self.fact_store.save()
-                if saved > 0:
+            if self.fact_store:
+                fact_count = len(self.fact_store)
+                logger.info(f"📚 FactStore has {fact_count} facts to save")
+                if fact_count > 0:
+                    saved = self.fact_store.save()
                     logger.info(f"📚 Saved {saved} facts to {self.fact_store.facts_file}")
+                else:
+                    logger.info(f"📚 No facts to save (fact store empty)")
 
             # Clean up external search sessions
             if self.external_search:
@@ -1412,8 +1415,7 @@ class RLMEngine:
                     source_filename=doc.filename,
                     query_context=state.query,
                 )
-                if new_facts > 0:
-                    logger.debug(f"Saved {new_facts} new facts from {doc.filename} to fact store")
+                logger.info(f"📚 Added {new_facts} facts from {doc.filename} to fact store (total: {len(self.fact_store)})")
 
             # Accumulate external research triggers
             triggers = extraction.get("external_triggers", {})
