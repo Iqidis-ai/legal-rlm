@@ -1505,23 +1505,39 @@ class RLMEngine:
             return
 
         # Check if we aborted due to critical read failures
+        # BUT still proceed with synthesis if we have facts
         if state.findings.get("critical_read_failures"):
-            self._emit_step(
-                state,
-                StepType.ERROR,
-                "Synthesis blocked due to critical document access failures",
-            )
-            error_msg = (
-                "**Investigation Aborted**\n\n"
-                "Too many consecutive document read failures. The documents may be:\n"
-                "- Located at incorrect paths\n"
-                "- Already cleaned up from temporary storage\n"
-                "- Inaccessible due to permissions or S3 issues\n\n"
-                f"Documents successfully read before failure: {state.documents_read}\n"
-                f"Query: {state.query}"
-            )
-            state.findings["final_output"] = error_msg
-            return
+            facts_count = len(state.findings.get("accumulated_facts", []))
+            if facts_count > 0:
+                # We have facts despite failures - proceed with warning
+                self._emit_step(
+                    state,
+                    StepType.THINKING,
+                    f"Some documents inaccessible, but proceeding with {facts_count} facts from {state.documents_read} docs",
+                )
+                # Add caveat to findings for synthesis to include
+                state.findings["read_failure_caveat"] = (
+                    f"Note: Some documents were inaccessible during investigation. "
+                    f"Analysis is based on {state.documents_read} successfully read documents."
+                )
+            else:
+                # No facts at all - cannot synthesize
+                self._emit_step(
+                    state,
+                    StepType.ERROR,
+                    "Synthesis blocked - no documents could be read",
+                )
+                error_msg = (
+                    "**Investigation Aborted**\n\n"
+                    "Too many consecutive document read failures and no facts were extracted. "
+                    "The documents may be:\n"
+                    "- Located at incorrect paths\n"
+                    "- Already cleaned up from temporary storage\n"
+                    "- Inaccessible due to permissions or S3 issues\n\n"
+                    f"Query: {state.query}"
+                )
+                state.findings["final_output"] = error_msg
+                return
 
         # Count sources for informative message
         facts = state.findings.get("accumulated_facts", [])
