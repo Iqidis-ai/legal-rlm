@@ -153,6 +153,7 @@ class RLMEngine:
         self.external_search = ExternalSearchManager() if self.config.enable_external_search else None
         self._external_research: dict = {}  # Store external research results
         self.repo: Optional[MatterRepository] = None  # Set during investigate()
+        self.fact_store: Optional[FactStore] = None  # Set during investigate()
 
     async def investigate(
         self,
@@ -238,6 +239,12 @@ class RLMEngine:
             state.fail(str(e))
             raise
         finally:
+            # Save fact store to persist extracted facts for future queries
+            if self.fact_store and len(self.fact_store) > 0:
+                saved = self.fact_store.save()
+                if saved > 0:
+                    logger.info(f"📚 Saved {saved} facts to {self.fact_store.facts_file}")
+
             # Clean up external search sessions
             if self.external_search:
                 try:
@@ -1273,6 +1280,16 @@ class RLMEngine:
             if self.on_fact:
                 for fact in facts:
                     self.on_fact(fact)
+
+            # Save facts to persistent store for future queries
+            if self.fact_store:
+                new_facts = self.fact_store.add_facts_from_extraction(
+                    extraction=extraction,
+                    source_filename=doc.filename,
+                    query_context=state.query,
+                )
+                if new_facts > 0:
+                    logger.debug(f"Saved {new_facts} new facts from {doc.filename} to fact store")
 
             # Accumulate external research triggers
             triggers = extraction.get("external_triggers", {})
