@@ -169,7 +169,21 @@ class RLMEngine:
         # Load fact store for this repository
         self.fact_store = FactStore(Path(repository_path))
         facts_loaded = self.fact_store.load()
-        logger.info(f"📚 FactStore initialized at {self.fact_store.facts_file}, loaded {facts_loaded} facts")
+
+        # Emit fact store status to UI trace
+        if facts_loaded > 0:
+            self._emit_step(
+                state,
+                StepType.FINDING,
+                f"📚 Loaded {facts_loaded} cached facts from previous investigations",
+            )
+        else:
+            self._emit_step(
+                state,
+                StepType.THINKING,
+                f"📚 No cached facts found - starting fresh (will save at {self.fact_store.facts_file})",
+            )
+
         cache = InvestigationCache()
 
         # Get repo info for informative step message
@@ -256,12 +270,19 @@ class RLMEngine:
             # Save fact store to persist extracted facts for future queries
             if self.fact_store:
                 fact_count = len(self.fact_store)
-                logger.info(f"📚 FactStore has {fact_count} facts to save")
                 if fact_count > 0:
                     saved = self.fact_store.save()
-                    logger.info(f"📚 Saved {saved} facts to {self.fact_store.facts_file}")
+                    self._emit_step(
+                        state,
+                        StepType.FINDING,
+                        f"📚 Saved {saved} facts to cache for future queries",
+                    )
                 else:
-                    logger.info(f"📚 No facts to save (fact store empty)")
+                    self._emit_step(
+                        state,
+                        StepType.THINKING,
+                        f"📚 No new facts extracted this session",
+                    )
 
             # Clean up external search sessions
             if self.external_search:
