@@ -212,8 +212,8 @@ class FactStore:
     def get_relevant(self, query: str, max_facts: int = 50) -> list[StoredFact]:
         """
         Get facts relevant to a query using simple keyword matching.
-
-        For more sophisticated relevance, use get_relevant_with_llm().
+        Falls back to returning all facts if keyword matching returns nothing
+        (e.g., for generic queries like "summarize this").
         """
         if not self._loaded:
             self.load()
@@ -223,6 +223,11 @@ class FactStore:
 
         query_lower = query.lower()
         relevant = [f for f in self._facts if f.matches_query(query_lower)]
+
+        # Fallback: if keyword matching returns nothing, return all facts
+        # This handles generic queries like "summarize" or "what's the main issue"
+        if not relevant:
+            relevant = self._facts.copy()
 
         # Sort by source to group facts from same document
         relevant.sort(key=lambda f: (f.source, f.page or 0))
