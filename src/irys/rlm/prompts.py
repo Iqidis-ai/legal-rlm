@@ -261,6 +261,47 @@ Design your approach:
 }}"""
 
 
+P_ASSESS_AND_PLAN = """Query: {query}
+{cached_facts_section}
+=== REPOSITORY ({total_files} files) ===
+{file_list}
+
+═══════════════════════════════════════════════════════════════════════════════
+UNIFIED ASSESSMENT & PLANNING
+═══════════════════════════════════════════════════════════════════════════════
+
+Make these assessments:
+
+1. CACHED FACTS CHECK: Can the cached facts (if any) already answer this query
+   WITHOUT reading documents? Be strict - only say yes if facts directly and
+   completely answer the query.
+
+2. COMPLEXITY: Does this need sophisticated legal reasoning or is it straightforward?
+   - SIMPLE: Direct fact lookups, single-doc answers, basic summaries
+   - COMPLEX: Multi-doc synthesis, legal analysis, timeline construction, contradictions
+
+3. INVESTIGATION PLAN (if facts don't answer):
+   - Scan filenames: identify case-specific docs vs generic references
+   - Which 2-3 files to read first? (Pick case-specific, not generic acts)
+   - What search terms will find relevant passages?
+   - Does the query require external authority (case law, regulations)?
+
+=== OUTPUT (JSON only) ===
+{{
+    "can_answer_from_facts": true | false,
+    "relevant_facts": ["list facts from cache that help answer this query"],
+    "complexity": "simple" | "complex",
+    "reasoning": "Strategy and assessment",
+    "key_issues": ["legal issue 1", "legal issue 2"],
+    "priority_files": ["exact_filename.pdf"],
+    "skip_files": ["generic_reference.pdf"],
+    "search_terms": ["term1", "term2"],
+    "case_law_searches": [],
+    "web_searches": [],
+    "success_criteria": "What finding would answer this query"
+}}"""
+
+
 P_ANALYZE_RESULTS = """Query: {query}
 
 === SEARCH RESULTS ===

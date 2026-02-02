@@ -196,14 +196,33 @@ class RLMEngine:
                 await self._direct_answer(state, repo)
             else:
                 # Full RLM investigation for large repositories
-                # First, classify query complexity (for large repos only - small repos do it in assess_small_repo)
-                is_complex = await decisions.classify_query_complexity(query, self.client)
-                is_simple = not is_complex
+                # Phase 1: Unified assessment and planning (includes complexity + fact sheet check)
+                assessment = await self._assess_and_create_plan(state, repo)
+
+                # Check if we can answer directly from cached facts
+                if assessment.get("can_answer_from_facts", False):
+                    relevant_facts = assessment.get("relevant_facts", [])
+                    if relevant_facts:
+                        self._emit_step(
+                            state,
+                            StepType.FINDING,
+                            f"Can answer from {len(relevant_facts)} cached facts - skipping document investigation",
+                        )
+                        state.findings["accumulated_facts"] = relevant_facts
+                        state.findings["answered_from_cache"] = True
+                        is_simple = assessment.get("complexity") == "simple"
+                        await self._synthesize(state, is_simple)
+                        # Skip the rest - we're done
+                        state.complete()
+                        return state
+
+                # Extract complexity for synthesis tier selection
+                is_simple = assessment.get("complexity") == "simple"
                 self._is_simple_query = is_simple
 
                 state.query_classification = {
-                    "type": "complex" if is_complex else "simple",
-                    "complexity": 4 if is_complex else 2,
+                    "type": "simple" if is_simple else "complex",
+                    "complexity": 2 if is_simple else 4,
                     "llm_classified": True,
                 }
 
@@ -212,10 +231,6 @@ class RLMEngine:
                     StepType.THINKING,
                     f"Starting: \"{query[:60]}{'...' if len(query) > 60 else ''}\" on {repo_name} ({file_count} files, {total_chars:,} chars) → {'FLASH' if is_simple else 'PRO'} synthesis",
                 )
-
-                # Mimics how a lawyer works:
-                # Phase 1: Create investigation plan based on the query and repo structure
-                await self._create_plan(state, repo)
 
                 # Phase 2: Investigation loop with continuous recalibration
                 # - Reads documents, extracts facts, accumulates research triggers
@@ -601,6 +616,108 @@ class RLMEngine:
             f"Plan: {_fmt_list(lead_descriptions, 3, 45)}",
             details=plan,
         )
+
+    async def _assess_and_create_plan(
+        self,
+        state: InvestigationState,
+        repo: MatterRepository,
+    ) -> dict:
+        """Unified assessment and planning for large repositories.
+
+        Combines complexity classification and planning into one LLM call.
+        Also checks if cached facts can answer the query.
+
+        Returns:
+            Assessment dict with can_answer_from_facts, complexity, plan details
+        """
+        stats = repo.get_stats()
+
+        self._emit_step(state, StepType.THINKING, f"Analyzing {stats.total_files} files...")
+        file_list = repo.get_file_list()
+
+        # Format file list for LLM - show filenames so it can prioritize
+        file_list_str = "\n".join(
+            f"  - {f['filename']} ({f['size_kb']}KB, {f['type']})"
+            for f in file_list[:50]  # Limit to 50 files for context
+        )
+        if len(file_list) > 50:
+            file_list_str += f"\n  ... and {len(file_list) - 50} more files"
+
+        # Get cached facts for this query
+        cached_facts_str = ""
+        if self.fact_store and len(self.fact_store) > 0:
+            relevant_facts = self.fact_store.get_relevant(state.query)
+            if relevant_facts:
+                cached_facts_str = self.fact_store.format_for_llm(relevant_facts)
+                self._emit_step(
+                    state,
+                    StepType.THINKING,
+                    f"Found {len(relevant_facts)} potentially relevant cached facts",
+                )
+
+        # Use unified assess_and_plan
+        assessment = await decisions.assess_and_plan(
+            query=state.query,
+            file_list=file_list_str,
+            total_files=stats.total_files,
+            client=self.client,
+            cached_facts=cached_facts_str,
+        )
+
+        # If can answer from facts, return early (caller handles synthesis)
+        if assessment.get("can_answer_from_facts", False):
+            return assessment
+
+        # Store plan info in state (same as _create_plan)
+        state.hypothesis = assessment.get("success_criteria", "Investigating query")
+        state.findings["issues"] = assessment.get("key_issues", [])
+        state.findings["initial_plan"] = assessment
+
+        # Emit the reasoning (show LLM's thinking process)
+        reasoning = assessment.get("reasoning", "")
+        key_issues = assessment.get("key_issues", [])
+
+        if reasoning:
+            self._emit_step(
+                state,
+                StepType.THINKING,
+                f"STRATEGY: {reasoning}",
+            )
+        if key_issues:
+            issues_str = ", ".join(key_issues[:3])
+            self._emit_step(
+                state,
+                StepType.THINKING,
+                f"KEY ISSUES: {issues_str}",
+            )
+
+        # PRIORITY: Create leads for priority files FIRST (read before searching)
+        priority_files = assessment.get("priority_files", [])
+        for filepath in priority_files[:3]:  # Limit to top 3 priority files
+            if isinstance(filepath, str):
+                state.add_lead(f"Read document: {filepath}", source="initial_plan")
+
+        # Then create leads from search terms
+        for term in assessment.get("search_terms", [])[:3]:
+            if isinstance(term, str):
+                state.add_lead(f"Search for: {term}", source="initial_plan")
+
+        # Fallback if no leads
+        if not state.leads:
+            terms = await decisions.extract_search_terms(state.query, self.client)
+            for term in terms[:2]:
+                state.add_lead(f"Search for: {term}", source="fallback")
+
+        # Show actual lead descriptions in step message
+        lead_descriptions = [l.description for l in state.leads]
+        self._emit_step(
+            state,
+            StepType.THINKING,
+            f"Plan: {_fmt_list(lead_descriptions, 3, 45)}",
+            details=assessment,
+        )
+
+        return assessment
 
     async def _execute_external_searches(
         self,

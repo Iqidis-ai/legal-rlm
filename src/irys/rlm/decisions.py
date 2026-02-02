@@ -674,6 +674,90 @@ async def create_plan(
     }
 
 
+async def assess_and_plan(
+    query: str,
+    file_list: str,
+    total_files: int,
+    client: GeminiClient,
+    cached_facts: str = "",
+) -> dict:
+    """Unified assessment and planning for large repositories.
+
+    Combines query complexity classification and investigation planning into
+    a single LLM call. Also checks if cached facts can answer the query.
+
+    Args:
+        query: The investigation query
+        file_list: Formatted list of files in the repository
+        total_files: Total number of files
+        client: GeminiClient instance
+        cached_facts: Pre-formatted fact sheet from FactStore.format_for_llm()
+
+    Returns:
+        dict with: can_answer_from_facts, relevant_facts, complexity,
+                   key_issues, priority_files, search_terms, etc.
+    """
+    start_time = time.time()
+    facts_info = f" with {len(cached_facts):,} chars of cached facts" if cached_facts else ""
+    logger.info(f"📋 assess_and_plan: unified assessment for {total_files} files{facts_info}")
+
+    # Build cached facts section for prompt
+    if cached_facts:
+        cached_facts_section = f"\n{cached_facts}\n"
+    else:
+        cached_facts_section = ""
+
+    prompt = prompts.P_ASSESS_AND_PLAN.format(
+        query=query,
+        file_list=file_list,
+        total_files=total_files,
+        cached_facts_section=cached_facts_section,
+    )
+
+    _log_llm_call("assess_and_plan", ModelTier.FLASH, prompt, start_time)
+    response = await client.complete(prompt, tier=ModelTier.FLASH)
+    result = parse_json_safe(response)
+
+    if result:
+        # Filter out useless search terms
+        if "search_terms" in result:
+            result["search_terms"] = filter_search_terms(result["search_terms"])
+        # Filter out template-style external queries
+        if "case_law_searches" in result:
+            result["case_law_searches"] = filter_external_queries(result["case_law_searches"])
+        if "web_searches" in result:
+            result["web_searches"] = filter_external_queries(result["web_searches"])
+
+        complexity = result.get("complexity", "complex")
+        can_answer_facts = result.get("can_answer_from_facts", False)
+        priority_files = len(result.get("priority_files", []))
+        search_terms = len(result.get("search_terms", []))
+
+        logger.info(
+            f"   Assessment: complexity={complexity}, can_answer_from_facts={can_answer_facts}, "
+            f"{priority_files} priority files, {search_terms} search terms"
+        )
+        _log_llm_result("assess_and_plan", result, time.time() - start_time)
+        return result
+
+    # Fallback
+    logger.warning("   JSON parsing failed, using fallback")
+    fallback_terms = filter_search_terms(query.split()[:5])
+    return {
+        "can_answer_from_facts": False,
+        "relevant_facts": [],
+        "complexity": "complex",
+        "reasoning": "Fallback assessment",
+        "key_issues": [query],
+        "priority_files": [],
+        "skip_files": [],
+        "search_terms": fallback_terms if fallback_terms else ["document"],
+        "case_law_searches": [],
+        "web_searches": [],
+        "success_criteria": "Find information relevant to the query",
+    }
+
+
 async def analyze_results(
     query: str,
     results: SearchResults,
