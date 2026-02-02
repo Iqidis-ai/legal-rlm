@@ -321,7 +321,54 @@ class RLMEngine:
             f"Loaded {state.documents_read} documents ({len(all_content):,} chars total)",
         )
 
-        # Step 1.5: Get cached facts for this query
+        # Step 1.5: Extract facts from each document if fact store is empty
+        # (Only on first run - subsequent runs will use cached facts)
+        if self.fact_store and len(self.fact_store) == 0:
+            self._emit_step(
+                state,
+                StepType.THINKING,
+                f"Extracting facts from {len(repo.list_files())} documents for future reference...",
+            )
+            # Extract facts from each file in parallel
+            file_list = repo.list_files()
+            extraction_tasks = []
+            for doc in file_list:
+                content = repo.read_file(doc.path)
+                if content:
+                    task = decisions.extract_facts(
+                        query=state.query,
+                        filename=doc.filename,
+                        content=content,
+                        client=self.client,
+                    )
+                    extraction_tasks.append((doc.filename, task))
+
+            # Execute extractions in parallel
+            if extraction_tasks:
+                results = await asyncio.gather(*[t for _, t in extraction_tasks], return_exceptions=True)
+                total_facts = 0
+                for (filename, _), result in zip(extraction_tasks, results):
+                    if isinstance(result, Exception):
+                        continue
+                    if result:
+                        new_facts = self.fact_store.add_facts_from_extraction(
+                            extraction=result,
+                            source_filename=filename,
+                            query_context=state.query,
+                        )
+                        total_facts += new_facts
+                        # Also add to state
+                        facts = result.get("facts", [])
+                        state.add_facts(facts)
+
+                if total_facts > 0:
+                    self._emit_step(
+                        state,
+                        StepType.FINDING,
+                        f"📚 Extracted {total_facts} facts from documents",
+                    )
+
+        # Step 1.6: Get cached facts for this query
         cached_facts_str = ""
         if self.fact_store and len(self.fact_store) > 0:
             relevant_facts = self.fact_store.get_relevant(state.query)
