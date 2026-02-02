@@ -1529,9 +1529,10 @@ class RLMEngine:
         4. Pinned DECISIVE documents OR small repo full content
         """
         # CRITICAL: Block synthesis if no documents were read
-        # This prevents hallucinated responses from external search alone
+        # Exception: Allow if answering from cached facts (we intentionally skipped reading)
         small_repo_content = state.findings.get("small_repo_content")
-        if state.documents_read == 0 and not small_repo_content:
+        answered_from_cache = state.findings.get("answered_from_cache", False)
+        if state.documents_read == 0 and not small_repo_content and not answered_from_cache:
             self._emit_step(
                 state,
                 StepType.ERROR,
