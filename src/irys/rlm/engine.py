@@ -980,17 +980,16 @@ class RLMEngine:
             tasks = [self._investigate_lead(state, repo, lead, cache) for lead in leads_to_process]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Check for critical read failure state
+            # Log read failures but DON'T abort - keep trying other documents
             if cache.consecutive_read_failures >= cache.MAX_CONSECUTIVE_FAILURES:
                 self._emit_step(
                     state,
-                    StepType.ERROR,
-                    f"Aborting: {cache.consecutive_read_failures} consecutive document read failures. "
-                    f"Total failures: {cache.total_read_failures}. Documents may be inaccessible.",
+                    StepType.THINKING,
+                    f"Note: {cache.consecutive_read_failures} consecutive read failures (some files may be in subdirectories). Continuing with other documents...",
                 )
-                # Set a failure flag so synthesis can check
-                state.findings["critical_read_failures"] = True
-                break
+                # Reset counter to allow more attempts - don't abort investigation
+                cache.consecutive_read_failures = 0
+                state.findings["had_read_failures"] = True
 
             iteration += 1
             facts_count = len(state.findings.get("accumulated_facts", []))
@@ -1465,13 +1464,8 @@ class RLMEngine:
 
         except Exception as e:
             self._emit_step(state, StepType.ERROR, f"Failed to read {file_path}: {e}")
-            should_abort = cache.record_read_failure()
-            if should_abort:
-                self._emit_step(
-                    state,
-                    StepType.ERROR,
-                    f"CRITICAL: {cache.consecutive_read_failures} consecutive read failures - document access broken",
-                )
+            cache.record_read_failure()
+            # Don't emit error here - the loop will handle it and continue
             return False  # Failure
 
     async def _synthesize(self, state: InvestigationState, is_simple: bool = False):
@@ -1504,40 +1498,12 @@ class RLMEngine:
             state.findings["final_output"] = error_msg
             return
 
-        # Check if we aborted due to critical read failures
-        # BUT still proceed with synthesis if we have facts
-        if state.findings.get("critical_read_failures"):
-            facts_count = len(state.findings.get("accumulated_facts", []))
-            if facts_count > 0:
-                # We have facts despite failures - proceed with warning
-                self._emit_step(
-                    state,
-                    StepType.THINKING,
-                    f"Some documents inaccessible, but proceeding with {facts_count} facts from {state.documents_read} docs",
-                )
-                # Add caveat to findings for synthesis to include
-                state.findings["read_failure_caveat"] = (
-                    f"Note: Some documents were inaccessible during investigation. "
-                    f"Analysis is based on {state.documents_read} successfully read documents."
-                )
-            else:
-                # No facts at all - cannot synthesize
-                self._emit_step(
-                    state,
-                    StepType.ERROR,
-                    "Synthesis blocked - no documents could be read",
-                )
-                error_msg = (
-                    "**Investigation Aborted**\n\n"
-                    "Too many consecutive document read failures and no facts were extracted. "
-                    "The documents may be:\n"
-                    "- Located at incorrect paths\n"
-                    "- Already cleaned up from temporary storage\n"
-                    "- Inaccessible due to permissions or S3 issues\n\n"
-                    f"Query: {state.query}"
-                )
-                state.findings["final_output"] = error_msg
-                return
+        # Note if there were read failures (for caveat in output)
+        if state.findings.get("had_read_failures"):
+            state.findings["read_failure_caveat"] = (
+                f"Note: Some documents were inaccessible during investigation. "
+                f"Analysis is based on {state.documents_read} successfully read documents."
+            )
 
         # Count sources for informative message
         facts = state.findings.get("accumulated_facts", [])
