@@ -347,10 +347,17 @@ class RLMEngine:
             if extraction_tasks:
                 results = await asyncio.gather(*[t for _, t in extraction_tasks], return_exceptions=True)
                 total_facts = 0
+                failed_extractions = 0
                 for (filename, _), result in zip(extraction_tasks, results):
                     if isinstance(result, Exception):
+                        failed_extractions += 1
+                        self._emit_step(
+                            state,
+                            StepType.THINKING,
+                            f"Extraction error for {filename}: {str(result)[:50]}",
+                        )
                         continue
-                    if result:
+                    if result and result.get("facts"):
                         new_facts = self.fact_store.add_facts_from_extraction(
                             extraction=result,
                             source_filename=filename,
@@ -360,12 +367,21 @@ class RLMEngine:
                         # Also add to state
                         facts = result.get("facts", [])
                         state.add_facts(facts)
+                    else:
+                        # Extraction returned but no facts
+                        failed_extractions += 1
 
                 if total_facts > 0:
                     self._emit_step(
                         state,
                         StepType.FINDING,
                         f"📚 Extracted {total_facts} facts from documents",
+                    )
+                elif failed_extractions > 0:
+                    self._emit_step(
+                        state,
+                        StepType.THINKING,
+                        f"⚠️ Extraction yielded no facts ({failed_extractions} documents had parsing issues)",
                     )
 
         # Step 1.6: Get cached facts for this query
