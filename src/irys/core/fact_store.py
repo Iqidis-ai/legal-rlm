@@ -302,4 +302,5 @@ class FactStore:
         return len(self._facts)
 
     def __bool__(self) -> bool:
-        return len(self) > 0
+        # Always return True so `if fact_store:` checks existence, not emptiness
+        return True

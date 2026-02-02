@@ -270,13 +270,25 @@ class RLMEngine:
             # Save fact store to persist extracted facts for future queries
             if self.fact_store:
                 fact_count = len(self.fact_store)
+                self._emit_step(
+                    state,
+                    StepType.THINKING,
+                    f"📚 DEBUG: fact_store has {fact_count} facts, _facts list: {len(self.fact_store._facts)}",
+                )
                 if fact_count > 0:
-                    saved = self.fact_store.save()
-                    self._emit_step(
-                        state,
-                        StepType.FINDING,
-                        f"📚 Saved {saved} facts to cache for future queries",
-                    )
+                    try:
+                        saved = self.fact_store.save()
+                        self._emit_step(
+                            state,
+                            StepType.FINDING,
+                            f"📚 Saved {saved} facts to {self.fact_store.facts_file}",
+                        )
+                    except Exception as e:
+                        self._emit_step(
+                            state,
+                            StepType.THINKING,
+                            f"📚 ERROR saving facts: {e}",
+                        )
                 else:
                     self._emit_step(
                         state,
@@ -1448,7 +1460,11 @@ class RLMEngine:
                     source_filename=doc.filename,
                     query_context=state.query,
                 )
-                logger.info(f"📚 Added {new_facts} facts from {doc.filename} to fact store (total: {len(self.fact_store)})")
+                self._emit_step(
+                    state,
+                    StepType.THINKING,
+                    f"📚 Added {new_facts} facts from {doc.filename} (store total: {len(self.fact_store)})",
+                )
 
             # Accumulate external research triggers
             triggers = extraction.get("external_triggers", {})
