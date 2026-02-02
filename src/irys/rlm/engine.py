@@ -322,67 +322,16 @@ class RLMEngine:
         )
 
         # Step 1.5: Extract facts from each document if fact store is empty
-        # (Only on first run - subsequent runs will use cached facts)
+        # Reuse _read_document which already handles extraction and fact storage
+        cache = InvestigationCache()
         if self.fact_store and len(self.fact_store) == 0:
             self._emit_step(
                 state,
                 StepType.THINKING,
                 f"Extracting facts from {len(repo.list_files())} documents for future reference...",
             )
-            # Extract facts from each file in parallel
-            file_list = repo.list_files()
-            extraction_tasks = []
-            for doc in file_list:
-                content = repo.read_file(doc.path)
-                if content:
-                    task = decisions.extract_facts(
-                        query=state.query,
-                        filename=doc.filename,
-                        content=content,
-                        client=self.client,
-                    )
-                    extraction_tasks.append((doc.filename, task))
-
-            # Execute extractions in parallel
-            if extraction_tasks:
-                results = await asyncio.gather(*[t for _, t in extraction_tasks], return_exceptions=True)
-                total_facts = 0
-                failed_extractions = 0
-                for (filename, _), result in zip(extraction_tasks, results):
-                    if isinstance(result, Exception):
-                        failed_extractions += 1
-                        self._emit_step(
-                            state,
-                            StepType.THINKING,
-                            f"Extraction error for {filename}: {str(result)[:50]}",
-                        )
-                        continue
-                    if result and result.get("facts"):
-                        new_facts = self.fact_store.add_facts_from_extraction(
-                            extraction=result,
-                            source_filename=filename,
-                            query_context=state.query,
-                        )
-                        total_facts += new_facts
-                        # Also add to state
-                        facts = result.get("facts", [])
-                        state.add_facts(facts)
-                    else:
-                        # Extraction returned but no facts
-                        failed_extractions += 1
-
-                if total_facts > 0:
-                    self._emit_step(
-                        state,
-                        StepType.FINDING,
-                        f"📚 Extracted {total_facts} facts from documents",
-                    )
-                elif failed_extractions > 0:
-                    self._emit_step(
-                        state,
-                        StepType.THINKING,
-                        f"⚠️ Extraction yielded no facts ({failed_extractions} documents had parsing issues)",
-                    )
+            for doc in repo.list_files():
+                await self._read_document(state, doc, cache)
 
         # Step 1.6: Get cached facts for this query
         cached_facts_str = ""
