@@ -1000,11 +1000,19 @@ class RLMEngine:
             # === CONSOLIDATED CHECKPOINT ===
             # Single LLM call replaces is_sufficient + should_replan
             if facts_count >= self.config.early_exit_facts or iteration > 1:
+                # Get cached facts for checkpoint evaluation
+                cached_facts_str = ""
+                if self.fact_store and len(self.fact_store) > 0:
+                    relevant_facts = self.fact_store.get_relevant(state.query)
+                    if relevant_facts:
+                        cached_facts_str = self.fact_store.format_for_llm(relevant_facts)
+
                 checkpoint_result = await decisions.checkpoint(
                     query=state.query,
                     findings=findings_summary,
                     plan=plan_summary,
                     client=self.client,
+                    cached_facts=cached_facts_str,
                 )
 
                 # Check sufficiency - MUST have read at least 1 document

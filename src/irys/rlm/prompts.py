@@ -641,7 +641,7 @@ Reply in JSON only:
 # =============================================================================
 
 P_CHECKPOINT = """Query: {query}
-
+{cached_facts_section}
 === EVIDENCE GATHERED ===
 {findings}
 
@@ -654,6 +654,7 @@ CHECKPOINT
 
 Quick assessment:
 1. SUFFICIENT? Do we have enough to answer the query with citations?
+   Consider BOTH current findings AND cached facts from previous investigations.
 2. PROGRESS? Is current approach finding relevant info or stalled?
 3. NEXT? If not sufficient, what specific actions?
 

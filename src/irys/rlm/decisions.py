@@ -1140,19 +1140,37 @@ async def checkpoint(
     findings: str,
     plan: str,
     client: GeminiClient,
+    cached_facts: str = "",
 ) -> dict:
     """Combined sufficiency + replan check. Uses LITE model.
 
     Consolidates is_sufficient + should_replan into one call.
+    Now also considers cached facts from previous investigations.
+
+    Args:
+        query: The investigation query
+        findings: Current findings summary
+        plan: Current investigation plan
+        client: GeminiClient instance
+        cached_facts: Pre-formatted fact sheet from FactStore.format_for_llm()
+
     Returns: {sufficient, should_replan, progress_assessment, next_steps, new_search_terms, files_to_check}
     """
     start_time = time.time()
-    logger.info(f"🔍 checkpoint: evaluating investigation status")
+    facts_info = f" (with {len(cached_facts):,} chars of cached facts)" if cached_facts else ""
+    logger.info(f"🔍 checkpoint: evaluating investigation status{facts_info}")
+
+    # Build cached facts section for prompt
+    if cached_facts:
+        cached_facts_section = f"\n{cached_facts}\n"
+    else:
+        cached_facts_section = ""
 
     prompt = prompts.P_CHECKPOINT.format(
         query=query,
         findings=findings,
         plan=plan,
+        cached_facts_section=cached_facts_section,
     )
 
     _log_llm_call("checkpoint", ModelTier.LITE, prompt, start_time)
