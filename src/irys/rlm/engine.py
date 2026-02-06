@@ -532,10 +532,23 @@ class RLMEngine:
             )
 
         # PRIORITY: Create leads for priority files FIRST (read before searching)
+        # Resolve display names to actual on-disk paths (LLM sees display names
+        # but files may be hash-named on disk)
+        name_to_path = {f["filename"]: f["path"] for f in file_list}
         priority_files = plan.get("priority_files", [])
         for filepath in priority_files[:3]:  # Limit to top 3 priority files
             if isinstance(filepath, str):
-                state.add_lead(f"Read document: {filepath}", source="initial_plan")
+                resolved = name_to_path.get(filepath)
+                if not resolved:
+                    # Partial match: LLM may truncate or approximate filenames
+                    for display_name, path in name_to_path.items():
+                        if display_name.startswith(filepath.split("...")[0].rstrip(". ")):
+                            resolved = path
+                            break
+                state.add_lead(
+                    f"Read document: {resolved or filepath}",
+                    source="initial_plan",
+                )
 
         # Then create leads from search terms
         for term in plan.get("search_terms", [])[:3]:
