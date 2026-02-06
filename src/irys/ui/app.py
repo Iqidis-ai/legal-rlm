@@ -292,9 +292,12 @@ class RLMApp:
             # Method 1: Try orig_name (Gradio 4.x+)
             if hasattr(file_obj, 'orig_name') and file_obj.orig_name:
                 orig = file_obj.orig_name
-                if os.path.sep in str(orig) or '/' in str(orig):
-                    return Path(orig).name, actual_name
-                return str(orig), actual_name
+                orig_str = Path(orig).name if (os.path.sep in str(orig) or '/' in str(orig)) else str(orig)
+                # Validate it's not a hash name (Gradio may return hash as orig_name at scale)
+                if not _is_hash_filename(orig_str):
+                    return orig_str, actual_name
+                # Fall through to other methods if orig_name is a hash
+                logger.debug(f"orig_name '{orig_str}' looks like a hash, trying other methods")
 
             # Method 2: Try path attribute (some Gradio versions)
             if hasattr(file_obj, 'path') and file_obj.path:
