@@ -90,6 +90,7 @@ class MatterRepository:
         self.search_engine._doc_cache = self._doc_cache  # Share cache
         self._file_cache: Optional[list[FileInfo]] = None
         self._metadata: Optional["RepositoryMetadata"] = None
+        self._display_path_map: Optional[dict[str, Path]] = None  # display_name -> actual Path
 
         # Load filename mapping if it exists (for S3/upload mode)
         self._filename_mapping = self._load_filename_mapping()
@@ -218,6 +219,20 @@ class MatterRepository:
         return self._filename_mapping["display_to_actual"].get(
             display_name, display_name
         )
+
+    def _get_display_path_map(self) -> dict[str, Path]:
+        """Lazily build mapping from display filenames to actual file Paths.
+
+        This provides a robust fallback for _resolve_path when the
+        _filename_mapping.json lookup fails (e.g., incomplete mapping,
+        S3 download with hash filenames).
+        """
+        if self._display_path_map is None:
+            self._display_path_map = {}
+            for file_info in self.list_files():
+                self._display_path_map[file_info.filename] = file_info.path
+            logger.debug(f"Built display_path_map with {len(self._display_path_map)} entries")
+        return self._display_path_map
 
     @property
     def is_small_repo(self) -> bool:
@@ -667,6 +682,21 @@ class MatterRepository:
                 if resolved.exists():
                     logger.debug(f"Resolved display name '{filename_only}' to actual '{actual_name}'")
                     return resolved
+
+        # Fallback: use display_path_map built from list_files()
+        # This handles cases where _filename_mapping.json is missing/incomplete
+        display_map = self._get_display_path_map()
+
+        # Try exact display name match
+        if path_str in display_map:
+            logger.debug(f"Resolved via display_path_map: '{path_str}'")
+            return display_map[path_str]
+
+        # Try just the filename portion
+        filename_only = Path(path_str).name
+        if filename_only in display_map and filename_only != path_str:
+            logger.debug(f"Resolved via display_path_map (filename only): '{filename_only}'")
+            return display_map[filename_only]
 
         # Fall back to original path (may not exist - let caller handle error)
         return self.base_path / path
