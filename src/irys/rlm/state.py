@@ -571,6 +571,17 @@ class InvestigationState:
             "pending": pending,
         }
 
+    def get_confidence_score(self) -> dict[str, Any]:
+        """Compute confidence score based on evidence gathered."""
+        citations = len(self.citations)
+        facts = len(self.findings.get("accumulated_facts", []))
+        docs = self.documents_read
+
+        score = min(100, citations * 5 + facts * 2 + docs * 3)
+        level = "high" if score >= 70 else "medium" if score >= 40 else "low"
+
+        return {"score": score, "level": level}
+
     def get_progress(self) -> dict[str, Any]:
         """Get investigation progress metrics."""
         lead_stats = self.get_lead_statistics()
