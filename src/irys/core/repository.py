@@ -93,6 +93,13 @@ class MatterRepository:
 
         # Load filename mapping if it exists (for S3/upload mode)
         self._filename_mapping = self._load_filename_mapping()
+
+        # Auto-detect and rename hash-named files if no mapping exists
+        if not self._filename_mapping["actual_to_display"]:
+            renamed = self._auto_detect_hash_files()
+            if renamed > 0:
+                logger.info(f"Auto-renamed {renamed} hash-named files with detected extensions")
+
         logger.info(f"Initialized repository: {base_path}")
 
     def _load_filename_mapping(self) -> dict:
@@ -133,6 +140,72 @@ class MatterRepository:
             logger.warning(f"Failed to load filename mapping: {e}")
 
         return result
+
+    @staticmethod
+    def _detect_extension_from_file(path: Path) -> str:
+        """Detect file extension from magic bytes of a file on disk.
+
+        Returns:
+            Extension string (e.g., '.pdf') or empty string if undetectable.
+        """
+        try:
+            with open(path, "rb") as f:
+                header = f.read(16)
+        except Exception:
+            return ""
+
+        if header.startswith(b'%PDF'):
+            return '.pdf'
+        if header.startswith(b'PK\x03\x04'):
+            return '.docx'  # ZIP-based (could be docx, xlsx, etc.)
+        if header.startswith(b'\xd0\xcf\x11\xe0'):
+            return '.doc'
+        if header.startswith(b'{\\rtf'):
+            return '.rtf'
+        # Try to detect text files
+        try:
+            with open(path, "rb") as f:
+                sample = f.read(1000)
+            sample.decode('utf-8')
+            return '.txt'
+        except (UnicodeDecodeError, Exception):
+            pass
+        return ''
+
+    def _auto_detect_hash_files(self) -> int:
+        """Detect hash-named files without extensions and rename with detected extension.
+
+        Scans the repository for files that look like content hashes (32+ hex chars,
+        no extension). For each, detects the file type from magic bytes and renames
+        the file on disk to include the correct extension.
+
+        Returns:
+            Number of files renamed.
+        """
+        renamed = 0
+        for path in self.base_path.glob("*"):
+            if not path.is_file():
+                continue
+            name = path.name
+            # Skip special files
+            if name.startswith("_") or name.startswith("~$") or name.startswith("."):
+                continue
+            # Check if it's a hash filename (no extension, 32+ hex chars)
+            if '.' in name or len(name) < 32:
+                continue
+            if not all(c in '0123456789abcdef' for c in name.lower()):
+                continue
+            # Detect extension from magic bytes
+            ext = self._detect_extension_from_file(path)
+            if ext:
+                new_path = path.with_suffix(ext)
+                if not new_path.exists():
+                    path.rename(new_path)
+                    renamed += 1
+                    logger.debug(f"Renamed hash file: {name} -> {new_path.name}")
+                else:
+                    logger.warning(f"Cannot rename {name} to {new_path.name}: target exists")
+        return renamed
 
     def _get_display_name(self, actual_filename: str) -> str:
         """Get display name for an actual filename."""
