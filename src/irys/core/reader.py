@@ -97,6 +97,35 @@ class DocumentReader:
 
     SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".mht", ".mhtml"}
 
+    @staticmethod
+    def _detect_type_from_magic(path: Path) -> str:
+        """Detect file type from magic bytes for extensionless files.
+
+        Returns extension string (e.g., '.pdf') or empty string.
+        """
+        try:
+            with open(path, "rb") as f:
+                header = f.read(16)
+        except Exception:
+            return ""
+
+        if header.startswith(b'%PDF'):
+            return '.pdf'
+        if header.startswith(b'PK\x03\x04'):
+            return '.docx'
+        if header.startswith(b'\xd0\xcf\x11\xe0'):
+            return '.doc'
+        if header.startswith(b'{\\rtf'):
+            return '.rtf'
+        try:
+            with open(path, "rb") as f:
+                sample = f.read(1000)
+            sample.decode('utf-8')
+            return '.txt'
+        except (UnicodeDecodeError, Exception):
+            pass
+        return ''
+
     def read(self, path: Path | str) -> DocumentContent:
         """Read a document and extract text."""
         path = Path(path)
@@ -115,6 +144,10 @@ class DocumentReader:
             )
 
         suffix = path.suffix.lower()
+
+        # For extensionless files (e.g., hash-named), detect type from magic bytes
+        if not suffix:
+            suffix = self._detect_type_from_magic(path)
 
         if suffix == ".pdf":
             return self._read_pdf(path)
