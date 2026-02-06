@@ -324,6 +324,10 @@ class MatterRepository:
             actual_ext = path.suffix.lower()
             effective_ext = display_ext if display_ext else actual_ext
 
+            # Last resort: detect extension from magic bytes for extensionless files
+            if not effective_ext:
+                effective_ext = self._detect_extension_from_file(path)
+
             # Filter by extension
             if effective_ext not in file_types:
                 continue
