@@ -15,6 +15,7 @@ import threading
 import queue
 import time
 import uuid
+import json
 import logging
 from pathlib import Path
 from typing import Optional, Generator
@@ -106,6 +107,16 @@ class RLMApp:
         for display_name, content, actual_filename in files:
             upload_files.append((display_name, content))
 
+        # Upload filename mapping as safety net for hash-named files
+        mapping = {}
+        for display_name, content, actual_filename in files:
+            if actual_filename != display_name:
+                mapping[actual_filename] = {"display_name": display_name}
+        if mapping:
+            mapping_content = json.dumps(mapping, indent=2).encode("utf-8")
+            upload_files.append(("_filename_mapping.json", mapping_content))
+            logger.info(f"Including filename mapping with {len(mapping)} entries in S3 upload")
+
         prefix = await s3_repo.upload_files(session_id, upload_files)
         logger.info(f"Uploaded {len(files)} files to S3: {prefix}")
         return prefix
@@ -158,6 +169,17 @@ class RLMApp:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
             logger.debug(f"Saved file: {file_path}")
+
+        # Write filename mapping as safety net for hash-named files
+        mapping = {}
+        for display_name, content, actual_filename in files:
+            if actual_filename != display_name:
+                mapping[actual_filename] = {"display_name": display_name}
+        if mapping:
+            mapping_path = temp_dir / "_filename_mapping.json"
+            with open(mapping_path, "w") as f:
+                json.dump(mapping, f, indent=2)
+            logger.info(f"Wrote filename mapping with {len(mapping)} entries")
 
         self._temp_dirs[session_id] = temp_dir
         logger.info(f"Saved {len(files)} files to temp: {temp_dir}")
