@@ -206,6 +206,7 @@ class IrysClient:
         self,
         query: str,
         s3_urls: list[str],
+        session_id: Optional[str] = None,
         on_step: Optional[Any] = None,
         on_citation: Optional[Any] = None,
         on_fact: Optional[Any] = None,
@@ -219,6 +220,7 @@ class IrysClient:
         Args:
             query: The question to investigate
             s3_urls: List of document URLs to analyze
+            session_id: Optional session ID for cross-investigation fact persistence
             on_step: Callback for step events (receives dict)
             on_citation: Callback for citation events (receives dict)
             on_fact: Callback for fact events (receives dict)
@@ -250,7 +252,11 @@ class IrysClient:
             async with client.stream(
                 "POST",
                 url,
-                json={"query": query, "s3_urls": s3_urls},
+                json={
+                    "query": query,
+                    "s3_urls": s3_urls,
+                    **({"session_id": session_id} if session_id else {}),
+                },
             ) as response:
                 if response.status_code != 200:
                     await response.aread()
