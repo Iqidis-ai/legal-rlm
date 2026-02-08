@@ -82,6 +82,8 @@ class Irys:
         # Callbacks
         self._on_progress: Optional[Callable] = None
         self._on_step: Optional[Callable] = None
+        self._on_citation: Optional[Callable] = None
+        self._on_fact: Optional[Callable] = None
 
     def _ensure_initialized(self):
         """Ensure components are initialized."""
@@ -103,6 +105,8 @@ class Irys:
                 config=engine_config,
                 on_step=self._on_step,
                 on_progress=self._on_progress,
+                on_citation=self._on_citation,
+                on_fact=self._on_fact,
             )
 
     def on_progress(self, callback: Callable[[dict], None]):
@@ -116,6 +120,18 @@ class Irys:
         self._on_step = callback
         if self._engine:
             self._engine.on_step = callback
+
+    def on_citation(self, callback: Callable):
+        """Register citation callback."""
+        self._on_citation = callback
+        if self._engine:
+            self._engine.on_citation = callback
+
+    def on_fact(self, callback: Callable):
+        """Register fact callback."""
+        self._on_fact = callback
+        if self._engine:
+            self._engine.on_fact = callback
 
     async def investigate(
         self,
