@@ -176,7 +176,7 @@ class S3UrlsInvestigateRequest(BaseModel):
             "Supports S3 URLs and generic HTTP(S) URLs including presigned URLs."
         ),
         min_length=1,
-        max_length=50,
+        max_length=500,
     )
     callback_url: Optional[str] = Field(
         None, description="URL to POST results when complete"
@@ -215,7 +215,7 @@ class S3UrlsSearchRequest(BaseModel):
             "'url', 'name' (filename), and 'mime' (MIME type) fields."
         ),
         min_length=1,
-        max_length=50,
+        max_length=500,
     )
     max_results: int = Field(20, ge=1, le=100, description="Maximum results")
 
