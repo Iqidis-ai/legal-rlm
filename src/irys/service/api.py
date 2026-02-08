@@ -1122,12 +1122,26 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
     """Investigate documents from URLs with real-time SSE streaming.
 
     Streams investigation progress as Server-Sent Events. Event types:
-    - `step`: Each thinking/search/read/synthesis step
-    - `citation`: Citation found during investigation
-    - `fact`: Fact extracted from a document
-    - `progress`: Progress update with counts
-    - `complete`: Final result with full analysis
-    - `error`: Error details if investigation fails
+
+    **step** - Each thinking/search/read/synthesis step:
+      `{id, step_type, content, details, depth, timestamp, duration_ms}`
+      step_type: "thinking" | "search" | "reading" | "finding" | "replan" | "verify" | "synthesis" | "error"
+
+    **citation** - Citation found during investigation:
+      `{id, document, page, text, context, relevance, timestamp}`
+
+    **fact** - Fact extracted from a document:
+      `{fact}`
+
+    **progress** - Progress update with counts:
+      `{status, elapsed_seconds, documents_read, searches_performed, citations,
+        leads_investigated, leads_pending, facts_accumulated, entities_found}`
+
+    **complete** - Final result with full analysis:
+      `{query, analysis, citations, entities, documents_processed, duration_seconds}`
+
+    **error** - Error details if investigation fails:
+      `{error}`
 
     Example curl:
     ```
@@ -1171,10 +1185,13 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
                 queue.put_nowait({
                     "event": "step",
                     "data": {
+                        "id": step.id,
                         "step_type": step.step_type.value if hasattr(step.step_type, 'value') else str(step.step_type),
                         "content": step.content,
+                        "details": step.details,
                         "depth": step.depth,
                         "timestamp": step.timestamp.isoformat(),
+                        "duration_ms": step.duration_ms,
                     },
                 })
 
@@ -1182,11 +1199,13 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
                 queue.put_nowait({
                     "event": "citation",
                     "data": {
+                        "id": citation.id,
                         "document": citation.document,
                         "page": citation.page,
                         "text": citation.text,
                         "context": citation.context,
                         "relevance": citation.relevance,
+                        "timestamp": citation.timestamp.isoformat(),
                     },
                 })
 
