@@ -202,6 +202,91 @@ class IrysClient:
         response.raise_for_status()
         return response.json()
 
+    async def investigate_urls_stream(
+        self,
+        query: str,
+        s3_urls: list[str],
+        on_step: Optional[Any] = None,
+        on_citation: Optional[Any] = None,
+        on_fact: Optional[Any] = None,
+        on_progress: Optional[Any] = None,
+        on_complete: Optional[Any] = None,
+        on_error: Optional[Any] = None,
+    ) -> dict[str, Any]:
+        """
+        Stream an investigation via SSE, dispatching events to callbacks.
+
+        Args:
+            query: The question to investigate
+            s3_urls: List of document URLs to analyze
+            on_step: Callback for step events (receives dict)
+            on_citation: Callback for citation events (receives dict)
+            on_fact: Callback for fact events (receives dict)
+            on_progress: Callback for progress events (receives dict)
+            on_complete: Callback for complete event (receives dict)
+            on_error: Callback for error events (receives dict)
+
+        Returns:
+            The complete event payload (final result), or error payload
+
+        Raises:
+            IrysError: If the request itself fails (not investigation errors)
+        """
+        import json
+
+        callbacks = {
+            "step": on_step,
+            "citation": on_citation,
+            "fact": on_fact,
+            "progress": on_progress,
+            "complete": on_complete,
+            "error": on_error,
+        }
+
+        result = None
+        url = f"{self.base_url}/investigate/urls/stream"
+
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "POST",
+                url,
+                json={"query": query, "s3_urls": s3_urls},
+            ) as response:
+                if response.status_code != 200:
+                    await response.aread()
+                    raise IrysError(
+                        f"Stream request failed ({response.status_code}): {response.text}"
+                    )
+
+                event_type = None
+                data_buf = []
+
+                async for line in response.aiter_lines():
+                    if line.startswith("event: "):
+                        event_type = line[7:]
+                    elif line.startswith("data: "):
+                        data_buf.append(line[6:])
+                    elif line == "" and event_type and data_buf:
+                        # End of event
+                        try:
+                            data = json.loads("".join(data_buf))
+                        except json.JSONDecodeError:
+                            data = {"raw": "".join(data_buf)}
+
+                        cb = callbacks.get(event_type)
+                        if cb:
+                            cb(data)
+
+                        if event_type == "complete":
+                            result = data
+                        elif event_type == "error":
+                            result = data
+
+                        event_type = None
+                        data_buf = []
+
+        return result or {}
+
     # Context manager support
     async def __aenter__(self):
         return self
