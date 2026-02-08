@@ -141,6 +141,7 @@ class SyncInvestigateResponse(BaseModel):
     analysis: str
     citations: list[dict[str, Any]] = []
     entities: dict[str, Any] = {}
+    facts: list[str] = Field(default_factory=list, description="Accumulated facts extracted during investigation")
     documents_processed: int
     duration_seconds: float
     s3_prefix: Optional[str] = Field(None, description="S3 prefix if files were kept")

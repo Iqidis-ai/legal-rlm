@@ -829,11 +829,13 @@ async def upload_investigate_sync(
             f"Sync investigation {job_id} completed in {duration:.1f}s (mode={config.storage_mode})")
 
         citations, entities = _serialize_result(result)
+        facts = result.state.findings.get("accumulated_facts", [])
         response = SyncInvestigateResponse(
             query=query,
             analysis=result.output,
             citations=citations,
             entities=entities,
+            facts=facts,
             documents_processed=result.state.documents_read,
             duration_seconds=round(duration, 2),
         )
@@ -1092,11 +1094,13 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             f"URL sync investigation {job_id} completed in {duration:.1f}s")
 
         citations, entities = _serialize_result(result)
+        facts = result.state.findings.get("accumulated_facts", [])
         return SyncInvestigateResponse(
             query=request.query,
             analysis=result.output,
             citations=citations,
             entities=entities,
+            facts=facts,
             documents_processed=result.state.documents_read,
             duration_seconds=round(duration, 2),
         )
@@ -1138,7 +1142,7 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
         leads_investigated, leads_pending, facts_accumulated, entities_found}`
 
     **complete** - Final result with full analysis:
-      `{query, analysis, citations, entities, documents_processed, duration_seconds}`
+      `{query, analysis, citations, entities, facts, documents_processed, duration_seconds}`
 
     **error** - Error details if investigation fails:
       `{error}`
@@ -1233,6 +1237,7 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
 
             duration = time.time() - start_time
             citations, entities = _serialize_result(result)
+            facts = result.state.findings.get("accumulated_facts", [])
             queue.put_nowait({
                 "event": "complete",
                 "data": {
@@ -1240,6 +1245,7 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
                     "analysis": result.output,
                     "citations": citations,
                     "entities": entities,
+                    "facts": facts,
                     "documents_processed": result.state.documents_read,
                     "duration_seconds": round(duration, 2),
                 },
