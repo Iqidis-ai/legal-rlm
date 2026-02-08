@@ -21,6 +21,9 @@ class InvestigateRequest(BaseModel):
     callback_url: Optional[str] = Field(
         None, description="URL to POST results when complete"
     )
+    session_id: Optional[str] = Field(
+        None, description="Session ID for cross-investigation fact/citation persistence"
+    )
     options: Optional[dict[str, Any]] = Field(
         default_factory=dict, description="Additional investigation options"
     )
@@ -145,6 +148,7 @@ class SyncInvestigateResponse(BaseModel):
     documents_processed: int
     duration_seconds: float
     s3_prefix: Optional[str] = Field(None, description="S3 prefix if files were kept")
+    session_id: Optional[str] = Field(None, description="Session ID if session persistence was used")
 
 
 # === S3 URL Models ===
@@ -176,6 +180,9 @@ class S3UrlsInvestigateRequest(BaseModel):
     )
     callback_url: Optional[str] = Field(
         None, description="URL to POST results when complete"
+    )
+    session_id: Optional[str] = Field(
+        None, description="Session ID for cross-investigation fact/citation persistence"
     )
     options: Optional[dict[str, Any]] = Field(
         default_factory=dict, description="Additional investigation options"
