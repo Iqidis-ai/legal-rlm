@@ -338,10 +338,16 @@ async def _run_investigation(
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key)
 
+        seed_facts, seed_citations = await _load_session(config, request.session_id)
+
         result = await irys.investigate(
             query=request.query,
             repository=str(temp_dir),
+            seed_facts=seed_facts,
+            seed_citations=seed_citations,
         )
+
+        await _save_session(config, request.session_id, result)
 
         # Extract results
         job.analysis = result.output
@@ -490,6 +496,8 @@ async def upload_investigate(
         None, description="Webhook URL for results"),
     keep_files: bool = Form(
         False, description="Keep files in S3 after processing"),
+    session_id: Optional[str] = Form(
+        None, description="Session ID for cross-investigation fact persistence"),
     background_tasks: BackgroundTasks = None,
 ):
     """Start investigation with uploaded files (async).
@@ -572,6 +580,7 @@ async def upload_investigate(
             callback_url,
             keep_files,
             config,
+            session_id,
         )
 
         return UploadInvestigateResponse(
@@ -596,6 +605,7 @@ async def _run_upload_investigation(
     callback_url: Optional[str],
     keep_files: bool,
     config: ServiceConfig,
+    session_id: Optional[str] = None,
 ):
     """Background task to run investigation on uploaded files."""
     job = _jobs[job_id]
@@ -620,10 +630,16 @@ async def _run_upload_investigation(
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key)
 
+        seed_facts, seed_citations = await _load_session(config, session_id)
+
         result = await irys.investigate(
             query=query,
             repository=str(temp_dir),
+            seed_facts=seed_facts,
+            seed_citations=seed_citations,
         )
+
+        await _save_session(config, session_id, result)
 
         # Extract results
         job.analysis = result.output
@@ -782,6 +798,8 @@ async def upload_investigate_sync(
                                    description="Document files to analyze"),
     keep_files: bool = Form(
         False, description="Keep files in S3 after processing for re-query"),
+    session_id: Optional[str] = Form(
+        None, description="Session ID for cross-investigation fact persistence"),
 ):
     """Upload and investigate files synchronously.
 
@@ -848,10 +866,16 @@ async def upload_investigate_sync(
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key)
 
+        seed_facts, seed_citations = await _load_session(config, session_id)
+
         result = await irys.investigate(
             query=query,
             repository=str(temp_dir),
+            seed_facts=seed_facts,
+            seed_citations=seed_citations,
         )
+
+        await _save_session(config, session_id, result)
 
         # Cleanup temp files
         if config.storage_mode == "local":
@@ -879,6 +903,7 @@ async def upload_investigate_sync(
             facts=facts,
             documents_processed=result.state.documents_read,
             duration_seconds=round(duration, 2),
+            session_id=session_id,
         )
 
         # Add S3 prefix to response if files kept (s3 mode only)
@@ -991,10 +1016,16 @@ async def _run_urls_investigation(
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key)
 
+        seed_facts, seed_citations = await _load_session(config, request.session_id)
+
         result = await irys.investigate(
             query=request.query,
             repository=str(temp_dir),
+            seed_facts=seed_facts,
+            seed_citations=seed_citations,
         )
+
+        await _save_session(config, request.session_id, result)
 
         # Extract results
         job.analysis = result.output
@@ -1122,10 +1153,16 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key)
 
+        seed_facts, seed_citations = await _load_session(config, request.session_id)
+
         result = await irys.investigate(
             query=request.query,
             repository=str(temp_dir),
+            seed_facts=seed_facts,
+            seed_citations=seed_citations,
         )
+
+        await _save_session(config, request.session_id, result)
 
         # Cleanup
         await s3_repo.cleanup(job_id)
@@ -1144,6 +1181,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             facts=facts,
             documents_processed=result.state.documents_read,
             duration_seconds=round(duration, 2),
+            session_id=request.session_id,
         )
 
     except HTTPException:
@@ -1271,10 +1309,18 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
             irys.on_fact(on_fact)
             irys.on_progress(on_progress)
 
+            # Load prior session data
+            seed_facts, seed_citations = await _load_session(config, request.session_id)
+
             result = await irys.investigate(
                 query=request.query,
                 repository=str(temp_dir),
+                seed_facts=seed_facts,
+                seed_citations=seed_citations,
             )
+
+            # Save session data
+            await _save_session(config, request.session_id, result)
 
             duration = time.time() - start_time
             citations, entities = _serialize_result(result)
@@ -1289,6 +1335,7 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
                     "facts": facts,
                     "documents_processed": result.state.documents_read,
                     "duration_seconds": round(duration, 2),
+                    "session_id": request.session_id,
                 },
             })
 
