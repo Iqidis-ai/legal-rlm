@@ -67,9 +67,8 @@ class MarkdownFormatter:
                 "",
             ])
             for c in state.citations[:20]:
-                verified = "✓" if c.verified else "○"
                 page = f", p. {c.page}" if c.page else ""
-                lines.append(f"- [{verified}] **{c.document}**{page}")
+                lines.append(f"- **{c.document}**{page}")
                 lines.append(f"  > \"{c.text[:100]}...\"")
                 lines.append(f"  - *{c.relevance}*")
                 lines.append("")
@@ -127,8 +126,7 @@ class HTMLFormatter:
         h2 {{ color: #555; }}
         .meta {{ background: #f5f5f5; padding: 10px; border-radius: 5px; }}
         .citation {{ border-left: 3px solid #007bff; padding-left: 10px; margin: 10px 0; }}
-        .verified {{ color: green; }}
-        .unverified {{ color: orange; }}
+        .citation strong {{ color: #333; }}
         .entity {{ display: inline-block; background: #e0e0e0; padding: 2px 8px; margin: 2px; border-radius: 3px; }}
         blockquote {{ background: #f9f9f9; border-left: 3px solid #ccc; padding: 10px; margin: 10px 0; }}
     </style>
@@ -171,12 +169,9 @@ class HTMLFormatter:
         return html_content
 
     def _format_citation_html(self, citation: Any) -> str:
-        verified_class = "verified" if citation.verified else "unverified"
-        verified_icon = "✓" if citation.verified else "○"
         page = f", p. {citation.page}" if citation.page else ""
         return f"""
         <div class="citation">
-            <span class="{verified_class}">{verified_icon}</span>
             <strong>{html.escape(citation.document)}</strong>{page}
             <blockquote>{html.escape(citation.text[:150])}...</blockquote>
             <em>{html.escape(citation.relevance)}</em>
@@ -237,9 +232,8 @@ class PlainTextFormatter:
                 "-" * 40,
             ])
             for c in state.citations[:15]:
-                verified = "[V]" if c.verified else "[ ]"
                 page = f", p. {c.page}" if c.page else ""
-                lines.append(f"{verified} {c.document}{page}")
+                lines.append(f"  {c.document}{page}")
                 lines.append(f"      \"{c.text[:80]}...\"")
             lines.append("")
 
