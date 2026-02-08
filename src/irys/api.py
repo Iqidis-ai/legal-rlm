@@ -138,6 +138,8 @@ class Irys:
         query: str,
         repository: str | Path,
         template: Optional[str] = None,
+        seed_facts: Optional[list[str]] = None,
+        seed_citations: Optional[list[dict]] = None,
     ) -> "InvestigationResult":
         """
         Run an investigation.
@@ -146,6 +148,8 @@ class Irys:
             query: The legal question to investigate
             repository: Path to document repository
             template: Optional investigation template name
+            seed_facts: Prior-session facts to seed into investigation
+            seed_citations: Prior-session citations to seed into investigation
 
         Returns:
             InvestigationResult with findings and output
@@ -171,7 +175,11 @@ class Irys:
         # Run investigation
         self._telemetry.start_operation("investigation")
         try:
-            state = await self._engine.investigate(query, repository)
+            state = await self._engine.investigate(
+                query, repository,
+                seed_facts=seed_facts,
+                seed_citations=seed_citations,
+            )
         finally:
             self._telemetry.end_operation(
                 "investigation",
