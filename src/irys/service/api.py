@@ -36,12 +36,53 @@ from .models import (
     S3UrlsSearchRequest,
 )
 from .s3_repository import S3Repository
+from .session_store import SessionStore, SessionData
 
 logger = logging.getLogger(__name__)
 
 # In-memory job storage (use Redis in production for multi-worker)
 _jobs: dict[str, JobResult] = {}
 _start_time: float = time.time()
+
+
+async def _load_session(
+    config: ServiceConfig, session_id: Optional[str],
+) -> tuple[list[str], list[dict]]:
+    """Load prior session facts/citations. Returns ([], []) if no session_id."""
+    if not session_id:
+        return [], []
+    store = SessionStore(config)
+    session = await store.load(session_id)
+    if session is None:
+        logger.info(f"Session {session_id}: new session")
+        return [], []
+    logger.info(
+        f"Session {session_id}: loaded {len(session.facts)} facts, "
+        f"{len(session.citations)} citations from investigation #{session.investigation_count}"
+    )
+    return session.facts, session.citations
+
+
+async def _save_session(
+    config: ServiceConfig, session_id: Optional[str], result,
+) -> None:
+    """Save accumulated facts/citations to session store."""
+    if not session_id:
+        return
+    store = SessionStore(config)
+    existing = await store.load(session_id) or SessionData()
+    facts = result.state.findings.get("accumulated_facts", [])
+    citations_serialized, _ = _serialize_result(result)
+    session = SessionData(
+        facts=facts,
+        citations=citations_serialized,
+        investigation_count=existing.investigation_count + 1,
+    )
+    await store.save(session_id, session)
+    logger.info(
+        f"Session {session_id}: saved {len(facts)} facts, "
+        f"{len(citations_serialized)} citations (investigation #{session.investigation_count})"
+    )
 
 # Version
 VERSION = "1.0.0"
