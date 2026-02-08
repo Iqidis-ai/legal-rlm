@@ -100,6 +100,7 @@ class MarkdownFormatter:
             f"- Documents read: {state.documents_read}",
             f"- Searches performed: {state.searches_performed}",
             f"- Citations collected: {len(state.citations)}",
+            f"- Facts accumulated: {len(state.findings.get('accumulated_facts', []))}",
             f"- Entities found: {len(state.entities)}",
             f"- API calls: {state.api_calls}",
         ])
