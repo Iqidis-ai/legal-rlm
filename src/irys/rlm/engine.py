@@ -157,6 +157,8 @@ class RLMEngine:
         self,
         query: str,
         repository_path: str | Path,
+        seed_facts: Optional[list[str]] = None,
+        seed_citations: Optional[list[dict]] = None,
     ) -> InvestigationState:
         """Run full recursive investigation."""
         repo = MatterRepository(repository_path)
@@ -164,6 +166,21 @@ class RLMEngine:
         self._external_research = {"case_law": [], "web": [], "analysis": {}}  # Reset with proper structure
         state = InvestigationState.create(query, str(repository_path))
         cache = InvestigationCache()
+
+        # Seed prior session data if provided
+        if seed_facts:
+            added = state.add_facts(seed_facts)
+            logger.info(f"Seeded {added}/{len(seed_facts)} prior-session facts")
+        if seed_citations:
+            for c in seed_citations:
+                state.add_citation(
+                    document=c.get("document", ""),
+                    page=c.get("page"),
+                    text=c.get("text", ""),
+                    context=c.get("context", ""),
+                    relevance=c.get("relevance", "prior session"),
+                )
+            logger.info(f"Seeded {len(seed_citations)} prior-session citations")
 
         # Get repo info for informative step message
         repo_name = Path(repository_path).name
