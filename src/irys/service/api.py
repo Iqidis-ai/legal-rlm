@@ -1,6 +1,7 @@
 """FastAPI REST API for Irys RLM service."""
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -14,7 +15,7 @@ from typing import Optional
 import aiofiles
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 import httpx
 
 from .config import ServiceConfig, get_config
@@ -1107,3 +1108,166 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         if s3_repo:
             await s3_repo.cleanup(job_id)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# === SSE STREAMING ENDPOINT ===
+
+
+@app.post(
+    "/investigate/urls/stream",
+    tags=["S3 URLs"],
+    responses={400: {"model": ErrorResponse}},
+)
+async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
+    """Investigate documents from URLs with real-time SSE streaming.
+
+    Streams investigation progress as Server-Sent Events. Event types:
+    - `step`: Each thinking/search/read/synthesis step
+    - `citation`: Citation found during investigation
+    - `fact`: Fact extracted from a document
+    - `progress`: Progress update with counts
+    - `complete`: Final result with full analysis
+    - `error`: Error details if investigation fails
+
+    Example curl:
+    ```
+    curl -N -X POST http://localhost:8000/investigate/urls/stream \\
+      -H "Content-Type: application/json" \\
+      -d '{"query": "What are the payment terms?", "s3_urls": ["https://..."]}'
+    ```
+    """
+    config = get_config()
+
+    # Validate URL count upfront
+    if len(request.s3_urls) > config.max_documents_per_job:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many URLs ({len(request.s3_urls)}). Max: {config.max_documents_per_job}",
+        )
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def run_investigation():
+        """Download docs and run investigation, pushing events to queue."""
+        job_id = f"stream_{uuid.uuid4().hex[:8]}"
+        s3_repo = None
+        temp_dir = None
+        start_time = time.time()
+
+        try:
+            # Download documents from URLs
+            s3_repo = S3Repository(
+                bucket=config.s3_bucket or "placeholder",
+                prefix="",
+                config=config,
+            )
+            temp_dir = await s3_repo.download_urls_to_temp(job_id, request.s3_urls)
+
+            # Create Irys with callbacks wired to queue
+            from irys import Irys
+            irys = Irys(api_key=config.gemini_api_key)
+
+            def on_step(step):
+                queue.put_nowait({
+                    "event": "step",
+                    "data": {
+                        "step_type": step.step_type.value if hasattr(step.step_type, 'value') else str(step.step_type),
+                        "content": step.content,
+                        "depth": step.depth,
+                        "timestamp": step.timestamp.isoformat(),
+                    },
+                })
+
+            def on_citation(citation):
+                queue.put_nowait({
+                    "event": "citation",
+                    "data": {
+                        "document": citation.document,
+                        "page": citation.page,
+                        "text": citation.text,
+                        "context": citation.context,
+                        "relevance": citation.relevance,
+                    },
+                })
+
+            def on_fact(fact):
+                queue.put_nowait({
+                    "event": "fact",
+                    "data": {"fact": fact},
+                })
+
+            def on_progress(progress):
+                queue.put_nowait({
+                    "event": "progress",
+                    "data": progress,
+                })
+
+            irys.on_step(on_step)
+            irys.on_citation(on_citation)
+            irys.on_fact(on_fact)
+            irys.on_progress(on_progress)
+
+            result = await irys.investigate(
+                query=request.query,
+                repository=str(temp_dir),
+            )
+
+            duration = time.time() - start_time
+            citations, entities = _serialize_result(result)
+            queue.put_nowait({
+                "event": "complete",
+                "data": {
+                    "query": request.query,
+                    "analysis": result.output,
+                    "citations": citations,
+                    "entities": entities,
+                    "documents_processed": result.state.documents_read,
+                    "duration_seconds": round(duration, 2),
+                },
+            })
+
+        except Exception as e:
+            logger.error(f"Stream investigation failed: {e}")
+            queue.put_nowait({
+                "event": "error",
+                "data": {"error": str(e)},
+            })
+
+        finally:
+            # Cleanup temp files
+            if s3_repo and temp_dir:
+                await s3_repo.cleanup(job_id)
+            # Signal end of stream
+            queue.put_nowait(None)
+
+    async def event_generator():
+        """Yield SSE-formatted events from the queue."""
+        task = asyncio.create_task(run_investigation())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                event_type = item["event"]
+                data = json.dumps(item["data"])
+                yield f"event: {event_type}\ndata: {data}\n\n"
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
