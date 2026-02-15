@@ -1,6 +1,9 @@
 # Irys RLM - Git Ignore File
 # Prevents sensitive data and temporary files from being committed
 
+# Confidential data - DO NOT COMMIT
+matters/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -29,11 +32,13 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.venv/
 
 # Environment variables and secrets
 .env
 .env.local
 .env.*.local
+*.env
 *.key
 *.pem
 secrets/
@@ -56,10 +61,10 @@ htmlcov/
 .tox/
 *.cover
 .hypothesis/
-.pytest_cache/
 nosetests.xml
 coverage.xml
 *.coveragerc
+*.coverage
 
 # Logs
 *.log
@@ -69,6 +74,7 @@ logs/
 # Jupyter Notebook
 .ipynb_checkpoints
 *.ipynb
+.ipynb_checkpoints/
 
 # Temporary files
 *.tmp
@@ -76,6 +82,7 @@ logs/
 *.bak
 *.swp
 .~*
+/tmp/
 
 # Cache directories
 .cache/
@@ -102,6 +109,10 @@ evaluation_results*.json
 test_results/
 test_results*.json
 
+# Test output
+/test_*.csv
+/test_*.json
+
 # Output files
 output/
 results/
@@ -118,13 +129,11 @@ flagged/
 *.sqlite
 *.sqlite3
 
-# macOS
+# OS files
 .DS_Store
 .AppleDouble
 .LSOverride
 ._*
-
-# Windows
 Thumbs.db
 ehthumbs.db
 Desktop.ini
@@ -135,6 +144,5 @@ nginx-*.conf
 *.service
 docker-compose.override.yml
 
-# Virtual environment
-.venv/
-
+# Local deployment notes (not for repo)
+deploy/

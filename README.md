@@ -16,6 +16,7 @@ Irys RLM is a sophisticated legal document analysis system that uses recursive l
 - [Model Tiering Strategy](#model-tiering-strategy)
 - [Investigation Flow](#investigation-flow)
 - [Output Formats](#output-formats)
+- [Knowledge Graph System](#knowledge-graph-system)
 - [Development](#development)
 - [Limitations](#limitations)
 
@@ -137,7 +138,7 @@ src/irys/
 ## Installation
 
 ### Prerequisites
-- Python 3.11+
+- Python 3.10+
 - Google Gemini API key
 
 ### Setup
@@ -448,6 +449,233 @@ Machine-readable format including:
 - Confidence scores
 - Investigation statistics
 
+---
+
+## Knowledge Graph System
+
+A comprehensive system for extracting, building, querying, and visualizing knowledge graphs from legal documents.
+
+### Knowledge Graph Overview
+
+This module provides an end-to-end pipeline for:
+- **Document Ingestion**: Parse PDFs, DOCX, and TXT files
+- **Entity Extraction**: Extract people, organizations, dates, money, facts, and more
+- **Knowledge Graph Construction**: Build a property graph with typed entities and relationships
+- **Natural Language Querying**: Ask questions in plain English
+- **Interactive Visualization**: Explore the graph with a web-based D3.js interface
+
+### Hybrid Extraction Pipeline
+- **Structural Extraction**: Pattern-based parsing for high-confidence elements (parties, signatures, defined terms)
+- **Semantic Extraction**: AI-powered extraction using Google Gemini for entities, relationships, and facts
+- **Entity Resolution**: Fuzzy matching to deduplicate entities across documents
+
+### Entity Types Supported
+| Type | Description |
+|------|-------------|
+| Person | Individuals mentioned in documents |
+| Organization | Companies, law firms, government bodies |
+| Document | Contracts, filings, exhibits |
+| Date | Temporal references |
+| Money | Financial amounts |
+| Location | Geographic references |
+| Reference | Citations and cross-references |
+| Fact | Obligations, allegations, key terms |
+| Clause | Contract sections |
+
+### Relationship Types
+`represents`, `party_to`, `signed`, `employed_by`, `affiliated_with`, `testified`, `references`, `mentioned_in`, `about`, `binds`, `related_to`, `attributed_to`, `defined_as`
+
+### Knowledge Graph Setup
+
+```bash
+# Install additional dependencies
+pip install -r requirements.txt
+
+# Set up environment variables
+cp .env.example .env
+# Edit .env and add your Gemini API key
+```
+
+### Knowledge Graph CLI Usage
+
+#### Batch Document Extraction
+
+```bash
+# Using CLI tool
+python -m src.cli.extract --matter my_case
+
+# With custom documents directory
+python -m src.cli.extract --matter my_case --dir ./documents
+
+# Single file
+python -m src.cli.extract --matter my_case --file ./document.pdf
+```
+
+#### Query the Knowledge Graph
+
+```bash
+# Single query
+python -m src.cli.query --matter my_case "Who are the main parties?"
+
+# Interactive mode
+python -m src.cli.query --matter my_case --interactive
+
+# List entities by type
+python -m src.cli.query --matter my_case --list-entities Person
+
+# Search entities
+python -m src.cli.query --matter my_case --search "ACME"
+
+# Show stats
+python -m src.cli.query --matter my_case --stats
+```
+
+#### Export Data
+
+```bash
+# Export full graph to JSON
+python -m src.cli.export --matter my_case --output graph.json
+
+# Export for D3.js visualization
+python -m src.cli.export --matter my_case --format d3 --output viz.json
+
+# Export entities to CSV
+python -m src.cli.export --matter my_case --format csv-entities --output entities.csv
+
+# Export edges to CSV
+python -m src.cli.export --matter my_case --format csv-edges --output edges.csv
+```
+
+### Visualization Server
+
+```bash
+# Default (citiom_v_gulfstream matter)
+python visualization_server.py
+
+# Custom matter
+python visualization_server.py --matter my_case --port 8080
+```
+
+Then open http://localhost:8000 in your browser.
+
+### Programmatic Knowledge Graph Usage (SDK)
+
+```python
+from src.core import KnowledgeGraph
+
+# Initialize for a specific matter
+kg = KnowledgeGraph("my_case")
+
+# Add a document
+kg.add_document("path/to/document.pdf")
+
+# Query the graph
+result = kg.query("Who are the main parties in this case?")
+print(result.answer)
+
+# Get entity summary
+summary = kg.get_entity_summary("ACME Corporation")
+print(summary)
+
+# List all organizations
+orgs = kg.list_entities(entity_type="Organization")
+for org in orgs:
+    print(f"- {org['name']}")
+```
+
+### Natural Language Queries
+
+The system supports various query types:
+
+| Query Type | Example |
+|------------|---------|
+| Entity Search | "Who are the main parties?" |
+| Relationship Query | "How is John Smith related to ACME Corp?" |
+| Fact Search | "What obligations are mentioned?" |
+| Timeline | "What are the key dates?" |
+| Aggregation | "How many documents are in the graph?" |
+
+### Graph Editing
+
+Edit the graph via the web interface or programmatically:
+
+```python
+# Merge duplicate entities
+kg.merge_entities(keep_id="entity-123", merge_id="entity-456")
+
+# Add a new entity
+kg.add_entity(name="New Person", entity_type="Person")
+
+# Add a relationship
+kg.add_edge(source_id="entity-123", target_id="entity-789", relation="represents")
+```
+
+### Knowledge Graph Project Structure
+
+```
+src/
+├── core/                     # Core SDK (no web dependencies)
+│   ├── __init__.py           # Exports KnowledgeGraph class
+│   ├── config.py             # Configuration and constants
+│   ├── knowledge_graph.py    # Main unified interface
+│   ├── storage/              # Database layer
+│   │   ├── database.py       # SQLite operations
+│   │   └── models.py         # Data models (Entity, Edge, etc.)
+│   ├── extraction/           # Document processing
+│   │   ├── extraction_pipeline.py
+│   │   ├── structural_extractor.py
+│   │   └── semantic_extractor.py
+│   ├── parsing/              # Document parsing
+│   │   ├── document_parser.py
+│   │   └── chunker.py
+│   ├── query/                # NL query engine
+│   │   └── nl_query.py
+│   └── embeddings/           # Vector search
+│       └── vector_store.py
+├── api/                      # REST API layer
+│   ├── __init__.py
+│   └── server.py             # Flask Blueprint with all endpoints
+├── cli/                      # Command-line tools
+│   ├── __init__.py
+│   ├── extract.py            # Batch extraction
+│   ├── query.py              # Query interface
+│   └── export.py             # Data export
+└── visualization/            # Graph export
+    └── graph_exporter.py     # D3.js data format
+```
+
+### Knowledge Graph API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/graph` | GET | Get full graph data for visualization |
+| `/api/search?q=term` | GET | Search entities by name |
+| `/api/query` | POST | Execute natural language query |
+| `/api/entity/<id>` | GET | Get entity details and neighborhood |
+| `/api/entity/<id>` | PUT | Update entity properties |
+| `/api/entity/<id>` | DELETE | Delete an entity |
+| `/api/entity` | POST | Create a new entity |
+| `/api/edge` | POST | Create a new relationship |
+| `/api/merge` | POST | Merge two entities |
+| `/api/nl-edit` | POST | Natural language graph editing |
+| `/api/stats` | GET | Get graph statistics |
+| `/api/entity-types` | GET | List available entity types |
+| `/api/relation-types` | GET | List available relation types |
+
+### Web Visualization Features
+
+The interactive visualization includes:
+
+- **Force-directed graph layout** with multiple layout options (cluster, radial, hierarchical)
+- **Type filtering** - Show/hide entity types
+- **Search** - Find entities by name
+- **Natural language queries** - Ask questions about the graph
+- **Entity details panel** - View connections and properties
+- **Edit mode** - Modify entities and relationships
+- **Confidence indicators** - Visual distinction for confirmed/extracted/inferred entities
+
+---
+
 ## Development
 
 ### Running Tests
@@ -530,5 +758,5 @@ The search engine includes a `smart_search` mode that:
 ---
 
 **Version:** 0.1.0
-**Python:** 3.11+
+**Python:** 3.10+
 **Primary API:** Google Gemini (gemini-2.5-flash-lite, gemini-2.5-flash, gemini-2.5-pro)

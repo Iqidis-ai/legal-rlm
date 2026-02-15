@@ -1,0 +1,1150 @@
+"""
+Complete extraction pipeline that orchestrates document processing.
+
+Flow:
+1. Parse document
+2. Structural extraction (defined terms, parties)
+3. Chunk document
+4. Semantic extraction per chunk (PARALLEL)
+5. Entity resolution
+6. Store in graph
+
+Performance optimizations:
+- Large chunks (20K tokens) for fewer API calls
+- Unified extraction (1 API call per chunk instead of 3)
+- Parallel chunk processing with ThreadPoolExecutor
+- Global rate limiter for API safety
+"""
+import os
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from ..storage.postgres_database import PostgreSQLDatabase as Database
+from ..storage.models import Entity, Edge, Mention, Document, Alias
+from ..parsing.document_parser import DocumentParser, ParsedDocument
+from ..parsing.chunker import Chunker, Chunk
+from ..embeddings.vector_store import VectorStore, EmbeddingGenerator
+from .structural_extractor import StructuralExtractor, StructuralExtraction
+from .semantic_extractor import SemanticExtractor, SemanticExtraction, ExtractedEntity, RelationshipInferrer
+from ..config import GEMINI_API_KEY, RESOLUTION_CONFIDENCE_THRESHOLD
+
+
+def _print(*args, **kwargs):
+    """Print with flush for real-time output."""
+    print(*args, **kwargs, flush=True)
+
+
+# Parallel processing settings - auto-detect tier
+_IS_PAID_TIER = os.getenv(
+    "GEMINI_PAID_TIER", "true").lower() in ("true", "1", "yes")
+MAX_PARALLEL_WORKERS = 8 if _IS_PAID_TIER else 3
+REQUESTS_PER_MINUTE = 60 if _IS_PAID_TIER else 15
+MIN_DELAY_BETWEEN_REQUESTS = 60.0 / REQUESTS_PER_MINUTE
+
+
+class GlobalRateLimiter:
+    """Thread-safe rate limiter for parallel API calls.
+
+    Computes the next allowed request time inside the lock but sleeps
+    *outside* the lock so other threads can reserve their own slots
+    concurrently instead of serialising behind a sleeping thread.
+    """
+
+    def __init__(self, requests_per_minute: int = REQUESTS_PER_MINUTE):
+        self.min_delay = 60.0 / requests_per_minute
+        self.lock = threading.Lock()
+        self.next_allowed_time = 0.0
+
+    def acquire(self):
+        """Reserve the next rate-limit slot and sleep until it arrives."""
+        with self.lock:
+            now = time.time()
+            if self.next_allowed_time <= now:
+                self.next_allowed_time = now
+            wait_until = self.next_allowed_time
+            self.next_allowed_time += self.min_delay
+
+        # Sleep outside the lock — other threads can reserve future slots
+        sleep_time = wait_until - time.time()
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+
+# Global rate limiter instance
+_global_rate_limiter = GlobalRateLimiter()
+
+
+class EntityNormalizer:
+    """Normalize and match entity names for better coreference resolution."""
+
+    # Common suffixes to strip for matching
+    ORG_SUFFIXES = [
+        ', Inc.', ', Inc', ' Inc.', ' Inc', ' LLC', ' L.L.C.', ' LLP', ' L.L.P.',
+        ', Ltd.', ', Ltd', ' Ltd.', ' Ltd', ' Corp.', ' Corp', ' Corporation',
+        ' Co.', ' Co', ' Company', ' & Co.', ' & Co', ' PLC', ' plc',
+        ' Limited', ' Incorporated', ' Associates', ' & Associates',
+        ' Partners', ' & Partners', ' Group', ' Holdings', ' International',
+    ]
+
+    # Common title prefixes for people
+    PERSON_PREFIXES = [
+        'Mr. ', 'Mrs. ', 'Ms. ', 'Miss ', 'Dr. ', 'Prof. ', 'Professor ',
+        'Hon. ', 'Honorable ', 'Judge ', 'Justice ', 'Sen. ', 'Senator ',
+        'Rep. ', 'Representative ', 'Atty. ', 'Attorney ', 'Esq.',
+    ]
+
+    # Common abbreviation mappings
+    ABBREVIATIONS = {
+        'intl': 'international',
+        'int\'l': 'international',
+        'natl': 'national',
+        'nat\'l': 'national',
+        'corp': 'corporation',
+        'assoc': 'associates',
+        'mgmt': 'management',
+        'svcs': 'services',
+        'svc': 'service',
+        'tech': 'technology',
+        'sys': 'systems',
+        'grp': 'group',
+        'hldgs': 'holdings',
+        'mfg': 'manufacturing',
+        'dist': 'distribution',
+        'dev': 'development',
+    }
+
+    @staticmethod
+    def normalize_org_name(name: str) -> str:
+        """Normalize organization name for matching."""
+        normalized = name.strip()
+
+        # Remove common suffixes
+        for suffix in EntityNormalizer.ORG_SUFFIXES:
+            if normalized.endswith(suffix):
+                normalized = normalized[:-len(suffix)].strip()
+            elif normalized.lower().endswith(suffix.lower()):
+                normalized = normalized[:-len(suffix)].strip()
+
+        # Expand abbreviations
+        words = normalized.split()
+        expanded = []
+        for word in words:
+            word_lower = word.lower().rstrip('.,')
+            if word_lower in EntityNormalizer.ABBREVIATIONS:
+                expanded.append(EntityNormalizer.ABBREVIATIONS[word_lower])
+            else:
+                expanded.append(word)
+        normalized = ' '.join(expanded)
+
+        return normalized.strip()
+
+    @staticmethod
+    def normalize_person_name(name: str) -> str:
+        """Normalize person name for matching."""
+        normalized = name.strip()
+
+        # Remove title prefixes
+        for prefix in EntityNormalizer.PERSON_PREFIXES:
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix):].strip()
+            elif normalized.lower().startswith(prefix.lower()):
+                normalized = normalized[len(prefix):].strip()
+
+        # Remove trailing suffixes like Jr., Sr., III, Esq.
+        suffixes = [', Jr.', ', Jr', ' Jr.', ' Jr', ', Sr.', ', Sr', ' Sr.', ' Sr',
+                    ', III', ' III', ', II', ' II', ', IV', ' IV', ', Esq.', ', Esq', ' Esq.', ' Esq']
+        for suffix in suffixes:
+            if normalized.endswith(suffix):
+                normalized = normalized[:-len(suffix)].strip()
+
+        return normalized.strip()
+
+    # Entity type indicators for validation
+    ORG_TYPE_INDICATORS = [
+        'corporation', 'corp.', 'corp', 'incorporated', 'inc.', 'inc',
+        'limited', 'ltd.', 'ltd', 'llc', 'l.l.c.', 'llp', 'l.l.p.',
+        'company', 'co.', 'holdings', 'group', 'partners', 'associates',
+        'enterprises', 'industries', 'international', 'solutions',
+        'services', 'systems', 'technologies', 'aerospace', 'aviation',
+        'foundation', 'institute', 'association', 'plc', 'gmbh', 'ag',
+    ]
+
+    @staticmethod
+    def validate_entity_type(name: str, claimed_type: str) -> str:
+        """
+        Validate and potentially correct the entity type based on name patterns.
+
+        Returns the corrected type if the claimed type appears incorrect.
+        """
+        name_lower = name.lower()
+
+        # Check if the name clearly indicates an Organization
+        for indicator in EntityNormalizer.ORG_TYPE_INDICATORS:
+            if indicator in name_lower:
+                # Name contains organization indicator but was classified as Person
+                if claimed_type == 'Person':
+                    return 'Organization'
+                return claimed_type
+
+        # Check for person name patterns (Mr., Dr., etc.)
+        for prefix in EntityNormalizer.PERSON_PREFIXES:
+            if name_lower.startswith(prefix.lower()):
+                if claimed_type == 'Organization':
+                    return 'Person'
+                return claimed_type
+
+        # Check for ALL CAPS names that might be organizations
+        if name.isupper() and len(name) > 3:
+            words = name.split()
+            # Multiple uppercase words often indicate organization
+            if len(words) > 1 and any(ind in name_lower for ind in ['aerospace', 'corp', 'inc', 'ltd']):
+                if claimed_type == 'Person':
+                    return 'Organization'
+
+        return claimed_type
+
+    @staticmethod
+    def normalize_name(name: str, entity_type: str = None) -> str:
+        """Normalize entity name based on type."""
+        if entity_type == 'Organization':
+            return EntityNormalizer.normalize_org_name(name)
+        elif entity_type == 'Person':
+            return EntityNormalizer.normalize_person_name(name)
+        else:
+            return name.strip()
+
+    @staticmethod
+    def compute_similarity(name1: str, name2: str, entity_type: str = None) -> float:
+        """Compute similarity score between two entity names."""
+        from difflib import SequenceMatcher
+
+        # Normalize both names
+        n1 = EntityNormalizer.normalize_name(name1, entity_type).lower()
+        n2 = EntityNormalizer.normalize_name(name2, entity_type).lower()
+
+        # Exact match after normalization
+        if n1 == n2:
+            return 1.0
+
+        # Check if one contains the other (partial match)
+        if n1 in n2 or n2 in n1:
+            shorter = min(len(n1), len(n2))
+            longer = max(len(n1), len(n2))
+            return 0.7 + (0.3 * shorter / longer)
+
+        # Check word overlap for organizations
+        if entity_type == 'Organization':
+            words1 = set(n1.split())
+            words2 = set(n2.split())
+            if words1 and words2:
+                overlap = len(words1 & words2)
+                total = len(words1 | words2)
+                if overlap > 0:
+                    jaccard = overlap / total
+                    # High overlap is a good signal
+                    if jaccard > 0.5:
+                        return 0.6 + (0.4 * jaccard)
+
+        # Check if person names match (last name + first initial)
+        if entity_type == 'Person':
+            parts1 = n1.split()
+            parts2 = n2.split()
+            if len(parts1) >= 2 and len(parts2) >= 2:
+                # Check last name match
+                if parts1[-1] == parts2[-1]:
+                    # Check first name or initial match
+                    if parts1[0] == parts2[0]:
+                        return 0.95
+                    elif parts1[0][0] == parts2[0][0]:
+                        return 0.8
+
+        # Fall back to sequence matching
+        ratio = SequenceMatcher(None, n1, n2).ratio()
+        return ratio
+
+    @staticmethod
+    def find_best_match(name: str, candidates: List, entity_type: str = None, threshold: float = 0.75):
+        """Find the best matching entity from candidates."""
+        best_match = None
+        best_score = 0
+
+        for candidate in candidates:
+            candidate_name = candidate.canonical_name if hasattr(
+                candidate, 'canonical_name') else str(candidate)
+            score = EntityNormalizer.compute_similarity(
+                name, candidate_name, entity_type)
+
+            if score > best_score and score >= threshold:
+                best_score = score
+                best_match = candidate
+
+        return best_match, best_score
+
+
+class ExtractionPipeline:
+    """Orchestrates the full extraction pipeline."""
+
+    def __init__(self, db: Database, vector_store: VectorStore, api_key: str = GEMINI_API_KEY):
+        self.db = db
+        self.vector_store = vector_store
+        self.parser = DocumentParser()
+        self.chunker = Chunker()
+        self.structural_extractor = StructuralExtractor()
+        self.semantic_extractor = SemanticExtractor(
+            api_key, external_rate_limit=True)
+        self.embedding_generator = EmbeddingGenerator(api_key)
+
+    def process_document(self, filepath: str, skip_if_exists: bool = True) -> Optional[str]:
+        """Process a single document through the extraction pipeline.
+
+        Returns the document ID if successful.
+        """
+        _print(f"\n{'='*60}")
+        _print(f"Processing: {filepath}")
+        _print('='*60)
+
+        # Step 1: Parse document
+        _print("\n[1/6] Parsing document...")
+        parsed = self.parser.parse(filepath)
+        if not parsed:
+            _print(f"Failed to parse: {filepath}")
+            return None
+
+        # Check if already processed
+        if skip_if_exists:
+            existing = self.db.get_document_by_hash(parsed.file_hash)
+            if existing and existing.processed_at:
+                _print(f"Document already processed: {existing.id}")
+                return existing.id
+
+        # Create document record
+        doc = Document.create(
+            filename=parsed.filename,
+            filepath=parsed.filepath,
+            file_hash=parsed.file_hash
+        )
+        doc_id = self.db.add_document(doc)
+        _print(f"Created document record: {doc_id}")
+
+        # Step 2: Structural extraction
+        _print("\n[2/6] Extracting structural elements...")
+        structural = self.structural_extractor.extract(parsed.text)
+        self._store_structural_results(structural, doc_id, parsed.text)
+
+        # Step 3: Chunk document
+        _print("\n[3/6] Chunking document...")
+        chunks = self.chunker.chunk_text(parsed.text)
+        _print(f"Created {len(chunks)} chunks")
+
+        # Get existing entities for context
+        existing_entities = [
+            e.canonical_name for e in self.db.get_all_entities(limit=100)]
+
+        # Step 4: Semantic extraction per chunk (PARALLEL)
+        _print("\n[4/6] Extracting entities, relations, and facts (parallel)...")
+        all_entities = []
+        all_relations = []
+        all_facts = []
+
+        # Use parallel processing for faster extraction
+        if len(chunks) > 1:
+            results = self._extract_chunks_parallel(chunks, existing_entities)
+        else:
+            results = self._extract_chunks_sequential(
+                chunks, existing_entities)
+
+        for extraction, chunk in results:
+            # Add span offsets to entities
+            for entity in extraction.entities:
+                # Ensure properties is a dict (LLM might return a list)
+                if not isinstance(entity.properties, dict):
+                    entity.properties = {}
+                entity.properties['chunk_start'] = chunk.start_char
+                entity.properties['chunk_end'] = chunk.end_char
+
+            all_entities.extend(extraction.entities)
+            all_relations.extend(extraction.relations)
+            all_facts.extend(extraction.facts)
+
+        # Infer additional relationships from extracted data
+        _print("\n[4.5/6] Inferring implicit relationships...")
+        inferred_relations = RelationshipInferrer.infer_relationships(
+            all_entities, all_relations, all_facts
+        )
+        _print(
+            f"  Inferred {len(inferred_relations)} additional relationships")
+        all_relations.extend(inferred_relations)
+
+        # Step 5: Entity resolution and storage
+        _print("\n[5/6] Resolving and storing entities...")
+        entity_map = self._resolve_and_store_entities(
+            all_entities, doc_id, parsed.text)
+
+        # Step 6: Store relations and facts
+        _print("\n[6/6] Storing relations and facts...")
+        self._store_relations(all_relations, entity_map, doc_id)
+        self._store_facts(all_facts, entity_map, doc_id)
+
+        # Mark document as processed
+        self.db.mark_document_processed(doc_id)
+
+        # Save vector store
+        self.vector_store.save()
+
+        _print(f"\n{'='*60}")
+        _print(f"Document processing complete: {doc_id}")
+        stats = self.db.get_stats()
+        _print(
+            f"Graph now has: {stats['entities']} entities, {stats['edges']} edges")
+        _print('='*60)
+
+        return doc_id
+
+    def process_parsed_document(
+        self, parsed: ParsedDocument, skip_if_exists: bool = True,
+        doc_id: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Process an already-parsed document (e.g. from S3 bytes).
+        Returns document ID if successful.
+
+        Args:
+            parsed: The parsed document to process
+            skip_if_exists: Skip if already processed (by file_hash)
+            doc_id: Optional Iqidis document ID to link back to source
+        """
+        _print(f"\n{'='*60}")
+        _print(f"Processing: {parsed.filename}")
+        _print('='*60)
+
+        if skip_if_exists:
+            existing = self.db.get_document_by_hash(parsed.file_hash)
+            if existing and existing.processed_at:
+                _print(f"Document already processed: {existing.id}")
+                return existing.id
+
+        doc = Document.create(
+            filename=parsed.filename,
+            filepath=parsed.filepath,
+            file_hash=parsed.file_hash,
+            doc_id=doc_id
+        )
+        doc_id = self.db.add_document(doc)
+        _print(f"Created document record: {doc_id}")
+        doc_start = time.time()
+
+        t0 = time.time()
+        _print("\n[2/6] Extracting structural elements...")
+        structural = self.structural_extractor.extract(parsed.text)
+        self._store_structural_results(structural, doc_id, parsed.text)
+        _print(f"  ⏱ Step 2: {time.time() - t0:.1f}s")
+
+        t0 = time.time()
+        _print("\n[3/6] Chunking document...")
+        chunks = self.chunker.chunk_text(parsed.text)
+        _print(f"Created {len(chunks)} chunks")
+
+        existing_entities = [
+            e.canonical_name for e in self.db.get_all_entities(limit=100)]
+        _print(f"  ⏱ Step 3: {time.time() - t0:.1f}s")
+
+        t0 = time.time()
+        _print("\n[4/6] Extracting entities, relations, and facts (parallel)...")
+        all_entities, all_relations, all_facts = [], [], []
+        if len(chunks) > 1:
+            results = self._extract_chunks_parallel(chunks, existing_entities)
+        else:
+            results = self._extract_chunks_sequential(
+                chunks, existing_entities)
+
+        for extraction, chunk in results:
+            for entity in extraction.entities:
+                if not isinstance(entity.properties, dict):
+                    entity.properties = {}
+                entity.properties['chunk_start'] = chunk.start_char
+                entity.properties['chunk_end'] = chunk.end_char
+            all_entities.extend(extraction.entities)
+            all_relations.extend(extraction.relations)
+            all_facts.extend(extraction.facts)
+        _print(f"  ⏱ Step 4: {time.time() - t0:.1f}s")
+
+        t0 = time.time()
+        _print("\n[4.5/6] Inferring implicit relationships...")
+        inferred = RelationshipInferrer.infer_relationships(
+            all_entities, all_relations, all_facts
+        )
+        all_relations.extend(inferred)
+        _print(f"  ⏱ Step 4.5: {time.time() - t0:.1f}s")
+
+        t0 = time.time()
+        _print("\n[5/6] Resolving and storing entities...")
+        entity_map = self._resolve_and_store_entities(
+            all_entities, doc_id, parsed.text)
+        _print(f"  ⏱ Step 5: {time.time() - t0:.1f}s")
+
+        t0 = time.time()
+        _print("\n[6/6] Storing relations and facts...")
+        self._store_relations(all_relations, entity_map, doc_id)
+        self._store_facts(all_facts, entity_map, doc_id)
+        _print(f"  ⏱ Step 6: {time.time() - t0:.1f}s")
+
+        self.db.mark_document_processed(doc_id)
+        self.vector_store.save()
+
+        _print(
+            f"\n✅ Document complete: {doc_id} (total: {time.time() - doc_start:.1f}s)")
+        return doc_id
+
+    def process_precomputed_chunks(
+        self,
+        parsed: ParsedDocument,
+        precomputed_chunks: List[Dict[str, Any]],
+        skip_if_exists: bool = True,
+        doc_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Process a document with pre-computed chunks + embeddings (Tier 1).
+
+        Skips: text extraction, chunking, embedding generation.
+        Runs: structural extraction, entity extraction (Step 4),
+              relationship inference (Step 4.5), entity resolution (Step 5),
+              storage (Step 6), and stores chunk embeddings.
+
+        Args:
+            parsed: ParsedDocument with combined text from all chunks
+            precomputed_chunks: List of dicts with keys: chunk_index, content, embedding
+            skip_if_exists: Skip if document already processed
+            doc_id: Optional Iqidis document ID
+        """
+        _print(f"\n{'='*60}")
+        _print(f"Processing (Tier 1 — precomputed): {parsed.filename}")
+        _print('='*60)
+
+        if skip_if_exists:
+            existing = self.db.get_document_by_hash(parsed.file_hash)
+            if existing and existing.processed_at:
+                _print(f"Document already processed: {existing.id}")
+                return existing.id
+
+        doc = Document.create(
+            filename=parsed.filename,
+            filepath=parsed.filepath,
+            file_hash=parsed.file_hash,
+            doc_id=doc_id
+        )
+        kg_doc_id = self.db.add_document(doc)
+        _print(f"Created document record: {kg_doc_id}")
+        doc_start = time.time()
+
+        # Step 2: Structural extraction (fast, regex-based — still useful)
+        t0 = time.time()
+        _print("\n[2/6] Extracting structural elements...")
+        structural = self.structural_extractor.extract(parsed.text)
+        self._store_structural_results(structural, kg_doc_id, parsed.text)
+        _print(f"  ⏱ Step 2: {time.time() - t0:.1f}s")
+
+        # Step 3: SKIPPED — using pre-computed chunks
+        t0 = time.time()
+        sorted_chunks = sorted(
+            precomputed_chunks, key=lambda c: c.get("chunk_index", 0))
+        chunks = []
+        char_offset = 0
+        for pc in sorted_chunks:
+            content = pc.get("content", "")
+            chunk = Chunk(
+                text=content,
+                start_char=char_offset,
+                end_char=char_offset + len(content),
+                chunk_index=pc.get("chunk_index", len(chunks)),
+                total_chunks=len(sorted_chunks),
+            )
+            chunks.append(chunk)
+            char_offset += len(content) + 1  # +1 for separator
+        _print(
+            f"\n[3/6] Using {len(chunks)} pre-computed chunks (SKIP chunking)")
+        _print(f"  ⏱ Step 3: {time.time() - t0:.3f}s")
+
+        # Step 4: Entity extraction (parallel) — uses chunk content text
+        t0 = time.time()
+        _print("\n[4/6] Extracting entities, relations, and facts (parallel)...")
+        existing_entities = [
+            e.canonical_name for e in self.db.get_all_entities(limit=100)]
+        all_entities, all_relations, all_facts = [], [], []
+        if len(chunks) > 1:
+            results = self._extract_chunks_parallel(chunks, existing_entities)
+        else:
+            results = self._extract_chunks_sequential(
+                chunks, existing_entities)
+
+        for extraction, chunk in results:
+            for entity in extraction.entities:
+                if not isinstance(entity.properties, dict):
+                    entity.properties = {}
+                entity.properties['chunk_start'] = chunk.start_char
+                entity.properties['chunk_end'] = chunk.end_char
+            all_entities.extend(extraction.entities)
+            all_relations.extend(extraction.relations)
+            all_facts.extend(extraction.facts)
+        _print(f"  ⏱ Step 4: {time.time() - t0:.1f}s")
+
+        # Step 4.5: Infer implicit relationships
+        t0 = time.time()
+        _print("\n[4.5/6] Inferring implicit relationships...")
+        inferred = RelationshipInferrer.infer_relationships(
+            all_entities, all_relations, all_facts
+        )
+        all_relations.extend(inferred)
+        _print(f"  ⏱ Step 4.5: {time.time() - t0:.1f}s")
+
+        # Step 5: Resolve and store entities
+        t0 = time.time()
+        _print("\n[5/6] Resolving and storing entities...")
+        entity_map = self._resolve_and_store_entities(
+            all_entities, kg_doc_id, parsed.text)
+        _print(f"  ⏱ Step 5: {time.time() - t0:.1f}s")
+
+        # Step 6: Store relations and facts
+        t0 = time.time()
+        _print("\n[6/6] Storing relations and facts...")
+        self._store_relations(all_relations, entity_map, kg_doc_id)
+        self._store_facts(all_facts, entity_map, kg_doc_id)
+        _print(f"  ⏱ Step 6: {time.time() - t0:.1f}s")
+
+        # Store pre-computed chunk embeddings
+        t0 = time.time()
+        self.db.store_document_chunks_batch(kg_doc_id, sorted_chunks)
+        _print(f"  ⏱ Chunk embeddings stored: {time.time() - t0:.1f}s")
+
+        self.db.mark_document_processed(kg_doc_id)
+        self.vector_store.save()
+
+        _print(
+            f"\n✅ Document complete (Tier 1): {kg_doc_id} (total: {time.time() - doc_start:.1f}s)")
+        return kg_doc_id
+
+    def process_directory(self, dirpath: str, recursive: bool = True, parallel: bool = False) -> List[str]:
+        """Process all documents in a directory.
+
+        Args:
+            dirpath: Path to directory containing documents
+            recursive: Search subdirectories
+            parallel: Process documents in parallel (experimental)
+
+        Returns list of successfully processed document IDs.
+        """
+        dirpath = Path(dirpath)
+        if not dirpath.exists():
+            _print(f"Directory not found: {dirpath}")
+            return []
+
+        supported_extensions = self.parser.get_supported_extensions()
+        processed_ids = []
+
+        # Find all files
+        if recursive:
+            files = []
+            for ext in supported_extensions:
+                files.extend(dirpath.rglob(f"*{ext}"))
+        else:
+            files = []
+            for ext in supported_extensions:
+                files.extend(dirpath.glob(f"*{ext}"))
+
+        _print(f"Found {len(files)} documents to process")
+
+        if parallel and len(files) > 1:
+            processed_ids = self._process_documents_parallel(files)
+        else:
+            for filepath in files:
+                try:
+                    doc_id = self.process_document(str(filepath))
+                    if doc_id:
+                        processed_ids.append(doc_id)
+                except Exception as e:
+                    _print(f"Error processing {filepath}: {e}")
+                    continue
+
+        return processed_ids
+
+    def _process_documents_parallel(self, files: List[Path], max_workers: int = 2) -> List[str]:
+        """Process multiple documents in parallel.
+
+        Note: Uses limited parallelism to avoid database contention.
+        """
+        processed_ids = []
+        total_files = len(files)
+
+        _print(
+            f"\nProcessing {total_files} documents with {max_workers} parallel workers...")
+
+        def process_single(filepath: Path) -> Optional[str]:
+            """Worker function for parallel document processing."""
+            try:
+                return self.process_document(str(filepath))
+            except Exception as e:
+                _print(f"Error processing {filepath}: {e}")
+                return None
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(process_single, f): f for f in files}
+
+            completed = 0
+            for future in as_completed(futures):
+                filepath = futures[future]
+                doc_id = future.result()
+                completed += 1
+
+                if doc_id:
+                    processed_ids.append(doc_id)
+                    _print(
+                        f"\n[{completed}/{total_files}] Completed: {filepath.name}")
+                else:
+                    _print(
+                        f"\n[{completed}/{total_files}] Failed: {filepath.name}")
+
+        return processed_ids
+
+    def _extract_chunks_parallel(
+        self, chunks: List[Chunk], existing_entities: List[str]
+    ) -> List[Tuple[SemanticExtraction, Chunk]]:
+        """Extract from chunks in parallel using ThreadPoolExecutor."""
+        results = []
+        total_chunks = len(chunks)
+
+        _print(
+            f"  Processing {total_chunks} chunks with {MAX_PARALLEL_WORKERS} parallel workers...")
+
+        def extract_chunk(chunk_data: Tuple[int, Chunk]) -> Tuple[SemanticExtraction, Chunk, int]:
+            """Worker function for parallel extraction."""
+            idx, chunk = chunk_data
+            # Use global rate limiter
+            _global_rate_limiter.acquire()
+
+            try:
+                extraction = self.semantic_extractor.extract(
+                    chunk.text, existing_entities)
+                return extraction, chunk, idx
+            except Exception as e:
+                _print(f"\n    Chunk {idx+1} error: {e}")
+                return SemanticExtraction(entities=[], relations=[], facts=[]), chunk, idx
+
+        # Process chunks in parallel
+        with ThreadPoolExecutor(max_workers=MAX_PARALLEL_WORKERS) as executor:
+            # Submit all chunks
+            futures = {
+                executor.submit(extract_chunk, (i, chunk)): i
+                for i, chunk in enumerate(chunks)
+            }
+
+            # Collect results as they complete
+            completed = 0
+            for future in as_completed(futures):
+                extraction, chunk, idx = future.result()
+                results.append((extraction, chunk))
+                completed += 1
+
+                # Progress update
+                e_count = len(extraction.entities)
+                r_count = len(extraction.relations)
+                f_count = len(extraction.facts)
+                _print(
+                    f"  [{completed}/{total_chunks}] Chunk {idx+1}: {e_count} entities, {r_count} relations, {f_count} facts")
+
+        # Sort results by original chunk order
+        results.sort(key=lambda x: chunks.index(x[1]))
+
+        total_e = sum(len(r[0].entities) for r in results)
+        total_r = sum(len(r[0].relations) for r in results)
+        total_f = sum(len(r[0].facts) for r in results)
+        _print(
+            f"  Total extracted: {total_e} entities, {total_r} relations, {total_f} facts")
+
+        return results
+
+    def _extract_chunks_sequential(
+        self, chunks: List[Chunk], existing_entities: List[str]
+    ) -> List[Tuple[SemanticExtraction, Chunk]]:
+        """Extract from chunks sequentially (for single chunk or fallback)."""
+        results = []
+
+        for i, chunk in enumerate(chunks):
+            _print(f"  Chunk {i+1}/{len(chunks)}...", end=" ")
+
+            try:
+                extraction = self.semantic_extractor.extract(
+                    chunk.text, existing_entities)
+                results.append((extraction, chunk))
+
+                # Update existing entities for context
+                existing_entities.extend([e.name for e in extraction.entities])
+
+                _print(
+                    f"Found {len(extraction.entities)} entities, {len(extraction.relations)} relations, {len(extraction.facts)} facts")
+
+            except Exception as e:
+                _print(f"Error: {e}")
+                results.append(
+                    (SemanticExtraction(entities=[], relations=[], facts=[]), chunk))
+
+        return results
+
+    def _store_structural_results(self, structural: StructuralExtraction, doc_id: str, full_text: str):
+        """Store results from structural extraction using batch operations."""
+        all_entities = []
+        all_mentions = []
+        all_aliases = []
+        embedding_texts = []  # (entity_id, text_for_embedding)
+
+        # Collect parties
+        for party in structural.parties:
+            entity = Entity.create(
+                type="Organization" if any(corp in party.name for corp in [
+                                           'Inc', 'Corp', 'LLC', 'Ltd', 'LLP']) else "Person",
+                canonical_name=party.name,
+                properties={"role": party.role, "source": "structural"},
+                confidence="confirmed"
+            )
+            all_entities.append(entity)
+            all_mentions.append(Mention.create(
+                entity_id=entity.id, doc_id=doc_id,
+                span_start=party.span_start, span_end=party.span_end,
+                surface_text=party.name,
+                context_snippet=full_text[max(
+                    0, party.span_start-100):party.span_end+100]
+            ))
+            for alias in party.aliases:
+                if alias != party.name:
+                    all_aliases.append(Alias.create(
+                        entity.id, alias, "defined_term"))
+            embedding_texts.append(
+                (entity.id, f"{party.name} {party.role}"[:500]))
+
+        # Collect defined terms
+        for term in structural.defined_terms:
+            entity = Entity.create(
+                type="Reference", canonical_name=term.term,
+                properties={"definition": term.definition,
+                            "source": "structural"},
+                confidence="confirmed"
+            )
+            all_entities.append(entity)
+            for alias in term.aliases:
+                if alias != term.term:
+                    all_aliases.append(Alias.create(
+                        entity.id, alias, "defined_term"))
+            embedding_texts.append(
+                (entity.id, f"{term.term} {term.definition}"[:500]))
+
+        # Document metadata entity
+        if structural.document_type != 'unknown':
+            doc_entity = Entity.create(
+                type="Document", canonical_name=f"Doc_{doc_id[:8]}",
+                properties={"document_type": structural.document_type, "case_number": structural.case_number,
+                            "court": structural.court_or_tribunal, "source": "structural"},
+                confidence="confirmed"
+            )
+            all_entities.append(doc_entity)
+
+        # Batch insert all at once
+        if all_entities:
+            self.db.add_entities_batch(all_entities)
+        if all_mentions:
+            self.db.add_mentions_batch(all_mentions)
+        if all_aliases:
+            self.db.add_aliases_batch(all_aliases)
+
+        # Batch generate and store embeddings
+        if embedding_texts:
+            self._store_entity_embeddings_batch(embedding_texts)
+
+        _print(
+            f"  Stored {len(structural.parties)} parties, {len(structural.defined_terms)} defined terms")
+
+    def _resolve_and_store_entities(self, entities: List[ExtractedEntity], doc_id: str, full_text: str) -> Dict[str, str]:
+        """Resolve extracted entities against existing graph and store.
+
+        Optimized v3: fully in-memory resolution.
+        - Pre-loads ALL existing entities + aliases in 2 SQL queries (not per-entity).
+        - Builds an in-memory name→entity index for O(1) exact / normalized lookups.
+        - Uses name similarity (≥0.8) for fuzzy matching — no embedding API calls.
+        - Batches new entity creation, mentions, aliases, and embeddings.
+        Returns mapping of entity name -> entity ID.
+        """
+        entity_map: Dict[str, str] = {}
+        pending_aliases: list = []
+
+        # --- Deduplicate: keep first occurrence per name ---
+        unique_entities: Dict[str, ExtractedEntity] = {}
+        for entity in entities:
+            if not entity.name or len(entity.name) < 2:
+                continue
+            if entity.name not in unique_entities:
+                unique_entities[entity.name] = entity
+
+        total = len(unique_entities)
+        _print(f"  {len(entities)} raw → {total} unique entities to resolve")
+
+        # --- Pre-load all existing entities + aliases (2 queries total) ---
+        all_existing = self.db.get_all_entities(limit=50000)
+        all_aliases = self.db.get_all_aliases_for_matter()
+
+        # Build in-memory lookup: lowercase name/alias → list of entities
+        name_index: Dict[str, list] = {}  # {name_lower: [Entity, ...]}
+        entity_by_id: Dict[str, 'Entity'] = {}
+
+        for ent in all_existing:
+            entity_by_id[ent.id] = ent
+            key = ent.canonical_name.lower()
+            name_index.setdefault(key, []).append(ent)
+            # Also index by normalized name
+            norm = EntityNormalizer.normalize_name(
+                ent.canonical_name, ent.type).lower()
+            if norm != key:
+                name_index.setdefault(norm, []).append(ent)
+
+        for alias in all_aliases:
+            ent = entity_by_id.get(alias.entity_id)
+            if ent:
+                alias_key = alias.alias_text.lower()
+                name_index.setdefault(alias_key, []).append(ent)
+
+        _print(f"  Loaded {len(all_existing)} existing entities, "
+               f"{len(all_aliases)} aliases into memory index")
+
+        # Collect new entities for batch creation at the end
+        new_entity_batch: list = []
+
+        for i, (name, entity) in enumerate(unique_entities.items()):
+            if (i + 1) % 100 == 0:
+                _print(f"  ... resolving {i+1}/{total}")
+
+            validated_type = EntityNormalizer.validate_entity_type(
+                entity.name, entity.type)
+            if validated_type != entity.type:
+                entity.type = validated_type
+
+            normalized_name = EntityNormalizer.normalize_name(
+                entity.name, entity.type)
+
+            # --- In-memory lookup: gather candidates from index ---
+            candidates_set: Dict[str, 'Entity'] = {}  # id -> Entity (dedup)
+            for lookup_key in {name.lower(), normalized_name.lower()}:
+                for ent in name_index.get(lookup_key, []):
+                    candidates_set[ent.id] = ent
+            candidates = list(candidates_set.values())
+
+            if candidates:
+                best_match, match_score = EntityNormalizer.find_best_match(
+                    entity.name, candidates, entity.type, threshold=0.8)
+
+                if best_match and match_score >= 0.8:
+                    entity_map[entity.name] = best_match.id
+                    if entity.name.lower() != best_match.canonical_name.lower():
+                        pending_aliases.append(Alias.create(
+                            best_match.id, entity.name, "extracted"))
+                    continue
+
+            # No exact/fuzzy match in index — try broader fuzzy against all existing
+            if all_existing and name not in entity_map:
+                best_match, match_score = EntityNormalizer.find_best_match(
+                    entity.name, all_existing, entity.type, threshold=0.85)
+                if best_match and match_score >= 0.85:
+                    entity_map[entity.name] = best_match.id
+                    if entity.name.lower() != best_match.canonical_name.lower():
+                        pending_aliases.append(Alias.create(
+                            best_match.id, entity.name, "extracted"))
+                    continue
+
+            # No match — create new entity
+            new_entity_batch.append(
+                self._prepare_new_entity(entity, doc_id, full_text))
+
+        # --- Batch-create all new entities ---
+        if new_entity_batch:
+            _print(f"  Batch-creating {len(new_entity_batch)} new entities...")
+            db_entities = [item[0] for item in new_entity_batch]
+            mentions = [item[1] for item in new_entity_batch]
+            emb_texts = [item[2] for item in new_entity_batch]
+            names = [item[3] for item in new_entity_batch]
+
+            self.db.add_entities_batch(db_entities)
+            self.db.add_mentions_batch(mentions)
+
+            # Map names to IDs
+            for db_ent, ent_name in zip(db_entities, names):
+                entity_map[ent_name] = db_ent.id
+
+            # Batch embeddings (single API call for all new entities)
+            if emb_texts:
+                self._store_entity_embeddings_batch(emb_texts)
+
+        # Batch insert all collected aliases
+        if pending_aliases:
+            self.db.add_aliases_batch(pending_aliases)
+
+        _print(f"  Resolved: {len(entity_map)} entities "
+               f"({len(new_entity_batch)} new, {len(pending_aliases)} aliases)")
+        return entity_map
+
+    def _prepare_new_entity(
+        self, entity: ExtractedEntity, doc_id: str, full_text: str
+    ) -> Tuple:
+        """Prepare a new entity, mention, and embedding text for batch creation.
+        Returns (db_entity, mention, (entity_id, emb_text), entity_name).
+        """
+        db_entity = Entity.create(
+            type=entity.type,
+            canonical_name=entity.name,
+            properties=entity.properties,
+            confidence="extracted"
+        )
+        entity_id = db_entity.id
+
+        chunk_start = entity.properties.get('chunk_start', 0)
+        chunk_end = entity.properties.get('chunk_end', len(full_text))
+
+        mention = Mention.create(
+            entity_id=entity_id,
+            doc_id=doc_id,
+            span_start=chunk_start,
+            span_end=chunk_end,
+            surface_text=entity.span_text[:200],
+            context_snippet=full_text[chunk_start:min(
+                chunk_start + 300, len(full_text))]
+        )
+
+        emb_text = f"{entity.name} {str(entity.properties)}"[:500]
+        return (db_entity, mention, (entity_id, emb_text), entity.name)
+
+    def _store_entity_embedding(self, entity_id: str, name: str, context: str = ""):
+        """Generate and store embedding for an entity."""
+        try:
+            text = f"{name} {context}"[:500]
+            embedding = self.embedding_generator.generate(text)
+            self.vector_store.add(entity_id, embedding)
+        except Exception as e:
+            _print(f"Warning: Could not generate embedding for {name}: {e}")
+
+    def _store_entity_embeddings_batch(self, embedding_texts: List[Tuple[str, str]]):
+        """Generate and store embeddings for multiple entities at once.
+
+        Args:
+            embedding_texts: List of (entity_id, text_for_embedding) tuples
+        """
+        if not embedding_texts:
+            return
+        try:
+            texts = [text for _, text in embedding_texts]
+            embeddings = self.embedding_generator.generate_batch(texts)
+            items = [(eid, emb)
+                     for (eid, _), emb in zip(embedding_texts, embeddings)]
+            self.vector_store.add_batch(items)
+        except Exception as e:
+            _print(f"Warning: Batch embedding generation failed: {e}")
+            # Fallback to individual generation
+            for entity_id, text in embedding_texts:
+                self._store_entity_embedding(entity_id, text, "")
+
+    def _store_relations(self, relations: List, entity_map: Dict[str, str], doc_id: str):
+        """Store extracted relations in the graph using batch operations."""
+        all_edges = []
+
+        for rel in relations:
+            source_id = entity_map.get(rel.source_name)
+            target_id = entity_map.get(rel.target_name)
+
+            if not source_id or not target_id:
+                source_id = self._find_entity_by_name(
+                    rel.source_name, entity_map)
+                target_id = self._find_entity_by_name(
+                    rel.target_name, entity_map)
+
+            if source_id and target_id:
+                all_edges.append(Edge.create(
+                    source_entity_id=source_id,
+                    target_entity_id=target_id,
+                    relation_type=rel.relation_type,
+                    properties=rel.properties,
+                    confidence="extracted",
+                    provenance_doc_id=doc_id
+                ))
+
+        if all_edges:
+            self.db.add_edges_batch(all_edges)
+        _print(f"  Stored {len(all_edges)} relations")
+
+    def _store_facts(self, facts: List, entity_map: Dict[str, str], doc_id: str):
+        """Store extracted facts as Fact entities using batch operations."""
+        all_fact_entities = []
+        all_edges = []
+
+        for fact in facts:
+            try:
+                fact_props = fact.properties if isinstance(
+                    fact.properties, dict) else {}
+
+                fact_entity = Entity.create(
+                    type="Fact",
+                    canonical_name=f"{fact.fact_type}: {fact.text[:50]}...",
+                    properties={"fact_type": fact.fact_type,
+                                "full_text": fact.text, **fact_props},
+                    confidence="extracted"
+                )
+                all_fact_entities.append(fact_entity)
+
+                # Collect edges linking fact to related entities
+                related = fact.related_entities if isinstance(
+                    fact.related_entities, list) else []
+                for entity_ref in related:
+                    if isinstance(entity_ref, str):
+                        entity_name = entity_ref
+                    elif isinstance(entity_ref, dict):
+                        entity_name = entity_ref.get(
+                            'name', '') or str(entity_ref)
+                    else:
+                        continue
+
+                    entity_id = entity_map.get(entity_name) or self._find_entity_by_name(
+                        entity_name, entity_map)
+                    if entity_id:
+                        all_edges.append(Edge.create(
+                            source_entity_id=fact_entity.id,
+                            target_entity_id=entity_id,
+                            relation_type="about",
+                            properties={},
+                            confidence="extracted",
+                            provenance_doc_id=doc_id
+                        ))
+            except Exception as e:
+                _print(f"  Warning: Failed to prepare fact: {e}")
+                continue
+
+        # Batch insert all facts and edges
+        if all_fact_entities:
+            self.db.add_entities_batch(all_fact_entities)
+        if all_edges:
+            self.db.add_edges_batch(all_edges)
+        _print(f"  Stored {len(all_fact_entities)} facts")
+
+    def _find_entity_by_name(self, name: str, entity_map: Dict[str, str]) -> Optional[str]:
+        """Find entity ID by name with fuzzy matching (in-memory only, no DB)."""
+        # Exact match
+        if name in entity_map:
+            return entity_map[name]
+
+        # Case-insensitive match
+        name_lower = name.lower()
+        for k, v in entity_map.items():
+            if k.lower() == name_lower:
+                return v
+
+        # Partial match (substring containment)
+        for k, v in entity_map.items():
+            if name_lower in k.lower() or k.lower() in name_lower:
+                return v
+
+        return None

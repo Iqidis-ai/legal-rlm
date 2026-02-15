@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KnowledgeGraphsIqidis - Backend Explainer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.6.1/mermaid.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+
+        .schema-field {
+            border-bottom: 1px solid #e2e8f0;
+            padding: 8px 0;
+        }
+
+        .schema-field:last-child {
+            border-bottom: none;
+        }
+
+        .flow-step {
+            border-left: 2px solid #e2e8f0;
+            padding-left: 20px;
+            padding-bottom: 20px;
+            position: relative;
+        }
+
+        .flow-step::before {
+            content: '';
+            width: 12px;
+            height: 12px;
+            background: #3b82f6;
+            border-radius: 50%;
+            position: absolute;
+            left: -7px;
+            top: 0;
+        }
+
+        .flow-step.active::before {
+            background: #10b981;
+            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2);
+        }
+
+        .flow-step:last-child {
+            border-left: 2px solid transparent;
+        }
+
+        pre {
+            background: #1e293b;
+            color: #e2e8f0;
+            border-radius: 8px;
+            padding: 12px;
+            overflow-x: auto;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+
+<body class="text-slate-800">
+
+    <!-- Navigation -->
+    <nav class="bg-white border-b border-slate-200 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">K
+                </div>
+                <h1
+                    class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600">
+                    Backend Explainer</h1>
+            </div>
+            <div class="flex space-x-6 text-sm font-medium text-slate-500">
+                <a href="#architecture" class="hover:text-blue-600 transition-colors">Architecture</a>
+                <a href="#schema" class="hover:text-blue-600 transition-colors">Database Schema</a>
+                <a href="#simulation" class="hover:text-blue-600 transition-colors">Flow Simulation</a>
+                <a href="#playground" class="hover:text-blue-600 transition-colors">Graph Playground</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-6 py-10 space-y-20">
+
+        <!-- 1. System Architecture -->
+        <section id="architecture" class="scroll-mt-24">
+            <div class="mb-8">
+                <h2 class="text-3xl font-bold mb-4">System Architecture</h2>
+                <p class="text-slate-600 max-w-3xl">Understanding how components fit together in `src/core`. The
+                    interaction flows from the API/CLI down to the core logic, which orchestrates specialized pipelines
+                    for interaction with storage layers.</p>
+            </div>
+            <div class="card p-8 overflow-hidden bg-white">
+                <div class="mermaid">
+                    graph TD
+                    subgraph Clients
+                    CLI[CLI Tools]
+                    API[REST API / Web UI]
+                    end
+
+                    subgraph Core_Logic["src/core (Business Logic)"]
+                    KG[KnowledgeGraph]
+                    XP[ExtractionPipeline]
+                    QE[QueryEngine]
+                    end
+
+                    subgraph Storage_Layer["Storage Layer"]
+                    SQL[(SQLite Database)]
+                    VEC[(FAISS Vector Store)]
+                    FS[File System]
+                    end
+
+                    subgraph External_Services
+                    LLM[Gemini API]
+                    end
+
+                    CLI -->|python -m src.cli| KG
+                    API -->|/query, /process| KG
+
+                    KG -->|process_document()| XP
+                    KG -->|query()| QE
+
+                    XP -->|1. Read| FS
+                    XP -->|2. Extract| LLM
+                    XP -->|3. Store| SQL
+                    XP -->|4. Index| VEC
+
+                    QE -->|1. Embed Query| LLM
+                    QE -->|2. Search| VEC
+                    QE -->|3. Expand Graph| SQL
+                    QE -->|4. Answer| LLM
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. Database Schema -->
+        <section id="schema" class="scroll-mt-24">
+            <div class="mb-8">
+                <h2 class="text-3xl font-bold mb-4">Database Schema</h2>
+                <p class="text-slate-600 max-w-3xl">The core data models defined in `src/core/storage/models.py`.
+                    Understanding these structures is key to understanding the graph capabilities.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- Entities Table -->
+                <div class="card p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-xl font-semibold text-blue-600">Entity Model</h3>
+                        <span class="text-xs font-mono bg-slate-100 px-2 py-1 rounded">table: entities</span>
+                    </div>
+                    <div class="space-y-4">
+                        <div class="schema-field">
+                            <div class="flex justify-between"><span class="font-mono font-bold text-slate-700">id</span>
+                                <span class="text-xs text-slate-400">UUID (PK)</span></div>
+                            <p class="text-sm text-slate-500 mt-1">Unique identifier for the node.</p>
+                        </div>
+                        <div class="schema-field">
+                            <div class="flex justify-between"><span
+                                    class="font-mono font-bold text-slate-700">type</span> <span
+                                    class="text-xs text-slate-400">VARCHAR</span></div>
+                            <p class="text-sm text-slate-500 mt-1">E.g., "Person", "Organization", "Event".</p>
+                        </div>
+                        <div class="schema-field">
+                            <div class="flex justify-between"><span
+                                    class="font-mono font-bold text-slate-700">canonical_name</span> <span
+                                    class="text-xs text-slate-400">VARCHAR</span></div>
+                            <p class="text-sm text-slate-500 mt-1">The main display name.</p>
+                        </div>
+                        <div class="schema-field">
+                            <div class="flex justify-between"><span
+                                    class="font-mono font-bold text-slate-700">properties</span> <span
+                                    class="text-xs text-slate-400">JSON</span></div>
+                            <p class="text-sm text-slate-500 mt-1">Flexible key-value pairs (e.g. {"age": 50}).</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Edges Table -->
+                <div class="card p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-xl font-semibold text-indigo-600">Edge Model</h3>
+                        <span class="text-xs font-mono bg-slate-100 px-2 py-1 rounded">table: edges</span>
+                    </div>
+                    <div class="space-y-4">
+                        <div class="schema-field">
+                            <div class="flex justify-between"><span
+                                    class="font-mono font-bold text-slate-700">source_entity_id</span> <span
+                                    class="text-xs text-slate-400">UUID (FK)</span></div>
+                            <p class="text-sm text-slate-500 mt-1">Origin node of the relationship.</p>
+                        </div>
+                        <div class="schema-field">
+                            <div class="flex justify-between"><span
+                                    class="font-mono font-bold text-slate-700">target_entity_id</span> <span
+                                    class="text-xs text-slate-400">UUID (FK)</span></div>
+                            <p class="text-sm text-slate-500 mt-1">Destination node of the relationship.</p>
+                        </div>
+                        <div class="schema-field">
+                            <div class="flex justify-between"><span
+                                    class="font-mono font-bold text-slate-700">relation_type</span> <span
+                                    class="text-xs text-slate-400">VARCHAR</span></div>
+                            <p class="text-sm text-slate-500 mt-1">E.g., "WORKS_FOR", "SIGNED".</p>
+                        </div>
+                        <div class="schema-field">
+                            <div class="flex justify-between"><span
+                                    class="font-mono font-bold text-slate-700">provenance_span</span> <span
+                                    class="text-xs text-slate-400">JSON</span></div>
+                            <p class="text-sm text-slate-500 mt-1">Where in the doc this was found.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. Workflow Simulation -->
+        <section id="simulation" class="scroll-mt-24">
+            <div class="mb-8">
+                <h2 class="text-3xl font-bold mb-4">Logic Flow Simulation</h2>
+                <p class="text-slate-600 max-w-3xl">Interactive walk-through of the two most important backend
+                    processes.</p>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
+                <div class="flex border-b border-slate-200">
+                    <button onclick="setSimulation('ingestion')" id="btn-ingestion"
+                        class="px-6 py-4 font-semibold text-blue-600 border-b-2 border-blue-600 bg-blue-50 transition-colors">Document
+                        Ingestion Flow</button>
+                    <button onclick="setSimulation('query')" id="btn-query"
+                        class="px-6 py-4 font-semibold text-slate-500 hover:text-slate-700 transition-colors">Query
+                        Execution Flow</button>
+                </div>
+
+                <div class="p-8 grid grid-cols-1 lg:grid-cols-2 gap-10">
+                    <!-- Left: Controls & Steps -->
+                    <div>
+                        <div id="ingestion-desc" class="mb-6">
+                            <h3 class="text-xl font-bold mb-2">Process: `extract.py`</h3>
+                            <p class="text-slate-600">Simulates extracting knowledge from a raw PDF "Agreement.pdf".</p>
+                        </div>
+                        <div id="query-desc" class="hidden mb-6">
+                            <h3 class="text-xl font-bold mb-2">Process: `query.py`</h3>
+                            <p class="text-slate-600">Simulates answering: "Who signed the agreement?"</p>
+                        </div>
+
+                        <div id="sim-steps" class="space-y-1">
+                            <!-- Populated by JS -->
+                        </div>
+
+                        <button onclick="nextStep()"
+                            class="mt-6 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors shadow-md">
+                            Next Step &rarr;
+                        </button>
+                        <button onclick="resetSim()"
+                            class="mt-6 ml-2 px-6 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg font-medium transition-colors">
+                            Reset
+                        </button>
+                    </div>
+
+                    <!-- Right: State Visualization -->
+                    <div
+                        class="bg-slate-900 rounded-xl p-6 font-mono text-sm shadow-inner overflow-hidden flex flex-col">
+                        <div class="flex justify-between items-center mb-4 border-b border-slate-700 pb-2">
+                            <span class="text-slate-400 uppercase tracking-wider text-xs">System State / Logs</span>
+                            <div class="flex space-x-2">
+                                <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                                <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                                <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                            </div>
+                        </div>
+                        <div id="sim-console" class="flex-1 overflow-y-auto space-y-2 max-h-[400px]">
+                            <div class="text-slate-500 italic">// Waiting to start...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 4. Graph Playground -->
+        <section id="playground" class="scroll-mt-24 pb-20">
+            <div class="mb-8">
+                <h2 class="text-3xl font-bold mb-4">Data Playground</h2>
+                <p class="text-slate-600 max-w-3xl">Click on nodes to see the exact JSON structure that would be
+                    returned by the `Models`. This links the visualization directly to the code definitions.</p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[600px]">
+                <div class="lg:col-span-2 bg-white rounded-xl shadow-lg border border-slate-200 p-1 relative">
+                    <div id="mynetwork" class="w-full h-full rounded-lg bg-slate-50"></div>
+                    <div class="absolute bottom-4 left-4 bg-white/90 p-2 rounded shadow text-xs">
+                        <div class="flex items-center"><span
+                                class="w-3 h-3 rounded-full bg-[#97c2fc] mr-2 block"></span> Organization</div>
+                        <div class="flex items-center"><span
+                                class="w-3 h-3 rounded-full bg-[#fb7e81] mr-2 block"></span> Person</div>
+                        <div class="flex items-center"><span
+                                class="w-3 h-3 rounded-full bg-[#ffff00] mr-2 block"></span> Document</div>
+                    </div>
+                </div>
+                <div class="lg:col-span-1 flex flex-col gap-6">
+                    <div
+                        class="bg-slate-900 rounded-xl p-6 text-slate-300 font-mono text-sm flex-1 overflow-auto shadow-lg">
+                        <div
+                            class="text-xs uppercase tracking-wider text-slate-500 mb-2 border-b border-slate-700 pb-2">
+                            Selected Object JSON</div>
+                        <pre id="json-display"
+                            class="bg-transparent p-0 text-green-400">Select a node to inspect...</pre>
+                    </div>
+                    <div class="bg-white rounded-xl p-6 shadow-lg border border-slate-200">
+                        <h4 class="font-bold text-slate-700 mb-2">Code Reference</h4>
+                        <p class="text-sm text-slate-600">
+                            Matches <code
+                                class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">src/core/storage/models.py</code>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="bg-white border-t py-10 mt-10">
+        <div class="max-w-7xl mx-auto px-6 text-center text-slate-500 text-sm">
+            <p>Generated by Antigravity for KnowledgeGraphsIqidis education.</p>
+        </div>
+    </footer>
+
+    <script>
+        // Init Mermaid
+        mermaid.initialize({ startOnLoad: true });
+
+        // --- SIMULATION DATA & LOGIC ---
+        const scenarios = {
+            ingestion: {
+                steps: [
+                    { title: "Load Document", sub: "Load PDF from filesystem", log: "Reading 'Agreement.pdf' (2.4MB)... SHA256: a1b2c3..." },
+                    { title: "Text Extraction", sub: "PyMuPDF parsing", log: "Extracted 15 pages. Total characters: 24,500." },
+                    { title: "Chunking", sub: "Sliding window strategy", log: "Created 12 chunks. Size: 2000 chars, Overlap: 200 chars." },
+                    { title: "Entity Extraction", sub: "Gemini API Call", log: "Asking Gemini: 'Extract entities from chunk 1'...\nFound: [John Smith (Person), Acme Corp (Org)]" },
+                    { title: "Resolution", sub: "Deduplication", log: "Checking DB... 'John Smith' matches existing entity (95% confidence). Merging." },
+                    { title: "Storage", sub: "Write to SQLite & FAISS", log: "COMMIT: \n- 2 Entities updated\n- 1 Edge created\n- 12 Vectors added to Index" }
+                ]
+            },
+            query: {
+                steps: [
+                    { title: "Receive Query", sub: "User Input", log: "Query: 'Who signed the agreement?'" },
+                    { title: "Vector Search", sub: "Find relevant chunks", log: "Embedding query... Searching FAISS index...\nFound 3 relevant chunks (distance < 0.4)." },
+                    { title: "Graph Lookup", sub: "Find connected nodes", log: "Querying SQLite:\nSELECT * FROM edges WHERE type='SIGNED' AND target='Agreement'" },
+                    { title: "Context Assembly", sub: "Combine Graph + Text", log: "Context: \n- Graph: John Smith -> SIGNED -> Agreement\n- Text: '...agreement was executed by John Smith...'" },
+                    { title: "Synthesis", sub: "LLM Generation", log: "Sending to Gemini...\nResponse: 'John Smith signed the agreement on behalf of Acme Corp.'" }
+                ]
+            }
+        };
+
+        let currentScenario = 'ingestion';
+        let currentStepIndex = -1;
+
+        function setSimulation(mode) {
+            currentScenario = mode;
+            currentStepIndex = -1;
+
+            // Toggle UI
+            document.getElementById('btn-ingestion').className = mode === 'ingestion'
+                ? "px-6 py-4 font-semibold text-blue-600 border-b-2 border-blue-600 bg-blue-50 transition-colors"
+                : "px-6 py-4 font-semibold text-slate-500 hover:text-slate-700 transition-colors";
+            document.getElementById('btn-query').className = mode === 'query'
+                ? "px-6 py-4 font-semibold text-blue-600 border-b-2 border-blue-600 bg-blue-50 transition-colors"
+                : "px-6 py-4 font-semibold text-slate-500 hover:text-slate-700 transition-colors";
+
+            document.getElementById('ingestion-desc').classList.toggle('hidden', mode !== 'ingestion');
+            document.getElementById('query-desc').classList.toggle('hidden', mode !== 'query');
+
+            renderSteps();
+            document.getElementById('sim-console').innerHTML = '<div class="text-slate-500 italic">// Ready to start. Press "Next Step".</div>';
+        }
+
+        function renderSteps() {
+            const container = document.getElementById('sim-steps');
+            const data = scenarios[currentScenario].steps;
+            container.innerHTML = data.map((step, idx) => `
+                <div class="flow-step ${idx <= currentStepIndex ? 'active' : ''} ${idx === currentStepIndex ? 'text-slate-800' : 'text-slate-400'}">
+                    <div class="font-bold">${step.title}</div>
+                    <div class="text-sm">${step.sub}</div>
+                </div>
+            `).join('');
+        }
+
+        function nextStep() {
+            const max = scenarios[currentScenario].steps.length - 1;
+            if (currentStepIndex < max) {
+                currentStepIndex++;
+                renderSteps();
+
+                // Add log
+                const logDiv = document.getElementById('sim-console');
+                const logData = scenarios[currentScenario].steps[currentStepIndex].log;
+                const entry = document.createElement('div');
+                entry.className = "text-green-400 font-mono border-l-2 border-slate-700 pl-2 text-xs mb-2";
+                entry.innerText = `> [STEP ${currentStepIndex + 1}] ${logData}`;
+                logDiv.appendChild(entry);
+                logDiv.scrollTop = logDiv.scrollHeight;
+            }
+        }
+
+        function resetSim() {
+            currentStepIndex = -1;
+            renderSteps();
+            document.getElementById('sim-console').innerHTML = '<div class="text-slate-500 italic">// Reset. Ready.</div>';
+        }
+
+        // Initialize simulation UI
+        renderSteps();
+
+
+        // --- GRAPH PLAYGROUND LOGIC ---
+        // Sample data mimicking models.py structure
+        const nodes = new vis.DataSet([
+            {
+                id: 1, label: "John Smith", group: "person", data: {
+                    id: "uuid-1", type: "Person", canonical_name: "John Smith",
+                    properties: { role: "CEO", email: "john@acme.com" },
+                    confidence: "confirmed", status: "active"
+                }
+            },
+            {
+                id: 2, label: "Acme Corp", group: "org", data: {
+                    id: "uuid-2", type: "Organization", canonical_name: "Acme Corp",
+                    properties: { industry: "Tech", location: "NY" },
+                    confidence: "extracted", status: "active"
+                }
+            },
+            {
+                id: 3, label: "Employment Agreement", group: "doc", data: {
+                    id: "uuid-3", type: "Document", canonical_name: "Employment Agreement.pdf",
+                    properties: { date: "2023-01-01", pages: 15 },
+                    confidence: "1.0", status: "active"
+                }
+            },
+            {
+                id: 4, label: "Signed", group: "event", shape: "box", data: {
+                    id: "uuid-edge-1", type: "Edge", relation: "SIGNED",
+                    source: "John Smith", target: "Agreement"
+                }
+            }
+        ]);
+
+        const edges = new vis.DataSet([
+            { from: 1, to: 2, label: "WORKS_FOR", arrows: "to" },
+            { from: 1, to: 3, label: "SIGNED", arrows: "to" },
+            { from: 2, to: 3, label: "PARTY_TO", arrows: "to" }
+        ]);
+
+        const container = document.getElementById("mynetwork");
+        const data = { nodes: nodes, edges: edges };
+        const options = {
+            nodes: { shape: "dot", size: 20, font: { size: 14, face: "Inter" } },
+            groups: {
+                person: { color: { background: "#fb7e81", border: "#fa5a5e" } },
+                org: { color: { background: "#97c2fc", border: "#2b7ce9" } },
+                doc: { color: { background: "#ffff00", border: "#fb7e81" } }
+            },
+            physics: { stabilization: false },
+            interaction: { hover: true }
+        };
+
+        const network = new vis.Network(container, data, options);
+
+        network.on("click", function (params) {
+            if (params.nodes.length > 0) {
+                const nodeId = params.nodes[0];
+                const nodeData = nodes.get(nodeId).data;
+                document.getElementById("json-display").innerText = JSON.stringify(nodeData, null, 2);
+            } else {
+                document.getElementById("json-display").innerText = "Select a node to inspect...";
+            }
+        });
+    </script>
+</body>
+
+</html>
