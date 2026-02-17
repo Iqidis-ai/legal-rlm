@@ -10,7 +10,7 @@ http {
     # Redirect HTTP to HTTPS
     server {
         listen 80;
-        server_name rlm.irys.ai;
+        server_name rlm.iryslegal.com;
 
         # Let's Encrypt challenge location
         location /.well-known/acme-challenge/ {
@@ -26,11 +26,11 @@ http {
     # HTTPS server
     server {
         listen 443 ssl http2;
-        server_name rlm.irys.ai;
+        server_name rlm.iryslegal.com;
 
         # SSL certificates (Let's Encrypt)
-        ssl_certificate /etc/letsencrypt/live/rlm.irys.ai/fullchain.pem;
-        ssl_certificate_key /etc/letsencrypt/live/rlm.irys.ai/privkey.pem;
+        ssl_certificate /etc/letsencrypt/live/rlm.iryslegal.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/rlm.iryslegal.com/privkey.pem;
 
         # SSL configuration
         ssl_session_timeout 1d;
