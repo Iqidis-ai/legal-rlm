@@ -18,6 +18,7 @@ from ..core.models import GeminiClient, ModelTier
 from ..core.repository import MatterRepository
 from ..core.search import SearchResults
 from ..core.external_search import ExternalSearchManager
+from ..core.fact_store import FactStore
 from .state import InvestigationState, StepType, ThinkingStep, Citation, Lead, classify_query
 from . import decisions
 
@@ -152,6 +153,7 @@ class RLMEngine:
         self.external_search = ExternalSearchManager() if self.config.enable_external_search else None
         self._external_research: dict = {}  # Store external research results
         self.repo: Optional[MatterRepository] = None  # Set during investigate()
+        self.fact_store: Optional[FactStore] = None  # Set during investigate()
 
     async def investigate(
         self,
@@ -165,6 +167,25 @@ class RLMEngine:
         self.repo = repo  # Store for methods that need repo access (e.g., _load_pinned_documents)
         self._external_research = {"case_law": [], "web": [], "analysis": {}}  # Reset with proper structure
         state = InvestigationState.create(query, str(repository_path))
+
+        # Load fact store for this repository
+        self.fact_store = FactStore(Path(repository_path))
+        facts_loaded = self.fact_store.load()
+
+        # Emit fact store status to UI trace
+        if facts_loaded > 0:
+            self._emit_step(
+                state,
+                StepType.FINDING,
+                f"📚 Loaded {facts_loaded} cached facts from previous investigations",
+            )
+        else:
+            self._emit_step(
+                state,
+                StepType.THINKING,
+                f"📚 No cached facts found - starting fresh (will save at {self.fact_store.facts_file})",
+            )
+
         cache = InvestigationCache()
 
         # Seed prior session data if provided
@@ -205,14 +226,33 @@ class RLMEngine:
                 await self._direct_answer(state, repo)
             else:
                 # Full RLM investigation for large repositories
-                # First, classify query complexity (for large repos only - small repos do it in assess_small_repo)
-                is_complex = await decisions.classify_query_complexity(query, self.client)
-                is_simple = not is_complex
+                # Phase 1: Unified assessment and planning (includes complexity + fact sheet check)
+                assessment = await self._assess_and_create_plan(state, repo)
+
+                # Check if we can answer directly from cached facts
+                if assessment.get("can_answer_from_facts", False):
+                    relevant_facts = assessment.get("relevant_facts", [])
+                    if relevant_facts:
+                        self._emit_step(
+                            state,
+                            StepType.FINDING,
+                            f"Can answer from {len(relevant_facts)} cached facts - skipping document investigation",
+                        )
+                        state.findings["accumulated_facts"] = relevant_facts
+                        state.findings["answered_from_cache"] = True
+                        is_simple = assessment.get("complexity") == "simple"
+                        await self._synthesize(state, is_simple)
+                        # Skip the rest - we're done
+                        state.complete()
+                        return state
+
+                # Extract complexity for synthesis tier selection
+                is_simple = assessment.get("complexity") == "simple"
                 self._is_simple_query = is_simple
 
                 state.query_classification = {
-                    "type": "complex" if is_complex else "simple",
-                    "complexity": 4 if is_complex else 2,
+                    "type": "simple" if is_simple else "complex",
+                    "complexity": 2 if is_simple else 4,
                     "llm_classified": True,
                 }
 
@@ -221,10 +261,6 @@ class RLMEngine:
                     StepType.THINKING,
                     f"Starting: \"{query[:60]}{'...' if len(query) > 60 else ''}\" on {repo_name} ({file_count} files, {total_chars:,} chars) → {'FLASH' if is_simple else 'PRO'} synthesis",
                 )
-
-                # Mimics how a lawyer works:
-                # Phase 1: Create investigation plan based on the query and repo structure
-                await self._create_plan(state, repo)
 
                 # Phase 2: Investigation loop with continuous recalibration
                 # - Reads documents, extracts facts, accumulates research triggers
@@ -248,6 +284,35 @@ class RLMEngine:
             state.fail(str(e))
             raise
         finally:
+            # Save fact store to persist extracted facts for future queries
+            if self.fact_store:
+                fact_count = len(self.fact_store)
+                self._emit_step(
+                    state,
+                    StepType.THINKING,
+                    f"📚 DEBUG: fact_store has {fact_count} facts, _facts list: {len(self.fact_store._facts)}",
+                )
+                if fact_count > 0:
+                    try:
+                        saved = self.fact_store.save()
+                        self._emit_step(
+                            state,
+                            StepType.FINDING,
+                            f"📚 Saved {saved} facts to {self.fact_store.facts_file}",
+                        )
+                    except Exception as e:
+                        self._emit_step(
+                            state,
+                            StepType.THINKING,
+                            f"📚 ERROR saving facts: {e}",
+                        )
+                else:
+                    self._emit_step(
+                        state,
+                        StepType.THINKING,
+                        f"📚 No new facts extracted this session",
+                    )
+
             # Clean up external search sessions
             if self.external_search:
                 try:
@@ -262,6 +327,7 @@ class RLMEngine:
         Direct answer mode for small repositories.
 
         Intelligent flow that only searches externally when genuinely needed:
+        0. Check cached facts - maybe we can answer without reading docs
         1. Load all documents (small enough to fit in context)
         2. Unified assessment (FLASH): complexity + external search decision
         3. If external search needed: execute specific searches
@@ -284,6 +350,30 @@ class RLMEngine:
             f"Loaded {state.documents_read} documents ({len(all_content):,} chars total)",
         )
 
+        # Step 1.5: Extract facts from each document if fact store is empty
+        # Reuse _read_document which already handles extraction and fact storage
+        cache = InvestigationCache()
+        if self.fact_store and len(self.fact_store) == 0:
+            self._emit_step(
+                state,
+                StepType.THINKING,
+                f"Extracting facts from {len(repo.list_files())} documents for future reference...",
+            )
+            for doc in repo.list_files():
+                await self._read_document(state, repo, doc.path, cache)
+
+        # Step 1.6: Get cached facts for this query
+        cached_facts_str = ""
+        if self.fact_store and len(self.fact_store) > 0:
+            relevant_facts = self.fact_store.get_relevant(state.query)
+            if relevant_facts:
+                cached_facts_str = self.fact_store.format_for_llm(relevant_facts)
+                self._emit_step(
+                    state,
+                    StepType.THINKING,
+                    f"Found {len(relevant_facts)} potentially relevant cached facts",
+                )
+
         # Step 2: Unified assessment - determines complexity AND external search need
         self._emit_step(state, StepType.THINKING, "Assessing query against documents...")
 
@@ -291,6 +381,7 @@ class RLMEngine:
             query=state.query,
             content=all_content,
             client=self.client,
+            cached_facts=cached_facts_str,
         )
 
         # Store complexity for synthesis tier selection
@@ -301,6 +392,23 @@ class RLMEngine:
             "complexity": 2 if is_simple else 4,
             "llm_classified": True,
         }
+
+        # Check if we can answer directly from cached facts
+        can_answer_from_facts = assessment.get("can_answer_from_facts", False)
+        relevant_facts_used = assessment.get("relevant_facts", [])
+
+        if can_answer_from_facts and relevant_facts_used:
+            self._emit_step(
+                state,
+                StepType.FINDING,
+                f"Can answer from {len(relevant_facts_used)} cached facts - skipping document analysis",
+            )
+            # Store the relevant facts as evidence for synthesis
+            state.findings["accumulated_facts"] = relevant_facts_used
+            state.findings["answered_from_cache"] = True
+            # Proceed directly to synthesis
+            await self._synthesize(state, is_simple)
+            return
 
         can_answer_from_docs = assessment.get("can_answer_from_docs", True)
         gap = assessment.get("gap", "")
@@ -587,6 +695,108 @@ class RLMEngine:
             details=plan,
         )
 
+    async def _assess_and_create_plan(
+        self,
+        state: InvestigationState,
+        repo: MatterRepository,
+    ) -> dict:
+        """Unified assessment and planning for large repositories.
+
+        Combines complexity classification and planning into one LLM call.
+        Also checks if cached facts can answer the query.
+
+        Returns:
+            Assessment dict with can_answer_from_facts, complexity, plan details
+        """
+        stats = repo.get_stats()
+
+        self._emit_step(state, StepType.THINKING, f"Analyzing {stats.total_files} files...")
+        file_list = repo.get_file_list()
+
+        # Format file list for LLM - show filenames so it can prioritize
+        file_list_str = "\n".join(
+            f"  - {f['filename']} ({f['size_kb']}KB, {f['type']})"
+            for f in file_list[:50]  # Limit to 50 files for context
+        )
+        if len(file_list) > 50:
+            file_list_str += f"\n  ... and {len(file_list) - 50} more files"
+
+        # Get cached facts for this query
+        cached_facts_str = ""
+        if self.fact_store and len(self.fact_store) > 0:
+            relevant_facts = self.fact_store.get_relevant(state.query)
+            if relevant_facts:
+                cached_facts_str = self.fact_store.format_for_llm(relevant_facts)
+                self._emit_step(
+                    state,
+                    StepType.THINKING,
+                    f"Found {len(relevant_facts)} potentially relevant cached facts",
+                )
+
+        # Use unified assess_and_plan
+        assessment = await decisions.assess_and_plan(
+            query=state.query,
+            file_list=file_list_str,
+            total_files=stats.total_files,
+            client=self.client,
+            cached_facts=cached_facts_str,
+        )
+
+        # If can answer from facts, return early (caller handles synthesis)
+        if assessment.get("can_answer_from_facts", False):
+            return assessment
+
+        # Store plan info in state (same as _create_plan)
+        state.hypothesis = assessment.get("success_criteria", "Investigating query")
+        state.findings["issues"] = assessment.get("key_issues", [])
+        state.findings["initial_plan"] = assessment
+
+        # Emit the reasoning (show LLM's thinking process)
+        reasoning = assessment.get("reasoning", "")
+        key_issues = assessment.get("key_issues", [])
+
+        if reasoning:
+            self._emit_step(
+                state,
+                StepType.THINKING,
+                f"STRATEGY: {reasoning}",
+            )
+        if key_issues:
+            issues_str = ", ".join(key_issues[:3])
+            self._emit_step(
+                state,
+                StepType.THINKING,
+                f"KEY ISSUES: {issues_str}",
+            )
+
+        # PRIORITY: Create leads for priority files FIRST (read before searching)
+        priority_files = assessment.get("priority_files", [])
+        for filepath in priority_files[:3]:  # Limit to top 3 priority files
+            if isinstance(filepath, str):
+                state.add_lead(f"Read document: {filepath}", source="initial_plan")
+
+        # Then create leads from search terms
+        for term in assessment.get("search_terms", [])[:3]:
+            if isinstance(term, str):
+                state.add_lead(f"Search for: {term}", source="initial_plan")
+
+        # Fallback if no leads
+        if not state.leads:
+            terms = await decisions.extract_search_terms(state.query, self.client)
+            for term in terms[:2]:
+                state.add_lead(f"Search for: {term}", source="fallback")
+
+        # Show actual lead descriptions in step message
+        lead_descriptions = [l.description for l in state.leads]
+        self._emit_step(
+            state,
+            StepType.THINKING,
+            f"Plan: {_fmt_list(lead_descriptions, 3, 45)}",
+            details=assessment,
+        )
+
+        return assessment
+
     async def _execute_external_searches(
         self,
         state: InvestigationState,
@@ -848,17 +1058,16 @@ class RLMEngine:
             tasks = [self._investigate_lead(state, repo, lead, cache) for lead in leads_to_process]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Check for critical read failure state
+            # Log read failures but DON'T abort - keep trying other documents
             if cache.consecutive_read_failures >= cache.MAX_CONSECUTIVE_FAILURES:
                 self._emit_step(
                     state,
-                    StepType.ERROR,
-                    f"Aborting: {cache.consecutive_read_failures} consecutive document read failures. "
-                    f"Total failures: {cache.total_read_failures}. Documents may be inaccessible.",
+                    StepType.THINKING,
+                    f"Note: {cache.consecutive_read_failures} consecutive read failures (some files may be in subdirectories). Continuing with other documents...",
                 )
-                # Set a failure flag so synthesis can check
-                state.findings["critical_read_failures"] = True
-                break
+                # Reset counter to allow more attempts - don't abort investigation
+                cache.consecutive_read_failures = 0
+                state.findings["had_read_failures"] = True
 
             iteration += 1
             facts_count = len(state.findings.get("accumulated_facts", []))
@@ -868,11 +1077,19 @@ class RLMEngine:
             # === CONSOLIDATED CHECKPOINT ===
             # Single LLM call replaces is_sufficient + should_replan
             if facts_count >= self.config.early_exit_facts or iteration > 1:
+                # Get cached facts for checkpoint evaluation
+                cached_facts_str = ""
+                if self.fact_store and len(self.fact_store) > 0:
+                    relevant_facts = self.fact_store.get_relevant(state.query)
+                    if relevant_facts:
+                        cached_facts_str = self.fact_store.format_for_llm(relevant_facts)
+
                 checkpoint_result = await decisions.checkpoint(
                     query=state.query,
                     findings=findings_summary,
                     plan=plan_summary,
                     client=self.client,
+                    cached_facts=cached_facts_str,
                 )
 
                 # Check sufficiency - MUST have read at least 1 document
@@ -1266,6 +1483,19 @@ class RLMEngine:
                 for fact in facts:
                     self.on_fact(fact)
 
+            # Save facts to persistent store for future queries
+            if self.fact_store:
+                new_facts = self.fact_store.add_facts_from_extraction(
+                    extraction=extraction,
+                    source_filename=doc.filename,
+                    query_context=state.query,
+                )
+                self._emit_step(
+                    state,
+                    StepType.THINKING,
+                    f"📚 Added {new_facts} facts from {doc.filename} (store total: {len(self.fact_store)})",
+                )
+
             # Accumulate external research triggers
             triggers = extraction.get("external_triggers", {})
             if triggers:
@@ -1315,13 +1545,8 @@ class RLMEngine:
 
         except Exception as e:
             self._emit_step(state, StepType.ERROR, f"Failed to read {file_path}: {e}")
-            should_abort = cache.record_read_failure()
-            if should_abort:
-                self._emit_step(
-                    state,
-                    StepType.ERROR,
-                    f"CRITICAL: {cache.consecutive_read_failures} consecutive read failures - document access broken",
-                )
+            cache.record_read_failure()
+            # Don't emit error here - the loop will handle it and continue
             return False  # Failure
 
     async def _synthesize(self, state: InvestigationState, is_simple: bool = False):
@@ -1334,9 +1559,10 @@ class RLMEngine:
         4. Pinned DECISIVE documents OR small repo full content
         """
         # CRITICAL: Block synthesis if no documents were read
-        # This prevents hallucinated responses from external search alone
+        # Exception: Allow if answering from cached facts (we intentionally skipped reading)
         small_repo_content = state.findings.get("small_repo_content")
-        if state.documents_read == 0 and not small_repo_content:
+        answered_from_cache = state.findings.get("answered_from_cache", False)
+        if state.documents_read == 0 and not small_repo_content and not answered_from_cache:
             self._emit_step(
                 state,
                 StepType.ERROR,
@@ -1354,24 +1580,12 @@ class RLMEngine:
             state.findings["final_output"] = error_msg
             return
 
-        # Check if we aborted due to critical read failures
-        if state.findings.get("critical_read_failures"):
-            self._emit_step(
-                state,
-                StepType.ERROR,
-                "Synthesis blocked due to critical document access failures",
+        # Note if there were read failures (for caveat in output)
+        if state.findings.get("had_read_failures"):
+            state.findings["read_failure_caveat"] = (
+                f"Note: Some documents were inaccessible during investigation. "
+                f"Analysis is based on {state.documents_read} successfully read documents."
             )
-            error_msg = (
-                "**Investigation Aborted**\n\n"
-                "Too many consecutive document read failures. The documents may be:\n"
-                "- Located at incorrect paths\n"
-                "- Already cleaned up from temporary storage\n"
-                "- Inaccessible due to permissions or S3 issues\n\n"
-                f"Documents successfully read before failure: {state.documents_read}\n"
-                f"Query: {state.query}"
-            )
-            state.findings["final_output"] = error_msg
-            return
 
         # Count sources for informative message
         facts = state.findings.get("accumulated_facts", [])

@@ -507,24 +507,43 @@ async def assess_small_repo(
     query: str,
     content: str,
     client: GeminiClient,
+    cached_facts: str = "",
 ) -> dict:
     """Unified assessment for small repositories.
 
     Determines:
-    1. Query complexity (simple vs complex) for synthesis tier selection
-    2. Whether external search is needed (with specific searches if so)
+    1. Whether cached facts can answer the query (skip doc reading)
+    2. Query complexity (simple vs complex) for synthesis tier selection
+    3. Whether external search is needed (with specific searches if so)
 
     Uses FLASH model for better judgment on external search decisions.
     The FLASH system prompt already includes guidance on being selective
     about external research.
+
+    Args:
+        query: The investigation query
+        content: Full document content (concatenated)
+        client: GeminiClient instance
+        cached_facts: Pre-formatted fact sheet from FactStore.format_for_llm()
     """
     start_time = time.time()
     content_preview = f"{len(content):,} chars"
-    logger.info(f"📊 assess_small_repo: evaluating query against {content_preview}")
+    facts_preview = f", {len(cached_facts):,} chars of cached facts" if cached_facts else ""
+    logger.info(f"📊 assess_small_repo: evaluating query against {content_preview}{facts_preview}")
+
+    # Build cached facts section for prompt
+    if cached_facts:
+        cached_facts_section = f"\n{cached_facts}\n"
+        cached_facts_note = " and cached facts from previous investigations"
+    else:
+        cached_facts_section = ""
+        cached_facts_note = ""
 
     prompt = prompts.P_ASSESS_SMALL_REPO.format(
         query=query,
         content=content,
+        cached_facts_section=cached_facts_section,
+        cached_facts_note=cached_facts_note,
     )
 
     _log_llm_call("assess_small_repo", ModelTier.FLASH, prompt, start_time)
@@ -545,15 +564,18 @@ async def assess_small_repo(
             result["web_searches"] = []
 
         complexity = result.get("complexity", "complex")
-        can_answer = result.get("can_answer_from_docs", True)
+        can_answer_docs = result.get("can_answer_from_docs", True)
+        can_answer_facts = result.get("can_answer_from_facts", False)
         searches = len(result.get("case_law_searches", [])) + len(result.get("web_searches", []))
-        logger.info(f"   Assessment: complexity={complexity}, can_answer_from_docs={can_answer}, searches={searches}")
+        logger.info(f"   Assessment: complexity={complexity}, can_answer_from_facts={can_answer_facts}, can_answer_from_docs={can_answer_docs}, searches={searches}")
         _log_llm_result("assess_small_repo", result, time.time() - start_time)
         return result
 
     # Fallback: assume complex, can answer from docs (conservative - no external search)
     logger.warning("   JSON parsing failed, using conservative fallback (no external search)")
     return {
+        "can_answer_from_facts": False,
+        "relevant_facts": [],
         "complexity": "complex",
         "can_answer_from_docs": True,
         "reasoning": "Fallback assessment",
@@ -648,6 +670,90 @@ async def create_plan(
         "key_issues": [query],
         "priority_files": [],
         "search_terms": fallback_terms if fallback_terms else ["document"],
+        "success_criteria": "Find information relevant to the query",
+    }
+
+
+async def assess_and_plan(
+    query: str,
+    file_list: str,
+    total_files: int,
+    client: GeminiClient,
+    cached_facts: str = "",
+) -> dict:
+    """Unified assessment and planning for large repositories.
+
+    Combines query complexity classification and investigation planning into
+    a single LLM call. Also checks if cached facts can answer the query.
+
+    Args:
+        query: The investigation query
+        file_list: Formatted list of files in the repository
+        total_files: Total number of files
+        client: GeminiClient instance
+        cached_facts: Pre-formatted fact sheet from FactStore.format_for_llm()
+
+    Returns:
+        dict with: can_answer_from_facts, relevant_facts, complexity,
+                   key_issues, priority_files, search_terms, etc.
+    """
+    start_time = time.time()
+    facts_info = f" with {len(cached_facts):,} chars of cached facts" if cached_facts else ""
+    logger.info(f"📋 assess_and_plan: unified assessment for {total_files} files{facts_info}")
+
+    # Build cached facts section for prompt
+    if cached_facts:
+        cached_facts_section = f"\n{cached_facts}\n"
+    else:
+        cached_facts_section = ""
+
+    prompt = prompts.P_ASSESS_AND_PLAN.format(
+        query=query,
+        file_list=file_list,
+        total_files=total_files,
+        cached_facts_section=cached_facts_section,
+    )
+
+    _log_llm_call("assess_and_plan", ModelTier.FLASH, prompt, start_time)
+    response = await client.complete(prompt, tier=ModelTier.FLASH)
+    result = parse_json_safe(response)
+
+    if result:
+        # Filter out useless search terms
+        if "search_terms" in result:
+            result["search_terms"] = filter_search_terms(result["search_terms"])
+        # Filter out template-style external queries
+        if "case_law_searches" in result:
+            result["case_law_searches"] = filter_external_queries(result["case_law_searches"])
+        if "web_searches" in result:
+            result["web_searches"] = filter_external_queries(result["web_searches"])
+
+        complexity = result.get("complexity", "complex")
+        can_answer_facts = result.get("can_answer_from_facts", False)
+        priority_files = len(result.get("priority_files", []))
+        search_terms = len(result.get("search_terms", []))
+
+        logger.info(
+            f"   Assessment: complexity={complexity}, can_answer_from_facts={can_answer_facts}, "
+            f"{priority_files} priority files, {search_terms} search terms"
+        )
+        _log_llm_result("assess_and_plan", result, time.time() - start_time)
+        return result
+
+    # Fallback
+    logger.warning("   JSON parsing failed, using fallback")
+    fallback_terms = filter_search_terms(query.split()[:5])
+    return {
+        "can_answer_from_facts": False,
+        "relevant_facts": [],
+        "complexity": "complex",
+        "reasoning": "Fallback assessment",
+        "key_issues": [query],
+        "priority_files": [],
+        "skip_files": [],
+        "search_terms": fallback_terms if fallback_terms else ["document"],
+        "case_law_searches": [],
+        "web_searches": [],
         "success_criteria": "Find information relevant to the query",
     }
 
@@ -1034,19 +1140,37 @@ async def checkpoint(
     findings: str,
     plan: str,
     client: GeminiClient,
+    cached_facts: str = "",
 ) -> dict:
     """Combined sufficiency + replan check. Uses LITE model.
 
     Consolidates is_sufficient + should_replan into one call.
+    Now also considers cached facts from previous investigations.
+
+    Args:
+        query: The investigation query
+        findings: Current findings summary
+        plan: Current investigation plan
+        client: GeminiClient instance
+        cached_facts: Pre-formatted fact sheet from FactStore.format_for_llm()
+
     Returns: {sufficient, should_replan, progress_assessment, next_steps, new_search_terms, files_to_check}
     """
     start_time = time.time()
-    logger.info(f"🔍 checkpoint: evaluating investigation status")
+    facts_info = f" (with {len(cached_facts):,} chars of cached facts)" if cached_facts else ""
+    logger.info(f"🔍 checkpoint: evaluating investigation status{facts_info}")
+
+    # Build cached facts section for prompt
+    if cached_facts:
+        cached_facts_section = f"\n{cached_facts}\n"
+    else:
+        cached_facts_section = ""
 
     prompt = prompts.P_CHECKPOINT.format(
         query=query,
         findings=findings,
         plan=plan,
+        cached_facts_section=cached_facts_section,
     )
 
     _log_llm_call("checkpoint", ModelTier.LITE, prompt, start_time)

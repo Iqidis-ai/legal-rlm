@@ -164,7 +164,7 @@ Reply JSON only:
 # =============================================================================
 
 P_ASSESS_SMALL_REPO = """Query: {query}
-
+{cached_facts_section}
 === MATTER DOCUMENTS ===
 {content}
 
@@ -172,13 +172,17 @@ P_ASSESS_SMALL_REPO = """Query: {query}
 STRATEGIC ASSESSMENT
 ═══════════════════════════════════════════════════════════════════════════════
 
-You have the complete document set. Make two calls:
+You have the complete document set{cached_facts_note}. Make these calls:
 
-1. COMPLEXITY: Does this need sophisticated legal reasoning (multi-doc synthesis,
+1. CACHED FACTS CHECK: Can the cached facts (if any) already answer this query
+   WITHOUT needing to read the documents? Be strict - only say yes if the facts
+   directly and completely answer the query.
+
+2. COMPLEXITY: Does this need sophisticated legal reasoning (multi-doc synthesis,
    legal analysis, strategic thinking) or is it straightforward (fact lookup,
    single-doc answer, basic summary)?
 
-2. EXTERNAL RESEARCH: Does the QUERY itself ask for case law, precedents, or
+3. EXTERNAL RESEARCH: Does the QUERY itself ask for case law, precedents, or
    legal standards we'd need to look up?
 
    NOTE: Just because documents mention laws/jurisdictions doesn't mean we search.
@@ -186,6 +190,8 @@ You have the complete document set. Make two calls:
 
 === OUTPUT (JSON only) ===
 {{
+  "can_answer_from_facts": true | false,
+  "relevant_facts": ["list facts from cache that help answer this query"],
   "complexity": "simple" | "complex",
   "can_answer_from_docs": true | false,
   "reasoning": "Your strategic assessment",
@@ -252,6 +258,47 @@ Design your approach:
     "web_searches": [],
     "success_criteria": "What finding would answer this query",
     "potential_challenges": "Anticipated difficulties"
+}}"""
+
+
+P_ASSESS_AND_PLAN = """Query: {query}
+{cached_facts_section}
+=== REPOSITORY ({total_files} files) ===
+{file_list}
+
+═══════════════════════════════════════════════════════════════════════════════
+UNIFIED ASSESSMENT & PLANNING
+═══════════════════════════════════════════════════════════════════════════════
+
+Make these assessments:
+
+1. CACHED FACTS CHECK: Can the cached facts (if any) already answer this query
+   WITHOUT reading documents? Be strict - only say yes if facts directly and
+   completely answer the query.
+
+2. COMPLEXITY: Does this need sophisticated legal reasoning or is it straightforward?
+   - SIMPLE: Direct fact lookups, single-doc answers, basic summaries
+   - COMPLEX: Multi-doc synthesis, legal analysis, timeline construction, contradictions
+
+3. INVESTIGATION PLAN (if facts don't answer):
+   - Scan filenames: identify case-specific docs vs generic references
+   - Which 2-3 files to read first? (Pick case-specific, not generic acts)
+   - What search terms will find relevant passages?
+   - Does the query require external authority (case law, regulations)?
+
+=== OUTPUT (JSON only) ===
+{{
+    "can_answer_from_facts": true | false,
+    "relevant_facts": ["list facts from cache that help answer this query"],
+    "complexity": "simple" | "complex",
+    "reasoning": "Strategy and assessment",
+    "key_issues": ["legal issue 1", "legal issue 2"],
+    "priority_files": ["exact_filename.pdf"],
+    "skip_files": ["generic_reference.pdf"],
+    "search_terms": ["term1", "term2"],
+    "case_law_searches": [],
+    "web_searches": [],
+    "success_criteria": "What finding would answer this query"
 }}"""
 
 
@@ -594,7 +641,7 @@ Reply in JSON only:
 # =============================================================================
 
 P_CHECKPOINT = """Query: {query}
-
+{cached_facts_section}
 === EVIDENCE GATHERED ===
 {findings}
 
@@ -607,6 +654,7 @@ CHECKPOINT
 
 Quick assessment:
 1. SUFFICIENT? Do we have enough to answer the query with citations?
+   Consider BOTH current findings AND cached facts from previous investigations.
 2. PROGRESS? Is current approach finding relevant info or stalled?
 3. NEXT? If not sufficient, what specific actions?
 
