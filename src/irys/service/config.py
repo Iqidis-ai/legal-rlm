@@ -9,7 +9,7 @@ from typing import Optional
 
 @dataclass
 class ServiceConfig:
-    """Production service configuration for Irys RLM."""
+    """Production service configuration"""
 
     # API Settings
     host: str = "0.0.0.0"
