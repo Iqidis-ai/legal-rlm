@@ -180,7 +180,11 @@ def _truncate_middle(text: str, limit: int) -> str:
 
 
 def _truncate_conversation_from_start(messages: list, limit: int) -> str:
-    """Format conversation, truncating oldest messages if over limit."""
+    """Format conversation, truncating oldest messages if over limit.
+
+    Each message is formatted as:
+    [ROLE]: content [Attachments: file1.pdf, file2.docx]
+    """
     truncation_notice = "[Earlier conversation truncated...]\n"
     newline_char_length = 1
 
@@ -189,7 +193,16 @@ def _truncate_conversation_from_start(messages: list, limit: int) -> str:
     for msg in messages:
         role = getattr(msg, "role", msg.get("role", "user")) if isinstance(msg, dict) else msg.role
         content = getattr(msg, "content", msg.get("content", "")) if isinstance(msg, dict) else msg.content
-        lines.append(f"[{role.upper()}]: {content}")
+
+        # Extract attachment names if present
+        attachments = getattr(msg, "attachments", msg.get("attachments")) if isinstance(msg, dict) else getattr(msg, "attachments", None)
+        attachment_suffix = ""
+        if attachments:
+            attachment_names = [a.name if hasattr(a, "name") else a.get("name") for a in attachments if (a.name if hasattr(a, "name") else a.get("name"))]
+            if attachment_names:
+                attachment_suffix = f" [Attachments: {', '.join(attachment_names)}]"
+
+        lines.append(f"[{role.upper()}]: {content}{attachment_suffix}")
 
     full_text = "\n".join(lines)
 
@@ -215,8 +228,35 @@ def _truncate_conversation_from_start(messages: list, limit: int) -> str:
     return ""
 
 
+def _extract_current_message_attachments(context: Optional[Any]) -> list[str]:
+    """Extract attachment names from the last message in conversation history.
+
+    The last message is typically the current query message, and its attachments
+    are the documents sent with the current request.
+
+    Returns list of attachment names, or empty list if none.
+    """
+    if not context:
+        return []
+
+    conversation = getattr(context, "conversation_history", None)
+    if not conversation:
+        return []
+
+    last_message = conversation[-1]
+    attachments = getattr(last_message, "attachments", last_message.get("attachments")) if isinstance(last_message, dict) else getattr(last_message, "attachments", None)
+
+    if not attachments:
+        return []
+
+    return [a.name if hasattr(a, "name") else a.get("name") for a in attachments if (a.name if hasattr(a, "name") else a.get("name"))]
+
+
 def _format_conversation_section(context: Optional[Any], limit: int) -> str:
     """Format conversation history with specified character limit.
+
+    Excludes the last message since it contains the current query which is
+    passed separately to the model.
 
     Returns formatted section or empty string if no conversation.
     """
@@ -227,7 +267,12 @@ def _format_conversation_section(context: Optional[Any], limit: int) -> str:
     if not conversation:
         return ""
 
-    history_text = _truncate_conversation_from_start(conversation, limit)
+    # Exclude the last message (current query) from history
+    prior_messages = conversation[:-1] if len(conversation) > 1 else []
+    if not prior_messages:
+        return ""
+
+    history_text = _truncate_conversation_from_start(prior_messages, limit)
     if history_text:
         return f"=== PRIOR CONVERSATION ===\n{history_text}\n"
     return ""
@@ -236,8 +281,9 @@ def _format_conversation_section(context: Optional[Any], limit: int) -> str:
 def format_context_section(context: Optional[Any]) -> str:
     """Format investigation context for prompts (planning phase).
 
-    Includes conversation history and planning instructions.
-    - Conversation: 300K limit, truncates oldest messages first
+    Includes conversation history, current message attachments, and planning instructions.
+    - Conversation: 300K limit, truncates oldest messages first (excludes last/current message)
+    - Current attachments: Documents sent with the current query
     - Planning instructions: 30K limit, truncates middle
 
     Returns empty string if no context provided.
@@ -247,10 +293,16 @@ def format_context_section(context: Optional[Any]) -> str:
 
     parts = []
 
-    # Format conversation history (300K limit)
+    # Format conversation history (300K limit) - excludes last message
     conv_section = _format_conversation_section(context, CONVERSATION_LIMIT_PLANNING)
     if conv_section:
         parts.append(conv_section.rstrip())
+
+    # Extract current message attachments (from last message)
+    current_attachments = _extract_current_message_attachments(context)
+    if current_attachments:
+        attachment_list = ", ".join(current_attachments)
+        parts.append(f"=== CURRENT MESSAGE ATTACHMENTS ===\n{attachment_list}")
 
     # Format planning instructions (30K limit, truncate middle)
     planning_instructions = getattr(context, "planning_instructions", None)
@@ -267,7 +319,8 @@ def format_output_instructions_section(context: Optional[Any]) -> str:
     """Format output context for synthesis prompt.
 
     Includes:
-    - Conversation history: 200K limit, truncates oldest messages first
+    - Conversation history: 200K limit, truncates oldest messages first (excludes last/current message)
+    - Current attachments: Documents sent with the current query
     - Output instructions: 10K limit, truncates middle
 
     Returns empty string if no context provided.
@@ -277,10 +330,16 @@ def format_output_instructions_section(context: Optional[Any]) -> str:
 
     parts = []
 
-    # Format conversation history (200K limit for synthesis)
+    # Format conversation history (200K limit for synthesis) - excludes last message
     conv_section = _format_conversation_section(context, CONVERSATION_LIMIT_SYNTHESIS)
     if conv_section:
         parts.append(conv_section.rstrip())
+
+    # Extract current message attachments (from last message)
+    current_attachments = _extract_current_message_attachments(context)
+    if current_attachments:
+        attachment_list = ", ".join(current_attachments)
+        parts.append(f"=== CURRENT MESSAGE ATTACHMENTS ===\n{attachment_list}")
 
     # Format output instructions (10K limit, truncate middle)
     output_instructions = getattr(context, "output_instructions", None)
