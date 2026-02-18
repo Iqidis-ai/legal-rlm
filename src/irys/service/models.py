@@ -9,12 +9,26 @@ from pydantic import BaseModel, Field
 # === Investigation Context Models ===
 
 
+class MessageAttachment(BaseModel):
+    """Attachment metadata for a conversation message."""
+    id: Optional[str] = Field(None, description="Unique identifier for the attachment")
+    url: Optional[str] = Field(None, description="URL or path to the attachment")
+    name: Optional[str] = Field(None, description="Display name of the attachment")
+    content_type: Optional[str] = Field(None, description="MIME type (e.g., 'application/pdf')")
+
+    class Config:
+        extra = "allow"  # Allow additional fields for future extensibility
+
+
 class ConversationMessage(BaseModel):
     """A single message in conversation history."""
     role: Literal["user", "assistant"] = Field(
         ..., description="Role of the message sender"
     )
     content: str = Field(..., description="Message content")
+    attachments: Optional[list[MessageAttachment]] = Field(
+        None, description="Documents/files attached to this message"
+    )
 
 
 class InvestigationContext(BaseModel):
