@@ -1354,11 +1354,34 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
             queue.put_nowait(None)
 
     async def event_generator():
-        """Yield SSE-formatted events from the queue."""
+        """Yield SSE-formatted events from the queue.
+
+        Uses asyncio.wait_for with timeout to yield control back to
+        the event loop frequently, allowing the investigation task
+        to make progress and push events to the queue.
+        """
         task = asyncio.create_task(run_investigation())
         try:
             while True:
-                item = await queue.get()
+                try:
+                    # Short timeout forces event loop to context-switch
+                    item = await asyncio.wait_for(queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    # Check if task finished while we were waiting
+                    if task.done():
+                        # Drain remaining items
+                        while not queue.empty():
+                            item = queue.get_nowait()
+                            if item is None:
+                                return
+                            event_type = item["event"]
+                            data = json.dumps(item["data"])
+                            yield f"event: {event_type}\ndata: {data}\n\n"
+                        return
+                    # Yield heartbeat to flush buffers and keep connection alive
+                    yield ": heartbeat\n\n"
+                    continue
+
                 if item is None:
                     break
                 event_type = item["event"]

@@ -174,13 +174,13 @@ class RLMEngine:
 
         # Emit fact store status to UI trace
         if facts_loaded > 0:
-            self._emit_step(
+            await self._emit_step_async(
                 state,
                 StepType.FINDING,
                 f"📚 Loaded {facts_loaded} cached facts from previous investigations",
             )
         else:
-            self._emit_step(
+            await self._emit_step_async(
                 state,
                 StepType.THINKING,
                 f"📚 No cached facts found - starting fresh (will save at {self.fact_store.facts_file})",
@@ -211,13 +211,13 @@ class RLMEngine:
         try:
             # Check if small repository first - uses unified assessment (includes complexity)
             if repo.is_small_repo:
-                self._emit_step(
+                await self._emit_step_async(
                     state,
                     StepType.THINKING,
                     f"Starting: \"{query[:60]}{'...' if len(query) > 60 else ''}\" on {repo_name} ({file_count} files, {total_chars:,} chars) → small repo mode",
                 )
                 file_names = [f.filename for f in repo.list_files()[:5]]
-                self._emit_step(
+                await self._emit_step_async(
                     state,
                     StepType.THINKING,
                     f"Small repo mode: {_fmt_list(file_names, 4, 30)}",
@@ -233,7 +233,7 @@ class RLMEngine:
                 if assessment.get("can_answer_from_facts", False):
                     relevant_facts = assessment.get("relevant_facts", [])
                     if relevant_facts:
-                        self._emit_step(
+                        await self._emit_step_async(
                             state,
                             StepType.FINDING,
                             f"Can answer from {len(relevant_facts)} cached facts - skipping document investigation",
@@ -256,7 +256,7 @@ class RLMEngine:
                     "llm_classified": True,
                 }
 
-                self._emit_step(
+                await self._emit_step_async(
                     state,
                     StepType.THINKING,
                     f"Starting: \"{query[:60]}{'...' if len(query) > 60 else ''}\" on {repo_name} ({file_count} files, {total_chars:,} chars) → {'FLASH' if is_simple else 'PRO'} synthesis",
@@ -337,14 +337,14 @@ class RLMEngine:
         This replaces the old trigger-based approach which over-searched.
         """
         file_names = [f.filename for f in repo.list_files()]
-        self._emit_step(state, StepType.READING, f"Loading: {_fmt_list(file_names, 4, 25)}")
+        await self._emit_step_async(state, StepType.READING, f"Loading: {_fmt_list(file_names, 4, 25)}")
 
         # Step 1: Load all content directly
         all_content = repo.get_all_content()
         state.documents_read = len(repo.list_files())
         state.findings["small_repo_content"] = all_content
 
-        self._emit_step(
+        await self._emit_step_async(
             state,
             StepType.FINDING,
             f"Loaded {state.documents_read} documents ({len(all_content):,} chars total)",
@@ -354,7 +354,7 @@ class RLMEngine:
         # Reuse _read_document which already handles extraction and fact storage
         cache = InvestigationCache()
         if self.fact_store and len(self.fact_store) == 0:
-            self._emit_step(
+            await self._emit_step_async(
                 state,
                 StepType.THINKING,
                 f"Extracting facts from {len(repo.list_files())} documents for future reference...",
@@ -368,14 +368,14 @@ class RLMEngine:
             relevant_facts = self.fact_store.get_relevant(state.query)
             if relevant_facts:
                 cached_facts_str = self.fact_store.format_for_llm(relevant_facts)
-                self._emit_step(
+                await self._emit_step_async(
                     state,
                     StepType.THINKING,
                     f"Found {len(relevant_facts)} potentially relevant cached facts",
                 )
 
         # Step 2: Unified assessment - determines complexity AND external search need
-        self._emit_step(state, StepType.THINKING, "Assessing query against documents...")
+        await self._emit_step_async(state, StepType.THINKING, "Assessing query against documents...")
 
         assessment = await decisions.assess_small_repo(
             query=state.query,
@@ -398,7 +398,7 @@ class RLMEngine:
         relevant_facts_used = assessment.get("relevant_facts", [])
 
         if can_answer_from_facts and relevant_facts_used:
-            self._emit_step(
+            await self._emit_step_async(
                 state,
                 StepType.FINDING,
                 f"Can answer from {len(relevant_facts_used)} cached facts - skipping document analysis",
@@ -413,7 +413,7 @@ class RLMEngine:
         can_answer_from_docs = assessment.get("can_answer_from_docs", True)
         gap = assessment.get("gap", "")
 
-        self._emit_step(
+        await self._emit_step_async(
             state,
             StepType.THINKING,
             f"Assessment: {'SIMPLE' if is_simple else 'COMPLEX'} synthesis, "
@@ -432,7 +432,7 @@ class RLMEngine:
                     queries_preview.append(f"CaseLaw[{_fmt_list(case_law_queries, 2, 30)}]")
                 if web_queries:
                     queries_preview.append(f"Web[{_fmt_list(web_queries, 2, 30)}]")
-                self._emit_step(
+                await self._emit_step_async(
                     state,
                     StepType.THINKING,
                     f"External search: {' | '.join(queries_preview)}",
@@ -465,7 +465,7 @@ class RLMEngine:
                     if not sufficiency.get("sufficient", True):
                         additional_search = sufficiency.get("additional_search", "")
                         if additional_search:
-                            self._emit_step(
+                            await self._emit_step_async(
                                 state,
                                 StepType.THINKING,
                                 f"Gap remains, additional search: {additional_search[:50]}...",
@@ -483,11 +483,11 @@ class RLMEngine:
                             }
                             await self._execute_external_searches(state)
                     else:
-                        self._emit_step(state, StepType.THINKING, "External results sufficient")
+                        await self._emit_step_async(state, StepType.THINKING, "External results sufficient")
                 elif not has_results:
-                    self._emit_step(state, StepType.THINKING, "No external results found")
+                    await self._emit_step_async(state, StepType.THINKING, "No external results found")
         elif can_answer_from_docs:
-            self._emit_step(state, StepType.THINKING, "Proceeding with documents only (no external search needed)")
+            await self._emit_step_async(state, StepType.THINKING, "Proceeding with documents only (no external search needed)")
 
         # Step 5: Add citations and synthesize
         self._add_external_citations(state)
@@ -608,7 +608,7 @@ class RLMEngine:
         """Phase 1: Create investigation plan using LLM."""
         stats = repo.get_stats()
 
-        self._emit_step(state, StepType.THINKING, f"Analyzing {stats.total_files} files...")
+        await self._emit_step_async(state, StepType.THINKING, f"Analyzing {stats.total_files} files...")
         file_list = repo.get_file_list()
 
         # Format file list for LLM - show filenames so it can prioritize
@@ -637,20 +637,20 @@ class RLMEngine:
         key_issues = plan.get("key_issues", [])
 
         if reasoning:
-            self._emit_step(
+            await self._emit_step_async(
                 state,
                 StepType.THINKING,
                 f"STRATEGY: {reasoning}",
             )
         if key_issues:
             issues_str = ", ".join(key_issues[:3])
-            self._emit_step(
+            await self._emit_step_async(
                 state,
                 StepType.THINKING,
                 f"KEY ISSUES: {issues_str}",
             )
         if challenges:
-            self._emit_step(
+            await self._emit_step_async(
                 state,
                 StepType.THINKING,
                 f"CHALLENGES: {challenges}",
@@ -688,7 +688,7 @@ class RLMEngine:
 
         # Show actual lead descriptions in step message
         lead_descriptions = [l.description for l in state.leads]
-        self._emit_step(
+        await self._emit_step_async(
             state,
             StepType.THINKING,
             f"Plan: {_fmt_list(lead_descriptions, 3, 45)}",
@@ -710,7 +710,7 @@ class RLMEngine:
         """
         stats = repo.get_stats()
 
-        self._emit_step(state, StepType.THINKING, f"Analyzing {stats.total_files} files...")
+        await self._emit_step_async(state, StepType.THINKING, f"Analyzing {stats.total_files} files...")
         file_list = repo.get_file_list()
 
         # Format file list for LLM - show filenames so it can prioritize
@@ -727,7 +727,7 @@ class RLMEngine:
             relevant_facts = self.fact_store.get_relevant(state.query)
             if relevant_facts:
                 cached_facts_str = self.fact_store.format_for_llm(relevant_facts)
-                self._emit_step(
+                await self._emit_step_async(
                     state,
                     StepType.THINKING,
                     f"Found {len(relevant_facts)} potentially relevant cached facts",
@@ -756,14 +756,14 @@ class RLMEngine:
         key_issues = assessment.get("key_issues", [])
 
         if reasoning:
-            self._emit_step(
+            await self._emit_step_async(
                 state,
                 StepType.THINKING,
                 f"STRATEGY: {reasoning}",
             )
         if key_issues:
             issues_str = ", ".join(key_issues[:3])
-            self._emit_step(
+            await self._emit_step_async(
                 state,
                 StepType.THINKING,
                 f"KEY ISSUES: {issues_str}",
@@ -788,7 +788,7 @@ class RLMEngine:
 
         # Show actual lead descriptions in step message
         lead_descriptions = [l.description for l in state.leads]
-        self._emit_step(
+        await self._emit_step_async(
             state,
             StepType.THINKING,
             f"Plan: {_fmt_list(lead_descriptions, 3, 45)}",
@@ -1041,14 +1041,14 @@ class RLMEngine:
 
             pending_leads = state.get_pending_leads()
             if not pending_leads:
-                self._emit_step(state, StepType.THINKING, "No more leads to investigate")
+                await self._emit_step_async(state, StepType.THINKING, "No more leads to investigate")
                 break
 
             # Take leads to process
             leads_to_process = pending_leads[:self.config.max_leads_per_level]
 
             lead_descriptions = [l.description for l in leads_to_process]
-            self._emit_step(
+            await self._emit_step_async(
                 state,
                 StepType.THINKING,
                 f"Iteration {iteration + 1}: {_fmt_list(lead_descriptions, 3, 40)}",
@@ -1060,7 +1060,7 @@ class RLMEngine:
 
             # Log read failures but DON'T abort - keep trying other documents
             if cache.consecutive_read_failures >= cache.MAX_CONSECUTIVE_FAILURES:
-                self._emit_step(
+                await self._emit_step_async(
                     state,
                     StepType.THINKING,
                     f"Note: {cache.consecutive_read_failures} consecutive read failures (some files may be in subdirectories). Continuing with other documents...",
@@ -1292,7 +1292,7 @@ class RLMEngine:
                 return
 
             cache.add_search(search_term)
-            self._emit_step(state, StepType.SEARCH, f"Searching: {search_term}")
+            await self._emit_step_async(state, StepType.SEARCH, f"Searching: {search_term}")
 
             # Perform search (using smart_search for OR fallback)
             results = repo.smart_search(search_term, context_lines=2)
@@ -1304,7 +1304,7 @@ class RLMEngine:
 
             # Show matching document names
             doc_names = list(set(Path(hit.file_path).name for hit in results.hits[:5]))
-            self._emit_step(
+            await self._emit_step_async(
                 state,
                 StepType.FINDING,
                 f"Found {len(results.hits)} matches in: {_fmt_list(doc_names, 3, 30)}",
@@ -1442,7 +1442,7 @@ class RLMEngine:
             logger.debug(f"Skipping already extracted: {file_path}")
             return True  # Already extracted = success
 
-        self._emit_step(state, StepType.READING, f"Reading: {Path(file_path).name}")
+        await self._emit_step_async(state, StepType.READING, f"Reading: {Path(file_path).name}")
 
         try:
             doc = repo.read(file_path)
@@ -1604,7 +1604,7 @@ class RLMEngine:
         elif small_repo:
             source_parts.append("all docs (small repo)")
 
-        self._emit_step(state, StepType.SYNTHESIS, f"Synthesizing: {', '.join(source_parts)}")
+        await self._emit_step_async(state, StepType.SYNTHESIS, f"Synthesizing: {', '.join(source_parts)}")
 
         # SOURCE 1: Local document evidence
         facts = state.findings.get("accumulated_facts", [])
@@ -1651,7 +1651,7 @@ class RLMEngine:
 
         state.findings["final_output"] = response
         output_len = len(response)
-        self._emit_step(state, StepType.SYNTHESIS, f"Complete: {output_len:,} chars synthesized from {state.documents_read} docs")
+        await self._emit_step_async(state, StepType.SYNTHESIS, f"Complete: {output_len:,} chars synthesized from {state.documents_read} docs")
 
     async def _load_pinned_documents(self, state: InvestigationState) -> str:
         """Load content from DECISIVE pinned documents for synthesis.
@@ -1730,6 +1730,21 @@ class RLMEngine:
         if self.on_step:
             self.on_step(step)
         self._emit_progress(state)
+
+    async def _emit_step_async(
+        self,
+        state: InvestigationState,
+        step_type: StepType,
+        content: str,
+        details: Optional[dict] = None,
+    ):
+        """Emit a thinking step with async yield for streaming.
+
+        Use this in hot paths where multiple steps emit between awaits,
+        to allow the event loop to process queued events for streaming.
+        """
+        self._emit_step(state, step_type, content, details)
+        await asyncio.sleep(0)  # Yield to event loop for streaming
 
     def _emit_progress(self, state: InvestigationState):
         """Emit progress update."""
