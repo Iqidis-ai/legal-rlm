@@ -154,9 +154,10 @@ def _coerce_int(value: any) -> int | None:
 # =============================================================================
 
 # Character limits for context sections
-CONVERSATION_HISTORY_LIMIT = 300_000  # 300K chars
-PLANNING_INSTRUCTIONS_LIMIT = 30_000  # 30K chars
-OUTPUT_INSTRUCTIONS_LIMIT = 10_000    # 10K chars
+CONVERSATION_LIMIT_PLANNING = 300_000   # 300K chars for planning phase
+CONVERSATION_LIMIT_SYNTHESIS = 200_000  # 200K chars for synthesis phase
+PLANNING_INSTRUCTIONS_LIMIT = 30_000    # 30K chars
+OUTPUT_INSTRUCTIONS_LIMIT = 10_000      # 10K chars
 
 
 def _truncate_middle(text: str, limit: int) -> str:
@@ -214,6 +215,24 @@ def _truncate_conversation_from_start(messages: list, limit: int) -> str:
     return ""
 
 
+def _format_conversation_section(context: Optional[Any], limit: int) -> str:
+    """Format conversation history with specified character limit.
+
+    Returns formatted section or empty string if no conversation.
+    """
+    if not context:
+        return ""
+
+    conversation = getattr(context, "conversation_history", None)
+    if not conversation:
+        return ""
+
+    history_text = _truncate_conversation_from_start(conversation, limit)
+    if history_text:
+        return f"=== PRIOR CONVERSATION ===\n{history_text}\n"
+    return ""
+
+
 def format_context_section(context: Optional[Any]) -> str:
     """Format investigation context for prompts (planning phase).
 
@@ -228,20 +247,16 @@ def format_context_section(context: Optional[Any]) -> str:
 
     parts = []
 
-    # Format conversation history (300K limit, truncate from start)
-    conversation = getattr(context, "conversation_history", None)
-    if conversation:
-        history_text = _truncate_conversation_from_start(conversation, CONVERSATION_HISTORY_LIMIT)
-        if history_text:
-            parts.append("=== PRIOR CONVERSATION ===")
-            parts.append(history_text)
+    # Format conversation history (300K limit)
+    conv_section = _format_conversation_section(context, CONVERSATION_LIMIT_PLANNING)
+    if conv_section:
+        parts.append(conv_section.rstrip())
 
     # Format planning instructions (30K limit, truncate middle)
     planning_instructions = getattr(context, "planning_instructions", None)
     if planning_instructions:
         truncated = _truncate_middle(planning_instructions, PLANNING_INSTRUCTIONS_LIMIT)
-        parts.append("=== SPECIAL INSTRUCTIONS ===")
-        parts.append(truncated)
+        parts.append(f"=== SPECIAL INSTRUCTIONS ===\n{truncated}")
 
     if parts:
         return "\n".join(parts) + "\n"
@@ -249,18 +264,32 @@ def format_context_section(context: Optional[Any]) -> str:
 
 
 def format_output_instructions_section(context: Optional[Any]) -> str:
-    """Format output instructions for synthesis prompt.
+    """Format output context for synthesis prompt.
 
-    10K character limit, truncates middle if exceeded.
-    Returns empty string if no output instructions provided.
+    Includes:
+    - Conversation history: 200K limit, truncates oldest messages first
+    - Output instructions: 10K limit, truncates middle
+
+    Returns empty string if no context provided.
     """
     if not context:
         return ""
 
+    parts = []
+
+    # Format conversation history (200K limit for synthesis)
+    conv_section = _format_conversation_section(context, CONVERSATION_LIMIT_SYNTHESIS)
+    if conv_section:
+        parts.append(conv_section.rstrip())
+
+    # Format output instructions (10K limit, truncate middle)
     output_instructions = getattr(context, "output_instructions", None)
     if output_instructions:
         truncated = _truncate_middle(output_instructions, OUTPUT_INSTRUCTIONS_LIMIT)
-        return f"\n=== OUTPUT INSTRUCTIONS ===\n{truncated}\n"
+        parts.append(f"=== OUTPUT INSTRUCTIONS ===\n{truncated}")
+
+    if parts:
+        return "\n".join(parts) + "\n"
     return ""
 
 
