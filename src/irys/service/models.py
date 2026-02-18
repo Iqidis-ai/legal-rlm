@@ -2,8 +2,42 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
+
+
+# === Investigation Context Models ===
+
+
+class ConversationMessage(BaseModel):
+    """A single message in conversation history."""
+    role: Literal["user", "assistant"] = Field(
+        ..., description="Role of the message sender"
+    )
+    content: str = Field(..., description="Message content")
+
+
+class InvestigationContext(BaseModel):
+    """Additional context and instructions for investigation.
+
+    Groups all optional contextual information that can guide
+    the investigation planning and output synthesis phases.
+    """
+    conversation_history: Optional[list[ConversationMessage]] = Field(
+        None,
+        description="Prior conversation messages for context continuity"
+    )
+    planning_instructions: Optional[str] = Field(
+        None,
+        description="Instructions to guide investigation planning and assessment phase"
+    )
+    output_instructions: Optional[str] = Field(
+        None,
+        description="Instructions for synthesis output (e.g., language, style preferences)"
+    )
+
+
+# === Job Status and Core Models ===
 
 
 class JobStatus(str, Enum):
@@ -23,6 +57,10 @@ class InvestigateRequest(BaseModel):
     )
     session_id: Optional[str] = Field(
         None, description="Session ID for cross-investigation fact/citation persistence"
+    )
+    context: Optional[InvestigationContext] = Field(
+        None,
+        description="Additional context including conversation history and instructions"
     )
     options: Optional[dict[str, Any]] = Field(
         default_factory=dict, description="Additional investigation options"
@@ -184,6 +222,10 @@ class S3UrlsInvestigateRequest(BaseModel):
     session_id: Optional[str] = Field(
         None, description="Session ID for cross-investigation fact/citation persistence"
     )
+    context: Optional[InvestigationContext] = Field(
+        None,
+        description="Additional context including conversation history and instructions"
+    )
     options: Optional[dict[str, Any]] = Field(
         default_factory=dict, description="Additional investigation options"
     )
@@ -201,6 +243,14 @@ class S3UrlsInvestigateRequest(BaseModel):
                     },
                 ],
                 "callback_url": "https://your-service.com/webhook/investigation",
+                "context": {
+                    "conversation_history": [
+                        {"role": "user", "content": "What is this contract about?"},
+                        {"role": "assistant", "content": "This is a service agreement..."}
+                    ],
+                    "planning_instructions": "Focus on payment terms. Client is concerned about late fees.",
+                    "output_instructions": "Respond in English. Use formal legal language."
+                }
             }
         }
 

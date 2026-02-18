@@ -152,6 +152,7 @@ class RLMEngine:
         # Initialize external search manager (enabled by default)
         self.external_search = ExternalSearchManager() if self.config.enable_external_search else None
         self._external_research: dict = {}  # Store external research results
+        self._context: Optional[Any] = None  # Investigation context (set during investigate())
         self.repo: Optional[MatterRepository] = None  # Set during investigate()
         self.fact_store: Optional[FactStore] = None  # Set during investigate()
 
@@ -161,11 +162,24 @@ class RLMEngine:
         repository_path: str | Path,
         seed_facts: Optional[list[str]] = None,
         seed_citations: Optional[list[dict]] = None,
+        context: Optional[Any] = None,
     ) -> InvestigationState:
-        """Run full recursive investigation."""
+        """Run full recursive investigation.
+
+        Args:
+            query: The investigation question
+            repository_path: Path to document repository
+            seed_facts: Prior-session facts to seed
+            seed_citations: Prior-session citations to seed
+            context: Optional InvestigationContext with:
+                - conversation_history: Prior Q&A for context
+                - planning_instructions: Guidance for planning phase
+                - output_instructions: Guidance for synthesis (e.g., language)
+        """
         repo = MatterRepository(repository_path)
         self.repo = repo  # Store for methods that need repo access (e.g., _load_pinned_documents)
         self._external_research = {"case_law": [], "web": [], "analysis": {}}  # Reset with proper structure
+        self._context = context  # Store context for use in decision functions
         state = InvestigationState.create(query, str(repository_path))
 
         # Load fact store for this repository
