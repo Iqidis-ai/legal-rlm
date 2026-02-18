@@ -164,6 +164,7 @@ Reply JSON only:
 # =============================================================================
 
 P_ASSESS_SMALL_REPO = """Query: {query}
+{context_section}
 {cached_facts_section}
 === MATTER DOCUMENTS ===
 {content}
@@ -262,6 +263,7 @@ Design your approach:
 
 
 P_ASSESS_AND_PLAN = """Query: {query}
+{context_section}
 {cached_facts_section}
 === REPOSITORY ({total_files} files) ===
 {file_list}
@@ -411,7 +413,7 @@ The current approach isn't working. Diagnose and redirect:
 # =============================================================================
 
 P_SYNTHESIZE = """Query: {query}
-
+{output_instructions_section}
 === DECISIVE DOCUMENTS ===
 {pinned_content}
 

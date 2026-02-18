@@ -150,6 +150,121 @@ def _coerce_int(value: any) -> int | None:
 
 
 # =============================================================================
+# CONTEXT FORMATTING HELPERS
+# =============================================================================
+
+# Character limits for context sections
+CONVERSATION_HISTORY_LIMIT = 300_000  # 300K chars
+PLANNING_INSTRUCTIONS_LIMIT = 30_000  # 30K chars
+OUTPUT_INSTRUCTIONS_LIMIT = 10_000    # 10K chars
+
+
+def _truncate_middle(text: str, limit: int) -> str:
+    """Truncate text by removing the middle portion, keeping start and end."""
+    if len(text) <= limit:
+        return text
+
+    # Reserve space for the truncation marker: "\n\n[... X characters truncated ...]\n\n"
+    truncation_marker_overhead = 60
+
+    usable_limit = limit - truncation_marker_overhead
+    keep_start = usable_limit // 2
+    keep_end = usable_limit - keep_start
+
+    start = text[:keep_start]
+    end = text[-keep_end:]
+    chars_removed = len(text) - len(start) - len(end)
+
+    return f"{start}\n\n[... {chars_removed:,} characters truncated ...]\n\n{end}"
+
+
+def _truncate_conversation_from_start(messages: list, limit: int) -> str:
+    """Format conversation, truncating oldest messages if over limit."""
+    truncation_notice = "[Earlier conversation truncated...]\n"
+    newline_char_length = 1
+
+    # Format all messages
+    lines = []
+    for msg in messages:
+        role = getattr(msg, "role", msg.get("role", "user")) if isinstance(msg, dict) else msg.role
+        content = getattr(msg, "content", msg.get("content", "")) if isinstance(msg, dict) else msg.content
+        lines.append(f"[{role.upper()}]: {content}")
+
+    full_text = "\n".join(lines)
+
+    if len(full_text) <= limit:
+        return full_text
+
+    # Truncate from start - keep most recent messages
+    # Work backwards to find how many messages fit
+    kept_lines = []
+    current_length = 0
+    available_for_messages = limit - len(truncation_notice)
+
+    for line in reversed(lines):
+        line_length_with_newline = len(line) + newline_char_length
+        if current_length + line_length_with_newline <= available_for_messages:
+            kept_lines.insert(0, line)
+            current_length += line_length_with_newline
+        else:
+            break
+
+    if kept_lines:
+        return truncation_notice + "\n".join(kept_lines)
+    return ""
+
+
+def format_context_section(context: Optional[Any]) -> str:
+    """Format investigation context for prompts (planning phase).
+
+    Includes conversation history and planning instructions.
+    - Conversation: 300K limit, truncates oldest messages first
+    - Planning instructions: 30K limit, truncates middle
+
+    Returns empty string if no context provided.
+    """
+    if not context:
+        return ""
+
+    parts = []
+
+    # Format conversation history (300K limit, truncate from start)
+    conversation = getattr(context, "conversation_history", None)
+    if conversation:
+        history_text = _truncate_conversation_from_start(conversation, CONVERSATION_HISTORY_LIMIT)
+        if history_text:
+            parts.append("=== PRIOR CONVERSATION ===")
+            parts.append(history_text)
+
+    # Format planning instructions (30K limit, truncate middle)
+    planning_instructions = getattr(context, "planning_instructions", None)
+    if planning_instructions:
+        truncated = _truncate_middle(planning_instructions, PLANNING_INSTRUCTIONS_LIMIT)
+        parts.append("=== SPECIAL INSTRUCTIONS ===")
+        parts.append(truncated)
+
+    if parts:
+        return "\n".join(parts) + "\n"
+    return ""
+
+
+def format_output_instructions_section(context: Optional[Any]) -> str:
+    """Format output instructions for synthesis prompt.
+
+    10K character limit, truncates middle if exceeded.
+    Returns empty string if no output instructions provided.
+    """
+    if not context:
+        return ""
+
+    output_instructions = getattr(context, "output_instructions", None)
+    if output_instructions:
+        truncated = _truncate_middle(output_instructions, OUTPUT_INSTRUCTIONS_LIMIT)
+        return f"\n=== OUTPUT INSTRUCTIONS ===\n{truncated}\n"
+    return ""
+
+
+# =============================================================================
 # WORKER TIER DECISIONS (LITE model)
 # =============================================================================
 
@@ -508,6 +623,7 @@ async def assess_small_repo(
     content: str,
     client: GeminiClient,
     cached_facts: str = "",
+    context: Optional[Any] = None,
 ) -> dict:
     """Unified assessment for small repositories.
 
@@ -525,6 +641,7 @@ async def assess_small_repo(
         content: Full document content (concatenated)
         client: GeminiClient instance
         cached_facts: Pre-formatted fact sheet from FactStore.format_for_llm()
+        context: Optional investigation context with conversation history and instructions
     """
     start_time = time.time()
     content_preview = f"{len(content):,} chars"
@@ -539,11 +656,15 @@ async def assess_small_repo(
         cached_facts_section = ""
         cached_facts_note = ""
 
+    # Build context section for prompt
+    context_section = format_context_section(context)
+
     prompt = prompts.P_ASSESS_SMALL_REPO.format(
         query=query,
         content=content,
         cached_facts_section=cached_facts_section,
         cached_facts_note=cached_facts_note,
+        context_section=context_section,
     )
 
     _log_llm_call("assess_small_repo", ModelTier.FLASH, prompt, start_time)
@@ -680,6 +801,7 @@ async def assess_and_plan(
     total_files: int,
     client: GeminiClient,
     cached_facts: str = "",
+    context: Optional[Any] = None,
 ) -> dict:
     """Unified assessment and planning for large repositories.
 
@@ -692,6 +814,7 @@ async def assess_and_plan(
         total_files: Total number of files
         client: GeminiClient instance
         cached_facts: Pre-formatted fact sheet from FactStore.format_for_llm()
+        context: Optional investigation context with conversation history and instructions
 
     Returns:
         dict with: can_answer_from_facts, relevant_facts, complexity,
@@ -707,11 +830,15 @@ async def assess_and_plan(
     else:
         cached_facts_section = ""
 
+    # Build context section for prompt
+    context_section = format_context_section(context)
+
     prompt = prompts.P_ASSESS_AND_PLAN.format(
         query=query,
         file_list=file_list,
         total_files=total_files,
         cached_facts_section=cached_facts_section,
+        context_section=context_section,
     )
 
     _log_llm_call("assess_and_plan", ModelTier.FLASH, prompt, start_time)
@@ -867,11 +994,21 @@ async def synthesize(
     external_research: str = "",
     pinned_content: str = "",
     tier: ModelTier = ModelTier.PRO,
+    context: Optional[Any] = None,
 ) -> str:
     """Synthesize final answer.
 
     Uses PRO model by default. For simple queries, can use FLASH model
     but ALWAYS uses PRO system prompt for synthesis quality.
+
+    Args:
+        query: The investigation query
+        evidence: Evidence gathered during investigation
+        client: GeminiClient instance
+        external_research: External research results (case law, web)
+        pinned_content: Decisive document content
+        tier: Model tier to use (PRO or FLASH)
+        context: Optional investigation context with output instructions
     """
     start_time = time.time()
     evidence_lines = evidence.count('\n') + 1 if evidence else 0
@@ -879,11 +1016,15 @@ async def synthesize(
     tier_label = "FLASH" if tier == ModelTier.FLASH else "PRO"
     logger.info(f"📝 synthesize [{tier_label}]: creating final answer from {evidence_lines} evidence lines{pinned_info}")
 
+    # Build output instructions section for prompt
+    output_instructions_section = format_output_instructions_section(context)
+
     prompt = prompts.P_SYNTHESIZE.format(
         query=query,
         evidence=evidence or "No specific findings accumulated.",
         external_research=external_research or "No external research conducted.",
         pinned_content=pinned_content or "No decisive documents identified.",
+        output_instructions_section=output_instructions_section,
     )
 
     _log_llm_call("synthesize", tier, prompt, start_time)

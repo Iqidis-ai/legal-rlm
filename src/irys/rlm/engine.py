@@ -396,6 +396,7 @@ class RLMEngine:
             content=all_content,
             client=self.client,
             cached_facts=cached_facts_str,
+            context=self._context,
         )
 
         # Store complexity for synthesis tier selection
@@ -754,6 +755,7 @@ class RLMEngine:
             total_files=stats.total_files,
             client=self.client,
             cached_facts=cached_facts_str,
+            context=self._context,
         )
 
         # If can answer from facts, return early (caller handles synthesis)
@@ -1661,6 +1663,7 @@ class RLMEngine:
             pinned_content=pinned_content,
             client=self.client,
             tier=synthesis_tier,
+            context=self._context,
         )
 
         state.findings["final_output"] = response
