@@ -150,6 +150,209 @@ def _coerce_int(value: any) -> int | None:
 
 
 # =============================================================================
+# CONTEXT FORMATTING HELPERS
+# =============================================================================
+
+# Character limits for context sections
+CONVERSATION_LIMIT_PLANNING = 300_000   # 300K chars for planning phase
+CONVERSATION_LIMIT_SYNTHESIS = 200_000  # 200K chars for synthesis phase
+PLANNING_INSTRUCTIONS_LIMIT = 30_000    # 30K chars
+OUTPUT_INSTRUCTIONS_LIMIT = 10_000      # 10K chars
+
+
+def _truncate_middle(text: str, limit: int) -> str:
+    """Truncate text by removing the middle portion, keeping start and end."""
+    if len(text) <= limit:
+        return text
+
+    # Reserve space for the truncation marker: "\n\n[... X characters truncated ...]\n\n"
+    truncation_marker_overhead = 60
+
+    usable_limit = limit - truncation_marker_overhead
+    keep_start = usable_limit // 2
+    keep_end = usable_limit - keep_start
+
+    start = text[:keep_start]
+    end = text[-keep_end:]
+    chars_removed = len(text) - len(start) - len(end)
+
+    return f"{start}\n\n[... {chars_removed:,} characters truncated ...]\n\n{end}"
+
+
+def _truncate_conversation_from_start(messages: list, limit: int) -> str:
+    """Format conversation, truncating oldest messages if over limit.
+
+    Each message is formatted as:
+    [ROLE]: content [Attachments: file1.pdf, file2.docx]
+    """
+    truncation_notice = "[Earlier conversation truncated...]\n"
+    newline_char_length = 1
+
+    # Format all messages
+    lines = []
+    for msg in messages:
+        role = getattr(msg, "role", msg.get("role", "user")) if isinstance(msg, dict) else msg.role
+        content = getattr(msg, "content", msg.get("content", "")) if isinstance(msg, dict) else msg.content
+
+        # Extract attachment names if present
+        attachments = getattr(msg, "attachments", msg.get("attachments")) if isinstance(msg, dict) else getattr(msg, "attachments", None)
+        attachment_suffix = ""
+        if attachments:
+            attachment_names = [a.name if hasattr(a, "name") else a.get("name") for a in attachments if (a.name if hasattr(a, "name") else a.get("name"))]
+            if attachment_names:
+                attachment_suffix = f" [Attachments: {', '.join(attachment_names)}]"
+
+        lines.append(f"[{role.upper()}]: {content}{attachment_suffix}")
+
+    full_text = "\n".join(lines)
+
+    if len(full_text) <= limit:
+        return full_text
+
+    # Truncate from start - keep most recent messages
+    # Work backwards to find how many messages fit
+    kept_lines = []
+    current_length = 0
+    available_for_messages = limit - len(truncation_notice)
+
+    for line in reversed(lines):
+        line_length_with_newline = len(line) + newline_char_length
+        if current_length + line_length_with_newline <= available_for_messages:
+            kept_lines.insert(0, line)
+            current_length += line_length_with_newline
+        else:
+            break
+
+    if kept_lines:
+        return truncation_notice + "\n".join(kept_lines)
+    return ""
+
+
+def _extract_current_message_attachments(context: Optional[Any]) -> list[str]:
+    """Extract attachment names from the last message in conversation history.
+
+    The last message is typically the current query message, and its attachments
+    are the documents sent with the current request.
+
+    Returns list of attachment names, or empty list if none.
+    """
+    if not context:
+        return []
+
+    conversation = getattr(context, "conversation_history", None)
+    if not conversation:
+        return []
+
+    last_message = conversation[-1]
+    attachments = getattr(last_message, "attachments", last_message.get("attachments")) if isinstance(last_message, dict) else getattr(last_message, "attachments", None)
+
+    if not attachments:
+        return []
+
+    return [a.name if hasattr(a, "name") else a.get("name") for a in attachments if (a.name if hasattr(a, "name") else a.get("name"))]
+
+
+def _format_conversation_section(context: Optional[Any], limit: int) -> str:
+    """Format conversation history with specified character limit.
+
+    Excludes the last message since it contains the current query which is
+    passed separately to the model.
+
+    Returns formatted section or empty string if no conversation.
+    """
+    if not context:
+        return ""
+
+    conversation = getattr(context, "conversation_history", None)
+    if not conversation:
+        return ""
+
+    # Exclude the last message (current query) from history
+    prior_messages = conversation[:-1] if len(conversation) > 1 else []
+    if not prior_messages:
+        return ""
+
+    history_text = _truncate_conversation_from_start(prior_messages, limit)
+    if history_text:
+        return f"=== PRIOR CONVERSATION ===\n{history_text}\n"
+    return ""
+
+
+def format_context_section(context: Optional[Any]) -> str:
+    """Format investigation context for prompts (planning phase).
+
+    Includes conversation history, current message attachments, and planning instructions.
+    - Conversation: 300K limit, truncates oldest messages first (excludes last/current message)
+    - Current attachments: Documents sent with the current query
+    - Planning instructions: 30K limit, truncates middle
+
+    Returns empty string if no context provided.
+    """
+    if not context:
+        return ""
+
+    parts = []
+
+    # Format conversation history (300K limit) - excludes last message
+    conv_section = _format_conversation_section(context, CONVERSATION_LIMIT_PLANNING)
+    if conv_section:
+        parts.append(conv_section.rstrip())
+
+    # Extract current message attachments (from last message)
+    current_attachments = _extract_current_message_attachments(context)
+    if current_attachments:
+        attachment_list = ", ".join(current_attachments)
+        parts.append(f"=== CURRENT MESSAGE ATTACHMENTS ===\n{attachment_list}")
+
+    # Format planning instructions (30K limit, truncate middle)
+    planning_instructions = getattr(context, "planning_instructions", None)
+    if planning_instructions:
+        truncated = _truncate_middle(planning_instructions, PLANNING_INSTRUCTIONS_LIMIT)
+        parts.append(f"=== SPECIAL INSTRUCTIONS ===\n{truncated}")
+
+    if parts:
+        return "\n".join(parts) + "\n"
+    return ""
+
+
+def format_output_instructions_section(context: Optional[Any]) -> str:
+    """Format output context for synthesis prompt.
+
+    Includes:
+    - Conversation history: 200K limit, truncates oldest messages first (excludes last/current message)
+    - Current attachments: Documents sent with the current query
+    - Output instructions: 10K limit, truncates middle
+
+    Returns empty string if no context provided.
+    """
+    if not context:
+        return ""
+
+    parts = []
+
+    # Format conversation history (200K limit for synthesis) - excludes last message
+    conv_section = _format_conversation_section(context, CONVERSATION_LIMIT_SYNTHESIS)
+    if conv_section:
+        parts.append(conv_section.rstrip())
+
+    # Extract current message attachments (from last message)
+    current_attachments = _extract_current_message_attachments(context)
+    if current_attachments:
+        attachment_list = ", ".join(current_attachments)
+        parts.append(f"=== CURRENT MESSAGE ATTACHMENTS ===\n{attachment_list}")
+
+    # Format output instructions (10K limit, truncate middle)
+    output_instructions = getattr(context, "output_instructions", None)
+    if output_instructions:
+        truncated = _truncate_middle(output_instructions, OUTPUT_INSTRUCTIONS_LIMIT)
+        parts.append(f"=== OUTPUT INSTRUCTIONS ===\n{truncated}")
+
+    if parts:
+        return "\n".join(parts) + "\n"
+    return ""
+
+
+# =============================================================================
 # WORKER TIER DECISIONS (LITE model)
 # =============================================================================
 
@@ -508,6 +711,7 @@ async def assess_small_repo(
     content: str,
     client: GeminiClient,
     cached_facts: str = "",
+    context: Optional[Any] = None,
 ) -> dict:
     """Unified assessment for small repositories.
 
@@ -525,6 +729,7 @@ async def assess_small_repo(
         content: Full document content (concatenated)
         client: GeminiClient instance
         cached_facts: Pre-formatted fact sheet from FactStore.format_for_llm()
+        context: Optional investigation context with conversation history and instructions
     """
     start_time = time.time()
     content_preview = f"{len(content):,} chars"
@@ -539,11 +744,15 @@ async def assess_small_repo(
         cached_facts_section = ""
         cached_facts_note = ""
 
+    # Build context section for prompt
+    context_section = format_context_section(context)
+
     prompt = prompts.P_ASSESS_SMALL_REPO.format(
         query=query,
         content=content,
         cached_facts_section=cached_facts_section,
         cached_facts_note=cached_facts_note,
+        context_section=context_section,
     )
 
     _log_llm_call("assess_small_repo", ModelTier.FLASH, prompt, start_time)
@@ -680,6 +889,7 @@ async def assess_and_plan(
     total_files: int,
     client: GeminiClient,
     cached_facts: str = "",
+    context: Optional[Any] = None,
 ) -> dict:
     """Unified assessment and planning for large repositories.
 
@@ -692,6 +902,7 @@ async def assess_and_plan(
         total_files: Total number of files
         client: GeminiClient instance
         cached_facts: Pre-formatted fact sheet from FactStore.format_for_llm()
+        context: Optional investigation context with conversation history and instructions
 
     Returns:
         dict with: can_answer_from_facts, relevant_facts, complexity,
@@ -707,11 +918,15 @@ async def assess_and_plan(
     else:
         cached_facts_section = ""
 
+    # Build context section for prompt
+    context_section = format_context_section(context)
+
     prompt = prompts.P_ASSESS_AND_PLAN.format(
         query=query,
         file_list=file_list,
         total_files=total_files,
         cached_facts_section=cached_facts_section,
+        context_section=context_section,
     )
 
     _log_llm_call("assess_and_plan", ModelTier.FLASH, prompt, start_time)
@@ -867,11 +1082,21 @@ async def synthesize(
     external_research: str = "",
     pinned_content: str = "",
     tier: ModelTier = ModelTier.PRO,
+    context: Optional[Any] = None,
 ) -> str:
     """Synthesize final answer.
 
     Uses PRO model by default. For simple queries, can use FLASH model
     but ALWAYS uses PRO system prompt for synthesis quality.
+
+    Args:
+        query: The investigation query
+        evidence: Evidence gathered during investigation
+        client: GeminiClient instance
+        external_research: External research results (case law, web)
+        pinned_content: Decisive document content
+        tier: Model tier to use (PRO or FLASH)
+        context: Optional investigation context with output instructions
     """
     start_time = time.time()
     evidence_lines = evidence.count('\n') + 1 if evidence else 0
@@ -879,11 +1104,15 @@ async def synthesize(
     tier_label = "FLASH" if tier == ModelTier.FLASH else "PRO"
     logger.info(f"📝 synthesize [{tier_label}]: creating final answer from {evidence_lines} evidence lines{pinned_info}")
 
+    # Build output instructions section for prompt
+    output_instructions_section = format_output_instructions_section(context)
+
     prompt = prompts.P_SYNTHESIZE.format(
         query=query,
         evidence=evidence or "No specific findings accumulated.",
         external_research=external_research or "No external research conducted.",
         pinned_content=pinned_content or "No decisive documents identified.",
+        output_instructions_section=output_instructions_section,
     )
 
     _log_llm_call("synthesize", tier, prompt, start_time)

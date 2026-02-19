@@ -140,6 +140,7 @@ class Irys:
         template: Optional[str] = None,
         seed_facts: Optional[list[str]] = None,
         seed_citations: Optional[list[dict]] = None,
+        context: Optional[Any] = None,
     ) -> "InvestigationResult":
         """
         Run an investigation.
@@ -150,6 +151,8 @@ class Irys:
             template: Optional investigation template name
             seed_facts: Prior-session facts to seed into investigation
             seed_citations: Prior-session citations to seed into investigation
+            context: Optional InvestigationContext with conversation_history,
+                     planning_instructions, and output_instructions
 
         Returns:
             InvestigationResult with findings and output
@@ -179,6 +182,7 @@ class Irys:
                 query, repository,
                 seed_facts=seed_facts,
                 seed_citations=seed_citations,
+                context=context,
             )
         finally:
             self._telemetry.end_operation(

@@ -417,11 +417,11 @@ def validate_query(query: str) -> tuple[bool, list[str]]:
         issues.append("Query cannot be empty")
         return False, issues
 
-    if len(query) < 5:
-        issues.append("Query is too short (minimum 5 characters)")
+    # if len(query) < 5:
+    #     issues.append("Query is too short (minimum 5 characters)")
 
-    if len(query) > 2000:
-        issues.append("Query is too long (maximum 2000 characters)")
+    # if len(query) > 2000:
+    #     issues.append("Query is too long (maximum 2000 characters)")
 
     return len(issues) == 0, issues
 

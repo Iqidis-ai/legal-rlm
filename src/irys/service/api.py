@@ -22,6 +22,7 @@ from .config import ServiceConfig, get_config
 from .models import (
     InvestigateRequest,
     InvestigateResponse,
+    InvestigationContext,
     JobResult,
     JobStatus,
     SearchRequest,
@@ -83,6 +84,21 @@ async def _save_session(
         f"Session {session_id}: saved {len(facts)} facts, "
         f"{len(citations_serialized)} citations (investigation #{session.investigation_count})"
     )
+
+def _parse_context_json(context_json: Optional[str]) -> Optional[InvestigationContext]:
+    """Parse context JSON string into InvestigationContext object.
+
+    Used for multipart form endpoints where nested objects can't be sent directly.
+    """
+    if not context_json:
+        return None
+    try:
+        data = json.loads(context_json)
+        return InvestigationContext(**data)
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning(f"Failed to parse context JSON: {e}")
+        return None
+
 
 # Version
 VERSION = "1.0.0"
@@ -345,6 +361,7 @@ async def _run_investigation(
             repository=str(temp_dir),
             seed_facts=seed_facts,
             seed_citations=seed_citations,
+            context=request.context,
         )
 
         await _save_session(config, request.session_id, result)
@@ -498,6 +515,8 @@ async def upload_investigate(
         False, description="Keep files in S3 after processing"),
     session_id: Optional[str] = Form(
         None, description="Session ID for cross-investigation fact persistence"),
+    context_json: Optional[str] = Form(
+        None, description="Investigation context as JSON string (conversation_history, planning_instructions, output_instructions)"),
     background_tasks: BackgroundTasks = None,
 ):
     """Start investigation with uploaded files (async).
@@ -507,6 +526,8 @@ async def upload_investigate(
     - "s3": Files streamed to S3 (for production, keeps VM light)
 
     Set keep_files=true to preserve files in S3 for later re-query (s3 mode only).
+
+    context_json example: {"planning_instructions": "Focus on damages", "output_instructions": "Respond in Spanish"}
     """
     config = get_config()
 
@@ -571,6 +592,9 @@ async def upload_investigate(
         )
         _jobs[job_id] = job
 
+        # Parse context JSON
+        context = _parse_context_json(context_json)
+
         # Start background investigation
         background_tasks.add_task(
             _run_upload_investigation,
@@ -581,6 +605,7 @@ async def upload_investigate(
             keep_files,
             config,
             session_id,
+            context,
         )
 
         return UploadInvestigateResponse(
@@ -606,6 +631,7 @@ async def _run_upload_investigation(
     keep_files: bool,
     config: ServiceConfig,
     session_id: Optional[str] = None,
+    context: Optional[InvestigationContext] = None,
 ):
     """Background task to run investigation on uploaded files."""
     job = _jobs[job_id]
@@ -637,6 +663,7 @@ async def _run_upload_investigation(
             repository=str(temp_dir),
             seed_facts=seed_facts,
             seed_citations=seed_citations,
+            context=context,
         )
 
         await _save_session(config, session_id, result)
@@ -800,6 +827,8 @@ async def upload_investigate_sync(
         False, description="Keep files in S3 after processing for re-query"),
     session_id: Optional[str] = Form(
         None, description="Session ID for cross-investigation fact persistence"),
+    context_json: Optional[str] = Form(
+        None, description="Investigation context as JSON string (conversation_history, planning_instructions, output_instructions)"),
 ):
     """Upload and investigate files synchronously.
 
@@ -808,6 +837,8 @@ async def upload_investigate_sync(
     - "s3": Files streamed to S3 (for production, keeps VM light)
 
     Set keep_files=true to preserve files in S3 for later re-query (only applies in s3 mode).
+
+    context_json example: {"planning_instructions": "Focus on damages", "output_instructions": "Respond in Spanish"}
 
     Note: This endpoint blocks until investigation completes (may take 30-120 seconds).
     """
@@ -862,6 +893,9 @@ async def upload_investigate_sync(
             )
             temp_dir = await upload_repo.download_to_temp(job_id)
 
+        # Parse context JSON
+        context = _parse_context_json(context_json)
+
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key)
@@ -873,6 +907,7 @@ async def upload_investigate_sync(
             repository=str(temp_dir),
             seed_facts=seed_facts,
             seed_citations=seed_citations,
+            context=context,
         )
 
         await _save_session(config, session_id, result)
@@ -1023,6 +1058,7 @@ async def _run_urls_investigation(
             repository=str(temp_dir),
             seed_facts=seed_facts,
             seed_citations=seed_citations,
+            context=request.context,
         )
 
         await _save_session(config, request.session_id, result)
@@ -1160,6 +1196,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             repository=str(temp_dir),
             seed_facts=seed_facts,
             seed_citations=seed_citations,
+            context=request.context,
         )
 
         await _save_session(config, request.session_id, result)
@@ -1317,6 +1354,7 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
                 repository=str(temp_dir),
                 seed_facts=seed_facts,
                 seed_citations=seed_citations,
+                context=request.context,
             )
 
             # Save session data
@@ -1354,11 +1392,34 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
             queue.put_nowait(None)
 
     async def event_generator():
-        """Yield SSE-formatted events from the queue."""
+        """Yield SSE-formatted events from the queue.
+
+        Uses asyncio.wait_for with timeout to yield control back to
+        the event loop frequently, allowing the investigation task
+        to make progress and push events to the queue.
+        """
         task = asyncio.create_task(run_investigation())
         try:
             while True:
-                item = await queue.get()
+                try:
+                    # Short timeout forces event loop to context-switch
+                    item = await asyncio.wait_for(queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    # Check if task finished while we were waiting
+                    if task.done():
+                        # Drain remaining items
+                        while not queue.empty():
+                            item = queue.get_nowait()
+                            if item is None:
+                                return
+                            event_type = item["event"]
+                            data = json.dumps(item["data"])
+                            yield f"event: {event_type}\ndata: {data}\n\n"
+                        return
+                    # Yield heartbeat to flush buffers and keep connection alive
+                    yield ": heartbeat\n\n"
+                    continue
+
                 if item is None:
                     break
                 event_type = item["event"]
