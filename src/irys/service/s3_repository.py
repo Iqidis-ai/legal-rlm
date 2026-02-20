@@ -236,13 +236,13 @@ class S3Repository:
             f"{actual_file_count} files verified on disk at {temp_dir}"
         )
 
-        # Raise error if no files were downloaded
-        if actual_file_count == 0:
-            raise ValueError(
-                f"Failed to download any documents. Listed: {len(documents)}, "
-                f"Downloaded: {downloaded_count}, Verified on disk: {actual_file_count}. "
-                f"Temp dir: {temp_dir}"
-            )
+        # Donot raise error even if no files were downloaded
+        # if actual_file_count == 0:
+        #     raise ValueError(
+        #         f"Failed to download any documents. Listed: {len(documents)}, "
+        #         f"Downloaded: {downloaded_count}, Verified on disk: {actual_file_count}. "
+        #         f"Temp dir: {temp_dir}"
+        #     )
 
         return temp_dir
 
@@ -456,11 +456,11 @@ class S3Repository:
             f"{downloaded}/{len(url_inputs)} downloaded, {actual_file_count} files verified on disk at {temp_dir}"
         )
 
-        # Raise error if no files were downloaded
-        if downloaded == 0:
-            raise ValueError(
-                f"Failed to download any documents. Errors: {'; '.join(errors)}"
-            )
+        # Donot raise error even if no files were downloaded
+        # if downloaded == 0:
+        #     raise ValueError(
+        #         f"Failed to download any documents. Errors: {'; '.join(errors)}"
+        #     )
 
         # Raise error if files reported downloaded but not on disk (indicates bug)
         if downloaded > 0 and actual_file_count == 0:
