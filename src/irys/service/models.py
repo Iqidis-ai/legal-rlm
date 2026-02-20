@@ -227,7 +227,6 @@ class S3UrlsInvestigateRequest(BaseModel):
             "'url', 'name' (filename), and 'mime' (MIME type) fields. "
             "Supports S3 URLs and generic HTTP(S) URLs including presigned URLs."
         ),
-        min_length=1,
         max_length=500,
     )
     callback_url: Optional[str] = Field(
@@ -278,7 +277,6 @@ class S3UrlsSearchRequest(BaseModel):
             "List of document URLs. Each item can be a string URL or an object with "
             "'url', 'name' (filename), and 'mime' (MIME type) fields."
         ),
-        min_length=1,
         max_length=500,
     )
     max_results: int = Field(20, ge=1, le=100, description="Maximum results")
