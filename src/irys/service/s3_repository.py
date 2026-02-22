@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import AsyncIterator, Optional
 from contextlib import asynccontextmanager
-from urllib.parse import unquote_plus
+from urllib.parse import unquote_plus, urlparse, unquote as _url_unquote
 
 import boto3
 import httpx
@@ -42,6 +42,25 @@ MAGIC_BYTES = {
     b"\xd0\xcf\x11\xe0": ".doc",  # OLE compound document (old MS Office)
     b"{\\rtf": ".rtf",
 }
+
+# Maximum number of concurrent file downloads
+MAX_CONCURRENT_DOWNLOADS = 20
+
+
+def _make_unique_filename(name: str, used: set[str]) -> str:
+    """Return a unique filename, appending _1, _2 etc. to the stem if already taken."""
+    if name not in used:
+        used.add(name)
+        return name
+    stem = Path(name).stem
+    suffix = Path(name).suffix
+    counter = 1
+    while True:
+        candidate = f"{stem}_{counter}{suffix}"
+        if candidate not in used:
+            used.add(candidate)
+            return candidate
+        counter += 1
 
 
 def detect_extension_from_content_type(content_type: Optional[str]) -> Optional[str]:
@@ -209,22 +228,30 @@ class S3Repository:
                 except Exception as e:
                     logger.warning(f"Failed to load filename mapping: {e}")
 
-        # Download each document
-        downloaded_count = 0
-        skipped_count = 0
+        # Build download list with unique filenames (handle same-name conflicts)
+        used_names: set[str] = set()
+        download_pairs: list[tuple[str, str]] = []
         for doc_key in documents:
-            # Skip the mapping file (already downloaded)
             if doc_key == "_filename_mapping.json":
                 continue
-
-            # Determine the save name: use display name if available
             save_name = filename_mapping.get(doc_key, doc_key)
+            unique_name = _make_unique_filename(save_name, used_names)
+            download_pairs.append((doc_key, unique_name))
 
-            result = await self._download_file(doc_key, temp_dir, save_as=save_name)
-            if result:
-                downloaded_count += 1
-            else:
-                skipped_count += 1
+        # Download concurrently with limit
+        sem = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+
+        async def _dl(doc_key: str, save_name: str) -> Optional[Path]:
+            async with sem:
+                logger.debug(f"[async-dl] start  {save_name}")
+                result = await self._download_file(doc_key, temp_dir, save_as=save_name)
+                logger.debug(f"[async-dl] done   {save_name}")
+                return result
+
+        logger.info(f"[async-dl] launching {len(download_pairs)} downloads (max {MAX_CONCURRENT_DOWNLOADS} concurrent)")
+        dl_results = await asyncio.gather(*[_dl(k, n) for k, n in download_pairs], return_exceptions=True)
+        downloaded_count = sum(1 for r in dl_results if isinstance(r, Path))
+        skipped_count = sum(1 for r in dl_results if r is None or isinstance(r, Exception))
 
         # Verify files actually exist in temp directory
         actual_files = list(temp_dir.glob("**/*"))
@@ -412,40 +439,57 @@ class S3Repository:
 
         logger.info(f"Downloading {len(url_inputs)} documents for job {job_id}")
 
-        # Download each URL
-        downloaded = 0
-        errors = []
-        for url_input in url_inputs:
-            # Extract URL and metadata
-            if isinstance(url_input, str):
-                url = url_input
-                filename = None
-                mime_type = None
-            else:
-                # UrlWithMetadata object or dict
-                if hasattr(url_input, 'url'):
-                    url = url_input.url
-                    filename = url_input.name
-                    mime_type = url_input.mime
-                else:
-                    # Dict format
-                    url = url_input.get('url', url_input)
-                    filename = url_input.get('name')
-                    mime_type = url_input.get('mime')
+        # --- Step 1: parse every input and assign unique filenames up-front ---
+        # Filenames are resolved before any I/O so the LLM always sees distinct,
+        # human-readable names even when two inputs share the same base name.
+        used_names: set[str] = set()
 
-            try:
-                if self.is_s3_url(url):
-                    # S3 URL - use S3 client
-                    bucket, key = self.parse_s3_url(url)
-                    await self._download_url(bucket, key, temp_dir, filename, mime_type)
-                else:
-                    # Generic HTTP(S) URL (includes presigned S3 URLs)
-                    await self._download_http_url(url, temp_dir, filename, mime_type)
-                downloaded += 1
-            except Exception as e:
-                error_msg = f"Failed to download {url}: {e}"
-                logger.warning(error_msg)
-                errors.append(error_msg)
+        def _resolve_input(url_input) -> tuple[str, Optional[str], Optional[str]]:
+            """Return (url, filename, mime_type) from a str / object / dict input."""
+            if isinstance(url_input, str):
+                url, filename, mime_type = url_input, None, None
+            elif hasattr(url_input, "url"):
+                url, filename, mime_type = url_input.url, url_input.name, url_input.mime
+            else:
+                url = url_input.get("url", url_input)
+                filename = url_input.get("name")
+                mime_type = url_input.get("mime")
+
+            # Fall back to the filename embedded in the URL path
+            if not filename:
+                filename = _url_unquote(Path(urlparse(url).path).name) or None
+
+            # Ensure no two files land with the same name
+            if filename:
+                filename = _make_unique_filename(filename, used_names)
+
+            return url, filename, mime_type
+
+        parsed_inputs = [_resolve_input(u) for u in url_inputs]
+
+        # --- Step 2: download all files concurrently, capped at MAX_CONCURRENT_DOWNLOADS ---
+        sem = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+
+        async def _download_one(url: str, filename: Optional[str], mime_type: Optional[str]) -> tuple[bool, Optional[str]]:
+            async with sem:
+                logger.debug(f"[async-dl] start  {filename or url}")
+                try:
+                    if self.is_s3_url(url):
+                        bucket, key = self.parse_s3_url(url)
+                        await self._download_url(bucket, key, temp_dir, filename, mime_type)
+                    else:
+                        await self._download_http_url(url, temp_dir, filename, mime_type)
+                    logger.debug(f"[async-dl] done   {filename or url}")
+                    return True, None
+                except Exception as e:
+                    error_msg = f"Failed to download {url}: {e}"
+                    logger.warning(error_msg)
+                    return False, error_msg
+
+        logger.info(f"[async-dl] launching {len(parsed_inputs)} downloads (max {MAX_CONCURRENT_DOWNLOADS} concurrent)")
+        dl_results = await asyncio.gather(*[_download_one(u, f, m) for u, f, m in parsed_inputs])
+        downloaded = sum(1 for ok, _ in dl_results if ok)
+        errors = [msg for _, msg in dl_results if msg]
 
         # Verify files actually exist in temp directory
         actual_files = list(temp_dir.glob("**/*"))
