@@ -1,0 +1,61 @@
+{
+  "query": "Find all the rules/guidelines and other information for transfer of cases",
+  "analysis": "# Investigation Report\n\n**Query:** Find all the rules/guidelines and other information for transfer of cases\n**Status:** completed\n**Duration:** 32.3s\n\n## Confidence\n- Score: 45/100 (medium)\n\n## Hypothesis\nIdentification of the specific sections in the manual governing when, how, and by whom a case can be transferred, including any required forms or notifications.\n\n## Key Findings\n\n1. Case transfers are governed by Chapter 4, Section 3 of the Child Welfare Procedure Manual.\n2. A 'Preparation Meeting' is required to initiate co-case management and support reunification.\n3. An 'Agreement Meeting' must occur prior to a supervisor approving the transfer of a CPS assessment.\n4. If a Child Welfare case plan is older than three months, the sending worker must update it prior to transfer.\n5. The receiving worker must confirm the sufficiency of the ongoing safety plan within five working days of the transfer.\n6. Appendix 4.1 contains the 'Case Transfer Information Sufficiency Checklist' used to verify documentation readiness.\n7. Specific protocols exist for transfers between ongoing workers and for cases involving ICWA/ORICWA (Tribal court transfers).\n8. A 'Case Transfer Information Sufficiency Checklist' (Appendix 4.1) is the mandatory protocol for determining if a case is ready for hand-off.\n9. Supervisors are required to participate in a joint meeting between the transferring and receiving workers to facilitate the transition.\n10. Specific transfer protocols exist for moving cases from CPS to Permanency and for cases involving adoption services.\n11. If a case file is incomplete at the time of transfer, the supervisor must provide direction on which worker is responsible for completion.\n\n## Citations\n\n- **\\tmp\\irys\\sync_24499332\\cw-procedure-manual.pdf**, p. 4\n  > \"Section 3: Transfer of a Case..........................................................................\"\n  - *Found via search: transfer OR criteria*\n\n- **\\tmp\\irys\\sync_24499332\\cw-procedure-manual.pdf**, p. 5\n  > \"Appendix 4.1: Case Transfer Information Sufficiency Checklist..........................................\"\n  - *Found via search: transfer OR criteria*\n\n- **\\tmp\\irys\\sync_24499332\\cw-procedure-manual.pdf**, p. 421\n  > \"In and Out of Home, including case transfer procedures, requirements regarding contact with children...\"\n  - *Found via search: transfer OR criteria*\n\n- **\\tmp\\irys\\sync_24499332\\cw-procedure-manual.pdf**, p. 529\n  > \"within five working days of the case transfer that the ongoing safety plan is sufficient by assuring...\"\n  - *Found via search: case transfer*\n\n## Analysis\n\n**MEMORANDUM**\n\n**TO:** Case Management Leadership\n**FROM:** Named Partner\n**DATE:** May 22, 2024\n**RE:** Synthesis of Case Transfer Protocols and Requirements\n\n### **1. Executive Summary**\nCase transfers within the Child Welfare system are governed by **Chapter 4, Section 3 of the Child Welfare Procedure Manual**. The process is centered on two mandatory pillars: (1) the **Case Transfer Information Sufficiency Checklist (Appendix 4.1)** and (2) a series of structured meetings between sending and receiving staff. Success is predicated on the sending worker ensuring all documentation—specifically case plans and safety assessments—is current before the receiving worker assumes responsibility.\n\n### **2. Governing Authority & Mandatory Documentation**\n*   **Primary Authority:** Child Welfare Procedure Manual, Chapter 4, Section 3.\n*   **Mandatory Protocol:** The **Case Transfer Information Sufficiency Checklist (Appendix 4.1)** is the required instrument for determining if a case is legally and administratively ready for hand-off.\n*   **Case Plan Currency:** If a case plan is older than **three months**, the sending worker is strictly required to update it prior to the transfer.\n\n### **3. Procedural Requirements: The Meeting Framework**\nTransfers are not merely administrative hand-offs but require active collaboration:\n*   **Preparation Meeting:** Required to initiate co-case management and align on reunification support.\n*   **Agreement Meeting:** A prerequisite for any supervisor to approve the transfer of a CPS assessment.\n*   **Joint Supervisor Meeting:** Supervisors from both the sending and receiving units must participate in a joint meeting with the respective workers to facilitate the transition.\n\n### **4. Roles and Responsibilities**\n#### **A. Sending Worker Obligations**\n*   Complete all items on the Appendix 4.1 Checklist.\n*   Update any case plan exceeding the three-month threshold.\n*   Ensure the case file is complete (or flag deficiencies for supervisor intervention).\n\n#### **B. Receiving Worker Obligations**\n*   **Safety Plan Verification:** Within **five working days** of the transfer, the receiving worker must confirm the sufficiency of the ongoing safety plan.\n\n#### **C. Supervisory Oversight**\n*   Supervisors hold the final approval authority for transfers.\n*   **Conflict Resolution:** If a case file is incomplete at the time of transfer, the supervisor must provide explicit direction regarding which worker (sending or receiving) is responsible for completing the missing documentation.\n\n### **5. Specialized Transfer Protocols**\nThe manual dictates specific, heightened protocols for the following scenarios:\n*   **CPS to Permanency:** Transitions from assessment to long-term care.\n*   **Adoption Services:** Transfers involving specialized adoption staff.\n*   **Tribal Transfers (ICWA/ORICWA):** Specific protocols apply when cases involve Tribal court jurisdiction or Indian Child Welfare Act requirements.\n\n### **6. Risk Assessment & Gaps**\n*   **Documentation Lag:** The five-day window for the receiving worker to confirm safety plan sufficiency is a critical liability period. Failure to meet this deadline creates a gap in safety oversight.\n*   **Incomplete Files:** While the manual allows supervisors to assign completion tasks for incomplete files, this creates a risk of \"administrative drift\" where neither worker takes full ownership of legacy errors.\n*   **Uncertainty:** The provided materials do not specify the exact timeline for the \"Agreement Meeting\" relative to the physical transfer of the file, only that it must occur \"prior to\" approval.\n\n### **7. Recommendations**\n1.  **Audit Appendix 4.1:** Ensure all staff have the latest version of the Checklist, as this is the primary defense against transfer-related errors.\n2.  **Strict Enforcement of the 3-Month Rule:** Sending supervisors should not sign off on transfers if the case plan is 90+ days old.\n3.  **Safety Plan Verification Log:** Implement a tracking mechanism to ensure the receiving worker’s 5-day safety plan confirmation is documented in the system of record.\n\n---\n## Investigation Metrics\n- Documents read: 1\n- Searches performed: 3\n- Citations collected: 4\n- Facts accumulated: 11\n- Entities found: 0\n- API calls: 0",
+  "citations": [
+    {
+      "id": "03e7ce67",
+      "document": "\\tmp\\irys\\sync_24499332\\cw-procedure-manual.pdf",
+      "page": 4,
+      "text": "Section 3: Transfer of a Case..........................................................................................................520",
+      "context": "Section 1: Overview........................................................................................................................514\nSection 2: Introduction....................................................................................................................517\n>>> Section 3: Transfer of a Case..........................................................................................................520\nSection 4: Confirm the Ongoing Safety Plan....................................................................................528\nSection 5: Conduct the Protective Capacity Assessment................................................................. 532",
+      "relevance": "Found via search: transfer OR criteria",
+      "timestamp": "2026-02-17T21:29:50.487864"
+    },
+    {
+      "id": "1b07d201",
+      "document": "\\tmp\\irys\\sync_24499332\\cw-procedure-manual.pdf",
+      "page": 5,
+      "text": "Appendix 4.1: Case Transfer Information Sufficiency Checklist.........................................................710",
+      "context": "Section 20: Substance Affected Infant........................................................................................... 690\nSection 21: All About Me Book Procedure...................................................................................... 696\n>>> Appendix 4.1: Case Transfer Information Sufficiency Checklist.........................................................710\nAppendix 4.1a: Is My Safety Plan Sufficient?...................................................................................713\nAppendix 4.1b: In-Home Criteria and Conditions for Return Guide....................................................715",
+      "relevance": "Found via search: transfer OR criteria",
+      "timestamp": "2026-02-17T21:29:50.487864"
+    },
+    {
+      "id": "6862e4cd",
+      "document": "\\tmp\\irys\\sync_24499332\\cw-procedure-manual.pdf",
+      "page": 421,
+      "text": "In and Out of Home, including case transfer procedures, requirements regarding contact with children and parents, and",
+      "context": "Welfare involvement.\nAll in-home ongoing safety plans are managed as directed in the procedure manual, Chapter 4, Managing Child Safety\n>>> In and Out of Home, including case transfer procedures, requirements regarding contact with children and parents, and",
+      "relevance": "Found via search: transfer OR criteria",
+      "timestamp": "2026-02-17T21:29:50.487864"
+    },
+    {
+      "id": "47eb758a",
+      "document": "\\tmp\\irys\\sync_24499332\\cw-procedure-manual.pdf",
+      "page": 529,
+      "text": "within five working days of the case transfer that the ongoing safety plan is sufficient by assuring the plan is:",
+      "context": "a new impending danger safety threat is identified.\nIn addition, whether or not the caseworker was part of developing the ongoing safety plan, the worker must confirm\n>>> within five working days of the case transfer that the ongoing safety plan is sufficient by assuring the plan is:\nI. Adequate to manage child safety by controlling safety threats that are uniquely occurring within the family;\nand",
+      "relevance": "Found via search: case transfer",
+      "timestamp": "2026-02-17T21:29:51.132507"
+    }
+  ],
+  "entities": {},
+  "answer":  {},
+  "facts": [
+    "Case transfers are governed by Chapter 4, Section 3 of the Child Welfare Procedure Manual.",
+    "A 'Preparation Meeting' is required to initiate co-case management and support reunification.",
+    "An 'Agreement Meeting' must occur prior to a supervisor approving the transfer of a CPS assessment.",
+    "If a Child Welfare case plan is older than three months, the sending worker must update it prior to transfer.",
+    "The receiving worker must confirm the sufficiency of the ongoing safety plan within five working days of the transfer.",
+    "Appendix 4.1 contains the 'Case Transfer Information Sufficiency Checklist' used to verify documentation readiness.",
+    "Specific protocols exist for transfers between ongoing workers and for cases involving ICWA/ORICWA (Tribal court transfers).",
+    "A 'Case Transfer Information Sufficiency Checklist' (Appendix 4.1) is the mandatory protocol for determining if a case is ready for hand-off.",
+    "Supervisors are required to participate in a joint meeting between the transferring and receiving workers to facilitate the transition.",
+    "Specific transfer protocols exist for moving cases from CPS to Permanency and for cases involving adoption services.",
+    "If a case file is incomplete at the time of transfer, the supervisor must provide direction on which worker is responsible for completion."
+  ],
+  "documents_processed": 1, 
+  "duration_seconds": 33.23,
+  "s3_prefix": null,
+  "session_id": null
+}
