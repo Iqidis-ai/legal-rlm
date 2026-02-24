@@ -43,6 +43,7 @@ class IrysConfig:
     cache_ttl_seconds: int = 3600
     output_format: str = "markdown"
     log_level: str = "INFO"
+    enable_inline_citations: bool = False
 
 
 class Irys:
@@ -194,6 +195,15 @@ class Irys:
         # Format output
         formatter = get_formatter(self.config.output_format)
         output = formatter.format(state)
+
+        # Post-processing: inline citation injection (optional)
+        if self.config.enable_inline_citations:
+            from .service.inline_citation_service import InlineCitationService
+            output = InlineCitationService.inject(
+                answer=output,
+                citations=state.citations,
+                config=self.config,
+            )
 
         return InvestigationResult(
             state=state,
