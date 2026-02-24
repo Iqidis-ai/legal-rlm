@@ -1578,23 +1578,25 @@ class RLMEngine:
         # Exception: Allow if answering from cached facts (we intentionally skipped reading)
         small_repo_content = state.findings.get("small_repo_content")
         answered_from_cache = state.findings.get("answered_from_cache", False)
-        if state.documents_read == 0 and not small_repo_content and not answered_from_cache:
-            self._emit_step(
-                state,
-                StepType.ERROR,
-                "Cannot synthesize: 0 documents were successfully read. Check document paths and access.",
-            )
-            error_msg = (
-                "**Investigation Failed**\n\n"
-                "Unable to read any documents from the repository. This may indicate:\n"
-                "- Documents were not downloaded correctly\n"
-                "- File paths do not match between search index and storage\n"
-                "- Files were cleaned up before investigation completed\n\n"
-                f"Total read attempts that failed: multiple\n"
-                f"Query: {state.query}"
-            )
-            state.findings["final_output"] = error_msg
-            return
+        
+        # Donot block synthesis when no documents were read
+        # if state.documents_read == 0 and not small_repo_content and not answered_from_cache:
+        #     self._emit_step(
+        #         state,
+        #         StepType.ERROR,
+        #         "Cannot synthesize: 0 documents were successfully read. Check document paths and access.",
+        #     )
+        #     error_msg = (
+        #         "**Investigation Failed**\n\n"
+        #         "Unable to read any documents from the repository. This may indicate:\n"
+        #         "- Documents were not downloaded correctly\n"
+        #         "- File paths do not match between search index and storage\n"
+        #         "- Files were cleaned up before investigation completed\n\n"
+        #         f"Total read attempts that failed: multiple\n"
+        #         f"Query: {state.query}"
+        #     )
+        #     state.findings["final_output"] = error_msg
+        #     return
 
         # Note if there were read failures (for caveat in output)
         if state.findings.get("had_read_failures"):
