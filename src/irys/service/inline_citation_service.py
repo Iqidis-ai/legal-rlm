@@ -17,7 +17,7 @@ logger = logging.getLogger("irys.inline_citation")
 MAX_CITATIONS = 12
 
 # Maximum text excerpt per citation
-MAX_CITATION_TEXT_CHARS = 300
+MAX_CITATION_TEXT_CHARS = 1500
 
 # Prompt template for Gemini Lite
 INLINE_CITATION_PROMPT = """TASK:
@@ -116,7 +116,7 @@ class InlineCitationService:
         )
 
         # Step D: Call LLM (attempt 1)
-        annotated = cls._call_gemini_lite(prompt, config, len(answer))
+        annotated = cls._call_gemini_lite(prompt, config)
 
         # Step E: Validate
         if cls._validate_response(annotated, answer, valid_ids):
@@ -125,7 +125,7 @@ class InlineCitationService:
 
         # Retry once
         logger.info("First injection attempt failed validation, retrying")
-        annotated = cls._call_gemini_lite(prompt, config, len(answer))
+        annotated = cls._call_gemini_lite(prompt, config)
 
         if cls._validate_response(annotated, answer, valid_ids):
             return cls._renumber_citations(annotated)
@@ -136,7 +136,7 @@ class InlineCitationService:
 
     @classmethod
     def _sanitize_citations(cls, citations: list) -> list[SanitizedCitation]:
-        """Extract and sanitize citation data for prompt."""
+        """Extract citation data with simple length truncation."""
         sanitized = []
 
         for c in citations[:MAX_CITATIONS]:
@@ -146,23 +146,22 @@ class InlineCitationService:
                 if not cit_id:
                     continue
 
-                # Extract filename only (strip path)
-                document = getattr(c, 'document', '') or ''
-                filename = cls._extract_filename(document)
+                # Use document path directly
+                document = getattr(c, 'document', '') or 'unknown'
 
                 # Extract page
                 page = getattr(c, 'page', None)
 
-                # Extract and truncate text
+                # Extract and truncate text (simple hard truncation)
                 text = getattr(c, 'text', '') or ''
-                text_excerpt = cls._truncate_to_sentences(text, MAX_CITATION_TEXT_CHARS)
+                text_excerpt = cls._truncate_text(text)
 
                 if not text_excerpt:
                     continue
 
                 sanitized.append(SanitizedCitation(
                     id=cit_id,
-                    filename=filename,
+                    filename=document,  # Use full document path
                     page=page,
                     text_excerpt=text_excerpt,
                 ))
@@ -173,47 +172,17 @@ class InlineCitationService:
         return sanitized
 
     @staticmethod
-    def _extract_filename(document: str) -> str:
-        """Extract filename from path, handling various formats."""
-        if not document:
-            return "unknown"
-
-        # Handle external sources like "[Case Law] Title" or "[Web] Title"
-        if document.startswith("["):
-            return document
-
-        # Strip path separators (both Windows and Unix)
-        parts = document.replace("\\", "/").split("/")
-        filename = parts[-1] if parts else document
-
-        return filename or "unknown"
-
-    @staticmethod
-    def _truncate_to_sentences(text: str, max_chars: int) -> str:
-        """Truncate text to complete sentences within max_chars."""
+    def _truncate_text(text: str) -> str:
+        """Hard truncate text at MAX_CITATION_TEXT_CHARS with '...' suffix."""
         if not text:
             return ""
 
         text = text.strip()
-        if len(text) <= max_chars:
+        if len(text) <= MAX_CITATION_TEXT_CHARS:
             return text
 
-        # Find sentence boundaries
-        truncated = text[:max_chars]
-
-        # Try to end at a sentence boundary
-        for end_char in [". ", ".\n", ".\t"]:
-            last_period = truncated.rfind(end_char)
-            if last_period > max_chars // 2:
-                return truncated[:last_period + 1].strip()
-
-        # Fall back to last period
-        last_period = truncated.rfind(".")
-        if last_period > max_chars // 2:
-            return truncated[:last_period + 1].strip()
-
-        # No good sentence boundary, truncate with ellipsis
-        return truncated.rsplit(" ", 1)[0].strip() + "..."
+        # Hard truncate at 1500 chars with ellipsis
+        return text[:MAX_CITATION_TEXT_CHARS] + "..."
 
     @classmethod
     def _build_citation_block(cls, sanitized: list[SanitizedCitation]) -> str:
@@ -227,7 +196,7 @@ class InlineCitationService:
         return "\n\n".join(blocks)
 
     @classmethod
-    def _call_gemini_lite(cls, prompt: str, config, answer_length: int) -> str:
+    def _call_gemini_lite(cls, prompt: str, config) -> str:
         """Call Gemini Lite model for citation injection."""
         import asyncio
         from ..core.models import GeminiClient, ModelTier
@@ -235,9 +204,6 @@ class InlineCitationService:
         # Get or create client
         api_key = getattr(config, 'api_key', None) or os.environ.get("GEMINI_API_KEY")
         client = GeminiClient(api_key=api_key)
-
-        # Set max tokens to answer length + 20% for markers
-        max_tokens = int(answer_length * 1.2 / 4) + 100  # rough char to token estimate
 
         # Low temperature system prompt for deterministic output
         system_prompt = "You are a precise citation marker. Insert citation IDs exactly where the text is supported. Do not modify any other text."
