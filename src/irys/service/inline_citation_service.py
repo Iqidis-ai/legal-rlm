@@ -1,7 +1,7 @@
 """Inline citation injection post-processing service.
 
 Injects citation ID markers into synthesized answers using Gemini Lite,
-then deterministically renumbers them to [1], [2], etc.
+then deterministically renumbers them to [cite:1], [cite:2], etc.
 """
 
 import re
@@ -74,7 +74,7 @@ class InlineCitationService:
             config: IrysConfig with enable_inline_citations flag
 
         Returns:
-            Answer with [1], [2], ... citation markers, or original if injection fails
+            Answer with [cite:1], [cite:2], ... citation markers, or original if injection fails
         """
         # Step A: Early exits
         if not getattr(config, 'enable_inline_citations', False):
@@ -256,7 +256,7 @@ class InlineCitationService:
 
     @classmethod
     def _renumber_citations(cls, annotated: str) -> str:
-        """Deterministically renumber citations to [1], [2], etc."""
+        """Deterministically renumber citations to [cite:1], [cite:2], etc."""
         # Find all citation IDs in order of first appearance
         seen_ids = []
         for match in cls.CITATION_MARKER_PATTERN.finditer(annotated):
@@ -273,7 +273,7 @@ class InlineCitationService:
         # Replace all occurrences
         def replacer(match):
             cit_id = match.group(1)
-            return f"**[{id_to_num[cit_id]}]**"
+            return f"[cite:{id_to_num[cit_id]}]"
         result = cls.CITATION_MARKER_PATTERN.sub(replacer, annotated)
         logger.info(f"Citation injection successful: {len(seen_ids)} unique citations renumbered")
 
