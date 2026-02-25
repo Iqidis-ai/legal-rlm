@@ -16,9 +16,6 @@ logger = logging.getLogger("irys.inline_citation")
 # Maximum citations to include in prompt (keep prompt compact for Lite model)
 MAX_CITATIONS = 12
 
-# Maximum text excerpt per citation
-MAX_CITATION_TEXT_CHARS = 1500
-
 # Prompt template for Gemini Lite
 INLINE_CITATION_PROMPT = """TASK:
 Insert inline citation markers into the ANSWER using ONLY the provided CITATIONS.
@@ -31,6 +28,7 @@ Rules:
 5. Avoid repeating the same citation in consecutive sentences unless necessary.
 6. Attach a citation only to the first sentence that introduces the supported claim.
 7. Do not add explanations or commentary.
+8. Use SEPARATE brackets for multiple citations: [id1] [id2], NOT [id1, id2].
 
 CITATIONS:
 {citation_block}
@@ -136,7 +134,7 @@ class InlineCitationService:
 
     @classmethod
     def _sanitize_citations(cls, citations: list) -> list[SanitizedCitation]:
-        """Extract citation data with simple length truncation."""
+        """Extract citation data without truncation."""
         sanitized = []
 
         for c in citations[:MAX_CITATIONS]:
@@ -152,16 +150,16 @@ class InlineCitationService:
                 # Extract page
                 page = getattr(c, 'page', None)
 
-                # Extract and truncate text (simple hard truncation)
+                # Use citation text as-is (no truncation)
                 text = getattr(c, 'text', '') or ''
-                text_excerpt = cls._truncate_text(text)
+                text_excerpt = text.strip()
 
                 if not text_excerpt:
                     continue
 
                 sanitized.append(SanitizedCitation(
                     id=cit_id,
-                    filename=document,  # Use full document path
+                    filename=document,
                     page=page,
                     text_excerpt=text_excerpt,
                 ))
@@ -170,19 +168,6 @@ class InlineCitationService:
                 continue
 
         return sanitized
-
-    @staticmethod
-    def _truncate_text(text: str) -> str:
-        """Hard truncate text at MAX_CITATION_TEXT_CHARS with '...' suffix."""
-        if not text:
-            return ""
-
-        text = text.strip()
-        if len(text) <= MAX_CITATION_TEXT_CHARS:
-            return text
-
-        # Hard truncate at 1500 chars with ellipsis
-        return text[:MAX_CITATION_TEXT_CHARS] + "..."
 
     @classmethod
     def _build_citation_block(cls, sanitized: list[SanitizedCitation]) -> str:
@@ -232,6 +217,9 @@ class InlineCitationService:
             # No event loop, create one
             return asyncio.run(_complete())
 
+    # Pattern to detect comma-separated IDs in brackets (invalid format)
+    MULTI_ID_PATTERN = re.compile(r'\[[a-f0-9]{8}(?:,\s*[a-f0-9]{8})+\]')
+
     @classmethod
     def _validate_response(cls, annotated: str, original: str, valid_ids: set) -> bool:
         """Validate the annotated response."""
@@ -240,7 +228,12 @@ class InlineCitationService:
             logger.debug("Validation failed: empty response")
             return False
 
-        # Rule 2 & 3: Extract all citation markers
+        # Rule 2: Reject comma-separated IDs in brackets (e.g., [id1, id2])
+        if cls.MULTI_ID_PATTERN.search(annotated):
+            logger.debug("Validation failed: found comma-separated citation IDs in brackets")
+            return False
+
+        # Rule 3: Extract all citation markers
         found_ids = set(cls.CITATION_MARKER_PATTERN.findall(annotated))
 
         # Rule 4: All IDs must be valid (no unknown IDs)
@@ -280,8 +273,7 @@ class InlineCitationService:
         # Replace all occurrences
         def replacer(match):
             cit_id = match.group(1)
-            return f"[{id_to_num[cit_id]}]"
-
+            return f"**[{id_to_num[cit_id]}]**"
         result = cls.CITATION_MARKER_PATTERN.sub(replacer, annotated)
         logger.info(f"Citation injection successful: {len(seen_ids)} unique citations renumbered")
 
