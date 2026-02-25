@@ -43,7 +43,7 @@ class IrysConfig:
     cache_ttl_seconds: int = 3600
     output_format: str = "markdown"
     log_level: str = "INFO"
-    enable_inline_citations: bool = False
+    enable_inline_citations: bool = True
 
 
 class Irys:
