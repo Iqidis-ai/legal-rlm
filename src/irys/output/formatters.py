@@ -25,85 +25,85 @@ class MarkdownFormatter:
     def format(self, state: Any) -> str:
         """Format as Markdown document."""
         lines = [
-            f"# Investigation Report",
-            "",
-            f"**Query:** {state.query}",
-            f"**Status:** {state.status}",
-            f"**Duration:** {state.duration_seconds:.1f}s" if state.duration_seconds else "",
-            "",
+            # f"# Investigation Report",
+            # "",
+            # f"**Query:** {state.query}",
+            # f"**Status:** {state.status}",
+            # f"**Duration:** {state.duration_seconds:.1f}s" if state.duration_seconds else "",
+            # "",
         ]
 
-        # Confidence
-        confidence = state.get_confidence_score()
-        lines.extend([
-            "## Confidence",
-            f"- Score: {confidence['score']}/100 ({confidence['level']})",
-            "",
-        ])
+        # # Confidence
+        # confidence = state.get_confidence_score()
+        # lines.extend([
+        #     "## Confidence",
+        #     f"- Score: {confidence['score']}/100 ({confidence['level']})",
+        #     "",
+        # ])
 
-        # Hypothesis
-        if state.hypothesis:
-            lines.extend([
-                "## Hypothesis",
-                state.hypothesis,
-                "",
-            ])
+        # # Hypothesis
+        # if state.hypothesis:
+        #     lines.extend([
+        #         "## Hypothesis",
+        #         state.hypothesis,
+        #         "",
+        #     ])
 
-        # Key Findings
-        facts = state.findings.get("accumulated_facts", [])
-        if facts:
-            lines.extend([
-                "## Key Findings",
-                "",
-            ])
-            for i, fact in enumerate(facts[:15], 1):
-                lines.append(f"{i}. {fact}")
-            lines.append("")
+        # # Key Findings
+        # facts = state.findings.get("accumulated_facts", [])
+        # if facts:
+        #     lines.extend([
+        #         "## Key Findings",
+        #         "",
+        #     ])
+        #     for i, fact in enumerate(facts[:15], 1):
+        #         lines.append(f"{i}. {fact}")
+        #     lines.append("")
 
-        # Citations
-        if state.citations:
-            lines.extend([
-                "## Citations",
-                "",
-            ])
-            for c in state.citations[:20]:
-                page = f", p. {c.page}" if c.page else ""
-                lines.append(f"- **{c.document}**{page}")
-                lines.append(f"  > \"{c.text[:100]}...\"")
-                lines.append(f"  - *{c.relevance}*")
-                lines.append("")
+        # # Citations
+        # if state.citations:
+        #     lines.extend([
+        #         "## Citations",
+        #         "",
+        #     ])
+        #     for c in state.citations[:20]:
+        #         page = f", p. {c.page}" if c.page else ""
+        #         lines.append(f"- **{c.document}**{page}")
+        #         lines.append(f"  > \"{c.text[:100]}...\"")
+        #         lines.append(f"  - *{c.relevance}*")
+        #         lines.append("")
 
-        # Entities
-        if state.entities:
-            lines.extend([
-                "## Key Entities",
-                "",
-            ])
-            for entity in state.get_top_entities(10):
-                lines.append(f"- **{entity.name}** ({entity.entity_type}): {entity.mentions} mentions")
-            lines.append("")
+        # # Entities
+        # if state.entities:
+        #     lines.extend([
+        #         "## Key Entities",
+        #         "",
+        #     ])
+        #     for entity in state.get_top_entities(10):
+        #         lines.append(f"- **{entity.name}** ({entity.entity_type}): {entity.mentions} mentions")
+        #     lines.append("")
 
         # Final Output
         final_output = state.findings.get("final_output")
         if final_output:
             lines.extend([
-                "## Analysis",
-                "",
+                # "## Analysis",
+                # "",
                 final_output,
-                "",
+                # "",
             ])
 
-        # Metrics
-        lines.extend([
-            "---",
-            "## Investigation Metrics",
-            f"- Documents read: {state.documents_read}",
-            f"- Searches performed: {state.searches_performed}",
-            f"- Citations collected: {len(state.citations)}",
-            f"- Facts accumulated: {len(state.findings.get('accumulated_facts', []))}",
-            f"- Entities found: {len(state.entities)}",
-            f"- API calls: {state.api_calls}",
-        ])
+        # # Metrics
+        # lines.extend([
+        #     "---",
+        #     "## Investigation Metrics",
+        #     f"- Documents read: {state.documents_read}",
+        #     f"- Searches performed: {state.searches_performed}",
+        #     f"- Citations collected: {len(state.citations)}",
+        #     f"- Facts accumulated: {len(state.findings.get('accumulated_facts', []))}",
+        #     f"- Entities found: {len(state.entities)}",
+        #     f"- API calls: {state.api_calls}",
+        # ])
 
         return "\n".join(lines)
 
