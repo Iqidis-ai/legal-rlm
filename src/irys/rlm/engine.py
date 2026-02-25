@@ -191,13 +191,14 @@ class RLMEngine:
             await self._emit_step_async(
                 state,
                 StepType.FINDING,
-                f"📚 Loaded {facts_loaded} cached facts from previous investigations",
+                f"Loaded {facts_loaded} cached facts from previous investigations",
             )
         else:
             await self._emit_step_async(
                 state,
                 StepType.THINKING,
-                f"📚 No cached facts found - starting fresh (will save at {self.fact_store.facts_file})",
+                f"No cached facts found - starting fresh (will save at {self.fact_store.facts_file})",
+                visible=False,
             )
 
         cache = InvestigationCache()
@@ -229,12 +230,14 @@ class RLMEngine:
                     state,
                     StepType.THINKING,
                     f"Starting: \"{query[:60]}{'...' if len(query) > 60 else ''}\" on {repo_name} ({file_count} files, {total_chars:,} chars) → small repo mode",
+                    visible=False,
                 )
                 file_names = [f.filename for f in repo.list_files()[:5]]
                 await self._emit_step_async(
                     state,
                     StepType.THINKING,
                     f"Small repo mode: {_fmt_list(file_names, 4, 30)}",
+                    visible=False,
                 )
                 # _direct_answer does its own unified assessment (complexity + external search decision)
                 await self._direct_answer(state, repo)
@@ -274,6 +277,7 @@ class RLMEngine:
                     state,
                     StepType.THINKING,
                     f"Starting: \"{query[:60]}{'...' if len(query) > 60 else ''}\" on {repo_name} ({file_count} files, {total_chars:,} chars) → {'FLASH' if is_simple else 'PRO'} synthesis",
+                    visible=False,
                 )
 
                 # Phase 2: Investigation loop with continuous recalibration
@@ -304,7 +308,8 @@ class RLMEngine:
                 self._emit_step(
                     state,
                     StepType.THINKING,
-                    f"📚 DEBUG: fact_store has {fact_count} facts, _facts list: {len(self.fact_store._facts)}",
+                    f"DEBUG: fact_store has {fact_count} facts, _facts list: {len(self.fact_store._facts)}",
+                    visible=False,
                 )
                 if fact_count > 0:
                     try:
@@ -312,19 +317,22 @@ class RLMEngine:
                         self._emit_step(
                             state,
                             StepType.FINDING,
-                            f"📚 Saved {saved} facts to {self.fact_store.facts_file}",
+                            f"Saved {saved} facts to {self.fact_store.facts_file}",
+                            visible=False,
                         )
                     except Exception as e:
                         self._emit_step(
                             state,
                             StepType.THINKING,
-                            f"📚 ERROR saving facts: {e}",
+                            f"ERROR saving facts: {e}",
+                            visible=False,
                         )
                 else:
                     self._emit_step(
                         state,
                         StepType.THINKING,
-                        f"📚 No new facts extracted this session",
+                        f"No new facts extracted this session",
+                        visible=False,
                     )
 
             # Clean up external search sessions
@@ -433,6 +441,7 @@ class RLMEngine:
             StepType.THINKING,
             f"Assessment: {'SIMPLE' if is_simple else 'COMPLEX'} synthesis, "
             f"{'can answer from docs' if can_answer_from_docs else f'needs external: {gap[:50]}...'}",
+            visible=True,
         )
 
         # Step 3: External search only if assessment says we need it
@@ -498,11 +507,11 @@ class RLMEngine:
                             }
                             await self._execute_external_searches(state)
                     else:
-                        await self._emit_step_async(state, StepType.THINKING, "External results sufficient")
+                        await self._emit_step_async(state, StepType.THINKING, "External results sufficient", visible=False)
                 elif not has_results:
-                    await self._emit_step_async(state, StepType.THINKING, "No external results found")
+                    await self._emit_step_async(state, StepType.THINKING, "No external results found", visible=False)
         elif can_answer_from_docs:
-            await self._emit_step_async(state, StepType.THINKING, "Proceeding with documents only (no external search needed)")
+            await self._emit_step_async(state, StepType.THINKING, "Proceeding with documents only (no external search needed)", visible=False)
 
         # Step 5: Add citations and synthesize
         self._add_external_citations(state)
@@ -1080,6 +1089,7 @@ class RLMEngine:
                     state,
                     StepType.THINKING,
                     f"Note: {cache.consecutive_read_failures} consecutive read failures (some files may be in subdirectories). Continuing with other documents...",
+                    visible=False,
                 )
                 # Reset counter to allow more attempts - don't abort investigation
                 cache.consecutive_read_failures = 0
@@ -1116,6 +1126,7 @@ class RLMEngine:
                         state,
                         StepType.THINKING,
                         f"Sufficient: {facts_count} facts from {docs_read} docs - proceeding to synthesis",
+                        visible=True,
                     )
                     break
                 elif checkpoint_result.get("sufficient") and docs_read == 0:
@@ -1124,6 +1135,7 @@ class RLMEngine:
                         state,
                         StepType.ERROR,
                         f"Checkpoint claims sufficient but 0 documents read - continuing investigation",
+                        visible=False,
                     )
 
                 # Handle replanning if needed
@@ -1151,6 +1163,7 @@ class RLMEngine:
                             state,
                             StepType.THINKING,
                             f"Added {new_leads_added} new leads from checkpoint",
+                            visible=False,
                         )
 
             # 3. Dynamic external search - trigger if we discover we need it
@@ -1509,7 +1522,8 @@ class RLMEngine:
                 self._emit_step(
                     state,
                     StepType.THINKING,
-                    f"📚 Added {new_facts} facts from {doc.filename} (store total: {len(self.fact_store)})",
+                    f"Added {new_facts} facts from {doc.filename} (store total: {len(self.fact_store)})",
+                    visible=False,
                 )
 
             # Accumulate external research triggers
@@ -1743,9 +1757,19 @@ class RLMEngine:
         step_type: StepType,
         content: str,
         details: Optional[dict] = None,
+        visible: bool = True,
     ):
-        """Emit a thinking step and call callback."""
-        step = state.add_step(step_type, content, details)
+        """Emit a thinking step and call callback.
+
+        Args:
+            visible: Whether step should be shown in user-facing UI.
+                     Hidden steps are for developer/debug purposes only.
+        """
+        # Merge visible flag into details
+        step_details = details.copy() if details else {}
+        step_details["visible"] = visible
+
+        step = state.add_step(step_type, content, step_details)
         if self.on_step:
             self.on_step(step)
         self._emit_progress(state)
@@ -1756,13 +1780,17 @@ class RLMEngine:
         step_type: StepType,
         content: str,
         details: Optional[dict] = None,
+        visible: bool = True,
     ):
         """Emit a thinking step with async yield for streaming.
 
         Use this in hot paths where multiple steps emit between awaits,
         to allow the event loop to process queued events for streaming.
+
+        Args:
+            visible: Whether step should be shown in user-facing UI.
         """
-        self._emit_step(state, step_type, content, details)
+        self._emit_step(state, step_type, content, details, visible)
         await asyncio.sleep(0)  # Yield to event loop for streaming
 
     def _emit_progress(self, state: InvestigationState):
