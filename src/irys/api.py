@@ -44,6 +44,12 @@ class IrysConfig:
     output_format: str = "markdown"
     log_level: str = "INFO"
     enable_inline_citations: bool = True
+    # S3 settings (optional; local disk used if not set)
+    s3_bucket: Optional[str] = None
+    s3_region: str = "us-east-1"
+    s3_prefix: Optional[str] = None  # matter-level prefix, e.g. "matters/case-123"
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
 
 
 class Irys:
@@ -96,10 +102,17 @@ class Irys:
                 ttl_seconds=self.config.cache_ttl_seconds)
 
         if self._engine is None:
+            s3_prefix = (self.config.s3_prefix or "").strip("/")
             engine_config = RLMConfig(
                 max_depth=self.config.max_depth,
                 max_leads_per_level=self.config.max_leads_per_level,
                 checkpoint_dir=self.config.checkpoint_dir,
+                s3_bucket=self.config.s3_bucket,
+                s3_region=self.config.s3_region,
+                s3_checkpoint_prefix=f"{s3_prefix}/checkpoints" if s3_prefix else None,
+                s3_facts_prefix=f"{s3_prefix}/facts" if s3_prefix else None,
+                aws_access_key_id=self.config.aws_access_key_id,
+                aws_secret_access_key=self.config.aws_secret_access_key,
             )
             self._engine = RLMEngine(
                 gemini_client=self._client,
