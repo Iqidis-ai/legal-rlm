@@ -66,6 +66,13 @@ class RLMConfig:
     max_case_law_queries: int = 5  # Max queries to run
     max_web_queries: int = 5       # Max queries to run
     parallel_external_searches: bool = True  # Run queries in parallel
+    # S3 settings (all optional; local disk used if not set)
+    s3_bucket: Optional[str] = None
+    s3_region: str = "us-east-1"
+    s3_checkpoint_prefix: Optional[str] = None  # e.g. "matters/case-123/checkpoints"
+    s3_facts_prefix: Optional[str] = None       # e.g. "matters/case-123/facts"
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
 
 
 @dataclass
@@ -182,8 +189,17 @@ class RLMEngine:
         self._context = context  # Store context for use in decision functions
         state = InvestigationState.create(query, str(repository_path))
 
-        # Load fact store for this repository
-        self.fact_store = FactStore(Path(repository_path))
+        # Load fact store for this repository (S3-backed when configured)
+        s3_facts_config = None
+        if self.config.s3_bucket and self.config.s3_facts_prefix:
+            s3_facts_config = {
+                "bucket": self.config.s3_bucket,
+                "region": self.config.s3_region,
+                "prefix": self.config.s3_facts_prefix,
+                "aws_access_key_id": self.config.aws_access_key_id,
+                "aws_secret_access_key": self.config.aws_secret_access_key,
+            }
+        self.fact_store = FactStore(Path(repository_path), s3_config=s3_facts_config)
         facts_loaded = self.fact_store.load()
 
         # Emit fact store status to UI trace
@@ -341,6 +357,10 @@ class RLMEngine:
                     await self.external_search.close()
                 except Exception:
                     pass
+
+            # Delete S3 checkpoints after successful completion
+            if state.status == "completed":
+                self._delete_s3_checkpoints(state.id)
 
         return state
 
@@ -1838,21 +1858,66 @@ class RLMEngine:
 
         return "\n".join(lines)
 
+    def _get_s3_client(self):
+        """Build a boto3 S3 client from RLMConfig S3 settings."""
+        import boto3
+        kwargs = {"region_name": self.config.s3_region}
+        if self.config.aws_access_key_id:
+            kwargs["aws_access_key_id"] = self.config.aws_access_key_id
+        if self.config.aws_secret_access_key:
+            kwargs["aws_secret_access_key"] = self.config.aws_secret_access_key
+        return boto3.client("s3", **kwargs)
+
     def _save_checkpoint(self, state: InvestigationState, iteration: int):
-        """Save investigation checkpoint."""
-        if not self.config.checkpoint_dir:
+        """Save investigation checkpoint to S3 or local disk."""
+        if self.config.s3_bucket and self.config.s3_checkpoint_prefix:
+            try:
+                s3 = self._get_s3_client()
+                key = f"{self.config.s3_checkpoint_prefix}/checkpoint_{state.id}_iter{iteration}.json"
+                state.save_checkpoint_to_s3(s3, self.config.s3_bucket, key)
+                logger.info(f"Saved checkpoint to S3: {key}")
+            except Exception as e:
+                logger.error(f"Failed to save checkpoint to S3: {e}")
             return
 
+        if not self.config.checkpoint_dir:
+            return
         checkpoint_path = Path(self.config.checkpoint_dir) / f"checkpoint_{state.id}_iter{iteration}.json"
         state.save_checkpoint(checkpoint_path)
         logger.info(f"Saved checkpoint: {checkpoint_path}")
 
+    def _delete_s3_checkpoints(self, state_id: str):
+        """Delete all S3 checkpoints for a given state_id after successful completion."""
+        if not (self.config.s3_bucket and self.config.s3_checkpoint_prefix):
+            return
+        try:
+            s3 = self._get_s3_client()
+            prefix = f"{self.config.s3_checkpoint_prefix}/checkpoint_{state_id}_"
+            paginator = s3.get_paginator("list_objects_v2")
+            keys_to_delete = []
+            for page in paginator.paginate(Bucket=self.config.s3_bucket, Prefix=prefix):
+                for obj in page.get("Contents", []):
+                    keys_to_delete.append({"Key": obj["Key"]})
+            if keys_to_delete:
+                s3.delete_objects(
+                    Bucket=self.config.s3_bucket,
+                    Delete={"Objects": keys_to_delete},
+                )
+                logger.info(f"Deleted {len(keys_to_delete)} S3 checkpoints for state {state_id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete S3 checkpoints for {state_id}: {e}")
+
     async def resume_investigation(
         self,
-        checkpoint_path: str | Path,
+        checkpoint_path: Optional[str | Path] = None,
+        s3_key: Optional[str] = None,
     ) -> InvestigationState:
-        """Resume investigation from checkpoint."""
-        state = InvestigationState.load_checkpoint(checkpoint_path)
+        """Resume investigation from checkpoint (local path or S3 key)."""
+        if s3_key and self.config.s3_bucket:
+            s3 = self._get_s3_client()
+            state = InvestigationState.load_checkpoint_from_s3(s3, self.config.s3_bucket, s3_key)
+        else:
+            state = InvestigationState.load_checkpoint(checkpoint_path)
         repo = MatterRepository(state.repository_path)
         cache = InvestigationCache()
 
