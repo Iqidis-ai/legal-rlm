@@ -136,6 +136,7 @@ class DiskCache:
         self.ttl_seconds = ttl_seconds
         self._index_file = self.cache_dir / "_index.json"
         self._load_index()
+        self.cleanup_expired()
 
     def _load_index(self):
         """Load cache index from disk."""
@@ -147,6 +148,18 @@ class DiskCache:
                 self._index = {}
         else:
             self._index = {}
+
+    def cleanup_expired(self):
+        """Remove all entries whose TTL has expired."""
+        if not self.ttl_seconds:
+            return
+        now = datetime.now()
+        expired_keys = [
+            safe_key for safe_key, entry in self._index.items()
+            if datetime.fromisoformat(entry["created_at"]) + timedelta(seconds=self.ttl_seconds) < now
+        ]
+        for safe_key in expired_keys:
+            self._remove(safe_key)
 
     def _save_index(self):
         """Save cache index to disk."""
@@ -223,6 +236,7 @@ class DiskCache:
 
     def _enforce_size_limit(self):
         """Evict oldest items if cache exceeds size limit."""
+        self.cleanup_expired()
         total_size = sum(e.get("size_bytes", 0) for e in self._index.values())
         max_bytes = self.max_size_mb * 1024 * 1024
 
