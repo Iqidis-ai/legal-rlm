@@ -1093,3 +1093,15 @@ class InvestigationState:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return cls.from_dict(data)
+
+    def save_checkpoint_to_s3(self, s3_client, bucket: str, key: str):
+        """Save state to S3 as a checkpoint."""
+        body = json.dumps(self.to_dict(), indent=2).encode("utf-8")
+        s3_client.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/json")
+
+    @classmethod
+    def load_checkpoint_from_s3(cls, s3_client, bucket: str, key: str) -> "InvestigationState":
+        """Load state from S3 checkpoint."""
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        data = json.loads(response["Body"].read().decode("utf-8"))
+        return cls.from_dict(data)
