@@ -121,13 +121,15 @@ async def lifespan(app: FastAPI):
     logger.info(f"S3 Bucket: {config.s3_bucket}")
     logger.info(f"Temp Dir: {config.temp_dir}")
 
-    # Start cleanup task
+    # Start cleanup tasks
     cleanup_task = asyncio.create_task(_cleanup_loop(config))
+    stale_dir_task = asyncio.create_task(_cleanup_stale_temp_dirs(config))
 
     yield
 
     # Cleanup on shutdown
     cleanup_task.cancel()
+    stale_dir_task.cancel()
     logger.info("Shutting down...")
 
 
@@ -148,6 +150,30 @@ async def _cleanup_loop(config: ServiceConfig):
                 logger.debug(f"Cleaned up job {job_id}")
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
+
+
+async def _cleanup_stale_temp_dirs(config: ServiceConfig):
+    """Periodically remove temp subdirectories older than cleanup_after_seconds."""
+    import shutil
+    while True:
+        await asyncio.sleep(300)  # Run every 5 minutes
+        try:
+            temp_root = Path(config.temp_dir)
+            if not temp_root.exists():
+                continue
+            now = datetime.now().timestamp()
+            for entry in temp_root.iterdir():
+                if not entry.is_dir():
+                    continue
+                age_seconds = now - entry.stat().st_mtime
+                if age_seconds > config.cleanup_after_seconds:
+                    try:
+                        shutil.rmtree(entry)
+                        logger.debug(f"Removed stale temp dir: {entry}")
+                    except Exception as rm_err:
+                        logger.warning(f"Failed to remove {entry}: {rm_err}")
+        except Exception as e:
+            logger.error(f"Stale temp dir cleanup error: {e}")
 
 
 def create_app(config: Optional[ServiceConfig] = None) -> FastAPI:
@@ -193,6 +219,19 @@ def create_app(config: Optional[ServiceConfig] = None) -> FastAPI:
 
 # Create default app instance
 app = create_app()
+
+
+def _make_irys(config: ServiceConfig, s3_prefix: Optional[str] = None):
+    """Create an Irys instance wired with service S3 config."""
+    from irys import Irys
+    return Irys(
+        api_key=config.gemini_api_key,
+        s3_bucket=config.s3_bucket or None,
+        s3_region=config.s3_region,
+        s3_prefix=s3_prefix,
+        aws_access_key_id=config.aws_access_key_id,
+        aws_secret_access_key=config.aws_secret_access_key,
+    )
 
 
 def _serialize_result(result) -> tuple[list, dict]:
@@ -351,8 +390,7 @@ async def _run_investigation(
         temp_dir = await s3_repo.download_to_temp(job_id)
 
         # Run investigation
-        from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key)
+        irys = _make_irys(config, s3_prefix=request.s3_prefix)
 
         seed_facts, seed_citations = await _load_session(config, request.session_id)
 
@@ -653,8 +691,7 @@ async def _run_upload_investigation(
             )
             temp_dir = await s3_repo.download_to_temp(job_id)
 
-        from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key)
+        irys = _make_irys(config, s3_prefix=s3_prefix)
 
         seed_facts, seed_citations = await _load_session(config, session_id)
 
@@ -897,8 +934,7 @@ async def upload_investigate_sync(
         context = _parse_context_json(context_json)
 
         # Run investigation
-        from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key)
+        irys = _make_irys(config, s3_prefix=s3_prefix)
 
         seed_facts, seed_citations = await _load_session(config, session_id)
 
@@ -1048,8 +1084,7 @@ async def _run_urls_investigation(
         temp_dir = await s3_repo.download_urls_to_temp(job_id, request.s3_urls)
 
         # Run investigation
-        from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key)
+        irys = _make_irys(config)
 
         seed_facts, seed_citations = await _load_session(config, request.session_id)
 
@@ -1186,8 +1221,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         temp_dir = await s3_repo.download_urls_to_temp(job_id, request.s3_urls)
 
         # Run investigation
-        from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key)
+        irys = _make_irys(config)
 
         seed_facts, seed_citations = await _load_session(config, request.session_id)
 
@@ -1298,8 +1332,7 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
             temp_dir = await s3_repo.download_urls_to_temp(job_id, request.s3_urls)
 
             # Create Irys with callbacks wired to queue
-            from irys import Irys
-            irys = Irys(api_key=config.gemini_api_key)
+            irys = _make_irys(config)
 
             def on_step(step):
                 queue.put_nowait({
