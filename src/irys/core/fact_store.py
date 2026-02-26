@@ -70,10 +70,19 @@ class FactStore:
     STORE_DIR = ".irys"
     FACTS_FILE = "facts.jsonl"
 
-    def __init__(self, repository_path: Path):
+    def __init__(self, repository_path: Path, s3_config: Optional[dict] = None):
+        """
+        Args:
+            repository_path: Local path to repository (used for local fallback).
+            s3_config: Optional S3 config dict with keys: bucket, region, prefix,
+                       aws_access_key_id, aws_secret_access_key.
+                       When set, load/save use S3 as primary storage.
+        """
         self.repository_path = Path(repository_path)
         self.store_dir = self.repository_path / self.STORE_DIR
         self.facts_file = self.store_dir / self.FACTS_FILE
+        self.s3_config = s3_config
+        self._s3_client = None
         self._facts: list[StoredFact] = []
         self._loaded = False
 
@@ -81,9 +90,52 @@ class FactStore:
         """Create .irys directory if it doesn't exist."""
         self.store_dir.mkdir(parents=True, exist_ok=True)
 
+    def _get_s3_client(self):
+        """Return a cached boto3 S3 client built from s3_config."""
+        if self._s3_client is None:
+            import boto3
+            cfg = self.s3_config or {}
+            kwargs = {"region_name": cfg.get("region", "us-east-1")}
+            if cfg.get("aws_access_key_id"):
+                kwargs["aws_access_key_id"] = cfg["aws_access_key_id"]
+            if cfg.get("aws_secret_access_key"):
+                kwargs["aws_secret_access_key"] = cfg["aws_secret_access_key"]
+            self._s3_client = boto3.client("s3", **kwargs)
+        return self._s3_client
+
+    def _s3_key(self) -> str:
+        """Return S3 object key for the facts file."""
+        prefix = (self.s3_config or {}).get("prefix", "").strip("/")
+        if prefix:
+            return f"{prefix}/{self.FACTS_FILE}"
+        return self.FACTS_FILE
+
     def load(self) -> int:
-        """Load facts from JSONL file. Returns number of facts loaded."""
+        """Load facts from JSONL file (S3 if configured, else local). Returns number of facts loaded."""
         self._facts = []
+
+        if self.s3_config:
+            try:
+                s3 = self._get_s3_client()
+                key = self._s3_key()
+                response = s3.get_object(Bucket=self.s3_config["bucket"], Key=key)
+                content = response["Body"].read().decode("utf-8")
+                for line_num, line in enumerate(content.splitlines(), 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        self._facts.append(StoredFact.from_json_line(line))
+                    except (json.JSONDecodeError, TypeError) as e:
+                        logger.warning(f"Skipping malformed S3 line {line_num}: {e}")
+                logger.info(f"Loaded {len(self._facts)} facts from S3 key {key}")
+                self._loaded = True
+                return len(self._facts)
+            except Exception as e:
+                if "NoSuchKey" in str(e) or "404" in str(e):
+                    logger.info(f"No existing fact store in S3 at {self._s3_key()}")
+                else:
+                    logger.warning(f"Failed to load facts from S3, falling back to local: {e}")
 
         if not self.facts_file.exists():
             logger.info(f"No existing fact store at {self.facts_file}")
@@ -112,13 +164,30 @@ class FactStore:
             return 0
 
     def save(self) -> int:
-        """Save all facts to JSONL file. Returns number of facts saved."""
+        """Save all facts to JSONL (S3 if configured, also local). Returns number of facts saved."""
+        content = "".join(fact.to_json_line() + "\n" for fact in self._facts)
+
+        if self.s3_config:
+            try:
+                s3 = self._get_s3_client()
+                key = self._s3_key()
+                s3.put_object(
+                    Bucket=self.s3_config["bucket"],
+                    Key=key,
+                    Body=content.encode("utf-8"),
+                    ContentType="application/x-ndjson",
+                )
+                logger.info(f"Saved {len(self._facts)} facts to S3 key {key}")
+                return len(self._facts)
+            except Exception as e:
+                logger.error(f"Failed to save facts to S3: {e}")
+                return 0
+
         self._ensure_store_dir()
 
         try:
             with open(self.facts_file, "w", encoding="utf-8") as f:
-                for fact in self._facts:
-                    f.write(fact.to_json_line() + "\n")
+                f.write(content)
 
             logger.info(f"Saved {len(self._facts)} facts to {self.facts_file}")
             return len(self._facts)
