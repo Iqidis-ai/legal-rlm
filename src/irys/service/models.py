@@ -49,6 +49,10 @@ class InvestigationContext(BaseModel):
         None,
         description="Instructions for synthesis output (e.g., language, style preferences)"
     )
+    output_system_instructions: Optional[str] = Field(
+        None,
+        description="Additional system-level instructions appended to the synthesis system prompt"
+    )
 
 
 # === Job Status and Core Models ===
@@ -262,7 +266,8 @@ class S3UrlsInvestigateRequest(BaseModel):
                         {"role": "assistant", "content": "This is a service agreement..."}
                     ],
                     "planning_instructions": "Focus on payment terms. Client is concerned about late fees.",
-                    "output_instructions": "Respond in English. Use formal legal language."
+                    "output_instructions": "Respond in English. Use formal legal language.",
+                    "output_system_instructions": "You are a senior attorney specializing in contract law."
                 }
             }
         }

@@ -1116,8 +1116,16 @@ async def synthesize(
     )
 
     _log_llm_call("synthesize", tier, prompt, start_time)
+
+    # Build system prompt - base PRO prompt + optional output_system_instructions
+    system_prompt = SYSTEM_PROMPT_PRO
+    output_system_instructions = getattr(context, "output_system_instructions", None)
+    if output_system_instructions:
+        system_prompt = f"{SYSTEM_PROMPT_PRO}\n\n{output_system_instructions}"
+        logger.info(f"📝 Appending output_system_instructions ({len(output_system_instructions)} chars) to synthesis system prompt")
+
     # ALWAYS use PRO system prompt for synthesis, regardless of model tier
-    response = await client.complete(prompt, tier=tier, system_prompt=SYSTEM_PROMPT_PRO)
+    response = await client.complete(prompt, tier=tier, system_prompt=system_prompt)
 
     logger.info(f"✨ Synthesis complete: {len(response)} chars")
     _log_llm_result("synthesize", f"{len(response)} char response", time.time() - start_time)
