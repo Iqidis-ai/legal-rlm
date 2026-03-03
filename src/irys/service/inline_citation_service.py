@@ -18,29 +18,35 @@ MAX_CITATIONS = 12
 
 # Prompt template for Gemini Lite
 INLINE_CITATION_PROMPT = """TASK:
-Insert inline citation markers into the ANSWER using ONLY the provided CITATIONS.
 
-Rules:
-1. Do NOT rewrite or change wording.
-2. Only insert citation ID markers in square brackets, like [c89e8135].
-3. Use ONLY citation IDs listed below.
-4. If support is weak or unclear, do NOT attach a citation.
-5. Avoid repeating the same citation in consecutive sentences unless necessary.
-6. Attach a citation only to the first sentence that introduces the supported claim.
-7. Do not add explanations or commentary.
-8. Use SEPARATE brackets for multiple citations: [id1] [id2], NOT [id1, id2].
-
-CITATIONS:
-{citation_block}
+Insert inline citation markers into the ANSWER using only the provided CITATIONS.
 
 ANSWER:
 {answer}
 
+CITATIONS:
+{citation_block}
+
+OINSTRUCTIONS:
+
+Read the ANSWER sentence by sentence.
+
+For each sentence:
+
+Insert a citation ID at the end of the sentence only if the sentence shares at least one valid anchor with the citation text.
+
+If multiple citations match, insert all matching IDs separated by a single space:
+[id1] [id2]
+
+If no citation matches, leave the sentence unchanged.
+
+Do not insert citations without anchor overlap.
+
 OUTPUT:
-Return ONLY the full answer text with citation ID markers inserted.
-No markdown.
-No JSON.
-No extra text."""
+
+Return the full ANSWER text with citation markers inserted.
+Return only the ANSWER text.
+Do not include explanations."""
 
 
 @dataclass
@@ -191,7 +197,46 @@ class InlineCitationService:
         client = GeminiClient(api_key=api_key)
 
         # Low temperature system prompt for deterministic output
-        system_prompt = "You are a precise citation marker. Insert citation IDs exactly where the text is supported. Do not modify any other text."
+        system_prompt = """ 
+        You insert citation ID markers into a given ANSWER.
+
+        You may only insert citation markers in square brackets.
+        You must not change wording.
+        You must not remove text.
+        You must not add new text.
+        You must not reorder sentences.
+
+        You may only use citation IDs provided in the CITATIONS block.
+        Never invent or modify citation IDs.
+        If no valid citation matches a sentence, leave it unchanged.
+
+        A citation may be inserted only if the sentence shares at least one clear anchor with the citation text.
+
+        Valid anchors:
+
+        Exact numbers (e.g., 17.3%, 5.5%, 13.5%)
+
+        Exact dates (e.g., March 2025)
+
+        Named entities (e.g., SCBs, CRAR, CET1)
+
+        Distinct multi-word phrases (two or more consecutive words that match)
+
+        If multiple citations match a sentence, insert all valid matching citation IDs.
+
+        Insert citations at the end of the supported sentence.
+
+        Separate multiple citations with a single space:
+        [id1] [id2]
+
+        Do not insert citations without anchor overlap.
+        Do not insert citations to increase count.
+
+        Return the full ANSWER text with citation markers inserted.
+        Return only the ANSWER text.
+        Do not include explanations or commentary.
+
+        """
 
         async def _complete():
             return await client.complete(
