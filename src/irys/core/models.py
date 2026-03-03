@@ -489,62 +489,47 @@ class GeminiClient:
         # Acquire rate limit token
         await self._rate_limiter.acquire()
 
-        # Try primary model with retry, fallback on 503
-        model_to_use = mc.model_id
-        max_attempts = 2
-        last_error = None
+        # Try primary model, fallback on timeout/unavailable errors
+        response = None
+        try:
+            api_call = asyncio.to_thread(
+                self.client.models.generate_content,
+                model=mc.model_id,
+                contents=contents,
+                config=config,
+            )
+            if no_timeout:
+                response = await api_call
+            else:
+                response = await asyncio.wait_for(api_call, timeout=request_timeout)
+        except (asyncio.TimeoutError, TimeoutError, Exception) as e:
+            error_str = str(e)
+            is_timeout = isinstance(e, (asyncio.TimeoutError, TimeoutError))
+            is_unavailable = "503" in error_str or "UNAVAILABLE" in error_str or "overloaded" in error_str.lower()
 
-        for attempt in range(max_attempts):
-            try:
-                api_call = asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=model_to_use,
-                    contents=contents,
-                    config=config,
-                )
-                if no_timeout:
-                    response = await api_call
-                else:
-                    response = await asyncio.wait_for(api_call, timeout=request_timeout)
-                break  # Success
-            except asyncio.TimeoutError:
-                logger.error(f"API call to {model_to_use} timed out after {request_timeout}s")
-                raise TimeoutError(f"API call timed out after {request_timeout}s")
-            except Exception as e:
-                last_error = e
-                error_str = str(e)
-                # Check for 503 overloaded error
-                if "503" in error_str or "UNAVAILABLE" in error_str or "overloaded" in error_str.lower():
-                    if attempt < max_attempts - 1:
-                        logger.warning(f"{model_to_use} overloaded, retrying in 2s... (attempt {attempt + 1}/{max_attempts})")
-                        await asyncio.sleep(2)
-                    elif mc.fallback_model_id:
-                        # Switch to fallback model
-                        logger.warning(f"{model_to_use} still overloaded after {max_attempts} attempts, falling back to {mc.fallback_model_id}")
-                        model_to_use = mc.fallback_model_id
-                        # One more attempt with fallback
-                        try:
-                            fallback_call = asyncio.to_thread(
-                                self.client.models.generate_content,
-                                model=model_to_use,
-                                contents=contents,
-                                config=config,
-                            )
-                            if no_timeout:
-                                response = await fallback_call
-                            else:
-                                response = await asyncio.wait_for(fallback_call, timeout=request_timeout)
-                            break  # Fallback succeeded
-                        except Exception as fallback_error:
-                            raise fallback_error
-                    else:
-                        raise e
-                else:
-                    raise e
-        else:
-            # All retries exhausted
-            if last_error:
-                raise last_error
+            # No fallback configured: re-raise
+            if not mc.fallback_model_id:
+                if is_timeout:
+                    raise TimeoutError(f"API call timed out after {request_timeout}s")
+                raise
+
+            # Case 1: Timeout/unavailable - try fallback
+            if is_timeout or is_unavailable:
+                logger.warning(f"{mc.model_id} {'timed out' if is_timeout else 'unavailable'}, falling back to {mc.fallback_model_id}")
+            # Case 2: Other errors - also try fallback
+            else:
+                logger.warning(f"{mc.model_id} failed ({error_str[:100]}), falling back to {mc.fallback_model_id}")
+
+            fallback_call = asyncio.to_thread(
+                self.client.models.generate_content,
+                model=mc.fallback_model_id,
+                contents=contents,
+                config=config,
+            )
+            if no_timeout:
+                response = await fallback_call
+            else:
+                response = await asyncio.wait_for(fallback_call, timeout=request_timeout)
 
         # Track usage
         self._usage[tier].requests += 1
