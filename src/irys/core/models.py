@@ -393,6 +393,10 @@ class GeminiClient:
     DEFAULT_RPM = 60  # Requests per minute
     DEFAULT_BURST = 10  # Burst size
 
+    # Class-level Vertex AI client (lazy initialized, shared across instances)
+    _vertex_client: Optional[genai.Client] = None
+    _vertex_init_attempted: bool = False
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -410,6 +414,92 @@ class GeminiClient:
         self._cache = cache
         self._usage: dict[ModelTier, UsageStats] = {t: UsageStats() for t in ModelTier}
         self._rate_limiter = RateLimiter(requests_per_minute, burst_size)
+
+    @classmethod
+    def _get_vertex_client(cls) -> Optional[genai.Client]:
+        """Lazy initialization for Vertex AI client."""
+        if cls._vertex_init_attempted:
+            return cls._vertex_client
+
+        cls._vertex_init_attempted = True
+        try:
+            import json
+            creds_json = os.environ.get("VERTEXAI_CREDENTIALS_JSON")
+            if not creds_json:
+                logger.debug("VERTEXAI_CREDENTIALS_JSON not set, Vertex AI fallback disabled")
+                return None
+
+            credentials = json.loads(creds_json)
+            project_id = credentials.get("project_id")
+            if not project_id:
+                logger.warning("Invalid Vertex AI credentials: missing project_id")
+                return None
+
+            location = os.environ.get("VERTEX_LOCATION", "us-central1")
+            cls._vertex_client = genai.Client(
+                vertexai=True,
+                project=project_id,
+                location=location,
+            )
+            logger.info(f"Vertex AI client initialized (project={project_id}, location={location})")
+            return cls._vertex_client
+        except Exception as e:
+            logger.warning(f"Failed to initialize Vertex AI client: {e}")
+            return None
+
+    async def _try_call(
+        self, client: genai.Client, model: str, contents: list, config: Any, timeout: float, no_timeout: bool
+    ) -> Any:
+        """Make a single API call with timeout handling."""
+        api_call = asyncio.to_thread(client.models.generate_content, model=model, contents=contents, config=config)
+        if no_timeout:
+            return await api_call
+        return await asyncio.wait_for(api_call, timeout=timeout)
+
+    async def _call_with_fallback(
+        self, primary_model: str, fallback_model: str, contents: list, config: Any, timeout: float, no_timeout: bool
+    ) -> Any:
+        """Execute API call with fallback strategy.
+
+        Timeout: Gemini(primary) → Gemini(fallback) → Vertex(fallback)
+        Other errors: Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback)
+        """
+        vertex = self._get_vertex_client()
+
+        # Step 1: Try Gemini API with primary model
+        try:
+            return await self._try_call(self.client, primary_model, contents, config, timeout, no_timeout)
+        except (asyncio.TimeoutError, TimeoutError) as e:
+            # Timeout: skip to fallback model directly
+            logger.warning(f"{primary_model} timed out, skipping to fallback model")
+            if not fallback_model:
+                raise TimeoutError(f"API call timed out after {timeout}s")
+        except Exception as e:
+            error_str = str(e)
+            is_unavailable = "503" in error_str or "UNAVAILABLE" in error_str or "overloaded" in error_str.lower()
+
+            # Step 2: For non-timeout errors, try Vertex AI with primary model
+            if vertex and not is_unavailable:
+                try:
+                    logger.warning(f"Gemini {primary_model} failed, trying Vertex AI")
+                    return await self._try_call(vertex, primary_model, contents, config, timeout, no_timeout)
+                except Exception as vertex_e:
+                    logger.warning(f"Vertex AI {primary_model} also failed: {str(vertex_e)[:100]}")
+
+            if not fallback_model:
+                raise
+
+            logger.warning(f"{primary_model} {'unavailable' if is_unavailable else 'failed'}, trying fallback model")
+
+        # Step 3: Try Gemini API with fallback model
+        try:
+            return await self._try_call(self.client, fallback_model, contents, config, timeout, no_timeout)
+        except Exception as e:
+            # Step 4: Try Vertex AI with fallback model
+            if vertex:
+                logger.warning(f"Gemini {fallback_model} failed, trying Vertex AI fallback")
+                return await self._try_call(vertex, fallback_model, contents, config, timeout, no_timeout)
+            raise
 
     def _get_config(self, tier: ModelTier, system_prompt: Optional[str] = None) -> types.GenerateContentConfig:
         """Get generation config for a tier with system instruction."""
@@ -489,47 +579,12 @@ class GeminiClient:
         # Acquire rate limit token
         await self._rate_limiter.acquire()
 
-        # Try primary model, fallback on timeout/unavailable errors
-        response = None
-        try:
-            api_call = asyncio.to_thread(
-                self.client.models.generate_content,
-                model=mc.model_id,
-                contents=contents,
-                config=config,
-            )
-            if no_timeout:
-                response = await api_call
-            else:
-                response = await asyncio.wait_for(api_call, timeout=request_timeout)
-        except (asyncio.TimeoutError, TimeoutError, Exception) as e:
-            error_str = str(e)
-            is_timeout = isinstance(e, (asyncio.TimeoutError, TimeoutError))
-            is_unavailable = "503" in error_str or "UNAVAILABLE" in error_str or "overloaded" in error_str.lower()
-
-            # No fallback configured: re-raise
-            if not mc.fallback_model_id:
-                if is_timeout:
-                    raise TimeoutError(f"API call timed out after {request_timeout}s")
-                raise
-
-            # Case 1: Timeout/unavailable - try fallback
-            if is_timeout or is_unavailable:
-                logger.warning(f"{mc.model_id} {'timed out' if is_timeout else 'unavailable'}, falling back to {mc.fallback_model_id}")
-            # Case 2: Other errors - also try fallback
-            else:
-                logger.warning(f"{mc.model_id} failed ({error_str[:100]}), falling back to {mc.fallback_model_id}")
-
-            fallback_call = asyncio.to_thread(
-                self.client.models.generate_content,
-                model=mc.fallback_model_id,
-                contents=contents,
-                config=config,
-            )
-            if no_timeout:
-                response = await fallback_call
-            else:
-                response = await asyncio.wait_for(fallback_call, timeout=request_timeout)
+        # Fallback strategy:
+        # - Timeout: Gemini(primary) → Gemini(fallback) → Vertex(fallback)
+        # - Other errors: Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback)
+        response = await self._call_with_fallback(
+            mc.model_id, mc.fallback_model_id, contents, config, request_timeout, no_timeout
+        )
 
         # Track usage
         self._usage[tier].requests += 1
