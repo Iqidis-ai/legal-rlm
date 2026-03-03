@@ -306,6 +306,7 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
         max_output_tokens=65536,  # Maximum output for thorough synthesis
         cost_per_1m_input=2.00,
         cost_per_1m_output=12.00,
+        fallback_model_id="gemini-2.5-pro",  # Fallback when 503/overloaded
     ),
 }
 
