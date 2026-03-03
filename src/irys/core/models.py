@@ -15,6 +15,9 @@ import logging
 
 from google import genai
 from google.genai import types
+import json
+import base64
+from google.oauth2 import service_account
 
 # Import ResponseCache with TYPE_CHECKING to avoid circular imports
 from typing import TYPE_CHECKING
@@ -417,29 +420,39 @@ class GeminiClient:
 
     @classmethod
     def _get_vertex_client(cls) -> Optional[genai.Client]:
-        """Lazy initialization for Vertex AI client."""
+        """Lazy initialization for Vertex AI client using base64-encoded credentials."""
         if cls._vertex_init_attempted:
             return cls._vertex_client
 
         cls._vertex_init_attempted = True
         try:
-            import json
-            creds_json = os.environ.get("VERTEXAI_CREDENTIALS_JSON")
-            if not creds_json:
-                logger.debug("VERTEXAI_CREDENTIALS_JSON not set, Vertex AI fallback disabled")
+            creds_b64 = os.environ.get("VERTEXAI_CREDENTIALS_B64")
+            if not creds_b64:
+                logger.debug("VERTEXAI_CREDENTIALS_B64 not set, Vertex AI fallback disabled")
                 return None
 
-            credentials = json.loads(creds_json)
-            project_id = credentials.get("project_id")
+            # Decode base64 to JSON string
+            logger.debug("Decoding base64 Vertex AI credentials")
+            creds_json = base64.b64decode(creds_b64).decode('utf-8')
+            credentials_dict = json.loads(creds_json)
+
+            project_id = credentials_dict.get("project_id")
             if not project_id:
                 logger.warning("Invalid Vertex AI credentials: missing project_id")
                 return None
 
-            location = os.environ.get("VERTEX_LOCATION", "global")
+            # Create credentials directly from dict (no temp file needed)
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_dict,
+                scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            )
+
+            location = os.environ.get("VERTEX_LOCATION", "us-central1")
             cls._vertex_client = genai.Client(
                 vertexai=True,
                 project=project_id,
                 location=location,
+                credentials=credentials,
             )
             logger.info(f"Vertex AI client initialized (project={project_id}, location={location})")
             return cls._vertex_client
