@@ -435,7 +435,7 @@ class GeminiClient:
                 logger.warning("Invalid Vertex AI credentials: missing project_id")
                 return None
 
-            location = os.environ.get("VERTEX_LOCATION", "us-central1")
+            location = os.environ.get("VERTEX_LOCATION", "global")
             cls._vertex_client = genai.Client(
                 vertexai=True,
                 project=project_id,
