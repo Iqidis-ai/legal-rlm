@@ -9,6 +9,7 @@ from typing import Optional, Iterator
 import os
 import json
 import logging
+import mimetypes
 
 from .reader import DocumentReader, DocumentContent
 from .search import DocumentSearch, SearchResults, SearchHit
@@ -107,12 +108,19 @@ class MatterRepository:
         """Load filename mapping from _filename_mapping.json if it exists.
 
         Returns:
-            Dict with two sub-dicts:
+            Dict with four sub-dicts:
             - 'actual_to_display': actual_filename -> display_name
             - 'display_to_actual': display_name -> actual_filename
+            - 'display_to_url': display_name -> url (if available)
+            - 'display_to_mime': display_name -> mime type (if available)
         """
         mapping_path = self.base_path / "_filename_mapping.json"
-        result = {"actual_to_display": {}, "display_to_actual": {}}
+        result = {
+            "actual_to_display": {},
+            "display_to_actual": {},
+            "display_to_url": {},
+            "display_to_mime": {},
+        }
 
         if not mapping_path.exists():
             logger.debug(f"No filename mapping found at {mapping_path}")
@@ -131,9 +139,22 @@ class MatterRepository:
 
             # Build bidirectional mappings
             for actual_name, info in raw_mapping.items():
-                display_name = info.get("display_name", actual_name)
+                if isinstance(info, dict):
+                    display_name = info.get("display_name", actual_name)
+                    url = info.get("url")
+                    mime = info.get("mime")
+                else:
+                    # Legacy format: just a string
+                    display_name = str(info)
+                    url = None
+                    mime = None
+
                 result["actual_to_display"][actual_name] = display_name
                 result["display_to_actual"][display_name] = actual_name
+                if url:
+                    result["display_to_url"][display_name] = url
+                if mime:
+                    result["display_to_mime"][display_name] = mime
 
             logger.info(f"Loaded filename mapping with {len(raw_mapping)} entries")
             logger.debug(f"Sample mappings: {list(result['display_to_actual'].items())[:3]}")
@@ -219,6 +240,36 @@ class MatterRepository:
         return self._filename_mapping["display_to_actual"].get(
             display_name, display_name
         )
+
+    def get_document_url(self, document_name: str) -> Optional[str]:
+        """Get URL for a document if available.
+
+        Args:
+            document_name: Display name or actual filename of the document
+
+        Returns:
+            URL string if available, None otherwise
+        """
+        url = self._filename_mapping["display_to_url"].get(document_name)
+        if url:
+            return url
+
+        display_name = self._get_display_name(document_name)
+        return self._filename_mapping["display_to_url"].get(display_name)
+
+    def get_document_mime(self, document_name: str) -> Optional[str]:
+        """Get MIME type for a document if available or infer it from its filename."""
+        mime = self._filename_mapping["display_to_mime"].get(document_name)
+        if mime:
+            return mime
+
+        display_name = self._get_display_name(document_name)
+        mime = self._filename_mapping["display_to_mime"].get(display_name)
+        if mime:
+            return mime
+
+        guessed_mime, _ = mimetypes.guess_type(display_name or document_name)
+        return guessed_mime
 
     def _get_display_path_map(self) -> dict[str, Path]:
         """Lazily build mapping from display filenames to actual file Paths.

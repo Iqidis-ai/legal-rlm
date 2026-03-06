@@ -231,6 +231,8 @@ class RLMEngine:
                     text=c.get("text", ""),
                     context=c.get("context", ""),
                     relevance=c.get("relevance", "prior session"),
+                    url=c.get("url"),
+                    mime=c.get("mime"),
                 )
             logger.info(f"Seeded {len(seed_citations)} prior-session citations")
 
@@ -576,6 +578,8 @@ class RLMEngine:
                 text=case.get('snippet', '') or '',
                 context=f"Citation: {case.get('citation', 'N/A')} | Court: {case.get('court', 'N/A')}",
                 relevance="External case law research",
+                url=case.get('url'),
+                mime=case.get('mime'),
             )
             if citation and self.on_citation:
                 self.on_citation(citation)
@@ -588,6 +592,8 @@ class RLMEngine:
                 text=result.get('content', '') or '',
                 context=f"URL: {result.get('url', 'N/A')}",
                 relevance="External regulatory research",
+                url=result.get('url'),
+                mime=result.get('mime'),
             )
             if citation and self.on_citation:
                 self.on_citation(citation)
@@ -1048,6 +1054,8 @@ class RLMEngine:
                     text=case.get('snippet', '') or case.get('opinion_text', '') or '',
                     context=f"Citation: {case.get('citation', 'N/A')} | Court: {case.get('court', 'N/A')}",
                     relevance="External case law research",
+                    url=case.get('url'),
+                    mime=case.get('mime'),
                 )
                 if citation and self.on_citation:
                     self.on_citation(citation)
@@ -1060,6 +1068,8 @@ class RLMEngine:
                     text=result.get('content', '') or '',
                     context=f"URL: {result.get('url', 'N/A')}",
                     relevance="External regulatory research",
+                    url=result.get('url'),
+                    mime=result.get('mime'),
                 )
                 if citation and self.on_citation:
                     self.on_citation(citation)
@@ -1394,12 +1404,17 @@ class RLMEngine:
         # Add citations from relevant hits
         relevant_hits = analysis.get("relevant_hits", [])
         for hit in relevant_hits[:3]:
+            # Get URL for the document if available
+            doc_url = repo.get_document_url(hit.filename) if hasattr(repo, 'get_document_url') else None
+            doc_mime = repo.get_document_mime(hit.filename) if hasattr(repo, 'get_document_mime') else None
             citation = state.add_citation(
                 document=hit.file_path,
                 page=hit.page_num,
                 text=hit.match_text,
                 context=hit.context,
                 relevance=f"Found via search: {results.query}",
+                url=doc_url,
+                mime=doc_mime,
             )
             if citation and self.on_citation:
                 self.on_citation(citation)
@@ -1580,12 +1595,17 @@ class RLMEngine:
             # Add citations from quotes (limit to 2)
             for quote in extraction.get("quotes", [])[:2]:
                 if isinstance(quote, dict) and "text" in quote:
+                    # Get URL for the document if available
+                    doc_url = repo.get_document_url(doc.filename) if hasattr(repo, 'get_document_url') else None
+                    doc_mime = repo.get_document_mime(doc.filename) if hasattr(repo, 'get_document_mime') else None
                     citation = state.add_citation(
                         document=doc.path,
                         page=quote.get("page"),
                         text=quote["text"],
                         context="",
                         relevance=quote.get("relevance", "Direct quote"),
+                        url=doc_url,
+                        mime=doc_mime,
                     )
                     if citation and self.on_citation:
                         self.on_citation(citation)

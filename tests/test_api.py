@@ -122,6 +122,30 @@ class TestInvestigationResult:
         assert "status" in data
         assert "confidence" in data
 
+    def test_result_citation_keeps_url_and_mime(self):
+        from irys.rlm.state import InvestigationState
+
+        state = InvestigationState.create("Test query", "/path")
+        state.add_citation(
+            "doc.pdf",
+            1,
+            "text",
+            "ctx",
+            "rel",
+            url="https://example.com/doc.pdf",
+            mime="application/pdf",
+        )
+
+        result = InvestigationResult(
+            state=state,
+            output="Test output",
+            format="markdown",
+        )
+
+        citation = result.citations[0]
+        assert citation.url == "https://example.com/doc.pdf"
+        assert citation.mime == "application/pdf"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

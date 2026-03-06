@@ -97,6 +97,8 @@ class Citation:
     context: str
     relevance: str
     timestamp: datetime = field(default_factory=datetime.now)
+    url: Optional[str] = None  # Document URL if available
+    mime: Optional[str] = None  # Document MIME type if available
 
     @classmethod
     def create(
@@ -106,6 +108,8 @@ class Citation:
         text: str,
         context: str,
         relevance: str,
+        url: Optional[str] = None,
+        mime: Optional[str] = None,
     ) -> "Citation":
         return cls(
             id=str(uuid.uuid4())[:8],
@@ -114,6 +118,8 @@ class Citation:
             text=text,
             context=context,
             relevance=relevance,
+            url=url,
+            mime=mime,
         )
 
 
@@ -372,6 +378,8 @@ class InvestigationState:
         text: str,
         context: str,
         relevance: str,
+        url: Optional[str] = None,
+        mime: Optional[str] = None,
     ) -> Optional[Citation]:
         """Add a citation if not duplicate."""
         text_normalized = " ".join(text.lower().split())[:100]
@@ -388,6 +396,8 @@ class InvestigationState:
             text=text,
             context=context,
             relevance=relevance,
+            url=url,
+            mime=mime,
         )
         self.citations.append(citation)
         return citation
@@ -891,6 +901,8 @@ class InvestigationState:
                     "context": c.context,
                     "relevance": c.relevance,
                     "timestamp": c.timestamp.isoformat(),
+                    "url": c.url,
+                    "mime": c.mime,
                 }
                 for c in self.citations
             ],
@@ -995,6 +1007,8 @@ class InvestigationState:
                 context=c["context"],
                 relevance=c["relevance"],
                 timestamp=datetime.fromisoformat(c["timestamp"]),
+                url=c.get("url"),
+                mime=c.get("mime"),
             )
             state.citations.append(citation)
 

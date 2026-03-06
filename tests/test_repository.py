@@ -99,3 +99,25 @@ class TestMatterRepository:
 
         assert stats.total_files == 2
         assert ".txt" in stats.files_by_type
+
+    def test_filename_mapping_preserves_url_and_mime(self, tmp_path):
+        """Test filename mapping metadata lookup for URL-backed documents."""
+        (tmp_path / "file_a.pdf").write_text("a")
+        (tmp_path / "file_b.pdf").write_text("b")
+        (tmp_path / "_filename_mapping.json").write_text(
+            '{\n'
+            '  "file_a.pdf": {"display_name": "same-name.pdf", "url": "https://example.com/a", "mime": "application/pdf"},\n'
+            '  "file_b.pdf": {"display_name": "same-name_1.pdf", "url": "https://example.com/b", "mime": "application/pdf"}\n'
+            '}'
+        )
+
+        repo = MatterRepository(tmp_path)
+
+        files = repo.list_files()
+        filenames = [f.filename for f in files]
+
+        assert "same-name.pdf" in filenames
+        assert "same-name_1.pdf" in filenames
+        assert repo.get_document_url("same-name.pdf") == "https://example.com/a"
+        assert repo.get_document_url("file_b.pdf") == "https://example.com/b"
+        assert repo.get_document_mime("same-name_1.pdf") == "application/pdf"

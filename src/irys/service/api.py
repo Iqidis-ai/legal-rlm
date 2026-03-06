@@ -1359,6 +1359,8 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
                         "context": citation.context,
                         "relevance": citation.relevance,
                         "timestamp": citation.timestamp.isoformat(),
+                        "url": citation.url,
+                        "mime": citation.mime,
                     },
                 })
 

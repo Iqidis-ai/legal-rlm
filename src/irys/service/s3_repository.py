@@ -500,6 +500,22 @@ class S3Repository:
             f"{downloaded}/{len(url_inputs)} downloaded, {actual_file_count} files verified on disk at {temp_dir}"
         )
 
+        # Create filename mapping with URLs for citation tracking
+        mapping = {}
+        for url, filename, mime_type in parsed_inputs:
+            if filename:
+                mapping[filename] = {
+                    "display_name": filename,
+                    "url": url,
+                    "mime": mime_type,
+                }
+
+        if mapping:
+            mapping_path = temp_dir / "_filename_mapping.json"
+            with open(mapping_path, "w") as f:
+                json.dump(mapping, f, indent=2)
+            logger.info(f"Created filename mapping with {len(mapping)} entries including URLs")
+
         # Donot raise error even if no files were downloaded
         # if downloaded == 0:
         #     raise ValueError(
