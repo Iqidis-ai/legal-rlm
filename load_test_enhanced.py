@@ -15,6 +15,7 @@ import json
 import time
 import random
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import List, Dict, Any, Tuple
 from statistics import mean, median
@@ -28,14 +29,17 @@ DOCUMENT_FILE        = "main_doc.json"
 S3_BUCKET_BASE       = "https://iqidis-artifact.s3.us-east-1.amazonaws.com"
 TEST_QUERY           = "Test investigation - load testing"
 REQUESTS_PER_MINUTE  = 10
-TEST_DURATION_MINUTES = 5
-MIN_DOCS_PER_REQUEST = 8
-MAX_DOCS_PER_REQUEST = 20
+TEST_DURATION_MINUTES = 2
+
+# Concurrent burst mode config
+CONCURRENT_BURST_COUNT = 5   # Number of requests fired simultaneously
+MIN_DOCS_PER_REQUEST = 200
+MAX_DOCS_PER_REQUEST = 300
 LOG_FILE             = "load_test_enhanced_log.jsonl"
 REQUEST_TIMEOUT      = 6000
 
 # Enhanced sampling config
-MIN_WORD_DOCS_PER_REQUEST    = 2     # Minimum Word docs guaranteed per request
+MIN_WORD_DOCS_PER_REQUEST    = 5     # Minimum Word docs guaranteed per request
 MAX_REQUEST_SIZE_MB          = 200   # Hard cap on cumulative request payload size
 FORCE_LARGE_DOC_PROBABILITY  = 0.15  # Probability of forcing ≥1 large doc per request
 
@@ -651,15 +655,142 @@ def run_load_test(
 
 
 # ============================================================================
+# CONCURRENT BURST MODE
+# ============================================================================
+
+def run_concurrent_burst(
+    buckets: Dict[str, List[Dict[str, Any]]],
+    burst_count: int,
+    query: str,
+    min_docs: int,
+    max_docs: int,
+    min_word_docs: int,
+    max_request_size_mb: float,
+    log_file: str,
+    timeout: int,
+    force_large_prob: float,
+) -> None:
+    """
+    Fire burst_count requests all at the same time (concurrent) and wait for
+    all of them to complete.
+
+    All payloads are built upfront before any request is sent so that the HTTP
+    calls start as close to simultaneously as possible.  A shared
+    DocumentCycler ensures each request gets a distinct slice of the document
+    pool.
+    """
+    cycler = DocumentCycler(buckets['all'])
+
+    print(f"\nStarting concurrent burst test")
+    print(f"  Dataset:               {DOCUMENT_FILE}")
+    print(f"  Concurrent requests:   {burst_count}")
+    print(f"  Docs per request:      {min_docs}–{max_docs}")
+    print(f"  Min Word docs:         {min_word_docs}")
+    print(f"  Max request size:      {max_request_size_mb} MB")
+    print(f"  Force large prob:      {force_large_prob:.0%}")
+    print(f"  Log file:              {log_file}\n")
+
+    # Clear / create log file
+    with open(log_file, 'w', encoding='utf-8') as f:
+        f.write('')
+
+    # Build all payloads upfront (sequential — fast)
+    payloads: List[Tuple[str, List[Dict[str, str]], Dict[str, int]]] = []
+    for i in range(burst_count):
+        selected_docs, composition = build_request_payload(
+            buckets, min_docs, max_docs, min_word_docs, max_request_size_mb,
+            cycler=cycler, force_large_prob=force_large_prob,
+        )
+        s3_urls = build_s3_url_objects(selected_docs)
+        request_id = f"req_{i + 1:03d}"
+        payloads.append((request_id, s3_urls, composition))
+
+    print(f"All {burst_count} payloads built — firing concurrently...\n")
+
+    burst_start = time.time()
+
+    def _worker(args: Tuple[str, List[Dict[str, str]], Dict[str, int]]) -> Dict[str, Any]:
+        req_id, s3_urls, composition = args
+        result = send_investigation_request(query, s3_urls, timeout)
+        return {
+            "request_id":               req_id,
+            "composition":              composition,
+            "result":                   result,
+            "timestamp":                datetime.now().isoformat(),
+        }
+
+    results = []
+    with ThreadPoolExecutor(max_workers=burst_count) as executor:
+        futures = {executor.submit(_worker, p): p[0] for p in payloads}
+        for future in as_completed(futures):
+            entry_data = future.result()
+            results.append(entry_data)
+
+            req_id      = entry_data["request_id"]
+            composition = entry_data["composition"]
+            result      = entry_data["result"]
+            status      = result.get("status_code", "ERROR")
+            latency     = result.get("latency_seconds", 0)
+            size_mb     = composition["total_request_size_bytes"] / (1024 * 1024)
+            error_msg   = f" → {result.get('error')}" if result.get("error") else ""
+
+            print(
+                f"[{req_id}] "
+                f"{composition['documents_sent']} docs "
+                f"(S:{composition['small_docs']} M:{composition['medium_docs']} "
+                f"L:{composition['large_docs']} W:{composition['word_docs']}) "
+                f"| {size_mb:.1f} MB | {latency}s | {status}{error_msg}"
+            )
+
+            log_entry = {
+                "timestamp":                entry_data["timestamp"],
+                "request_id":               req_id,
+                "documents_sent":           composition["documents_sent"],
+                "total_request_size_bytes": composition["total_request_size_bytes"],
+                "small_docs":               composition["small_docs"],
+                "medium_docs":              composition["medium_docs"],
+                "large_docs":               composition["large_docs"],
+                "word_docs":                composition["word_docs"],
+                "status_code":              result.get("status_code"),
+                "latency_seconds":          result.get("latency_seconds"),
+                "response_size":            result.get("response_size"),
+                "error":                    result.get("error"),
+            }
+            log_request(log_file, log_entry)
+
+    total_time = time.time() - burst_start
+    generate_summary_report(log_file, total_time)
+
+    print(f"\n{'='*80}")
+    print(f"Concurrent burst test completed")
+    print(f"Requests fired:  {burst_count}")
+    print(f"Wall-clock time: {total_time:.1f}s")
+    print(f"Log file:        {log_file}")
+    print(f"{'='*80}\n")
+
+
+# ============================================================================
 # MAIN EXECUTION
 # ============================================================================
 
 def main() -> None:
-    """Main entry point."""
+    """Main entry point.
+
+    Prompts for test mode:
+      1 — Sequential (original): requests spaced ~6 s apart over 2 minutes
+      2 — Concurrent burst:      CONCURRENT_BURST_COUNT requests all at once
+    """
     print("=" * 80)
     print("RLM Investigation API Load Testing Harness — Enhanced")
     print("=" * 80)
     print()
+    print("Select test mode:")
+    print(f"  [1] Sequential  — {REQUESTS_PER_MINUTE} req/min × {TEST_DURATION_MINUTES} min "
+          f"({REQUESTS_PER_MINUTE * TEST_DURATION_MINUTES} total, ~{60 // REQUESTS_PER_MINUTE}s apart)")
+    print(f"  [2] Concurrent  — {CONCURRENT_BURST_COUNT} requests fired simultaneously")
+    print()
+
+    mode = input("Enter mode [1/2] (default 2): ").strip() or "2"
 
     # Load and deduplicate
     documents = load_documents(DOCUMENT_FILE)
@@ -679,19 +810,33 @@ def main() -> None:
         print("WARNING: No Word documents found — MIN_WORD_DOCS_PER_REQUEST "
               "will be satisfied with 0 Word docs")
 
-    run_load_test(
-        buckets              = buckets,
-        requests_per_minute  = REQUESTS_PER_MINUTE,
-        duration_minutes     = TEST_DURATION_MINUTES,
-        query                = TEST_QUERY,
-        min_docs             = MIN_DOCS_PER_REQUEST,
-        max_docs             = MAX_DOCS_PER_REQUEST,
-        min_word_docs        = MIN_WORD_DOCS_PER_REQUEST,
-        max_request_size_mb  = MAX_REQUEST_SIZE_MB,
-        log_file             = LOG_FILE,
-        timeout              = REQUEST_TIMEOUT,
-        force_large_prob     = FORCE_LARGE_DOC_PROBABILITY,
-    )
+    if mode == "1":
+        run_load_test(
+            buckets              = buckets,
+            requests_per_minute  = REQUESTS_PER_MINUTE,
+            duration_minutes     = TEST_DURATION_MINUTES,
+            query                = TEST_QUERY,
+            min_docs             = MIN_DOCS_PER_REQUEST,
+            max_docs             = MAX_DOCS_PER_REQUEST,
+            min_word_docs        = MIN_WORD_DOCS_PER_REQUEST,
+            max_request_size_mb  = MAX_REQUEST_SIZE_MB,
+            log_file             = LOG_FILE,
+            timeout              = REQUEST_TIMEOUT,
+            force_large_prob     = FORCE_LARGE_DOC_PROBABILITY,
+        )
+    else:
+        run_concurrent_burst(
+            buckets              = buckets,
+            burst_count          = CONCURRENT_BURST_COUNT,
+            query                = TEST_QUERY,
+            min_docs             = MIN_DOCS_PER_REQUEST,
+            max_docs             = MAX_DOCS_PER_REQUEST,
+            min_word_docs        = MIN_WORD_DOCS_PER_REQUEST,
+            max_request_size_mb  = MAX_REQUEST_SIZE_MB,
+            log_file             = LOG_FILE,
+            timeout              = REQUEST_TIMEOUT,
+            force_large_prob     = FORCE_LARGE_DOC_PROBABILITY,
+        )
 
 
 if __name__ == "__main__":
