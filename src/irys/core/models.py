@@ -711,3 +711,26 @@ class GeminiClient:
     def reset_usage(self):
         """Reset usage counters."""
         self._usage = {t: UsageStats() for t in ModelTier}
+
+
+# =============================================================================
+# MULTIMODAL EMBEDDING CONFIGURATION (Phase 1 — additive, new code only)
+# =============================================================================
+
+@dataclass
+class EmbeddingConfig:
+    """Configuration for the multimodal embedding layer.
+
+    model_id and region are configuration values, not constants — the Preview
+    model string will change on GA and must be updatable without touching code.
+    """
+    model_id: str = "gemini-embedding-2-preview"
+    fast_dimensionality: int = 256      # stage 1 candidate retrieval (FAISS)
+    full_dimensionality: int = 3072     # stage 2 reranking (local cosine)
+    index_dimensionality: int = 768     # stored vectors — balance of cost/quality
+    index_task_type: str = "RETRIEVAL_DOCUMENT"
+    query_task_type: str = "RETRIEVAL_QUERY"
+    region: str = "us-central1"
+    top_k_candidates: int = 50          # stage 1 returns this many
+    top_k_results: int = 10             # stage 2 returns this many
+    similarity_threshold: float = 0.65  # needs calibration against real matter data
