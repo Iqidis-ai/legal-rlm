@@ -97,8 +97,14 @@ class Citation:
     context: str
     relevance: str
     timestamp: datetime = field(default_factory=datetime.now)
-    url: Optional[str] = None  # Document URL if available
+    url: Optional[str] = None   # Document URL if available
     mime: Optional[str] = None  # Document MIME type if available
+    # --- Multimodal extension (Phase 1 additive) ---
+    chunk_id: Optional[str] = None    # Links back to ChunkRecord.chunk_id
+    asset_type: Optional[str] = None  # "text" | "audio" | "image" | "video"
+    similarity: Optional[float] = None  # Retrieval confidence score [0, 1]
+    start_char: Optional[int] = None  # Character offset into source (text chunks)
+    end_char: Optional[int] = None    # Character offset end (text chunks)
 
     @classmethod
     def create(
@@ -121,6 +127,39 @@ class Citation:
             url=url,
             mime=mime,
         )
+
+
+def citation_from_evidence_card(
+    card: Any,
+    relevance: str,
+) -> "Citation":
+    """Build a Citation from an EvidenceCard (Phase 1 multimodal path).
+
+    Imported lazily to avoid circular imports — EvidenceCard lives in
+    src/irys/core/retrieval.py which may not always be available.
+
+    Args:
+        card:      An EvidenceCard instance.
+        relevance: Human-readable relevance note (caller-supplied).
+
+    Returns:
+        Citation with all multimodal fields populated.
+    """
+    import os
+    doc_name = os.path.basename(card.asset_path)
+    return Citation(
+        id=str(uuid.uuid4())[:8],
+        document=doc_name,
+        page=card.page_number,
+        text=card.text_content,
+        context=card.text_content,
+        relevance=relevance,
+        chunk_id=card.chunk_id,
+        asset_type=card.asset_type,
+        similarity=card.similarity,
+        start_char=card.start_char,
+        end_char=card.end_char,
+    )
 
 
 @dataclass
