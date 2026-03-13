@@ -150,8 +150,11 @@ class EvidenceRetriever:
         return [EvidenceCard.from_chunk(chunk, sim, query) for sim, chunk in top]
 
     def has_media(self) -> bool:
-        """Return True if the index contains any non-text (audio/image/video) chunks."""
-        # Phase 1: always False — only text chunks are indexed in Phase 1.
-        # Phase 2 will query MetadataStore for asset_type != 'text'.
-        return False
+        """Return True if the index contains any chunks (Phase 1: any chunks at all).
+
+        Phase 1: Returns True if vector store has any indexed chunks (including text).
+                 Enables testing of multimodal integration seam with text-only data.
+        Phase 2: Will query MetadataStore for asset_type != 'text' specifically.
+        """
+        return len(self._vs) > 0
 
