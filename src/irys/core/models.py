@@ -734,3 +734,4 @@ class EmbeddingConfig:
     top_k_candidates: int = 50          # stage 1 returns this many
     top_k_results: int = 10             # stage 2 returns this many
     similarity_threshold: float = 0.65  # needs calibration against real matter data
+    chunk_strategy_version: int = 1     # increment to force reindex when chunking logic changes
