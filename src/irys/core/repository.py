@@ -62,6 +62,29 @@ class RepositoryMetadata:
     learnings: dict[str, str] = field(default_factory=dict)  # query -> key facts
 
 
+# =============================================================================
+# Multimodal asset discovery (Phase 1 additive — new code only)
+# =============================================================================
+
+@dataclass
+class Asset:
+    """A non-text media file discovered in the repository.
+
+    Used exclusively by discover_media_assets(). The existing text-document
+    discovery path (list_files, get_file_list, search, etc.) is untouched.
+    """
+    path: Path
+    filename: str
+    asset_type: str   # "audio" | "image" | "video"
+    mime_type: str
+    size_bytes: int
+    relative_path: str
+
+    @property
+    def size_mb(self) -> float:
+        return self.size_bytes / (1024 * 1024)
+
+
 class MatterRepository:
     """
     Programmatic access to a legal matter document repository.
@@ -762,6 +785,67 @@ class MatterRepository:
             size_bytes=full_path.stat().st_size,
             relative_path=str(full_path.relative_to(self.base_path)),
         )
+
+    # === MULTIMODAL ASSET DISCOVERY (Phase 1 additive) ===
+
+    #: Extensions recognised as audio assets.
+    AUDIO_EXTENSIONS: frozenset[str] = frozenset({".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"})
+    #: Extensions recognised as image assets.
+    IMAGE_EXTENSIONS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".gif", ".tiff", ".bmp", ".webp"})
+    #: Extensions recognised as video assets.
+    VIDEO_EXTENSIONS: frozenset[str] = frozenset({".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"})
+
+    def discover_media_assets(
+        self,
+        pattern: str = "**/*",
+        asset_types: Optional[list[str]] = None,
+    ) -> list["Asset"]:
+        """Discover non-text media files in the repository.
+
+        This method is strictly additive — it does not modify or share
+        state with list_files(), search(), or any existing text-document path.
+
+        Args:
+            pattern:     Glob pattern (default: recursive).
+            asset_types: Filter to specific types: "audio", "image", "video".
+                         If None, all three are returned.
+
+        Returns:
+            List of Asset objects sorted by relative_path.
+        """
+        allowed = set(asset_types) if asset_types else {"audio", "image", "video"}
+
+        ext_to_type: dict[str, str] = {}
+        if "audio" in allowed:
+            ext_to_type.update({e: "audio" for e in self.AUDIO_EXTENSIONS})
+        if "image" in allowed:
+            ext_to_type.update({e: "image" for e in self.IMAGE_EXTENSIONS})
+        if "video" in allowed:
+            ext_to_type.update({e: "video" for e in self.VIDEO_EXTENSIONS})
+
+        assets: list[Asset] = []
+        for path in self.base_path.glob(pattern):
+            if not path.is_file():
+                continue
+            if path.name.startswith(("~$", "_", ".")):
+                continue
+            ext = path.suffix.lower()
+            asset_type = ext_to_type.get(ext)
+            if asset_type is None:
+                continue
+            mime, _ = mimetypes.guess_type(path.name)
+            assets.append(Asset(
+                path=path,
+                filename=path.name,
+                asset_type=asset_type,
+                mime_type=mime or "application/octet-stream",
+                size_bytes=path.stat().st_size,
+                relative_path=str(path.relative_to(self.base_path)),
+            ))
+
+        assets.sort(key=lambda a: a.relative_path)
+        logger.debug("discover_media_assets: found %d asset(s)", len(assets))
+        return assets
 
     def __repr__(self) -> str:
         stats = self.get_stats()
