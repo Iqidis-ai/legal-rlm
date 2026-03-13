@@ -66,6 +66,8 @@ class RLMConfig:
     max_case_law_queries: int = 5  # Max queries to run
     max_web_queries: int = 5       # Max queries to run
     parallel_external_searches: bool = True  # Run queries in parallel
+    # Multimodal settings (Phase 1 additive)
+    multimodal_enabled: bool = False  # Feature flag for multimodal evidence retrieval
     # S3 settings (all optional; local disk used if not set)
     s3_bucket: Optional[str] = None
     s3_region: str = "us-east-1"
@@ -1088,6 +1090,16 @@ class RLMEngine:
         3. Dynamically decide if external research is needed based on what we find
         4. Stop when we have sufficient evidence
         """
+        # Phase 1 multimodal integration seam (Task 1.9)
+        if self.config.multimodal_enabled:
+            evidence_retriever = getattr(self, 'evidence_retriever', None)
+            if evidence_retriever is not None and hasattr(evidence_retriever, 'has_media'):
+                if evidence_retriever.has_media():
+                    # Retrieve multimodal evidence for the main query
+                    cards = await asyncio.to_thread(evidence_retriever.search, state.query)
+                    for card in cards:
+                        state.add_media_finding(card)
+
         iteration = 0
         executed_external_queries = set()  # Track executed queries for tiered search
 

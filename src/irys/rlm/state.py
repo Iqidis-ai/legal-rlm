@@ -359,6 +359,7 @@ class InvestigationState:
 
     # Accumulated knowledge
     findings: dict[str, Any] = field(default_factory=dict)
+    media_findings: dict[str, Any] = field(default_factory=dict)  # Phase 1: multimodal evidence (chunk_id → EvidenceCard)
     hypothesis: Optional[str] = None
     query_classification: Optional[dict] = None
 
@@ -494,6 +495,17 @@ class InvestigationState:
             if self.add_fact(fact):
                 added += 1
         return added
+
+    def add_media_finding(self, card: Any) -> None:
+        """Add an EvidenceCard to media_findings (Phase 1 multimodal path).
+
+        Args:
+            card: An EvidenceCard instance from evidence retrieval.
+
+        Note:
+            Keyed by chunk_id for deduplication and lookup.
+        """
+        self.media_findings[card.chunk_id] = card
 
     def add_triggers(self, triggers: dict[str, list]) -> int:
         """Accumulate external research triggers from document extraction.
