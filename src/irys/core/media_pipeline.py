@@ -199,3 +199,168 @@ def process_image(path: Path) -> list[ChunkRecord]:
 def process_video(path: Path) -> list[ChunkRecord]:
     """Transcribe and chunk a video file. Phase 2 stub."""
     raise NotImplementedError(f"process_video is a Phase 2 feature. Path: {path}")
+
+
+# =============================================================================
+# IndexCacheRecord + IndexCache (Phase 1 additive)
+# =============================================================================
+
+@dataclass
+class IndexCacheRecord:
+    """Per-asset indexing state — used to decide whether to re-index.
+
+    Fields:
+        asset_id:               Unique identifier for the asset (path as string).
+        checksum:               SHA-256 of the file content at last index time.
+        embedding_model:        Embedding model used for the last index run.
+        dimensionality:         Index dimensionality used for the last run.
+        chunk_strategy_version: Version of the chunking strategy used.
+        indexed_at:             ISO UTC timestamp of last successful index run.
+    """
+    asset_id: str
+    checksum: str
+    embedding_model: str
+    dimensionality: int
+    chunk_strategy_version: int
+    indexed_at: str
+
+
+class IndexCache:
+    """SQLite-backed per-asset index state for re-index decisions.
+
+    Stored in the same .irys/index/{matter_id}/ directory as the vector store.
+    A re-index is needed when: file is new, checksum changed, model changed,
+    dimensionality changed, or chunk_strategy_version changed.
+    """
+
+    _TABLE_SQL = (
+        "CREATE TABLE IF NOT EXISTS index_cache ("
+        "  asset_id               TEXT PRIMARY KEY,"
+        "  checksum               TEXT NOT NULL,"
+        "  embedding_model        TEXT NOT NULL,"
+        "  dimensionality         INTEGER NOT NULL,"
+        "  chunk_strategy_version INTEGER NOT NULL,"
+        "  indexed_at             TEXT NOT NULL"
+        ")"
+    )
+
+    def __init__(self, db_path: Path):
+        self._db = sqlite3.connect(str(db_path))
+        self._db.execute(self._TABLE_SQL)
+        self._db.commit()
+
+    def close(self) -> None:
+        """Close the database connection."""
+        if hasattr(self, '_db'):
+            self._db.close()
+
+    def _compute_checksum(self, asset_path: Path) -> str:
+        """Compute SHA-256 checksum of asset file."""
+        import hashlib
+        sha256 = hashlib.sha256()
+        with open(asset_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+
+    def needs_reindex(self, asset: "Asset", config: "EmbeddingConfig") -> bool:
+        """Return True if the asset needs (re-)indexing.
+
+        True when: no record exists, checksum changed, model changed,
+        dimensionality changed, or chunk_strategy_version changed.
+
+        Args:
+            asset: The Asset to check.
+            config: The EmbeddingConfig with current settings.
+
+        Returns:
+            True if reindexing is needed, False otherwise.
+        """
+        from .models import EmbeddingConfig
+        from .repository import Asset
+
+        asset_id = str(asset.path)
+        current_checksum = self._compute_checksum(asset.path)
+
+        row = self._db.execute(
+            "SELECT checksum, embedding_model, dimensionality, chunk_strategy_version "
+            "FROM index_cache WHERE asset_id = ?",
+            (asset_id,),
+        ).fetchone()
+
+        if row is None:
+            return True
+
+        stored_checksum, stored_model, stored_dim, stored_version = row
+        return (
+            stored_checksum != current_checksum
+            or stored_model != config.model_id
+            or stored_dim != config.index_dimensionality
+            or stored_version != config.chunk_strategy_version
+        )
+
+    def mark_indexed(self, asset: "Asset", config: "EmbeddingConfig") -> None:
+        """Mark an asset as indexed with the current configuration.
+
+        Creates or updates the cache record for the asset.
+
+        Args:
+            asset: The Asset that was indexed.
+            config: The EmbeddingConfig used for indexing.
+        """
+        from .models import EmbeddingConfig
+        from .repository import Asset
+
+        asset_id = str(asset.path)
+        checksum = self._compute_checksum(asset.path)
+        indexed_at = datetime.utcnow().isoformat()
+
+        self._db.execute(
+            "INSERT OR REPLACE INTO index_cache "
+            "(asset_id, checksum, embedding_model, dimensionality, chunk_strategy_version, indexed_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                asset_id,
+                checksum,
+                config.model_id,
+                config.index_dimensionality,
+                config.chunk_strategy_version,
+                indexed_at,
+            ),
+        )
+        self._db.commit()
+
+    def get(self, asset_id: str) -> Optional[IndexCacheRecord]:
+        """Fetch an IndexCacheRecord by asset_id, or None if not found.
+
+        Args:
+            asset_id: The asset identifier (typically the path as string).
+
+        Returns:
+            IndexCacheRecord if found, None otherwise.
+        """
+        row = self._db.execute(
+            "SELECT asset_id, checksum, embedding_model, dimensionality, "
+            "chunk_strategy_version, indexed_at "
+            "FROM index_cache WHERE asset_id = ?",
+            (asset_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return IndexCacheRecord(
+            asset_id=row[0],
+            checksum=row[1],
+            embedding_model=row[2],
+            dimensionality=row[3],
+            chunk_strategy_version=row[4],
+            indexed_at=row[5],
+        )
+
+    def evict(self, asset_id: str) -> None:
+        """Remove the cache record for an asset (e.g. on file deletion).
+
+        Args:
+            asset_id: The asset identifier to remove from cache.
+        """
+        self._db.execute("DELETE FROM index_cache WHERE asset_id = ?", (asset_id,))
+        self._db.commit()
