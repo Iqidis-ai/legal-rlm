@@ -19,7 +19,7 @@ import numpy as np
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from irys.core.models import EmbeddingConfig
+from irys.core.models import EmbeddingConfig, GeminiClient
 from irys.core.embeddings import EmbeddingClient
 from irys.core.vector_store import LocalVectorStore
 from irys.core.media_pipeline import ChunkRecord, MetadataStore, process_audio, process_image, process_video
@@ -29,9 +29,15 @@ from irys.rlm.engine import RLMEngine, RLMConfig
 from irys.rlm.state import citation_from_evidence_card
 
 
-# Check for Vertex AI credentials
-SKIP_REASON = "Requires VERTEXAI_CREDENTIALS_B64 environment variable"
-HAS_CREDENTIALS = bool(os.environ.get("VERTEXAI_CREDENTIALS_B64"))
+# Load .env, overriding any stale shell env vars so the correct key is used.
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
+# Accept either Vertex AI service-account creds or a plain Gemini API key.
+HAS_CREDENTIALS = bool(
+    os.environ.get("VERTEXAI_CREDENTIALS_B64") or os.environ.get("GEMINI_API_KEY")
+)
+SKIP_REASON = "Requires VERTEXAI_CREDENTIALS_B64 or GEMINI_API_KEY environment variable"
 
 
 @pytest.mark.skipif(not HAS_CREDENTIALS, reason=SKIP_REASON)
@@ -76,19 +82,27 @@ class TestPhase1EndToEnd:
         )
 
     @pytest.fixture
-    def vertex_project(self):
-        """Extract Vertex AI project ID from credentials."""
+    def embedding_client_kwargs(self):
+        """Return kwargs to construct EmbeddingClient from available credentials.
+
+        Prefers VERTEXAI_CREDENTIALS_B64 (service account) over GEMINI_API_KEY
+        (AI Studio API key).  Skips if neither is present.
+        """
         import base64
         creds_b64 = os.environ.get("VERTEXAI_CREDENTIALS_B64")
-        if not creds_b64:
-            pytest.skip("Missing VERTEXAI_CREDENTIALS_B64")
+        if creds_b64:
+            creds_json = base64.b64decode(creds_b64).decode("utf-8")
+            credentials_dict = json.loads(creds_json)
+            return {"project": credentials_dict.get("project_id")}
 
-        creds_json = base64.b64decode(creds_b64).decode('utf-8')
-        credentials_dict = json.loads(creds_json)
-        return credentials_dict.get("project_id")
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if api_key:
+            return {"api_key": api_key}
+
+        pytest.skip("Missing VERTEXAI_CREDENTIALS_B64 or GEMINI_API_KEY")
 
     @pytest.fixture
-    def indexed_matter(self, temp_matter, tmp_path, embedding_config, vertex_project):
+    def indexed_matter(self, temp_matter, tmp_path, embedding_config, embedding_client_kwargs):
         """Index the matter through EmbeddingClient → VectorStore → MetadataStore.
 
         Returns:
@@ -105,11 +119,10 @@ class TestPhase1EndToEnd:
         )
         metadata_store = MetadataStore(index_dir / "metadata.db")
 
-        # Initialize embedding client
+        # Initialize embedding client (API key or Vertex AI service account)
         embedding_client = EmbeddingClient(
             config=embedding_config,
-            project=vertex_project,
-            region=embedding_config.region,
+            **embedding_client_kwargs,
         )
 
         # Index each text document
@@ -159,7 +172,7 @@ class TestPhase1EndToEnd:
         return temp_matter, evidence_retriever
 
     @pytest.mark.asyncio
-    async def test_multimodal_flag_isolation(self, indexed_matter, vertex_project):
+    async def test_multimodal_flag_isolation(self, indexed_matter):
         """Test that multimodal_enabled flag produces identical output when disabled.
 
         Steps 3-4 of Task 1.10:
@@ -178,7 +191,7 @@ class TestPhase1EndToEnd:
             max_iterations=1,
             multimodal_enabled=False,
         )
-        engine_disabled = RLMEngine(config_disabled, api_key=os.environ["GEMINI_API_KEY"])
+        engine_disabled = RLMEngine(GeminiClient(api_key=os.environ["GEMINI_API_KEY"]), config_disabled)
 
         # Run investigation with multimodal disabled
         state_disabled = await engine_disabled.investigate(query, matter_dir)
@@ -189,7 +202,7 @@ class TestPhase1EndToEnd:
             max_iterations=1,
             multimodal_enabled=True,
         )
-        engine_enabled = RLMEngine(config_enabled, api_key=os.environ["GEMINI_API_KEY"])
+        engine_enabled = RLMEngine(GeminiClient(api_key=os.environ["GEMINI_API_KEY"]), config_enabled)
 
         # Run investigation with multimodal enabled but no evidence_retriever attached
         # This tests: "multimodal_enabled = True with an empty media index produces zero changes"
@@ -259,7 +272,7 @@ class TestPhase1EndToEnd:
         assert citation.end_char == top_card.end_char
 
     @pytest.mark.asyncio
-    async def test_multimodal_enabled_with_media(self, indexed_matter, vertex_project):
+    async def test_multimodal_enabled_with_media(self, indexed_matter):
         """Test that multimodal_enabled=True with media calls evidence_retriever.search().
 
         Step 4 continuation of Task 1.10:
@@ -280,7 +293,7 @@ class TestPhase1EndToEnd:
             max_iterations=1,
             multimodal_enabled=True,
         )
-        engine_enabled = RLMEngine(config_enabled, api_key=os.environ["GEMINI_API_KEY"])
+        engine_enabled = RLMEngine(GeminiClient(api_key=os.environ["GEMINI_API_KEY"]), config_enabled)
 
         # Attach evidence_retriever to engine
         engine_enabled.evidence_retriever = evidence_retriever

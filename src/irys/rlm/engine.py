@@ -244,6 +244,16 @@ class RLMEngine:
         total_chars = repo.metadata.total_chars if repo.metadata else 0
 
         try:
+            # Phase 1 multimodal integration seam (Task 1.9)
+            # Run before small/large repo branch so both paths get media evidence.
+            if self.config.multimodal_enabled:
+                _ev_retriever = getattr(self, 'evidence_retriever', None)
+                if _ev_retriever is not None and hasattr(_ev_retriever, 'has_media'):
+                    if _ev_retriever.has_media():
+                        cards = await asyncio.to_thread(_ev_retriever.search, state.query)
+                        for card in cards:
+                            state.add_media_finding(card)
+
             # Check if small repository first - uses unified assessment (includes complexity)
             if repo.is_small_repo:
                 await self._emit_step_async(
