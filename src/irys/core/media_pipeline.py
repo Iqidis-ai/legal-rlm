@@ -188,9 +188,85 @@ class MetadataStore:
 # Phase 2 stubs — raise NotImplementedError until Phase 2
 # =============================================================================
 
-def process_audio(path: Path) -> list[ChunkRecord]:
-    """Transcribe and chunk an audio file. Phase 2 stub."""
-    raise NotImplementedError(f"process_audio is a Phase 2 feature. Path: {path}")
+async def process_audio(
+    file_path: Path,
+    chunk_duration_s: int = 30,
+    overlap_s: int = 5,
+) -> list[ChunkRecord]:
+    """Split audio file into overlapping chunks.
+
+    Phase 2 implementation: chunks audio into fixed-duration segments with overlap.
+    Uses pydub to load and analyze audio files.
+
+    Args:
+        file_path: Absolute path to the audio file.
+        chunk_duration_s: Duration of each chunk in seconds (default: 30).
+        overlap_s: Overlap between consecutive chunks in seconds (default: 5).
+
+    Returns:
+        List of ChunkRecords with timestamps. text_content is empty at index time
+        (filled at retrieval time via AudioInsights extraction).
+
+    Raises:
+        FileNotFoundError: If the audio file does not exist.
+        ValueError: If chunk_duration_s or overlap_s are invalid.
+    """
+    # Validate file exists
+    if not file_path.exists():
+        raise FileNotFoundError(f"Audio file not found: {file_path}")
+
+    # Validate parameters
+    if chunk_duration_s <= 0:
+        raise ValueError("chunk_duration_s must be positive")
+    if overlap_s < 0:
+        raise ValueError("overlap_s must be non-negative")
+    if overlap_s >= chunk_duration_s:
+        raise ValueError("overlap_s must be less than chunk_duration_s")
+
+    # Import pydub here to avoid dependency at module load
+    from pydub import AudioSegment
+
+    # Load audio file
+    logger.info("Loading audio file: %s", file_path)
+    audio = AudioSegment.from_file(str(file_path))
+
+    # Get duration in seconds
+    duration_s = len(audio) / 1000.0  # pydub uses milliseconds
+    logger.info("Audio duration: %.2fs", duration_s)
+
+    # Calculate chunk boundaries
+    chunks: list[ChunkRecord] = []
+    chunk_index = 0
+    start_s = 0.0
+
+    while start_s < duration_s:
+        end_s = min(start_s + chunk_duration_s, duration_s)
+
+        # Create ChunkRecord
+        chunk = ChunkRecord(
+            chunk_id=str(uuid.uuid4()),
+            asset_path=str(file_path),
+            asset_type="audio",
+            chunk_index=chunk_index,
+            text_content="",  # Empty at index time, filled at retrieval
+            start_time_s=start_s,
+            end_time_s=end_s,
+            start_char=None,  # Not applicable for audio
+            end_char=None,
+            page_number=None,  # Not applicable for audio
+            metadata={
+                "file_duration_s": duration_s,
+                "format": file_path.suffix.lstrip("."),
+            },
+        )
+        chunks.append(chunk)
+
+        # Move to next chunk with overlap
+        start_s += chunk_duration_s - overlap_s
+        chunk_index += 1
+
+    logger.info("Created %d chunks from audio file", len(chunks))
+    return chunks
 
 
 def process_image(path: Path) -> list[ChunkRecord]:

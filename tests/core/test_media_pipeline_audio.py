@@ -49,19 +49,20 @@ def audio_60s(tmp_path: Path) -> Path:
 # =============================================================================
 
 @pytest.mark.asyncio
-async def test_audio_chunking_90s_file_returns_3_chunks(audio_90s: Path):
-    """Test that a 90-second file produces 3 chunks with correct timestamps.
+async def test_audio_chunking_90s_file_returns_4_chunks(audio_90s: Path):
+    """Test that a 90-second file produces 4 chunks with correct timestamps.
 
     Expected chunks with 30s duration and 5s overlap:
     - Chunk 0: 0-30s
     - Chunk 1: 25-55s (starts 5s before end of chunk 0)
     - Chunk 2: 50-80s (starts 5s before end of chunk 1)
+    - Chunk 3: 75-90s (final chunk, covers last 15s of audio)
 
-    Note: Final chunk may be shorter if it extends past file duration.
+    Note: Final chunk is shorter (15s) but ensures all audio is indexed.
     """
     chunks = await process_audio(audio_90s, chunk_duration_s=30, overlap_s=5)
 
-    assert len(chunks) == 3, "90s file should produce 3 chunks (30s each with 5s overlap)"
+    assert len(chunks) == 4, "90s file should produce 4 chunks (covers all audio)"
 
     # Chunk 0: 0-30s
     assert chunks[0].chunk_index == 0
@@ -77,6 +78,11 @@ async def test_audio_chunking_90s_file_returns_3_chunks(audio_90s: Path):
     assert chunks[2].chunk_index == 2
     assert chunks[2].start_time_s == 50.0
     assert chunks[2].end_time_s == 80.0
+
+    # Chunk 3: 75-90s (final chunk)
+    assert chunks[3].chunk_index == 3
+    assert chunks[3].start_time_s == 75.0
+    assert chunks[3].end_time_s == 90.0
 
 
 @pytest.mark.asyncio
@@ -97,16 +103,21 @@ async def test_audio_chunking_exact_multiple_returns_correct_chunks(audio_60s: P
     """Test that a 60-second file (exact 2x chunk size) produces correct chunks."""
     chunks = await process_audio(audio_60s, chunk_duration_s=30, overlap_s=5)
 
-    # 60s with 30s chunks and 5s overlap should produce 2 chunks
-    assert len(chunks) == 2
+    # 60s with 30s chunks and 5s overlap should produce 3 chunks
+    # (to cover all audio, including the last 5s)
+    assert len(chunks) == 3
 
     # Chunk 0: 0-30s
     assert chunks[0].start_time_s == 0.0
     assert chunks[0].end_time_s == 30.0
 
-    # Chunk 1: 25-55s (but clamped to 60s max)
+    # Chunk 1: 25-55s
     assert chunks[1].start_time_s == 25.0
     assert chunks[1].end_time_s == 55.0
+
+    # Chunk 2: 50-60s (final chunk, covers last 10s)
+    assert chunks[2].start_time_s == 50.0
+    assert chunks[2].end_time_s == 60.0
 
 
 # =============================================================================
