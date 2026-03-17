@@ -739,3 +739,34 @@ Synthesize all external research:
     "combined_framework": "How case law + regulations together inform this situation",
     "summary": "Unified external legal context"
 }}"""
+
+
+# =============================================================================
+# Phase 2: Audio extraction (multimodal)
+# =============================================================================
+
+P_EXTRACT_AUDIO_INSIGHTS = """Listen carefully to this audio clip and extract information relevant to the query:
+
+**Query**: {query}
+
+Extract:
+1. **Summary**: Concise factual summary (2-3 sentences) focused on query relevance
+2. **Key Content**: Important spoken phrases or statements relevant to the query
+3. **Entities**: Named entities mentioned (people, organizations, dates, locations)
+4. **Temporal References**: Any dates, times, or temporal markers mentioned
+5. **Confidence**: Rate extraction confidence (low/medium/high)
+
+CRITICAL:
+- Focus on factual extraction, NOT speculation
+- Penalize uncertain or speculative content
+- If audio is unclear/corrupted/irrelevant, return low confidence
+- Tie extraction to investigation intent (query)
+
+Return response in this JSON format:
+{{
+    "summary": "...",
+    "spoken_content": "...",
+    "entities": ["entity1", "entity2"],
+    "temporal_refs": ["date1", "time1"],
+    "confidence": "medium"
+}}"""
