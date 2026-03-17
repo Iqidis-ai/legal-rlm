@@ -162,10 +162,10 @@ async def test_embed_media_calls_gemini_upload_file(
         client = EmbeddingClient(embedding_config, api_key="fake-key")
         vector = client.embed_media(audio_file)
 
-        # Verify upload_file was called
+        # Verify upload_file was called with correct parameter
         mock_client.files.upload.assert_called_once()
         call_args = mock_client.files.upload.call_args
-        assert call_args[1]["path"] == str(audio_file)
+        assert call_args[1]["file"] == str(audio_file)
 
         # Verify embed_content was called with uploaded file
         mock_client.models.embed_content.assert_called_once()

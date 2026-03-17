@@ -36,21 +36,53 @@ class EmbeddingClient:
     - _normalize: L2-normalizes all vectors (required for sub-3072-dim MRL)
     """
 
-    def __init__(self, config: EmbeddingConfig, project: str, region: str | None = None):
+    def __init__(
+        self,
+        config: EmbeddingConfig,
+        project: str | None = None,
+        region: str | None = None,
+        api_key: str | None = None,
+    ):
+        """Initialize the embedding client.
+
+        Supports two authentication modes:
+        - API key (Google AI Studio): pass ``api_key``. ``project`` is ignored.
+        - Vertex AI service account / ADC: pass ``project`` (and optionally
+          ``region``). ``api_key`` must be None.
+
+        Args:
+            config:  Embedding configuration (model, dimensions, thresholds).
+            project: GCP project ID — required for Vertex AI mode.
+            region:  GCP region — defaults to config.region in Vertex mode.
+            api_key: Google AI Studio API key — activates API-key mode.
+        """
         self._config = config
         self._project = project
         self._region = region or config.region
-        self._client = genai.Client(
-            vertexai=True,
-            project=project,
-            location=self._region,
-        )
-        logger.info(
-            "EmbeddingClient initialized — model=%s project=%s region=%s",
-            config.model_id,
-            project,
-            self._region,
-        )
+        self._api_key = api_key
+
+        if api_key:
+            self._client = genai.Client(api_key=api_key)
+            logger.info(
+                "EmbeddingClient initialized — model=%s auth=api_key",
+                config.model_id,
+            )
+        else:
+            if not project:
+                raise ValueError(
+                    "EmbeddingClient requires either api_key or project (Vertex AI)."
+                )
+            self._client = genai.Client(
+                vertexai=True,
+                project=project,
+                location=self._region,
+            )
+            logger.info(
+                "EmbeddingClient initialized — model=%s project=%s region=%s",
+                config.model_id,
+                project,
+                self._region,
+            )
 
     # ------------------------------------------------------------------
     # Public interface
@@ -115,18 +147,79 @@ class EmbeddingClient:
             output_dimensionality=output_dimensionality,
         )
 
-    def embed_media(self, path: Path) -> np.ndarray:  # noqa: ARG002
-        """Embed a media file (audio, video, image).
+    def embed_media(self, path: Path) -> np.ndarray:
+        """Embed a media file (audio, video, image) using Gemini multimodal API.
 
-        Phase 1 stub — raises NotImplementedError until Phase 2.
-        This is intentional and part of the Phase 1 acceptance criteria.
+        Phase 2 implementation for audio files. Uses Gemini's native multimodal
+        embedding support via file upload API.
+
+        Args:
+            path: Absolute path to the media file.
+
+        Returns:
+            L2-normalized float32 embedding vector of shape (index_dimensionality,).
 
         Raises:
-            NotImplementedError: always.
+            FileNotFoundError: If the media file does not exist.
+            EmbeddingError: On unsupported format or API failure.
         """
-        raise NotImplementedError(
-            f"embed_media is a Phase 2 feature. Cannot embed media file: {path}"
-        )
+        import time
+
+        # Validate file exists
+        if not path.exists():
+            raise FileNotFoundError(f"Media file not found: {path}")
+
+        # Validate supported audio format
+        supported_extensions = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+        if path.suffix.lower() not in supported_extensions:
+            raise EmbeddingError(
+                f"Unsupported audio format: {path.suffix}. "
+                f"Supported: {', '.join(supported_extensions)}"
+            )
+
+        try:
+            # Upload audio file to Gemini
+            # Note: files.upload() only available in API key mode (not Vertex AI)
+            logger.info("Uploading audio file to Gemini: %s", path)
+            uploaded_file = self._client.files.upload(file=str(path))
+
+            # Wait for file processing to complete
+            logger.debug("Waiting for file processing: %s", uploaded_file.name)
+            while uploaded_file.state.name == "PROCESSING":
+                time.sleep(2)
+                uploaded_file = self._client.files.get(uploaded_file.name)
+
+            if uploaded_file.state.name != "ACTIVE":
+                raise EmbeddingError(
+                    f"File processing failed. State: {uploaded_file.state.name}"
+                )
+
+            logger.info("File processed successfully: %s", uploaded_file.name)
+
+            # Generate embedding with same config as text
+            response = self._client.models.embed_content(
+                model=self._config.model_id,
+                content=uploaded_file,
+                config=types.EmbedContentConfig(
+                    task_type=self._config.index_task_type,
+                    output_dimensionality=self._config.index_dimensionality,
+                ),
+            )
+
+            # Extract and normalize embedding
+            raw = response.embeddings[0].values
+            vector = np.array(raw, dtype=np.float32)
+            normalized = self._normalize(vector)
+
+            logger.info("Audio embedding generated: %d dimensions", len(normalized))
+            return normalized
+
+        except FileNotFoundError:
+            raise  # Re-raise as-is
+        except EmbeddingError:
+            raise  # Re-raise as-is
+        except Exception as exc:
+            raise EmbeddingError(f"Failed to embed audio file {path}: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Internal helpers
