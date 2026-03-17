@@ -5,10 +5,13 @@ EvidenceRetriever: two-stage search (256-dim FAISS fast pass → 3072-dim rerank
 
 Frozen files (engine.py, decisions.py, reader.py, search.py) have zero
 imports from this module.
+
+Phase 2: Audio chunk handling with extraction at retrieval time.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +25,17 @@ from .models import EmbeddingConfig
 from .vector_store import LocalVectorStore
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Phase 2: Critical Safeguards for audio handling
+# =============================================================================
+
+# Safeguard #1: Modality-aware score calibration
+AUDIO_CALIBRATION_FACTOR = 0.85  # Tune based on empirical testing
+
+# Safeguard #2: Limit extraction to top N chunks
+MAX_AUDIO_EXTRACTIONS = 5  # Prevent excessive FLASH API calls
 
 
 # =============================================================================
@@ -105,12 +119,24 @@ class EvidenceRetriever:
         self._ec = embedding_client
         self._cfg = config
 
-    def search(self, query: str) -> list[EvidenceCard]:
-        """Run two-stage retrieval for a query.
+    async def search(self, query: str, gemini_client=None) -> list[EvidenceCard]:
+        """Run two-stage retrieval for a query with audio extraction support.
+
+        Phase 2 enhancement: Handles audio chunks by extracting insights at
+        retrieval time using Gemini Flash.
+
+        Args:
+            query: The search query string.
+            gemini_client: Optional GeminiClient for audio extraction (Phase 2).
 
         Returns:
             List of EvidenceCards sorted by descending similarity,
             filtered to >= config.similarity_threshold.
+
+        Critical Safeguards:
+            - Limits audio extraction to top MAX_AUDIO_EXTRACTIONS chunks
+            - Applies AUDIO_CALIBRATION_FACTOR to audio similarity scores
+            - Handles extraction failures with fallback (confidence=0.0, penalty)
         """
         if len(self._vs) == 0:
             logger.debug("EvidenceRetriever: vector store is empty, returning []")
@@ -149,7 +175,100 @@ class EvidenceRetriever:
         scored.sort(key=lambda x: x[0], reverse=True)
         top = scored[: self._cfg.top_k_results]
 
-        return [EvidenceCard.from_chunk(chunk, sim, query) for sim, chunk in top]
+        # Phase 2: Separate audio chunks from text chunks
+        audio_chunks = [(sim, chunk) for sim, chunk in top if chunk.asset_type == "audio"]
+        text_chunks = [(sim, chunk) for sim, chunk in top if chunk.asset_type != "audio"]
+
+        # Process text chunks (existing behavior)
+        evidence_cards = [EvidenceCard.from_chunk(chunk, sim, query) for sim, chunk in text_chunks]
+
+        # Process audio chunks (Phase 2: extraction at retrieval time)
+        if audio_chunks and gemini_client is not None:
+            logger.info("Processing %d audio chunks (limit: %d)", len(audio_chunks), MAX_AUDIO_EXTRACTIONS)
+
+            # Safeguard #2: Limit extraction to top N audio chunks
+            audio_to_extract = audio_chunks[:MAX_AUDIO_EXTRACTIONS]
+
+            # Extract insights from each audio chunk
+            for sim, chunk in audio_to_extract:
+                try:
+                    # Import extraction functions
+                    from .audio_extraction import extract_audio_insights, extract_audio_segment
+
+                    # Extract audio segment using timestamps
+                    audio_bytes = await extract_audio_segment(
+                        Path(chunk.asset_path),
+                        chunk.start_time_s or 0.0,
+                        chunk.end_time_s or 30.0,
+                    )
+
+                    # Extract insights using Gemini Flash
+                    insights = await extract_audio_insights(
+                        audio_bytes,
+                        gemini_client,
+                        query,  # Query-aware extraction (Safeguard #4)
+                    )
+
+                    # Safeguard #3: Handle extraction failures
+                    if insights.error is not None:
+                        logger.warning(
+                            "Audio extraction failed for %s: %s",
+                            chunk.asset_path,
+                            insights.error,
+                        )
+                        # Penalty: reduce similarity by 50%
+                        calibrated_sim = sim * 0.5
+                    else:
+                        # Safeguard #1: Apply modality-aware score calibration
+                        calibrated_sim = sim * AUDIO_CALIBRATION_FACTOR
+
+                    # Create EvidenceCard with extracted text
+                    card = EvidenceCard(
+                        chunk_id=chunk.chunk_id,
+                        asset_path=chunk.asset_path,
+                        asset_type="audio",
+                        text_content=insights.summary,  # Derived text for engine reasoning
+                        similarity=calibrated_sim,
+                        query=query,
+                        page_number=None,  # Not applicable for audio
+                        start_char=chunk.start_time_s,  # Reuse for timestamp (seconds)
+                        end_char=chunk.end_time_s,
+                        metadata={
+                            **chunk.metadata,
+                            "audio_insights": {
+                                "spoken_content": insights.spoken_content,
+                                "entities": insights.entities,
+                                "confidence": insights.confidence,
+                                "temporal_refs": insights.temporal_refs,
+                                "error": insights.error,
+                            },
+                        },
+                    )
+                    evidence_cards.append(card)
+
+                except Exception as exc:
+                    logger.error(
+                        "Failed to process audio chunk %s: %s",
+                        chunk.chunk_id,
+                        exc,
+                    )
+                    # Safeguard #3: Fallback on total failure
+                    # Create card with penalty but don't skip entirely
+                    card = EvidenceCard.from_chunk(chunk, sim * 0.5, query)
+                    card.metadata["extraction_error"] = str(exc)
+                    evidence_cards.append(card)
+
+        # Re-sort all cards by calibrated similarity
+        evidence_cards.sort(key=lambda c: c.similarity, reverse=True)
+
+        logger.info(
+            "Search complete: %d cards (%d text, %d audio)",
+            len(evidence_cards),
+            len(text_chunks),
+            len([c for c in evidence_cards if c.asset_type == "audio"]),
+        )
+
+        return evidence_cards
 
     def has_media(self) -> bool:
         """Return True if the index contains any chunks (Phase 1: any chunks at all).
