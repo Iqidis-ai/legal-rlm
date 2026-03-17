@@ -127,7 +127,9 @@ class MetadataStore:
     )
 
     def __init__(self, db_path: Path):
-        self._db = sqlite3.connect(str(db_path))
+        # check_same_thread=False allows the connection to be used from worker
+        # threads (e.g. asyncio.to_thread) without raising ProgrammingError.
+        self._db = sqlite3.connect(str(db_path), check_same_thread=False)
         self._db.execute(self._TABLE_SQL)
         self._db.commit()
 
