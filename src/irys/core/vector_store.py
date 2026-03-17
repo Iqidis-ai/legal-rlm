@@ -76,7 +76,7 @@ class LocalVectorStore:
         self._faiss: faiss.IndexFlatL2 = faiss.IndexFlatL2(fast_dim)
         self._fast_ids: list[str] = []
 
-        self._db = sqlite3.connect(str(index_dir / self._SQLITE_FILE))
+        self._db = sqlite3.connect(str(index_dir / self._SQLITE_FILE), check_same_thread=False)
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -134,7 +134,7 @@ class LocalVectorStore:
             store._faiss = faiss.IndexFlatL2(fast_dim)
             store._fast_ids = []
 
-        store._db = sqlite3.connect(str(index_dir / cls._SQLITE_FILE))
+        store._db = sqlite3.connect(str(index_dir / cls._SQLITE_FILE), check_same_thread=False)
         store._init_db()
         logger.info("VectorStore loaded from %s (%d vectors)", index_dir, store._faiss.ntotal)
         return store
