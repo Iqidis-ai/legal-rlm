@@ -125,9 +125,11 @@ class EvidenceRetriever:
         if not candidate_ids:
             return []
 
-        # Stage 2: embed query at 3072-dim, cosine rerank
+        # Stage 2: embed query at index_dimensionality, cosine rerank.
+        # Stored vectors in SQLite are at index_dimensionality (768), so the
+        # query must match that dimension for np.dot to be well-defined.
         full_query_vec = self._ec.embed_query(
-            query, output_dimensionality=self._cfg.full_dimensionality
+            query, output_dimensionality=self._cfg.index_dimensionality
         )
         chunks = self._ms.get_many(candidate_ids)
         chunk_map = {c.chunk_id: c for c in chunks}
