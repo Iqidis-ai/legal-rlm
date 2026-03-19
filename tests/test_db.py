@@ -74,6 +74,9 @@ class TestDocumentRepository:
     def test_updated_at_column_is_indexed(self):
         assert StoredDocument.__table__.c.updated_at.index is True
 
+    def test_extracted_at_column_is_indexed(self):
+        assert StoredDocument.__table__.c.extracted_at.index is True
+
     def test_upsert_inserts_and_updates_document(self):
         engine = create_engine("sqlite+pysqlite:///:memory:")
         Base.metadata.create_all(engine)
@@ -84,11 +87,22 @@ class TestDocumentRepository:
             created = repo.upsert(
                 session,
                 DocumentUpsert(
-                    url="https://example.com/documents/contract.pdf",
+                    canonical_url="https://example.com/documents/contract.pdf",
+                    source_url=(
+                        "https://signed.example.com/documents/contract.pdf?token=abc"
+                    ),
                     file_name="contract.pdf",
                     content_type="application/pdf",
                     source="upload",
-                    extracted_text="Initial extracted text",
+                    page_count=2,
+                    total_chars=22,
+                    pages_json=[
+                        {"page_num": 1, "text": "Initial page one"},
+                        {"page_num": 2, "text": "Initial page two"},
+                    ],
+                    full_text="Initial extracted text",
+                    extraction_status="completed",
+                    extraction_version="v1",
                     metadata_json={"pages": 12},
                 ),
             )
@@ -98,8 +112,8 @@ class TestDocumentRepository:
             updated = repo.upsert(
                 session,
                 DocumentUpsert(
-                    url="https://example.com/documents/contract.pdf",
-                    extracted_text="Updated extracted text",
+                    canonical_url="https://example.com/documents/contract.pdf",
+                    full_text="Updated extracted text",
                     checksum="abc123",
                 ),
             )
@@ -107,8 +121,11 @@ class TestDocumentRepository:
 
             assert updated.id == created.id
             assert updated.file_name == "contract.pdf"
-            assert updated.extracted_text == "Updated extracted text"
+            assert updated.canonical_url == "https://example.com/documents/contract.pdf"
+            assert updated.source_url == "https://signed.example.com/documents/contract.pdf?token=abc"
+            assert updated.full_text == "Updated extracted text"
             assert updated.checksum == "abc123"
+            assert updated.page_count == 2
 
     def test_list_documents_returns_latest_updates_first(self):
         engine = create_engine("sqlite+pysqlite:///:memory:")
@@ -117,17 +134,38 @@ class TestDocumentRepository:
         repo = DocumentRepository()
 
         with session_factory() as session:
-            repo.upsert(session, DocumentUpsert(url="https://example.com/a", file_name="a.pdf"))
+            repo.upsert(
+                session,
+                DocumentUpsert(canonical_url="https://example.com/a", file_name="a.pdf"),
+            )
             session.commit()
-            repo.upsert(session, DocumentUpsert(url="https://example.com/b", file_name="b.pdf"))
+            repo.upsert(
+                session,
+                DocumentUpsert(canonical_url="https://example.com/b", file_name="b.pdf"),
+            )
             session.commit()
 
             documents = repo.list_documents(session)
 
-            assert [document.url for document in documents] == [
+            assert [document.canonical_url for document in documents] == [
                 "https://example.com/b",
                 "https://example.com/a",
             ]
+
+    def test_upsert_defaults_source_url_to_canonical_url(self):
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+        repo = DocumentRepository()
+
+        with session_factory() as session:
+            created = repo.upsert(
+                session,
+                DocumentUpsert(canonical_url="https://example.com/default-source"),
+            )
+            session.commit()
+
+            assert created.source_url == "https://example.com/default-source"
 
     def test_run_document_smoke_test(self):
         engine = create_engine("sqlite+pysqlite:///:memory:")
@@ -136,11 +174,13 @@ class TestDocumentRepository:
 
         result = run_document_smoke_test(
             session_factory=session_factory,
-            url="https://example.com/smoke-test",
+            canonical_url="https://example.com/smoke-test",
             file_name="smoke-test.txt",
         )
 
-        assert result.url == "https://example.com/smoke-test"
+        assert result.canonical_url == "https://example.com/smoke-test"
+        assert result.source_url == "https://example.com/smoke-test"
         assert result.file_name == "smoke-test.txt"
         assert result.checksum == "smoke-test-checksum"
-        assert "https://example.com/smoke-test" in result.listed_urls
+        assert result.extraction_status == "completed"
+        assert "https://example.com/smoke-test" in result.listed_canonical_urls

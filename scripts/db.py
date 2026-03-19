@@ -53,7 +53,8 @@ def cmd_revision(args: argparse.Namespace) -> None:
 def cmd_smoke_test(args: argparse.Namespace) -> None:
     result = run_document_smoke_test(
         session_factory=get_session_factory(),
-        url=args.url,
+        canonical_url=args.url,
+        source_url=args.source_url,
         file_name=args.file_name,
         content_type=args.content_type,
         source=args.source,
@@ -65,7 +66,7 @@ def cmd_smoke_test(args: argparse.Namespace) -> None:
 def cmd_get(args: argparse.Namespace) -> None:
     repo = DocumentRepository()
     with session_scope(get_session_factory()) as session:
-        document = repo.get_by_url(session, args.url)
+        document = repo.get_by_canonical_url(session, args.url)
         if document is None:
             print(json.dumps({"found": False, "url": args.url}, indent=2))
             return
@@ -75,11 +76,14 @@ def cmd_get(args: argparse.Namespace) -> None:
                 {
                     "found": True,
                     "id": document.id,
-                    "url": document.url,
+                    "canonical_url": document.canonical_url,
+                    "source_url": document.source_url,
                     "file_name": document.file_name,
                     "content_type": document.content_type,
                     "source": document.source,
                     "checksum": document.checksum,
+                    "extraction_status": document.extraction_status,
+                    "extraction_version": document.extraction_version,
                 },
                 indent=2,
             )
@@ -95,9 +99,11 @@ def cmd_list(args: argparse.Namespace) -> None:
                 [
                     {
                         "id": document.id,
-                        "url": document.url,
+                        "canonical_url": document.canonical_url,
+                        "source_url": document.source_url,
                         "file_name": document.file_name,
                         "source": document.source,
+                        "extraction_status": document.extraction_status,
                     }
                     for document in documents
                 ],
@@ -137,6 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--url",
         default="https://example.com/irys-db-smoke-test.txt",
     )
+    smoke_parser.add_argument("--source-url")
     smoke_parser.add_argument("--file-name", default="irys-db-smoke-test.txt")
     smoke_parser.add_argument("--content-type", default="text/plain")
     smoke_parser.add_argument("--source", default="db-smoke-test")
