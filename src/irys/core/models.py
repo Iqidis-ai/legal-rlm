@@ -603,12 +603,17 @@ class GeminiClient:
             mc.model_id, mc.fallback_model_id, contents, config, request_timeout, no_timeout
         )
 
-        # Track usage
+        # Track usage from actual response metadata
         self._usage[tier].requests += 1
-        # Estimate tokens (actual count would require response metadata)
-        estimated_input = len(prompt) // 4
-        estimated_output = len(response.text) // 4 if response.text else 0
-        self._usage[tier].add(estimated_input, estimated_output)
+        usage_meta = getattr(response, "usage_metadata", None)
+        if usage_meta:
+            input_tokens = getattr(usage_meta, "prompt_token_count", 0) or 0
+            output_tokens = getattr(usage_meta, "candidates_token_count", 0) or 0
+        else:
+            # Fallback estimation if metadata unavailable
+            input_tokens = len(prompt) // 4
+            output_tokens = len(response.text) // 4 if response.text else 0
+        self._usage[tier].add(input_tokens, output_tokens)
 
         response_text = response.text or ""
 
