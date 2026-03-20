@@ -12,6 +12,7 @@ from typing import Optional, Callable, Any
 import asyncio
 import os
 import logging
+import time
 
 from google import genai
 from google.genai import types
@@ -23,6 +24,7 @@ from google.oauth2 import service_account
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .cache import ResponseCache
+    from .telemetry import InvestigationStep
 
 logger = logging.getLogger(__name__)
 
@@ -548,6 +550,7 @@ class GeminiClient:
         tools: Optional[list] = None,
         timeout: Optional[float] = None,
         use_cache: bool = True,
+        active_step: Optional["InvestigationStep"] = None,
     ) -> str:
         """Generate completion using specified tier with timeout.
 
@@ -558,6 +561,7 @@ class GeminiClient:
             tools: Optional tools for function calling
             timeout: Optional custom timeout
             use_cache: Whether to use response cache (default True)
+            active_step: Optional telemetry step to record this operation on
 
         Returns:
             The model's response text
@@ -578,6 +582,20 @@ class GeminiClient:
             cached = self._cache.get(cache_key_prompt, mc.model_id)
             if cached:
                 logger.debug(f"Cache hit for {mc.model_id}")
+                # Record cache hit on telemetry step
+                if active_step is not None:
+                    from .telemetry import StepOperation
+                    active_step.add_operation(StepOperation(
+                        type="llm",
+                        latency_ms=0,
+                        tier=tier.value.upper(),
+                        model_id=mc.model_id,
+                        prompt_tokens=0,
+                        thinking_tokens=0,
+                        output_tokens=0,
+                        cost_usd=0.0,
+                        cached=True,
+                    ))
                 return cached
 
         if tools:
@@ -599,9 +617,11 @@ class GeminiClient:
         # Fallback strategy:
         # - Timeout: Gemini(primary) → Gemini(fallback) → Vertex(fallback)
         # - Other errors: Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback)
+        call_start = time.monotonic()
         response = await self._call_with_fallback(
             mc.model_id, mc.fallback_model_id, contents, config, request_timeout, no_timeout
         )
+        call_latency_ms = int((time.monotonic() - call_start) * 1000)
 
         # Track usage from actual response metadata
         self._usage[tier].requests += 1
@@ -609,11 +629,32 @@ class GeminiClient:
         if usage_meta:
             input_tokens = getattr(usage_meta, "prompt_token_count", 0) or 0
             output_tokens = getattr(usage_meta, "candidates_token_count", 0) or 0
+            thinking_tokens = getattr(usage_meta, "thoughts_token_count", 0) or 0
         else:
             # Fallback estimation if metadata unavailable
             input_tokens = len(prompt) // 4
             output_tokens = len(response.text) // 4 if response.text else 0
+            thinking_tokens = 0
         self._usage[tier].add(input_tokens, output_tokens)
+
+        # Record operation on telemetry step
+        if active_step is not None:
+            from .telemetry import StepOperation
+            op_cost = (
+                input_tokens * mc.cost_per_1m_input / 1_000_000
+                + output_tokens * mc.cost_per_1m_output / 1_000_000
+            )
+            active_step.add_operation(StepOperation(
+                type="llm",
+                latency_ms=call_latency_ms,
+                tier=tier.value.upper(),
+                model_id=mc.model_id,
+                prompt_tokens=input_tokens,
+                thinking_tokens=thinking_tokens,
+                output_tokens=output_tokens,
+                cost_usd=round(op_cost, 6),
+                cached=False,
+            ))
 
         response_text = response.text or ""
 
