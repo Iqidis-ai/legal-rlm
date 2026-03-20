@@ -67,6 +67,7 @@ class StepOperation:
                 "query": self.query,
                 "result_count": self.result_count,
                 "usage_raw": self.usage_raw,
+                "cost_usd": self.cost_usd,
             })
         return base
 
@@ -90,6 +91,7 @@ class StepOperation:
                 "query": self.query,
                 "result_count": self.result_count,
                 "usage_raw": self.usage_raw,
+                "cost_usd": self.cost_usd,
             }
         return {}
 
