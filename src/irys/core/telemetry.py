@@ -32,6 +32,8 @@ class StepOperation:
     prompt_tokens: int = 0
     thinking_tokens: int = 0
     output_tokens: int = 0
+    cached_tokens: int = 0  # cached_content_token_count from usageMetadata
+    total_tokens: int = 0  # total_token_count from usageMetadata
     cost_usd: float = 0.0
     cached: bool = False
 
@@ -54,6 +56,8 @@ class StepOperation:
                 "prompt_tokens": self.prompt_tokens,
                 "thinking_tokens": self.thinking_tokens,
                 "output_tokens": self.output_tokens,
+                "cached_tokens": self.cached_tokens,
+                "total_tokens": self.total_tokens,
                 "cost_usd": self.cost_usd,
                 "cached": self.cached,
             })
@@ -75,6 +79,8 @@ class StepOperation:
                 "prompt_tokens": self.prompt_tokens,
                 "thinking_tokens": self.thinking_tokens,
                 "output_tokens": self.output_tokens,
+                "cached_tokens": self.cached_tokens,
+                "total_tokens": self.total_tokens,
                 "cost_usd": self.cost_usd,
                 "cached": self.cached,
             }

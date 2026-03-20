@@ -285,6 +285,7 @@ class ModelConfig:
     max_output_tokens: int = 8192
     cost_per_1m_input: float = 0.075  # Default Gemini 2.5 Flash pricing
     cost_per_1m_output: float = 0.30
+    cost_per_1m_cached_input: float = 0.01875  # Default: 25% of input price
     fallback_model_id: str = ""  # Fallback model when primary is unavailable (503)
 
 
@@ -298,6 +299,7 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
         max_output_tokens=16384,  # Don't be stingy
         cost_per_1m_input=0.10,
         cost_per_1m_output=0.40,
+        cost_per_1m_cached_input=0.025,  # 25% of input
     ),
     ModelTier.FLASH: ModelConfig(
         model_id="gemini-3-flash-preview",  # Primary model
@@ -306,6 +308,7 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
         max_output_tokens=32768,
         cost_per_1m_input=0.50,
         cost_per_1m_output=3.00,
+        cost_per_1m_cached_input=0.125,  # 25% of input
         fallback_model_id="gemini-2.5-flash",  # Fallback when 503/overloaded
     ),
     ModelTier.PRO: ModelConfig(
@@ -315,6 +318,7 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
         max_output_tokens=65536,  # Maximum output for thorough synthesis
         cost_per_1m_input=2.00,
         cost_per_1m_output=12.00,
+        cost_per_1m_cached_input=0.50,  # 25% of input
         fallback_model_id="gemini-2.5-pro",  # Fallback when 503/overloaded
     ),
 }
@@ -630,18 +634,30 @@ class GeminiClient:
             input_tokens = getattr(usage_meta, "prompt_token_count", 0) or 0
             output_tokens = getattr(usage_meta, "candidates_token_count", 0) or 0
             thinking_tokens = getattr(usage_meta, "thoughts_token_count", 0) or 0
+            cached_tokens = getattr(usage_meta, "cached_content_token_count", 0) or 0
+            total_tokens = getattr(usage_meta, "total_token_count", 0) or 0
         else:
             # Fallback estimation if metadata unavailable
             input_tokens = len(prompt) // 4
             output_tokens = len(response.text) // 4 if response.text else 0
             thinking_tokens = 0
+            cached_tokens = 0
+            total_tokens = 0
         self._usage[tier].add(input_tokens, output_tokens)
 
         # Record operation on telemetry step
         if active_step is not None:
             from .telemetry import StepOperation
+            # Cost formula:
+            # - Non-cached input tokens at full input rate
+            # - Cached input tokens at reduced cached rate
+            # - Thinking tokens at output rate
+            # - Output tokens at output rate
+            non_cached_input = max(0, input_tokens - cached_tokens)
             op_cost = (
-                input_tokens * mc.cost_per_1m_input / 1_000_000
+                non_cached_input * mc.cost_per_1m_input / 1_000_000
+                + cached_tokens * mc.cost_per_1m_cached_input / 1_000_000
+                + thinking_tokens * mc.cost_per_1m_output / 1_000_000
                 + output_tokens * mc.cost_per_1m_output / 1_000_000
             )
             active_step.add_operation(StepOperation(
@@ -652,6 +668,8 @@ class GeminiClient:
                 prompt_tokens=input_tokens,
                 thinking_tokens=thinking_tokens,
                 output_tokens=output_tokens,
+                cached_tokens=cached_tokens,
+                total_tokens=total_tokens,
                 cost_usd=round(op_cost, 6),
                 cached=False,
             ))
