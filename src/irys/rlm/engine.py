@@ -971,6 +971,9 @@ class RLMEngine:
                 return query, []
 
         # Helper for web search
+        # Tavily pricing: 1 credit = $0.008 (basic=1 credit, advanced=2 credits)
+        _TAVILY_USD_PER_CREDIT = 0.008
+
         async def search_web(query: str) -> tuple[str, dict]:
             t0 = _time.monotonic()
             try:
@@ -980,6 +983,9 @@ class RLMEngine:
                 )
                 result_data = result_data or {}
                 web_results = result_data.get("results", [])
+                usage_raw = result_data.get("usage")
+                credits_used = (usage_raw.get("credits", 0) if isinstance(usage_raw, dict) else 0)
+                cost_usd = credits_used * _TAVILY_USD_PER_CREDIT
                 if t_step_ext:
                     t_step_ext.add_operation(StepOperation(
                         type="ext_search",
@@ -987,7 +993,8 @@ class RLMEngine:
                         service="tavily",
                         query=query,
                         result_count=len(web_results),
-                        usage_raw=result_data.get("usage"),
+                        usage_raw=usage_raw,
+                        cost_usd=cost_usd,
                     ))
                 return query, result_data
             except Exception as e:
@@ -2129,7 +2136,8 @@ async def _persist_telemetry(summary) -> None:
             )
             session.add(log)
 
-            # 2. Insert steps and operations
+            # 2. Insert steps first, then flush so FK references exist
+            step_ops = []  # collect (step_id, op_dict) pairs
             for step_dict in summary_dict.get("steps", []):
                 step_id = str(uuid4())
                 step = InvestigationStepModel(
@@ -2142,22 +2150,26 @@ async def _persist_telemetry(summary) -> None:
                     step_latency_ms=step_dict.get("step_latency_ms"),
                 )
                 session.add(step)
-
                 for op_dict in step_dict.get("operations", []):
-                    # Build details dict (type-specific fields)
-                    details = {k: v for k, v in op_dict.items()
-                               if k not in ("type", "started_at", "latency_ms")}
+                    step_ops.append((step_id, op_dict))
 
-                    op = InvestigationOperation(
-                        id=str(uuid4()),
-                        step_id=step_id,
-                        investigation_id=summary_dict["investigation_id"],
-                        type=op_dict["type"],
-                        started_at=_parse_dt(op_dict["started_at"]),
-                        latency_ms=op_dict.get("latency_ms"),
-                        details=details,
-                    )
-                    session.add(op)
+            # Flush log + steps so FK constraints are satisfied
+            session.flush()
+
+            # 3. Insert operations
+            for step_id, op_dict in step_ops:
+                details = {k: v for k, v in op_dict.items()
+                           if k not in ("type", "started_at", "latency_ms")}
+                op = InvestigationOperation(
+                    id=str(uuid4()),
+                    step_id=step_id,
+                    investigation_id=summary_dict["investigation_id"],
+                    type=op_dict["type"],
+                    started_at=_parse_dt(op_dict["started_at"]),
+                    latency_ms=op_dict.get("latency_ms"),
+                    details=details,
+                )
+                session.add(op)
 
         logger.info("Telemetry persisted to DB: %s", summary_dict["investigation_id"])
     except Exception as e:
