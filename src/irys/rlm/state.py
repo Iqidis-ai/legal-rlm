@@ -346,6 +346,9 @@ class InvestigationState:
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 
+    # Telemetry summary (populated by engine after finalize())
+    telemetry_summary: Optional[dict] = None
+
     @classmethod
     def create(cls, query: str, repository_path: str) -> "InvestigationState":
         return cls(
