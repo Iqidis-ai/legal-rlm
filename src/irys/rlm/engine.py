@@ -172,6 +172,7 @@ class RLMEngine:
         seed_facts: Optional[list[str]] = None,
         seed_citations: Optional[list[dict]] = None,
         context: Optional[Any] = None,
+        message_id: Optional[str] = None,
     ) -> InvestigationState:
         """Run full recursive investigation.
 
@@ -192,7 +193,7 @@ class RLMEngine:
         state = InvestigationState.create(query, str(repository_path))
 
         # Initialize per-investigation telemetry
-        self._telemetry = InvestigationTelemetry()
+        self._telemetry = InvestigationTelemetry(message_id=message_id)
 
         # Load fact store for this repository (S3-backed when configured)
         s3_facts_config = None

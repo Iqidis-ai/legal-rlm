@@ -76,6 +76,9 @@ class InvestigateRequest(BaseModel):
     session_id: Optional[str] = Field(
         None, description="Session ID for cross-investigation fact/citation persistence"
     )
+    message_id: Optional[str] = Field(
+        None, description="Caller-supplied message ID for telemetry cross-referencing"
+    )
     context: Optional[InvestigationContext] = Field(
         None,
         description="Additional context including conversation history and instructions"
@@ -238,6 +241,9 @@ class S3UrlsInvestigateRequest(BaseModel):
     )
     session_id: Optional[str] = Field(
         None, description="Session ID for cross-investigation fact/citation persistence"
+    )
+    message_id: Optional[str] = Field(
+        None, description="Caller-supplied message ID for telemetry cross-referencing"
     )
     context: Optional[InvestigationContext] = Field(
         None,
