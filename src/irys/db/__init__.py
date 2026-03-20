@@ -9,7 +9,12 @@ from .config import (
     normalize_database_url,
     try_get_database_config,
 )
-from .models import StoredDocument
+from .models import (
+    InvestigationLog,
+    InvestigationOperation,
+    InvestigationStepModel,
+    StoredDocument,
+)
 from .repositories import DocumentRepository, DocumentUpsert
 from .session import create_db_engine, get_engine, get_session_factory, session_scope
 from .tools import DocumentSmokeTestResult, run_document_smoke_test
@@ -20,6 +25,9 @@ __all__ = [
     "DocumentRepository",
     "DocumentSmokeTestResult",
     "DocumentUpsert",
+    "InvestigationLog",
+    "InvestigationOperation",
+    "InvestigationStepModel",
     "StoredDocument",
     "create_all_tables",
     "create_db_engine",

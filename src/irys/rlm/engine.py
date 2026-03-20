@@ -385,6 +385,11 @@ class RLMEngine:
                     extra={"telemetry": summary.to_dict()},
                 )
 
+                # Persist telemetry to DB (fire-and-forget)
+                from ..db.config import is_database_configured
+                if is_database_configured():
+                    asyncio.create_task(_persist_telemetry(summary))
+
         return state
 
     async def _direct_answer(self, state: InvestigationState, repo: MatterRepository):
@@ -2084,3 +2089,76 @@ class RLMEngine:
             "individual_summaries": summaries,
             "document_count": len(summaries),
         }
+
+
+# ---------------------------------------------------------------------------
+# Telemetry persistence (fire-and-forget, never blocks investigation)
+# ---------------------------------------------------------------------------
+
+async def _persist_telemetry(summary) -> None:
+    """Write telemetry to DB asynchronously. Logs warning on failure, never raises."""
+    try:
+        from ..db.session import session_scope
+        from ..db.models.investigation_log import (
+            InvestigationLog,
+            InvestigationStepModel,
+            InvestigationOperation,
+        )
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        summary_dict = summary.to_dict() if hasattr(summary, "to_dict") else summary
+
+        def _parse_dt(iso_str):
+            if isinstance(iso_str, datetime):
+                return iso_str
+            return datetime.fromisoformat(iso_str)
+
+        with session_scope() as session:
+            # 1. Insert investigation log
+            log = InvestigationLog(
+                id=summary_dict["investigation_id"],
+                message_id=summary_dict.get("message_id"),
+                started_at=_parse_dt(summary_dict["started_at"]),
+                completed_at=_parse_dt(summary_dict["completed_at"]),
+                status=summary_dict["status"],
+                total_duration_ms=summary_dict.get("total_duration_ms"),
+                total_cost_usd=summary_dict.get("total_cost_usd"),
+                total_steps=summary_dict.get("total_steps"),
+                phase_breakdown=summary_dict.get("phase_breakdown"),
+            )
+            session.add(log)
+
+            # 2. Insert steps and operations
+            for step_dict in summary_dict.get("steps", []):
+                step_id = str(uuid4())
+                step = InvestigationStepModel(
+                    id=step_id,
+                    investigation_id=summary_dict["investigation_id"],
+                    seq=step_dict["seq"],
+                    step_name=step_dict["step_name"],
+                    phase=step_dict["phase"],
+                    started_at=_parse_dt(step_dict["started_at"]),
+                    step_latency_ms=step_dict.get("step_latency_ms"),
+                )
+                session.add(step)
+
+                for op_dict in step_dict.get("operations", []):
+                    # Build details dict (type-specific fields)
+                    details = {k: v for k, v in op_dict.items()
+                               if k not in ("type", "started_at", "latency_ms")}
+
+                    op = InvestigationOperation(
+                        id=str(uuid4()),
+                        step_id=step_id,
+                        investigation_id=summary_dict["investigation_id"],
+                        type=op_dict["type"],
+                        started_at=_parse_dt(op_dict["started_at"]),
+                        latency_ms=op_dict.get("latency_ms"),
+                        details=details,
+                    )
+                    session.add(op)
+
+        logger.info("Telemetry persisted to DB: %s", summary_dict["investigation_id"])
+    except Exception as e:
+        logger.warning("Failed to persist telemetry to DB: %s", e)
