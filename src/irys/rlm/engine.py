@@ -370,12 +370,20 @@ class RLMEngine:
             if state.status == "completed":
                 self._delete_s3_checkpoints(state.id)
 
-            # Finalize telemetry
+            # Finalize telemetry and emit structured log
             if self._telemetry:
                 telemetry_status = state.status or "unknown"
                 summary = self._telemetry.finalize(status=telemetry_status)
                 state.telemetry_summary = summary.to_dict()
-                logger.info("investigation_telemetry", extra={"telemetry": summary.to_dict()})
+                logger.info(
+                    "investigation_complete: id=%s status=%s duration_ms=%d cost_usd=%.6f steps=%d",
+                    summary.investigation_id,
+                    summary.status,
+                    summary.total_duration_ms,
+                    summary.total_cost_usd,
+                    summary.total_steps,
+                    extra={"telemetry": summary.to_dict()},
+                )
 
         return state
 
