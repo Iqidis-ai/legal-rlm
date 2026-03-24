@@ -21,6 +21,7 @@ class InvestigationLog(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     message_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)

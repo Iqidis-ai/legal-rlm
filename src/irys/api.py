@@ -156,6 +156,7 @@ class Irys:
         seed_citations: Optional[list[dict]] = None,
         context: Optional[Any] = None,
         message_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> "InvestigationResult":
         """
         Run an investigation.
@@ -168,6 +169,10 @@ class Irys:
             seed_citations: Prior-session citations to seed into investigation
             context: Optional InvestigationContext with conversation_history,
                      planning_instructions, and output_instructions
+            message_id: Optional caller-supplied message ID for telemetry cross-referencing
+            user_id: Optional caller-supplied user ID; stored on the telemetry log so
+                     the investigation can be attributed to a user even after the
+                     originating message/chat is deleted
 
         Returns:
             InvestigationResult with findings and output
@@ -199,6 +204,7 @@ class Irys:
                 seed_citations=seed_citations,
                 context=context,
                 message_id=message_id,
+                user_id=user_id,
             )
         finally:
             self._telemetry.end_operation(

@@ -79,6 +79,9 @@ class InvestigateRequest(BaseModel):
     message_id: Optional[str] = Field(
         None, description="Caller-supplied message ID for telemetry cross-referencing"
     )
+    user_id: Optional[str] = Field(
+        None, description="Caller-supplied user ID; stored on the telemetry log for attribution even after message/chat deletion"
+    )
     context: Optional[InvestigationContext] = Field(
         None,
         description="Additional context including conversation history and instructions"
@@ -244,6 +247,9 @@ class S3UrlsInvestigateRequest(BaseModel):
     )
     message_id: Optional[str] = Field(
         None, description="Caller-supplied message ID for telemetry cross-referencing"
+    )
+    user_id: Optional[str] = Field(
+        None, description="Caller-supplied user ID; stored on the telemetry log for attribution even after message/chat deletion"
     )
     context: Optional[InvestigationContext] = Field(
         None,
