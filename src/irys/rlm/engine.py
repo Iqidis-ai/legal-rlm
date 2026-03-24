@@ -15,7 +15,6 @@ import logging
 import re
 
 from ..core.models import GeminiClient, ModelTier
-from ..db.config import get_database_config
 from ..core.repository import MatterRepository
 from ..core.search import SearchResults
 from ..core.external_search import ExternalSearchManager
@@ -389,6 +388,7 @@ class RLMEngine:
 
                 # Persist telemetry to DB (fire-and-forget)
                 try:
+                    from ..db.config import get_database_config
                     get_database_config()
                     asyncio.create_task(_persist_telemetry(summary))
                 except ValueError as e:
