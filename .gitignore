@@ -108,6 +108,7 @@ results/
 investigations/
 *.pdf
 *.docx
+test_streaming_output/
 
 # Gradio temporary files
 gradio_cached_examples/

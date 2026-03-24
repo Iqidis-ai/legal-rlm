@@ -419,6 +419,7 @@ class TavilyClient:
             "max_results": max_results,
             "include_answer": include_answer,
             "include_raw_content": include_raw_content,
+            "include_usage": True,
         }
 
         if include_domains:

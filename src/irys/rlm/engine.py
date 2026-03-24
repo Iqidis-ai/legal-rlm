@@ -19,6 +19,7 @@ from ..core.repository import MatterRepository
 from ..core.search import SearchResults
 from ..core.external_search import ExternalSearchManager
 from ..core.fact_store import FactStore
+from ..core.telemetry import InvestigationTelemetry, StepOperation
 from .state import InvestigationState, StepType, ThinkingStep, Citation, Lead, classify_query
 from . import decisions
 
@@ -162,6 +163,7 @@ class RLMEngine:
         self._context: Optional[Any] = None  # Investigation context (set during investigate())
         self.repo: Optional[MatterRepository] = None  # Set during investigate()
         self.fact_store: Optional[FactStore] = None  # Set during investigate()
+        self._telemetry: Optional[InvestigationTelemetry] = None  # Set during investigate()
 
     async def investigate(
         self,
@@ -170,6 +172,7 @@ class RLMEngine:
         seed_facts: Optional[list[str]] = None,
         seed_citations: Optional[list[dict]] = None,
         context: Optional[Any] = None,
+        message_id: Optional[str] = None,
     ) -> InvestigationState:
         """Run full recursive investigation.
 
@@ -188,6 +191,9 @@ class RLMEngine:
         self._external_research = {"case_law": [], "web": [], "analysis": {}}  # Reset with proper structure
         self._context = context  # Store context for use in decision functions
         state = InvestigationState.create(query, str(repository_path))
+
+        # Initialize per-investigation telemetry
+        self._telemetry = InvestigationTelemetry(message_id=message_id)
 
         # Load fact store for this repository (S3-backed when configured)
         s3_facts_config = None
@@ -364,6 +370,26 @@ class RLMEngine:
             if state.status == "completed":
                 self._delete_s3_checkpoints(state.id)
 
+            # Finalize telemetry and emit structured log
+            if self._telemetry:
+                telemetry_status = state.status or "unknown"
+                summary = self._telemetry.finalize(status=telemetry_status)
+                state.telemetry_summary = summary.to_dict()
+                logger.info(
+                    "investigation_complete: id=%s status=%s duration_ms=%d cost_usd=%.6f steps=%d",
+                    summary.investigation_id,
+                    summary.status,
+                    summary.total_duration_ms,
+                    summary.total_cost_usd,
+                    summary.total_steps,
+                    extra={"telemetry": summary.to_dict()},
+                )
+
+                # Persist telemetry to DB (fire-and-forget)
+                from ..db.config import is_database_configured
+                if is_database_configured():
+                    asyncio.create_task(_persist_telemetry(summary))
+
         return state
 
     async def _direct_answer(self, state: InvestigationState, repo: MatterRepository):
@@ -421,13 +447,17 @@ class RLMEngine:
         # Step 2: Unified assessment - determines complexity AND external search need
         await self._emit_step_async(state, StepType.THINKING, "Assessing query against documents...")
 
+        t_step = self._telemetry.begin_step("assess_small_repo", "planning") if self._telemetry else None
         assessment = await decisions.assess_small_repo(
             query=state.query,
             content=all_content,
             client=self.client,
             cached_facts=cached_facts_str,
             context=self._context,
+            active_step=t_step,
         )
+        if t_step:
+            self._telemetry.end_step(t_step)
 
         # Store complexity for synthesis tier selection
         is_simple = assessment.get("complexity") == "simple"
@@ -501,12 +531,16 @@ class RLMEngine:
                     # Summarize what we found for sufficiency check
                     results_summary = self._format_results_summary()
 
+                    t_step_suff = self._telemetry.begin_step("sufficiency_check", "investigation_loop") if self._telemetry else None
                     sufficiency = await decisions.check_search_sufficiency(
                         query=state.query,
                         original_gap=gap,
                         results_summary=results_summary,
                         client=self.client,
+                        active_step=t_step_suff,
                     )
+                    if t_step_suff:
+                        self._telemetry.end_step(t_step_suff)
 
                     if not sufficiency.get("sufficient", True):
                         additional_search = sufficiency.get("additional_search", "")
@@ -784,6 +818,7 @@ class RLMEngine:
                 )
 
         # Use unified assess_and_plan
+        t_step = self._telemetry.begin_step("planning", "planning") if self._telemetry else None
         assessment = await decisions.assess_and_plan(
             query=state.query,
             file_list=file_list_str,
@@ -791,7 +826,10 @@ class RLMEngine:
             client=self.client,
             cached_facts=cached_facts_str,
             context=self._context,
+            active_step=t_step,
         )
+        if t_step:
+            self._telemetry.end_step(t_step)
 
         # If can answer from facts, return early (caller handles synthesis)
         if assessment.get("can_answer_from_facts", False):
@@ -905,26 +943,60 @@ class RLMEngine:
             f"External search ({total_queries}): {' | '.join(queries_preview)}",
         )
 
+        import time as _time
+
+        # Create a telemetry step for the entire external search batch
+        t_step_ext = self._telemetry.begin_step("external_search", "investigation_loop") if self._telemetry else None
+
         # Helper for case law search
         async def search_case_law(query: str) -> tuple[str, list]:
+            t0 = _time.monotonic()
             try:
                 cases = await self.external_search.search_case_law(
                     query,
                     max_results=self.config.max_case_law_results
                 )
-                return query, cases or []
+                cases = cases or []
+                if t_step_ext:
+                    t_step_ext.add_operation(StepOperation(
+                        type="ext_search",
+                        latency_ms=int((_time.monotonic() - t0) * 1000),
+                        service="courtlistener",
+                        query=query,
+                        result_count=len(cases),
+                    ))
+                return query, cases
             except Exception as e:
                 logger.warning(f"Case law search failed for '{query}': {e}")
                 return query, []
 
         # Helper for web search
+        # Tavily pricing: 1 credit = $0.008 (basic=1 credit, advanced=2 credits)
+        _TAVILY_USD_PER_CREDIT = 0.008
+
         async def search_web(query: str) -> tuple[str, dict]:
+            t0 = _time.monotonic()
             try:
                 result_data = await self.external_search.search_web(
                     query,
                     max_results=self.config.max_web_results
                 )
-                return query, result_data or {}
+                result_data = result_data or {}
+                web_results = result_data.get("results", [])
+                usage_raw = result_data.get("usage")
+                credits_used = (usage_raw.get("credits", 0) if isinstance(usage_raw, dict) else 0)
+                cost_usd = credits_used * _TAVILY_USD_PER_CREDIT
+                if t_step_ext:
+                    t_step_ext.add_operation(StepOperation(
+                        type="ext_search",
+                        latency_ms=int((_time.monotonic() - t0) * 1000),
+                        service="tavily",
+                        query=query,
+                        result_count=len(web_results),
+                        usage_raw=usage_raw,
+                        cost_usd=cost_usd,
+                    ))
+                return query, result_data
             except Exception as e:
                 logger.warning(f"Web search failed for '{query}': {e}")
                 return query, {}
@@ -1000,6 +1072,10 @@ class RLMEngine:
                     if result_data.get("answer"):
                         self._external_research["web_answer"] = result_data["answer"]
 
+        # Finalize external search telemetry step
+        if t_step_ext:
+            self._telemetry.end_step(t_step_ext)
+
         # CONSOLIDATED: Analyze all external results in one call
         if self._external_research.get("case_law") or self._external_research.get("web"):
             # Format case law results
@@ -1022,12 +1098,16 @@ class RLMEngine:
                 ])
 
             # Single consolidated call replaces analyze_case_law_results + analyze_web_results
+            t_step_ae = self._telemetry.begin_step("analyze_external", "investigation_loop") if self._telemetry else None
             analysis = await decisions.analyze_external(
                 query=state.query,
                 case_law_results=case_law_text,
                 web_results=web_text,
                 client=self.client,
+                active_step=t_step_ae,
             )
+            if t_step_ae:
+                self._telemetry.end_step(t_step_ae)
 
             # Store analysis in both locations for backwards compatibility
             self._external_research["analysis"]["case_law"] = {
@@ -1140,13 +1220,17 @@ class RLMEngine:
                     if relevant_facts:
                         cached_facts_str = self.fact_store.format_for_llm(relevant_facts)
 
+                t_step_ck = self._telemetry.begin_step("sufficiency_check", "investigation_loop") if self._telemetry else None
                 checkpoint_result = await decisions.checkpoint(
                     query=state.query,
                     findings=findings_summary,
                     plan=plan_summary,
                     client=self.client,
                     cached_facts=cached_facts_str,
+                    active_step=t_step_ck,
                 )
+                if t_step_ck:
+                    self._telemetry.end_step(t_step_ck)
 
                 # Check sufficiency - MUST have read at least 1 document
                 # Facts from 0 docs is logically impossible for document investigation
@@ -1270,13 +1354,17 @@ class RLMEngine:
         )
 
         # Generate specific queries using accumulated triggers
+        t_step_eq = self._telemetry.begin_step("generate_external_queries", "investigation_loop") if self._telemetry else None
         result = await decisions.generate_external_queries(
             query=state.query,
             facts=facts,
             entities=entities,
             client=self.client,
             triggers=triggers,
+            active_step=t_step_eq,
         )
+        if t_step_eq:
+            self._telemetry.end_step(t_step_eq)
 
         case_law_queries = result.get("case_law_queries", [])
         web_queries = result.get("web_queries", [])
@@ -1386,13 +1474,17 @@ class RLMEngine:
         already_read = list(cache.extracted_docs)
 
         # Single consolidated call: pick_relevant_hits + analyze_results + prioritize_documents
+        t_step_as = self._telemetry.begin_step("analyze_search", "investigation_loop") if self._telemetry else None
         analysis = await decisions.analyze_search(
             query=state.query,
             key_issues=key_issues,
             results=results,
             already_read=already_read,
             client=self.client,
+            active_step=t_step_as,
         )
+        if t_step_as:
+            self._telemetry.end_step(t_step_as)
 
         # Store facts and emit callbacks
         facts = analysis.get("facts", [])
@@ -1526,13 +1618,17 @@ class RLMEngine:
             extraction_limit = 10000 if getattr(self, '_is_simple_query', False) else 35000
 
             # Use decisions layer to extract facts
+            t_step_ef = self._telemetry.begin_step("extract_facts", "investigation_loop") if self._telemetry else None
             extraction = await decisions.extract_facts(
                 query=state.query,
                 filename=doc.filename,
                 content=content,
                 client=self.client,
                 max_content_chars=extraction_limit,
+                active_step=t_step_ef,
             )
+            if t_step_ef:
+                self._telemetry.end_step(t_step_ef)
 
             # Store facts
             facts = extraction.get("facts", [])
@@ -1712,6 +1808,7 @@ class RLMEngine:
             logger.info("Using FLASH model with PRO system prompt for simple query synthesis")
 
         # Synthesize with materials only - PRO system prompt handles the rest
+        t_step_syn = self._telemetry.begin_step("synthesize", "synthesis") if self._telemetry else None
         response = await decisions.synthesize(
             query=state.query,
             evidence=evidence,
@@ -1720,7 +1817,10 @@ class RLMEngine:
             client=self.client,
             tier=synthesis_tier,
             context=self._context,
+            active_step=t_step_syn,
         )
+        if t_step_syn:
+            self._telemetry.end_step(t_step_syn)
 
         state.findings["final_output"] = response
         output_len = len(response)
@@ -1996,3 +2096,81 @@ class RLMEngine:
             "individual_summaries": summaries,
             "document_count": len(summaries),
         }
+
+
+# ---------------------------------------------------------------------------
+# Telemetry persistence (fire-and-forget, never blocks investigation)
+# ---------------------------------------------------------------------------
+
+async def _persist_telemetry(summary) -> None:
+    """Write telemetry to DB asynchronously. Logs warning on failure, never raises."""
+    try:
+        from ..db.session import session_scope
+        from ..db.models.investigation_log import (
+            InvestigationLog,
+            InvestigationStepModel,
+            InvestigationOperation,
+        )
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        summary_dict = summary.to_dict() if hasattr(summary, "to_dict") else summary
+
+        def _parse_dt(iso_str):
+            if isinstance(iso_str, datetime):
+                return iso_str
+            return datetime.fromisoformat(iso_str)
+
+        with session_scope() as session:
+            # 1. Insert investigation log
+            log = InvestigationLog(
+                id=summary_dict["investigation_id"],
+                message_id=summary_dict.get("message_id"),
+                started_at=_parse_dt(summary_dict["started_at"]),
+                completed_at=_parse_dt(summary_dict["completed_at"]),
+                status=summary_dict["status"],
+                total_duration_ms=summary_dict.get("total_duration_ms"),
+                total_cost_usd=summary_dict.get("total_cost_usd"),
+                total_steps=summary_dict.get("total_steps"),
+                phase_breakdown=summary_dict.get("phase_breakdown"),
+            )
+            session.add(log)
+
+            # 2. Insert steps first, then flush so FK references exist
+            step_ops = []  # collect (step_id, op_dict) pairs
+            for step_dict in summary_dict.get("steps", []):
+                step_id = str(uuid4())
+                step = InvestigationStepModel(
+                    id=step_id,
+                    investigation_id=summary_dict["investigation_id"],
+                    seq=step_dict["seq"],
+                    step_name=step_dict["step_name"],
+                    phase=step_dict["phase"],
+                    started_at=_parse_dt(step_dict["started_at"]),
+                    step_latency_ms=step_dict.get("step_latency_ms"),
+                )
+                session.add(step)
+                for op_dict in step_dict.get("operations", []):
+                    step_ops.append((step_id, op_dict))
+
+            # Flush log + steps so FK constraints are satisfied
+            session.flush()
+
+            # 3. Insert operations
+            for step_id, op_dict in step_ops:
+                details = {k: v for k, v in op_dict.items()
+                           if k not in ("type", "started_at", "latency_ms")}
+                op = InvestigationOperation(
+                    id=str(uuid4()),
+                    step_id=step_id,
+                    investigation_id=summary_dict["investigation_id"],
+                    type=op_dict["type"],
+                    started_at=_parse_dt(op_dict["started_at"]),
+                    latency_ms=op_dict.get("latency_ms"),
+                    details=details,
+                )
+                session.add(op)
+
+        logger.info("Telemetry persisted to DB: %s", summary_dict["investigation_id"])
+    except Exception as e:
+        logger.warning("Failed to persist telemetry to DB: %s", e)

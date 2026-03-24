@@ -155,6 +155,7 @@ class Irys:
         seed_facts: Optional[list[str]] = None,
         seed_citations: Optional[list[dict]] = None,
         context: Optional[Any] = None,
+        message_id: Optional[str] = None,
     ) -> "InvestigationResult":
         """
         Run an investigation.
@@ -197,6 +198,7 @@ class Irys:
                 seed_facts=seed_facts,
                 seed_citations=seed_citations,
                 context=context,
+                message_id=message_id,
             )
         finally:
             self._telemetry.end_operation(
