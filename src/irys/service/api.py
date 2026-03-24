@@ -1397,6 +1397,7 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
                 seed_citations=seed_citations,
                 context=request.context,
                 message_id=getattr(request, "message_id", None),
+                user_id=getattr(request, "user_id", None),
             )
 
             # Save session data
