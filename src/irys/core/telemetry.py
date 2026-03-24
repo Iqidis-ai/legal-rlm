@@ -140,6 +140,7 @@ class TelemetrySummary:
 
     investigation_id: str
     message_id: Optional[str]
+    user_id: Optional[str]
     started_at: datetime
     completed_at: datetime
     status: str
@@ -153,6 +154,7 @@ class TelemetrySummary:
         return {
             "investigation_id": self.investigation_id,
             "message_id": self.message_id,
+            "user_id": self.user_id,
             "started_at": self.started_at.isoformat(),
             "completed_at": self.completed_at.isoformat(),
             "status": self.status,
@@ -178,6 +180,7 @@ class InvestigationTelemetry:
 
     investigation_id: str = field(default_factory=lambda: f"inv_{uuid.uuid4().hex[:8]}")
     message_id: Optional[str] = None
+    user_id: Optional[str] = None
     started_at: datetime = field(default_factory=_utcnow)
     completed_at: Optional[datetime] = None
     status: Optional[str] = None
@@ -225,6 +228,7 @@ class InvestigationTelemetry:
         return TelemetrySummary(
             investigation_id=self.investigation_id,
             message_id=self.message_id,
+            user_id=self.user_id,
             started_at=self.started_at,
             completed_at=self.completed_at,
             status=status,

@@ -401,6 +401,7 @@ async def _run_investigation(
             seed_citations=seed_citations,
             context=request.context,
             message_id=getattr(request, "message_id", None),
+            user_id=getattr(request, "user_id", None),
         )
 
         await _save_session(config, request.session_id, result)
@@ -1096,6 +1097,7 @@ async def _run_urls_investigation(
             seed_citations=seed_citations,
             context=request.context,
             message_id=getattr(request, "message_id", None),
+            user_id=getattr(request, "user_id", None),
         )
 
         await _save_session(config, request.session_id, result)
@@ -1234,6 +1236,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             seed_citations=seed_citations,
             context=request.context,
             message_id=getattr(request, "message_id", None),
+            user_id=getattr(request, "user_id", None),
         )
 
         await _save_session(config, request.session_id, result)
