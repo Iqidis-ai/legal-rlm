@@ -35,7 +35,7 @@ class ServiceConfig:
     max_concurrent_jobs: int = 5
 
     # Processing Settings
-    max_documents_per_job: int = 500
+    max_documents_per_job: int = 1000
     max_document_size_mb: int = 200
     request_timeout_seconds: int = 600  # 10 minutes
 
@@ -70,7 +70,7 @@ class ServiceConfig:
             cleanup_after_seconds=int(os.getenv("IRYS_CLEANUP_SECONDS", "600")),
             max_concurrent_jobs=int(os.getenv("IRYS_MAX_CONCURRENT_JOBS", "5")),
             # Processing Settings
-            max_documents_per_job=int(os.getenv("IRYS_MAX_DOCS_PER_JOB", "500")),
+            max_documents_per_job=int(os.getenv("IRYS_MAX_DOCS_PER_JOB", "1000")),
             max_document_size_mb=int(os.getenv("IRYS_MAX_DOC_SIZE_MB", "200")),
             request_timeout_seconds=int(os.getenv("IRYS_TIMEOUT_SECONDS", "600")),
             # Logging
