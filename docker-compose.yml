@@ -51,7 +51,7 @@ services:
 
       # Resource limits
       - IRYS_MAX_CONCURRENT_JOBS=5
-      - IRYS_MAX_DOCS_PER_JOB=500
+      - IRYS_MAX_DOCS_PER_JOB=650
       - IRYS_MAX_DOC_SIZE_MB=200
       - IRYS_MAX_TEMP_SIZE_MB=5000
       - IRYS_CLEANUP_SECONDS=600

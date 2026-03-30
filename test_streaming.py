@@ -56,6 +56,8 @@ async def test_streaming_with_urls():
     payload = {
         # "query": "What are the main topics discussed in these documents? point out the key points from these documents",
         "query": "2 questiosn -> Summarize the provided documents - and do websearch and caselaw research on 'permissibility of lowest pricing claims for a texas rv'",
+        "message_id": "test_streaming.py",
+        "user_id": "test_user",
         "s3_urls": [
             {
                 "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/af/cb/d02e2e7120dfeedb137f4daffd2656b39e92383167fd163e98e2ae03831b",
@@ -222,7 +224,6 @@ async def run_streaming_test(url: str, payload: dict):
 
     start_time = asyncio.get_event_loop().time()
     event_count = 0
-    last_event_time = start_time
 
     try:
         async with httpx.AsyncClient(timeout=600.0) as client:
@@ -247,93 +248,68 @@ async def run_streaming_test(url: str, payload: dict):
 
                     current_time = asyncio.get_event_loop().time()
                     elapsed = current_time - start_time
-                    gap = current_time - last_event_time
-                    last_event_time = current_time
 
                     # Parse SSE format
                     if line.startswith("event: "):
                         current_event_type = line[7:].strip()
                         event_count += 1
-
-                        # Color-code by event type
-                        if current_event_type == "step":
-                            icon = "🔄"
-                        elif current_event_type == "citation":
-                            icon = "📄"
-                        elif current_event_type == "fact":
-                            icon = "💡"
-                        elif current_event_type == "progress":
-                            icon = "📊"
-                        elif current_event_type == "complete":
-                            icon = "✅"
-                        elif current_event_type == "error":
-                            icon = "❌"
-                        else:
-                            icon = "❓"
-
-                        log(f"[{elapsed:6.2f}s | gap: {gap:5.2f}s] {icon} Event #{event_count}: {current_event_type.upper()}")
+                        continue  # Wait for the data line
 
                     elif line.startswith("data: "):
                         try:
                             data = json.loads(line[6:])
-
-                            # Store event in response_data
-                            current_time_iso = datetime.now().isoformat()
-                            response_data["events"].append({
-                                "event_type": current_event_type,
-                                "event_number": event_count,
-                                "elapsed_seconds": round(elapsed, 3),
-                                "timestamp": current_time_iso,
-                                "data": data,
-                            })
-
-                            # Display relevant info based on event type
-                            if current_event_type == "step":
-                                content = data.get("content", "")[:100]
-                                step_type = data.get("step_type", "")
-                                log(f"    └─ [{step_type}] {content}")
-
-                            elif current_event_type == "citation":
-                                doc = data.get("document", "")
-                                page = data.get("page")
-                                page_str = f", p.{page}" if page else ""
-                                log(f"    └─ {doc}{page_str}")
-
-                            elif current_event_type == "fact":
-                                fact = data.get("fact", "")[:100]
-                                log(f"    └─ {fact}")
-
-                            elif current_event_type == "progress":
-                                status = data.get("status", "")
-                                docs = data.get("documents_read", 0)
-                                cites = data.get("citations", 0)
-                                facts = data.get("facts_accumulated", 0)
-                                log(f"    └─ {status} | Docs: {docs}, Citations: {cites}, Facts: {facts}")
-
-                            elif current_event_type == "complete":
-                                duration = data.get("duration_seconds", 0)
-                                docs = data.get("documents_processed", 0)
-                                log(f"    └─ Investigation complete in {duration:.1f}s ({docs} docs)")
-                                log(f"\n{'=' * 80}")
-                                log(f"FINAL ANALYSIS:")
-                                log(f"{'=' * 80}")
-                                analysis = data.get("analysis", "")
-                                log(analysis)
-
-                                # Store the complete result
-                                response_data["result"] = data
-
-                            elif current_event_type == "error":
-                                error = data.get("error", "")
-                                log(f"    └─ ERROR: {error}")
-                                response_data["error"] = error
-
                         except json.JSONDecodeError as e:
-                            log(f"    └─ [JSON Error: {e}]")
-                        except Exception as e:
-                            log(f"    └─ [Parse Error: {e}]")
+                            log(f"[{elapsed:6.2f}s] [JSON Error: {e}]")
+                            continue
 
-                    log("")  # Blank line between events
+                        # Always store in JSON output (including progress)
+                        response_data["events"].append({
+                            "event_type": current_event_type,
+                            "event_number": event_count,
+                            "elapsed_seconds": round(elapsed, 3),
+                            "timestamp": datetime.now().isoformat(),
+                            "data": data,
+                        })
+
+                        # Skip progress events in display — just noise
+                        if current_event_type == "progress":
+                            continue
+
+                        # Format display based on event type
+                        if current_event_type == "step":
+                            step_type = data.get("step_type", "")
+                            content = data.get("content", "")
+                            visible = data.get("details", {}).get("visible", True)
+                            tag = step_type.upper()
+                            if not visible:
+                                tag += " (hidden)"
+                            log(f"[{elapsed:6.1f}s] [{tag}] {content}")
+
+                        elif current_event_type == "fact":
+                            fact = data.get("fact", "")
+                            log(f"[{elapsed:6.1f}s] [FACT] {fact}")
+
+                        elif current_event_type == "citation":
+                            doc = data.get("document", "")
+                            page = data.get("page")
+                            text = data.get("text", "")[:120]
+                            page_str = f" p.{page}" if page else ""
+                            log(f"[{elapsed:6.1f}s] [CITE] {doc}{page_str} — {text}")
+
+                        elif current_event_type == "complete":
+                            duration = data.get("duration_seconds", 0)
+                            docs = data.get("documents_processed", 0)
+                            log(f"\n{'=' * 80}")
+                            log(f"COMPLETE — {duration:.1f}s, {docs} docs processed")
+                            log(f"{'=' * 80}")
+                            analysis = data.get("analysis", "")
+                            log(analysis)
+                            response_data["result"] = data
+
+                        elif current_event_type == "error":
+                            error = data.get("error", "")
+                            log(f"[{elapsed:6.1f}s] [ERROR] {error}")
+                            response_data["error"] = error
 
                 total_time = asyncio.get_event_loop().time() - start_time
                 log(f"\n{'=' * 80}")
