@@ -294,6 +294,9 @@ class NullMatterAdapter:
     def log_gap(self, summary: str, gap_id: Optional[str] = None) -> None:
         pass
 
+    def record_gap(self, description: str, **kwargs) -> str:
+        return ""
+
     def request_stop(self) -> None:
         pass
 

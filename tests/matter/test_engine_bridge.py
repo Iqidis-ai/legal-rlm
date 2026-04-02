@@ -29,6 +29,7 @@ def test_null_adapter_all_methods():
     adapter.log_step("retrieving", "initial search")  # must not raise
     adapter.log_conflict("Contradiction: fact A conflicts with fact B")  # must not raise
     adapter.log_gap("Missing document", "contract.pdf")  # must not raise
+    assert adapter.record_gap("Missing: signed amendment") == ""  # must not raise
 
 
 # ---------------------------------------------------------------------------
