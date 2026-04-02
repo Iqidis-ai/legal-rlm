@@ -1093,7 +1093,13 @@ class RLMEngine:
                     facts_to_add.append(fact_item)
                 elif isinstance(fact_item, dict) and "fact" in fact_item:
                     facts_to_add.append(fact_item["fact"])
-            state.add_facts(facts_to_add)
+            # Prefix each fact with its source role so the synthesis LLM sees labeled facts
+            # rather than bare strings — closes the SO-5 per-fact calibration gap identified
+            # by Adversarial Audit #2.  Aggregate source-role counts remain in {source_calibration}.
+            from ..matter.runtime import infer_source_role as _infer_role
+            _top = results.top(1)
+            _src_label = _infer_role(_top[0].filename).value.upper() if _top else "UNKNOWN"
+            state.add_facts([f"[{_src_label}] {f}" for f in facts_to_add])
             # Also record into matter model if enabled
             adapter = getattr(state, "_matter_adapter", None)
             if adapter is not None:
@@ -1237,7 +1243,10 @@ class RLMEngine:
                         facts_to_add.append(fact_item)
                     elif isinstance(fact_item, dict) and "fact" in fact_item:
                         facts_to_add.append(fact_item["fact"])
-                state.add_facts(facts_to_add)
+                # Prefix each fact with its source role (SO-5 per-fact calibration)
+                from ..matter.runtime import infer_source_role as _infer_role
+                _src_label = _infer_role(doc.filename).value.upper()
+                state.add_facts([f"[{_src_label}] {f}" for f in facts_to_add])
                 # Also record into matter model if enabled; pass issue_id if from targeted lead
                 adapter = getattr(state, "_matter_adapter", None)
                 if adapter is not None:
