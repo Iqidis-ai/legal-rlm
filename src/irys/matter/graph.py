@@ -1,4 +1,5 @@
-"""AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore.
+"""AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
+DocumentInventoryStore.
 
 The assertion store is the heart of the intelligence layer. It maintains
 typed assertions with speech-act classification, support/attack links,
@@ -804,3 +805,92 @@ class QuantStore:
                 "count": r["cnt"],
             }
         return result
+
+
+class DocumentInventoryStore:
+    """
+    Tracks which documents have been ingested into the matter model.
+
+    Uses the document_inventory table (defined in schema.py).  The primary purpose
+    is to gate the cold/hot split in _deep_read_document(): a document whose
+    ingest_status == 'complete' has already been fully analysed and stored in the
+    assertion graph; the engine can skip the expensive LLM pass on re-runs.
+
+    Dedup key: (matter_id, relative_path).  sha256 is also stored so a future
+    "content changed" check can detect when a cold re-ingest is required.
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def upsert(
+        self,
+        relative_path: str,
+        sha256: str,
+        size_bytes: int = 0,
+        file_type: Optional[str] = None,
+    ) -> tuple[str, bool]:
+        """Insert or locate a document_inventory row.
+
+        Returns (doc_id, is_new).  is_new=True means this document has not been
+        seen before in this matter; is_new=False means it already exists.
+        sha256 collision on a different path is treated as the same physical file
+        (handled by the UNIQUE index on (matter_id, sha256)).
+        """
+        now = _now()
+        doc_id = _id()
+        with self.db.transaction():
+            self.db.execute(
+                """INSERT OR IGNORE INTO document_inventory
+                   (id, matter_id, relative_path, sha256, size_bytes, file_type,
+                    discovered_at, ingest_status, parse_status)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (doc_id, self.matter_id, relative_path, sha256,
+                 size_bytes, file_type, now, "pending", "pending"),
+            )
+        # Fetch actual row (may have been ignored on conflict)
+        row = self.db.execute(
+            "SELECT id, ingest_status FROM document_inventory WHERE matter_id=? AND relative_path=?",
+            (self.matter_id, relative_path),
+        ).fetchone()
+        if row is None:
+            # Fallback: try sha256 collision path
+            row = self.db.execute(
+                "SELECT id, ingest_status FROM document_inventory WHERE matter_id=? AND sha256=?",
+                (self.matter_id, sha256),
+            ).fetchone()
+        actual_id = row["id"] if row else doc_id
+        is_new = actual_id == doc_id  # True only if INSERT succeeded (no conflict)
+        return actual_id, is_new
+
+    def mark_ingested(self, doc_id: str) -> None:
+        """Set ingest_status='complete' and record last_read_at."""
+        now = _now()
+        self.db.execute(
+            "UPDATE document_inventory SET ingest_status='complete', last_read_at=? WHERE id=?",
+            (now, doc_id),
+        )
+
+    def is_ingested(self, relative_path: str) -> bool:
+        """Return True if this document has already been fully ingested."""
+        row = self.db.execute(
+            "SELECT ingest_status FROM document_inventory WHERE matter_id=? AND relative_path=?",
+            (self.matter_id, relative_path),
+        ).fetchone()
+        return row is not None and row["ingest_status"] == "complete"
+
+    def get_ingested_paths(self) -> list[str]:
+        """Return relative_paths of all fully-ingested documents."""
+        rows = self.db.execute(
+            "SELECT relative_path FROM document_inventory WHERE matter_id=? AND ingest_status='complete'",
+            (self.matter_id,),
+        ).fetchall()
+        return [r["relative_path"] for r in rows]
+
+    def count(self) -> int:
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM document_inventory WHERE matter_id=?",
+            (self.matter_id,),
+        ).fetchone()
+        return row[0]

@@ -1,6 +1,7 @@
 """FastAPI REST API for Irys RLM service."""
 
 import asyncio
+import hashlib
 import logging
 import os
 import time
@@ -159,11 +160,21 @@ def _serialize_result(result) -> tuple[list, dict]:
     return citations, entities
 
 
-def _wire_matter_model(irys_instance, temp_dir: str, job_id: str, config) -> Optional[str]:
+def _compute_corpus_key(descriptor: str) -> str:
+    """Derive a stable 16-char hex key from a corpus descriptor string.
+
+    The key is used as the matter DB directory name so the same corpus always
+    opens the same persistent matter model across runs (SO-1 durable model).
+    """
+    return hashlib.sha256(descriptor.encode()).hexdigest()[:16]
+
+
+def _wire_matter_model(irys_instance, temp_dir: str, corpus_key: str, config) -> Optional[str]:
     """Pre-create and register the matter model before investigation starts.
 
-    The DB is placed in config.matter_db_dir/{job_id}/ — outside temp_dir — so
-    it survives temp cleanup and satisfies SO-1 (durable matter model).
+    The DB is placed in config.matter_db_dir/{corpus_key}/ — keyed to the
+    document corpus, not the job — so repeated runs on the same corpus reuse
+    the same persistent matter model (SO-1 durable matter model).
 
     Returns matter_id, or None if matter model is not enabled.
     """
@@ -173,8 +184,8 @@ def _wire_matter_model(irys_instance, temp_dir: str, job_id: str, config) -> Opt
     from irys.matter import MatterModel
 
     irys_instance._ensure_initialized()
-    # Store DB in the stable matter_db_dir, NOT inside the job's temp directory.
-    matter_db_path = Path(config.matter_db_dir) / job_id
+    # Store DB under corpus_key so the same corpus always reopens the same DB.
+    matter_db_path = Path(config.matter_db_dir) / corpus_key
     matter_model = MatterModel.open(matter_db_path)
     matter_id = matter_model.matter_id
     # repo_key maps the temp download path → the pre-registered model so the
@@ -324,9 +335,11 @@ async def _run_investigation(
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
-        matter_id = _wire_matter_model(irys, str(temp_dir), job.id, config)
+        corpus_key = _compute_corpus_key(f"s3://{config.s3_bucket}/{request.s3_prefix}")
+        matter_id = _wire_matter_model(irys, str(temp_dir), corpus_key, config)
         if matter_id:
             job.matter_id = matter_id
+            job.corpus_key = corpus_key
 
         result = await irys.investigate(
             query=request.query,
@@ -528,6 +541,14 @@ async def upload_investigate(
         if not file_data:
             raise HTTPException(status_code=400, detail="No valid files uploaded")
 
+        # Compute stable corpus identity from file content hashes (SO-1)
+        upload_corpus_key = _compute_corpus_key(
+            "|".join(sorted(
+                f"{fname}:{hashlib.sha256(content).hexdigest()}"
+                for fname, content in file_data
+            ))
+        )
+
         # Branch based on storage mode
         if config.storage_mode == "local":
             # LOCAL MODE: Save to temp directory
@@ -552,6 +573,7 @@ async def upload_investigate(
             query=query,
             s3_prefix=s3_prefix,
             created_at=datetime.now(),
+            corpus_key=upload_corpus_key,
         )
         _jobs[job_id] = job
 
@@ -611,7 +633,9 @@ async def _run_upload_investigation(
 
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
-        matter_id = _wire_matter_model(irys, str(temp_dir), job.id, config)
+        # Use pre-computed corpus_key from the job record (stable per file content set)
+        corpus_key = job.corpus_key or _compute_corpus_key(f"upload:{job_id}")
+        matter_id = _wire_matter_model(irys, str(temp_dir), corpus_key, config)
         if matter_id:
             job.matter_id = matter_id
 
@@ -814,6 +838,14 @@ async def upload_investigate_sync(
         if not file_data:
             raise HTTPException(status_code=400, detail="No valid files uploaded")
 
+        # Compute stable corpus identity from file content hashes (SO-1)
+        sync_corpus_key = _compute_corpus_key(
+            "|".join(sorted(
+                f"{fname}:{hashlib.sha256(content).hexdigest()}"
+                for fname, content in file_data
+            ))
+        )
+
         # Branch based on storage mode
         if config.storage_mode == "local":
             # LOCAL MODE: Save directly to temp directory
@@ -840,7 +872,7 @@ async def upload_investigate_sync(
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
-        _wire_matter_model(irys, str(temp_dir), job_id, config)
+        _wire_matter_model(irys, str(temp_dir), sync_corpus_key, config)
 
         result = await irys.investigate(
             query=query,
@@ -981,9 +1013,11 @@ async def _run_urls_investigation(
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
-        matter_id = _wire_matter_model(irys, str(temp_dir), job.id, config)
+        corpus_key = _compute_corpus_key(",".join(sorted(request.s3_urls)))
+        matter_id = _wire_matter_model(irys, str(temp_dir), corpus_key, config)
         if matter_id:
             job.matter_id = matter_id
+            job.corpus_key = corpus_key
 
         result = await irys.investigate(
             query=request.query,
@@ -1119,7 +1153,8 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
-        _wire_matter_model(irys, str(temp_dir), job_id, config)
+        urls_corpus_key = _compute_corpus_key(",".join(sorted(request.s3_urls)))
+        _wire_matter_model(irys, str(temp_dir), urls_corpus_key, config)
 
         result = await irys.investigate(
             query=request.query,

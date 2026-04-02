@@ -14,7 +14,10 @@ from pathlib import Path
 from typing import Optional
 
 from .db import SQLiteMatterDB
-from .graph import AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore
+from .graph import (
+    AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
+    DocumentInventoryStore,
+)
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
 from .enums import (
@@ -58,6 +61,7 @@ class MatterModel:
         self.quant = QuantStore(db, matter_id)
         self.ledger = ReasoningLedgerStore(db, matter_id)
         self.belief = BeliefRevisionEngine(db, self.assertions)
+        self.inventory = DocumentInventoryStore(db, matter_id)
 
     # ------------------------------------------------------------------
     # Factory methods

@@ -75,6 +75,7 @@ class JobResult(BaseModel):
     # Matter model (when enable_matter_model=True)
     matter_id: Optional[str] = None
     run_id: Optional[str] = None
+    corpus_key: Optional[str] = None  # Stable corpus identity; matter DB is keyed to this
 
 
 # === Matter Model API Models ===

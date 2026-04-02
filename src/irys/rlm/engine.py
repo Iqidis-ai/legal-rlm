@@ -778,6 +778,10 @@ class RLMEngine:
         adapter = getattr(state, "_matter_adapter", None)
         matter_ctx = adapter.get_context() if adapter is not None else None
 
+        # Seed InvestigationState with facts already in the matter model (SO-1 hot reuse)
+        if matter_ctx is not None and matter_ctx.existing_assertion_count > 0:
+            self._hydrate_from_matter_model(state)
+
         prompt = ORIENTATION_PROMPT.format(
             structure=structure_str,
             total_files=stats.total_files,
@@ -988,6 +992,42 @@ class RLMEngine:
                 )
                 break
 
+    def _hydrate_from_matter_model(self, state: InvestigationState) -> None:
+        """Seed InvestigationState with the top assertions from the persistent matter model.
+
+        Called at the start of _orient() when the matter model has existing data.
+        This prevents the engine from "re-discovering" facts already in the assertion
+        graph, satisfying SO-1 (durable matter model — hot path reads from store).
+
+        Only loads facts into accumulated_facts; the dedup gate in state.add_facts()
+        prevents duplicates if the engine independently re-extracts the same text.
+        """
+        if self._matter_model is None:
+            return
+        try:
+            recent = self._matter_model.assertions.list_recent(limit=30)
+        except Exception:
+            return
+        if not recent:
+            return
+
+        loaded = 0
+        for row in recent:
+            prop = row.get("proposition_text", "")
+            if not prop:
+                continue
+            source_role = row.get("source_role") or "unknown"
+            label = source_role.upper()
+            state.add_facts([f"[{label}] {prop}"])
+            loaded += 1
+
+        if loaded:
+            self._emit_step(
+                state,
+                StepType.THINKING,
+                f"Hydrated {loaded} facts from prior matter model run (SO-1 reuse)",
+            )
+
     async def _investigate_lead(
         self,
         state: InvestigationState,
@@ -1196,6 +1236,34 @@ class RLMEngine:
 
         try:
             doc = repo.read(file_path)
+
+            # Cold/hot split (SO-1): if document already fully ingested into the matter
+            # model in a prior run, skip the expensive LLM analysis pass.
+            _mm = self._matter_model
+            _inventory_doc_id: Optional[str] = None
+            if _mm is not None:
+                import hashlib as _hl
+                try:
+                    _raw = Path(file_path).read_bytes()
+                    _sha = _hl.sha256(_raw).hexdigest()
+                    _inv_id, _is_new = _mm.inventory.upsert(
+                        relative_path=doc.filename,
+                        sha256=_sha,
+                        size_bytes=len(_raw),
+                        file_type=Path(file_path).suffix.lstrip(".") or None,
+                    )
+                    _inventory_doc_id = _inv_id
+                    if not _is_new and _mm.inventory.is_ingested(doc.filename):
+                        # HOT PATH: already ingested; count but skip LLM
+                        state.documents_read += 1
+                        self._emit_step(
+                            state, StepType.READING,
+                            f"Hot path (already ingested): {doc.filename}",
+                        )
+                        return
+                except Exception:
+                    pass  # inventory failure must not block analysis
+
             state.documents_read += 1
 
             # Use excerpt for analysis
@@ -1342,6 +1410,13 @@ class RLMEngine:
                             affected_type="issue" if focus_issue_id else None,
                             affected_id=focus_issue_id,
                         )
+
+            # Mark document as fully ingested so future runs take the hot path (SO-1)
+            if _mm is not None and _inventory_doc_id is not None:
+                try:
+                    _mm.inventory.mark_ingested(_inventory_doc_id)
+                except Exception:
+                    pass  # non-fatal
 
         except Exception as e:
             self._emit_step(state, StepType.ERROR, f"Failed to read {file_path}: {e}")
