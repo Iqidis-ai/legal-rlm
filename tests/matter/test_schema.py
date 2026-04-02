@@ -56,3 +56,12 @@ def test_idempotent_schema_application():
     from irys.matter.schema import apply_schema
     db = SQLiteMatterDB.in_memory()
     apply_schema(db.conn)  # Second application — skips all migrations, no error
+
+
+def test_unique_index_on_assertion_occurrence():
+    """The ix_occurrence_unique_doc index must exist for the concurrent dedup fix to work."""
+    db = SQLiteMatterDB.in_memory()
+    row = db.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='ix_occurrence_unique_doc'"
+    ).fetchone()
+    assert row is not None, "UNIQUE INDEX ix_occurrence_unique_doc must exist on assertion_occurrence(assertion_id, document_id)"
