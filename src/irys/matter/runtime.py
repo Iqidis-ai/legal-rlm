@@ -283,6 +283,22 @@ class MatterRuntimeAdapter:
     def is_stop_requested(self) -> bool:
         return self.model.ledger.is_stop_requested(self.run_id)
 
+    def record_actor(
+        self,
+        canonical_name: str,
+        actor_type: str = "person",
+    ) -> str:
+        """
+        Persist an actor (person or organization) to the durable actor store.
+        Idempotent: same normalized name returns the existing actor_id.
+        Returns actor_id.
+        """
+        actor_id, _ = self.model.actors.upsert_actor(
+            canonical_name=canonical_name,
+            actor_type=actor_type,
+        )
+        return actor_id
+
 
 class NullMatterAdapter:
     """
@@ -333,3 +349,6 @@ class NullMatterAdapter:
 
     def is_stop_requested(self) -> bool:
         return False
+
+    def record_actor(self, canonical_name: str, actor_type: str = "person") -> str:
+        return ""

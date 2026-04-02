@@ -166,3 +166,42 @@ def test_build_source_calibration_no_model():
 
     calibration = engine._build_source_calibration(None)
     assert "skepticism" in calibration.lower() or "unavailable" in calibration.lower()
+
+
+# ---------------------------------------------------------------------------
+# SO-5: Actor store wiring
+# ---------------------------------------------------------------------------
+
+def test_record_actor_persists_to_actor_store():
+    """record_actor() must persist people/organizations to durable actor store."""
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Actor test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    aid1 = adapter.record_actor("Jane Smith", actor_type="person")
+    aid2 = adapter.record_actor("Acme Corp", actor_type="organization")
+
+    assert aid1
+    assert aid2
+    assert aid1 != aid2
+    assert model.actors.count() == 2
+
+
+def test_record_actor_is_idempotent():
+    """Same actor name → same actor_id."""
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Actor dedup test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    aid1 = adapter.record_actor("John Doe", actor_type="person")
+    aid2 = adapter.record_actor("john doe", actor_type="person")  # normalized match
+
+    assert aid1 == aid2
+    assert model.actors.count() == 1
+
+
+def test_null_adapter_record_actor():
+    """NullMatterAdapter.record_actor() must not raise and must return empty string."""
+    adapter = NullMatterAdapter()
+    result = adapter.record_actor("Jane Smith")
+    assert result == ""

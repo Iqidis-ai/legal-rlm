@@ -1209,6 +1209,16 @@ class RLMEngine:
             # Extract and store entities
             if analysis.get("entities"):
                 state.add_entities_from_analysis(analysis["entities"], doc.filename)
+                # Persist people and companies to durable actor store (SO-5 actor resolution)
+                adapter = getattr(state, "_matter_adapter", None)
+                if adapter is not None:
+                    entities = analysis["entities"]
+                    for name in entities.get("people", []):
+                        if isinstance(name, str) and name.strip():
+                            adapter.record_actor(name.strip(), actor_type="person")
+                    for name in entities.get("companies", []):
+                        if isinstance(name, str) and name.strip():
+                            adapter.record_actor(name.strip(), actor_type="organization")
 
             # Add leads for mentioned entities/connections
             for concern in analysis.get("concerns", [])[:2]:
