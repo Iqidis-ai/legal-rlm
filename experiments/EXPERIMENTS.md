@@ -5,6 +5,26 @@ Only Codex-validated conclusions are recorded as findings.
 
 ---
 
+## EXP-001 — Static Structural Baseline (2026-04-02)
+
+**Status:** COMPLETE (static analysis — no API key available for live run)
+**Git commit:** 61de459
+**Purpose:** Establish pre-refactor structural baseline for the current pipeline.
+
+**Key findings:**
+- `engine.py`: 2069 lines, `state.py`: 1801 lines — large, tightly coupled
+- Facts stored as **flat strings** in `findings["accumulated_facts"]` via `add_fact()` — no typing, no speech-act classification, no support/attack links. This is the exact target of SO-2.
+- **Zero persistence** — `InvestigationState` is fully ephemeral. Everything lost after each run. Reuse rate: 0%.
+- Issues stored as `list[str]` in `findings["issues"]` from `_orient()` — no structured issue tree.
+- Actor/entity store: per-run `dict[str, Entity]`, lost after run. No alias resolution, no role assignment beyond filename heuristics.
+- Source-role modeling: `EVIDENCE_SOURCE_WEIGHTS` dict maps filename keywords to weights. Complaint and order both score high (~0.85-0.95) — no distinction between advocacy and authoritative sources.
+- Test files: 6 test files with 87 tests described in ROUNDTABLE_PROGRESS.md are **not committed**. Only `test_simple.py` exists.
+- No belief revision, no assumption tracking, no gap store, no reasoning ledger.
+
+**What we learned:** The refactor scope is exactly as the gap analysis predicted. The `_investigate_loop` in engine.py is the primary integration point for matter model writes. The `InvestigationState.add_fact()` → `findings["accumulated_facts"]` pattern is the specific code to replace with typed assertions.
+
+---
+
 ## EXP-000 — Ledger Initialization (2026-04-02)
 
 **Status:** INIT

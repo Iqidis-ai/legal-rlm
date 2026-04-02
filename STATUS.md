@@ -32,7 +32,7 @@ structural additions.
 | High-level API (Irys class) | Complete | api.py — async + sync |
 | Service layer (FastAPI + S3) | Complete | service/ |
 | Gradio UI | Complete | ui/app.py |
-| Test suite | Complete | 87 tests passing across 6 files |
+| Test suite | MISSING FROM REPO | test files described in ROUNDTABLE_PROGRESS.md were never committed. Only test_simple.py exists (requires GEMINI_API_KEY). |
 | Documentation | Complete | README, API_DOCS, DEPLOY |
 
 ---
