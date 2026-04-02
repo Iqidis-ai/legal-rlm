@@ -49,10 +49,11 @@ class AssertionStore:
         now = _now()
 
         with self.db.transaction():
-            # Check for existing canonical assertion
+            # Check for existing canonical assertion — must match matter, layer, AND prop key
+            # so the same text proposition can coexist in separate reasoning layers (SO-2/arch §2)
             row = self.db.execute(
-                "SELECT id, belief_state FROM assertion WHERE matter_id=? AND proposition_key=?",
-                (self.matter_id, prop_key),
+                "SELECT id, belief_state FROM assertion WHERE matter_id=? AND model_layer=? AND proposition_key=?",
+                (self.matter_id, candidate.model_layer.value, prop_key),
             ).fetchone()
 
             if row is None:

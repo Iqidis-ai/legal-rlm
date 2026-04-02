@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -509,12 +509,42 @@ def _migration_v2(conn) -> None:
         conn.execute(stmt)
 
 
+def _migration_v3(conn) -> None:
+    """Fix assertion identity collapse — include model_layer in the unique key.
+
+    Previously ux_assertion_prop was (matter_id, proposition_key), which meant
+    the same text proposition in different reasoning layers silently merged into
+    one canonical assertion. This migration widens the key so record/reality/
+    proof/legal/decision-context assertions can coexist as separate objects.
+
+    For DBs with existing data: rows with the same (matter_id, proposition_key)
+    but different model_layer will now be distinct. Rows with the same
+    (matter_id, model_layer, proposition_key) are deduplicated — the first
+    row encountered is kept, others are deleted before the index is rebuilt.
+    """
+    # Remove duplicate rows that would violate the new unique constraint,
+    # keeping the earliest created_at row per (matter_id, model_layer, proposition_key).
+    conn.execute("""
+        DELETE FROM assertion WHERE rowid NOT IN (
+            SELECT MIN(rowid) FROM assertion
+            GROUP BY matter_id, model_layer, proposition_key
+        )
+    """)
+    # Drop old single-key index and create layer-aware replacement.
+    conn.execute("DROP INDEX IF EXISTS ux_assertion_prop")
+    conn.execute(
+        "CREATE UNIQUE INDEX ux_assertion_prop "
+        "ON assertion(matter_id, model_layer, proposition_key)"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
 _MIGRATIONS: list[tuple[int, object]] = [
     (1, _migration_v1),
     (2, _migration_v2),
+    (3, _migration_v3),
 ]
 
 
