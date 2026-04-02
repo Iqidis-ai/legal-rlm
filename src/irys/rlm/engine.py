@@ -205,6 +205,9 @@ Investigation Summary:
 
 Working Hypothesis: {hypothesis}
 
+Source Calibration (CRITICAL — read before analyzing facts):
+{source_calibration}
+
 Key Entities Identified:
 {entities}
 
@@ -1254,6 +1257,9 @@ class RLMEngine:
         # Get entity summary
         entities_text = state.get_entities_formatted()
 
+        # Build source-role calibration from matter model (SO-5)
+        source_calibration = self._build_source_calibration(state)
+
         prompt = SYNTHESIS_PROMPT.format(
             query=state.query,
             docs_analyzed=state.documents_read,
@@ -1261,6 +1267,7 @@ class RLMEngine:
             citation_count=len(state.citations),
             max_depth=state.max_depth_reached,
             hypothesis=state.hypothesis or "No specific hypothesis formed",
+            source_calibration=source_calibration,
             entities=entities_text or "No entities identified",
             findings=findings_text or "No specific findings accumulated",
             citations=citations_text or "No citations collected",
@@ -1271,6 +1278,55 @@ class RLMEngine:
 
         state.findings["final_output"] = response
         self._emit_step(state, StepType.SYNTHESIS, "Analysis complete")
+
+    def _build_source_calibration(self, state: InvestigationState) -> str:
+        """
+        Build a source-role calibration block for the synthesis prompt (SO-5).
+
+        Queries the matter model for assertion counts grouped by source_role so
+        the LLM knows which facts came from advocacy sources (complaints, briefs)
+        vs. operative sources (contracts, orders) before synthesizing.
+        """
+        if self._matter_model is None:
+            return "No source-role data available — treat all facts with appropriate skepticism."
+
+        try:
+            rows = self._matter_model.db.execute(
+                """SELECT source_role, COUNT(*) AS cnt
+                   FROM assertion
+                   WHERE matter_id = ?
+                   GROUP BY source_role
+                   ORDER BY cnt DESC""",
+                (self._matter_model.matter_id,),
+            ).fetchall()
+        except Exception:
+            return "Source-role data unavailable."
+
+        if not rows:
+            return "No assertions recorded in matter model yet."
+
+        # Role descriptions used to calibrate LLM trust
+        _role_labels = {
+            "advocacy": "ADVOCACY (alleged/argued — do NOT treat as established facts)",
+            "operative": "OPERATIVE (signed documents, orders — treat as established)",
+            "authoritative": "AUTHORITATIVE (statutes, case law — treat as controlling)",
+            "procedural": "PROCEDURAL (court filings, notices — established procedurally)",
+            "informal": "INFORMAL (emails, notes — corroborative only)",
+            "draft": "DRAFT (unexecuted — treat as proposed, not operative)",
+            "post_hoc": "POST-HOC EXPLANATORY (created after events — limited weight)",
+            "unknown": "UNKNOWN SOURCE ROLE — verify before relying",
+        }
+
+        lines = ["The following facts were extracted from documents with these source roles:"]
+        for row in rows:
+            role = row["source_role"] if row["source_role"] else "unknown"
+            label = _role_labels.get(role, f"{role.upper()} — calibrate appropriately")
+            lines.append(f"  • {row['cnt']} assertions from {label}")
+        lines.append(
+            "\nWARNING: Facts from ADVOCACY sources represent one party's position, not "
+            "established truth. Do not amplify advocacy material as if it were operative fact."
+        )
+        return "\n".join(lines)
 
     # ==========================================================================
     # Units 21-25: Advanced Analysis Methods
