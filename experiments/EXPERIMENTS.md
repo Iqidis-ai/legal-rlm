@@ -5,37 +5,47 @@ Only Codex-validated conclusions are recorded as findings.
 
 ---
 
-## EXP-006 — Tier 1 Review Fixes + SO-3/SO-4 Ledger Depth (2026-04-02)
+## EXP-006 — Tier 1 Review Fixes + SO-3/SO-4/SO-5/SO-7 Depth (2026-04-02)
 
 **Status:** COMPLETE
-**Git commits:** 9cb8d72 → 56f110c (3 commits)
-**Purpose:** Fix bugs found by Tier 1 correctness review (bz547kj24) and close the
-next-highest-priority gaps from Adversarial Audit #1.
+**Git commits:** 9cb8d72 → 33ed9d2 (14 commits)
+**Purpose:** Fix bugs found by Tier 1 correctness review (bz547kj24) and systematically
+close all remaining partial SO gaps from Adversarial Audit #1.
 
 **Changes shipped:**
 1. **Checkpoint serialization bug** — `Lead.search_term` and `Lead.focus_issue_id` were missing
    from `to_dict()`/`from_dict()` in state.py; silently dropped on checkpoint save/resume
 2. **Reasoning ledger depth** (SO-3) — `adapter.log_step()` was only called in one orientation
-   branch; now logged at: orientation complete (with issue + search counts), each investigation
-   iteration (with lead summaries), key facts recorded from search, synthesis phase entry
-3. **Issue-to-assertion linking** (SO-4) — `record_fact()` now accepts `issue_id`; calls
-   `link_assertion()` when provided; `_analyze_search_results` passes `lead.focus_issue_id` so
-   issue-focused leads build real assertion→issue coverage in the matter model
+   branch; now logged at: orientation complete, each iteration, key facts recorded, synthesis phase
+3. **Issue-to-assertion linking** (SO-4) — `record_fact()` accepts `issue_id`; threaded through
+   both `_analyze_search_results` AND `_batch_deep_read`/`_deep_read_document`
+4. **Source-role calibration in synthesis** (SO-5) — `_build_source_calibration()` queries
+   assertion counts by source_role; synthesis prompt now has a CRITICAL calibration block warning
+   LLM not to amplify advocacy material as established facts
+5. **Gap store populated by engine** (SO-7) — `adapter.record_gap()` added to adapter (dual-writes
+   gap table + ledger event); engine records `MISSING_DOCUMENT` gaps when: (a) search returns no
+   hits for a focus-issue lead, (b) deep read fails with an exception
+6. **NullMatterAdapter.record_gap()** — missing method would have caused AttributeError on
+   non-matter-model runs
+7. **resume_investigation() adapter wiring** — `state._matter_adapter` was never set on resumed
+   state; fixed: now starts a new run_session, wires adapter, handles complete/fail lifecycle
+8. **Gap descriptions in orientation** — `_format_matter_context()` now shows up to 3 gap
+   descriptions (not just count) so LLM knows specifically what's missing
 
 **What we learned:**
 - Checkpoint serialization is a silent data-loss category: fields added to a dataclass must
   also be added to to_dict/from_dict or they vanish on resume without any error
-- Reasoning ledger was effectively empty for the user (no iterations, no facts recorded)
-  because log_step was only wired to issue identification, not the investigation phases
-- Issue-to-assertion linking only required 4 lines once record_fact() had the issue_id param;
-  the infrastructure was already there (link_assertion is idempotent INSERT OR IGNORE)
+- `resume_investigation()` was missing adapter wiring since day 1 — resumed runs had zero
+  matter model writes and no stop propagation, silently
+- Source calibration required just one DB query (GROUP BY source_role); the structured assertion
+  data was already there, just not surfaced to the synthesis LLM
+- NullMatterAdapter interface completeness is a recurring issue: every new adapter method needs
+  a no-op counterpart
 
 **What remains:**
-- Redirect (SO-3) is pure scaffolding — no implementation
-- Source role not influencing synthesis weighting (SO-5)
-- Numeric extraction (SO-6) not started
-- Gap store not populated by engine (SO-7)
-- No test coverage for issue-to-assertion linking via record_fact()
+- Redirect (SO-3) — pure scaffolding, `redirect_requested` field exists but nothing triggers it
+- Numeric extraction (SO-6) — not started
+- Gap store: only populated on search misses and read failures; no LLM-driven gap detection
 
 ---
 
