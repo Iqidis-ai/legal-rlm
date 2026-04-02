@@ -33,32 +33,33 @@ class ModelConfig:
     thinking_level: str = ""
     temperature: float = 1.0
     max_output_tokens: int = 8192
-    cost_per_1m_input: float = 0.075  # Default Gemini 2.5 Flash pricing
-    cost_per_1m_output: float = 0.30
+    cost_per_1m_input: float = 0.30  # Default Gemini 2.5 Flash pricing (verified Apr 2026)
+    cost_per_1m_output: float = 2.50
 
 
 # Model configurations per tier
+# Pricing verified April 2026 (see experiments/EXPERIMENTS.md EXP-009)
 MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
     ModelTier.LITE: ModelConfig(
         model_id="gemini-2.5-flash-lite",
         thinking_level="",
         max_output_tokens=8192,  # Increased from 4096 to reduce truncation
-        cost_per_1m_input=0.01875,  # 1/4 of flash
-        cost_per_1m_output=0.075,
+        cost_per_1m_input=0.10,
+        cost_per_1m_output=0.40,
     ),
     ModelTier.FLASH: ModelConfig(
         model_id="gemini-2.5-flash",
         thinking_level="",
         max_output_tokens=16384,  # Increased from 8192 to reduce JSON truncation
-        cost_per_1m_input=0.075,
-        cost_per_1m_output=0.30,
+        cost_per_1m_input=0.30,
+        cost_per_1m_output=2.50,
     ),
     ModelTier.PRO: ModelConfig(
         model_id="gemini-2.5-pro",
         thinking_level="",
         max_output_tokens=32768,  # Increased from 16384 for thorough analysis
         cost_per_1m_input=1.25,
-        cost_per_1m_output=5.00,
+        cost_per_1m_output=10.00,
     ),
 }
 
@@ -72,10 +73,10 @@ class UsageStats:
 
     @property
     def estimated_cost(self) -> float:
-        """Estimate cost based on default Flash pricing."""
+        """Estimate cost based on default Flash pricing (verified Apr 2026)."""
         return (
-            self.input_tokens * 0.075 / 1_000_000 +
-            self.output_tokens * 0.30 / 1_000_000
+            self.input_tokens * 0.30 / 1_000_000 +
+            self.output_tokens * 2.50 / 1_000_000
         )
 
     def add(self, input_tokens: int, output_tokens: int):
