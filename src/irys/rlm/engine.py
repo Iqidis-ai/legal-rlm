@@ -97,7 +97,10 @@ def _format_matter_context(ctx) -> str:
                 "Generate search leads that specifically target this issue."
             )
     if ctx.open_gaps:
-        lines.append(f"- Known gaps / missing documents: {len(ctx.open_gaps)}")
+        lines.append(f"- Known gaps / missing information ({len(ctx.open_gaps)} total):")
+        for gap in ctx.open_gaps[:3]:
+            desc = gap.get("description", "")[:100]
+            lines.append(f"  * {desc}")
     lines.append("")
     return "\n".join(lines)
 
