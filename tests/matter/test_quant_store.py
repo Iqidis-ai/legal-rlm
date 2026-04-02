@@ -100,3 +100,77 @@ def test_null_adapter_record_quant():
     adapter = NullMatterAdapter()
     result = adapter.record_quant("amount", "$50,000", amount_value=50000.0)
     assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# SO-6 reconciliation and conflict detection
+# ---------------------------------------------------------------------------
+
+def test_reconcile_by_subject_groups_by_type(model):
+    """reconcile_by_subject() must sum amounts per subject_type."""
+    model.quant.record(quant_kind="amount", raw_text="inv1", amount_value=50_000.0,
+                       currency="USD", subject_type="invoice")
+    model.quant.record(quant_kind="amount", raw_text="inv2", amount_value=30_000.0,
+                       currency="USD", subject_type="invoice")
+    model.quant.record(quant_kind="amount", raw_text="pmt1", amount_value=40_000.0,
+                       currency="USD", subject_type="payment")
+
+    rec = model.quant.reconcile_by_subject("USD")
+    assert "invoice" in rec
+    assert "payment" in rec
+    assert rec["invoice"]["total"] == 80_000.0
+    assert rec["invoice"]["count"] == 2
+    assert rec["payment"]["total"] == 40_000.0
+
+
+def test_reconcile_by_subject_excludes_wrong_currency(model):
+    """reconcile_by_subject() must not mix currencies."""
+    model.quant.record(quant_kind="amount", raw_text="usd_inv", amount_value=10_000.0,
+                       currency="USD", subject_type="invoice")
+    model.quant.record(quant_kind="amount", raw_text="eur_pmt", amount_value=9_000.0,
+                       currency="EUR", subject_type="payment")
+
+    rec_usd = model.quant.reconcile_by_subject("USD")
+    assert "invoice" in rec_usd
+    assert "payment" not in rec_usd
+
+
+def test_get_conflicts_detects_same_subject_different_values(model):
+    """get_conflicts() must flag when same subject_type has multiple distinct amounts."""
+    model.quant.record(quant_kind="amount", raw_text="version A", amount_value=50_000.0,
+                       currency="USD", subject_type="invoice")
+    model.quant.record(quant_kind="amount", raw_text="version B", amount_value=55_000.0,
+                       currency="USD", subject_type="invoice")
+
+    conflicts = model.quant.get_conflicts()
+    assert len(conflicts) == 1
+    assert conflicts[0]["subject_type"] == "invoice"
+    assert 50_000.0 in conflicts[0]["values"]
+    assert 55_000.0 in conflicts[0]["values"]
+
+
+def test_get_conflicts_no_conflict_when_values_agree(model):
+    """get_conflicts() must return empty when all amounts for a subject agree."""
+    model.quant.record(quant_kind="amount", raw_text="invoice", amount_value=50_000.0,
+                       currency="USD", subject_type="invoice")
+    model.quant.record(quant_kind="amount", raw_text="invoice copy", amount_value=50_000.0,
+                       currency="USD", subject_type="invoice")
+
+    assert model.quant.get_conflicts() == []
+
+
+def test_adapter_record_quant_passes_subject_type(model):
+    """record_quant() subject_type must be stored and queryable."""
+    run_id = model.start_run("Reconciliation test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    adapter.record_quant(
+        quant_kind="amount",
+        raw_text="$75,000 invoice total",
+        amount_value=75_000.0,
+        currency="USD",
+        subject_type="invoice",
+    )
+
+    rec = model.quant.reconcile_by_subject("USD")
+    assert rec.get("invoice", {}).get("total") == 75_000.0

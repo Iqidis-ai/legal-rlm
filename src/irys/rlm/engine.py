@@ -190,6 +190,7 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
 4. NUMERIC FACTS (SO-6 — extract ALL monetary amounts, dates, rates, counts):
    For each number, provide a structured object:
    - kind: "amount" | "date" | "rate" | "balance" | "count"
+   - subject: one-word subject type — "invoice" | "payment" | "fee" | "damages" | "balance" | "rate" | "deposit" | "penalty" | "other"
    - raw: exact text from document
    - value: numeric value if parseable (null otherwise)
    - currency: "USD" etc. for amounts (null if not monetary)
@@ -211,7 +212,7 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
     "key_facts": [{{"fact": "...", "page": N}}],
     "quotes": [{{"text": "...", "page": N}}],
     "entities": {{"people": ["name1"], "dates": ["date1"], "amounts": ["$X"], "companies": ["co1"]}},
-    "numeric_facts": [{{"kind": "amount", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due"}}],
+    "numeric_facts": [{{"kind": "amount", "subject": "invoice", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due"}}],
     "connections": ["doc reference 1"],
     "concerns": ["issue 1"]
 }}
@@ -1257,6 +1258,7 @@ class RLMEngine:
                             currency=nf.get("currency"),
                             date_value=date_val,
                             rate_value=rate,
+                            subject_type=nf.get("subject"),
                         )
 
             # Extract and store entities

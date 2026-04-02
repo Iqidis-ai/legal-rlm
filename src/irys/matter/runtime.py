@@ -308,6 +308,7 @@ class MatterRuntimeAdapter:
         date_value: Optional[str] = None,
         rate_value: Optional[float] = None,
         unit: Optional[str] = None,
+        subject_type: Optional[str] = None,
         assertion_id: Optional[str] = None,
     ) -> str:
         """
@@ -322,6 +323,7 @@ class MatterRuntimeAdapter:
             date_value=date_value,
             rate_value=rate_value,
             unit=unit,
+            subject_type=subject_type,
             assertion_id=assertion_id,
         )
 

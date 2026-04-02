@@ -713,3 +713,58 @@ class QuantStore:
             (self.matter_id,),
         ).fetchone()
         return row[0]
+
+    def get_conflicts(self) -> list[dict]:
+        """Return groups of amount facts with the same subject_type+currency but different values.
+
+        A conflict means the same subject category (e.g. 'invoice') has multiple
+        distinct monetary amounts recorded — possible discrepancy or data error.
+        Returns one dict per conflict group with keys: subject_type, currency, values, raw_texts.
+        """
+        rows = self.db.execute(
+            """SELECT subject_type, currency,
+                      COUNT(DISTINCT ROUND(amount_value, 2)) AS distinct_values,
+                      GROUP_CONCAT(ROUND(amount_value, 2)) AS value_list,
+                      GROUP_CONCAT(raw_text, ' || ') AS texts
+               FROM quant_fact
+               WHERE matter_id=? AND quant_kind='amount'
+                 AND subject_type IS NOT NULL AND amount_value IS NOT NULL
+               GROUP BY subject_type, currency
+               HAVING distinct_values > 1
+               ORDER BY distinct_values DESC""",
+            (self.matter_id,),
+        ).fetchall()
+        conflicts = []
+        for r in rows:
+            r = dict(r)
+            r["values"] = [float(v) for v in (r.pop("value_list") or "").split(",") if v]
+            r.pop("distinct_values", None)
+            conflicts.append(r)
+        return conflicts
+
+    def reconcile_by_subject(self, currency: str = "USD") -> dict:
+        """Summarise amount facts grouped by subject_type for a given currency.
+
+        Returns a dict mapping subject_type → {"total": float, "count": int, "facts": list}.
+        Useful for payment reconciliation: compare 'invoice' totals vs 'payment' totals.
+        """
+        rows = self.db.execute(
+            """SELECT subject_type,
+                      SUM(amount_value) AS total,
+                      COUNT(*) AS cnt
+               FROM quant_fact
+               WHERE matter_id=? AND quant_kind='amount'
+                 AND (currency=? OR (currency IS NULL AND ?='USD'))
+                 AND amount_value IS NOT NULL
+               GROUP BY subject_type
+               ORDER BY total DESC""",
+            (self.matter_id, currency, currency),
+        ).fetchall()
+        result: dict[str, dict] = {}
+        for r in rows:
+            subject = r["subject_type"] or "unknown"
+            result[subject] = {
+                "total": round(r["total"], 2),
+                "count": r["cnt"],
+            }
+        return result
