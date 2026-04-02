@@ -277,3 +277,119 @@ class GapStore:
             (self.matter_id,),
         ).fetchone()
         return row[0]
+
+
+class ActorStore:
+    """
+    Manages actors (parties, counsel, witnesses, entities) and their aliases.
+
+    Deduplication invariant: the same real-world actor may appear under many
+    name variations. One actor row + N actor_alias rows.
+    Alias lookup is the primary entry point: get_by_alias() is the dedup gate.
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    @staticmethod
+    def _normalize(name: str) -> str:
+        """Normalize for deduplication: lowercase, collapse whitespace."""
+        return " ".join(name.lower().split())
+
+    def upsert_actor(
+        self,
+        canonical_name: str,
+        actor_type: str = "person",
+        home_side: Optional[str] = None,
+        agenda_notes: Optional[str] = None,
+    ) -> tuple[str, bool]:
+        """
+        Create or retrieve an actor by canonical name.
+        Also registers the canonical name as an alias.
+        Returns (actor_id, is_new).
+        """
+        normalized = self._normalize(canonical_name)
+        now = _now()
+
+        with self.db.transaction():
+            row = self.db.execute(
+                "SELECT id FROM actor WHERE matter_id=? AND normalized_name=?",
+                (self.matter_id, normalized),
+            ).fetchone()
+
+            if row is not None:
+                return row["id"], False
+
+            actor_id = _id()
+            self.db.execute(
+                """INSERT INTO actor
+                   (id, matter_id, canonical_name, normalized_name, actor_type,
+                    home_side, agenda_notes, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (actor_id, self.matter_id, canonical_name, normalized,
+                 actor_type, home_side, agenda_notes, now, now),
+            )
+            # Register canonical name as primary alias
+            self.db.execute(
+                """INSERT OR IGNORE INTO actor_alias
+                   (id, actor_id, alias_text, alias_type, created_at)
+                   VALUES (?,?,?,?,?)""",
+                (_id(), actor_id, normalized, "canonical", now),
+            )
+
+        return actor_id, True
+
+    def add_alias(self, actor_id: str, alias_text: str, alias_type: str = "name") -> str:
+        """Register an alias for an actor. Idempotent. Returns alias_id."""
+        normalized = self._normalize(alias_text)
+        now = _now()
+        alias_id = _id()
+        with self.db.transaction():
+            self.db.execute(
+                """INSERT OR IGNORE INTO actor_alias
+                   (id, actor_id, alias_text, alias_type, created_at)
+                   VALUES (?,?,?,?,?)""",
+                (alias_id, actor_id, normalized, alias_type, now),
+            )
+        row = self.db.execute(
+            "SELECT id FROM actor_alias WHERE actor_id=? AND alias_text=?",
+            (actor_id, normalized),
+        ).fetchone()
+        return row["id"] if row else alias_id
+
+    def get_by_alias(self, alias_text: str) -> Optional[str]:
+        """
+        Look up an actor_id by any alias (including canonical name).
+        Returns actor_id or None if not found.
+        """
+        normalized = self._normalize(alias_text)
+        row = self.db.execute(
+            """SELECT a.id FROM actor a
+               JOIN actor_alias aa ON aa.actor_id = a.id
+               WHERE a.matter_id=? AND aa.alias_text=?""",
+            (self.matter_id, normalized),
+        ).fetchone()
+        return row["id"] if row else None
+
+    def list_actors(self) -> list[dict]:
+        """Return all actors for this matter."""
+        rows = self.db.execute(
+            "SELECT * FROM actor WHERE matter_id=? ORDER BY canonical_name",
+            (self.matter_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_aliases(self, actor_id: str) -> list[str]:
+        """Return all alias texts for an actor."""
+        rows = self.db.execute(
+            "SELECT alias_text FROM actor_alias WHERE actor_id=? ORDER BY alias_type, alias_text",
+            (actor_id,),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def count(self) -> int:
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM actor WHERE matter_id=?", (self.matter_id,)
+        ).fetchone()
+        return row[0]

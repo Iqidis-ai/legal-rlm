@@ -10,6 +10,7 @@ When enabled:
 - conflicts trigger BeliefRevision after each write batch
 """
 
+import re
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
@@ -19,6 +20,67 @@ from .enums import (
     AssertionKind, OriginKind, RevisionCause, AssertionLinkType,
 )
 from .models import AssertionCandidate, QueryMatterContext
+
+
+# ---------------------------------------------------------------------------
+# Source-role inference from document filename/path
+# ---------------------------------------------------------------------------
+# Maps filename keyword patterns → SourceRole.
+# Listed in priority order — first match wins.
+
+_SOURCE_ROLE_PATTERNS: list[tuple[re.Pattern, SourceRole]] = [
+    # Draft: check FIRST — a draft contract is not yet operative
+    (re.compile(
+        r"(draft|redline|redlined|markup|track.?change)",
+        re.IGNORECASE,
+    ), SourceRole.DRAFT),
+    # Procedural: filings, pleadings, motions, discovery
+    (re.compile(
+        r"(complaint|answer|motion|brief|petition|pleading|filing|discovery|"
+        r"subpoena|deposition|interrogator|exhibit|affidavit)",
+        re.IGNORECASE,
+    ), SourceRole.PROCEDURAL),
+    # Operative: contracts, agreements, orders, amendments, leases
+    (re.compile(
+        r"(contract|agreement|msa|sow|nda|lease|license|amendment|addendum|"
+        r"settlement|deed|covenant|warrant|indenture|resolution)",
+        re.IGNORECASE,
+    ), SourceRole.OPERATIVE),
+    # Authoritative: statutes, regulations, court orders, decisions
+    (re.compile(
+        r"(statute|regulation|rule|code|order|opinion|decision|judgment|judgement|"
+        r"mandate|injunction|ruling|decree)",
+        re.IGNORECASE,
+    ), SourceRole.AUTHORITATIVE),
+    # Advocacy: demand letters, position papers
+    (re.compile(
+        r"(demand|letter|memo|memorandum|position|argument|appeal)",
+        re.IGNORECASE,
+    ), SourceRole.ADVOCACY),
+    # Informal: emails, messages, notes, chats, texts
+    (re.compile(
+        r"(email|mail|message|note|chat|text|sms|slack|teams|whatsapp|"
+        r"thread|correspondence)",
+        re.IGNORECASE,
+    ), SourceRole.INFORMAL),
+    # Post-hoc: explanatory memos, expert reports, declarations written after events
+    (re.compile(
+        r"(report|expert|declaration|analysis|assessment|audit|review|evaluation)",
+        re.IGNORECASE,
+    ), SourceRole.POST_HOC_EXPLANATORY),
+]
+
+
+def infer_source_role(document_id: str) -> SourceRole:
+    """
+    Infer SourceRole from document filename/path keywords.
+    Returns SourceRole.UNKNOWN if no pattern matches.
+    """
+    stem = Path(document_id).name  # filename only, not full path
+    for pattern, role in _SOURCE_ROLE_PATTERNS:
+        if pattern.search(stem):
+            return role
+    return SourceRole.UNKNOWN
 
 
 class MatterRuntimeAdapter:
@@ -70,8 +132,12 @@ class MatterRuntimeAdapter:
     ) -> str:
         """
         Convert an extracted fact string into a typed assertion.
+        Auto-infers source_role from document_id if not explicitly provided.
         Returns assertion_id.
         """
+        if source_role == SourceRole.UNKNOWN:
+            source_role = infer_source_role(document_id)
+
         candidate = AssertionCandidate(
             proposition_text=proposition_text,
             model_layer=model_layer,

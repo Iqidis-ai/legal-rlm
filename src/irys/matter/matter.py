@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from .db import SQLiteMatterDB
-from .graph import AssertionStore, GapStore
+from .graph import AssertionStore, GapStore, ActorStore
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
 from .enums import (
@@ -52,6 +52,7 @@ class MatterModel:
         # Sub-stores
         self.assertions = AssertionStore(db, matter_id)
         self.gaps = GapStore(db, matter_id)
+        self.actors = ActorStore(db, matter_id)
         self.ledger = ReasoningLedgerStore(db, matter_id)
         self.belief = BeliefRevisionEngine(db, self.assertions)
 

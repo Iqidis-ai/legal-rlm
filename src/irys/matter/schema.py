@@ -270,6 +270,9 @@ CREATE TABLE IF NOT EXISTS actor_alias (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_actor_alias
     ON actor_alias(actor_id, alias_text);
 
+CREATE INDEX IF NOT EXISTS ix_actor_alias_text
+    ON actor_alias(alias_text);
+
 CREATE TABLE IF NOT EXISTS actor_affiliation (
     id          TEXT PRIMARY KEY,
     actor_id    TEXT NOT NULL REFERENCES actor(id),
