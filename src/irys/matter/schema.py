@@ -460,25 +460,47 @@ ALL_DDL = [
     _DDL_QUANT,
 ]
 
-CORE_DDL = [_DDL_SCHEMA_VERSION, _DDL_CORE]
-
-
-def apply_schema(conn, ddl_blocks=None) -> None:
-    """Apply DDL blocks to an open SQLite connection."""
-    from datetime import datetime, timezone
-    if ddl_blocks is None:
-        ddl_blocks = ALL_DDL
-    cursor = conn.cursor()
-    for block in ddl_blocks:
-        for statement in block.split(";"):
-            stmt = statement.strip()
+def _migration_v1(conn) -> None:
+    """Initial schema: create all tables and indexes."""
+    for block in ALL_DDL:
+        for stmt in block.split(";"):
+            stmt = stmt.strip()
             if stmt:
-                cursor.execute(stmt)
-    # Record schema version if not already present
-    cursor.execute("SELECT COUNT(*) FROM schema_version WHERE version = ?", (SCHEMA_VERSION,))
-    if cursor.fetchone()[0] == 0:
-        cursor.execute(
-            "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
-            (SCHEMA_VERSION, datetime.now(timezone.utc).isoformat()),
-        )
+                conn.execute(stmt)
+
+
+# Ordered migrations: (target_version, callable).
+# Each migration brings the DB from (target_version - 1) to target_version.
+# Never remove or reorder entries — append new ones for future changes.
+_MIGRATIONS: list[tuple[int, object]] = [
+    (1, _migration_v1),
+]
+
+
+def apply_schema(conn) -> None:
+    """Run pending migrations to bring the DB to SCHEMA_VERSION.
+
+    Safe to call on both fresh DBs (runs all migrations) and existing DBs
+    (skips already-applied migrations). Idempotent.
+    """
+    from datetime import datetime, timezone
+
+    # Ensure schema_version table exists before reading it.
+    for stmt in _DDL_SCHEMA_VERSION.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            conn.execute(stmt)
     conn.commit()
+
+    row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
+    current_version: int = row[0] if row and row[0] is not None else 0
+
+    for to_version, migration_fn in _MIGRATIONS:
+        if current_version < to_version:
+            migration_fn(conn)  # type: ignore[operator]
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                (to_version, datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+            current_version = to_version

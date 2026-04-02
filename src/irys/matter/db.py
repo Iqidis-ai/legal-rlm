@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from .schema import apply_schema, ALL_DDL
+from .schema import apply_schema
 
 
 class SQLiteMatterDB:
@@ -21,15 +21,14 @@ class SQLiteMatterDB:
     auto-commit (isolation_level=None with explicit BEGIN where needed).
     """
 
-    def __init__(self, db_path: Path, apply_full_schema: bool = True):
+    def __init__(self, db_path: Path):
         self.db_path = db_path
         self._local = threading.local()
-        self._apply_full_schema = apply_full_schema
         # Ensure parent directory exists
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        # Initialize schema on first open
+        # Initialize / migrate schema on first open
         conn = self._conn()
-        apply_schema(conn, ALL_DDL if apply_full_schema else None)
+        apply_schema(conn)
 
     def _conn(self) -> sqlite3.Connection:
         """Get (or create) a thread-local connection."""
@@ -77,16 +76,12 @@ class SQLiteMatterDB:
             self._local.conn = None
 
     @classmethod
-    def for_repository(
-        cls,
-        repository_path: str | Path,
-        apply_full_schema: bool = True,
-    ) -> "SQLiteMatterDB":
+    def for_repository(cls, repository_path: str | Path) -> "SQLiteMatterDB":
         """Open (or create) the matter DB for a repository path."""
         repo = Path(repository_path)
         db_dir = repo / ".irys"
         db_path = db_dir / "matter.sqlite3"
-        return cls(db_path, apply_full_schema=apply_full_schema)
+        return cls(db_path)
 
     @classmethod
     def in_memory(cls) -> "SQLiteMatterDB":

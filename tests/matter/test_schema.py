@@ -53,6 +53,6 @@ def test_wal_mode():
 
 def test_idempotent_schema_application():
     """Applying schema twice must not raise."""
-    from irys.matter.schema import apply_schema, ALL_DDL
+    from irys.matter.schema import apply_schema
     db = SQLiteMatterDB.in_memory()
-    apply_schema(db.conn, ALL_DDL)  # Second application
+    apply_schema(db.conn)  # Second application — skips all migrations, no error
