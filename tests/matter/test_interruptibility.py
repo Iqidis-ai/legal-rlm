@@ -161,6 +161,32 @@ def test_run_fail_transition(model):
     assert run.status == "failed"
 
 
+def test_run_interrupt_transition(model):
+    """interrupt_run() sets status=interrupted and records a ledger event."""
+    run_id = model.start_run("Interrupt lifecycle test")
+    model.interrupt_run(run_id)
+    run = model.ledger.get_run(run_id)
+    assert run.status == "interrupted"
+    assert run.completed_at is not None
+
+    events = model.ledger.get_events(run_id)
+    event_types = [e["event_type"] for e in events]
+    assert "user_interrupted" in event_types
+
+
+def test_interrupt_distinct_from_complete_and_fail(model):
+    """All three terminal statuses are distinct."""
+    r1 = model.start_run("complete test")
+    model.complete_run(r1)
+    r2 = model.start_run("fail test")
+    model.fail_run(r2, "error")
+    r3 = model.start_run("interrupt test")
+    model.interrupt_run(r3)
+
+    statuses = {model.ledger.get_run(rid).status for rid in [r1, r2, r3]}
+    assert statuses == {"completed", "failed", "interrupted"}
+
+
 def test_recent_runs(model):
     for i in range(3):
         run_id = model.start_run(f"Query {i}")
