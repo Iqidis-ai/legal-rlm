@@ -37,6 +37,7 @@ class RLMConfig:
     min_depth: int = 2  # Minimum depth even for simple queries
     depth_citation_threshold: int = 15  # Stop early if enough citations
     max_iterations: int = 20  # Maximum investigation loop iterations
+    enable_matter_model: bool = False  # When True, persist facts to SQLite matter model
 
 
 # System prompts for different stages
@@ -569,12 +570,14 @@ class RLMEngine:
         on_step: Optional[Callable[[ThinkingStep], None]] = None,
         on_citation: Optional[Callable[[Citation], None]] = None,
         on_progress: Optional[Callable[[dict], None]] = None,
+        matter_model=None,  # Optional[MatterModel] — injected when enable_matter_model=True
     ):
         self.client = gemini_client
         self.config = config or RLMConfig()
         self.on_step = on_step
         self.on_citation = on_citation
         self.on_progress = on_progress
+        self._matter_model = matter_model
         # Global semaphore to limit concurrent CPU-intensive operations
         self._operation_semaphore: Optional[asyncio.Semaphore] = None
         self._doc_count: int = 0  # Track document count for adaptive behavior
@@ -627,6 +630,8 @@ class RLMEngine:
         Returns:
             InvestigationState with all findings, citations, thinking trace
         """
+        from ..matter.runtime import MatterRuntimeAdapter, NullMatterAdapter
+
         repo = MatterRepository(repository_path)
         state = InvestigationState.create(query, str(repository_path))
 
@@ -636,6 +641,16 @@ class RLMEngine:
 
         # Reset semaphore for new investigation
         self._operation_semaphore = None
+
+        # Build matter adapter — real or null depending on config + injected model
+        if self.config.enable_matter_model and self._matter_model is not None:
+            run_id = self._matter_model.start_run(query)
+            matter_adapter = MatterRuntimeAdapter(self._matter_model, run_id)
+        else:
+            run_id = None
+            matter_adapter = NullMatterAdapter()
+
+        state._matter_adapter = matter_adapter
 
         # Classify the query
         state.query_classification = classify_query(query)
@@ -659,9 +674,13 @@ class RLMEngine:
             await self._synthesize(state)
 
             state.complete()
+            if run_id is not None:
+                self._matter_model.complete_run(run_id)
 
         except Exception as e:
             state.fail(str(e))
+            if run_id is not None:
+                self._matter_model.fail_run(run_id, str(e))
             raise
 
         return state
@@ -878,6 +897,12 @@ class RLMEngine:
                 elif isinstance(fact_item, dict) and "fact" in fact_item:
                     facts_to_add.append(fact_item["fact"])
             state.add_facts(facts_to_add)
+            # Also record into matter model if enabled
+            adapter = getattr(state, "_matter_adapter", None)
+            if adapter is not None:
+                doc_id = results.query  # best proxy for source; overridden in deep read
+                for fact_text in facts_to_add:
+                    adapter.record_fact(fact_text, document_id=doc_id)
 
         # Update hypothesis if changed
         if analysis.get("hypothesis_update"):
@@ -1006,6 +1031,11 @@ class RLMEngine:
                     elif isinstance(fact_item, dict) and "fact" in fact_item:
                         facts_to_add.append(fact_item["fact"])
                 state.add_facts(facts_to_add)
+                # Also record into matter model if enabled
+                adapter = getattr(state, "_matter_adapter", None)
+                if adapter is not None:
+                    for fact_text in facts_to_add:
+                        adapter.record_fact(fact_text, document_id=doc.filename)
 
             # Extract and store entities
             if analysis.get("entities"):
