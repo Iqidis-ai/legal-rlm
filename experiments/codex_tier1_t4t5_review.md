@@ -1,31 +1,10 @@
-# Codex/Manual Tier 1 Review — T4 + T5
+**Findings**
+I did not inspect the test suite per your constraint, so the test-gap call below is inferred from the implementation.
 
-Date: 2026-04-02
-Scope: src/irys/rlm/engine.py (T4 bridge), src/irys/matter/graph.py (ActorStore),
-       src/irys/matter/runtime.py (infer_source_role, record_fact), tests/matter/
+- HIGH (4): `ActorStore` does not enforce its own alias-based dedup invariant. The class says alias lookup is the dedup gate, but `upsert_actor()` only checks `actor.normalized_name` and never consults `actor_alias`, so a later `upsert_actor()` on an existing alias can create a second actor row. `MatterModel` only exposes `self.actors = ActorStore(...)`; the inspected integration adds no wrapper that forces alias lookup first. Missing tests I would want here: “existing alias then `upsert_actor()`”, “same normalized alias presented for two actors”, and canonical/alias normalization variants. [graph.py#L286](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/graph.py#L286) [graph.py#L315](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/graph.py#L315) [matter.py#L55](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L55)
 
-## Findings
+- MEDIUM (1, 4): `ActorStore.upsert_actor()` is not thread-safe from the code shown. The transaction wraps a `SELECT`-then-`INSERT`, which is not an atomic upsert by itself; two concurrent callers can both miss the row before one inserts. If the unseen DB layer has a uniqueness constraint or stronger locking, one caller may fail instead of silently duplicating, but this still is not a safe upsert. A missing test here is a concurrent identical-upsert test asserting one row and one shared `actor_id`. [graph.py#L315](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/graph.py#L315)
 
-### MEDIUM — Missing index on actor_alias(alias_text) for get_by_alias lookups
-- `get_by_alias()` queries `WHERE aa.alias_text=?` but `ux_actor_alias` only covers
-  `(actor_id, alias_text)`. Full table scan for large alias sets.
-- **Fix applied:** Added `ix_actor_alias_text ON actor_alias(alias_text)`.
+- LOW (2): `infer_source_role()` does correctly prioritize `DRAFT` over `OPERATIVE` for `Contract_Draft_v2.docx`. The patterns are explicitly “first match wins”, `draft` is listed before `contract`, and the loop returns the first match, so this case resolves to `SourceRole.DRAFT`. [runtime.py#L29](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L29) [runtime.py#L74](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L74)
 
-### LOW — Source-role DRAFT priority corrected
-- 'Contract_Draft_v2.docx' matched OPERATIVE before DRAFT in original pattern order.
-- **Fix applied:** DRAFT pattern moved to first position in _SOURCE_ROLE_PATTERNS.
-
-### LOW — run_id None path in investigate() is safe
-- Guard `if run_id is not None:` on complete_run/fail_run prevents calls when
-  enable_matter_model=False or matter_model=None.
-
-### DESIGN NOTE — actor_alias has no cross-actor uniqueness constraint
-- Two different actors CAN share the same alias_text (e.g. both have alias "Acme").
-  `get_by_alias` returns the first DB match, which is indeterminate.
-- Acceptable for current scope. Not a defect given controlled alias creation.
-
-### CORRECTNESS — ActorStore.upsert_actor is thread-safe ✓
-- Thread-local SQLite connections + WAL mode; no shared mutable state.
-
-## Status
-All issues addressed. 70/70 tests passing. T5 approved for commit.
+- LOW (3): Yes, `run_id` can be `None` while `self._matter_model` is non-`None`: when `enable_matter_model` is false, `investigate()` takes the null-adapter branch. In the inspected path that is intentional and safe: the two `add_facts` blocks still call `record_fact()`, but on `NullMatterAdapter` it is a no-op, and `complete_run` / `fail_run` are guarded by `if run_id is not None`. [engine.py#L645](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L645) [engine.py#L899](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L899) [engine.py#L1033](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1033) [runtime.py#L237](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L237)

@@ -906,8 +906,8 @@ class RLMEngine:
             search_results=results_text,
         )
 
-        # Use FLASH for analysis
-        response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+        # LITE sufficient: structured extraction from search snippets, not reasoning
+        response = await self.client.complete(prompt, tier=ModelTier.LITE)
 
         # Parse with safe defaults
         analysis = self._parse_json_safe(response, {
@@ -1196,7 +1196,8 @@ class RLMEngine:
             text=text[:5000],  # Limit text size
         )
 
-        response = await self.client.complete(prompt, tier=ModelTier.LITE)
+        # NANO: pure NER — no reasoning, just structured JSON output
+        response = await self.client.complete(prompt, tier=ModelTier.NANO)
 
         defaults = {
             "people": [],
@@ -1303,7 +1304,8 @@ class RLMEngine:
             events=events_text or "No events found",
         )
 
-        response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+        # LITE sufficient: chronological ordering of already-extracted events
+        response = await self.client.complete(prompt, tier=ModelTier.LITE)
 
         defaults = {
             "chronology": [],
@@ -2040,7 +2042,8 @@ If not compound, return the original query as a single sub_query with priority 1
             content=content,
         )
 
-        response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+        # LITE sufficient: bulk per-document extraction, not synthesis
+        response = await self.client.complete(prompt, tier=ModelTier.LITE)
 
         defaults = {
             "summary": "Unable to generate summary",
