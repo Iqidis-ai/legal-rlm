@@ -5,6 +5,81 @@ Only Codex-validated conclusions are recorded as findings.
 
 ---
 
+## EXP-010 — Stable Corpus Identity + Cold/Hot Document Ingest Split (2026-04-02)
+
+**Status:** COMPLETE — Tier 1 Correctness review in progress (bi0058y9k)
+**Git commit:** ac8652b
+**Purpose:** Fix SO-1 write-only gap: matter DB was keyed by job_id → new DB every run → no cross-run reuse. Implement stable corpus identity and cold/hot split so second run on same corpus skips LLM for already-ingested documents.
+
+**Changes shipped:**
+1. **DocumentInventoryStore** (`graph.py`) — new store backed by existing `document_inventory` table. `upsert()`, `mark_ingested()`, `is_ingested()`, `get_ingested_paths()`. Wired as `MatterModel.inventory`.
+2. **`_compute_corpus_key()`** (`api.py`) — SHA256-based 16-char hex key from stable corpus descriptor:
+   - S3 prefix path: `sha256("s3://{bucket}/{prefix}")`
+   - URL path: `sha256(",".join(sorted(urls)))`
+   - Upload path: `sha256("|".join(sorted("{fname}:{sha256(content)}" for each file)))`
+3. **`_wire_matter_model()`** now takes `corpus_key` instead of `job_id` — same corpus always reopens the same persistent matter DB
+4. **Cold/hot split in `_deep_read_document()`**: compute sha256(file), `upsert()` in inventory; if `is_ingested()` → hot path (skip LLM, increment count, return); else → cold path (full LLM analysis) → `mark_ingested()` at end
+5. **`_hydrate_from_matter_model()`**: seeds `InvestigationState.accumulated_facts` with top-30 prior assertions before orientation, preventing fact re-discovery on repeated runs
+6. **`JobResult.corpus_key`** field added to models.py
+
+**What we learned:**
+- S3 prefix corpus_key is location-based (bucket/prefix), not content-hash-based → stale if files change under same prefix. Acceptable v1 limitation. Future: list-and-hash S3 objects.
+- Upload corpus_key is computed from file content hashes BEFORE saving → stable and correct
+- `is_ingested()` correctly handles incomplete prior runs: pending→not skipped; complete→skipped
+- The `_is_new` check in upsert guards against double-counting but is_ingested() is the authoritative gate for hot path
+- Hydration uses list_recent(30) — bounded, no memory explosion risk
+
+**Test count:** 158 passing (unchanged — no regressions)
+
+---
+
+## EXP-009 — Tier 1 Codex Review Fixes + LLM Pricing Research (2026-04-02)
+
+**Status:** IN PROGRESS (Codex architecture brief pending)
+**Git commits:** 2710a74
+**Purpose:** Fix all HIGH + MEDIUM issues from EXP-007 Tier 1 Codex review; gather LLM pricing data to inform next-gen model tier architecture.
+
+**Fixes shipped (2710a74):**
+- H1: Matter model DB moved to `matter_db_dir` (outside temp_dir) — survives cleanup (SO-1)
+- H2: `complaint`, `answer`, `brief` reclassified as ADVOCACY (not procedural); speech_act auto-elevated from source_role: advocacy→alleged, operative/authoritative→operative (SO-5)
+- H3: Belief revision now propagates through `attacks`/`negates` edges, not just `supports` (SO-2)
+- H5: Missing-doc heuristic requires ALL significant words to match a filename (not just any), eliminating false negatives (SO-7)
+- M1: `QuantStore.record()` idempotent on (matter_id, quant_kind, raw_text) — no double-counting across runs (SO-6)
+- M2: `record_fact()` accepts `issue_link_type` param for correct directional issue linkage (SO-4)
+- M3: Sync investigation endpoints now wire the matter model (were bypassing it entirely)
+- M4: Stop checks added at start of `_orient`, `_verify_citations`, `_synthesize` (SO-3)
+- L1: Clarification dedup checks all statuses — answered questions not re-issued (SO-7)
+
+**LLM Pricing Research findings (verified April 2026):**
+| Model | Input | Output | Notes |
+|-------|-------|--------|-------|
+| gemini-2.5-flash-lite | $0.10/1M | $0.40/1M | Current LITE tier |
+| gemini-2.5-flash | $0.30/1M | $2.50/1M | Current FLASH tier |
+| gemini-2.5-pro | $1.25/1M | $10.00/1M | Current PRO tier (synthesis only) |
+| Gemini Batch API | -50% | -50% | All Gemini models, async only |
+| Groq Llama 3.1 8B | $0.05/1M | $0.08/1M | Fastest inference, NANO candidate |
+| Groq Llama 4 Scout | $0.11/1M | $0.34/1M | 128K ctx, stronger NANO candidate |
+| GPT-4.1 Nano | $0.05/1M | $0.20/1M | 1M ctx window |
+| DeepSeek V3.2 | $0.28/1M | $0.42/1M | Cache hit: $0.028/1M input |
+| gemini-2.0-flash | DEPRECATED | — | June 1 2026 (already migrated) |
+
+**Codex Architecture Brief findings (Codex session bd9yg6kn1):**
+- Do NOT add NANO tier before splitting `_deep_read_document()` — weaker models cause silent failures via `_parse_json_safe()`
+- Batch API fits cold-path only (upload-time extraction); not orient/investigate/synthesis
+- PRO synthesis is NOT the cost problem — one bounded call per run
+- GPT-4.1 Nano 1M context mostly irrelevant to issue-driven architecture
+- SO-1 is currently write-only — engine reads `QueryMatterContext` but all downstream phases work from current-run memory
+- **Highest-leverage single change:** split `_deep_read_document()` into cold-ingest + hot-refresh passes, keyed to stable matter identity
+
+**Adversarial Audit #2 findings (Codex session bwjb86msn):**
+- **MOST DANGEROUS FINDING: SO-5 is PARTIAL/FAIL** — source_role stored in DB but synthesis works from flat unlabeled fact strings. Aggregate calibration block exists but per-fact labels absent from `{findings}` slot. Advocacy material can be silently promoted to apparent fact in final memo.
+- Fix: prefix `[SOURCE_ROLE]` on facts at `add_facts()` call sites in engine.py (lines 1096, 1240) — 2 lines of code
+- Status: **BLOCKING** per governance FAIL rule — awaiting user decision before proceeding
+
+**Status:** BLOCKED on user response re: SO-5 fix.
+
+---
+
 ## EXP-008 — Service API Matter Model Endpoints + SO-6 Reconciliation (2026-04-02)
 
 **Status:** COMPLETE
