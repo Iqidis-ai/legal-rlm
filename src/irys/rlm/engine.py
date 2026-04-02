@@ -1190,6 +1190,18 @@ class RLMEngine:
 
         except Exception as e:
             self._emit_step(state, StepType.ERROR, f"Failed to read {file_path}: {e}")
+            # Record as gap: document exists in search index but could not be read (SO-7)
+            _adp = getattr(state, "_matter_adapter", None)
+            if _adp is not None:
+                from ..matter.enums import GapType
+                _adp.record_gap(
+                    description=f"Document read failed: {Path(file_path).name} — {str(e)[:150]}",
+                    gap_type=GapType.MISSING_DOCUMENT,
+                    expected_artifact=str(file_path),
+                    materiality=0.3,
+                    affected_type="issue" if focus_issue_id else None,
+                    affected_id=focus_issue_id,
+                )
 
     async def _verify_citations(self, state: InvestigationState, repo: MatterRepository):
         """Verify citations by checking if quoted text exists in documents."""
