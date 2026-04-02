@@ -46,7 +46,7 @@ Only Codex-validated conclusions are recorded as findings.
 - LOW: SQLite write serialization under 10-concurrent asyncio coroutines — marginal.
 - No HIGH performance issues found. Gate: CLEAN.
 
-**Test count:** 173 passing (2 regression tests added for HIGH-1 basename + HIGH-2 sha256 mismatch)
+**Test count:** 175 passing (4 regression tests added: HIGH-1 basename, HIGH-2 sha256 mismatch, MEDIUM concurrent dedup, schema unique index verification)
 
 ---
 
