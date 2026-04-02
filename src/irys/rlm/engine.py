@@ -761,6 +761,16 @@ class RLMEngine:
         max_iterations = self.config.max_iterations  # Configurable limit
 
         while iteration < max_iterations:
+            # Check user stop request before each iteration
+            adapter = getattr(state, "_matter_adapter", None)
+            if adapter is not None and adapter.is_stop_requested():
+                self._emit_step(
+                    state,
+                    StepType.THINKING,
+                    "Investigation paused: user requested stop",
+                )
+                break
+
             # Track facts before this iteration for diminishing returns check
             facts_before = len(state.findings.get("accumulated_facts", []))
 
@@ -807,6 +817,10 @@ class RLMEngine:
             facts_after = len(state.findings.get("accumulated_facts", []))
             facts_added = facts_after - facts_before
             state.facts_per_iteration.append(facts_added)
+
+            # Flush belief revision for any new assertions added this iteration
+            if adapter is not None:
+                adapter.flush_revisions()
 
             iteration += 1
 
