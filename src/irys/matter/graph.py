@@ -840,6 +840,9 @@ class DocumentInventoryStore:
         """
         now = _now()
         doc_id = _id()
+        # Keep the SELECT inside the same transaction as the INSERT so there is no
+        # TOCTOU window where a concurrent coroutine could read a stale (or absent)
+        # row between the two operations.
         with self.db.transaction():
             self.db.execute(
                 """INSERT OR IGNORE INTO document_inventory
@@ -849,19 +852,19 @@ class DocumentInventoryStore:
                 (doc_id, self.matter_id, relative_path, sha256,
                  size_bytes, file_type, now, "pending", "pending"),
             )
-        # Fetch actual row (may have been ignored on conflict)
-        row = self.db.execute(
-            "SELECT id, ingest_status FROM document_inventory WHERE matter_id=? AND relative_path=?",
-            (self.matter_id, relative_path),
-        ).fetchone()
-        if row is None:
-            # Fallback: try sha256 collision path
+            # Fetch actual row (may differ from doc_id if INSERT was ignored on conflict)
             row = self.db.execute(
-                "SELECT id, ingest_status FROM document_inventory WHERE matter_id=? AND sha256=?",
-                (self.matter_id, sha256),
+                "SELECT id, ingest_status FROM document_inventory WHERE matter_id=? AND relative_path=?",
+                (self.matter_id, relative_path),
             ).fetchone()
+            if row is None:
+                # Fallback: sha256 collision (same content, different path name)
+                row = self.db.execute(
+                    "SELECT id, ingest_status FROM document_inventory WHERE matter_id=? AND sha256=?",
+                    (self.matter_id, sha256),
+                ).fetchone()
         actual_id = row["id"] if row else doc_id
-        is_new = actual_id == doc_id  # True only if INSERT succeeded (no conflict)
+        is_new = actual_id == doc_id  # True only if INSERT succeeded (no prior conflict)
         return actual_id, is_new
 
     def mark_ingested(self, doc_id: str) -> None:

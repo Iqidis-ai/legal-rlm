@@ -165,6 +165,16 @@ def _compute_corpus_key(descriptor: str) -> str:
 
     The key is used as the matter DB directory name so the same corpus always
     opens the same persistent matter model across runs (SO-1 durable model).
+
+    Known limitation: for S3-prefix paths the descriptor is the bucket+prefix
+    location string, NOT a hash of the file contents.  If files under the same
+    S3 prefix are replaced or added between runs, the corpus_key stays unchanged
+    and new/modified documents will be served from the prior matter model's hot
+    path rather than triggering a cold re-ingest.  The hot path will still skip
+    ingestion for documents already marked complete, which is safe; only truly
+    new files (not yet in document_inventory) will be cold-ingested correctly.
+    A future improvement can list + hash S3 objects at job-start for full
+    content-based identity.
     """
     return hashlib.sha256(descriptor.encode()).hexdigest()[:16]
 
@@ -633,11 +643,16 @@ async def _run_upload_investigation(
 
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
-        # Use pre-computed corpus_key from the job record (stable per file content set)
-        corpus_key = job.corpus_key or _compute_corpus_key(f"upload:{job_id}")
-        matter_id = _wire_matter_model(irys, str(temp_dir), corpus_key, config)
-        if matter_id:
-            job.matter_id = matter_id
+        # corpus_key must have been set by the upload endpoint from file content hashes.
+        # If absent (should never happen), skip matter model wiring rather than fall back
+        # to a per-run job_id — a per-run key would silently fragment the matter DB (SO-1).
+        corpus_key = job.corpus_key
+        if corpus_key:
+            matter_id = _wire_matter_model(irys, str(temp_dir), corpus_key, config)
+            if matter_id:
+                job.matter_id = matter_id
+        else:
+            logger.warning(f"Upload job {job_id}: corpus_key absent, matter model wiring skipped")
 
         result = await irys.investigate(
             query=query,

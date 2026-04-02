@@ -1012,13 +1012,16 @@ class RLMEngine:
             return
 
         loaded = 0
+        _strip_role_prefix = __import__("re").compile(r'^\[[A-Z_]+\]\s*').sub
         for row in recent:
             prop = row.get("proposition_text", "")
             if not prop:
                 continue
             source_role = row.get("source_role") or "unknown"
             label = source_role.upper()
-            state.add_facts([f"[{label}] {prop}"])
+            # Strip any existing [ROLE] prefix to prevent double-labeling legacy rows
+            prop_clean = _strip_role_prefix('', prop)
+            state.add_facts([f"[{label}] {prop_clean}"])
             loaded += 1
 
         if loaded:
