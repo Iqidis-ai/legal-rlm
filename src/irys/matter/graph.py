@@ -503,7 +503,7 @@ class IssueStore:
         rows = self.db.execute(
             """SELECT * FROM issue
                WHERE matter_id=? AND status='open' AND materiality >= ?
-               ORDER BY (salience * materiality) DESC""",
+               ORDER BY (salience * materiality) DESC, id ASC""",
             (self.matter_id, min_materiality),
         ).fetchall()
         return [dict(r) for r in rows]

@@ -228,7 +228,7 @@ class MatterModel:
         # Find weakest issue (lowest materiality × salience score)
         weakest_issue_id = None
         if open_issues:
-            weakest = min(open_issues, key=lambda i: i["materiality"] * i["salience"])
+            weakest = min(open_issues, key=lambda i: (i["materiality"] * i["salience"], i["id"]))
             weakest_issue_id = weakest["id"]
 
         return QueryMatterContext(
