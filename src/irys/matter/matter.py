@@ -172,16 +172,18 @@ class MatterModel:
         new_state: BeliefState,
         run_id: Optional[str] = None,
         note: Optional[str] = None,
+        confidence: Optional[float] = None,
     ) -> RevisionResult:
         """Apply a user correction to an assertion and propagate."""
-        confidence_map = {
-            BeliefState.OPERATIVE: 0.95,
-            BeliefState.ADMITTED: 0.90,
-            BeliefState.SUPERSEDED: 0.10,
-            BeliefState.WITHDRAWN: 0.0,
-            BeliefState.DISPUTED: 0.3,
-        }
-        confidence = confidence_map.get(new_state, 0.5)
+        if confidence is None:
+            confidence_map = {
+                BeliefState.OPERATIVE: 0.95,
+                BeliefState.ADMITTED: 0.90,
+                BeliefState.SUPERSEDED: 0.10,
+                BeliefState.WITHDRAWN: 0.0,
+                BeliefState.DISPUTED: 0.3,
+            }
+            confidence = confidence_map.get(new_state, 0.5)
         return self.belief.force_state(
             assertion_id=assertion_id,
             new_state=new_state,

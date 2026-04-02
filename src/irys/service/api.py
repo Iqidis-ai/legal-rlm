@@ -36,6 +36,7 @@ from .models import (
     StopRunRequest,
     RedirectRunRequest,
     AnswerClarificationRequest,
+    CorrectAssertionRequest,
 )
 from .s3_repository import S3Repository
 
@@ -1274,4 +1275,78 @@ async def get_reconciliation(matter_id: str, currency: str = "USD"):
         "currency": currency,
         "by_subject": reconciliation,
         "conflicts": conflicts,
+    }
+
+
+@app.get(
+    "/matter/{matter_id}/issues",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_issues(matter_id: str, min_materiality: float = 0.0):
+    """Return open issues with assertion coverage counts (SO-4).
+
+    Each issue includes the count of supporting and attacking assertions
+    so clients can see which claims are well-evidenced vs. proof-gap-exposed.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    issues = model.issues.get_open_issues(min_materiality=min_materiality)
+    result = []
+    for issue in issues:
+        assertions = model.issues.get_assertions_for_issue(issue["id"])
+        issue["supporting_assertions"] = sum(
+            1 for a in assertions if a.get("relation_type") in ("supports", "establishes")
+        )
+        issue["attacking_assertions"] = sum(
+            1 for a in assertions if a.get("relation_type") in ("attacks", "negates")
+        )
+        issue["total_assertions"] = len(assertions)
+        result.append(issue)
+    return result
+
+
+@app.post(
+    "/matter/{matter_id}/assertions/{assertion_id}/correct",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}, 400: {"model": ErrorResponse}},
+)
+async def correct_assertion(
+    matter_id: str, assertion_id: str, request: CorrectAssertionRequest
+):
+    """Apply a user correction to an assertion's belief state (SO-2).
+
+    Propagates the change through the assertion dependency graph, updating
+    all downstream conclusions that depended on the corrected assertion.
+    Returns the revision result including which dependent assertions changed.
+    """
+    from irys.matter.enums import BeliefState, RevisionCause
+
+    model = _get_matter_model_or_404(matter_id)
+
+    try:
+        new_state = BeliefState(request.new_belief_state)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid belief_state '{request.new_belief_state}'. "
+                   "Valid values: alleged/argued/admitted/operative/performed/"
+                   "disputed/superseded/withdrawn/inferred/resolved/unknown",
+        )
+
+    try:
+        result = model.correct_assertion(
+            assertion_id=assertion_id,
+            new_state=new_state,
+            confidence=request.confidence,
+            note=request.note,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    return {
+        "assertion_id": assertion_id,
+        "old_belief_state": result.old_belief_state.value,
+        "new_belief_state": result.new_belief_state.value,
+        "propagated_to": result.propagated_to or [],
+        "cause": result.cause.value,
     }

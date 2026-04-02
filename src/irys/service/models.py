@@ -72,6 +72,50 @@ class JobResult(BaseModel):
     documents_processed: int = 0
     error: Optional[str] = None
 
+    # Matter model (when enable_matter_model=True)
+    matter_id: Optional[str] = None
+    run_id: Optional[str] = None
+
+
+# === Matter Model API Models ===
+
+class MatterStatsResponse(BaseModel):
+    """Matter model stats."""
+    matter_id: str
+    assertion_count: int
+    open_gap_count: int
+    open_issue_count: int
+    actor_count: int
+    quant_fact_count: int
+    pending_clarifications: int
+    recent_runs: int
+
+
+class StopRunRequest(BaseModel):
+    """Request to stop a running investigation."""
+    pass
+
+
+class RedirectRunRequest(BaseModel):
+    """Request to redirect investigation to a specific issue."""
+    issue_id: str = Field(..., description="Issue ID to redirect investigation toward")
+
+
+class AnswerClarificationRequest(BaseModel):
+    """User answer to a clarification question."""
+    answer_text: str = Field(..., description="User's answer to the clarification question")
+
+
+class CorrectAssertionRequest(BaseModel):
+    """User correction to an assertion's belief state (SO-2 belief revision)."""
+    new_belief_state: str = Field(
+        ...,
+        description="New belief state: alleged/argued/admitted/operative/performed/"
+                    "disputed/superseded/withdrawn/inferred/resolved/unknown",
+    )
+    confidence: float = Field(0.8, ge=0.0, le=1.0, description="Confidence level 0.0–1.0")
+    note: str = Field(..., description="Reason for the correction")
+
 
 class SearchRequest(BaseModel):
     """Request for quick search."""
