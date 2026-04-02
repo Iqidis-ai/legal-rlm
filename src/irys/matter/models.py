@@ -115,6 +115,7 @@ class QueryMatterContext:
     existing_assertion_count: int = 0
     existing_actor_count: int = 0
     known_document_ids: list[str] = field(default_factory=list)
+    known_actors: list[str] = field(default_factory=list)
     weakest_issue_id: Optional[str] = None
 
 

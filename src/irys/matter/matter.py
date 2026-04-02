@@ -228,6 +228,21 @@ class MatterModel:
         open_issues = self.issues.get_open_issues(min_materiality=0.3)
         actor_count = self.actors.count()
 
+        # Top actors by canonical name (limit 10 to keep context brief)
+        known_actors = [
+            a["canonical_name"]
+            for a in self.actors.list_actors()[:10]
+        ]
+
+        # Documents already indexed in the assertion store
+        rows = self.db.execute(
+            """SELECT DISTINCT document_id FROM assertion_occurrence
+               WHERE assertion_id IN (SELECT id FROM assertion WHERE matter_id=?)
+               ORDER BY document_id LIMIT 20""",
+            (self.matter_id,),
+        ).fetchall()
+        known_document_ids = [r["document_id"] for r in rows]
+
         # Find weakest issue (lowest materiality × salience score)
         weakest_issue_id = None
         if open_issues:
@@ -241,6 +256,8 @@ class MatterModel:
             open_issues=open_issues,
             existing_assertion_count=assertion_count,
             existing_actor_count=actor_count,
+            known_actors=known_actors,
+            known_document_ids=known_document_ids,
             weakest_issue_id=weakest_issue_id,
         )
 

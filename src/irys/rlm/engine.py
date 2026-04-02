@@ -101,6 +101,11 @@ def _format_matter_context(ctx) -> str:
         for gap in ctx.open_gaps[:3]:
             desc = gap.get("description", "")[:100]
             lines.append(f"  * {desc}")
+    if ctx.known_actors:
+        lines.append(f"- Key parties already identified: {', '.join(ctx.known_actors[:8])}")
+    if ctx.known_document_ids:
+        lines.append(f"- Documents already analyzed ({len(ctx.known_document_ids)} total): "
+                     + ", ".join(ctx.known_document_ids[:5]))
     lines.append("")
     return "\n".join(lines)
 
