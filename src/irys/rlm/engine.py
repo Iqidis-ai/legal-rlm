@@ -1234,6 +1234,46 @@ class RLMEngine:
                         priority=0.6,
                     )
 
+            # LLM-driven gap detection: check referenced documents against repo (SO-7)
+            connections = analysis.get("connections", [])
+            if connections:
+                # Build a quick lookup of known filenames (lowercase)
+                known_names = {
+                    f.filename.lower()
+                    for f in repo.list_files()
+                }
+                _adp = getattr(state, "_matter_adapter", None)
+                for ref in connections[:5]:  # limit to avoid noise
+                    if not isinstance(ref, str) or not ref.strip():
+                        continue
+                    ref = ref.strip()
+                    # Create a search lead so the pipeline tries to find it
+                    state.add_lead(
+                        description=f"Find referenced document: {ref}",
+                        source=doc.filename,
+                        priority=0.65,
+                        search_term=ref,
+                        focus_issue_id=focus_issue_id,
+                    )
+                    # If no existing file name contains key words from the reference,
+                    # immediately record as a potential gap
+                    ref_lower = ref.lower()
+                    ref_words = [w for w in ref_lower.split() if len(w) > 3]
+                    found_in_repo = any(
+                        any(word in fname for word in ref_words)
+                        for fname in known_names
+                    )
+                    if not found_in_repo and _adp is not None and ref_words:
+                        from ..matter.enums import GapType
+                        _adp.record_gap(
+                            description=f"Referenced document not found in repository: '{ref}' (mentioned in {Path(file_path).name})",
+                            gap_type=GapType.MISSING_DOCUMENT,
+                            expected_artifact=ref,
+                            materiality=0.5,
+                            affected_type="issue" if focus_issue_id else None,
+                            affected_id=focus_issue_id,
+                        )
+
         except Exception as e:
             self._emit_step(state, StepType.ERROR, f"Failed to read {file_path}: {e}")
             # Record as gap: document exists in search index but could not be read (SO-7)
