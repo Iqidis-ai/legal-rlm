@@ -5,6 +5,40 @@ Only Codex-validated conclusions are recorded as findings.
 
 ---
 
+## EXP-006 — Tier 1 Review Fixes + SO-3/SO-4 Ledger Depth (2026-04-02)
+
+**Status:** COMPLETE
+**Git commits:** 9cb8d72 → 56f110c (3 commits)
+**Purpose:** Fix bugs found by Tier 1 correctness review (bz547kj24) and close the
+next-highest-priority gaps from Adversarial Audit #1.
+
+**Changes shipped:**
+1. **Checkpoint serialization bug** — `Lead.search_term` and `Lead.focus_issue_id` were missing
+   from `to_dict()`/`from_dict()` in state.py; silently dropped on checkpoint save/resume
+2. **Reasoning ledger depth** (SO-3) — `adapter.log_step()` was only called in one orientation
+   branch; now logged at: orientation complete (with issue + search counts), each investigation
+   iteration (with lead summaries), key facts recorded from search, synthesis phase entry
+3. **Issue-to-assertion linking** (SO-4) — `record_fact()` now accepts `issue_id`; calls
+   `link_assertion()` when provided; `_analyze_search_results` passes `lead.focus_issue_id` so
+   issue-focused leads build real assertion→issue coverage in the matter model
+
+**What we learned:**
+- Checkpoint serialization is a silent data-loss category: fields added to a dataclass must
+  also be added to to_dict/from_dict or they vanish on resume without any error
+- Reasoning ledger was effectively empty for the user (no iterations, no facts recorded)
+  because log_step was only wired to issue identification, not the investigation phases
+- Issue-to-assertion linking only required 4 lines once record_fact() had the issue_id param;
+  the infrastructure was already there (link_assertion is idempotent INSERT OR IGNORE)
+
+**What remains:**
+- Redirect (SO-3) is pure scaffolding — no implementation
+- Source role not influencing synthesis weighting (SO-5)
+- Numeric extraction (SO-6) not started
+- Gap store not populated by engine (SO-7)
+- No test coverage for issue-to-assertion linking via record_fact()
+
+---
+
 ## EXP-005 — Engine-Substrate Wiring Sprint (2026-04-02)
 
 **Status:** COMPLETE
@@ -27,10 +61,10 @@ Only Codex-validated conclusions are recorded as findings.
 - Assertion identity: the (matter_id, proposition_key) unique key was the single highest-risk design choice — it collapsed all five reasoning layers
 - Migration system was prerequisite for all schema changes; existing `apply_schema()` couldn't handle any non-additive changes
 
-**What remains:**
-- `adapter.log_step()` called in only one orientation branch — reasoning ledger is thin
+**What remains (superseded by EXP-006):**
+- `adapter.log_step()` called in only one orientation branch — reasoning ledger is thin ✓ FIXED
+- Issue-to-assertion linking not yet happening in live engine (SO-4) ✓ FIXED
 - Redirect (SO-3) is pure scaffolding
-- Issue-to-assertion linking not yet happening in live engine (SO-4)
 - Source role still not influencing synthesis weighting (SO-5)
 - Numeric extraction (SO-6) not started
 - Gap store not populated by engine (SO-7)
