@@ -49,7 +49,7 @@ Repository Structure:
 Total files: {total_files}
 
 User Query: {query}
-
+{matter_context}
 Your task is to create a strategic research plan. Think like an experienced litigator or investigator.
 
 Consider:
@@ -73,6 +73,33 @@ Respond in JSON format:
     "hypothesis": "Your initial hypothesis based on query analysis"
 }}
 """
+
+
+def _format_matter_context(ctx) -> str:
+    """Format a QueryMatterContext into a prompt-injectable string.
+
+    Returns empty string when ctx is None (null adapter path).
+    """
+    if ctx is None:
+        return ""
+    lines = ["\nExisting Matter Intelligence (read from durable store):"]
+    if ctx.existing_assertion_count:
+        lines.append(f"- Known facts already recorded: {ctx.existing_assertion_count}")
+    if ctx.open_issues:
+        issue_titles = [i.get("title", "") for i in ctx.open_issues[:5]]
+        lines.append(f"- Open legal issues: {', '.join(t for t in issue_titles if t)}")
+    if ctx.weakest_issue_id:
+        weakest_titles = [i.get("title", "") for i in ctx.open_issues
+                          if i.get("id") == ctx.weakest_issue_id]
+        if weakest_titles:
+            lines.append(
+                f"- PRIORITY FOCUS: Issue with least evidence — '{weakest_titles[0]}'. "
+                "Generate search leads that specifically target this issue."
+            )
+    if ctx.open_gaps:
+        lines.append(f"- Known gaps / missing documents: {len(ctx.open_gaps)}")
+    lines.append("")
+    return "\n".join(lines)
 
 ANALYZE_FINDINGS_PROMPT = """You are a senior legal analyst extracting evidence from search results.
 
@@ -695,10 +722,15 @@ class RLMEngine:
 
         structure_str = "\n".join(f"  {folder}: {count} files" for folder, count in structure.items())
 
+        # Read persisted matter state — activates SO-1 (reuse) and SO-4 (issue-driven)
+        adapter = getattr(state, "_matter_adapter", None)
+        matter_ctx = adapter.get_context() if adapter is not None else None
+
         prompt = ORIENTATION_PROMPT.format(
             structure=structure_str,
             total_files=stats.total_files,
             query=state.query,
+            matter_context=_format_matter_context(matter_ctx),
         )
 
         # Use FLASH for intelligent planning
@@ -849,6 +881,14 @@ class RLMEngine:
         lead: Lead,
     ):
         """Investigate a single lead - may spawn sub-investigations."""
+        # Respect stop requests before doing any expensive work.
+        # This is checked here (not only in _investigate_loop) because all leads
+        # in a batch are launched via asyncio.gather before the loop stop check runs.
+        _adapter = getattr(state, "_matter_adapter", None)
+        if _adapter is not None and _adapter.is_stop_requested():
+            state.mark_lead_investigated(lead.id, "Skipped: user requested stop")
+            return
+
         # Acquire semaphore to limit concurrent heavy operations
         async with self._get_semaphore():
             state.recursion_depth += 1
