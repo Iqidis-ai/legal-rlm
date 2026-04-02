@@ -133,6 +133,30 @@ def test_assertion_link_idempotent(model):
     assert link1 == link2  # Same link, not duplicated
 
 
+def test_same_assertion_same_doc_no_duplicate_occurrence(model):
+    """INSERT OR IGNORE deduplicates same (assertion_id, document_id) via UNIQUE INDEX.
+
+    This covers the MEDIUM finding: concurrent runs ingesting the same document must not
+    produce duplicate assertion_occurrence rows. The UNIQUE INDEX on
+    (assertion_id, document_id) makes the second INSERT silently a no-op.
+    """
+    text = "The defendant failed to deliver by the deadline."
+    c = make_candidate(text, doc_id="complaint.pdf")
+
+    id1, is_new1 = model.assertions.upsert_occurrence(c)
+    # Simulate concurrent / duplicate ingestion of the exact same doc
+    id2, is_new2 = model.assertions.upsert_occurrence(c)
+
+    assert id1 == id2
+    assert is_new1 is True
+    assert is_new2 is False
+    # Second INSERT OR IGNORE must be silently dropped — only ONE occurrence row
+    occurrences = model.assertions.get_occurrences(id1)
+    assert len(occurrences) == 1, (
+        "duplicate ingestion of same assertion from same doc must not create two occurrence rows"
+    )
+
+
 def test_belief_state_default_unknown(model):
     c = make_candidate("Something happened.", doc_id="doc1")
     assertion_id, _ = model.assertions.upsert_occurrence(c)
