@@ -5,6 +5,49 @@ Only Codex-validated conclusions are recorded as findings.
 
 ---
 
+## EXP-008 — Service API Matter Model Endpoints + SO-6 Reconciliation (2026-04-02)
+
+**Status:** COMPLETE
+**Git commits:** ddbc483 → 78e906a (3 commits)
+**Purpose:** Expose matter model intelligence via REST API (SO-3 user steerability); implement SO-6 numeric conflict detection and payment reconciliation query layer.
+
+**Changes shipped:**
+1. **Matter model REST endpoints** (SO-3) — 8 new endpoints:
+   - `GET /matter/{id}` — stats (assertions, gaps, issues, actors, quant, clarifications)
+   - `GET /matter/{id}/runs` — recent investigation run history
+   - `GET /matter/{id}/runs/{run_id}/events` — full reasoning ledger event sequence
+   - `GET /matter/{id}/clarifications` — pending clarification questions
+   - `POST /matter/{id}/stop` — signal engine stop via `request_stop()` (sets DB flag read by engine on next iteration)
+   - `POST /matter/{id}/runs/{run_id}/redirect` — redirect active investigation to target issue
+   - `POST /matter/{id}/clarifications/{qid}/answer` — answer clarification question
+   - `GET /matter/{id}/reconcile` — payment reconciliation summary + conflict list
+2. **Matter model registry** — `_active_matter_models: dict[str, MatterModel]` in service/api.py; `_wire_matter_model()` helper pre-creates and registers the model before `irys.investigate()` is called so stop/redirect signals reach the live engine
+3. **ServiceConfig.enable_matter_model** — env var `IRYS_ENABLE_MATTER_MODEL`; all three background investigation tasks (`_run_investigation`, `_run_upload_investigation`, `_run_urls_investigation`) now wire matter model when enabled
+4. **QuantStore.get_conflicts()** — finds amount facts with same subject_type+currency but different values; returns conflict groups with value lists (SO-6 numeric conflict detection)
+5. **QuantStore.reconcile_by_subject()** — groups amount totals by subject_type+currency; invoice vs payment reconciliation
+6. **MatterModel.detect_quant_conflicts()** — calls `get_conflicts()`, records each conflict as UNRESOLVED_CONTRADICTION gap (materiality 0.8); idempotent
+7. **MatterModel.reconcile()** — thin facade over `reconcile_by_subject()`
+8. **DEEP_READ_PROMPT: numeric_facts subject field** — added `subject` field ("invoice" | "payment" | "fee" | "damages" | "balance" | "rate" | "deposit" | "penalty" | "other") to numeric_facts LLM schema
+9. **engine.py**: passes `subject_type` from `nf.get("subject")` on quant extraction; calls `detect_quant_conflicts()` at run completion alongside `generate_clarifications_from_gaps()`
+10. **MatterRuntimeAdapter.record_quant()**: added `subject_type` parameter
+11. **8 new tests** — reconcile_by_subject, get_conflicts, detect_quant_conflicts idempotency, adapter subject_type wiring
+
+**What we learned:**
+- The stop endpoint design requires `request_stop()` (sets DB flag), NOT `interrupt_run()` (which is the terminal state the engine sets after actually stopping)
+- Pre-creating the matter model before `irys.investigate()` is the only way to register it in the service registry early enough for stop/redirect to work during active runs
+- `subject_type=None` in existing quant records means reconciliation silently loses data — prompting the LLM for a subject field is essential
+- Conflict detection is cheapest at run-end (not per-document) since we need all amounts extracted first
+
+**Test count:** 134 passing (up from 126)
+
+**What remains (Priority 1):**
+- Adversarial Audit #2 now overdue — all Priority-0 SOs present and Priority-1 work started
+- Tier 1 Codex review pending (review of EXP-007 + EXP-008 changes)
+- SO-6 quant reconciliation surface in synthesis output (currently computed but not shown in investigation output)
+- SO-2 belief revision propagation end-to-end test with assertion link graph
+
+---
+
 ## EXP-007 — All Priority-0 SOs Complete + SO-6 Initial + Service Wiring (2026-04-02)
 
 **Status:** COMPLETE
