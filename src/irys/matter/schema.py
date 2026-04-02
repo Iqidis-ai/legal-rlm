@@ -455,6 +455,9 @@ CREATE TABLE IF NOT EXISTS clarification_question (
 
 CREATE INDEX IF NOT EXISTS ix_clarification_matter_status
     ON clarification_question(matter_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS ix_clarification_matter_text
+    ON clarification_question(matter_id, question_text);
 """
 
 _DDL_SCHEMA_VERSION = """

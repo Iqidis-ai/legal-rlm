@@ -97,6 +97,9 @@ class ServiceConfig:
         if not self.s3_bucket:
             errors.append("S3_BUCKET is required for production")
 
+        if self.enable_matter_model and not self.matter_db_dir.strip():
+            errors.append("IRYS_MATTER_DB_DIR must not be empty when enable_matter_model=True")
+
         return errors
 
 
