@@ -11,7 +11,7 @@ Verifies:
 import pytest
 from irys.matter import MatterModel, AssertionCandidate, SpeechAct, SourceRole
 from irys.matter import ModelLayer, AssertionKind, BeliefState, LedgerEventType
-from irys.matter.enums import OriginKind, RevisionCause
+from irys.matter.enums import OriginKind, RevisionCause, GapType
 from irys.matter.runtime import MatterRuntimeAdapter, NullMatterAdapter
 
 
@@ -137,6 +137,33 @@ def test_ledger_gap_identified_event(model):
         if e["event_type"] == LedgerEventType.GAP_IDENTIFIED.value
     ]
     assert len(gap_events) == 1
+
+
+def test_record_gap_persists_to_gap_store_and_ledger(model):
+    """record_gap() must write both a gap row and a ledger event (SO-7)."""
+    run_id = model.start_run("Gap store test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    gap_id = adapter.record_gap(
+        description="No documents found for: 'signed amendment'",
+        gap_type=GapType.MISSING_DOCUMENT,
+        expected_artifact="signed amendment",
+        materiality=0.7,
+    )
+
+    assert gap_id
+
+    # Gap persisted in store
+    open_gaps = model.gaps.open_gaps(min_materiality=0.5)
+    assert len(open_gaps) == 1
+    assert open_gaps[0]["id"] == gap_id
+    assert open_gaps[0]["gap_type"] == GapType.MISSING_DOCUMENT.value
+
+    # Ledger event recorded
+    events = model.ledger.get_events(run_id)
+    gap_events = [e for e in events if e["event_type"] == LedgerEventType.GAP_IDENTIFIED.value]
+    assert len(gap_events) == 1
+    assert gap_events[0]["changed_object_id"] == gap_id
 
 
 # ---------------------------------------------------------------------------
