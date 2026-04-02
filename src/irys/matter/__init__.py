@@ -20,7 +20,7 @@ from .models import (
     AssertionCandidate, AssertionRecord, RevisionResult,
     QueryMatterContext, RunSessionRecord,
 )
-from .graph import AssertionStore, GapStore, ActorStore, IssueStore
+from .graph import AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
 from .runtime import MatterRuntimeAdapter, NullMatterAdapter, infer_source_role
@@ -36,7 +36,8 @@ __all__ = [
     "AssertionCandidate", "AssertionRecord", "RevisionResult",
     "QueryMatterContext", "RunSessionRecord",
     # Stores
-    "AssertionStore", "GapStore", "ActorStore", "IssueStore", "ReasoningLedgerStore",
+    "AssertionStore", "GapStore", "ActorStore", "IssueStore", "ClarificationStore",
+    "ReasoningLedgerStore",
     "BeliefRevisionEngine",
     # Runtime
     "MatterRuntimeAdapter", "NullMatterAdapter", "infer_source_role",

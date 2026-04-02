@@ -1,4 +1,4 @@
-"""AssertionStore, GapStore, ActorStore, IssueStore.
+"""AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore.
 
 The assertion store is the heart of the intelligence layer. It maintains
 typed assertions with speech-act classification, support/attack links,
@@ -538,6 +538,92 @@ class IssueStore:
     def count_open(self) -> int:
         row = self.db.execute(
             "SELECT COUNT(*) FROM issue WHERE matter_id=? AND status='open'",
+            (self.matter_id,),
+        ).fetchone()
+        return row[0]
+
+
+class ClarificationStore:
+    """
+    Manages clarification questions and their answers (SO-7, SO-3).
+
+    Clarification questions are generated from high-materiality gaps.
+    They are surfaced to the user between investigation runs.
+    Answered questions are injected into the next orientation context.
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def add_question(
+        self,
+        question_text: str,
+        why_it_matters: Optional[str] = None,
+        expected_impact: Optional[str] = None,
+        gap_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> str:
+        """
+        Record a clarification question. Returns question_id.
+        Idempotent on (matter_id, question_text) — will not create duplicates.
+        """
+        now = _now()
+        # Dedup: check if same question text already exists unanswered
+        row = self.db.execute(
+            "SELECT id FROM clarification_question "
+            "WHERE matter_id=? AND question_text=? AND status='pending'",
+            (self.matter_id, question_text),
+        ).fetchone()
+        if row is not None:
+            return row["id"]
+
+        q_id = _id()
+        with self.db.transaction():
+            self.db.execute(
+                """INSERT INTO clarification_question
+                   (id, matter_id, gap_id, run_id, question_text, why_it_matters,
+                    expected_impact, status, created_at)
+                   VALUES (?,?,?,?,?,?,?,'pending',?)""",
+                (q_id, self.matter_id, gap_id, run_id,
+                 question_text, why_it_matters, expected_impact, now),
+            )
+        return q_id
+
+    def answer_question(self, question_id: str, answer_text: str) -> None:
+        """Record the user's answer to a clarification question."""
+        now = _now()
+        self.db.execute(
+            """UPDATE clarification_question
+               SET answer_text=?, answered_at=?, status='answered'
+               WHERE id=?""",
+            (answer_text, now, question_id),
+        )
+
+    def get_pending(self) -> list[dict]:
+        """Return unanswered clarification questions, newest first."""
+        rows = self.db.execute(
+            """SELECT * FROM clarification_question
+               WHERE matter_id=? AND status='pending'
+               ORDER BY created_at DESC""",
+            (self.matter_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_answered(self) -> list[dict]:
+        """Return answered questions — for injection into orientation context."""
+        rows = self.db.execute(
+            """SELECT * FROM clarification_question
+               WHERE matter_id=? AND status='answered'
+               ORDER BY answered_at DESC""",
+            (self.matter_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_pending(self) -> int:
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM clarification_question "
+            "WHERE matter_id=? AND status='pending'",
             (self.matter_id,),
         ).fetchone()
         return row[0]

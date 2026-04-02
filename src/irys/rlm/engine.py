@@ -106,6 +106,13 @@ def _format_matter_context(ctx) -> str:
     if ctx.known_document_ids:
         lines.append(f"- Documents already analyzed ({len(ctx.known_document_ids)} total): "
                      + ", ".join(ctx.known_document_ids[:5]))
+    if ctx.answered_clarifications:
+        lines.append(f"- User-supplied context ({len(ctx.answered_clarifications)} answers):")
+        for cl in ctx.answered_clarifications[:3]:
+            q = (cl.get("question_text") or "")[:80]
+            a = (cl.get("answer_text") or "")[:120]
+            lines.append(f"  Q: {q}")
+            lines.append(f"  A: {a}")
     lines.append("")
     return "\n".join(lines)
 
@@ -724,6 +731,12 @@ class RLMEngine:
             state.complete()
             if run_id is not None:
                 self._matter_model.complete_run(run_id)
+                # Generate clarification questions from open gaps (SO-7)
+                self._matter_model.generate_clarifications_from_gaps(
+                    run_id=run_id,
+                    top_n=3,
+                    min_materiality=0.5,
+                )
 
         except Exception as e:
             state.fail(str(e))

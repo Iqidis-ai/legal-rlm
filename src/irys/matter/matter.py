@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from .db import SQLiteMatterDB
-from .graph import AssertionStore, GapStore, ActorStore, IssueStore
+from .graph import AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
 from .enums import (
@@ -54,6 +54,7 @@ class MatterModel:
         self.gaps = GapStore(db, matter_id)
         self.actors = ActorStore(db, matter_id)
         self.issues = IssueStore(db, matter_id)
+        self.clarifications = ClarificationStore(db, matter_id)
         self.ledger = ReasoningLedgerStore(db, matter_id)
         self.belief = BeliefRevisionEngine(db, self.assertions)
 
@@ -249,6 +250,9 @@ class MatterModel:
             weakest = min(open_issues, key=lambda i: (i["materiality"] * i["salience"], i["id"]))
             weakest_issue_id = weakest["id"]
 
+        # Answered clarifications: inject user context into orientation
+        answered_clarifications = self.clarifications.get_answered()
+
         return QueryMatterContext(
             matter_id=self.matter_id,
             matter_name=matter_name,
@@ -258,8 +262,56 @@ class MatterModel:
             existing_actor_count=actor_count,
             known_actors=known_actors,
             known_document_ids=known_document_ids,
+            answered_clarifications=answered_clarifications,
             weakest_issue_id=weakest_issue_id,
         )
+
+    # ------------------------------------------------------------------
+    # Clarification engine (SO-7, SO-3)
+    # ------------------------------------------------------------------
+
+    def generate_clarifications_from_gaps(
+        self,
+        run_id: Optional[str] = None,
+        top_n: int = 3,
+        min_materiality: float = 0.5,
+    ) -> list[str]:
+        """
+        Generate clarification questions for the highest-materiality open gaps.
+
+        Called at the end of an investigation run. Returns list of new question_ids.
+        Only generates questions for gaps that don't already have a pending question.
+        """
+        gaps = self.gaps.open_gaps(min_materiality=min_materiality)
+        # Sort by materiality descending and take top N
+        gaps = sorted(gaps, key=lambda g: g.get("materiality_score", 0), reverse=True)[:top_n]
+
+        question_ids = []
+        for gap in gaps:
+            description = gap.get("description", "")
+            if not description:
+                continue
+            # Format question based on gap type
+            gap_type = gap.get("gap_type", "")
+            if "document" in gap_type or "missing" in gap_type.lower():
+                question = f"We could not find the following in the repository: {description}. Do you have access to this document or information?"
+                why = "This document was referenced in the matter but is not present in the repository."
+                impact = "If available, this document could materially change our analysis and conclusions."
+            else:
+                question = f"We identified a gap: {description}. Can you provide any additional context or documentation?"
+                why = "This information is needed to complete the analysis."
+                impact = "Providing this information will allow us to better assess the matter."
+
+            q_id = self.clarifications.add_question(
+                question_text=question,
+                why_it_matters=why,
+                expected_impact=impact,
+                gap_id=gap.get("id"),
+                run_id=run_id,
+            )
+            question_ids.append(q_id)
+
+        return question_ids
 
     # ------------------------------------------------------------------
     # Stats
