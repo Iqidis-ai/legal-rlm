@@ -143,6 +143,20 @@ class ReasoningLedgerStore:
                 summary=f"Run failed: {reason[:200]}",
             )
 
+    def interrupt_run(self, run_id: str) -> None:
+        """Mark a run session as interrupted by user stop."""
+        now = _now()
+        with self.db.transaction():
+            self.db.execute(
+                "UPDATE run_session SET status=?, completed_at=? WHERE id=?",
+                (RunStatus.INTERRUPTED.value, now, run_id),
+            )
+            self._append_event(
+                run_id=run_id,
+                event_type=LedgerEventType.USER_INTERRUPTED,
+                summary="Run interrupted by user stop request",
+            )
+
     def request_stop(self, run_id: str) -> None:
         """Set stop_requested flag — checked by the engine between iterations."""
         self.db.execute(

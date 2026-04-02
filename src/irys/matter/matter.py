@@ -128,6 +128,9 @@ class MatterModel:
     def fail_run(self, run_id: str, reason: str) -> None:
         self.ledger.fail_run(run_id, reason)
 
+    def interrupt_run(self, run_id: str) -> None:
+        self.ledger.interrupt_run(run_id)
+
     # ------------------------------------------------------------------
     # Assertion management
     # ------------------------------------------------------------------

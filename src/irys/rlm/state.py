@@ -633,14 +633,25 @@ class Lead:
     priority: float = 0.5  # 0-1
     investigated: bool = False
     findings: Optional[str] = None
+    search_term: Optional[str] = None  # Verbatim search term; bypasses _extract_search_term()
+    focus_issue_id: Optional[str] = None  # Issue this lead targets, for coverage tracking
 
     @classmethod
-    def create(cls, description: str, source: str, priority: float = 0.5) -> "Lead":
+    def create(
+        cls,
+        description: str,
+        source: str,
+        priority: float = 0.5,
+        search_term: Optional[str] = None,
+        focus_issue_id: Optional[str] = None,
+    ) -> "Lead":
         return cls(
             id=str(uuid.uuid4())[:8],
             description=description,
             source=source,
             priority=priority,
+            search_term=search_term,
+            focus_issue_id=focus_issue_id,
         )
 
 
@@ -739,7 +750,14 @@ class InvestigationState:
         self.citations.append(citation)
         return citation
 
-    def add_lead(self, description: str, source: str, priority: float = 0.5) -> Optional[Lead]:
+    def add_lead(
+        self,
+        description: str,
+        source: str,
+        priority: float = 0.5,
+        search_term: Optional[str] = None,
+        focus_issue_id: Optional[str] = None,
+    ) -> Optional[Lead]:
         """Add a lead to investigate if not duplicate."""
         # Normalize description for comparison
         desc_normalized = " ".join(description.lower().split())
@@ -753,7 +771,8 @@ class InvestigationState:
                     existing.priority = priority
                 return None  # Duplicate
 
-        lead = Lead.create(description, source, priority)
+        lead = Lead.create(description, source, priority,
+                           search_term=search_term, focus_issue_id=focus_issue_id)
         self.leads.append(lead)
         return lead
 
@@ -1441,6 +1460,11 @@ class InvestigationState:
         """Mark investigation as failed."""
         self.status = "failed"
         self.error = error
+        self.completed_at = datetime.now()
+
+    def interrupt(self):
+        """Mark investigation as interrupted by user stop. Partial state preserved."""
+        self.status = "interrupted"
         self.completed_at = datetime.now()
 
     def assess_answer_quality(self) -> AnswerQualityAssessment:

@@ -694,6 +694,16 @@ class RLMEngine:
             # Phase 2: Iterative investigation loop
             await self._investigate_loop(state, repo)
 
+            # If user stopped the run, skip verify/synthesis and mark interrupted.
+            # Partial facts/citations/leads are preserved as-is for resume.
+            _adapter = getattr(state, "_matter_adapter", None)
+            if _adapter is not None and _adapter.is_stop_requested():
+                self._emit_step(state, StepType.THINKING, "Stopped by user — partial state preserved")
+                state.interrupt()
+                if run_id is not None:
+                    self._matter_model.interrupt_run(run_id)
+                return state
+
             # Phase 2.5: Verify citations
             await self._verify_citations(state, repo)
 
@@ -763,21 +773,34 @@ class RLMEngine:
                         why="From orientation analysis",
                     )
 
-        # Create initial leads from plan
+        # Create initial leads from plan — preserve raw search terms to bypass
+        # _extract_search_term() token collapse (SO-4 issue-focused search)
+        weakest_id = matter_ctx.weakest_issue_id if matter_ctx else None
         for search_term in plan.get("initial_searches", [])[:5]:
-            if isinstance(search_term, str):
+            if isinstance(search_term, str) and search_term.strip():
+                # First lead targeting weakest issue gets priority boost
+                priority = 0.9 if (weakest_id and search_term == plan.get("initial_searches", [None])[0]) else 0.8
                 state.add_lead(
                     description=f"Search for: {search_term}",
                     source="initial_plan",
-                    priority=0.8,
+                    priority=priority,
+                    search_term=search_term.strip(),
+                    focus_issue_id=weakest_id,
                 )
 
-        # If no searches were found, fall back to query-based search
+        # If no searches were found, fall back: weakest issue title → query tokens
         if not plan.get("initial_searches"):
+            if matter_ctx and matter_ctx.weakest_issue_id and matter_ctx.open_issues:
+                weakest_issues = [i for i in matter_ctx.open_issues
+                                  if i.get("id") == matter_ctx.weakest_issue_id]
+                fallback_term = weakest_issues[0]["title"] if weakest_issues else state.query
+            else:
+                fallback_term = state.query
             state.add_lead(
                 description=f"Search for key terms in query",
                 source="fallback",
                 priority=0.8,
+                search_term=fallback_term,
             )
 
         self._emit_step(
@@ -884,9 +907,9 @@ class RLMEngine:
         # Respect stop requests before doing any expensive work.
         # This is checked here (not only in _investigate_loop) because all leads
         # in a batch are launched via asyncio.gather before the loop stop check runs.
+        # Do NOT mark the lead investigated — leave it pending so resume can retry it.
         _adapter = getattr(state, "_matter_adapter", None)
         if _adapter is not None and _adapter.is_stop_requested():
-            state.mark_lead_investigated(lead.id, "Skipped: user requested stop")
             return
 
         # Acquire semaphore to limit concurrent heavy operations
@@ -902,8 +925,9 @@ class RLMEngine:
 
                 self._emit_step(state, StepType.SEARCH, f"Investigating: {lead.description}")
 
-                # Extract search term from lead
-                search_term = self._extract_search_term(lead.description)
+                # Use preserved raw search term if available (SO-4); else extract from description.
+                # Raw terms avoid token collapse from _extract_search_term for issue-focused leads.
+                search_term = lead.search_term or self._extract_search_term(lead.description)
 
                 # Perform search (scale workers based on doc count)
                 max_workers = min(4, max(1, self._doc_count))
