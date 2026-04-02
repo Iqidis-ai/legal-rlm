@@ -810,6 +810,16 @@ class RLMEngine:
             details=plan,
         )
 
+        # Log orientation summary to reasoning ledger (SO-3 user visibility)
+        adapter = getattr(state, "_matter_adapter", None)
+        if adapter is not None:
+            issues_found = plan.get("issues", [])
+            searches_planned = plan.get("initial_searches", [])
+            adapter.log_step(
+                f"Orientation complete: {len(issues_found)} issues, {len(searches_planned)} search leads",
+                why=f"Hypothesis: {(state.hypothesis or '')[:200]}",
+            )
+
     async def _investigate_loop(self, state: InvestigationState, repo: MatterRepository):
         """Phase 2: Iterative investigation with recursive lead following."""
         iteration = 0
@@ -855,6 +865,16 @@ class RLMEngine:
                 StepType.THINKING,
                 f"Investigating {len(leads_to_process)} leads in parallel (iteration {iteration + 1})",
             )
+
+            # Log iteration start to reasoning ledger
+            if adapter is not None:
+                lead_summaries = ", ".join(
+                    (l.search_term or l.description)[:60] for l in leads_to_process[:3]
+                )
+                adapter.log_step(
+                    f"Iteration {iteration + 1}: investigating {len(leads_to_process)} leads",
+                    why=f"Leads: {lead_summaries}",
+                )
 
             # Process leads in parallel
             tasks = [
@@ -997,6 +1017,11 @@ class RLMEngine:
                 doc_id = results.top(1)[0].filename  # primary source doc; overridden in deep read
                 for fact_text in facts_to_add:
                     adapter.record_fact(fact_text, document_id=doc_id)
+                if facts_to_add:
+                    adapter.log_step(
+                        f"Recorded {len(facts_to_add)} facts from search: {results.query[:60]}",
+                        why=f"Source: {doc_id}",
+                    )
 
         # Update hypothesis if changed
         if analysis.get("hypothesis_update"):
@@ -1207,6 +1232,16 @@ class RLMEngine:
     async def _synthesize(self, state: InvestigationState):
         """Phase 3: Final synthesis using Pro model."""
         self._emit_step(state, StepType.SYNTHESIS, "Synthesizing final analysis...")
+
+        # Log synthesis entry to reasoning ledger (SO-3)
+        adapter = getattr(state, "_matter_adapter", None)
+        if adapter is not None:
+            facts = state.findings.get("accumulated_facts", [])
+            adapter.log_step(
+                f"Synthesis phase: {state.documents_read} docs, "
+                f"{state.searches_performed} searches, {len(facts)} facts",
+                why="All leads exhausted or investigation complete",
+            )
 
         # Compile all findings
         facts = state.findings.get("accumulated_facts", [])
