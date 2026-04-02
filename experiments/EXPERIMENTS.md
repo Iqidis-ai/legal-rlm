@@ -7,8 +7,8 @@ Only Codex-validated conclusions are recorded as findings.
 
 ## EXP-010 — Stable Corpus Identity + Cold/Hot Document Ingest Split (2026-04-02)
 
-**Status:** COMPLETE — Tier 1 Correctness review in progress (bi0058y9k)
-**Git commit:** ac8652b
+**Status:** COMPLETE — Tier 1 Correctness all findings fixed; Performance review pending
+**Git commits:** ac8652b → ae4d3d5 → 0a79895
 **Purpose:** Fix SO-1 write-only gap: matter DB was keyed by job_id → new DB every run → no cross-run reuse. Implement stable corpus identity and cold/hot split so second run on same corpus skips LLM for already-ingested documents.
 
 **Changes shipped:**
@@ -29,7 +29,15 @@ Only Codex-validated conclusions are recorded as findings.
 - The `_is_new` check in upsert guards against double-counting but is_ingested() is the authoritative gate for hot path
 - Hydration uses list_recent(30) — bounded, no memory explosion risk
 
-**Test count:** 158 passing (unchanged — no regressions)
+**Tier 1 Correctness findings (codex_tier1_correctness_010.txt @ ac8652b):**
+- HIGH: Basename collision — `engine.py` passed `_fp.name` to inventory, aliasing `contracts/msa.pdf` and `exhibits/msa.pdf`. Fixed: use full `file_path` as inventory key.
+- HIGH: SHA256 mismatch not detected — `upsert()` used INSERT OR IGNORE but never compared stored vs. incoming sha256. Fixed: detect mismatch in transaction, reset `ingest_status='pending'`.
+- HIGH: corpus_key fallback to job_id defeated SO-1 in upload path. Fixed: skip wiring if corpus_key absent.
+- HIGH: upsert TOCTOU race — SELECT outside INSERT transaction. Fixed: moved SELECT inside `with self.db.transaction()`.
+- MEDIUM: Concurrent double-ingest — `assertion_occurrence` had no uniqueness constraint. Fixed: `CREATE UNIQUE INDEX IF NOT EXISTS ix_occurrence_unique_doc ON assertion_occurrence(assertion_id, document_id)`.
+- LOW: `_hydrate_from_matter_model()` double-prefixed legacy `[ROLE]` propositions. Fixed: strip before re-labeling.
+
+**Test count:** 173 passing (2 regression tests added for HIGH-1 basename + HIGH-2 sha256 mismatch)
 
 ---
 
