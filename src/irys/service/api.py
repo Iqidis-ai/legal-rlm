@@ -1283,24 +1283,54 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
 
     Streams investigation progress as Server-Sent Events. Event types:
 
-    **step** - Each thinking/search/read/synthesis step:
+    **Hierarchical lead-centric events:**
+
+    **investigation.started** - Investigation begins:
+      `{query, document_count, repository}`
+
+    **plan** - Investigation plan created:
+      `{leads: [{id, type, description}], success_criteria, key_issues, strategy, iteration}`
+
+    **lead.started** - Lead begins execution:
+      `{lead_id, type, description, parent_lead_id}`
+
+    **lead.update** - Real-time update within a lead:
+      `{lead_id, kind, data}` — kind: matches|fact|ranking|reading|insight|spawned|external_results|analysis|triggers
+
+    **lead.done** - Lead completes:
+      `{lead_id, duration_ms}`
+
+    **lead.error** - Lead fails:
+      `{lead_id, error}`
+
+    **checkpoint** - Sufficiency check after iteration:
+      `{decision, total_facts, docs_read, reasoning}`
+
+    **replan** - New leads added after checkpoint:
+      `{new_leads: [{id, type, description}], iteration}`
+
+    **synthesis.started** - Synthesis begins:
+      `{fact_count, citation_count, case_law_count, web_count, model}`
+
+    **synthesis.complete** - Synthesis done:
+      `{output_length, duration_ms, docs_read, facts_used, citations}`
+
+    **Legacy events (still emitted for backward compatibility):**
+
+    **step** - Unmapped step types:
       `{id, step_type, content, details, depth, timestamp, duration_ms}`
-      step_type: "thinking" | "search" | "reading" | "finding" | "replan" | "verify" | "synthesis" | "error"
 
-    **citation** - Citation found during investigation:
-      `{id, document, page, text, context, relevance, timestamp}`
+    **citation** - Citation found:
+      `{id, document, page, text, context, relevance, timestamp, url, mime}`
 
-    **fact** - Fact extracted from a document:
-      `{fact}`
-
-    **progress** - Progress update with counts:
+    **progress** - Progress update (emitted at boundaries only):
       `{status, elapsed_seconds, documents_read, searches_performed, citations,
         leads_investigated, leads_pending, facts_accumulated, entities_found}`
 
-    **complete** - Final result with full analysis:
+    **complete** - Final result:
       `{query, analysis, citations, entities, facts, documents_processed, duration_seconds}`
 
-    **error** - Error details if investigation fails:
+    **error** - Fatal error:
       `{error}`
 
     Example curl:
@@ -1340,19 +1370,44 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
             # Create Irys with callbacks wired to queue
             irys = _make_irys(config)
 
+            # Map new hierarchical StepType values to named SSE events
+            _STEP_TYPE_TO_SSE_EVENT = {
+                "investigation_started": "investigation.started",
+                "plan": "plan",
+                "lead_started": "lead.started",
+                "lead_update": "lead.update",
+                "lead_done": "lead.done",
+                "lead_error": "lead.error",
+                "checkpoint": "checkpoint",
+                "replan": "replan",
+                "synthesis_started": "synthesis.started",
+                "synthesis_complete": "synthesis.complete",
+            }
+
             def on_step(step):
-                queue.put_nowait({
-                    "event": "step",
-                    "data": {
-                        "id": step.id,
-                        "step_type": step.step_type.value if hasattr(step.step_type, 'value') else str(step.step_type),
-                        "content": step.content,
-                        "details": step.details,
-                        "depth": step.depth,
-                        "timestamp": step.timestamp.isoformat(),
-                        "duration_ms": step.duration_ms,
-                    },
-                })
+                step_type_str = step.step_type.value if hasattr(step.step_type, 'value') else str(step.step_type)
+                sse_event = _STEP_TYPE_TO_SSE_EVENT.get(step_type_str)
+
+                if sse_event:
+                    # New hierarchical event — details IS the payload
+                    queue.put_nowait({
+                        "event": sse_event,
+                        "data": step.details or {},
+                    })
+                else:
+                    # Legacy/unmapped step type — keep old format
+                    queue.put_nowait({
+                        "event": "step",
+                        "data": {
+                            "id": step.id,
+                            "step_type": step_type_str,
+                            "content": step.content,
+                            "details": step.details,
+                            "depth": step.depth,
+                            "timestamp": step.timestamp.isoformat(),
+                            "duration_ms": step.duration_ms,
+                        },
+                    })
 
             def on_citation(citation):
                 queue.put_nowait({

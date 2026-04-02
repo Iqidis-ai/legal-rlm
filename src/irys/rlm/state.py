@@ -15,6 +15,7 @@ import json
 
 class StepType(Enum):
     """Types of investigation steps."""
+    # Legacy types (kept for backward compat during transition)
     THINKING = "thinking"
     SEARCH = "search"
     READING = "reading"
@@ -23,6 +24,16 @@ class StepType(Enum):
     VERIFY = "verify"
     SYNTHESIS = "synthesis"
     ERROR = "error"
+    # New hierarchical event types
+    INVESTIGATION_STARTED = "investigation_started"
+    PLAN = "plan"
+    LEAD_STARTED = "lead_started"
+    LEAD_UPDATE = "lead_update"
+    LEAD_DONE = "lead_done"
+    LEAD_ERROR = "lead_error"
+    CHECKPOINT = "checkpoint"
+    SYNTHESIS_STARTED = "synthesis_started"
+    SYNTHESIS_COMPLETE = "synthesis_complete"
 
 
 class QueryType(Enum):
@@ -163,6 +174,15 @@ class ThinkingStep:
             StepType.VERIFY: "[V]",
             StepType.SYNTHESIS: "[Y]",
             StepType.ERROR: "[!]",
+            StepType.INVESTIGATION_STARTED: "[>>]",
+            StepType.PLAN: "[PLAN]",
+            StepType.LEAD_STARTED: "[L>]",
+            StepType.LEAD_UPDATE: "[L~]",
+            StepType.LEAD_DONE: "[L.]",
+            StepType.LEAD_ERROR: "[L!]",
+            StepType.CHECKPOINT: "[CK]",
+            StepType.SYNTHESIS_STARTED: "[Y>]",
+            StepType.SYNTHESIS_COMPLETE: "[Y.]",
         }.get(self.step_type, "*")
         return f"{indent}{prefix} {self.content}"
 
@@ -279,6 +299,20 @@ class Contradiction:
         )
 
 
+def _derive_lead_type(description: str) -> str:
+    """Derive lead type from description prefix."""
+    desc_lower = description.lower().strip()
+    if desc_lower.startswith("read document:") or desc_lower.startswith("read:"):
+        return "read"
+    if desc_lower.startswith("search for:") or desc_lower.startswith("search:"):
+        return "search"
+    if desc_lower.startswith("caselaw:") or "case law" in desc_lower:
+        return "caselaw"
+    if desc_lower.startswith("web:") or "web search" in desc_lower:
+        return "web"
+    return "search"
+
+
 @dataclass
 class Lead:
     """A lead to investigate further."""
@@ -287,13 +321,19 @@ class Lead:
     source: str
     investigated: bool = False
     findings: Optional[str] = None
+    lead_type: str = "search"
+    parent_lead_id: Optional[str] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
 
     @classmethod
-    def create(cls, description: str, source: str) -> "Lead":
+    def create(cls, description: str, source: str, parent_lead_id: Optional[str] = None) -> "Lead":
         return cls(
             id=str(uuid.uuid4())[:8],
             description=description,
             source=source,
+            lead_type=_derive_lead_type(description),
+            parent_lead_id=parent_lead_id,
         )
 
 
@@ -405,7 +445,7 @@ class InvestigationState:
         self.citations.append(citation)
         return citation
 
-    def add_lead(self, description: str, source: str) -> Optional[Lead]:
+    def add_lead(self, description: str, source: str, parent_lead_id: Optional[str] = None) -> Optional[Lead]:
         """Add a lead to investigate if not duplicate."""
         desc_normalized = " ".join(description.lower().split())
 
@@ -414,7 +454,7 @@ class InvestigationState:
             if self._word_overlap(desc_normalized, existing_normalized) > 0.8:
                 return None
 
-        lead = Lead.create(description, source)
+        lead = Lead.create(description, source, parent_lead_id=parent_lead_id)
         self.leads.append(lead)
         return lead
 

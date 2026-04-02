@@ -276,10 +276,104 @@ async def run_streaming_test(url: str, payload: dict):
                             continue
 
                         # Format display based on event type
-                        if current_event_type == "step":
+                        if current_event_type == "investigation.started":
+                            query = data.get("query", "")[:60]
+                            doc_count = data.get("document_count", 0)
+                            repo = data.get("repository", "")
+                            log(f"[{elapsed:6.1f}s] [STARTED] {repo} ({doc_count} docs) — \"{query}\"")
+
+                        elif current_event_type == "plan":
+                            leads = data.get("leads", [])
+                            strategy = data.get("strategy", "")[:80]
+                            log(f"[{elapsed:6.1f}s] [PLAN] {len(leads)} leads — {strategy}")
+                            for lead in leads:
+                                log(f"             {lead.get('id', '?')} ({lead.get('type', '?')}): {lead.get('description', '')}")
+
+                        elif current_event_type == "lead.started":
+                            lead_id = data.get("lead_id", "?")
+                            lead_type = data.get("type", "?")
+                            desc = data.get("description", "")
+                            parent = data.get("parent_lead_id")
+                            parent_str = f" (parent: {parent})" if parent else ""
+                            log(f"[{elapsed:6.1f}s] [LEAD.STARTED] {lead_id} ({lead_type}): \"{desc}\"{parent_str}")
+
+                        elif current_event_type == "lead.update":
+                            lead_id = data.get("lead_id", "?")
+                            kind = data.get("kind", "?")
+                            update_data = data.get("data", {})
+                            if kind == "matches":
+                                count = update_data.get("match_count", 0)
+                                docs = update_data.get("docs", [])
+                                doc_str = ", ".join(f"{d['name']}({d['hit_count']})" for d in docs[:3])
+                                log(f"[{elapsed:6.1f}s]   [UPDATE:{kind}] {count} matches across {len(docs)} docs: {doc_str}")
+                            elif kind == "fact":
+                                fact = update_data.get("fact", "")[:100]
+                                log(f"[{elapsed:6.1f}s]   [UPDATE:{kind}] \"{fact}\"")
+                            elif kind == "ranking":
+                                doc = update_data.get("doc", "?")
+                                crit = update_data.get("criticality", "?")
+                                log(f"[{elapsed:6.1f}s]   [UPDATE:{kind}] {doc} -> {crit}")
+                            elif kind == "reading":
+                                doc = update_data.get("doc", "?")
+                                log(f"[{elapsed:6.1f}s]   [UPDATE:{kind}] {doc}")
+                            elif kind == "insight":
+                                learned = update_data.get("learned", "")
+                                gaps = update_data.get("gaps", "")
+                                log(f"[{elapsed:6.1f}s]   [UPDATE:{kind}] learned={learned[:60]}... gaps={gaps[:60]}...")
+                            elif kind == "spawned":
+                                new_id = update_data.get("new_lead_id", "?")
+                                new_type = update_data.get("type", "?")
+                                new_desc = update_data.get("description", "")
+                                log(f"[{elapsed:6.1f}s]   [UPDATE:{kind}] -> {new_id} ({new_type}): {new_desc}")
+                            elif kind == "external_results":
+                                source = update_data.get("source", "?")
+                                count = update_data.get("count", 0)
+                                log(f"[{elapsed:6.1f}s]   [UPDATE:{kind}] {source}: {count} results")
+                            elif kind == "analysis":
+                                summary = (update_data.get("summary") or "")[:100]
+                                log(f"[{elapsed:6.1f}s]   [UPDATE:{kind}] {summary}")
+                            else:
+                                log(f"[{elapsed:6.1f}s]   [UPDATE:{kind}] {json.dumps(update_data)[:120]}")
+
+                        elif current_event_type == "lead.done":
+                            lead_id = data.get("lead_id", "?")
+                            duration_ms = data.get("duration_ms", 0)
+                            log(f"[{elapsed:6.1f}s] [LEAD.DONE] {lead_id} ({duration_ms/1000:.1f}s)")
+
+                        elif current_event_type == "lead.error":
+                            lead_id = data.get("lead_id", "?")
+                            error = data.get("error", "")
+                            log(f"[{elapsed:6.1f}s] [LEAD.ERROR] {lead_id}: {error}")
+
+                        elif current_event_type == "checkpoint":
+                            decision = data.get("decision", "?")
+                            facts = data.get("total_facts", 0)
+                            docs = data.get("docs_read", 0)
+                            reasoning = data.get("reasoning", "")[:80]
+                            log(f"[{elapsed:6.1f}s] [CHECKPOINT] {decision.upper()} — {facts} facts, {docs} docs. {reasoning}")
+
+                        elif current_event_type == "replan":
+                            new_leads = data.get("new_leads", [])
+                            iteration = data.get("iteration", "?")
+                            log(f"[{elapsed:6.1f}s] [REPLAN] iteration {iteration}, {len(new_leads)} new leads")
+                            for lead in new_leads:
+                                log(f"             + {lead.get('id', '?')} ({lead.get('type', '?')}): {lead.get('description', '')}")
+
+                        elif current_event_type == "synthesis.started":
+                            fact_count = data.get("fact_count", 0)
+                            model = data.get("model", "?")
+                            log(f"[{elapsed:6.1f}s] [SYNTHESIS.STARTED] {fact_count} facts, model={model}")
+
+                        elif current_event_type == "synthesis.complete":
+                            output_len = data.get("output_length", 0)
+                            duration_ms = data.get("duration_ms", 0)
+                            log(f"[{elapsed:6.1f}s] [SYNTHESIS.COMPLETE] {output_len:,} chars ({duration_ms/1000:.1f}s)")
+
+                        elif current_event_type == "step":
+                            # Legacy step events
                             step_type = data.get("step_type", "")
                             content = data.get("content", "")
-                            visible = data.get("details", {}).get("visible", True)
+                            visible = data.get("details", {}).get("visible", True) if data.get("details") else True
                             tag = step_type.upper()
                             if not visible:
                                 tag += " (hidden)"
@@ -310,6 +404,10 @@ async def run_streaming_test(url: str, payload: dict):
                             error = data.get("error", "")
                             log(f"[{elapsed:6.1f}s] [ERROR] {error}")
                             response_data["error"] = error
+
+                        else:
+                            # Unknown event type
+                            log(f"[{elapsed:6.1f}s] [{current_event_type}] {json.dumps(data)[:120]}")
 
                 total_time = asyncio.get_event_loop().time() - start_time
                 log(f"\n{'=' * 80}")

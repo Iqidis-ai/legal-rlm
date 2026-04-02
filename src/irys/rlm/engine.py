@@ -8,11 +8,13 @@ OPTIMIZED VERSION:
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional, Callable, Any
 from pathlib import Path
 import asyncio
 import logging
 import re
+import time
 
 from ..core.models import GeminiClient, ModelTier
 from ..core.repository import MatterRepository
@@ -26,7 +28,7 @@ from . import decisions
 logger = logging.getLogger(__name__)
 
 
-def _fmt_list(items: list, max_items: int = 3, max_len: int = 50) -> str:
+def _fmt_list(items: list, max_items: int = 10, max_len: int = 200) -> str:
     """Format a list for display: 'item1, item2, item3...'"""
     if not items:
         return "(none)"
@@ -164,6 +166,51 @@ class RLMEngine:
         self.repo: Optional[MatterRepository] = None  # Set during investigate()
         self.fact_store: Optional[FactStore] = None  # Set during investigate()
         self._telemetry: Optional[InvestigationTelemetry] = None  # Set during investigate()
+        # Lead lifecycle tracking
+        self._lead_start_times: dict[str, float] = {}
+
+    async def _emit_lead_started(self, state: InvestigationState, lead: Lead):
+        """Emit lead.started event and track timing."""
+        self._lead_start_times[lead.id] = time.monotonic()
+        lead.started_at = datetime.now()
+        await self._emit_step_async(
+            state, StepType.LEAD_STARTED, f"Lead: {lead.description}",
+            details={
+                "lead_id": lead.id,
+                "type": lead.lead_type,
+                "description": lead.description,
+                "parent_lead_id": lead.parent_lead_id,
+            },
+        )
+
+    async def _emit_lead_update(self, state: InvestigationState, lead_id: str, kind: str, data: dict):
+        """Emit lead.update event with structured data."""
+        await self._emit_step_async(
+            state, StepType.LEAD_UPDATE, f"Lead update: {kind}",
+            details={"lead_id": lead_id, "kind": kind, "data": data},
+        )
+
+    async def _emit_lead_done(self, state: InvestigationState, lead_id: str):
+        """Emit lead.done event with duration."""
+        duration_ms = 0
+        if lead_id in self._lead_start_times:
+            duration_ms = int((time.monotonic() - self._lead_start_times.pop(lead_id)) * 1000)
+        # Find and update the lead's finished_at
+        for lead in state.leads:
+            if lead.id == lead_id:
+                lead.finished_at = datetime.now()
+                break
+        await self._emit_step_async(
+            state, StepType.LEAD_DONE, f"Lead done ({duration_ms}ms)",
+            details={"lead_id": lead_id, "duration_ms": duration_ms},
+        )
+
+    async def _emit_lead_error(self, state: InvestigationState, lead_id: str, error: str):
+        """Emit lead.error event."""
+        await self._emit_step_async(
+            state, StepType.LEAD_ERROR, f"Lead failed: {error}",
+            details={"lead_id": lead_id, "error": error},
+        )
 
     async def investigate(
         self,
@@ -249,19 +296,21 @@ class RLMEngine:
         total_chars = repo.metadata.total_chars if repo.metadata else 0
 
         try:
+            # Emit investigation.started event
+            await self._emit_step_async(
+                state, StepType.INVESTIGATION_STARTED, "Starting investigation",
+                details={
+                    "query": query,
+                    "document_count": file_count,
+                    "repository": repo_name,
+                },
+            )
+
             # Check if small repository first - uses unified assessment (includes complexity)
             if repo.is_small_repo:
                 await self._emit_step_async(
-                    state,
-                    StepType.THINKING,
+                    state, StepType.THINKING,
                     f"Starting: \"{query[:60]}{'...' if len(query) > 60 else ''}\" on {repo_name} ({file_count} files, {total_chars:,} chars) → small repo mode",
-                    visible=False,
-                )
-                file_names = [f.filename for f in repo.list_files()[:5]]
-                await self._emit_step_async(
-                    state,
-                    StepType.THINKING,
-                    f"Small repo mode: {_fmt_list(file_names, 4, 30)}",
                     visible=False,
                 )
                 # _direct_answer does its own unified assessment (complexity + external search decision)
@@ -299,8 +348,7 @@ class RLMEngine:
                 }
 
                 await self._emit_step_async(
-                    state,
-                    StepType.THINKING,
+                    state, StepType.THINKING,
                     f"Starting: \"{query[:60]}{'...' if len(query) > 60 else ''}\" on {repo_name} ({file_count} files, {total_chars:,} chars) → {'FLASH' if is_simple else 'PRO'} synthesis",
                     visible=False,
                 )
@@ -410,31 +458,21 @@ class RLMEngine:
 
         This replaces the old trigger-based approach which over-searched.
         """
-        file_names = [f.filename for f in repo.list_files()]
-        await self._emit_step_async(state, StepType.READING, f"Loading: {_fmt_list(file_names, 4, 25)}")
-
         # Step 1: Load all content directly
         all_content = repo.get_all_content()
         state.documents_read = len(repo.list_files())
         state.findings["small_repo_content"] = all_content
 
-        await self._emit_step_async(
-            state,
-            StepType.FINDING,
-            f"Loaded {state.documents_read} documents ({len(all_content):,} chars total)",
-        )
-
         # Step 1.5: Extract facts from each document if fact store is empty
-        # Reuse _read_document which already handles extraction and fact storage
+        # Wrap each doc read in lead lifecycle
         cache = InvestigationCache()
         if self.fact_store and len(self.fact_store) == 0:
-            await self._emit_step_async(
-                state,
-                StepType.THINKING,
-                f"Extracting facts from {len(repo.list_files())} documents for future reference...",
-            )
             for doc in repo.list_files():
-                await self._read_document(state, repo, doc.path, cache)
+                read_lead = Lead.create(f"Read document: {doc.filename}", source="direct_answer")
+                state.leads.append(read_lead)
+                await self._emit_lead_started(state, read_lead)
+                await self._read_document(state, repo, doc.path, cache, lead_id=read_lead.id)
+                await self._emit_lead_done(state, read_lead.id)
 
         # Step 1.6: Get cached facts for this query
         cached_facts_str = ""
@@ -449,7 +487,6 @@ class RLMEngine:
                 )
 
         # Step 2: Unified assessment - determines complexity AND external search need
-        await self._emit_step_async(state, StepType.THINKING, "Assessing query against documents...")
 
         t_step = self._telemetry.begin_step("assess_small_repo", "planning") if self._telemetry else None
         assessment = await decisions.assess_small_repo(
@@ -492,12 +529,17 @@ class RLMEngine:
         can_answer_from_docs = assessment.get("can_answer_from_docs", True)
         gap = assessment.get("gap", "")
 
+        # Emit plan event for direct answer assessment
         await self._emit_step_async(
-            state,
-            StepType.THINKING,
-            f"Assessment: {'SIMPLE' if is_simple else 'COMPLEX'} synthesis, "
-            f"{'can answer from docs' if can_answer_from_docs else f'needs external: {gap[:50]}...'}",
-            visible=True,
+            state, StepType.PLAN, "Assessment complete",
+            details={
+                "leads": [{"id": l.id, "type": l.lead_type, "description": l.description} for l in state.leads],
+                "success_criteria": "",
+                "key_issues": [],
+                "strategy": f"{'SIMPLE' if is_simple else 'COMPLEX'} synthesis, "
+                           f"{'docs only' if can_answer_from_docs else f'needs external — gap: {gap}'}",
+                "iteration": 1,
+            },
         )
 
         # Step 3: External search only if assessment says we need it
@@ -506,18 +548,6 @@ class RLMEngine:
             web_queries = assessment.get("web_searches", [])
 
             if case_law_queries or web_queries:
-                # Log what we're searching for
-                queries_preview = []
-                if case_law_queries:
-                    queries_preview.append(f"CaseLaw[{_fmt_list(case_law_queries, 2, 30)}]")
-                if web_queries:
-                    queries_preview.append(f"Web[{_fmt_list(web_queries, 2, 30)}]")
-                await self._emit_step_async(
-                    state,
-                    StepType.THINKING,
-                    f"External search: {' | '.join(queries_preview)}",
-                )
-
                 # Execute round 1
                 state.findings["initial_plan"] = {
                     "case_law_searches": case_law_queries,
@@ -548,11 +578,13 @@ class RLMEngine:
 
                     if not sufficiency.get("sufficient", True):
                         additional_search = sufficiency.get("additional_search", "")
+                        remaining_gap = sufficiency.get("remaining_gap", "")
                         if additional_search:
+                            gap_reason = f" — remaining gap: {remaining_gap}" if remaining_gap else ""
                             await self._emit_step_async(
                                 state,
                                 StepType.THINKING,
-                                f"Gap remains, additional search: {additional_search[:50]}...",
+                                f"Insufficient — need additional search: \"{additional_search}\"{gap_reason}",
                             )
 
                             # Determine if it's case law or web based on content
@@ -724,26 +756,6 @@ class RLMEngine:
         challenges = plan.get("potential_challenges", "")
         key_issues = plan.get("key_issues", [])
 
-        if reasoning:
-            await self._emit_step_async(
-                state,
-                StepType.THINKING,
-                f"STRATEGY: {reasoning}",
-            )
-        if key_issues:
-            issues_str = ", ".join(key_issues[:3])
-            await self._emit_step_async(
-                state,
-                StepType.THINKING,
-                f"KEY ISSUES: {issues_str}",
-            )
-        if challenges:
-            await self._emit_step_async(
-                state,
-                StepType.THINKING,
-                f"CHALLENGES: {challenges}",
-            )
-
         # PRIORITY: Create leads for priority files FIRST (read before searching)
         # Resolve display names to actual on-disk paths (LLM sees display names
         # but files may be hash-named on disk)
@@ -774,13 +786,17 @@ class RLMEngine:
             for term in terms[:2]:
                 state.add_lead(f"Search for: {term}", source="fallback")
 
-        # Show actual lead descriptions in step message
-        lead_descriptions = [l.description for l in state.leads]
+        # Emit structured plan event
         await self._emit_step_async(
-            state,
-            StepType.THINKING,
-            f"Plan: {_fmt_list(lead_descriptions, 3, 45)}",
-            details=plan,
+            state, StepType.PLAN,
+            f"Investigation plan — {len(state.leads)} leads",
+            details={
+                "leads": [{"id": l.id, "type": l.lead_type, "description": l.description} for l in state.leads],
+                "success_criteria": plan.get("success_criteria", ""),
+                "key_issues": plan.get("key_issues", []),
+                "strategy": plan.get("reasoning", ""),
+                "iteration": 1,
+            },
         )
 
     async def _assess_and_create_plan(
@@ -844,24 +860,6 @@ class RLMEngine:
         state.findings["issues"] = assessment.get("key_issues", [])
         state.findings["initial_plan"] = assessment
 
-        # Emit the reasoning (show LLM's thinking process)
-        reasoning = assessment.get("reasoning", "")
-        key_issues = assessment.get("key_issues", [])
-
-        if reasoning:
-            await self._emit_step_async(
-                state,
-                StepType.THINKING,
-                f"STRATEGY: {reasoning}",
-            )
-        if key_issues:
-            issues_str = ", ".join(key_issues[:3])
-            await self._emit_step_async(
-                state,
-                StepType.THINKING,
-                f"KEY ISSUES: {issues_str}",
-            )
-
         # PRIORITY: Create leads for priority files FIRST (read before searching)
         priority_files = assessment.get("priority_files", [])
         for filepath in priority_files[:3]:  # Limit to top 3 priority files
@@ -879,13 +877,17 @@ class RLMEngine:
             for term in terms[:2]:
                 state.add_lead(f"Search for: {term}", source="fallback")
 
-        # Show actual lead descriptions in step message
-        lead_descriptions = [l.description for l in state.leads]
+        # Emit structured plan event
         await self._emit_step_async(
-            state,
-            StepType.THINKING,
-            f"Plan: {_fmt_list(lead_descriptions, 3, 45)}",
-            details=assessment,
+            state, StepType.PLAN,
+            f"Investigation plan — {len(state.leads)} leads",
+            details={
+                "leads": [{"id": l.id, "type": l.lead_type, "description": l.description} for l in state.leads],
+                "success_criteria": assessment.get("success_criteria", ""),
+                "key_issues": assessment.get("key_issues", []),
+                "strategy": assessment.get("reasoning", ""),
+                "iteration": 1,
+            },
         )
 
         return assessment
@@ -936,15 +938,10 @@ class RLMEngine:
         web_queries = web_queries[:self.config.max_web_queries] if web_queries else []
 
         total_queries = len(case_law_queries) + len(web_queries)
-        queries_preview = []
-        if case_law_queries:
-            queries_preview.append(f"CaseLaw: {_fmt_list(case_law_queries, 2, 35)}")
-        if web_queries:
-            queries_preview.append(f"Web: {_fmt_list(web_queries, 2, 35)}")
         self._emit_step(
-            state,
-            StepType.THINKING,
-            f"External search ({total_queries}): {' | '.join(queries_preview)}",
+            state, StepType.SEARCH,
+            f"Executing {total_queries} external searches ({len(case_law_queries)} case law, {len(web_queries)} web)",
+            visible=False,
         )
 
         import time as _time
@@ -1016,7 +1013,7 @@ class RLMEngine:
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Process results
+            # Process results — each query is its own lead
             case_law_count = len(case_law_queries)
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
@@ -1025,56 +1022,68 @@ class RLMEngine:
 
                 query, data = result
                 if i < case_law_count:
-                    # Case law result
+                    # Case law result — create lead
+                    ext_lead = Lead.create(f"CaseLaw: {query}", source="external_search")
+                    ext_lead.lead_type = "caselaw"
+                    state.leads.append(ext_lead)
+                    await self._emit_lead_started(state, ext_lead)
                     if data:
                         self._external_research["case_law"].extend(data)
-                        case_names = [c.get("case_name", "Unknown") for c in data]
-                        self._emit_step(
-                            state,
-                            StepType.FINDING,
-                            f"CaseLaw ({len(data)}): {_fmt_list(case_names, 2, 40)}",
-                        )
+                        items = [{"name": c.get("case_name", "Unknown"), "citation": c.get("citation", ""), "snippet": (c.get("snippet") or "")[:200]} for c in data]
+                        await self._emit_lead_update(state, ext_lead.id, "external_results", {
+                            "source": "caselaw", "count": len(data), "items": items,
+                        })
+                    await self._emit_lead_done(state, ext_lead.id)
                 else:
-                    # Web result
+                    # Web result — create lead
+                    ext_lead = Lead.create(f"Web: {query}", source="external_search")
+                    ext_lead.lead_type = "web"
+                    state.leads.append(ext_lead)
+                    await self._emit_lead_started(state, ext_lead)
                     web_results = data.get("results", [])
                     if web_results:
                         self._external_research["web"].extend(web_results)
-                        titles = [r.get("title", "Untitled") for r in web_results]
-                        self._emit_step(
-                            state,
-                            StepType.FINDING,
-                            f"Web ({len(web_results)}): {_fmt_list(titles, 2, 40)}",
-                        )
+                        items = [{"name": r.get("title", "Untitled"), "snippet": (r.get("content") or "")[:200]} for r in web_results]
+                        await self._emit_lead_update(state, ext_lead.id, "external_results", {
+                            "source": "web", "count": len(web_results), "items": items,
+                        })
                     if data.get("answer"):
                         self._external_research["web_answer"] = data["answer"]
+                    await self._emit_lead_done(state, ext_lead.id)
         else:
             # Sequential execution (fallback)
             if case_law_queries and self.external_search:
                 for query in case_law_queries:
+                    ext_lead = Lead.create(f"CaseLaw: {query}", source="external_search")
+                    ext_lead.lead_type = "caselaw"
+                    state.leads.append(ext_lead)
+                    await self._emit_lead_started(state, ext_lead)
                     _, cases = await search_case_law(query)
                     if cases:
                         self._external_research["case_law"].extend(cases)
-                        case_names = [c.get("case_name", "Unknown") for c in cases]
-                        self._emit_step(
-                            state,
-                            StepType.FINDING,
-                            f"CaseLaw ({len(cases)}): {_fmt_list(case_names, 2, 40)}",
-                        )
+                        items = [{"name": c.get("case_name", "Unknown"), "citation": c.get("citation", ""), "snippet": (c.get("snippet") or "")[:200]} for c in cases]
+                        await self._emit_lead_update(state, ext_lead.id, "external_results", {
+                            "source": "caselaw", "count": len(cases), "items": items,
+                        })
+                    await self._emit_lead_done(state, ext_lead.id)
 
             if web_queries and self.external_search:
                 for query in web_queries:
+                    ext_lead = Lead.create(f"Web: {query}", source="external_search")
+                    ext_lead.lead_type = "web"
+                    state.leads.append(ext_lead)
+                    await self._emit_lead_started(state, ext_lead)
                     _, result_data = await search_web(query)
                     web_results = result_data.get("results", [])
                     if web_results:
                         self._external_research["web"].extend(web_results)
-                        titles = [r.get("title", "Untitled") for r in web_results]
-                        self._emit_step(
-                            state,
-                            StepType.FINDING,
-                            f"Web ({len(web_results)}): {_fmt_list(titles, 2, 40)}",
-                        )
+                        items = [{"name": r.get("title", "Untitled"), "snippet": (r.get("content") or "")[:200]} for r in web_results]
+                        await self._emit_lead_update(state, ext_lead.id, "external_results", {
+                            "source": "web", "count": len(web_results), "items": items,
+                        })
                     if result_data.get("answer"):
                         self._external_research["web_answer"] = result_data["answer"]
+                    await self._emit_lead_done(state, ext_lead.id)
 
         # Finalize external search telemetry step
         if t_step_ext:
@@ -1125,6 +1134,20 @@ class RLMEngine:
                 "summary": analysis.get("summary", ""),
             }
             self._external_research["analysis"]["combined"] = analysis.get("combined_framework", "")
+
+            # Emit external analysis as a lead.update on a dedicated analysis lead
+            ext_analysis_lead = Lead.create("External research analysis", source="external_search")
+            ext_analysis_lead.lead_type = "search"
+            state.leads.append(ext_analysis_lead)
+            await self._emit_lead_started(state, ext_analysis_lead)
+            await self._emit_lead_update(state, ext_analysis_lead.id, "analysis", {
+                "summary": analysis.get("summary", ""),
+                "key_precedents": analysis.get("key_precedents", []),
+                "regulations": analysis.get("regulations", []),
+                "legal_standards": analysis.get("legal_standards", []),
+                "combined_framework": analysis.get("combined_framework", ""),
+            })
+            await self._emit_lead_done(state, ext_analysis_lead.id)
 
         # Store in state findings for reference
         state.findings["external_research"] = self._external_research
@@ -1186,11 +1209,13 @@ class RLMEngine:
             # Take leads to process
             leads_to_process = pending_leads[:self.config.max_leads_per_level]
 
-            lead_descriptions = [l.description for l in leads_to_process]
+            lead_lines = [f"  - {l.description} (source: {l.source})" for l in leads_to_process]
+            remaining = len(pending_leads) - len(leads_to_process)
+            remaining_str = f" ({remaining} more leads queued)" if remaining > 0 else ""
             await self._emit_step_async(
                 state,
                 StepType.THINKING,
-                f"Iteration {iteration + 1}: {_fmt_list(lead_descriptions, 3, 40)}",
+                f"Iteration {iteration + 1} — processing {len(leads_to_process)} leads{remaining_str}:\n" + "\n".join(lead_lines),
             )
 
             # Process leads in parallel
@@ -1239,49 +1264,49 @@ class RLMEngine:
                 # Check sufficiency - MUST have read at least 1 document
                 # Facts from 0 docs is logically impossible for document investigation
                 docs_read = state.documents_read
-                if checkpoint_result.get("sufficient") and docs_read > 0:
-                    self._emit_step(
-                        state,
-                        StepType.THINKING,
-                        f"Sufficient: {facts_count} facts from {docs_read} docs - proceeding to synthesis",
-                        visible=True,
-                    )
+                progress = checkpoint_result.get("progress_assessment", "")
+                is_sufficient = checkpoint_result.get("sufficient", False)
+                should_replan = checkpoint_result.get("should_replan", False)
+
+                await self._emit_step_async(
+                    state, StepType.CHECKPOINT, "Sufficiency check",
+                    details={
+                        "decision": "sufficient" if (is_sufficient and docs_read > 0) else "insufficient",
+                        "total_facts": facts_count,
+                        "docs_read": docs_read,
+                        "reasoning": progress,
+                    },
+                )
+                if is_sufficient and docs_read > 0:
                     break
-                elif checkpoint_result.get("sufficient") and docs_read == 0:
-                    # LLM claims sufficient but no docs read - this is a bug state
-                    self._emit_step(
-                        state,
-                        StepType.ERROR,
-                        f"Checkpoint claims sufficient but 0 documents read - continuing investigation",
-                        visible=False,
-                    )
+                elif is_sufficient and docs_read == 0:
+                    logger.warning("Checkpoint claims sufficient but 0 docs read — continuing")
 
                 # Handle replanning if needed
-                if checkpoint_result.get("should_replan") and pending_leads:
-                    progress = checkpoint_result.get("progress_assessment", "")
-                    self._emit_step(
-                        state,
-                        StepType.THINKING,
-                        f"Recalibrating... {progress[:50]}",
-                    )
+                if should_replan and pending_leads:
+                    new_search_terms = checkpoint_result.get("new_search_terms", [])[:3]
+                    files_to_check = checkpoint_result.get("files_to_check", [])[:2]
 
                     # Add new leads from checkpoint
-                    new_leads_added = 0
-                    for term in checkpoint_result.get("new_search_terms", [])[:3]:
+                    newly_added_leads = []
+                    for term in new_search_terms:
                         if not cache.is_similar_search(term):
-                            state.add_lead(f"Search for: {term}", source="checkpoint")
-                            new_leads_added += 1
-                    for filepath in checkpoint_result.get("files_to_check", [])[:2]:
+                            new_lead = state.add_lead(f"Search for: {term}", source="checkpoint")
+                            if new_lead:
+                                newly_added_leads.append(new_lead)
+                    for filepath in files_to_check:
                         if not cache.has_extracted(filepath) and not cache.is_irrelevant(filepath):
-                            state.add_lead(f"Read document: {filepath}", source="checkpoint")
-                            new_leads_added += 1
+                            new_lead = state.add_lead(f"Read document: {filepath}", source="checkpoint")
+                            if new_lead:
+                                newly_added_leads.append(new_lead)
 
-                    if new_leads_added > 0:
-                        self._emit_step(
-                            state,
-                            StepType.THINKING,
-                            f"Added {new_leads_added} new leads from checkpoint",
-                            visible=False,
+                    if newly_added_leads:
+                        await self._emit_step_async(
+                            state, StepType.REPLAN, f"Replan — added {len(newly_added_leads)} new leads",
+                            details={
+                                "new_leads": [{"id": l.id, "type": l.lead_type, "description": l.description} for l in newly_added_leads],
+                                "iteration": iteration + 1,
+                            },
                         )
 
             # 3. Dynamic external search - trigger if we discover we need it
@@ -1297,9 +1322,9 @@ class RLMEngine:
 
                     if total_new > 0:
                         self._emit_step(
-                            state,
-                            StepType.THINKING,
-                            f"Running {total_new} new external search{'es' if total_new > 1 else ''}...",
+                            state, StepType.SEARCH,
+                            f"Triggering {total_new} external searches from document triggers",
+                            visible=False,
                         )
                         await self._execute_external_searches(
                             state,
@@ -1354,7 +1379,8 @@ class RLMEngine:
         self._emit_step(
             state,
             StepType.THINKING,
-            f"Triggers: {_fmt_list(trigger_list, 4, 30)}",
+            f"Checking external search need — {len(trigger_list)} triggers accumulated from {state.documents_read} docs:\n"
+            + "\n".join(f"  - {t}" for t in trigger_list),
         )
 
         # Generate specific queries using accumulated triggers
@@ -1389,15 +1415,20 @@ class RLMEngine:
             state.findings["initial_plan"]["case_law_searches"] = list(set(existing_case_law + case_law_queries))
             state.findings["initial_plan"]["web_searches"] = list(set(existing_web + web_queries))
 
-            queries_preview = []
-            if new_case_law:
-                queries_preview.append(f"CaseLaw: {_fmt_list(new_case_law, 2, 30)}")
-            if new_web:
-                queries_preview.append(f"Web: {_fmt_list(new_web, 2, 30)}")
+            query_lines = []
+            for q in new_case_law:
+                query_lines.append(f"  Case law: \"{q}\"")
+            for q in new_web:
+                query_lines.append(f"  Web: \"{q}\"")
+            # Also show what was filtered out
+            filtered_case = [q for q in case_law_queries if q in executed_queries]
+            filtered_web = [q for q in web_queries if q in executed_queries]
+            if filtered_case or filtered_web:
+                query_lines.append(f"  (Filtered {len(filtered_case) + len(filtered_web)} already-executed queries)")
             self._emit_step(
                 state,
                 StepType.THINKING,
-                f"New queries: {' | '.join(queries_preview)}",
+                f"Generated {len(new_case_law) + len(new_web)} new external queries:\n" + "\n".join(query_lines),
             )
             return {"case_law_queries": new_case_law, "web_queries": new_web}
 
@@ -1424,47 +1455,67 @@ class RLMEngine:
 
             # OPTIMIZATION: Skip if already extracted or marked irrelevant
             if cache.has_extracted(filepath):
+                await self._emit_step_async(state, StepType.THINKING, f"Skip read (already extracted): {filepath}", visible=False)
                 state.mark_lead_investigated(lead.id, "Already extracted")
                 return
             if cache.is_irrelevant(filepath):
+                await self._emit_step_async(state, StepType.THINKING, f"Skip read (marked irrelevant): {filepath}", visible=False)
                 state.mark_lead_investigated(lead.id, "Marked irrelevant")
                 return
 
-            await self._read_document(state, repo, filepath, cache)
-            state.mark_lead_investigated(lead.id, "Document read")
+            await self._emit_lead_started(state, lead)
+            try:
+                await self._read_document(state, repo, filepath, cache, lead_id=lead.id)
+                state.mark_lead_investigated(lead.id, "Document read")
+            except Exception as e:
+                await self._emit_lead_error(state, lead.id, str(e))
+                raise
+            await self._emit_lead_done(state, lead.id)
         else:
             # Extract search term
             search_term = self._extract_search_term(lead.description)
 
             # OPTIMIZATION: Skip similar searches
             if self.config.skip_similar_searches and cache.is_similar_search(search_term):
+                await self._emit_step_async(state, StepType.THINKING, f"Skip search (similar already done): \"{search_term}\"", visible=False)
                 state.mark_lead_investigated(lead.id, f"Similar search already done")
-                logger.info(f"Skipping similar search: {search_term}")
                 return
 
-            cache.add_search(search_term)
-            await self._emit_step_async(state, StepType.SEARCH, f"Searching: {search_term}")
+            await self._emit_lead_started(state, lead)
+            try:
+                cache.add_search(search_term)
 
-            # Perform search (using smart_search for OR fallback)
-            results = repo.smart_search(search_term, context_lines=2)
-            state.searches_performed += 1
+                # Perform search (using smart_search for OR fallback)
+                results = repo.smart_search(search_term, context_lines=2)
+                state.searches_performed += 1
 
-            if not results.hits:
-                state.mark_lead_investigated(lead.id, "No results found")
-                return
+                if not results.hits:
+                    await self._emit_lead_update(state, lead.id, "matches", {
+                        "query": search_term, "match_count": 0, "docs": [],
+                    })
+                    state.mark_lead_investigated(lead.id, "No results found")
+                    await self._emit_lead_done(state, lead.id)
+                    return
 
-            # Show matching document names
-            doc_names = list(set(Path(hit.file_path).name for hit in results.hits[:5]))
-            await self._emit_step_async(
-                state,
-                StepType.FINDING,
-                f"Found {len(results.hits)} matches in: {_fmt_list(doc_names, 3, 30)}",
-            )
+                # Build match details
+                doc_hit_counts = {}
+                for hit in results.hits:
+                    name = Path(hit.file_path).name
+                    doc_hit_counts[name] = doc_hit_counts.get(name, 0) + 1
+                await self._emit_lead_update(state, lead.id, "matches", {
+                    "query": search_term,
+                    "match_count": len(results.hits),
+                    "docs": [{"name": name, "hit_count": count} for name, count in doc_hit_counts.items()],
+                })
 
-            # CONSOLIDATED: Single analyze_search call replaces pick_relevant_hits + analyze_results + prioritize_documents
-            await self._analyze_results_consolidated(state, repo, results, cache)
+                # CONSOLIDATED: Single analyze_search call replaces pick_relevant_hits + analyze_results + prioritize_documents
+                await self._analyze_results_consolidated(state, repo, results, cache, lead_id=lead.id)
 
-            state.mark_lead_investigated(lead.id, f"Found {len(results.hits)} matches")
+                state.mark_lead_investigated(lead.id, f"Found {len(results.hits)} matches")
+            except Exception as e:
+                await self._emit_lead_error(state, lead.id, str(e))
+                raise
+            await self._emit_lead_done(state, lead.id)
 
     async def _analyze_results_consolidated(
         self,
@@ -1472,6 +1523,7 @@ class RLMEngine:
         repo: MatterRepository,
         results: SearchResults,
         cache: InvestigationCache,
+        lead_id: Optional[str] = None,
     ):
         """Consolidated search analysis - single FLASH call replaces 3 separate calls."""
         key_issues = state.findings.get("issues", [])
@@ -1490,12 +1542,23 @@ class RLMEngine:
         if t_step_as:
             self._telemetry.end_step(t_step_as)
 
-        # Store facts and emit callbacks
+        # Store facts and emit per-fact updates
         facts = analysis.get("facts", [])
         state.add_facts(facts)
-        if self.on_fact:
-            for fact in facts:
-                self.on_fact(fact)
+        if lead_id:
+            for f in facts:
+                await self._emit_lead_update(state, lead_id, "fact", {"fact": f, "source_doc": results.query})
+
+        # Emit rankings
+        ranked_docs = analysis.get("ranked_documents", [])
+        if lead_id:
+            for doc in ranked_docs:
+                filepath = doc.get("file") if isinstance(doc, dict) else doc
+                crit = doc.get("criticality", "?") if isinstance(doc, dict) else "?"
+                await self._emit_lead_update(state, lead_id, "ranking", {"doc": filepath, "criticality": crit})
+
+        read_deeper = analysis.get("read_deeper", [])[:2]
+        additional_searches = analysis.get("additional_searches", [])[:1]
 
         # Add citations from relevant hits
         relevant_hits = analysis.get("relevant_hits", [])
@@ -1515,15 +1578,23 @@ class RLMEngine:
             if citation and self.on_citation:
                 self.on_citation(citation)
 
-        # Add leads for docs to read deeper
-        for filepath in analysis.get("read_deeper", [])[:2]:
+        # Add leads for docs to read deeper — with parent tracking
+        for filepath in read_deeper:
             if isinstance(filepath, str) and not cache.has_extracted(filepath):
-                state.add_lead(f"Read document: {filepath}", source="analysis")
+                new_lead = state.add_lead(f"Read document: {filepath}", source="analysis", parent_lead_id=lead_id)
+                if new_lead and lead_id:
+                    await self._emit_lead_update(state, lead_id, "spawned", {
+                        "new_lead_id": new_lead.id, "type": new_lead.lead_type, "description": new_lead.description,
+                    })
 
-        # Add additional search leads
-        for term in analysis.get("additional_searches", [])[:1]:
+        # Add additional search leads — with parent tracking
+        for term in additional_searches:
             if isinstance(term, str) and not cache.is_similar_search(term):
-                state.add_lead(f"Search for: {term}", source="analysis")
+                new_lead = state.add_lead(f"Search for: {term}", source="analysis", parent_lead_id=lead_id)
+                if new_lead and lead_id:
+                    await self._emit_lead_update(state, lead_id, "spawned", {
+                        "new_lead_id": new_lead.id, "type": new_lead.lead_type, "description": new_lead.description,
+                    })
 
         # Get prioritized files from the consolidated analysis
         ranked_docs = analysis.get("ranked_documents", [])
@@ -1559,7 +1630,7 @@ class RLMEngine:
                 if filepath not in state.findings["pinned_documents"]:
                     state.findings["pinned_documents"].append(filepath)
 
-        await self._batch_read(state, repo, top_files[:self.config.parallel_reads], cache)
+        await self._batch_read(state, repo, top_files[:self.config.parallel_reads], cache, lead_id=lead_id)
 
     async def _batch_read(
         self,
@@ -1567,6 +1638,7 @@ class RLMEngine:
         repo: MatterRepository,
         file_paths: list[str],
         cache: InvestigationCache,
+        lead_id: Optional[str] = None,
     ):
         """Read multiple documents in parallel."""
         # Filter out already extracted docs
@@ -1582,7 +1654,7 @@ class RLMEngine:
             f"Reading: {_fmt_list(doc_names, 3, 30)}",
         )
 
-        tasks = [self._read_document(state, repo, fp, cache) for fp in to_read]
+        tasks = [self._read_document(state, repo, fp, cache, lead_id=lead_id) for fp in to_read]
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _read_document(
@@ -1591,6 +1663,7 @@ class RLMEngine:
         repo: MatterRepository,
         file_path: str,
         cache: InvestigationCache,
+        lead_id: Optional[str] = None,
     ) -> bool:
         """Read and extract facts from a document.
 
@@ -1602,7 +1675,13 @@ class RLMEngine:
             logger.debug(f"Skipping already extracted: {file_path}")
             return True  # Already extracted = success
 
-        await self._emit_step_async(state, StepType.READING, f"Reading: {Path(file_path).name}")
+        filename = Path(file_path).name
+
+        # Emit reading update
+        if lead_id:
+            await self._emit_lead_update(state, lead_id, "reading", {"doc": filename})
+        else:
+            await self._emit_step_async(state, StepType.READING, f"Reading: {filename}")
 
         try:
             doc = repo.read(file_path)
@@ -1634,18 +1713,14 @@ class RLMEngine:
             if t_step_ef:
                 self._telemetry.end_step(t_step_ef)
 
-            # Store facts
+            # Store facts and emit per-fact updates
             facts = extraction.get("facts", [])
-            if facts:
-                self._emit_step(
-                    state,
-                    StepType.FINDING,
-                    f"Facts ({len(facts)}) from {doc.filename}: {_fmt_list(facts, 2, 60)}",
-                )
             state.add_facts(facts)
-            if self.on_fact:
-                for fact in facts:
-                    self.on_fact(fact)
+            if lead_id:
+                for f in facts:
+                    await self._emit_lead_update(state, lead_id, "fact", {"fact": f, "source_doc": doc.filename})
+            elif facts:
+                self._emit_step(state, StepType.FINDING, f"Extracted {len(facts)} facts from {doc.filename}")
 
             # Save facts to persistent store for future queries
             if self.fact_store:
@@ -1655,8 +1730,7 @@ class RLMEngine:
                     query_context=state.query,
                 )
                 self._emit_step(
-                    state,
-                    StepType.THINKING,
+                    state, StepType.THINKING,
                     f"Added {new_facts} facts from {doc.filename} (store total: {len(self.fact_store)})",
                     visible=False,
                 )
@@ -1666,44 +1740,48 @@ class RLMEngine:
             if triggers:
                 added = state.add_triggers(triggers)
                 if added > 0:
-                    # Collect all trigger values for display
-                    trigger_values = []
-                    for trigger_list in triggers.values():
-                        if isinstance(trigger_list, list):
-                            trigger_values.extend(trigger_list)
-                    self._emit_step(
-                        state,
-                        StepType.THINKING,
-                        f"Triggers from {doc.filename}: {_fmt_list(trigger_values, 3, 30)}",
-                    )
+                    trigger_list = []
+                    for category, items in triggers.items():
+                        if isinstance(items, list) and items:
+                            for item in items:
+                                trigger_list.append(f"{category}: {item}")
+                    if lead_id:
+                        await self._emit_lead_update(state, lead_id, "triggers", {
+                            "count": added, "triggers": trigger_list,
+                        })
 
-            # Emit insights from the extraction (show LLM's thinking)
+            # Emit insights from the extraction
             insights = extraction.get("insights", "")
             gaps = extraction.get("gaps", "")
-            next_steps = extraction.get("next_steps", "")
-
-            if insights or gaps:
-                insight_msg = f"From {doc.filename}:\n"
+            next_steps_text = extraction.get("next_steps", "")
+            if lead_id and (insights or gaps):
+                await self._emit_lead_update(state, lead_id, "insight", {
+                    "learned": insights or None,
+                    "gaps": gaps or None,
+                    "next_steps": next_steps_text or None,
+                })
+            elif insights or gaps:
+                insight_msg = f"From {doc.filename}:"
                 if insights:
-                    insight_msg += f"  LEARNED: {insights}\n"
+                    insight_msg += f" LEARNED: {insights}"
                 if gaps:
-                    insight_msg += f"  GAPS: {gaps}\n"
-                if next_steps:
-                    insight_msg += f"  NEXT: {next_steps}"
-                self._emit_step(state, StepType.THINKING, insight_msg.strip())
+                    insight_msg += f" GAPS: {gaps}"
+                self._emit_step(state, StepType.THINKING, insight_msg)
 
             # Add citations from quotes (limit to 2)
-            for quote in extraction.get("quotes", [])[:2]:
+            quotes = extraction.get("quotes", [])[:2]
+            for quote in quotes:
                 if isinstance(quote, dict) and "text" in quote:
-                    # Get URL for the document if available
+                    page = quote.get("page")
+                    relevance = quote.get("relevance", "Direct quote")
                     doc_url = repo.get_document_url(doc.filename) if hasattr(repo, 'get_document_url') else None
                     doc_mime = repo.get_document_mime(doc.filename) if hasattr(repo, 'get_document_mime') else None
                     citation = state.add_citation(
                         document=doc.path,
-                        page=quote.get("page"),
+                        page=page,
                         text=quote["text"],
                         context="",
-                        relevance=quote.get("relevance", "Direct quote"),
+                        relevance=relevance,
                         url=doc_url,
                         mime=doc_mime,
                     )
@@ -1716,7 +1794,6 @@ class RLMEngine:
         except Exception as e:
             self._emit_step(state, StepType.ERROR, f"Failed to read {file_path}: {e}")
             cache.record_read_failure()
-            # Don't emit error here - the loop will handle it and continue
             return False  # Failure
 
     async def _synthesize(self, state: InvestigationState, is_simple: bool = False):
@@ -1776,7 +1853,18 @@ class RLMEngine:
         elif small_repo:
             source_parts.append("all docs (small repo)")
 
-        await self._emit_step_async(state, StepType.SYNTHESIS, f"Synthesizing: {', '.join(source_parts)}")
+        synth_tier = "FLASH" if (is_simple and self.config.use_flash_for_simple) else "PRO"
+        synth_start_time = time.monotonic()
+        await self._emit_step_async(
+            state, StepType.SYNTHESIS_STARTED, "Synthesizing",
+            details={
+                "fact_count": len(facts),
+                "citation_count": len(state.citations),
+                "case_law_count": case_law_count,
+                "web_count": web_count,
+                "model": synth_tier,
+            },
+        )
 
         # SOURCE 1: Local document evidence
         facts = state.findings.get("accumulated_facts", [])
@@ -1828,7 +1916,19 @@ class RLMEngine:
 
         state.findings["final_output"] = response
         output_len = len(response)
-        await self._emit_step_async(state, StepType.SYNTHESIS, f"Complete: {output_len:,} chars synthesized from {state.documents_read} docs")
+        total_citations = len(state.citations)
+        total_facts = len(state.findings.get("accumulated_facts", []))
+        synth_duration_ms = int((time.monotonic() - synth_start_time) * 1000)
+        await self._emit_step_async(
+            state, StepType.SYNTHESIS_COMPLETE, "Synthesis complete",
+            details={
+                "output_length": output_len,
+                "duration_ms": synth_duration_ms,
+                "docs_read": state.documents_read,
+                "facts_used": total_facts,
+                "citations": total_citations,
+            },
+        )
 
     async def _load_pinned_documents(self, state: InvestigationState) -> str:
         """Load content from DECISIVE pinned documents for synthesis.
@@ -1916,7 +2016,9 @@ class RLMEngine:
         step = state.add_step(step_type, content, step_details)
         if self.on_step:
             self.on_step(step)
-        self._emit_progress(state)
+        # Progress only emitted at boundaries (lead.done, checkpoint, synthesis.complete)
+        if step_type in (StepType.INVESTIGATION_STARTED, StepType.LEAD_DONE, StepType.CHECKPOINT, StepType.SYNTHESIS_COMPLETE):
+            self._emit_progress(state)
 
     async def _emit_step_async(
         self,
