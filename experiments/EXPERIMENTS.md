@@ -50,6 +50,39 @@ Only Codex-validated conclusions are recorded as findings.
 
 ---
 
+## EXP-011 — Tier 1 Correctness 011 Fixes: Path Stability + Hash Collision + Occurrence Index (2026-04-02)
+
+**Status:** COMPLETE — 179 tests passing; Codex re-run (012) in progress
+**Git commits:** 8551d5a → 9800371
+**Purpose:** Address all open findings from codex_tier1_correctness_011.txt. Two PARTIALLY_FIXED items, one INTRODUCED_NEW_BUG, plus a newly identified HIGH (ephemeral inventory key).
+
+**Changes shipped:**
+
+1. **engine.py `_deep_read_document` — ephemeral key fix (8551d5a):**
+   `_rel_path = file_path` stored absolute temp paths (e.g. `/tmp/run1/contracts/msa.pdf`) as inventory keys. These change every run → hot path (SO-1) never activated. Fix: `str(_fp.relative_to(repo.base_path))` normalizes to stable `contracts/msa.pdf`. Fallback to `file_path` for external/S3 paths.
+
+2. **engine.py `_deep_read_document` — assertion provenance aliasing (9800371):**
+   `adapter.record_fact(..., document_id=doc.filename)` used basename only → same-basename files in different dirs aliased in `assertion_occurrence`. Fix: use `document_id=_rel_path` (repo-relative, stable).
+
+3. **graph.py `DocumentInventoryStore.upsert` — hash collision resilience (9800371):**
+   SHA256 mismatch detection tried `UPDATE ... SET sha256=?` which failed if new hash already existed on another row (`ux_inventory_hash` constraint). Exception was swallowed → stale `complete` row survived → changed file treated as ingested. Fix: try full UPDATE; on constraint error, fall back to status-only `UPDATE ... SET ingest_status='pending'`. Status reset is always guaranteed.
+
+4. **schema.py + `_migration_v5` — occurrence uniqueness key (9800371):**
+   `ix_occurrence_unique_doc` on `(assertion_id, document_id)` was too coarse — dropped legitimate second occurrences with different `speech_act` (e.g., alleged → admitted for same fact in same doc). Fix: widen to `(assertion_id, document_id, speech_act)`. `SCHEMA_VERSION` bumped 4→5. `_migration_v5` drops the old index and creates the corrected one — applies to both fresh and existing databases.
+
+**What we learned:**
+- `SearchHit.file_path` is always an absolute path (set from `doc.path` in `search.py`). Inventory keys derived directly from it are never stable across runs. Normalization via `relative_to(base_path)` is the only correct approach.
+- SQLite's `INSERT OR IGNORE` on a unique index is safe for concurrent dedup, but the unique key must be semantically correct — too-coarse keys cause silent data loss, not errors.
+- When a column that's part of a unique index must be updated, always have a fallback path that handles the constraint violation — otherwise exception-swallowing in callers creates invisible correctness failures.
+
+**Regression tests added (4 new):**
+- `test_relative_to_base_path_produces_stable_key` — confirms path normalization across different temp dirs
+- `test_sha256_change_resets_status_when_new_hash_conflicts` — confirms status reset survives hash collision
+- `test_same_assertion_same_doc_different_speech_acts_both_recorded` — confirms widened index preserves multi-speech-act occurrences
+- `test_migration_v5_fixes_index_on_existing_db` — confirms migration corrects existing databases
+
+---
+
 ## EXP-009 — Tier 1 Codex Review Fixes + LLM Pricing Research (2026-04-02)
 
 **Status:** IN PROGRESS (Codex architecture brief pending)
