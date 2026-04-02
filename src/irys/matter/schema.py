@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -469,11 +469,52 @@ def _migration_v1(conn) -> None:
                 conn.execute(stmt)
 
 
+def _migration_v2(conn) -> None:
+    """Add missing query-critical indexes identified in Tier 2 scaling review.
+
+    Fixes O(n) scans on: gap open/count, issue title dedup, issue open list,
+    run_session recent_runs, actor list, assertion_link dependents lookup.
+    """
+    stmts = [
+        # assertion_link: src+type lookup for get_dependents()
+        # Current ux_assertion_link has dst between src and type — suboptimal.
+        "CREATE INDEX IF NOT EXISTS ix_link_src_type "
+        "ON assertion_link(src_assertion_id, link_type, dst_assertion_id)",
+
+        # gap: matter+status filter for open_gaps() / count_open()
+        # Current ix_gap_open starts with gap_type, not matter_id.
+        "CREATE INDEX IF NOT EXISTS ix_gap_matter_status "
+        "ON gap(matter_id, status, materiality_score DESC)",
+
+        # issue: matter+status filter for get_open_issues()
+        # Current ix_issue_tree is (parent_issue_id, sort_order) — wrong filter.
+        "CREATE INDEX IF NOT EXISTS ix_issue_matter_status "
+        "ON issue(matter_id, status, salience DESC, materiality DESC)",
+
+        # issue: expression index for LOWER(title) dedup in upsert_issue()
+        "CREATE INDEX IF NOT EXISTS ix_issue_title_norm "
+        "ON issue(matter_id, LOWER(title))",
+
+        # run_session: matter+time for recent_runs() ORDER BY started_at DESC
+        # Current ix_run_matter has status between matter_id and started_at.
+        "CREATE INDEX IF NOT EXISTS ix_run_matter_time "
+        "ON run_session(matter_id, started_at DESC)",
+
+        # actor: matter+canonical_name for list_actors() ORDER BY canonical_name
+        # ux_actor_name covers matter_id+normalized_name but not canonical_name sort.
+        "CREATE INDEX IF NOT EXISTS ix_actor_matter_name "
+        "ON actor(matter_id, canonical_name)",
+    ]
+    for stmt in stmts:
+        conn.execute(stmt)
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
 _MIGRATIONS: list[tuple[int, object]] = [
     (1, _migration_v1),
+    (2, _migration_v2),
 ]
 
 
