@@ -1263,11 +1263,14 @@ class RLMEngine:
             # COLD PATH: full document parsing + LLM analysis
             doc = repo.read(file_path)
 
-            # Register in inventory (compute sha256 from raw bytes for content identity)
+            # Register in inventory (compute sha256 from raw bytes for content identity).
+            # Resolve absolute path via repo.base_path so this works when CWD != repo root
+            # (e.g., in FastAPI background tasks where file_path is a relative path).
             if _mm is not None:
                 import hashlib as _hl
                 try:
-                    _raw = _fp.read_bytes()
+                    _abs_fp = (Path(repo.base_path) / file_path) if not _fp.is_absolute() else _fp
+                    _raw = _abs_fp.read_bytes()
                     _sha = _hl.sha256(_raw).hexdigest()
                     _inv_id, _ = _mm.inventory.upsert(
                         relative_path=_rel_path,
