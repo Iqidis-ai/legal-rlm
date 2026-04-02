@@ -219,6 +219,28 @@ class AssertionStore:
         ).fetchone()
         return row[0]
 
+    def list_recent(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        """Return recent assertions with their first occurrence's source metadata."""
+        rows = self.db.execute(
+            """SELECT a.id, a.proposition_text, a.model_layer, a.assertion_kind,
+                      a.belief_state, a.confidence, a.created_at,
+                      ao.document_id, ao.source_role, ao.speech_act
+               FROM assertion a
+               LEFT JOIN assertion_occurrence ao
+                 ON ao.assertion_id = a.id
+                 AND ao.id = (
+                     SELECT id FROM assertion_occurrence
+                     WHERE assertion_id = a.id
+                     ORDER BY created_at
+                     LIMIT 1
+                 )
+               WHERE a.matter_id=?
+               ORDER BY a.created_at DESC
+               LIMIT ? OFFSET ?""",
+            (self.matter_id, limit, offset),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_by_proposition(self, proposition_text: str) -> Optional[AssertionRecord]:
         """Look up an assertion by normalized proposition text."""
         import hashlib

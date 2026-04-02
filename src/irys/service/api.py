@@ -1279,6 +1279,26 @@ async def get_reconciliation(matter_id: str, currency: str = "USD"):
 
 
 @app.get(
+    "/matter/{matter_id}/assertions",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_assertions(matter_id: str, limit: int = 50, offset: int = 0):
+    """Return paginated list of assertions with source metadata (SO-2).
+
+    Each assertion includes belief_state, source_role, speech_act, and the
+    document it came from — enabling clients to audit the evidence layer.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return {
+        "total": model.assertions.count(),
+        "limit": limit,
+        "offset": offset,
+        "assertions": model.assertions.list_recent(limit=limit, offset=offset),
+    }
+
+
+@app.get(
     "/matter/{matter_id}/issues",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
