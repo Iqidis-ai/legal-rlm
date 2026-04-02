@@ -959,6 +959,18 @@ class RLMEngine:
 
                 if not results.hits:
                     state.mark_lead_investigated(lead.id, "No results found")
+                    # Record as a gap if this lead was targeting a specific issue (SO-7)
+                    _adp = getattr(state, "_matter_adapter", None)
+                    if _adp is not None and lead.focus_issue_id is not None:
+                        from ..matter.enums import GapType
+                        _adp.record_gap(
+                            description=f"No documents found for search: '{search_term}'",
+                            gap_type=GapType.MISSING_DOCUMENT,
+                            expected_artifact=search_term,
+                            materiality=0.4,
+                            affected_type="issue",
+                            affected_id=lead.focus_issue_id,
+                        )
                     return
 
                 self._emit_step(

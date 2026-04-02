@@ -17,7 +17,7 @@ from typing import Optional, TYPE_CHECKING
 from .matter import MatterModel
 from .enums import (
     LedgerEventType, SpeechAct, SourceRole, ModelLayer,
-    AssertionKind, OriginKind, RevisionCause, AssertionLinkType,
+    AssertionKind, OriginKind, RevisionCause, AssertionLinkType, GapType,
 )
 from .models import AssertionCandidate, QueryMatterContext
 
@@ -223,6 +223,30 @@ class MatterRuntimeAdapter:
             changed_object_type="gap" if gap_id else None,
             changed_object_id=gap_id,
         )
+
+    def record_gap(
+        self,
+        description: str,
+        gap_type: GapType = GapType.MISSING_DOCUMENT,
+        expected_artifact: Optional[str] = None,
+        materiality: float = 0.5,
+        affected_type: Optional[str] = None,
+        affected_id: Optional[str] = None,
+    ) -> str:
+        """
+        Persist a structured gap in the gap store and write a ledger event.
+        Returns gap_id.
+        """
+        gap_id = self.model.gaps.record(
+            gap_type=gap_type,
+            description=description,
+            expected_artifact=expected_artifact,
+            materiality=materiality,
+            affected_type=affected_type,
+            affected_id=affected_id,
+        )
+        self.log_gap(description, gap_id=gap_id)
+        return gap_id
 
     # ------------------------------------------------------------------
     # User steering (called from API layer)
