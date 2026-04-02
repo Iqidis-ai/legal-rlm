@@ -262,6 +262,20 @@ def test_null_adapter_redirect_is_always_false():
     assert adapter.get_redirect_issue_id() is None
 
 
+def test_issue_store_get_issue_by_id(model):
+    """IssueStore.get_issue(id) must return a dict with 'title' key."""
+    issue_id, _ = model.issues.upsert_issue("Breach of contract", IssueType.CLAIM)
+    row = model.issues.get_issue(issue_id)
+    assert row is not None
+    assert row["id"] == issue_id
+    assert row["title"] == "Breach of contract"
+
+
+def test_issue_store_get_issue_returns_none_for_unknown(model):
+    """get_issue() with unknown id must return None, not raise."""
+    assert model.issues.get_issue("nonexistent-id") is None
+
+
 # ---------------------------------------------------------------------------
 # User correction entry point
 # ---------------------------------------------------------------------------
