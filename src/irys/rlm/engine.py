@@ -1235,32 +1235,42 @@ class RLMEngine:
         self._emit_step(state, StepType.READING, f"Deep reading: {Path(file_path).name}")
 
         try:
-            doc = repo.read(file_path)
-
-            # Cold/hot split (SO-1): if document already fully ingested into the matter
-            # model in a prior run, skip the expensive LLM analysis pass.
+            # Cold/hot split (SO-1): check inventory BEFORE the expensive repo.read()
+            # so hot-path documents skip PDF parsing entirely, not just LLM calls.
             _mm = self._matter_model
             _inventory_doc_id: Optional[str] = None
+            _fp = Path(file_path)
+            _doc_filename = _fp.name
+
             if _mm is not None:
-                import hashlib as _hl
                 try:
-                    _raw = Path(file_path).read_bytes()
-                    _sha = _hl.sha256(_raw).hexdigest()
-                    _inv_id, _is_new = _mm.inventory.upsert(
-                        relative_path=doc.filename,
-                        sha256=_sha,
-                        size_bytes=len(_raw),
-                        file_type=Path(file_path).suffix.lstrip(".") or None,
-                    )
-                    _inventory_doc_id = _inv_id
-                    if not _is_new and _mm.inventory.is_ingested(doc.filename):
-                        # HOT PATH: already ingested; count but skip LLM
+                    if _mm.inventory.is_ingested(_doc_filename):
+                        # HOT PATH: already fully ingested in a prior run
                         state.documents_read += 1
                         self._emit_step(
                             state, StepType.READING,
-                            f"Hot path (already ingested): {doc.filename}",
+                            f"Hot path (already ingested): {_doc_filename}",
                         )
                         return
+                except Exception:
+                    pass  # inventory failure must not block analysis
+
+            # COLD PATH: full document parsing + LLM analysis
+            doc = repo.read(file_path)
+
+            # Register in inventory (compute sha256 from raw bytes for content identity)
+            if _mm is not None:
+                import hashlib as _hl
+                try:
+                    _raw = _fp.read_bytes()
+                    _sha = _hl.sha256(_raw).hexdigest()
+                    _inv_id, _ = _mm.inventory.upsert(
+                        relative_path=doc.filename,
+                        sha256=_sha,
+                        size_bytes=len(_raw),
+                        file_type=_fp.suffix.lstrip(".") or None,
+                    )
+                    _inventory_doc_id = _inv_id
                 except Exception:
                     pass  # inventory failure must not block analysis
 
