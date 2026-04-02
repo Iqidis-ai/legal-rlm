@@ -1,4 +1,4 @@
-"""AssertionStore, EvidenceStore, AssumptionStore, GapStore.
+"""AssertionStore, GapStore, ActorStore, IssueStore.
 
 The assertion store is the heart of the intelligence layer. It maintains
 typed assertions with speech-act classification, support/attack links,
@@ -12,7 +12,7 @@ from typing import Optional
 from .db import SQLiteMatterDB
 from .enums import (
     BeliefState, SpeechAct, SourceRole, ModelLayer, AssertionKind,
-    AssertionLinkType, OriginKind, GapType,
+    AssertionLinkType, OriginKind, GapType, IssueType,
 )
 from .models import AssertionCandidate, AssertionRecord, RevisionResult
 
@@ -391,5 +391,146 @@ class ActorStore:
     def count(self) -> int:
         row = self.db.execute(
             "SELECT COUNT(*) FROM actor WHERE matter_id=?", (self.matter_id,)
+        ).fetchone()
+        return row[0]
+
+
+class IssueStore:
+    """
+    Manages the legal issue tree for a matter.
+
+    Issues can be hierarchical (claim → sub-claim → predicate).
+    Assertions link to issues via assertion_issue_link.
+    This drives issue-targeted retrieval: instead of asking
+    "what do the documents say?", the engine asks "what supports/attacks
+    each open issue predicate?".
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def upsert_issue(
+        self,
+        title: str,
+        issue_type: IssueType,
+        parent_issue_id: Optional[str] = None,
+        burden_side: Optional[str] = None,
+        materiality: float = 0.5,
+        salience: float = 0.5,
+        sort_order: int = 0,
+    ) -> tuple[str, bool]:
+        """
+        Create or retrieve an issue by normalized title.
+        Returns (issue_id, is_new).
+        """
+        normalized_title = " ".join(title.lower().split())
+        now = _now()
+
+        with self.db.transaction():
+            row = self.db.execute(
+                """SELECT id FROM issue
+                   WHERE matter_id=? AND LOWER(title)=?""",
+                (self.matter_id, normalized_title),
+            ).fetchone()
+
+            if row is not None:
+                return row["id"], False
+
+            issue_id = _id()
+            self.db.execute(
+                """INSERT INTO issue
+                   (id, matter_id, parent_issue_id, title, issue_type,
+                    burden_side, materiality, salience, status, sort_order,
+                    created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (issue_id, self.matter_id, parent_issue_id, title,
+                 issue_type.value, burden_side, materiality, salience,
+                 "open", sort_order, now, now),
+            )
+
+        return issue_id, True
+
+    def add_predicate(
+        self,
+        issue_id: str,
+        description: str,
+        burden_side: Optional[str] = None,
+    ) -> str:
+        """
+        Add a testable predicate to an issue.
+        Returns predicate_id.
+        """
+        pred_id = _id()
+        now = _now()
+        with self.db.transaction():
+            self.db.execute(
+                """INSERT INTO issue_predicate
+                   (id, issue_id, description, burden_side, status, created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (pred_id, issue_id, description, burden_side, "open", now),
+            )
+        return pred_id
+
+    def link_assertion(
+        self,
+        assertion_id: str,
+        issue_id: str,
+        relation_type: str = "supports",
+    ) -> str:
+        """
+        Link an assertion to an issue. Idempotent.
+        relation_type: 'supports', 'attacks', 'establishes', 'negates'
+        Returns link_id.
+        """
+        link_id = _id()
+        now = _now()
+        with self.db.transaction():
+            self.db.execute(
+                """INSERT OR IGNORE INTO assertion_issue_link
+                   (id, assertion_id, issue_id, relation_type, created_at)
+                   VALUES (?,?,?,?,?)""",
+                (link_id, assertion_id, issue_id, relation_type, now),
+            )
+        row = self.db.execute(
+            "SELECT id FROM assertion_issue_link WHERE assertion_id=? AND issue_id=? AND relation_type=?",
+            (assertion_id, issue_id, relation_type),
+        ).fetchone()
+        return row["id"] if row else link_id
+
+    def get_open_issues(self, min_materiality: float = 0.0) -> list[dict]:
+        """Return open issues ordered by salience × materiality descending."""
+        rows = self.db.execute(
+            """SELECT * FROM issue
+               WHERE matter_id=? AND status='open' AND materiality >= ?
+               ORDER BY (salience * materiality) DESC""",
+            (self.matter_id, min_materiality),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_assertions_for_issue(self, issue_id: str) -> list[dict]:
+        """Return all assertions linked to an issue with their relation types."""
+        rows = self.db.execute(
+            """SELECT a.*, ail.relation_type
+               FROM assertion a
+               JOIN assertion_issue_link ail ON ail.assertion_id = a.id
+               WHERE ail.issue_id=?
+               ORDER BY ail.relation_type, a.belief_state""",
+            (issue_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_predicates(self, issue_id: str) -> list[dict]:
+        """Return all predicates for an issue."""
+        rows = self.db.execute(
+            "SELECT * FROM issue_predicate WHERE issue_id=? AND status='open' ORDER BY created_at",
+            (issue_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_open(self) -> int:
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM issue WHERE matter_id=? AND status='open'",
+            (self.matter_id,),
         ).fetchone()
         return row[0]

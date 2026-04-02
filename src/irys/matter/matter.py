@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from .db import SQLiteMatterDB
-from .graph import AssertionStore, GapStore, ActorStore
+from .graph import AssertionStore, GapStore, ActorStore, IssueStore
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
 from .enums import (
@@ -53,6 +53,7 @@ class MatterModel:
         self.assertions = AssertionStore(db, matter_id)
         self.gaps = GapStore(db, matter_id)
         self.actors = ActorStore(db, matter_id)
+        self.issues = IssueStore(db, matter_id)
         self.ledger = ReasoningLedgerStore(db, matter_id)
         self.belief = BeliefRevisionEngine(db, self.assertions)
 
@@ -220,14 +221,24 @@ class MatterModel:
         matter_name = row["name"] if row else "unknown"
 
         assertion_count = self.assertions.count()
-        gap_count = self.gaps.count_open()
         open_gaps = self.gaps.open_gaps(min_materiality=0.3)
+        open_issues = self.issues.get_open_issues(min_materiality=0.3)
+        actor_count = self.actors.count()
+
+        # Find weakest issue (lowest materiality × salience score)
+        weakest_issue_id = None
+        if open_issues:
+            weakest = min(open_issues, key=lambda i: i["materiality"] * i["salience"])
+            weakest_issue_id = weakest["id"]
 
         return QueryMatterContext(
             matter_id=self.matter_id,
             matter_name=matter_name,
             open_gaps=open_gaps,
+            open_issues=open_issues,
             existing_assertion_count=assertion_count,
+            existing_actor_count=actor_count,
+            weakest_issue_id=weakest_issue_id,
         )
 
     # ------------------------------------------------------------------
@@ -240,6 +251,8 @@ class MatterModel:
             "matter_id": self.matter_id,
             "assertion_count": self.assertions.count(),
             "open_gap_count": self.gaps.count_open(),
+            "open_issue_count": self.issues.count_open(),
+            "actor_count": self.actors.count(),
             "recent_runs": len(self.ledger.recent_runs(limit=5)),
         }
 

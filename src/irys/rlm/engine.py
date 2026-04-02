@@ -715,6 +715,22 @@ class RLMEngine:
         state.findings["issues"] = plan.get("issues", [])
         state.findings["initial_plan"] = plan
 
+        # Record issues in matter model if enabled
+        adapter = getattr(state, "_matter_adapter", None)
+        if adapter is not None and self._matter_model is not None:
+            from ..matter.enums import IssueType
+            for issue_title in plan.get("issues", []):
+                if isinstance(issue_title, str) and issue_title.strip():
+                    issue_id, _ = self._matter_model.issues.upsert_issue(
+                        title=issue_title.strip(),
+                        issue_type=IssueType.CLAIM,
+                        salience=0.7,
+                    )
+                    adapter.log_step(
+                        f"Issue identified: {issue_title[:100]}",
+                        why="From orientation analysis",
+                    )
+
         # Create initial leads from plan
         for search_term in plan.get("initial_searches", [])[:5]:
             if isinstance(search_term, str):
