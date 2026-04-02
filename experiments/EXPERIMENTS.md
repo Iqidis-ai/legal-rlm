@@ -5,6 +5,38 @@ Only Codex-validated conclusions are recorded as findings.
 
 ---
 
+## EXP-005 — Engine-Substrate Wiring Sprint (2026-04-02)
+
+**Status:** COMPLETE
+**Git commits:** 414c3e2 → 6977d4c (7 commits)
+**Purpose:** Close the engine-substrate disconnect flagged by Adversarial Audit #1 (all 5 SOs rated PARTIAL due to engine never reading the matter model stores during live runs).
+
+**Changes shipped:**
+1. **SO-5 bug fix** — `document_id = results.query` → `results.top(1)[0].filename` (source-role inference was running on search strings)
+2. **Migration runner** — `apply_schema()` replaced with versioned `_MIGRATIONS` list; CREATE-IF-NOT-EXISTS replay removed
+3. **Migration 2: 6 missing indexes** — gap/matter_status, issue/matter_status, issue/LOWER(title), run/matter_time, actor/matter_name, link/src_type
+4. **weakest_issue_id stability** — `get_open_issues()` now has `id ASC` tiebreaker; `build_query_context()` `min()` key includes id
+5. **depends_on direction fix** — removed from `get_dependents()` propagation (was propagating toward prerequisite, not dependent)
+6. **SO-1/SO-4 wiring** — `_orient()` reads `adapter.get_context()`, formats `QueryMatterContext` into orientation prompt; weakest issue injected with explicit "PRIORITY FOCUS" instruction; `Lead.search_term` preserves raw terms from LLM output bypassing `_extract_search_term()` token collapse
+7. **SO-3 interrupt lifecycle** — `_investigate_lead()` exits early without marking lead investigated; `interrupt_run()` added to ReasoningLedgerStore + MatterModel; post-loop stop check skips verify/synthesis; `state.interrupt()` sets proper status
+8. **Migration 3: assertion identity** — unique index rebuilt as `(matter_id, model_layer, proposition_key)` so same-text propositions in different reasoning layers coexist; upsert lookup updated to include `model_layer`
+
+**What we learned (Codex-validated):**
+- SO-1/SO-4: Prompt-only injection is not sufficient without preserving `Lead.search_term`; `_extract_search_term()` collapses multi-word queries to a single token, losing all issue-focused search intent
+- SO-3: Stop must skip synthesis entirely (not partial synthesis) per Codex design gate; run_session must transition to `interrupted` not `completed`
+- Assertion identity: the (matter_id, proposition_key) unique key was the single highest-risk design choice — it collapsed all five reasoning layers
+- Migration system was prerequisite for all schema changes; existing `apply_schema()` couldn't handle any non-additive changes
+
+**What remains:**
+- `adapter.log_step()` called in only one orientation branch — reasoning ledger is thin
+- Redirect (SO-3) is pure scaffolding
+- Issue-to-assertion linking not yet happening in live engine (SO-4)
+- Source role still not influencing synthesis weighting (SO-5)
+- Numeric extraction (SO-6) not started
+- Gap store not populated by engine (SO-7)
+
+---
+
 ## EXP-001 — Static Structural Baseline (2026-04-02)
 
 **Status:** COMPLETE (static analysis — no API key available for live run)
