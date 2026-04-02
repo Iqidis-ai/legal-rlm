@@ -1647,6 +1647,8 @@ class InvestigationState:
                     "priority": l.priority,
                     "investigated": l.investigated,
                     "findings": l.findings,
+                    "search_term": l.search_term,
+                    "focus_issue_id": l.focus_issue_id,
                 }
                 for l in self.leads
             ],
@@ -1749,6 +1751,8 @@ class InvestigationState:
                 priority=l.get("priority", 0.5),
                 investigated=l.get("investigated", False),
                 findings=l.get("findings"),
+                search_term=l.get("search_term"),
+                focus_issue_id=l.get("focus_issue_id"),
             )
             state.leads.append(lead)
 
