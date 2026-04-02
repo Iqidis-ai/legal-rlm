@@ -176,10 +176,16 @@ class AssertionStore:
 
         When assertion_id changes, all dependents must be re-evaluated.
         Link direction: assertion_id --SUPPORTS--> dependent
+
+        Note: depends_on links are stored but intentionally excluded from
+        propagation — the direction semantics (src depends on dst, so dst's
+        changes should re-evaluate src) require a separate reversed query that
+        is not implemented yet. Including depends_on here propagates in the
+        wrong direction (toward the prerequisite, not toward the dependent).
         """
         rows = self.db.execute(
             """SELECT dst_assertion_id FROM assertion_link
-               WHERE src_assertion_id=? AND link_type IN ('depends_on','supports')""",
+               WHERE src_assertion_id=? AND link_type='supports'""",
             (assertion_id,),
         ).fetchall()
         return [r[0] for r in rows]
