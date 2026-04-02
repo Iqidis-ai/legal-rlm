@@ -1,4 +1,4 @@
-"""AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore.
+"""AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore.
 
 The assertion store is the heart of the intelligence layer. It maintains
 typed assertions with speech-act classification, support/attack links,
@@ -624,6 +624,84 @@ class ClarificationStore:
         row = self.db.execute(
             "SELECT COUNT(*) FROM clarification_question "
             "WHERE matter_id=? AND status='pending'",
+            (self.matter_id,),
+        ).fetchone()
+        return row[0]
+
+
+class QuantStore:
+    """
+    Stores structured numeric facts extracted from documents (SO-6).
+
+    quant_kind values: "amount", "date", "date_range", "rate", "balance", "count"
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def record(
+        self,
+        quant_kind: str,
+        raw_text: str,
+        amount_value: Optional[float] = None,
+        currency: Optional[str] = None,
+        date_value: Optional[str] = None,
+        date_end_value: Optional[str] = None,
+        rate_value: Optional[float] = None,
+        unit: Optional[str] = None,
+        subject_type: Optional[str] = None,
+        subject_id: Optional[str] = None,
+        assertion_id: Optional[str] = None,
+        span_id: Optional[str] = None,
+    ) -> str:
+        """Persist a structured numeric fact. Returns quant_fact_id."""
+        qf_id = _id()
+        now = _now()
+        with self.db.transaction():
+            self.db.execute(
+                """INSERT INTO quant_fact
+                   (id, matter_id, quant_kind, amount_value, date_value, date_end_value,
+                    rate_value, currency, unit, raw_text, subject_type, subject_id,
+                    span_id, assertion_id, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (qf_id, self.matter_id, quant_kind, amount_value, date_value, date_end_value,
+                 rate_value, currency, unit, raw_text[:500], subject_type, subject_id,
+                 span_id, assertion_id, now),
+            )
+        return qf_id
+
+    def get_by_kind(self, quant_kind: str) -> list[dict]:
+        """Return all quant facts of a given kind, sorted by date."""
+        rows = self.db.execute(
+            """SELECT * FROM quant_fact
+               WHERE matter_id=? AND quant_kind=?
+               ORDER BY date_value, created_at""",
+            (self.matter_id, quant_kind),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_amounts(self, min_value: Optional[float] = None) -> list[dict]:
+        """Return all monetary amounts, optionally filtered by minimum value."""
+        if min_value is not None:
+            rows = self.db.execute(
+                """SELECT * FROM quant_fact
+                   WHERE matter_id=? AND quant_kind='amount' AND amount_value >= ?
+                   ORDER BY amount_value DESC""",
+                (self.matter_id, min_value),
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                """SELECT * FROM quant_fact
+                   WHERE matter_id=? AND quant_kind='amount'
+                   ORDER BY amount_value DESC NULLS LAST""",
+                (self.matter_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count(self) -> int:
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM quant_fact WHERE matter_id=?",
             (self.matter_id,),
         ).fetchone()
         return row[0]

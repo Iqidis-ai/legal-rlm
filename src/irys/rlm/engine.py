@@ -187,7 +187,15 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
    - Dates: date, what happened, significance
    - Amounts: value, context, what it represents
 
-4. DOCUMENT RELATIONSHIPS:
+4. NUMERIC FACTS (SO-6 — extract ALL monetary amounts, dates, rates, counts):
+   For each number, provide a structured object:
+   - kind: "amount" | "date" | "rate" | "balance" | "count"
+   - raw: exact text from document
+   - value: numeric value if parseable (null otherwise)
+   - currency: "USD" etc. for amounts (null if not monetary)
+   - context: brief label of what this number represents (max 60 chars)
+
+5. DOCUMENT RELATIONSHIPS:
    - References to other documents (attachments, exhibits)
    - Prior agreements or communications mentioned
    - Events that require corroboration elsewhere
@@ -202,7 +210,8 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
 {{
     "key_facts": [{{"fact": "...", "page": N}}],
     "quotes": [{{"text": "...", "page": N}}],
-    "entities": {{"people": ["name1"], "dates": ["date1"], "amounts": ["$X"]}},
+    "entities": {{"people": ["name1"], "dates": ["date1"], "amounts": ["$X"], "companies": ["co1"]}},
+    "numeric_facts": [{{"kind": "amount", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due"}}],
     "connections": ["doc reference 1"],
     "concerns": ["issue 1"]
 }}
@@ -1190,7 +1199,8 @@ class RLMEngine:
             analysis = self._parse_json_safe(response, {
                 "key_facts": [],
                 "quotes": [],
-                "entities": {"people": [], "companies": [], "dates": []},
+                "entities": {"people": [], "companies": [], "dates": [], "amounts": []},
+                "numeric_facts": [],
                 "connections": [],
                 "concerns": [],
             })
@@ -1223,6 +1233,30 @@ class RLMEngine:
                 if adapter is not None:
                     for fact_text in facts_to_add:
                         adapter.record_fact(fact_text, document_id=doc.filename, issue_id=focus_issue_id)
+
+            # Extract and store structured numeric facts (SO-6)
+            if analysis.get("numeric_facts"):
+                _adp = getattr(state, "_matter_adapter", None)
+                if _adp is not None:
+                    for nf in analysis["numeric_facts"][:20]:  # limit to avoid noise
+                        if not isinstance(nf, dict):
+                            continue
+                        kind = nf.get("kind", "amount")
+                        raw = nf.get("raw", "")
+                        if not raw:
+                            continue
+                        value = nf.get("value")
+                        amount = float(value) if kind == "amount" and value is not None else None
+                        rate = float(value) if kind == "rate" and value is not None else None
+                        date_val = raw if kind == "date" else None
+                        _adp.record_quant(
+                            quant_kind=kind,
+                            raw_text=f"{raw} — {nf.get('context', '')}",
+                            amount_value=amount,
+                            currency=nf.get("currency"),
+                            date_value=date_val,
+                            rate_value=rate,
+                        )
 
             # Extract and store entities
             if analysis.get("entities"):

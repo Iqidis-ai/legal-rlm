@@ -299,6 +299,32 @@ class MatterRuntimeAdapter:
         )
         return actor_id
 
+    def record_quant(
+        self,
+        quant_kind: str,
+        raw_text: str,
+        amount_value: Optional[float] = None,
+        currency: Optional[str] = None,
+        date_value: Optional[str] = None,
+        rate_value: Optional[float] = None,
+        unit: Optional[str] = None,
+        assertion_id: Optional[str] = None,
+    ) -> str:
+        """
+        Persist a structured numeric fact to the quant store (SO-6).
+        Returns quant_fact_id.
+        """
+        return self.model.quant.record(
+            quant_kind=quant_kind,
+            raw_text=raw_text,
+            amount_value=amount_value,
+            currency=currency,
+            date_value=date_value,
+            rate_value=rate_value,
+            unit=unit,
+            assertion_id=assertion_id,
+        )
+
 
 class NullMatterAdapter:
     """
@@ -351,4 +377,7 @@ class NullMatterAdapter:
         return False
 
     def record_actor(self, canonical_name: str, actor_type: str = "person") -> str:
+        return ""
+
+    def record_quant(self, quant_kind: str, raw_text: str, **kwargs) -> str:
         return ""
