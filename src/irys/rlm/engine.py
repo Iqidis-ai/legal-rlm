@@ -1243,16 +1243,18 @@ class RLMEngine:
             _mm = self._matter_model
             _inventory_doc_id: Optional[str] = None
             _fp = Path(file_path)
-            _doc_filename = _fp.name
+            # Use the full file_path as the inventory key, not just _fp.name, so that
+            # contracts/msa.pdf and exhibits/msa.pdf are never aliased to the same row.
+            _rel_path = file_path
 
             if _mm is not None:
                 try:
-                    if _mm.inventory.is_ingested(_doc_filename):
+                    if _mm.inventory.is_ingested(_rel_path):
                         # HOT PATH: already fully ingested in a prior run
                         state.documents_read += 1
                         self._emit_step(
                             state, StepType.READING,
-                            f"Hot path (already ingested): {_doc_filename}",
+                            f"Hot path (already ingested): {_fp.name}",
                         )
                         return
                 except Exception:
@@ -1268,7 +1270,7 @@ class RLMEngine:
                     _raw = _fp.read_bytes()
                     _sha = _hl.sha256(_raw).hexdigest()
                     _inv_id, _ = _mm.inventory.upsert(
-                        relative_path=doc.filename,
+                        relative_path=_rel_path,
                         sha256=_sha,
                         size_bytes=len(_raw),
                         file_type=_fp.suffix.lstrip(".") or None,

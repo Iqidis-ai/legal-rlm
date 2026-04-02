@@ -67,6 +67,10 @@ CREATE INDEX IF NOT EXISTS ix_occurrence_assertion
 CREATE INDEX IF NOT EXISTS ix_occurrence_document
     ON assertion_occurrence(document_id, span_id);
 
+-- Prevents duplicate occurrences from concurrent runs ingesting the same document
+CREATE UNIQUE INDEX IF NOT EXISTS ix_occurrence_unique_doc
+    ON assertion_occurrence(assertion_id, document_id);
+
 CREATE TABLE IF NOT EXISTS assertion_link (
     id              TEXT PRIMARY KEY,
     src_assertion_id TEXT NOT NULL REFERENCES assertion(id),

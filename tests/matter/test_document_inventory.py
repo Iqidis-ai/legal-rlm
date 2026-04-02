@@ -120,3 +120,48 @@ def test_partial_ingest_not_skipped(model):
     doc_id2, is_new2 = model.inventory.upsert("Partial.pdf", "p" * 64)
     assert doc_id == doc_id2
     assert model.inventory.is_ingested("Partial.pdf") is False
+
+
+# ---------------------------------------------------------------------------
+# HIGH-1: basename collision — distinct paths must not alias
+# ---------------------------------------------------------------------------
+
+def test_same_basename_different_dirs_are_distinct(model):
+    """contracts/msa.pdf and exhibits/msa.pdf must never share a row.
+
+    This catches the HIGH-1 finding: if the inventory key is doc.filename (path.name),
+    the second file silently aliases to the first and can be hot-skipped incorrectly.
+    """
+    id1, new1 = model.inventory.upsert("contracts/msa.pdf", "a" * 64)
+    id2, new2 = model.inventory.upsert("exhibits/msa.pdf", "b" * 64)
+    assert id1 != id2, "documents with the same basename but different paths must be distinct"
+    assert new1 is True
+    assert new2 is True
+    # Marking one ingested must not affect the other
+    model.inventory.mark_ingested(id1)
+    assert model.inventory.is_ingested("contracts/msa.pdf") is True
+    assert model.inventory.is_ingested("exhibits/msa.pdf") is False
+
+
+# ---------------------------------------------------------------------------
+# HIGH-2: sha256 mismatch — content change must force cold re-ingest
+# ---------------------------------------------------------------------------
+
+def test_sha256_change_resets_ingest_status(model):
+    """If a path's content changes, ingest_status must be reset to 'pending'.
+
+    This catches the HIGH-2 finding: without sha256 comparison, a changed file
+    at the same path keeps ingest_status='complete' and stale assertions are reused.
+    """
+    doc_id, _ = model.inventory.upsert("contract.pdf", "a" * 64)
+    model.inventory.mark_ingested(doc_id)
+    assert model.inventory.is_ingested("contract.pdf") is True
+
+    # Simulate file content change — same path, different sha256
+    doc_id2, is_new2 = model.inventory.upsert("contract.pdf", "b" * 64)
+    assert doc_id2 == doc_id, "same path must return same row id"
+    assert is_new2 is False
+    # Status must be reset so the engine runs a fresh cold ingest
+    assert model.inventory.is_ingested("contract.pdf") is False, (
+        "changed sha256 must reset ingest_status to 'pending'"
+    )

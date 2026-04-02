@@ -854,15 +854,21 @@ class DocumentInventoryStore:
             )
             # Fetch actual row (may differ from doc_id if INSERT was ignored on conflict)
             row = self.db.execute(
-                "SELECT id, ingest_status FROM document_inventory WHERE matter_id=? AND relative_path=?",
+                "SELECT id, ingest_status, sha256 FROM document_inventory WHERE matter_id=? AND relative_path=?",
                 (self.matter_id, relative_path),
             ).fetchone()
             if row is None:
                 # Fallback: sha256 collision (same content, different path name)
                 row = self.db.execute(
-                    "SELECT id, ingest_status FROM document_inventory WHERE matter_id=? AND sha256=?",
+                    "SELECT id, ingest_status, sha256 FROM document_inventory WHERE matter_id=? AND sha256=?",
                     (self.matter_id, sha256),
                 ).fetchone()
+            elif row["sha256"] != sha256:
+                # Content changed at same path — reset to pending to force cold re-ingest
+                self.db.execute(
+                    "UPDATE document_inventory SET sha256=?, size_bytes=?, ingest_status='pending', last_read_at=? WHERE id=?",
+                    (sha256, size_bytes, now, row["id"]),
+                )
         actual_id = row["id"] if row else doc_id
         is_new = actual_id == doc_id  # True only if INSERT succeeded (no prior conflict)
         return actual_id, is_new
