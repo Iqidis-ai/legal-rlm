@@ -174,3 +174,44 @@ def test_adapter_record_quant_passes_subject_type(model):
 
     rec = model.quant.reconcile_by_subject("USD")
     assert rec.get("invoice", {}).get("total") == 75_000.0
+
+
+# ---------------------------------------------------------------------------
+# MatterModel.detect_quant_conflicts() integration
+# ---------------------------------------------------------------------------
+
+def test_detect_quant_conflicts_creates_gap(model):
+    """detect_quant_conflicts() must record UNRESOLVED_CONTRADICTION gap for each conflict."""
+    model.quant.record(quant_kind="amount", raw_text="$50k — invoice A",
+                       amount_value=50_000.0, currency="USD", subject_type="invoice")
+    model.quant.record(quant_kind="amount", raw_text="$55k — invoice B",
+                       amount_value=55_000.0, currency="USD", subject_type="invoice")
+
+    gap_ids = model.detect_quant_conflicts()
+    assert len(gap_ids) == 1
+
+    open_gaps = model.gaps.open_gaps(min_materiality=0.0)
+    assert any(g["id"] == gap_ids[0] for g in open_gaps)
+    assert any("invoice" in g["description"] for g in open_gaps)
+
+
+def test_detect_quant_conflicts_is_idempotent(model):
+    """Calling detect_quant_conflicts() twice must not create duplicate gaps."""
+    model.quant.record(quant_kind="amount", raw_text="$50k", amount_value=50_000.0,
+                       currency="USD", subject_type="invoice")
+    model.quant.record(quant_kind="amount", raw_text="$60k", amount_value=60_000.0,
+                       currency="USD", subject_type="invoice")
+
+    model.detect_quant_conflicts()
+    model.detect_quant_conflicts()
+
+    open_gaps = model.gaps.open_gaps(min_materiality=0.0)
+    invoice_gaps = [g for g in open_gaps if "invoice" in g.get("description", "")]
+    assert len(invoice_gaps) == 1  # not duplicated
+
+
+def test_detect_quant_conflicts_no_conflicts_returns_empty(model):
+    """detect_quant_conflicts() must return [] when no conflicts exist."""
+    model.quant.record(quant_kind="amount", raw_text="$50k", amount_value=50_000.0,
+                       currency="USD", subject_type="invoice")
+    assert model.detect_quant_conflicts() == []

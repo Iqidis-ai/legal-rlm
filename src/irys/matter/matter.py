@@ -315,6 +315,50 @@ class MatterModel:
         return question_ids
 
     # ------------------------------------------------------------------
+    # Quantitative intelligence (SO-6 + SO-7)
+    # ------------------------------------------------------------------
+
+    def detect_quant_conflicts(self) -> list[str]:
+        """
+        Detect numeric conflicts: same subject_type+currency with divergent amounts.
+
+        For each conflict group found, records an UNRESOLVED_CONTRADICTION gap with
+        materiality 0.8 (high — amount conflicts are almost always significant).
+        Returns list of new gap_ids created. Idempotent: skips conflicts whose gap
+        description is already in the open gap store.
+        """
+        conflicts = self.quant.get_conflicts()
+        if not conflicts:
+            return []
+
+        existing_descriptions = {
+            g.get("description", "").lower()
+            for g in self.gaps.open_gaps(min_materiality=0.0)
+        }
+
+        gap_ids = []
+        for conflict in conflicts:
+            subject = conflict.get("subject_type") or "unknown"
+            currency = conflict.get("currency") or ""
+            values = conflict.get("values", [])
+            value_str = ", ".join(f"{v:,.2f}" for v in values[:5])
+            desc = f"Conflicting {subject} amounts ({currency}): {value_str}"
+            if desc.lower() in existing_descriptions:
+                continue
+            gap_id = self.record_gap(
+                description=desc,
+                gap_type=GapType.UNRESOLVED_CONTRADICTION,
+                materiality=0.8,
+            )
+            gap_ids.append(gap_id)
+
+        return gap_ids
+
+    def reconcile(self, currency: str = "USD") -> dict:
+        """Return reconciliation summary grouped by subject_type for a currency."""
+        return self.quant.reconcile_by_subject(currency)
+
+    # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
 

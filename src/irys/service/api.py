@@ -1253,3 +1253,25 @@ async def answer_clarification(
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"status": "answered", "question_id": question_id}
+
+
+@app.get(
+    "/matter/{matter_id}/reconcile",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_reconciliation(matter_id: str, currency: str = "USD"):
+    """Return a payment reconciliation summary grouped by subject type.
+
+    Groups all extracted monetary amounts by subject_type (invoice, payment,
+    fee, damages, etc.) and sums each bucket. Compare invoice vs payment totals
+    to identify claimed exposure.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    reconciliation = model.reconcile(currency=currency)
+    conflicts = model.quant.get_conflicts()
+    return {
+        "currency": currency,
+        "by_subject": reconciliation,
+        "conflicts": conflicts,
+    }

@@ -741,6 +741,8 @@ class RLMEngine:
             state.complete()
             if run_id is not None:
                 self._matter_model.complete_run(run_id)
+                # Detect numeric conflicts → gaps (SO-6 + SO-7)
+                self._matter_model.detect_quant_conflicts()
                 # Generate clarification questions from open gaps (SO-7)
                 self._matter_model.generate_clarifications_from_gaps(
                     run_id=run_id,
