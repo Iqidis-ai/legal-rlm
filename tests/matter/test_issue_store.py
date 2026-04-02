@@ -4,6 +4,7 @@ import pytest
 from irys.matter import MatterModel, AssertionCandidate, SpeechAct, SourceRole, ModelLayer
 from irys.matter import AssertionKind, IssueType, BeliefState
 from irys.matter.enums import OriginKind
+from irys.matter.runtime import MatterRuntimeAdapter
 
 
 @pytest.fixture
@@ -187,3 +188,51 @@ def test_stats_includes_issue_count(model):
     stats = model.stats()
     assert stats["open_issue_count"] == 1
     assert "actor_count" in stats
+
+
+# ---------------------------------------------------------------------------
+# record_fact() issue linking via MatterRuntimeAdapter (SO-4)
+# ---------------------------------------------------------------------------
+
+def test_record_fact_links_assertion_to_issue(model):
+    """record_fact(issue_id=...) must create an assertion→issue link (SO-4)."""
+    issue_id, _ = model.issues.upsert_issue("Breach of contract", IssueType.CLAIM)
+    run_id = model.start_run("test run")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    a_id = adapter.record_fact(
+        "Defendant failed to make payment on January 15.",
+        document_id="complaint.pdf",
+        issue_id=issue_id,
+    )
+
+    linked = model.issues.get_assertions_for_issue(issue_id)
+    assert len(linked) == 1
+    assert linked[0]["id"] == a_id
+    assert linked[0]["relation_type"] == "supports"
+
+
+def test_record_fact_without_issue_id_does_not_link(model):
+    """record_fact() with no issue_id must not create any issue links."""
+    issue_id, _ = model.issues.upsert_issue("Damages claim", IssueType.DAMAGES)
+    run_id = model.start_run("test run")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    adapter.record_fact("Some extracted fact.", document_id="doc.pdf")
+
+    linked = model.issues.get_assertions_for_issue(issue_id)
+    assert len(linked) == 0
+
+
+def test_record_fact_issue_link_is_idempotent(model):
+    """Calling record_fact twice with same text + issue_id must not duplicate links."""
+    issue_id, _ = model.issues.upsert_issue("Liability", IssueType.CLAIM)
+    run_id = model.start_run("test run")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Same proposition text will upsert to the same assertion_id
+    adapter.record_fact("Defendant admitted fault.", document_id="depo.pdf", issue_id=issue_id)
+    adapter.record_fact("Defendant admitted fault.", document_id="depo.pdf", issue_id=issue_id)
+
+    linked = model.issues.get_assertions_for_issue(issue_id)
+    assert len(linked) == 1
