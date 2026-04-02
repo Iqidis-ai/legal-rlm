@@ -11,7 +11,7 @@ Verifies:
 import pytest
 from irys.matter import MatterModel, AssertionCandidate, SpeechAct, SourceRole
 from irys.matter import ModelLayer, AssertionKind, BeliefState, LedgerEventType
-from irys.matter.enums import OriginKind, RevisionCause, GapType
+from irys.matter.enums import OriginKind, RevisionCause, GapType, IssueType
 from irys.matter.runtime import MatterRuntimeAdapter, NullMatterAdapter
 
 
@@ -222,6 +222,44 @@ def test_recent_runs(model):
     recent = model.ledger.recent_runs(limit=5)
     assert len(recent) == 3
     assert all(r["status"] == "completed" for r in recent)
+
+
+# ---------------------------------------------------------------------------
+# Redirect (SO-3)
+# ---------------------------------------------------------------------------
+
+def test_redirect_request_propagates_to_adapter(model):
+    """request_redirect() signals via ledger; is_redirect_requested() returns True."""
+    run_id = model.start_run("Redirect test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    assert not adapter.is_redirect_requested()
+
+    issue_id, _ = model.issues.upsert_issue("Payment obligation", IssueType.CLAIM)
+    adapter.request_redirect(issue_id)
+
+    assert adapter.is_redirect_requested()
+    assert adapter.get_redirect_issue_id() == issue_id
+
+
+def test_clear_redirect_resets_flag(model):
+    """clear_redirect() must allow is_redirect_requested() to return False again."""
+    run_id = model.start_run("Redirect clear test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    issue_id, _ = model.issues.upsert_issue("Damages", IssueType.DAMAGES)
+    adapter.request_redirect(issue_id)
+    assert adapter.is_redirect_requested()
+
+    adapter.clear_redirect()
+    assert not adapter.is_redirect_requested()
+
+
+def test_null_adapter_redirect_is_always_false():
+    adapter = NullMatterAdapter()
+    adapter.request_redirect("some-issue-id")  # must not raise
+    assert adapter.is_redirect_requested() is False
+    assert adapter.get_redirect_issue_id() is None
 
 
 # ---------------------------------------------------------------------------

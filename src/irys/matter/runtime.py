@@ -252,6 +252,25 @@ class MatterRuntimeAdapter:
     # User steering (called from API layer)
     # ------------------------------------------------------------------
 
+    def request_redirect(self, issue_id: str) -> None:
+        """Signal the engine to redirect focus to the given issue on the next iteration."""
+        self.model.ledger.request_redirect(self.run_id, issue_id)
+        self.model.ledger.append_event(
+            run_id=self.run_id,
+            event_type=LedgerEventType.BRANCH_SELECTED,
+            summary=f"User requested redirect to issue: {issue_id[:60]}",
+            branch_issue_id=issue_id,
+        )
+
+    def is_redirect_requested(self) -> bool:
+        return self.model.ledger.is_redirect_requested(self.run_id)
+
+    def get_redirect_issue_id(self) -> Optional[str]:
+        return self.model.ledger.get_redirect_issue_id(self.run_id)
+
+    def clear_redirect(self) -> None:
+        self.model.ledger.clear_redirect(self.run_id)
+
     def request_stop(self) -> None:
         """Signal the engine to stop after the current iteration."""
         self.model.ledger.request_stop(self.run_id)
@@ -296,6 +315,18 @@ class NullMatterAdapter:
 
     def record_gap(self, description: str, **kwargs) -> str:
         return ""
+
+    def request_redirect(self, issue_id: str) -> None:
+        pass
+
+    def is_redirect_requested(self) -> bool:
+        return False
+
+    def get_redirect_issue_id(self) -> Optional[str]:
+        return None
+
+    def clear_redirect(self) -> None:
+        pass
 
     def request_stop(self) -> None:
         pass

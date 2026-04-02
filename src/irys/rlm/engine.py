@@ -905,6 +905,34 @@ class RLMEngine:
 
             iteration += 1
 
+            # Check for user redirect request — inject high-priority lead for target issue (SO-3)
+            if adapter is not None and adapter.is_redirect_requested():
+                redirect_issue_id = adapter.get_redirect_issue_id()
+                adapter.clear_redirect()
+                if redirect_issue_id is not None:
+                    # Find issue title for the redirect target
+                    redirect_issues = [
+                        i for i in (state.findings.get("issues", []) or [])
+                        if isinstance(i, dict) and i.get("id") == redirect_issue_id
+                    ]
+                    issue_title = redirect_issues[0].get("title", redirect_issue_id[:40]) if redirect_issues else redirect_issue_id[:40]
+                    state.add_lead(
+                        description=f"Redirect focus: investigate '{issue_title}'",
+                        source="user_redirect",
+                        priority=0.95,
+                        search_term=issue_title,
+                        focus_issue_id=redirect_issue_id,
+                    )
+                    adapter.log_step(
+                        f"Redirected investigation to issue: '{issue_title}'",
+                        why="User redirect request",
+                    )
+                    self._emit_step(
+                        state,
+                        StepType.REPLAN,
+                        f"Investigation redirected to: '{issue_title}'",
+                    )
+
             # Reprioritize leads based on accumulated context
             if iteration % 2 == 0:  # Every other iteration
                 state.reprioritize_leads()

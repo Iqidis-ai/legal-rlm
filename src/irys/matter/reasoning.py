@@ -169,6 +169,31 @@ class ReasoningLedgerStore:
         ).fetchone()
         return bool(row["stop_requested"]) if row else False
 
+    def request_redirect(self, run_id: str, issue_id: str) -> None:
+        """Signal the engine to redirect focus to the given issue on the next iteration."""
+        self.db.execute(
+            "UPDATE run_session SET redirect_requested=1, active_branch_issue_id=? WHERE id=?",
+            (issue_id, run_id),
+        )
+
+    def is_redirect_requested(self, run_id: str) -> bool:
+        row = self.db.execute(
+            "SELECT redirect_requested FROM run_session WHERE id=?", (run_id,)
+        ).fetchone()
+        return bool(row["redirect_requested"]) if row else False
+
+    def get_redirect_issue_id(self, run_id: str) -> Optional[str]:
+        row = self.db.execute(
+            "SELECT active_branch_issue_id FROM run_session WHERE id=?", (run_id,)
+        ).fetchone()
+        return row["active_branch_issue_id"] if row else None
+
+    def clear_redirect(self, run_id: str) -> None:
+        """Clear the redirect flag after the engine has processed it."""
+        self.db.execute(
+            "UPDATE run_session SET redirect_requested=0 WHERE id=?", (run_id,)
+        )
+
     def get_events(self, run_id: str) -> list[dict]:
         """Fetch all ledger events for a run in sequence order."""
         rows = self.db.execute(
