@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import aiofiles
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, File, UploadFile, Form
@@ -32,6 +32,10 @@ from .models import (
     SyncInvestigateResponse,
     S3UrlsInvestigateRequest,
     S3UrlsSearchRequest,
+    MatterStatsResponse,
+    StopRunRequest,
+    RedirectRunRequest,
+    AnswerClarificationRequest,
 )
 from .s3_repository import S3Repository
 
@@ -40,6 +44,9 @@ logger = logging.getLogger(__name__)
 # In-memory job storage (use Redis in production for multi-worker)
 _jobs: dict[str, JobResult] = {}
 _start_time: float = time.time()
+
+# Matter model registry: matter_id → MatterModel (active investigations only)
+_active_matter_models: dict[str, Any] = {}
 
 # Version
 VERSION = "1.0.0"
@@ -85,6 +92,9 @@ async def _cleanup_loop(config: ServiceConfig):
                 (now - job.completed_at).seconds > config.cleanup_after_seconds
             ]
             for job_id in expired:
+                job = _jobs[job_id]
+                if job.matter_id and job.matter_id in _active_matter_models:
+                    del _active_matter_models[job.matter_id]
                 del _jobs[job_id]
                 logger.debug(f"Cleaned up job {job_id}")
         except Exception as e:
@@ -146,6 +156,39 @@ def _serialize_result(result) -> tuple[list, dict]:
             entities[name] = {"error": "Failed to serialize entity"}
 
     return citations, entities
+
+
+def _wire_matter_model(irys_instance, temp_dir: str, job: JobResult, config) -> Optional[str]:
+    """Pre-create and register the matter model before investigation starts.
+
+    Returns matter_id, or None if matter model is not enabled.
+    Sets job.matter_id so callers can use it for stop/redirect endpoints.
+    """
+    if not config.enable_matter_model:
+        return None
+
+    from irys.matter import MatterModel
+
+    irys_instance._ensure_initialized()
+    matter_model = MatterModel.open(temp_dir)
+    matter_id = matter_model.matter_id
+    repo_key = str(Path(temp_dir).resolve())
+    irys_instance._matter_models[repo_key] = matter_model
+    irys_instance._engine._matter_model = matter_model
+
+    _active_matter_models[matter_id] = matter_model
+    job.matter_id = matter_id
+    return matter_id
+
+
+def _get_matter_model_or_404(matter_id: str):
+    model = _active_matter_models.get(matter_id)
+    if model is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Matter model '{matter_id}' not found or no longer active",
+        )
+    return model
 
 
 # === ENDPOINTS ===
@@ -274,7 +317,8 @@ async def _run_investigation(
 
         # Run investigation
         from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key)
+        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
+        _wire_matter_model(irys, str(temp_dir), job, config)
 
         result = await irys.investigate(
             query=request.query,
@@ -289,6 +333,12 @@ async def _run_investigation(
         job.completed_at = datetime.now()
         job.duration_seconds = (
             job.completed_at - job.created_at).total_seconds()
+
+        # Record run_id from the matter model's most recent run
+        if job.matter_id and job.matter_id in _active_matter_models:
+            recent = _active_matter_models[job.matter_id].ledger.recent_runs(1)
+            if recent:
+                job.run_id = recent[0]["id"]
 
         logger.info(f"Job {job_id} completed in {job.duration_seconds:.1f}s")
 
@@ -552,7 +602,8 @@ async def _run_upload_investigation(
             temp_dir = await s3_repo.download_to_temp(job_id)
 
         from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key)
+        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
+        _wire_matter_model(irys, str(temp_dir), job, config)
 
         result = await irys.investigate(
             query=query,
@@ -568,6 +619,11 @@ async def _run_upload_investigation(
         job.duration_seconds = (
             job.completed_at - job.created_at
         ).total_seconds()
+
+        if job.matter_id and job.matter_id in _active_matter_models:
+            recent = _active_matter_models[job.matter_id].ledger.recent_runs(1)
+            if recent:
+                job.run_id = recent[0]["id"]
 
         logger.info(f"Upload job {job_id} completed in {job.duration_seconds:.1f}s (mode={'local' if is_local else 's3'})")
 
@@ -913,7 +969,8 @@ async def _run_urls_investigation(
 
         # Run investigation
         from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key)
+        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
+        _wire_matter_model(irys, str(temp_dir), job, config)
 
         result = await irys.investigate(
             query=request.query,
@@ -929,6 +986,11 @@ async def _run_urls_investigation(
         job.duration_seconds = (
             job.completed_at - job.created_at
         ).total_seconds()
+
+        if job.matter_id and job.matter_id in _active_matter_models:
+            recent = _active_matter_models[job.matter_id].ledger.recent_runs(1)
+            if recent:
+                job.run_id = recent[0]["id"]
 
         logger.info(f"URLs job {job_id} completed in {job.duration_seconds:.1f}s")
 
@@ -1073,3 +1135,121 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         if s3_repo:
             await s3_repo.cleanup(job_id)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# === MATTER MODEL ENDPOINTS ===
+
+
+@app.get(
+    "/matter/{matter_id}",
+    response_model=MatterStatsResponse,
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_stats(matter_id: str):
+    """Return counts and summary for an active matter model."""
+    model = _get_matter_model_or_404(matter_id)
+    return MatterStatsResponse(**model.stats())
+
+
+@app.get(
+    "/matter/{matter_id}/runs",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_runs(matter_id: str, limit: int = 10):
+    """List recent investigation runs for a matter."""
+    model = _get_matter_model_or_404(matter_id)
+    return model.ledger.recent_runs(limit=limit)
+
+
+@app.get(
+    "/matter/{matter_id}/runs/{run_id}/events",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_run_events(matter_id: str, run_id: str):
+    """Return the full reasoning ledger event sequence for a run."""
+    model = _get_matter_model_or_404(matter_id)
+    return model.ledger.get_events(run_id)
+
+
+@app.get(
+    "/matter/{matter_id}/clarifications",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_pending_clarifications(matter_id: str):
+    """Return pending clarification questions for a matter."""
+    model = _get_matter_model_or_404(matter_id)
+    return model.clarifications.get_pending()
+
+
+@app.post(
+    "/matter/{matter_id}/stop",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+async def stop_investigation(matter_id: str, _: StopRunRequest):
+    """Signal the active investigation to stop after the current iteration.
+
+    Sets stop_requested=1 in the run session; the engine reads this flag
+    between iterations and performs a clean interrupt without losing work.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    runs = model.ledger.recent_runs(1)
+    if not runs or runs[0]["status"] != "running":
+        raise HTTPException(status_code=409, detail="No running investigation to stop")
+    run_id = runs[0]["id"]
+    model.ledger.request_stop(run_id)
+    return {"status": "stop_requested", "run_id": run_id}
+
+
+@app.post(
+    "/matter/{matter_id}/runs/{run_id}/redirect",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+async def redirect_investigation(matter_id: str, run_id: str, request: RedirectRunRequest):
+    """Redirect the active investigation to focus on a specific issue.
+
+    Sets redirect_requested=1 and records the target issue_id; the engine
+    picks this up on the next iteration and pivots retrieval accordingly.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    run = model.ledger.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+    if run.status != "running":
+        raise HTTPException(status_code=409, detail=f"Run is not active (status: {run.status})")
+    issue = model.issues.get_issue(request.issue_id)
+    if issue is None:
+        raise HTTPException(status_code=404, detail=f"Issue '{request.issue_id}' not found")
+    model.ledger.request_redirect(run_id, request.issue_id)
+    return {
+        "status": "redirect_requested",
+        "run_id": run_id,
+        "issue_id": request.issue_id,
+        "issue_title": issue.get("title"),
+    }
+
+
+@app.post(
+    "/matter/{matter_id}/clarifications/{question_id}/answer",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def answer_clarification(
+    matter_id: str, question_id: str, request: AnswerClarificationRequest
+):
+    """Submit a user answer to a pending clarification question.
+
+    The answered clarification is injected into the orientation prompt of
+    subsequent investigation runs for this matter.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    try:
+        model.clarifications.answer_question(question_id, request.answer_text)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"status": "answered", "question_id": question_id}

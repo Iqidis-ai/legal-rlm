@@ -30,6 +30,7 @@ class ServiceConfig:
 
     # Storage Settings (for small instances)
     temp_dir: str = "/tmp/irys"
+    matter_db_dir: str = "/tmp/irys/matters"  # Persistent matter model DBs
     max_temp_size_mb: int = 500  # Max temp storage before cleanup
     cleanup_after_seconds: int = 300  # 5 minutes
     max_concurrent_jobs: int = 3
@@ -45,6 +46,9 @@ class ServiceConfig:
 
     # Storage mode: "local" for dev (files on disk), "s3" for production (stream to S3)
     storage_mode: str = "s3"
+
+    # Matter model: when True, all investigations build a persistent SQLite matter model
+    enable_matter_model: bool = False
 
     @classmethod
     def from_env(cls) -> "ServiceConfig":
@@ -66,6 +70,7 @@ class ServiceConfig:
             aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
             # Storage Settings
             temp_dir=os.getenv("IRYS_TEMP_DIR", "/tmp/irys"),
+            matter_db_dir=os.getenv("IRYS_MATTER_DB_DIR", "/tmp/irys/matters"),
             max_temp_size_mb=int(os.getenv("IRYS_MAX_TEMP_SIZE_MB", "500")),
             cleanup_after_seconds=int(os.getenv("IRYS_CLEANUP_SECONDS", "300")),
             max_concurrent_jobs=int(os.getenv("IRYS_MAX_CONCURRENT_JOBS", "3")),
@@ -78,6 +83,8 @@ class ServiceConfig:
             log_format=os.getenv("IRYS_LOG_FORMAT", "json"),
             # Storage mode
             storage_mode=os.getenv("IRYS_STORAGE_MODE", "s3"),
+            # Matter model
+            enable_matter_model=os.getenv("IRYS_ENABLE_MATTER_MODEL", "false").lower() == "true",
         )
 
     def validate(self) -> list[str]:
