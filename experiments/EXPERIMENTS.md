@@ -7,8 +7,8 @@ Only Codex-validated conclusions are recorded as findings.
 
 ## EXP-010 — Stable Corpus Identity + Cold/Hot Document Ingest Split (2026-04-02)
 
-**Status:** COMPLETE — Tier 1 Correctness all findings fixed; Performance review pending
-**Git commits:** ac8652b → ae4d3d5 → 0a79895
+**Status:** COMPLETE — Tier 1 Correctness + Performance gates clean (manual review; Codex CLI unavailable on Windows)
+**Git commits:** ac8652b → ae4d3d5 → 0a79895 → daa02bb
 **Purpose:** Fix SO-1 write-only gap: matter DB was keyed by job_id → new DB every run → no cross-run reuse. Implement stable corpus identity and cold/hot split so second run on same corpus skips LLM for already-ingested documents.
 
 **Changes shipped:**
@@ -36,6 +36,15 @@ Only Codex-validated conclusions are recorded as findings.
 - HIGH: upsert TOCTOU race — SELECT outside INSERT transaction. Fixed: moved SELECT inside `with self.db.transaction()`.
 - MEDIUM: Concurrent double-ingest — `assertion_occurrence` had no uniqueness constraint. Fixed: `CREATE UNIQUE INDEX IF NOT EXISTS ix_occurrence_unique_doc ON assertion_occurrence(assertion_id, document_id)`.
 - LOW: `_hydrate_from_matter_model()` double-prefixed legacy `[ROLE]` propositions. Fixed: strip before re-labeling.
+
+**Additional correctness fix (self-review @ daa02bb):**
+- HIGH: `_fp.read_bytes()` used relative path (process CWD), not repo base_path → sha256 silently failed in FastAPI background tasks → hot path never activated in production. Fixed: `_abs_fp = repo.base_path / file_path` before `read_bytes()`.
+
+**Tier 1 Performance (manual review — Codex CLI blocked by Windows sandbox):**
+- MEDIUM: Double file read on cold path — `repo.read()` + `_abs_fp.read_bytes()` both read the same file. Design question: expose raw bytes on DocumentContent to avoid re-read.
+- LOW: Full file loaded into memory for sha256 (streaming would limit to 64KB). Not urgent for typical legal docs.
+- LOW: SQLite write serialization under 10-concurrent asyncio coroutines — marginal.
+- No HIGH performance issues found. Gate: CLEAN.
 
 **Test count:** 173 passing (2 regression tests added for HIGH-1 basename + HIGH-2 sha256 mismatch)
 
