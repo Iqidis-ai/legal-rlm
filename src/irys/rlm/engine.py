@@ -1015,8 +1015,9 @@ class RLMEngine:
             adapter = getattr(state, "_matter_adapter", None)
             if adapter is not None:
                 doc_id = results.top(1)[0].filename  # primary source doc; overridden in deep read
+                issue_id = lead.focus_issue_id if lead is not None else None
                 for fact_text in facts_to_add:
-                    adapter.record_fact(fact_text, document_id=doc_id)
+                    adapter.record_fact(fact_text, document_id=doc_id, issue_id=issue_id)
                 if facts_to_add:
                     adapter.log_step(
                         f"Recorded {len(facts_to_add)} facts from search: {results.query[:60]}",

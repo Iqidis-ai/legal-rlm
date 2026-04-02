@@ -129,10 +129,12 @@ class MatterRuntimeAdapter:
         model_layer: ModelLayer = ModelLayer.RECORD,
         assertion_kind: AssertionKind = AssertionKind.FACTUAL,
         span_id: Optional[str] = None,
+        issue_id: Optional[str] = None,
     ) -> str:
         """
         Convert an extracted fact string into a typed assertion.
         Auto-infers source_role from document_id if not explicitly provided.
+        If issue_id is provided, links the assertion to that issue as a 'supports' relation.
         Returns assertion_id.
         """
         if source_role == SourceRole.UNKNOWN:
@@ -159,6 +161,11 @@ class MatterRuntimeAdapter:
                 changed_object_type="assertion",
                 changed_object_id=assertion_id,
             )
+
+        # Link to issue if a focus issue was specified for this lead (SO-4)
+        if issue_id is not None:
+            self.model.issues.link_assertion(assertion_id, issue_id, "supports")
+
         return assertion_id
 
     def flush_revisions(self) -> int:
