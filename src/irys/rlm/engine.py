@@ -930,7 +930,7 @@ class RLMEngine:
             # Also record into matter model if enabled
             adapter = getattr(state, "_matter_adapter", None)
             if adapter is not None:
-                doc_id = results.query  # best proxy for source; overridden in deep read
+                doc_id = results.top(1)[0].filename  # primary source doc; overridden in deep read
                 for fact_text in facts_to_add:
                     adapter.record_fact(fact_text, document_id=doc_id)
 
