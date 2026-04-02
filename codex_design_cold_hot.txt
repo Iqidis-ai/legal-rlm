@@ -1,0 +1,1 @@
+I have the persistence seams now. I’m checking what the synthesis phase actually reads from `InvestigationState`, so `hydrate_from_matter_model()` only loads state that the current engine will genuinely consume.
