@@ -1074,13 +1074,15 @@ class RLMEngine:
         # Deep read top documents in parallel
         top_files = list(results.by_file().keys())[:self.config.parallel_reads]
         if top_files:
-            await self._batch_deep_read(state, repo, top_files)
+            focus_issue_id = lead.focus_issue_id if lead is not None else None
+            await self._batch_deep_read(state, repo, top_files, focus_issue_id=focus_issue_id)
 
     async def _batch_deep_read(
         self,
         state: InvestigationState,
         repo: MatterRepository,
         file_paths: list[str],
+        focus_issue_id: Optional[str] = None,
     ):
         """Process multiple documents with controlled parallelism."""
         if not file_paths:
@@ -1098,7 +1100,7 @@ class RLMEngine:
 
         async def limited_read(fp: str):
             async with read_semaphore:
-                return await self._deep_read_document(state, repo, fp)
+                return await self._deep_read_document(state, repo, fp, focus_issue_id=focus_issue_id)
 
         tasks = [limited_read(fp) for fp in file_paths]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -1113,6 +1115,7 @@ class RLMEngine:
         state: InvestigationState,
         repo: MatterRepository,
         file_path: str,
+        focus_issue_id: Optional[str] = None,
     ):
         """Perform deep analysis of a document."""
         self._emit_step(state, StepType.READING, f"Deep reading: {Path(file_path).name}")
@@ -1166,11 +1169,11 @@ class RLMEngine:
                     elif isinstance(fact_item, dict) and "fact" in fact_item:
                         facts_to_add.append(fact_item["fact"])
                 state.add_facts(facts_to_add)
-                # Also record into matter model if enabled
+                # Also record into matter model if enabled; pass issue_id if from targeted lead
                 adapter = getattr(state, "_matter_adapter", None)
                 if adapter is not None:
                     for fact_text in facts_to_add:
-                        adapter.record_fact(fact_text, document_id=doc.filename)
+                        adapter.record_fact(fact_text, document_id=doc.filename, issue_id=focus_issue_id)
 
             # Extract and store entities
             if analysis.get("entities"):
