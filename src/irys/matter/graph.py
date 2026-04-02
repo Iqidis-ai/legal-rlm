@@ -864,11 +864,21 @@ class DocumentInventoryStore:
                     (self.matter_id, sha256),
                 ).fetchone()
             elif row["sha256"] != sha256:
-                # Content changed at same path — reset to pending to force cold re-ingest
-                self.db.execute(
-                    "UPDATE document_inventory SET sha256=?, size_bytes=?, ingest_status='pending', last_read_at=? WHERE id=?",
-                    (sha256, size_bytes, now, row["id"]),
-                )
+                # Content changed at same path — reset to pending to force cold re-ingest.
+                # The full UPDATE (sha256 + status) may fail if the NEW sha256 already exists
+                # on another row (ux_inventory_hash conflict). In that case fall back to a
+                # status-only reset — the status change is the critical part for SO-1 correctness.
+                try:
+                    self.db.execute(
+                        "UPDATE document_inventory SET sha256=?, size_bytes=?, ingest_status='pending', last_read_at=? WHERE id=?",
+                        (sha256, size_bytes, now, row["id"]),
+                    )
+                except Exception:
+                    # New sha256 conflicts with another row; reset status only
+                    self.db.execute(
+                        "UPDATE document_inventory SET ingest_status='pending', last_read_at=? WHERE id=?",
+                        (now, row["id"]),
+                    )
         actual_id = row["id"] if row else doc_id
         is_new = actual_id == doc_id  # True only if INSERT succeeded (no prior conflict)
         return actual_id, is_new

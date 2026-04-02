@@ -59,9 +59,35 @@ def test_idempotent_schema_application():
 
 
 def test_unique_index_on_assertion_occurrence():
-    """The ix_occurrence_unique_doc index must exist for the concurrent dedup fix to work."""
+    """The ix_occurrence_unique_doc index must exist and include speech_act in the key.
+
+    The v5 migration corrected the key from (assertion_id, document_id) to
+    (assertion_id, document_id, speech_act) so that same-assertion, same-doc,
+    different-speech-act occurrences are preserved rather than silently dropped.
+    """
     db = SQLiteMatterDB.in_memory()
     row = db.execute(
-        "SELECT name FROM sqlite_master WHERE type='index' AND name='ix_occurrence_unique_doc'"
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='ix_occurrence_unique_doc'"
     ).fetchone()
-    assert row is not None, "UNIQUE INDEX ix_occurrence_unique_doc must exist on assertion_occurrence(assertion_id, document_id)"
+    assert row is not None, "UNIQUE INDEX ix_occurrence_unique_doc must exist"
+    assert "speech_act" in row[0], (
+        "ix_occurrence_unique_doc must include speech_act column "
+        f"(found: {row[0]})"
+    )
+
+
+def test_migration_v5_fixes_index_on_existing_db():
+    """Applying _migration_v5 on a DB with the old coarse index corrects it."""
+    import sqlite3
+    from irys.matter.schema import _migration_v5, apply_schema
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+
+    # Verify v5 index has the correct key
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='ix_occurrence_unique_doc'"
+    ).fetchone()
+    assert row is not None
+    assert "speech_act" in row["sql"]

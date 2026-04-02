@@ -1343,7 +1343,9 @@ class RLMEngine:
                 adapter = getattr(state, "_matter_adapter", None)
                 if adapter is not None:
                     for fact_text in facts_to_add:
-                        adapter.record_fact(fact_text, document_id=doc.filename, issue_id=focus_issue_id)
+                        # Use _rel_path (repo-relative, stable) not doc.filename (basename only)
+                        # so same-basename files in different dirs don't alias in assertion_occurrence
+                        adapter.record_fact(fact_text, document_id=_rel_path, issue_id=focus_issue_id)
 
             # Extract and store structured numeric facts (SO-6)
             if analysis.get("numeric_facts"):

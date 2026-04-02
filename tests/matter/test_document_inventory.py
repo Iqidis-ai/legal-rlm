@@ -212,3 +212,34 @@ def test_relative_to_base_path_produces_stable_key(model):
     assert model.inventory.is_ingested(rel_key_run2) is True, (
         "hot path must activate on second run — ephemeral base_path must not break reuse"
     )
+
+
+# ---------------------------------------------------------------------------
+# MEDIUM: sha256 collision — status reset must succeed even when new hash
+#         conflicts with ux_inventory_hash from another row
+# ---------------------------------------------------------------------------
+
+def test_sha256_change_resets_status_when_new_hash_conflicts(model):
+    """ingest_status must be reset to 'pending' even if the new sha256 already
+    exists on another row (ux_inventory_hash conflict).
+
+    Before the fix, the UPDATE that combined sha256+status changes would raise on
+    the unique hash index, the exception was swallowed, and the stale 'complete'
+    row survived — SO-1 hot path incorrectly skipped a changed document.
+    """
+    # Another file already has the hash we're about to 'update' to
+    model.inventory.upsert("exhibits/archive.pdf", "b" * 64)
+
+    # This file starts as complete with a different hash
+    doc_id, _ = model.inventory.upsert("contracts/msa.pdf", "a" * 64)
+    model.inventory.mark_ingested(doc_id)
+    assert model.inventory.is_ingested("contracts/msa.pdf") is True
+
+    # Content changes to the same hash as exhibits/archive.pdf
+    # The sha256 update will conflict — but status MUST still be reset
+    doc_id2, is_new2 = model.inventory.upsert("contracts/msa.pdf", "b" * 64)
+    assert doc_id2 == doc_id
+    assert is_new2 is False
+    assert model.inventory.is_ingested("contracts/msa.pdf") is False, (
+        "status must be reset to 'pending' even when sha256 update hits a hash conflict"
+    )

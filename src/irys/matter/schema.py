@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -68,8 +68,11 @@ CREATE INDEX IF NOT EXISTS ix_occurrence_document
     ON assertion_occurrence(document_id, span_id);
 
 -- Prevents duplicate occurrences from concurrent runs ingesting the same document
+-- with the same speech-act classification. Including speech_act allows the same
+-- assertion to legitimately appear multiple times in one document when attributed
+-- differently (e.g., alleged in the complaint, admitted in the answer).
 CREATE UNIQUE INDEX IF NOT EXISTS ix_occurrence_unique_doc
-    ON assertion_occurrence(assertion_id, document_id);
+    ON assertion_occurrence(assertion_id, document_id, speech_act);
 
 CREATE TABLE IF NOT EXISTS assertion_link (
     id              TEXT PRIMARY KEY,
@@ -573,6 +576,26 @@ def _migration_v4(conn) -> None:
                 conn.execute(stmt)
 
 
+def _migration_v5(conn) -> None:
+    """Fix ix_occurrence_unique_doc: widen key to include speech_act.
+
+    The v4 schema introduced ix_occurrence_unique_doc on (assertion_id, document_id),
+    which is too coarse — it silently drops legitimate second occurrences of the same
+    assertion within one document when attributed with a different speech act (e.g.,
+    alleged vs admitted). The correct key is (assertion_id, document_id, speech_act).
+
+    Also ensures the index exists on databases that predate the v4 schema extension
+    (databases that skipped the index entirely due to SCHEMA_VERSION lagging).
+    """
+    # DROP is idempotent via IF EXISTS; handles both the too-coarse v4 variant
+    # and the case where the index was never created on older databases.
+    conn.execute("DROP INDEX IF EXISTS ix_occurrence_unique_doc")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_occurrence_unique_doc"
+        " ON assertion_occurrence(assertion_id, document_id, speech_act)"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -581,6 +604,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (2, _migration_v2),
     (3, _migration_v3),
     (4, _migration_v4),
+    (5, _migration_v5),
 ]
 
 

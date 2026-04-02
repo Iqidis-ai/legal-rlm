@@ -133,15 +133,15 @@ def test_assertion_link_idempotent(model):
     assert link1 == link2  # Same link, not duplicated
 
 
-def test_same_assertion_same_doc_no_duplicate_occurrence(model):
-    """INSERT OR IGNORE deduplicates same (assertion_id, document_id) via UNIQUE INDEX.
+def test_same_assertion_same_doc_same_speech_act_no_duplicate_occurrence(model):
+    """INSERT OR IGNORE deduplicates same (assertion_id, document_id, speech_act) via UNIQUE INDEX.
 
-    This covers the MEDIUM finding: concurrent runs ingesting the same document must not
-    produce duplicate assertion_occurrence rows. The UNIQUE INDEX on
-    (assertion_id, document_id) makes the second INSERT silently a no-op.
+    Concurrent runs ingesting the same document with the same speech-act classification
+    must not produce duplicate assertion_occurrence rows. The UNIQUE INDEX on
+    (assertion_id, document_id, speech_act) makes the second INSERT a no-op.
     """
     text = "The defendant failed to deliver by the deadline."
-    c = make_candidate(text, doc_id="complaint.pdf")
+    c = make_candidate(text, doc_id="complaint.pdf", speech_act=SpeechAct.ALLEGED)
 
     id1, is_new1 = model.assertions.upsert_occurrence(c)
     # Simulate concurrent / duplicate ingestion of the exact same doc
@@ -155,6 +155,33 @@ def test_same_assertion_same_doc_no_duplicate_occurrence(model):
     assert len(occurrences) == 1, (
         "duplicate ingestion of same assertion from same doc must not create two occurrence rows"
     )
+
+
+def test_same_assertion_same_doc_different_speech_acts_both_recorded(model):
+    """Same assertion with different speech acts in the same doc must produce two occurrence rows.
+
+    This catches the INTRODUCED_NEW_BUG finding: ix_occurrence_unique_doc on
+    (assertion_id, document_id) was too coarse and silently dropped legitimate
+    second occurrences with a different speech_act. The fix includes speech_act
+    in the uniqueness key.
+    """
+    text = "The payment was due on January 15, 2024."
+    c_alleged = make_candidate(text, doc_id="complaint.pdf", speech_act=SpeechAct.ALLEGED)
+    c_admitted = make_candidate(text, doc_id="complaint.pdf", speech_act=SpeechAct.ADMITTED)
+
+    id1, is_new1 = model.assertions.upsert_occurrence(c_alleged)
+    id2, is_new2 = model.assertions.upsert_occurrence(c_admitted)
+
+    # Same proposition → same assertion_id
+    assert id1 == id2
+    # Both occurrences must survive — different speech acts are semantically distinct
+    occurrences = model.assertions.get_occurrences(id1)
+    speech_acts_recorded = {occ["speech_act"] for occ in occurrences}
+    assert SpeechAct.ALLEGED.value in speech_acts_recorded, "ALLEGED occurrence must be recorded"
+    assert SpeechAct.ADMITTED.value in speech_acts_recorded, (
+        "ADMITTED occurrence must not be dropped — different speech act from same doc"
+    )
+    assert len(occurrences) == 2, "two distinct speech acts must produce two occurrence rows"
 
 
 def test_belief_state_default_unknown(model):
