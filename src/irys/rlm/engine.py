@@ -233,6 +233,9 @@ Working Hypothesis: {hypothesis}
 Source Calibration (CRITICAL — read before analyzing facts):
 {source_calibration}
 
+Quantitative Summary (SO-6 — extracted monetary amounts):
+{quant_summary}
+
 Key Entities Identified:
 {entities}
 
@@ -1425,6 +1428,9 @@ class RLMEngine:
         # Build source-role calibration from matter model (SO-5)
         source_calibration = self._build_source_calibration(state)
 
+        # Build quantitative reconciliation summary (SO-6)
+        quant_summary = self._build_quant_summary()
+
         prompt = SYNTHESIS_PROMPT.format(
             query=state.query,
             docs_analyzed=state.documents_read,
@@ -1433,6 +1439,7 @@ class RLMEngine:
             max_depth=state.max_depth_reached,
             hypothesis=state.hypothesis or "No specific hypothesis formed",
             source_calibration=source_calibration,
+            quant_summary=quant_summary,
             entities=entities_text or "No entities identified",
             findings=findings_text or "No specific findings accumulated",
             citations=citations_text or "No citations collected",
@@ -1492,6 +1499,43 @@ class RLMEngine:
             "\nWARNING: Facts from ADVOCACY sources represent one party's position, not "
             "established truth. Do not amplify advocacy material as if it were operative fact."
         )
+        return "\n".join(lines)
+
+    def _build_quant_summary(self) -> str:
+        """
+        Build a quantitative reconciliation block for the synthesis prompt (SO-6).
+
+        Shows extracted monetary totals by subject_type and flags any detected conflicts
+        so the LLM can include numeric analysis in the synthesis memo.
+        """
+        if self._matter_model is None:
+            return "No quantitative data extracted."
+
+        try:
+            total_count = self._matter_model.quant.count()
+            if total_count == 0:
+                return "No numeric facts extracted from documents."
+
+            reconciliation = self._matter_model.reconcile()
+            conflicts = self._matter_model.quant.get_conflicts()
+        except Exception:
+            return "Quantitative data unavailable."
+
+        lines = [f"Extracted {total_count} numeric facts."]
+
+        if reconciliation:
+            lines.append("Monetary amounts by category (USD unless noted):")
+            for subject, data in sorted(reconciliation.items(), key=lambda x: x[1]["total"], reverse=True):
+                lines.append(f"  • {subject}: ${data['total']:,.2f} ({data['count']} entries)")
+
+        if conflicts:
+            lines.append("NUMERIC CONFLICTS DETECTED (same category, different amounts):")
+            for c in conflicts[:3]:
+                subject = c.get("subject_type", "unknown")
+                currency = c.get("currency", "")
+                values = [f"${v:,.2f}" for v in (c.get("values") or [])[:4]]
+                lines.append(f"  ⚠ {subject} ({currency}): {', '.join(values)} — UNRESOLVED DISCREPANCY")
+
         return "\n".join(lines)
 
     # ==========================================================================
