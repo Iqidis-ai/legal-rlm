@@ -763,6 +763,9 @@ class RLMEngine:
 
     async def _orient(self, state: InvestigationState, repo: MatterRepository):
         """Phase 1: Understand repository and form initial hypothesis."""
+        _adapter = getattr(state, "_matter_adapter", None)
+        if _adapter is not None and _adapter.is_stop_requested():
+            return  # Stop was requested before orientation even started
         self._emit_step(state, StepType.THINKING, "Analyzing repository structure...")
 
         # Get repository overview
@@ -1310,12 +1313,14 @@ class RLMEngine:
                         search_term=ref,
                         focus_issue_id=focus_issue_id,
                     )
-                    # If no existing file name contains key words from the reference,
-                    # immediately record as a potential gap
+                    # If no existing filename contains ALL significant words from the
+                    # reference, record as a gap.  Requiring ALL words (not just any one)
+                    # prevents "Amendment No. 2" from falsely matching an unrelated file
+                    # that happens to contain the word "amendment".
                     ref_lower = ref.lower()
                     ref_words = [w for w in ref_lower.split() if len(w) > 3]
-                    found_in_repo = any(
-                        any(word in fname for word in ref_words)
+                    found_in_repo = bool(ref_words) and any(
+                        all(word in fname for word in ref_words)
                         for fname in known_names
                     )
                     if not found_in_repo and _adp is not None and ref_words:
@@ -1346,6 +1351,9 @@ class RLMEngine:
 
     async def _verify_citations(self, state: InvestigationState, repo: MatterRepository):
         """Verify citations by checking if quoted text exists in documents."""
+        _adapter = getattr(state, "_matter_adapter", None)
+        if _adapter is not None and _adapter.is_stop_requested():
+            return  # Skip expensive verification if user stopped the run
         unverified = state.get_unverified_citations()
         if not unverified:
             return
@@ -1403,6 +1411,9 @@ class RLMEngine:
 
     async def _synthesize(self, state: InvestigationState):
         """Phase 3: Final synthesis using Pro model."""
+        _adapter = getattr(state, "_matter_adapter", None)
+        if _adapter is not None and _adapter.is_stop_requested():
+            return  # Skip synthesis if user stopped the run
         self._emit_step(state, StepType.SYNTHESIS, "Synthesizing final analysis...")
 
         # Log synthesis entry to reasoning ledger (SO-3)

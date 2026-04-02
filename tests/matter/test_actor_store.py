@@ -124,11 +124,12 @@ def test_actor_home_side(model):
     ("MSA_2023.pdf", SourceRole.OPERATIVE),
     ("NDA_executed.docx", SourceRole.OPERATIVE),
     ("Amendment_1_to_Contract.pdf", SourceRole.OPERATIVE),
-    # Procedural
-    ("Complaint_filed_2024.pdf", SourceRole.PROCEDURAL),
+    # Procedural (motions, discovery, depositions — neutral court filings)
     ("Motion_to_Dismiss.pdf", SourceRole.PROCEDURAL),
-    ("Plaintiff_Brief.pdf", SourceRole.PROCEDURAL),
-    # Advocacy
+    ("Deposition_Smith_2024.pdf", SourceRole.PROCEDURAL),
+    # Advocacy (party-authored: complaints, answers, briefs, demands)
+    ("Complaint_filed_2024.pdf", SourceRole.ADVOCACY),
+    ("Plaintiff_Brief.pdf", SourceRole.ADVOCACY),
     ("Demand_Letter_Jan15.pdf", SourceRole.ADVOCACY),
     # Informal
     ("Email_thread_March.eml", SourceRole.INFORMAL),

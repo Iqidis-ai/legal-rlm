@@ -115,9 +115,10 @@ def test_assertion_link_creates_graph(model):
     assert id2 in attackers
 
     dependents = model.assertions.get_dependents(id2)
-    # id2 attacks id1 — id1 is not a dependent of id2 in the SUPPORTS sense
-    # get_dependents looks for SUPPORTS/DEPENDS_ON links pointing to id2
-    assert id1 not in dependents
+    # id2 attacks id1 — id1 IS a dependent of id2 because when the attacker
+    # changes state (e.g. gets withdrawn), the attacked assertion must be
+    # re-evaluated (it may recover).  get_dependents includes attacks/negates edges.
+    assert id1 in dependents
 
 
 def test_assertion_link_idempotent(model):

@@ -173,20 +173,20 @@ class AssertionStore:
 
     def get_dependents(self, assertion_id: str) -> list[str]:
         """
-        Return assertion IDs that this assertion supports (they depend on it).
+        Return assertion IDs that depend on this assertion and must be re-evaluated
+        when it changes.
 
-        When assertion_id changes, all dependents must be re-evaluated.
-        Link direction: assertion_id --SUPPORTS--> dependent
+        Two propagation paths:
+        - supports: A --supports--> B — B depends on A; if A weakens, B may weaken.
+        - attacks/negates: A --attacks--> B — B is attacked by A; if A is withdrawn or
+          disputed, B's status may recover and must be re-evaluated.
 
-        Note: depends_on links are stored but intentionally excluded from
-        propagation — the direction semantics (src depends on dst, so dst's
-        changes should re-evaluate src) require a separate reversed query that
-        is not implemented yet. Including depends_on here propagates in the
-        wrong direction (toward the prerequisite, not toward the dependent).
+        Note: depends_on links are intentionally excluded — propagation would go in
+        the wrong direction (toward the prerequisite, not toward the dependent).
         """
         rows = self.db.execute(
             """SELECT dst_assertion_id FROM assertion_link
-               WHERE src_assertion_id=? AND link_type='supports'""",
+               WHERE src_assertion_id=? AND link_type IN ('supports', 'attacks', 'negates')""",
             (assertion_id,),
         ).fetchall()
         return [r[0] for r in rows]
@@ -599,10 +599,12 @@ class ClarificationStore:
         Idempotent on (matter_id, question_text) — will not create duplicates.
         """
         now = _now()
-        # Dedup: check if same question text already exists unanswered
+        # Dedup: check if same question text already exists (pending OR answered).
+        # Answered questions must not be re-issued on subsequent runs — the answer
+        # is already captured and will be injected into the next orientation context.
         row = self.db.execute(
             "SELECT id FROM clarification_question "
-            "WHERE matter_id=? AND question_text=? AND status='pending'",
+            "WHERE matter_id=? AND question_text=?",
             (self.matter_id, question_text),
         ).fetchone()
         if row is not None:
@@ -685,7 +687,19 @@ class QuantStore:
         assertion_id: Optional[str] = None,
         span_id: Optional[str] = None,
     ) -> str:
-        """Persist a structured numeric fact. Returns quant_fact_id."""
+        """Persist a structured numeric fact. Returns quant_fact_id.
+
+        Idempotent on (matter_id, quant_kind, raw_text[:500]) — repeated engine
+        runs over the same document do not double-count the same extracted value.
+        """
+        raw_text_key = raw_text[:500]
+        existing = self.db.execute(
+            "SELECT id FROM quant_fact WHERE matter_id=? AND quant_kind=? AND raw_text=?",
+            (self.matter_id, quant_kind, raw_text_key),
+        ).fetchone()
+        if existing is not None:
+            return existing["id"]
+
         qf_id = _id()
         now = _now()
         with self.db.transaction():

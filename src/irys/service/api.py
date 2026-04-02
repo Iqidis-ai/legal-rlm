@@ -159,11 +159,13 @@ def _serialize_result(result) -> tuple[list, dict]:
     return citations, entities
 
 
-def _wire_matter_model(irys_instance, temp_dir: str, job: JobResult, config) -> Optional[str]:
+def _wire_matter_model(irys_instance, temp_dir: str, job_id: str, config) -> Optional[str]:
     """Pre-create and register the matter model before investigation starts.
 
+    The DB is placed in config.matter_db_dir/{job_id}/ — outside temp_dir — so
+    it survives temp cleanup and satisfies SO-1 (durable matter model).
+
     Returns matter_id, or None if matter model is not enabled.
-    Sets job.matter_id so callers can use it for stop/redirect endpoints.
     """
     if not config.enable_matter_model:
         return None
@@ -171,14 +173,17 @@ def _wire_matter_model(irys_instance, temp_dir: str, job: JobResult, config) -> 
     from irys.matter import MatterModel
 
     irys_instance._ensure_initialized()
-    matter_model = MatterModel.open(temp_dir)
+    # Store DB in the stable matter_db_dir, NOT inside the job's temp directory.
+    matter_db_path = Path(config.matter_db_dir) / job_id
+    matter_model = MatterModel.open(matter_db_path)
     matter_id = matter_model.matter_id
+    # repo_key maps the temp download path → the pre-registered model so the
+    # engine's MatterModel.open() call reuses this instance instead of reopening.
     repo_key = str(Path(temp_dir).resolve())
     irys_instance._matter_models[repo_key] = matter_model
     irys_instance._engine._matter_model = matter_model
 
     _active_matter_models[matter_id] = matter_model
-    job.matter_id = matter_id
     return matter_id
 
 
@@ -319,7 +324,9 @@ async def _run_investigation(
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
-        _wire_matter_model(irys, str(temp_dir), job, config)
+        matter_id = _wire_matter_model(irys, str(temp_dir), job.id, config)
+        if matter_id:
+            job.matter_id = matter_id
 
         result = await irys.investigate(
             query=request.query,
@@ -604,7 +611,9 @@ async def _run_upload_investigation(
 
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
-        _wire_matter_model(irys, str(temp_dir), job, config)
+        matter_id = _wire_matter_model(irys, str(temp_dir), job.id, config)
+        if matter_id:
+            job.matter_id = matter_id
 
         result = await irys.investigate(
             query=query,
@@ -830,7 +839,8 @@ async def upload_investigate_sync(
 
         # Run investigation
         from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key)
+        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
+        _wire_matter_model(irys, str(temp_dir), job_id, config)
 
         result = await irys.investigate(
             query=query,
@@ -971,7 +981,9 @@ async def _run_urls_investigation(
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
-        _wire_matter_model(irys, str(temp_dir), job, config)
+        matter_id = _wire_matter_model(irys, str(temp_dir), job.id, config)
+        if matter_id:
+            job.matter_id = matter_id
 
         result = await irys.investigate(
             query=request.query,
@@ -1106,7 +1118,8 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
 
         # Run investigation
         from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key)
+        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
+        _wire_matter_model(irys, str(temp_dir), job_id, config)
 
         result = await irys.investigate(
             query=request.query,

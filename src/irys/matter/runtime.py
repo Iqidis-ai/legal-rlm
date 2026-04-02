@@ -34,9 +34,17 @@ _SOURCE_ROLE_PATTERNS: list[tuple[re.Pattern, SourceRole]] = [
         r"(draft|redline|redlined|markup|track.?change)",
         re.IGNORECASE,
     ), SourceRole.DRAFT),
-    # Procedural: filings, pleadings, motions, discovery
+    # Advocacy: party-authored pleadings and argument documents (check BEFORE procedural
+    # so that "complaint" and "answer" get advocacy weight, not procedural weight).
+    # Use \b word boundaries for terms that are substrings of procedural words
+    # (e.g. "position" is a substring of "deposition").
     (re.compile(
-        r"(complaint|answer|motion|brief|petition|pleading|filing|discovery|"
+        r"(complaint|answer|brief|demand|letter|memo\b|memorandum|\bposition\b|argument|appeal)",
+        re.IGNORECASE,
+    ), SourceRole.ADVOCACY),
+    # Procedural: court filings, discovery documents, neutral court records
+    (re.compile(
+        r"(motion|petition|pleading|filing|discovery|"
         r"subpoena|deposition|interrogator|exhibit|affidavit)",
         re.IGNORECASE,
     ), SourceRole.PROCEDURAL),
@@ -52,11 +60,6 @@ _SOURCE_ROLE_PATTERNS: list[tuple[re.Pattern, SourceRole]] = [
         r"mandate|injunction|ruling|decree)",
         re.IGNORECASE,
     ), SourceRole.AUTHORITATIVE),
-    # Advocacy: demand letters, position papers
-    (re.compile(
-        r"(demand|letter|memo|memorandum|position|argument|appeal)",
-        re.IGNORECASE,
-    ), SourceRole.ADVOCACY),
     # Informal: emails, messages, notes, chats, texts
     (re.compile(
         r"(email|mail|message|note|chat|text|sms|slack|teams|whatsapp|"
@@ -130,15 +133,25 @@ class MatterRuntimeAdapter:
         assertion_kind: AssertionKind = AssertionKind.FACTUAL,
         span_id: Optional[str] = None,
         issue_id: Optional[str] = None,
+        issue_link_type: str = "supports",
     ) -> str:
         """
         Convert an extracted fact string into a typed assertion.
         Auto-infers source_role from document_id if not explicitly provided.
-        If issue_id is provided, links the assertion to that issue as a 'supports' relation.
+        Also auto-infers speech_act from source_role when speech_act is EXTRACTED
+        (advocacy → alleged, operative → operative, authoritative → operative).
+        If issue_id is provided, links the assertion to that issue with issue_link_type.
         Returns assertion_id.
         """
         if source_role == SourceRole.UNKNOWN:
             source_role = infer_source_role(document_id)
+
+        # Auto-elevate speech_act when the caller left it as the generic EXTRACTED default
+        if speech_act == SpeechAct.EXTRACTED:
+            if source_role == SourceRole.ADVOCACY:
+                speech_act = SpeechAct.ALLEGED
+            elif source_role in (SourceRole.OPERATIVE, SourceRole.AUTHORITATIVE):
+                speech_act = SpeechAct.OPERATIVE
 
         candidate = AssertionCandidate(
             proposition_text=proposition_text,
@@ -164,7 +177,7 @@ class MatterRuntimeAdapter:
 
         # Link to issue if a focus issue was specified for this lead (SO-4)
         if issue_id is not None:
-            self.model.issues.link_assertion(assertion_id, issue_id, "supports")
+            self.model.issues.link_assertion(assertion_id, issue_id, issue_link_type)
 
         return assertion_id
 
