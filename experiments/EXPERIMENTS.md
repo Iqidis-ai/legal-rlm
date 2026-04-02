@@ -5,6 +5,37 @@ Only Codex-validated conclusions are recorded as findings.
 
 ---
 
+## EXP-007 — All Priority-0 SOs Complete + SO-6 Initial + Service Wiring (2026-04-02)
+
+**Status:** COMPLETE
+**Git commits:** 81573f6 → 8bac432 (12 commits)
+**Purpose:** Close all remaining Priority-0 gaps and begin Priority-1 work (SO-6 quantitative intelligence).
+
+**Changes shipped:**
+1. **SO-3 redirect bug fix** — redirect title lookup searched `state.findings["issues"]` (string list from LLM) for dict with `.id == UUID`; always failed silently; now resolves title via `IssueStore.get_issue(id)` directly
+2. **Actor store wired** (SO-5) — entity extraction in `_deep_read_document` now persists people/companies to `ActorStore.upsert_actor()`; `adapter.record_actor()` added
+3. **Actor + doc context in orientation** (SO-1/SO-5) — `build_query_context()` now populates `known_actors` (top 10) and `known_document_ids` (up to 20 from assertion_occurrence); both shown in orientation prompt
+4. **Matter model in public API** (SO-1) — `IrysConfig.enable_matter_model` flag; `Irys` class opens `MatterModel.open(repository)` and injects into engine per-repository (keyed by resolved path)
+5. **LLM-driven gap detection** (SO-7) — `_deep_read_document` now checks `connections` from analysis against `repo.list_files()`; referenced docs not found in repo → `MISSING_DOCUMENT` gap + search lead
+6. **Clarification engine** (SO-7/SO-3) — `ClarificationStore` with add/answer/get_pending/get_answered; `MatterModel.generate_clarifications_from_gaps()` auto-generates questions for high-materiality gaps at run end; answered clarifications injected into orientation context; schema v4 migration
+7. **QuantStore** (SO-6) — `QuantStore.record()` persists structured numeric facts; `DEEP_READ_PROMPT` updated with `numeric_facts` array field; engine extracts and persists per-document; `adapter.record_quant()` added
+8. **stats() expanded** — includes `quant_fact_count` and `pending_clarifications`
+9. **IssueStore.get_issue(id)** — single issue lookup by UUID (was missing; needed for redirect fix)
+
+**What we learned:**
+- `state.findings["issues"]` is a list of LLM-generated strings, never dicts — the redirect UUID lookup was dead code from the start
+- Actor store was fully built but never called; single-line wiring in `_deep_read_document` activated it
+- The clarification engine only requires ~100 lines: a simple Q&A store + materiality threshold + gap iteration
+- SO-6 quant extraction is now live but quality depends entirely on LLM; will need calibration on real documents
+
+**What remains (Priority 1):**
+- Service API matter model endpoints (stop/redirect/clarify via REST) — SO-3 not yet accessible from API layer
+- Quant reconciliation queries (invoice vs payment matching) — data structure exists but no query layer
+- SO-6 numeric conflict detection
+- Adversarial Audit #2 now warranted — Priority 0 items are all present
+
+---
+
 ## EXP-006 — Tier 1 Review Fixes + SO-3/SO-4/SO-5/SO-7 Depth (2026-04-02)
 
 **Status:** COMPLETE
