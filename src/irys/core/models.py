@@ -21,10 +21,9 @@ logger = logging.getLogger(__name__)
 
 class ModelTier(Enum):
     """Model tiers for different task complexities."""
-    NANO = "nano"      # Bulk extraction: NER, classification, simple JSON — provider-swappable
-    LITE = "lite"      # Workhorse: document reading, structured analysis
-    FLASH = "flash"    # Intelligent: search routing, contradiction detection, planning
-    PRO = "pro"        # Synthesis: final polished legal output
+    LITE = "lite"      # Workhorse: reading, extraction
+    FLASH = "flash"    # Intelligent: search, routing, planning
+    PRO = "pro"        # Synthesis: final polished output
 
 
 @dataclass
@@ -40,21 +39,11 @@ class ModelConfig:
 
 # Model configurations per tier
 MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
-    # NANO: cheapest available model for bulk structured extraction (NER, tagging, simple JSON).
-    # Currently maps to gemini-2.5-flash-lite; designed to be remapped to an external provider
-    # (e.g. Groq Llama 3.1 8B at $0.05/$0.08/1M or DeepSeek V3) when multi-provider support lands.
-    ModelTier.NANO: ModelConfig(
-        model_id="gemini-2.5-flash-lite",
-        thinking_level="",
-        max_output_tokens=2048,  # Extraction tasks produce small JSON
-        cost_per_1m_input=0.01875,
-        cost_per_1m_output=0.075,
-    ),
     ModelTier.LITE: ModelConfig(
         model_id="gemini-2.5-flash-lite",
         thinking_level="",
-        max_output_tokens=8192,
-        cost_per_1m_input=0.01875,
+        max_output_tokens=8192,  # Increased from 4096 to reduce truncation
+        cost_per_1m_input=0.01875,  # 1/4 of flash
         cost_per_1m_output=0.075,
     ),
     ModelTier.FLASH: ModelConfig(
