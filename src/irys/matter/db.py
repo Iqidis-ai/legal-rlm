@@ -16,22 +16,37 @@ class SQLiteMatterDB:
     """
     Manages the SQLite connection for a single matter database.
 
-    Thread-safety: one connection per thread via threading.local().
-    All writes happen inside explicit transactions; reads use
-    auto-commit (isolation_level=None with explicit BEGIN where needed).
+    File-based databases: one connection per thread via threading.local().
+    In-memory databases (:memory:): single shared connection so all threads
+    see the same data (used in tests only).
     """
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
+        self._is_memory = str(db_path) == ":memory:"
+        self._shared_conn: Optional[sqlite3.Connection] = None
         self._local = threading.local()
-        # Ensure parent directory exists
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        # Initialize / migrate schema on first open
-        conn = self._conn()
-        apply_schema(conn)
+
+        if self._is_memory:
+            # Single shared connection for in-memory — all threads share it
+            conn = sqlite3.connect(
+                ":memory:", check_same_thread=False, isolation_level=None
+            )
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA temp_store=MEMORY")
+            self._shared_conn = conn
+            apply_schema(conn)
+        else:
+            # Ensure parent directory exists and apply schema via thread-local conn
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = self._conn()
+            apply_schema(conn)
 
     def _conn(self) -> sqlite3.Connection:
-        """Get (or create) a thread-local connection."""
+        """Get the active connection (shared for in-memory, thread-local for file)."""
+        if self._is_memory:
+            return self._shared_conn  # type: ignore[return-value]
         if not hasattr(self._local, "conn") or self._local.conn is None:
             conn = sqlite3.connect(
                 str(self.db_path),
@@ -71,7 +86,11 @@ class SQLiteMatterDB:
         return _Transaction(self)
 
     def close(self):
-        if hasattr(self._local, "conn") and self._local.conn:
+        if self._is_memory:
+            if self._shared_conn:
+                self._shared_conn.close()
+                self._shared_conn = None
+        elif hasattr(self._local, "conn") and self._local.conn:
             self._local.conn.close()
             self._local.conn = None
 
