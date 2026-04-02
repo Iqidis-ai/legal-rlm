@@ -65,7 +65,7 @@ incremental model update process.
 ## D-004: SQLite as Persistent Store for Matter Model
 
 **Date:** 2026-04-02
-**Status:** Proposed — pending Codex design gate
+**Status:** Active — confirmed by Codex design gate 2026-04-02 (session 019d4f71)
 
 **Decision (proposed):** Use SQLite as the persistence layer for all canonical stores
 (matter registry, document cards, actor store, assertion graph, issue model, etc.).
