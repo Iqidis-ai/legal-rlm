@@ -43,6 +43,7 @@ class IrysConfig:
     cache_ttl_seconds: int = 3600
     output_format: str = "markdown"
     log_level: str = "INFO"
+    enable_matter_model: bool = False  # When True, persist intelligence to durable SQLite store
 
 
 class Irys:
@@ -78,6 +79,7 @@ class Irys:
         self._engine: Optional[RLMEngine] = None
         self._cache: Optional[ResponseCache] = None
         self._telemetry = TelemetryCollector()
+        self._matter_models: dict[str, Any] = {}  # repo_path → MatterModel
 
         # Callbacks
         self._on_progress: Optional[Callable] = None
@@ -97,6 +99,7 @@ class Irys:
                 max_depth=self.config.max_depth,
                 max_leads_per_level=self.config.max_leads_per_level,
                 checkpoint_dir=self.config.checkpoint_dir,
+                enable_matter_model=self.config.enable_matter_model,
             )
             self._engine = RLMEngine(
                 gemini_client=self._client,
@@ -144,6 +147,14 @@ class Irys:
             raise ValueError(f"Invalid repository: {', '.join(issues)}")
 
         self._ensure_initialized()
+
+        # Wire matter model for this repository (SO-1: durable per-repo store)
+        if self.config.enable_matter_model:
+            repo_key = str(Path(repository).resolve())
+            if repo_key not in self._matter_models:
+                from .matter import MatterModel
+                self._matter_models[repo_key] = MatterModel.open(repository)
+            self._engine._matter_model = self._matter_models[repo_key]
 
         # Apply template if specified
         if template:
