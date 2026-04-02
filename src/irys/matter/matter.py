@@ -326,6 +326,8 @@ class MatterModel:
             "open_gap_count": self.gaps.count_open(),
             "open_issue_count": self.issues.count_open(),
             "actor_count": self.actors.count(),
+            "quant_fact_count": self.quant.count(),
+            "pending_clarifications": self.clarifications.count_pending(),
             "recent_runs": len(self.ledger.recent_runs(limit=5)),
         }
 
