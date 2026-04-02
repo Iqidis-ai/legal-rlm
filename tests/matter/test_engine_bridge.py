@@ -10,7 +10,7 @@ Verifies:
 """
 
 import pytest
-from irys.rlm.engine import RLMConfig
+from irys.rlm.engine import RLMConfig, RLMEngine
 from irys.matter import MatterModel
 from irys.matter.runtime import MatterRuntimeAdapter, NullMatterAdapter
 
@@ -129,3 +129,40 @@ def test_adapter_log_step_writes_ledger_event():
     branch_events = [e for e in events if e["event_type"] == LedgerEventType.BRANCH_SELECTED.value]
     assert len(branch_events) >= 1
     assert "payment" in branch_events[0]["summary"].lower()
+
+
+# ---------------------------------------------------------------------------
+# SO-5: _build_source_calibration() reflects actual assertion source roles
+# ---------------------------------------------------------------------------
+
+def test_build_source_calibration_groups_by_role():
+    """_build_source_calibration() must show calibration text keyed by source_role."""
+    from irys.matter.enums import SourceRole
+
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("calibration test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Record facts with different source roles
+    adapter.record_fact("Plaintiff alleges breach.", document_id="complaint.pdf")  # → ADVOCACY
+    adapter.record_fact("Contract requires payment by Jan 15.", document_id="contract.pdf")  # → OPERATIVE
+    adapter.record_fact("Court granted summary judgment.", document_id="order.pdf")  # → AUTHORITATIVE
+
+    # Build a minimal engine with the matter model (no Gemini client needed for this method)
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    calibration = engine._build_source_calibration(None)
+
+    assert "ADVOCACY" in calibration or "advocacy" in calibration.lower()
+    assert "OPERATIVE" in calibration or "operative" in calibration.lower()
+    assert "WARNING" in calibration  # always has the advocacy amplification warning
+
+
+def test_build_source_calibration_no_model():
+    """_build_source_calibration() with no matter model returns a safe fallback."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = None
+
+    calibration = engine._build_source_calibration(None)
+    assert "skepticism" in calibration.lower() or "unavailable" in calibration.lower()

@@ -1322,10 +1322,11 @@ class RLMEngine:
 
         try:
             rows = self._matter_model.db.execute(
-                """SELECT source_role, COUNT(*) AS cnt
-                   FROM assertion
-                   WHERE matter_id = ?
-                   GROUP BY source_role
+                """SELECT ao.source_role, COUNT(DISTINCT a.id) AS cnt
+                   FROM assertion a
+                   JOIN assertion_occurrence ao ON ao.assertion_id = a.id
+                   WHERE a.matter_id = ?
+                   GROUP BY ao.source_role
                    ORDER BY cnt DESC""",
                 (self._matter_model.matter_id,),
             ).fetchall()
