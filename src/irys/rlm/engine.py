@@ -937,12 +937,13 @@ class RLMEngine:
                 redirect_issue_id = adapter.get_redirect_issue_id()
                 adapter.clear_redirect()
                 if redirect_issue_id is not None:
-                    # Find issue title for the redirect target
-                    redirect_issues = [
-                        i for i in (state.findings.get("issues", []) or [])
-                        if isinstance(i, dict) and i.get("id") == redirect_issue_id
-                    ]
-                    issue_title = redirect_issues[0].get("title", redirect_issue_id[:40]) if redirect_issues else redirect_issue_id[:40]
+                    # Resolve issue title from matter model (state.findings["issues"]
+                    # stores string titles, not dicts — must use the issue store)
+                    issue_title = redirect_issue_id[:40]  # safe fallback
+                    if self._matter_model is not None:
+                        issue_row = self._matter_model.issues.get_issue(redirect_issue_id)
+                        if issue_row:
+                            issue_title = issue_row.get("title", redirect_issue_id[:40])
                     state.add_lead(
                         description=f"Redirect focus: investigate '{issue_title}'",
                         source="user_redirect",

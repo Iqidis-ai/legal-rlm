@@ -535,6 +535,14 @@ class IssueStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_issue(self, issue_id: str) -> Optional[dict]:
+        """Fetch a single issue by ID. Returns dict or None."""
+        row = self.db.execute(
+            "SELECT * FROM issue WHERE id=? AND matter_id=?",
+            (issue_id, self.matter_id),
+        ).fetchone()
+        return dict(row) if row else None
+
     def count_open(self) -> int:
         row = self.db.execute(
             "SELECT COUNT(*) FROM issue WHERE matter_id=? AND status='open'",
