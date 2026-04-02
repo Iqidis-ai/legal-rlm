@@ -342,3 +342,36 @@ def test_correct_assertion_404_unknown_assertion(client, register_model):
         json={"new_belief_state": "disputed", "confidence": 0.5, "note": "test"},
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# _compute_corpus_key() stability
+# ---------------------------------------------------------------------------
+
+def test_compute_corpus_key_stable():
+    """Same input always produces the same 16-char hex key."""
+    from irys.service.api import _compute_corpus_key
+    k1 = _compute_corpus_key("s3://my-bucket/matters/acme-v-techco")
+    k2 = _compute_corpus_key("s3://my-bucket/matters/acme-v-techco")
+    assert k1 == k2
+    assert len(k1) == 16
+    assert all(c in "0123456789abcdef" for c in k1)
+
+
+def test_compute_corpus_key_different_inputs():
+    """Different descriptors produce different keys."""
+    from irys.service.api import _compute_corpus_key
+    k1 = _compute_corpus_key("s3://bucket/prefix-a")
+    k2 = _compute_corpus_key("s3://bucket/prefix-b")
+    assert k1 != k2
+
+
+def test_compute_corpus_key_url_order_independent():
+    """URL corpus_key is stable regardless of URL list order."""
+    from irys.service.api import _compute_corpus_key
+    urls_a = ["https://s3.us-east-1.amazonaws.com/b/doc1.pdf",
+              "https://s3.us-east-1.amazonaws.com/b/doc2.pdf"]
+    urls_b = list(reversed(urls_a))
+    k1 = _compute_corpus_key(",".join(sorted(urls_a)))
+    k2 = _compute_corpus_key(",".join(sorted(urls_b)))
+    assert k1 == k2
