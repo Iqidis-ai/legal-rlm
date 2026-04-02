@@ -1305,6 +1305,22 @@ async def get_matter_issues(matter_id: str, min_materiality: float = 0.0):
     return result
 
 
+@app.get(
+    "/matter/{matter_id}/gaps",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_gaps(matter_id: str, min_materiality: float = 0.0):
+    """Return open gaps for a matter (SO-7 — missingness is modeled, not ignored).
+
+    Each gap represents something the system knows is missing: a document,
+    a predicate, an unresolved contradiction, or a needed clarification.
+    Filtered by materiality threshold (0.0 = all gaps, 0.5 = significant only).
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return model.gaps.open_gaps(min_materiality=min_materiality)
+
+
 @app.post(
     "/matter/{matter_id}/assertions/{assertion_id}/correct",
     tags=["Matter Model"],
