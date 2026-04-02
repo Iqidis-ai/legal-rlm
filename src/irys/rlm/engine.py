@@ -1903,6 +1903,15 @@ class RLMEngine:
 
         self._emit_step(state, StepType.THINKING, f"Resuming investigation from checkpoint")
 
+        # Wire matter adapter so resumed runs get ledger entries + stop propagation
+        from ..matter.runtime import MatterRuntimeAdapter, NullMatterAdapter
+        run_id = None
+        if self.config.enable_matter_model and self._matter_model is not None:
+            run_id = self._matter_model.start_run(f"Resume: {state.query[:120]}")
+            state._matter_adapter = MatterRuntimeAdapter(self._matter_model, run_id)
+        else:
+            state._matter_adapter = NullMatterAdapter()
+
         try:
             # Continue investigation loop if not complete
             if state.status not in ("completed", "failed"):
@@ -1910,9 +1919,13 @@ class RLMEngine:
                 await self._verify_citations(state, repo)
                 await self._synthesize(state)
                 state.complete()
+                if run_id is not None:
+                    self._matter_model.complete_run(run_id)
 
         except Exception as e:
             state.fail(str(e))
+            if run_id is not None:
+                self._matter_model.fail_run(run_id, str(e))
             raise
 
         return state
