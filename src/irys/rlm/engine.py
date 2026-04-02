@@ -1243,9 +1243,15 @@ class RLMEngine:
             _mm = self._matter_model
             _inventory_doc_id: Optional[str] = None
             _fp = Path(file_path)
-            # Use the full file_path as the inventory key, not just _fp.name, so that
-            # contracts/msa.pdf and exhibits/msa.pdf are never aliased to the same row.
-            _rel_path = file_path
+            # Normalize to a repo-relative path so the inventory key is STABLE across runs.
+            # file_path may be an absolute temp path (e.g. /tmp/abc123/contracts/msa.pdf)
+            # which changes every run, defeating hot-path reuse (SO-1).
+            # relative_to() gives us contracts/msa.pdf — a durable key.
+            try:
+                _rel_path = str(_fp.relative_to(repo.base_path))
+            except ValueError:
+                # file_path is outside base_path (e.g., external/S3 URI) — use as-is
+                _rel_path = file_path
 
             if _mm is not None:
                 try:

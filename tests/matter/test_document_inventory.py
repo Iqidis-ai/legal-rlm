@@ -8,9 +8,11 @@ Verifies:
 5. get_ingested_paths() returns only complete docs
 6. sha256 collision path: upsert with same hash but different path stays stable
 7. count() reflects total inventory rows
+8. Ephemeral absolute paths normalize to stable repo-relative keys (SO-1 hot-path reuse)
 """
 
 import pytest
+from pathlib import Path
 from irys.matter import MatterModel
 
 
@@ -164,4 +166,49 @@ def test_sha256_change_resets_ingest_status(model):
     # Status must be reset so the engine runs a fresh cold ingest
     assert model.inventory.is_ingested("contract.pdf") is False, (
         "changed sha256 must reset ingest_status to 'pending'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# HIGH-3: ephemeral absolute paths — inventory key must be repo-relative
+# ---------------------------------------------------------------------------
+
+def test_relative_to_base_path_produces_stable_key(model):
+    """Simulates the engine's _rel_path normalization across two 'runs'.
+
+    Before the fix, engine.py set _rel_path = file_path (the raw SearchHit
+    absolute path, e.g. /tmp/run1/contracts/msa.pdf). On a second run the
+    temp dir changes (/tmp/run2/...) so the key never matches — hot path
+    (SO-1 reuse) never activates.
+
+    The fix: _rel_path = str(_fp.relative_to(repo.base_path))
+    This test verifies that two absolute paths rooted at different base dirs
+    but referring to the same relative file produce the same inventory key.
+    """
+    base_run1 = Path("/tmp/run1")
+    base_run2 = Path("/tmp/run2")
+    abs_path_run1 = base_run1 / "contracts" / "msa.pdf"
+    abs_path_run2 = base_run2 / "contracts" / "msa.pdf"
+
+    # Simulate what the engine does: normalize to repo-relative key
+    rel_key_run1 = str(abs_path_run1.relative_to(base_run1))
+    rel_key_run2 = str(abs_path_run2.relative_to(base_run2))
+
+    assert rel_key_run1 == rel_key_run2, (
+        "same file in different temp dirs must produce the same inventory key"
+    )
+    assert rel_key_run1 == str(Path("contracts") / "msa.pdf")
+
+    # Verify the stable key activates hot path across simulated runs
+    sha = "c" * 64
+    doc_id_run1, is_new = model.inventory.upsert(rel_key_run1, sha)
+    model.inventory.mark_ingested(doc_id_run1)
+    assert model.inventory.is_ingested(rel_key_run1) is True
+
+    # Second run uses a different absolute path but the SAME relative key
+    doc_id_run2, is_new2 = model.inventory.upsert(rel_key_run2, sha)
+    assert doc_id_run2 == doc_id_run1, "same relative key must find existing row"
+    assert is_new2 is False
+    assert model.inventory.is_ingested(rel_key_run2) is True, (
+        "hot path must activate on second run — ephemeral base_path must not break reuse"
     )
