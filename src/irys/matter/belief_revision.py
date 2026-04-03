@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .db import SQLiteMatterDB
-from .enums import BeliefState, AssertionLinkType, RevisionCause
+from .enums import BeliefState, RevisionCause
 from .models import RevisionResult
 from .graph import AssertionStore
 
@@ -42,6 +42,7 @@ def _compute_belief_state(
     support_states: list[BeliefState],
     attack_states: list[BeliefState],
     has_superseding: bool = False,
+    current_confidence: float = 0.5,
 ) -> tuple[BeliefState, float]:
     """
     Compute new belief state and confidence from support/attack/supersedes graph.
@@ -91,11 +92,12 @@ def _compute_belief_state(
 
     if strong_supports and not active_attacks:
         # Non-operative but solid support, no attacks → keep current with mild boost
-        base_confidence = min(0.8, 0.5 + 0.05 * len(strong_supports))
+        # Never downgrade below current_confidence — seeded values should not be clobbered
+        base_confidence = max(current_confidence, min(0.8, 0.5 + 0.05 * len(strong_supports)))
         return current_state, base_confidence
 
-    # No conclusive signal — keep current state unchanged
-    return current_state, 0.5
+    # No conclusive signal — keep current state and preserve existing confidence
+    return current_state, current_confidence
 
 
 class BeliefRevisionEngine:
@@ -200,6 +202,7 @@ class BeliefRevisionEngine:
         new_state, new_confidence = _compute_belief_state(
             old_state, support_states, attack_states,
             has_superseding=bool(superseding_ids),
+            current_confidence=old_confidence,
         )
 
         if new_state == old_state and abs(new_confidence - old_confidence) < 0.01:

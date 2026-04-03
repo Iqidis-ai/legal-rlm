@@ -39,8 +39,13 @@ def _initial_belief_state(speech_act: SpeechAct) -> tuple[BeliefState, float]:
     TESTIFIED, STIPULATED, AMENDED, WAIVED, TERMINATED, INFERRED, OPERATIVE,
     EXTRACTED.  Note: DISPUTED/SUPERSEDED/WITHDRAWN are BeliefState members, not SpeechAct.
     """
-    if speech_act in (SpeechAct.OPERATIVE, SpeechAct.ADMITTED, SpeechAct.STIPULATED):
+    if speech_act == SpeechAct.OPERATIVE:
         return BeliefState.OPERATIVE, 0.8
+    if speech_act in (SpeechAct.ADMITTED, SpeechAct.STIPULATED):
+        # Admissions/stipulations are distinct from operative text — they carry legal
+        # significance but their truth is asserted by the admitting party, not by
+        # the document itself.
+        return BeliefState.ADMITTED, 0.8
     if speech_act in (SpeechAct.PERFORMED, SpeechAct.PAID):
         return BeliefState.PERFORMED, 0.8
     if speech_act == SpeechAct.INFERRED:
@@ -1104,7 +1109,9 @@ class TrustOverrideStore:
         """Upsert a trust override. Returns override id."""
         if trust_level not in ("low", "normal", "high"):
             raise ValueError(f"trust_level must be 'low', 'normal', or 'high', got {trust_level!r}")
-        override_id = _id()
+        # Normalize to forward slashes so Windows backslash paths match API/user-supplied patterns
+        document_pattern = document_pattern.replace("\\\\", "/").replace("\\", "/")
+        _new_id = _id()
         now = _now()
         self.db.execute(
             """INSERT INTO document_trust_override
@@ -1113,18 +1120,26 @@ class TrustOverrideStore:
                ON CONFLICT(matter_id, document_pattern)
                DO UPDATE SET trust_level=excluded.trust_level,
                              note=excluded.note""",
-            (override_id, self.matter_id, document_pattern, trust_level, note, now),
+            (_new_id, self.matter_id, document_pattern, trust_level, note, now),
         )
-        return override_id
+        # Return the actually stored ID — on ON CONFLICT path, _new_id is discarded
+        row = self.db.execute(
+            "SELECT id FROM document_trust_override WHERE matter_id=? AND document_pattern=?",
+            (self.matter_id, document_pattern),
+        ).fetchone()
+        return row["id"] if row else _new_id
 
     def get(self, document_id: str) -> Optional[str]:
         """Return trust_level for a document_id, or None if no override set.
 
         Matches against full document_id path first, then basename only.
         Among multiple matching patterns, the longest (most specific) wins.
+        Path separators are normalized to forward slashes to handle Windows paths.
         """
         from pathlib import Path
-        basename = Path(document_id).name
+        # Normalize both sides to forward slashes before comparison
+        _doc_normalized = document_id.replace("\\\\", "/").replace("\\", "/")
+        basename = Path(_doc_normalized).name
         rows = self.db.execute(
             """SELECT document_pattern, trust_level FROM document_trust_override
                WHERE matter_id=? AND trust_level != 'normal'
@@ -1132,8 +1147,8 @@ class TrustOverrideStore:
             (self.matter_id,),
         ).fetchall()
         for row in rows:
-            pattern = row["document_pattern"]
-            if pattern == document_id or pattern == basename:
+            pattern = row["document_pattern"].replace("\\\\", "/").replace("\\", "/")
+            if pattern == _doc_normalized or pattern == basename:
                 return row["trust_level"]
         return None
 

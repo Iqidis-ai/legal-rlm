@@ -12,7 +12,7 @@ When enabled:
 
 import re
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 from .matter import MatterModel
 from .enums import (
@@ -176,7 +176,8 @@ class MatterRuntimeAdapter:
         trust = self.model.trust_overrides.get(document_id)
         if trust == "low":
             speech_act = SpeechAct.ALLEGED
-        elif trust == "high" and speech_act == SpeechAct.ALLEGED:
+        elif trust == "high" and speech_act in (SpeechAct.ALLEGED, SpeechAct.EXTRACTED):
+            # Promote both ALLEGED and EXTRACTED sources when user marks document as high-trust
             speech_act = SpeechAct.OPERATIVE
 
         candidate = AssertionCandidate(

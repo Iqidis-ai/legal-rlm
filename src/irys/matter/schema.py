@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -64,8 +64,14 @@ CREATE TABLE IF NOT EXISTS assertion_occurrence (
 CREATE INDEX IF NOT EXISTS ix_occurrence_assertion
     ON assertion_occurrence(assertion_id, speech_act);
 
+CREATE INDEX IF NOT EXISTS ix_occurrence_assertion_created
+    ON assertion_occurrence(assertion_id, created_at);
+
 CREATE INDEX IF NOT EXISTS ix_occurrence_document
     ON assertion_occurrence(document_id, span_id);
+
+CREATE INDEX IF NOT EXISTS ix_assertion_matter_created
+    ON assertion(matter_id, created_at DESC);
 
 -- Prevents duplicate occurrences from concurrent runs ingesting the same document
 -- with the same speech-act classification. Including speech_act allows the same
@@ -512,6 +518,12 @@ CREATE TABLE IF NOT EXISTS document_annotation (
 
 CREATE INDEX IF NOT EXISTS ix_annotation_matter
     ON document_annotation(matter_id, annotation_type, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS ix_annotation_pattern
+    ON document_annotation(matter_id, document_pattern, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS ix_annotation_recent
+    ON document_annotation(matter_id, created_at DESC);
 """
 
 _DDL_SCHEMA_VERSION = """
@@ -709,6 +721,34 @@ def _migration_v9(conn) -> None:
             conn.execute(stmt)
 
 
+def _migration_v11(conn) -> None:
+    """Add performance indexes for list_recent() and document_annotation queries.
+
+    These indexes support:
+    - ix_occurrence_assertion_created: correlated subqueries in list_recent() for
+      primary_document_id/source_role/speech_act chronological ordering
+    - ix_assertion_matter_created: fast matter-scoped paging in list_recent()
+    - ix_annotation_pattern: get_for_document() filter on matter_id + document_pattern
+    - ix_annotation_recent: list_recent() order by created_at within a matter
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_occurrence_assertion_created "
+        "ON assertion_occurrence(assertion_id, created_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_assertion_matter_created "
+        "ON assertion(matter_id, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_annotation_pattern "
+        "ON document_annotation(matter_id, document_pattern, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_annotation_recent "
+        "ON document_annotation(matter_id, created_at DESC)"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -723,6 +763,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (8, _migration_v8),
     (9, _migration_v9),
     (10, _migration_v10),
+    (11, _migration_v11),
 ]
 
 

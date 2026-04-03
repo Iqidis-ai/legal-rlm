@@ -627,7 +627,7 @@ Respond in JSON format:
 """
 
 
-def _link_existing_assertions_to_issue(matter_model, doc_rel_path: str, issue_id: str, adapter) -> None:
+def _link_existing_assertions_to_issue(matter_model, doc_rel_path: str, issue_id: str) -> None:
     """Link already-recorded assertions from a document to a focus issue.
 
     Called when a document is short-circuited (hot path or within-run dedup) but
@@ -1489,11 +1489,9 @@ class RLMEngine:
             # assertions to the new issue so issue coverage isn't undercounted (SO-4).
             if _rel_path in state._reading_in_progress:
                 if focus_issue_id is not None and self._matter_model is not None:
-                    _adapter = getattr(state, "_matter_adapter", None)
-                    if _adapter is not None:
-                        _link_existing_assertions_to_issue(
-                            self._matter_model, _rel_path, focus_issue_id, _adapter
-                        )
+                    _link_existing_assertions_to_issue(
+                        self._matter_model, _rel_path, focus_issue_id
+                    )
                 return
             state._reading_in_progress.add(_rel_path)
 
@@ -1520,10 +1518,8 @@ class RLMEngine:
                         # issue coverage is not undercounted when the same document is relevant
                         # to multiple issues across different investigation iterations (SO-4).
                         if focus_issue_id is not None:
-                            _adapter = getattr(state, "_matter_adapter", None)
-                            if _adapter is not None:
                                 _link_existing_assertions_to_issue(
-                                    _mm, _rel_path, focus_issue_id, _adapter
+                                    _mm, _rel_path, focus_issue_id
                                 )
                         state.documents_read += 1
                         self._emit_step(
@@ -2497,36 +2493,47 @@ class RLMEngine:
             return
         from ..matter.enums import GapType
         open_issues = self._matter_model.issues.get_open_issues(min_materiality=0.4)
+        if not open_issues:
+            return
+
+        # Batch query 1: preload support counts for ALL open issues in one round-trip
+        issue_ids = [i["id"] for i in open_issues]
+        placeholders = ",".join("?" * len(issue_ids))
+        support_rows = self._matter_model.db.execute(
+            f"""SELECT issue_id, COUNT(*) AS cnt FROM assertion_issue_link
+                WHERE issue_id IN ({placeholders})
+                  AND relation_type IN ('supports','establishes')
+                GROUP BY issue_id""",
+            issue_ids,
+        ).fetchall()
+        supported_issue_ids = {r["issue_id"] for r in support_rows if r["cnt"] > 0}
+
+        # Batch query 2: preload all open proof-gap issue links in one round-trip
+        existing_gap_rows = self._matter_model.db.execute(
+            f"""SELECT gl.affected_id AS issue_id FROM gap g
+                JOIN gap_link gl ON gl.gap_id = g.id
+                WHERE g.matter_id=?
+                  AND g.status='open'
+                  AND gl.affected_type='issue'
+                  AND gl.affected_id IN ({placeholders})""",
+            [self._matter_model.matter_id] + issue_ids,
+        ).fetchall()
+        already_gapped_issue_ids = {r["issue_id"] for r in existing_gap_rows}
+
         for issue in open_issues:
             issue_id = issue["id"]
-            # Count supporting assertions -- 'supports' and 'establishes' both count as coverage
-            row = self._matter_model.db.execute(
-                """SELECT COUNT(*) FROM assertion_issue_link
-                   WHERE issue_id=? AND relation_type IN ('supports','establishes')""",
-                (issue_id,),
-            ).fetchone()
-            if row and row[0] == 0:
-                # Dedup: skip only if an open proof-gap (same expected_artifact) already exists
-                # for this issue — not just any open issue-linked gap.
-                _expected = f"Evidence supporting: {issue['title']}"
-                existing = self._matter_model.db.execute(
-                    """SELECT g.id FROM gap g
-                       JOIN gap_link gl ON gl.gap_id = g.id
-                       WHERE g.matter_id=? AND g.status='open' AND g.expected_artifact=?
-                         AND gl.affected_type='issue' AND gl.affected_id=?
-                       LIMIT 1""",
-                    (self._matter_model.matter_id, _expected, issue_id),
-                ).fetchone()
-                if existing is None:
-                    self._matter_model.gaps.record(
-                        gap_type=GapType.MISSING_DOCUMENT,
-                        description=f"No supporting evidence found for issue: '{issue['title']}'",
-                        expected_artifact=_expected,
-                        materiality=issue.get("materiality", 0.5),
-                        affected_type="issue",
-                        affected_id=issue_id,
-                    )
-
+            if issue_id in supported_issue_ids:
+                continue  # has supporting evidence — not a proof gap
+            if issue_id in already_gapped_issue_ids:
+                continue  # gap already recorded for this issue
+            self._matter_model.gaps.record(
+                gap_type=GapType.MISSING_DOCUMENT,
+                description=f"No supporting evidence found for issue: '{issue['title']}'",
+                expected_artifact=f"Evidence supporting: {issue['title']}",
+                materiality=issue.get("materiality", 0.5),
+                affected_type="issue",
+                affected_id=issue_id,
+            )
     def _save_checkpoint(self, state: InvestigationState, iteration: int):
         """Save investigation checkpoint."""
         if not self.config.checkpoint_dir:
