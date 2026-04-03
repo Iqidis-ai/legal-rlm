@@ -1905,3 +1905,82 @@ def test_get_summary_reuse_rate_zero_when_no_docs_read():
     summary = state.get_summary()
     metrics = summary.get("metrics", {})
     assert metrics.get("reuse_rate") == 0.0
+
+
+# ---------------------------------------------------------------------------
+# SO-3: log_conflict writes CONFLICT_DETECTED to the reasoning ledger
+# ---------------------------------------------------------------------------
+
+def test_log_conflict_writes_conflict_detected_event():
+    """MatterRuntimeAdapter.log_conflict() must write a CONFLICT_DETECTED ledger event (SO-3).
+
+    This verifies that numeric or factual conflicts surfaced during investigation
+    are recorded in the structured reasoning ledger — not silently discarded.
+    The ledger is user-facing (SO-3), so conflict detection events must appear
+    so the user can see and interrupt investigation around specific conflicts.
+    """
+    from irys.matter import LedgerEventType
+
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("conflict log test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    adapter.log_conflict(
+        "Invoice #42 has conflicting amounts: $50,000 in contract vs $55,000 in email"
+    )
+
+    events = model.ledger.get_events(run_id)
+    conflict_events = [
+        e for e in events if e["event_type"] == LedgerEventType.CONFLICT_DETECTED.value
+    ]
+    assert len(conflict_events) == 1, "log_conflict must write exactly one CONFLICT_DETECTED event"
+    assert "Invoice #42" in conflict_events[0]["summary"], (
+        "Conflict summary must appear in ledger event"
+    )
+
+
+# ---------------------------------------------------------------------------
+# SO-6: _build_quant_summary() surfaces date and rate facts
+# ---------------------------------------------------------------------------
+
+def test_build_quant_summary_shows_dates_and_rates():
+    """_build_quant_summary() must include date and rate facts alongside monetary amounts (SO-6).
+
+    Dates and rates are first-class quant kinds — not shown only as prose in memos.
+    The synthesis block must include a 'Key dates' section and a 'Rates' section
+    so the LLM can reference structured timeline and interest-rate data.
+    """
+    model = MatterModel.open_in_memory()
+
+    # Record a monetary amount (to ensure amounts section is present)
+    model.quant.record(quant_kind="amount", raw_text="$100,000 total claim",
+                       amount_value=100_000.0, currency="USD", subject_type="claim")
+
+    # Record date facts (SO-6 timeline intelligence)
+    model.quant.record(quant_kind="date", raw_text="Contract execution date",
+                       date_value="2023-01-15")
+    model.quant.record(quant_kind="date", raw_text="Payment deadline",
+                       date_value="2023-02-01")
+
+    # Record a rate fact (SO-6 interest / penalty modeling)
+    model.quant.record(quant_kind="rate", raw_text="18% per annum default interest rate",
+                       rate_value=18.0)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_quant_summary()
+
+    # Date section must appear
+    assert "2023-01-15" in result or "Contract execution" in result, (
+        f"Date fact must appear in quant summary: {result}"
+    )
+    assert "2023-02-01" in result or "Payment deadline" in result, (
+        f"Second date fact must appear in quant summary: {result}"
+    )
+
+    # Rate section must appear
+    assert "18" in result, f"Rate value 18% must appear in quant summary: {result}"
+    assert "interest" in result.lower() or "rate" in result.lower(), (
+        f"Rate description must appear in quant summary: {result}"
+    )

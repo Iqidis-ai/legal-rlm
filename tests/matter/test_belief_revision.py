@@ -224,3 +224,34 @@ def test_both_support_and_attack_results_in_disputed(model):
     assert central_record.belief_state == BeliefState.DISPUTED.value, (
         f"Both support+attack must result in DISPUTED; got {central_record.belief_state}"
     )
+
+
+def test_withdrawn_attacker_does_not_trigger_disputed(model):
+    """A WITHDRAWN attacker must not count as an active attack (SO-2 INERT filtering).
+
+    In _compute_belief_state(), WITHDRAWN is in _INERT so withdrawn attackers are
+    excluded from active_attacks.  Once a contradicting claim is withdrawn (e.g.
+    the opposing party retracts a position), the previously-challenged assertion
+    must recover — it must not remain DISPUTED due to an inert challenge.
+    """
+    central_id = add(model, "Payment of $50,000 was made on January 15.")
+    model.assertions.set_belief_state(central_id, BeliefState.OPERATIVE, 0.85)
+
+    # An attacker that was subsequently WITHDRAWN (retracted claim)
+    withdrawn_attacker_id = add(model, "Payment was never made (withdrawn by counsel).")
+    model.assertions.set_belief_state(withdrawn_attacker_id, BeliefState.WITHDRAWN, 0.0)
+    model.assertions.link(withdrawn_attacker_id, central_id, AssertionLinkType.CONTRADICTS)
+
+    # Trigger revision — the WITHDRAWN attacker must NOT cause DISPUTED
+    model.belief.apply(
+        seed_assertion_ids=[central_id],
+        cause=RevisionCause.NEW_EVIDENCE,
+    )
+
+    central_record = model.assertions.get(central_id)
+    assert central_record.belief_state != BeliefState.DISPUTED.value, (
+        f"WITHDRAWN attacker must not trigger DISPUTED; got {central_record.belief_state}"
+    )
+    assert central_record.belief_state == BeliefState.OPERATIVE.value, (
+        "Assertion with only WITHDRAWN attackers must remain OPERATIVE (INERT filtering)"
+    )
