@@ -1497,6 +1497,34 @@ class IssueStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def resolve_predicate(self, predicate_id: str) -> bool:
+        """Mark an issue predicate as resolved (SO-4 predicate-aware coverage).
+
+        Returns True if the predicate existed and was updated; False if not found.
+        Called when a supporting assertion is confirmed to satisfy a claim element.
+        """
+        with self.db.transaction():
+            cursor = self.db.execute(
+                "UPDATE issue_predicate SET status='resolved' WHERE id=?",
+                (predicate_id,),
+            )
+        return cursor.rowcount > 0
+
+    def resolve_predicate_by_description(self, issue_id: str, description: str) -> bool:
+        """Mark the first open predicate matching description as resolved.
+
+        Returns True if a predicate was found and resolved; False otherwise.
+        Useful when the engine knows a predicate description was satisfied but does not
+        have the predicate_id.
+        """
+        row = self.db.execute(
+            "SELECT id FROM issue_predicate WHERE issue_id=? AND description=? AND status='open'",
+            (issue_id, description.strip()[:300]),
+        ).fetchone()
+        if row is None:
+            return False
+        return self.resolve_predicate(row["id"])
+
     def get_issue(self, issue_id: str) -> Optional[dict]:
         """Fetch a single issue by ID. Returns dict or None."""
         row = self.db.execute(
@@ -3463,10 +3491,15 @@ class ProofStateStore:
         """
         assertion_ratio = supporting / (supporting + attacking + 1)
 
-        if total_predicates > 0:
+        if total_predicates > 0 and satisfied_predicates > 0:
+            # Both predicates defined AND some resolved: multiplicative boost.
             predicate_ratio = satisfied_predicates / total_predicates
             score = predicate_ratio * assertion_ratio
         else:
+            # No predicates defined, OR predicates defined but none resolved yet
+            # (no production writer has called resolve_predicate() yet).
+            # Fall back to assertion_ratio alone so issues with predicates are not
+            # unfairly scored 0 before the predicate resolver is wired in (SO-4).
             score = assertion_ratio
 
         return round(min(max(score, 0.0), 1.0), 4)

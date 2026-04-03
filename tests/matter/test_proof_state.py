@@ -144,9 +144,12 @@ def test_partial_status(model, issue_id):
 # ---------------------------------------------------------------------------
 
 def test_predicates_factor_into_score(model, issue_id):
-    """With predicates, score = predicate_ratio * assertion_ratio.
+    """With predicates defined but none resolved, score falls back to assertion_ratio.
 
-    Zero resolved predicates → score lower than assertion ratio alone.
+    Prior behavior: predicate_ratio=0 → score=0 (penalized issues with any predicates
+    because no production writer ever resolved them). New behavior: zero resolved
+    predicates falls back to assertion_ratio so predicate-bearing issues are not
+    unfairly scored 0 before resolve_predicate() is called in production (SO-4).
     """
     model.issues.add_predicate(issue_id, "Element A must be proved")
     model.issues.add_predicate(issue_id, "Element B must be proved")
@@ -156,24 +159,43 @@ def test_predicates_factor_into_score(model, issue_id):
     ps = model.proof_state.compute_and_store(issue_id)
     assert ps["total_predicate_count"] == 2
     assert ps["satisfied_predicate_count"] == 0
-    # predicate_ratio = 0/2 = 0 → sufficiency = 0
-    assert ps["sufficiency"] == 0.0
+    # 0 resolved predicates → falls back to assertion_ratio = 5/(5+0+1) ≈ 0.8333
+    assert ps["sufficiency"] > 0.0, (
+        "Zero resolved predicates must fall back to assertion_ratio, not 0"
+    )
+    # Predicates with assertions must score at least as well as no predicates/no assertions
+    ps_no_pred = model.proof_state._score(5, 0, 0, 0)
+    assert ps["sufficiency"] == ps_no_pred, (
+        "Zero resolved predicates should give same score as no-predicate case"
+    )
 
 
 def test_resolved_predicates_raise_score(model, issue_id):
     pred_id = model.issues.add_predicate(issue_id, "Element A")
+    model.issues.add_predicate(issue_id, "Element B")  # stays open
     for _ in range(3):
         _add_assertion(model, issue_id, "supports")
 
-    # Resolve the predicate
-    model.db.execute(
-        "UPDATE issue_predicate SET status='resolved' WHERE id=?",
-        (pred_id,),
-    )
+    # Resolve one predicate via the canonical API
+    assert model.issues.resolve_predicate(pred_id) is True
 
     ps = model.proof_state.compute_and_store(issue_id)
     assert ps["satisfied_predicate_count"] == 1
-    assert ps["sufficiency"] > 0.0
+    assert ps["total_predicate_count"] == 2
+    # With satisfied predicates: predicate_ratio=0.5 × assertion_ratio=3/(3+0+1)=0.75 = 0.375
+    assert ps["sufficiency"] == pytest.approx(0.375), (
+        "Partial predicate resolution must use predicate_ratio × assertion_ratio"
+    )
+
+    # Resolve both → predicate_ratio=1.0, score = assertion_ratio
+    pred_b_row = model.db.execute(
+        "SELECT id FROM issue_predicate WHERE issue_id=? AND description='Element B'",
+        (issue_id,),
+    ).fetchone()
+    model.issues.resolve_predicate(pred_b_row["id"])
+    ps2 = model.proof_state.compute_and_store(issue_id)
+    assert ps2["satisfied_predicate_count"] == 2
+    assert ps2["sufficiency"] == pytest.approx(0.75)
 
 
 # ---------------------------------------------------------------------------
