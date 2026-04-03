@@ -280,13 +280,10 @@ class GeminiClient:
             logger.error(f"API call to {mc.model_id} timed out after {request_timeout}s")
             raise TimeoutError(f"API call timed out after {request_timeout}s")
 
-        # Track usage — prefer actual token counts from usage_metadata when available.
-        # cached_content_token_count is the portion of prompt tokens served from cache
-        # (billed at 10% of input rate); prompt_token_count excludes cached tokens.
-        # Track usage — prefer actual token counts from usage_metadata when available.
-        # Gemini's prompt_token_count is the TOTAL prompt size INCLUDING cached tokens.
+        # Track usage — prefer actual token counts from response.usage_metadata.
+        # Gemini's prompt_token_count is the TOTAL prompt including cached tokens.
         # cached_content_token_count is the cached subset (billed at 10% of input rate).
-        # Non-cached input = prompt_token_count - cached_content_token_count.
+        # Non-cached input tokens = prompt_token_count - cached_content_token_count.
         um = getattr(response, "usage_metadata", None)
         if um is not None:
             total_prompt = getattr(um, "prompt_token_count", None) or 0
