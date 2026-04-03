@@ -1092,14 +1092,25 @@ class QuantStore:
         # use record() individually. Engine call sites do not use the return value.
         return ids
 
-    def get_by_kind(self, quant_kind: str) -> list[dict]:
-        """Return all quant facts of a given kind, sorted by date."""
-        rows = self.db.execute(
-            """SELECT * FROM quant_fact
-               WHERE matter_id=? AND quant_kind=?
-               ORDER BY date_value, created_at""",
-            (self.matter_id, quant_kind),
-        ).fetchall()
+    def get_by_kind(self, quant_kind: str, limit: Optional[int] = None) -> list[dict]:
+        """Return quant facts of a given kind, sorted by date_value then created_at.
+
+        limit: when provided, returns at most that many rows (DB-level bound).
+        """
+        if limit is not None:
+            rows = self.db.execute(
+                """SELECT * FROM quant_fact
+                   WHERE matter_id=? AND quant_kind=?
+                   ORDER BY date_value, created_at LIMIT ?""",
+                (self.matter_id, quant_kind, limit),
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                """SELECT * FROM quant_fact
+                   WHERE matter_id=? AND quant_kind=?
+                   ORDER BY date_value, created_at""",
+                (self.matter_id, quant_kind),
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def get_amounts(self, min_value: Optional[float] = None) -> list[dict]:

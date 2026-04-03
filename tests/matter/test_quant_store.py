@@ -283,3 +283,22 @@ def test_get_by_kind_empty_when_no_facts(model):
     """get_by_kind() returns [] when no facts of that kind exist."""
     assert model.quant.get_by_kind("date") == []
     assert model.quant.get_by_kind("rate") == []
+
+
+def test_get_by_kind_limit(model):
+    """get_by_kind(limit=N) returns at most N rows (DB-level bound)."""
+    for i in range(5):
+        model.quant.record(quant_kind="date", raw_text=f"Date {i}",
+                           date_value=f"2024-0{i+1}-01")
+    assert len(model.quant.get_by_kind("date", limit=3)) == 3
+    assert len(model.quant.get_by_kind("date")) == 5
+
+
+def test_get_by_kind_date_none_date_value(model):
+    """Date fact with null date_value must still be retrievable (raw_text fallback)."""
+    model.quant.record(quant_kind="date", raw_text="sometime in late 2023",
+                       date_value=None)
+    dates = model.quant.get_by_kind("date")
+    assert len(dates) == 1
+    assert dates[0]["date_value"] is None
+    assert dates[0]["raw_text"] == "sometime in late 2023"

@@ -2167,8 +2167,8 @@ class RLMEngine:
 
             reconciliation = self._matter_model.reconcile()
             conflicts = self._matter_model.quant.get_conflicts()
-            date_facts = self._matter_model.quant.get_by_kind("date")
-            rate_facts = self._matter_model.quant.get_by_kind("rate")
+            date_facts = self._matter_model.quant.get_by_kind("date", limit=8)
+            rate_facts = self._matter_model.quant.get_by_kind("rate", limit=5)
         except Exception:
             return "Quantitative data unavailable."
 
@@ -2188,18 +2188,23 @@ class RLMEngine:
                 lines.append(f"  ⚠ {subject} ({currency}): {', '.join(values)} — UNRESOLVED DISCREPANCY")
 
         if date_facts:
-            lines.append("Key dates extracted (chronological):")
-            for df in date_facts[:8]:
+            # Title avoids "chronological" since date_value may not be ISO-normalized.
+            lines.append("Key dates extracted (by stored date value):")
+            for df in date_facts:
                 _dv = df.get("date_value") or df.get("raw_text", "")[:60]
                 _ctx = df.get("raw_text", "")[:80]
                 lines.append(f"  • {_dv} — {_ctx}" if _dv != _ctx else f"  • {_dv}")
 
         if rate_facts:
             lines.append("Rates and percentages:")
-            for rf in rate_facts[:5]:
+            for rf in rate_facts:
                 _rv = rf.get("rate_value")
                 _ctx = rf.get("raw_text", "")[:80]
-                _rate_str = f"{_rv:.4g}%" if _rv is not None else ""
+                # Guard against non-numeric rate_value from corrupted/legacy rows.
+                try:
+                    _rate_str = f"{float(_rv):.4g}%" if _rv is not None else ""
+                except (TypeError, ValueError):
+                    _rate_str = ""
                 lines.append(f"  • {_rate_str} — {_ctx}" if _rate_str else f"  • {_ctx}")
 
         return "\n".join(lines)
