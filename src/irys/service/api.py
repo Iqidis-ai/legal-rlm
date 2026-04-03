@@ -1314,6 +1314,14 @@ async def stop_investigation(matter_id: str, _: StopRunRequest):
         raise HTTPException(status_code=409, detail="No running investigation to stop")
     run_id = runs[0]["id"]
     model.ledger.request_stop(run_id)
+    # Log the steering event so the reasoning trail reflects the user action (SO-3)
+    from irys.matter.enums import LedgerEventType
+    model.ledger.append_event(
+        run_id=run_id,
+        event_type=LedgerEventType.USER_INTERRUPTED,
+        summary="User requested stop via API",
+        why="User-initiated stop — investigation will halt after current iteration",
+    )
     return {"status": "stop_requested", "run_id": run_id}
 
 
@@ -1338,6 +1346,15 @@ async def redirect_investigation(matter_id: str, run_id: str, request: RedirectR
     if issue is None:
         raise HTTPException(status_code=404, detail=f"Issue '{request.issue_id}' not found")
     model.ledger.request_redirect(run_id, request.issue_id)
+    # Log the steering event so the reasoning trail reflects the user action (SO-3)
+    from irys.matter.enums import LedgerEventType
+    model.ledger.append_event(
+        run_id=run_id,
+        event_type=LedgerEventType.USER_REDIRECTED,
+        summary=f"User redirected to issue: {issue.get('title', request.issue_id)[:80]}",
+        why="User-initiated redirect via API",
+        branch_issue_id=request.issue_id,
+    )
     return {
         "status": "redirect_requested",
         "run_id": run_id,
