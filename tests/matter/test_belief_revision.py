@@ -224,6 +224,17 @@ def test_max_work_truncation_records_ledger_warning(model):
         assert len(warning_events) >= 1, (
             "A SYSTEM_WARNING ledger event must be recorded when MAX_WORK is reached"
         )
+
+        # Completing the run after truncation must not hit a seq_no collision.
+        # If the truncation event used a direct INSERT that bypassed _seq_cache,
+        # the next normal ledger append (complete_run) would reuse the same seq_no.
+        model.complete_run(run_id)  # must not raise
+        all_events = model.ledger.get_events(run_id)
+        seq_nos = [e["seq_no"] for e in all_events]
+        assert len(seq_nos) == len(set(seq_nos)), (
+            "Duplicate seq_no values detected — truncation event must route through "
+            "the canonical ledger path to preserve _seq_cache consistency"
+        )
     finally:
         BeliefRevisionEngine.MAX_WORK = original_max
 

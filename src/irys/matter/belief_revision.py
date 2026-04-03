@@ -18,7 +18,7 @@ through the graph and update all downstream conclusions.
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 _log = logging.getLogger(__name__)
 
@@ -26,6 +26,9 @@ from .db import SQLiteMatterDB
 from .enums import BeliefState, LedgerEventType, RevisionCause, SOURCE_TRUST_WEIGHTS
 from .models import RevisionResult
 from .graph import AssertionStore
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .reasoning import ReasoningLedgerStore
 
 
 def _now() -> str:
@@ -166,9 +169,15 @@ class BeliefRevisionEngine:
 
     MAX_WORK = 500
 
-    def __init__(self, db: SQLiteMatterDB, assertion_store: AssertionStore):
+    def __init__(
+        self,
+        db: SQLiteMatterDB,
+        assertion_store: AssertionStore,
+        ledger: "Optional[ReasoningLedgerStore]" = None,
+    ):
         self.db = db
         self.assertion_store = assertion_store
+        self._ledger = ledger
 
     def apply(
         self,
@@ -249,29 +258,16 @@ class BeliefRevisionEngine:
             )
             # Surface truncation as a structured SYSTEM_WARNING in the reasoning ledger
             # so users can see incomplete propagation (SO-2 run-level failure signal).
-            if run_id:
+            # Route through the canonical ledger path to preserve _seq_cache consistency.
+            if run_id and self._ledger is not None:
                 try:
-                    matter_id = self.assertion_store.matter_id
-                    seq_row = self.db.execute(
-                        "SELECT COALESCE(MAX(seq_no), -1) + 1 FROM ledger_event WHERE run_id=?",
-                        (run_id,),
-                    ).fetchone()
-                    seq_no = seq_row[0] if seq_row else 0
-                    self.db.execute(
-                        """INSERT INTO ledger_event
-                           (id, run_id, seq_no, event_type, summary, created_at)
-                           VALUES (?,?,?,?,?,?)""",
-                        (
-                            uuid.uuid4().hex,
-                            run_id,
-                            seq_no,
-                            LedgerEventType.SYSTEM_WARNING.value,
-                            (
-                                f"Belief revision truncated at MAX_WORK={self.MAX_WORK}; "
-                                f"{len(pending)} nodes unprocessed — downstream belief states "
-                                "may be stale. Revision was partial."
-                            ),
-                            datetime.now(timezone.utc).isoformat(),
+                    self._ledger.append_event(
+                        run_id=run_id,
+                        event_type=LedgerEventType.SYSTEM_WARNING,
+                        summary=(
+                            f"Belief revision truncated at MAX_WORK={self.MAX_WORK}; "
+                            f"{len(pending)} nodes unprocessed — downstream belief states "
+                            "may be stale. Revision was partial."
                         ),
                     )
                 except Exception as exc:

@@ -65,7 +65,7 @@ class MatterModel:
         self.clarifications = ClarificationStore(db, matter_id)
         self.quant = QuantStore(db, matter_id)
         self.ledger = ReasoningLedgerStore(db, matter_id)
-        self.belief = BeliefRevisionEngine(db, self.assertions)
+        self.belief = BeliefRevisionEngine(db, self.assertions, self.ledger)
         self.inventory = DocumentInventoryStore(db, matter_id)
         self.cache = ReasoningCacheStore(db, matter_id)
         self.trust_overrides = TrustOverrideStore(db, matter_id)
