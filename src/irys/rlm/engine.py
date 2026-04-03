@@ -2399,6 +2399,26 @@ class RLMEngine:
                 except Exception:
                     pass  # non-fatal
 
+            # Background maintenance: after each new document, incrementally
+            # refresh proof states and extract authority citations (SO-4).
+            # Both are best-effort — failures must never block the pipeline.
+            if _mm is not None:
+                try:
+                    _mm.proof_state.compute_all()
+                except Exception:
+                    pass
+                if analysis and analysis.get("quotes"):
+                    # Extract authorities from the raw document text processed so far.
+                    _quote_text = " ".join(
+                        q.get("text", "") for q in analysis["quotes"][:10]
+                        if isinstance(q, dict)
+                    )
+                    if _quote_text:
+                        try:
+                            self._extract_and_store_authorities(_quote_text)
+                        except Exception:
+                            pass
+
         except Exception as e:
             self._emit_step(state, StepType.ERROR, f"Failed to read {file_path}: {e}")
             # Remove from in-progress so a subsequent lead can retry on transient failures.
@@ -2921,6 +2941,11 @@ class RLMEngine:
         """Return {issue_id: (coverage_fraction, has_proof_gap, support_count)} from live DB.
 
         Called once per investigation iteration to drive dynamic lead reweighting (SO-4).
+
+        When ProofStateStore has computed states, uses the richer sufficiency score
+        instead of the assertion-count ratio.  Contested issues (attacking >= supporting)
+        are flagged as having a proof gap so they attract investigation budget.
+
         Returns empty dict when no matter model is available or the call fails.
         """
         if self._matter_model is None:
@@ -2929,7 +2954,9 @@ class RLMEngine:
             report = self._matter_model.get_issue_coverage_report()
         except Exception:
             return {}
-        return {
+
+        # Build base map from assertion-count report.
+        base: "dict[str, tuple[float, bool, int]]" = {
             item["id"]: (
                 float(item.get("coverage_fraction", 0.0)),
                 bool(item.get("has_proof_gap", False)),
@@ -2938,6 +2965,26 @@ class RLMEngine:
             for item in report
             if item.get("id")
         }
+
+        # Overlay with ProofStateStore sufficiency when available — richer signal.
+        try:
+            ps_rows = self._matter_model.proof_state.get_all()
+            for ps in ps_rows:
+                iid = ps.get("issue_id")
+                if iid not in base:
+                    continue
+                sufficiency = float(ps.get("sufficiency", base[iid][0]))
+                # Contested and insufficient issues both need more evidence.
+                proof_status = ps.get("proof_status", "")
+                has_gap = (
+                    base[iid][1]
+                    or proof_status in ("insufficient", "contested")
+                )
+                base[iid] = (sufficiency, has_gap, base[iid][2])
+        except Exception:
+            pass  # fall back to assertion-count ratio if proof state unavailable
+
+        return base
 
     def _build_issue_coverage_summary(self) -> str:
         """Build a per-issue evidence coverage block for the synthesis prompt (SO-4).
@@ -2956,23 +3003,53 @@ class RLMEngine:
         if not report:
             return "No open issues in matter model."
 
+        # Index proof states by issue_id for richer annotations.
+        proof_index: dict = {}
+        try:
+            if self._matter_model is not None:
+                ps_rows = self._matter_model.proof_state.get_all()
+                proof_index = {ps["issue_id"]: ps for ps in ps_rows}
+        except Exception:
+            pass
+
         lines = [f"{len(report)} open issue(s):"]
         for item in report:
             title = (item.get("title") or "Untitled")[:60]
             cnt = item.get("supporting_count", 0)
-            frac = item.get("coverage_fraction", 0.0)
-            pct = int(frac * 100)
-            gap_flag = " ⚠ PROOF GAP" if item.get("has_proof_gap") else ""
-            # Strength label based on coverage fraction
-            if frac >= 0.6:
-                strength = "STRONG"
-            elif frac >= 0.3:
-                strength = "PARTIAL"
+            issue_id = item.get("id", "")
+
+            ps = proof_index.get(issue_id)
+            if ps:
+                sufficiency = float(ps.get("sufficiency", 0.0))
+                proof_status = ps.get("proof_status", "insufficient")
+                atk = int(ps.get("attacking_count", 0))
+                pct = int(sufficiency * 100)
+                gap_flag = ""
+                if proof_status == "contested":
+                    gap_flag = f" ⚠ CONTESTED ({atk} attacking)"
+                elif proof_status == "insufficient" or item.get("has_proof_gap"):
+                    gap_flag = " ⚠ PROOF GAP"
+                strength = (
+                    "STRONG" if sufficiency >= 0.75
+                    else "PARTIAL" if sufficiency >= 0.25
+                    else "WEAK"
+                )
+                lines.append(
+                    f"  [{strength}/{proof_status.upper()}] {title}: "
+                    f"{cnt} supporting ({pct}% sufficiency){gap_flag}"
+                )
             else:
-                strength = "WEAK"
-            lines.append(
-                f"  [{strength}] {title}: {cnt} supporting assertion(s) ({pct}%){gap_flag}"
-            )
+                frac = item.get("coverage_fraction", 0.0)
+                pct = int(frac * 100)
+                gap_flag = " ⚠ PROOF GAP" if item.get("has_proof_gap") else ""
+                strength = (
+                    "STRONG" if frac >= 0.6
+                    else "PARTIAL" if frac >= 0.3
+                    else "WEAK"
+                )
+                lines.append(
+                    f"  [{strength}] {title}: {cnt} supporting ({pct}%){gap_flag}"
+                )
         return "\n".join(lines)
 
     def _build_gap_summary(self) -> str:
