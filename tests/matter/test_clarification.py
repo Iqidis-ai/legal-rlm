@@ -223,3 +223,48 @@ def test_proof_gap_clarification_asks_for_evidence_not_document(model):
     assert "we could not find" not in text, (
         "Proof gap question must not use the missing-document template"
     )
+
+
+def test_gap_linked_to_assertion_produces_assertion_impact_statement(model):
+    """A gap linked to an assertion must mention the assertion in the impact (SO-7).
+
+    When an absent document is cited by an existing assertion, the clarification
+    must say it 'may corroborate, contradict, or supersede that assertion' —
+    not a generic impact.
+    """
+    from irys.matter import AssertionCandidate, SpeechAct, SourceRole, ModelLayer, AssertionKind
+    from irys.matter.enums import OriginKind
+
+    run_id = model.start_run("Assertion gap test")
+
+    # Record an assertion that cites a missing document
+    cand = AssertionCandidate(
+        proposition_text="The payment was made on January 15, per wire transfer records.",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="email.pdf",
+        speech_act=SpeechAct.ALLEGED,
+        source_role=SourceRole.INFORMAL,
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    assertion_id, _ = model.assertions.upsert_occurrence(cand)
+
+    # Record a gap linked to that assertion (the wire transfer was referenced but absent)
+    model.gaps.record(
+        gap_type=GapType.MISSING_DOCUMENT,
+        description="Wire transfer confirmation referenced in email but not in repository",
+        expected_artifact="Wire transfer Jan 15",
+        materiality=0.75,
+        affected_type="assertion",
+        affected_id=assertion_id,
+    )
+
+    question_ids = model.generate_clarifications_from_gaps(run_id=run_id, min_materiality=0.5)
+    assert len(question_ids) == 1
+
+    q = model.clarifications.get_pending()[0]
+    impact = q["expected_impact"].lower()
+    # The impact for assertion-linked gaps mentions the assertion
+    assert "assertion" in impact or "fact" in impact or "corroborate" in impact or "contradict" in impact, (
+        f"Impact for assertion-linked gap must mention the assertion. Got: {q['expected_impact']!r}"
+    )
