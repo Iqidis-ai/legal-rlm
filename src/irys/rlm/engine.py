@@ -2814,6 +2814,10 @@ class RLMEngine:
         )
         _STRUCTURAL_VIOLATION = False
 
+        # Normalize line endings: CRLF → LF so regex patterns that anchor on
+        # \n work correctly on Windows-originated output or CRLF LLM responses.
+        synthesis_output = synthesis_output.replace('\r\n', '\n')
+
         import re as _re
         # Precompile per-level heading boundary patterns (at most 3 levels needed).
         _HDR_RE: dict = {
