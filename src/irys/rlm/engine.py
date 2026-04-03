@@ -822,16 +822,26 @@ class RLMEngine:
         # Orientation cache key: sha256 of normalized query + total file count +
         # annotation/trust-override count (so user context changes invalidate the cache).
         import hashlib as _hashlib
-        _annotation_count = (
-            len(self._matter_model.annotations.list_recent())
-            if self._matter_model is not None else 0
-        )
-        _trust_count = (
-            len(self._matter_model.trust_overrides.list_all())
-            if self._matter_model is not None else 0
-        )
+        # Orientation cache key: includes user-context state so that answered
+        # clarifications, new gaps, open-issue changes, trust overrides, and
+        # document annotations all invalidate the cache.
+        _clarification_count = 0
+        _open_issue_count = 0
+        _open_gap_count = 0
+        _annotation_count = 0
+        _trust_count = 0
+        if self._matter_model is not None:
+            try:
+                _clarification_count = len(self._matter_model.clarifications.get_answered())
+                _open_issue_count = self._matter_model.issues.count_open()
+                _open_gap_count = self._matter_model.gaps.count_open()
+                _annotation_count = len(self._matter_model.annotations.list_recent())
+                _trust_count = len(self._matter_model.trust_overrides.list_all())
+            except Exception:
+                pass  # non-critical; fallback to file-count key
         _orient_key = _hashlib.sha256(
             f"{state.query.lower().strip()}\n{stats.total_files}"
+            f"\n{_clarification_count}\n{_open_issue_count}\n{_open_gap_count}"
             f"\n{_annotation_count}\n{_trust_count}".encode()
         ).hexdigest()
 
@@ -1042,12 +1052,23 @@ class RLMEngine:
                     answer_text = (answer.get("answer_text") or "").strip()
                     question_text = (answer.get("question_text") or "").strip()
                     if answer_text:
+                        # Resolve gap → issue so the lead closes the coverage gap (SO-4)
+                        _cl_issue_id: Optional[str] = None
+                        _gap_id = answer.get("gap_id")
+                        if _gap_id and self._matter_model is not None:
+                            _gl = self._matter_model.db.execute(
+                                "SELECT affected_id FROM gap_link "
+                                "WHERE gap_id=? AND affected_type='issue' LIMIT 1",
+                                (_gap_id,),
+                            ).fetchone()
+                            if _gl:
+                                _cl_issue_id = _gl["affected_id"]
                         state.add_lead(
                             description=f"User context: {answer_text[:80]}",
                             source="clarification_answer",
                             priority=0.9,
                             search_term=answer_text[:80],
-                            focus_issue_id=None,
+                            focus_issue_id=_cl_issue_id,
                         )
                         adapter.log_step(
                             f"Injected clarification answer as active lead",
@@ -1130,7 +1151,7 @@ class RLMEngine:
             prop = row.get("proposition_text", "")
             if not prop:
                 continue
-            source_role = row.get("source_role") or "unknown"
+            source_role = row.get("primary_source_role") or row.get("source_role") or "unknown"
             label = source_role.upper()
             # Strip any existing [ROLE] prefix to prevent double-labeling legacy rows
             prop_clean = _strip_role_prefix('', prop)
@@ -1248,10 +1269,14 @@ class RLMEngine:
         if analysis.get("key_facts"):
             from ..matter.runtime import infer_source_role as _infer_role
 
-            # Build a name→(relative_path, SearchHit) lookup for all top hits
+            # Build a name→(relative_path, SearchHit) lookup for all prompt-visible hits.
+            # Key by full file_path (stable, unique) and filename (convenience lookup).
+            # Use file_path as the primary key to avoid basename collisions when two files
+            # share the same name in different directories.
             _hit_by_name: dict[str, object] = {}
-            for _h in results.top(5):
-                _hit_by_name[_h.filename] = _h
+            for _h in results.top(10):
+                _hit_by_name[_h.file_path] = _h        # most specific: full path
+                _hit_by_name[_h.filename] = _h         # convenience: basename
                 _hit_by_name[_h.filename.lower()] = _h
 
             # Fallback: top-hit doc_id and source role for facts with no source_file
@@ -2430,27 +2455,29 @@ class RLMEngine:
         open_issues = self._matter_model.issues.get_open_issues(min_materiality=0.4)
         for issue in open_issues:
             issue_id = issue["id"]
-            # Count supporting assertions
+            # Count supporting OR establishing assertions (both satisfy evidentiary coverage)
             row = self._matter_model.db.execute(
                 """SELECT COUNT(*) FROM assertion_issue_link
-                   WHERE issue_id=? AND relation_type='supports'""",
+                   WHERE issue_id=? AND relation_type IN ('supports', 'establishes')""",
                 (issue_id,),
             ).fetchone()
             if row and row[0] == 0:
-                # Dedup: skip if an open proof gap already exists for this issue
+                # Dedup: skip only if an open proof-gap (same expected_artifact) already exists
+                # for this issue — not just any open issue-linked gap.
+                _expected = f"Evidence supporting: {issue['title']}"
                 existing = self._matter_model.db.execute(
                     """SELECT g.id FROM gap g
                        JOIN gap_link gl ON gl.gap_id = g.id
-                       WHERE g.matter_id=? AND g.status='open'
+                       WHERE g.matter_id=? AND g.status='open' AND g.expected_artifact=?
                          AND gl.affected_type='issue' AND gl.affected_id=?
                        LIMIT 1""",
-                    (self._matter_model.matter_id, issue_id),
+                    (self._matter_model.matter_id, _expected, issue_id),
                 ).fetchone()
                 if existing is None:
                     self._matter_model.gaps.record(
                         gap_type=GapType.MISSING_DOCUMENT,
                         description=f"No supporting evidence found for issue: '{issue['title']}'",
-                        expected_artifact=f"Evidence supporting: {issue['title']}",
+                        expected_artifact=_expected,
                         materiality=issue.get("materiality", 0.5),
                         affected_type="issue",
                         affected_id=issue_id,

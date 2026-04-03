@@ -26,6 +26,36 @@ def _id() -> str:
     return uuid.uuid4().hex
 
 
+def _initial_belief_state(speech_act: SpeechAct) -> tuple[BeliefState, float]:
+    """Derive initial belief state and confidence from the assertion's speech act.
+
+    Avoids the "every assertion starts UNKNOWN" problem where operative facts
+    require a separate flush_revisions() cycle before they become useful for
+    downstream belief revision. Starting with a speech-act-derived state means
+    the assertion graph is immediately populated with meaningful initial values.
+
+    SpeechAct members: ALLEGED, ARGUED, DENIED, ADMITTED, ORDERED, PERFORMED,
+    PAID, REQUESTED, THREATENED, PROMISED, ESTIMATED, CALCULATED, OBSERVED,
+    TESTIFIED, STIPULATED, AMENDED, WAIVED, TERMINATED, INFERRED, OPERATIVE,
+    EXTRACTED.  Note: DISPUTED/SUPERSEDED/WITHDRAWN are BeliefState members, not SpeechAct.
+    """
+    if speech_act in (SpeechAct.OPERATIVE, SpeechAct.ADMITTED, SpeechAct.STIPULATED):
+        return BeliefState.OPERATIVE, 0.8
+    if speech_act in (SpeechAct.PERFORMED, SpeechAct.PAID):
+        return BeliefState.PERFORMED, 0.8
+    if speech_act == SpeechAct.INFERRED:
+        return BeliefState.INFERRED, 0.6
+    if speech_act == SpeechAct.ALLEGED:
+        # Alleged = claimed without independent proof → ALLEGED belief state, lower confidence
+        return BeliefState.ALLEGED, 0.3
+    if speech_act == SpeechAct.ARGUED:
+        return BeliefState.ARGUED, 0.3
+    if speech_act in (SpeechAct.WAIVED, SpeechAct.TERMINATED, SpeechAct.AMENDED):
+        return BeliefState.OPERATIVE, 0.7
+    # EXTRACTED, DENIED, ORDERED, REQUESTED, etc. — generic unknown until revision
+    return BeliefState.UNKNOWN, 0.5
+
+
 class AssertionStore:
     """
     Manages canonical assertions and their occurrences.
@@ -58,8 +88,10 @@ class AssertionStore:
             ).fetchone()
 
             if row is None:
-                # New canonical assertion
+                # New canonical assertion — seed belief state from speech act so
+                # the graph has meaningful initial values before flush_revisions()
                 assertion_id = _id()
+                _init_state, _init_conf = _initial_belief_state(candidate.speech_act)
                 self.db.execute(
                     """INSERT INTO assertion
                        (id, matter_id, proposition_key, proposition_text,
@@ -79,8 +111,8 @@ class AssertionStore:
                         candidate.object_json,
                         candidate.temporal_scope_start,
                         candidate.temporal_scope_end,
-                        BeliefState.UNKNOWN.value,
-                        0.5,
+                        _init_state.value,
+                        _init_conf,
                         now, now,
                     ),
                 )
@@ -185,9 +217,17 @@ class AssertionStore:
         Note: depends_on links are intentionally excluded — propagation would go in
         the wrong direction (toward the prerequisite, not toward the dependent).
         """
+        # corroborates: A --corroborates--> B — B gets additional support; changes in A
+        #   affect B's confidence, so B must be re-evaluated.
+        # supersedes: A --supersedes--> B — B is the superseded node; if A weakens, B may recover.
+        #   We traverse from A to B so the superseded assertion gets re-evaluated when
+        #   the superseding one changes.
+        # 'negates' removed: not a valid AssertionLinkType in the current enum.
         rows = self.db.execute(
             """SELECT dst_assertion_id FROM assertion_link
-               WHERE src_assertion_id=? AND link_type IN ('supports', 'attacks', 'negates', 'contradicts')""",
+               WHERE src_assertion_id=? AND link_type IN (
+                 'supports', 'attacks', 'contradicts', 'corroborates', 'supersedes'
+               )""",
             (assertion_id,),
         ).fetchall()
         return [r[0] for r in rows]
@@ -249,7 +289,8 @@ class AssertionStore:
         in both a complaint (ADVOCACY) and a contract (OPERATIVE) would show only the
         first-seen source role.
         """
-        import json
+        # primary_* fields come from the earliest occurrence (chronological, not lexicographic).
+        # We use a correlated subquery per field to avoid MIN() on non-sortable text columns.
         rows = self.db.execute(
             """SELECT a.id, a.proposition_text, a.model_layer, a.assertion_kind,
                       a.belief_state, a.confidence, a.created_at,
@@ -257,9 +298,15 @@ class AssertionStore:
                       GROUP_CONCAT(DISTINCT ao.source_role) AS source_roles_csv,
                       GROUP_CONCAT(DISTINCT ao.speech_act) AS speech_acts_csv,
                       GROUP_CONCAT(DISTINCT ao.document_id) AS documents_csv,
-                      MIN(ao.document_id) AS primary_document_id,
-                      MIN(ao.source_role) AS primary_source_role,
-                      MIN(ao.speech_act) AS primary_speech_act
+                      (SELECT ao2.document_id FROM assertion_occurrence ao2
+                       WHERE ao2.assertion_id = a.id
+                       ORDER BY ao2.created_at ASC LIMIT 1) AS primary_document_id,
+                      (SELECT ao2.source_role FROM assertion_occurrence ao2
+                       WHERE ao2.assertion_id = a.id
+                       ORDER BY ao2.created_at ASC LIMIT 1) AS primary_source_role,
+                      (SELECT ao2.speech_act FROM assertion_occurrence ao2
+                       WHERE ao2.assertion_id = a.id
+                       ORDER BY ao2.created_at ASC LIMIT 1) AS primary_speech_act
                FROM assertion a
                LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
                WHERE a.matter_id=?

@@ -184,11 +184,24 @@ def test_same_assertion_same_doc_different_speech_acts_both_recorded(model):
     assert len(occurrences) == 2, "two distinct speech acts must produce two occurrence rows"
 
 
-def test_belief_state_default_unknown(model):
-    c = make_candidate("Something happened.", doc_id="doc1")
-    assertion_id, _ = model.assertions.upsert_occurrence(c)
-    record = model.assertions.get(assertion_id)
-    assert record.belief_state == BeliefState.UNKNOWN.value
+def test_belief_state_seeded_from_speech_act(model):
+    """New assertions are seeded with belief state derived from speech act (not hardcoded UNKNOWN).
+
+    ALLEGED → BeliefState.ALLEGED; OPERATIVE → BeliefState.OPERATIVE; EXTRACTED → UNKNOWN.
+    This avoids the cold-start problem where every assertion starts UNKNOWN and
+    requires a separate flush_revisions() pass to acquire meaningful belief state.
+    """
+    # ALLEGED (default in make_candidate) → BeliefState.ALLEGED
+    c_alleged = make_candidate("Something happened.", doc_id="doc1")
+    aid, _ = model.assertions.upsert_occurrence(c_alleged)
+    record = model.assertions.get(aid)
+    assert record.belief_state == BeliefState.ALLEGED.value
+
+    # OPERATIVE → BeliefState.OPERATIVE
+    c_op = make_candidate("Payment was due.", doc_id="contract.pdf",
+                           speech_act=SpeechAct.OPERATIVE, source_role=SourceRole.OPERATIVE)
+    aid_op, _ = model.assertions.upsert_occurrence(c_op)
+    assert model.assertions.get(aid_op).belief_state == BeliefState.OPERATIVE.value
 
 
 def test_set_belief_state(model):
