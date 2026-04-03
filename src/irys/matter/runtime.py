@@ -419,6 +419,24 @@ class MatterRuntimeAdapter:
         """Return all trust overrides for this matter."""
         return self.model.trust_overrides.list_all()
 
+    def annotate_document(
+        self,
+        document_pattern: str,
+        annotation_text: str,
+        annotation_type: str = "strategic",
+    ) -> str:
+        """Attach a strategic note to a document pattern (SO-3 annotation).
+
+        Returns annotation_id.
+        """
+        return self.model.annotations.add(document_pattern, annotation_text, annotation_type)
+
+    def list_annotations(self, document_id: Optional[str] = None) -> list[dict]:
+        """Return annotations for a specific document, or all recent annotations."""
+        if document_id is not None:
+            return self.model.annotations.get_for_document(document_id)
+        return self.model.annotations.list_recent()
+
 
 class NullMatterAdapter:
     """
@@ -491,4 +509,10 @@ class NullMatterAdapter:
         return ""
 
     def list_trust_overrides(self) -> list[dict]:
+        return []
+
+    def annotate_document(self, document_pattern: str, annotation_text: str, **kwargs) -> str:
+        return ""
+
+    def list_annotations(self, document_id: Optional[str] = None) -> list[dict]:
         return []

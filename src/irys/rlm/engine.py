@@ -113,6 +113,13 @@ def _format_matter_context(ctx) -> str:
             a = (cl.get("answer_text") or "")[:120]
             lines.append(f"  Q: {q}")
             lines.append(f"  A: {a}")
+    if getattr(ctx, "document_annotations", None):
+        lines.append(f"- Document annotations from user ({len(ctx.document_annotations)} notes):")
+        for ann in ctx.document_annotations[:5]:
+            doc = (ann.get("document_pattern") or "")
+            txt = (ann.get("annotation_text") or "")[:150]
+            ann_type = (ann.get("annotation_type") or "strategic").upper()
+            lines.append(f"  [{ann_type}] {doc}: {txt}")
     lines.append("")
     return "\n".join(lines)
 

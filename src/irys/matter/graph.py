@@ -1,5 +1,5 @@
 """AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
-DocumentInventoryStore, TrustOverrideStore, ReasoningCacheStore.
+DocumentInventoryStore, TrustOverrideStore, DocumentAnnotationStore, ReasoningCacheStore.
 
 The assertion store is the heart of the intelligence layer. It maintains
 typed assertions with speech-act classification, support/attack links,
@@ -1095,5 +1095,71 @@ class TrustOverrideStore:
         self.db.execute(
             "DELETE FROM document_trust_override WHERE matter_id=? AND document_pattern=?",
             (self.matter_id, document_pattern),
+        )
+        return True
+
+
+class DocumentAnnotationStore:
+    """User-authored strategic notes attached to document patterns (SO-3 annotation).
+
+    Annotations are injected into the orientation prompt so the engine can
+    use the user's domain knowledge when building its investigation plan.
+
+    annotation_type values:
+      'strategic' — broad strategic context (e.g., "this report overstates damages")
+      'reliability' — reliability note (e.g., "chain of custody issues")
+      'scope' — scope/relevance note (e.g., "irrelevant to core claim, skip")
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def add(
+        self,
+        document_pattern: str,
+        annotation_text: str,
+        annotation_type: str = "strategic",
+    ) -> str:
+        """Add an annotation. Returns annotation_id."""
+        ann_id = _id()
+        now = _now()
+        self.db.execute(
+            """INSERT INTO document_annotation
+               (id, matter_id, document_pattern, annotation_text, annotation_type, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (ann_id, self.matter_id, document_pattern, annotation_text, annotation_type, now, now),
+        )
+        return ann_id
+
+    def get_for_document(self, document_id: str) -> list[dict]:
+        """Return all annotations matching a document_id (by full path or basename)."""
+        from pathlib import Path
+        basename = Path(document_id).name
+        rows = self.db.execute(
+            """SELECT id, document_pattern, annotation_text, annotation_type, created_at
+               FROM document_annotation
+               WHERE matter_id=? AND (document_pattern=? OR document_pattern=?)
+               ORDER BY created_at ASC""",
+            (self.matter_id, document_id, basename),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_recent(self, limit: int = 20) -> list[dict]:
+        """Return recent annotations across all documents."""
+        rows = self.db.execute(
+            """SELECT id, document_pattern, annotation_text, annotation_type, created_at
+               FROM document_annotation
+               WHERE matter_id=?
+               ORDER BY created_at DESC LIMIT ?""",
+            (self.matter_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete(self, annotation_id: str) -> bool:
+        """Remove an annotation by id."""
+        self.db.execute(
+            "DELETE FROM document_annotation WHERE matter_id=? AND id=?",
+            (self.matter_id, annotation_id),
         )
         return True

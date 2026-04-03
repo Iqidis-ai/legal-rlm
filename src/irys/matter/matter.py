@@ -16,7 +16,7 @@ from typing import Optional
 from .db import SQLiteMatterDB
 from .graph import (
     AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
-    DocumentInventoryStore, ReasoningCacheStore, TrustOverrideStore,
+    DocumentInventoryStore, ReasoningCacheStore, TrustOverrideStore, DocumentAnnotationStore,
 )
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
@@ -64,6 +64,7 @@ class MatterModel:
         self.inventory = DocumentInventoryStore(db, matter_id)
         self.cache = ReasoningCacheStore(db, matter_id)
         self.trust_overrides = TrustOverrideStore(db, matter_id)
+        self.annotations = DocumentAnnotationStore(db, matter_id)
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -285,6 +286,9 @@ class MatterModel:
         # Answered clarifications: inject user context into orientation
         answered_clarifications = self.clarifications.get_answered()
 
+        # Document annotations: strategic notes from user (SO-3 annotation)
+        document_annotations = self.annotations.list_recent(limit=10)
+
         return QueryMatterContext(
             matter_id=self.matter_id,
             matter_name=matter_name,
@@ -295,6 +299,7 @@ class MatterModel:
             known_actors=known_actors,
             known_document_ids=known_document_ids,
             answered_clarifications=answered_clarifications,
+            document_annotations=document_annotations,
             weakest_issue_id=weakest_issue_id,
         )
 

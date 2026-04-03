@@ -39,6 +39,7 @@ from .models import (
     AnswerClarificationRequest,
     CorrectAssertionRequest,
     TrustOverrideRequest,
+    DocumentAnnotationRequest,
 )
 from .s3_repository import S3Repository
 
@@ -1393,6 +1394,40 @@ async def list_trust_overrides(matter_id: str):
     """List all document trust overrides for a matter."""
     model = _get_matter_model_or_404(matter_id)
     return {"overrides": model.trust_overrides.list_all()}
+
+
+@app.post(
+    "/matter/{matter_id}/annotations",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def add_document_annotation(matter_id: str, request: DocumentAnnotationRequest):
+    """Add a strategic annotation to a document pattern (SO-3 annotation).
+
+    Annotations are injected into the orientation prompt so the engine uses the
+    user's domain knowledge about a document when planning the investigation.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    annotation_id = model.annotations.add(
+        request.document_pattern, request.annotation_text, request.annotation_type
+    )
+    return {"status": "added", "annotation_id": annotation_id}
+
+
+@app.get(
+    "/matter/{matter_id}/annotations",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def list_document_annotations(matter_id: str, document: Optional[str] = None):
+    """List document annotations for a matter.
+
+    Pass ?document=filename.pdf to filter by document, or omit for all recent annotations.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    if document:
+        return {"annotations": model.annotations.get_for_document(document)}
+    return {"annotations": model.annotations.list_recent()}
 
 
 @app.get(

@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -499,6 +499,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_trust_override
     ON document_trust_override(matter_id, document_pattern);
 """
 
+_DDL_DOCUMENT_ANNOTATION = """
+CREATE TABLE IF NOT EXISTS document_annotation (
+    id              TEXT PRIMARY KEY,
+    matter_id       TEXT NOT NULL REFERENCES matter(id),
+    document_pattern TEXT NOT NULL,
+    annotation_text TEXT NOT NULL,
+    annotation_type TEXT NOT NULL DEFAULT 'strategic',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_annotation_matter
+    ON document_annotation(matter_id, annotation_type, created_at DESC);
+"""
+
 _DDL_SCHEMA_VERSION = """
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL,
@@ -668,6 +683,19 @@ def _migration_v8(conn) -> None:
             conn.execute(stmt)
 
 
+def _migration_v10(conn) -> None:
+    """Add document_annotation table for SO-3 user document annotation.
+
+    Allows users to attach persistent strategic notes to document patterns
+    (e.g., "this expert report tends to overstate damages"). Notes are injected
+    into the orientation prompt so the engine uses them when building its plan.
+    """
+    for stmt in _DDL_DOCUMENT_ANNOTATION.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            conn.execute(stmt)
+
+
 def _migration_v9(conn) -> None:
     """Add document_trust_override table for SO-3 user trust steering.
 
@@ -694,6 +722,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (7, _migration_v7),
     (8, _migration_v8),
     (9, _migration_v9),
+    (10, _migration_v10),
 ]
 
 

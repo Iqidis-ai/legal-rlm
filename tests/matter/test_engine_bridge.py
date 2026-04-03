@@ -286,3 +286,42 @@ def test_null_adapter_trust_override():
     adapter = NullMatterAdapter()
     assert adapter.set_trust_override("anything.pdf", "low") == ""
     assert adapter.list_trust_overrides() == []
+
+
+# ---------------------------------------------------------------------------
+# SO-3: Document annotations — strategic notes injected into orientation
+# ---------------------------------------------------------------------------
+
+def test_document_annotation_persists():
+    """add() stores annotation; list_recent() returns it."""
+    model = MatterModel.open_in_memory()
+    ann_id = model.annotations.add(
+        "expert_report.pdf",
+        "Report was prepared for litigation; treat damages figures as advocacy positions.",
+        annotation_type="reliability",
+    )
+    assert ann_id
+
+    recent = model.annotations.list_recent()
+    assert len(recent) == 1
+    assert recent[0]["document_pattern"] == "expert_report.pdf"
+    assert "advocacy" in recent[0]["annotation_text"]
+    assert recent[0]["annotation_type"] == "reliability"
+
+
+def test_document_annotation_surfaces_in_matter_context():
+    """build_query_context() includes document_annotations from annotation store."""
+    model = MatterModel.open_in_memory()
+    model.annotations.add("complaint.pdf", "Plaintiff's complaint; treat all amounts as alleged.")
+
+    ctx = model.build_query_context()
+    assert len(ctx.document_annotations) == 1
+    assert ctx.document_annotations[0]["document_pattern"] == "complaint.pdf"
+
+
+def test_null_adapter_annotation():
+    """NullMatterAdapter annotation methods must not raise and return safe defaults."""
+    adapter = NullMatterAdapter()
+    assert adapter.annotate_document("doc.pdf", "some note") == ""
+    assert adapter.list_annotations() == []
+    assert adapter.list_annotations(document_id="doc.pdf") == []

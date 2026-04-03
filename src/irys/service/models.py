@@ -107,6 +107,22 @@ class AnswerClarificationRequest(BaseModel):
     answer_text: str = Field(..., description="User's answer to the clarification question")
 
 
+class DocumentAnnotationRequest(BaseModel):
+    """User strategic annotation for a document pattern (SO-3 annotation)."""
+    document_pattern: str = Field(
+        ...,
+        description="Document filename or relative path to annotate",
+    )
+    annotation_text: str = Field(
+        ...,
+        description="Strategic note (e.g., 'This report overstates damages; treat numerics as advocacy')",
+    )
+    annotation_type: str = Field(
+        "strategic",
+        description="Annotation type: 'strategic' | 'reliability' | 'scope'",
+    )
+
+
 class TrustOverrideRequest(BaseModel):
     """User trust override for a document (SO-3 trust steering, SO-5 calibration)."""
     document_pattern: str = Field(
