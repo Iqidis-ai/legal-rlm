@@ -2815,40 +2815,60 @@ class RLMEngine:
         }
 
         def _extract_section(text: str, hdr: str) -> str:
-            """Return text from hdr to the next header of equal or higher level."""
-            if hdr not in text:
-                return ""
-            start = text.index(hdr)
-            level = min(3, len(hdr) - len(hdr.lstrip("#")))
-            m = _HDR_RE[level].search(text, start + len(hdr))
-            return text[start:(m.start() if m else len(text))]
+            """Return text from hdr to the next header of equal or higher level.
+
+            Case-insensitive match against hdr (and a trailing-colon variant) so
+            heading-casing drift from LLM output does not silently skip the check.
+            """
+            text_lower = text.lower()
+            hdr_lower = hdr.lower()
+            for search in (hdr_lower, hdr_lower.rstrip(':') + ':'):
+                if search in text_lower:
+                    start = text_lower.index(search)
+                    level = min(3, len(hdr) - len(hdr.lstrip("#")))
+                    m = _HDR_RE[level].search(text, start + len(search))
+                    return text[start:(m.start() if m else len(text))]
+            return ""
 
         def _section_has_unhedged_title(
             section: str, titles: "list[str]", markers: "tuple[str, ...]"
         ) -> bool:
-            """True if any title appears on a line (or line-pair) without a hedge marker.
+            """True if any title appears in a semantic unit without a hedge marker.
 
-            Per-line check handles the common case of single-line bullets.
-            Bigram check (current line + next line joined) handles soft-wrapped
-            bullet continuation without the cross-bullet false-pass risk of a
-            wide character window.
+            Groups continuation lines into semantic units (bullet items / paragraphs)
+            so that a hedge on a continuation line of the same bullet clears the title
+            on the preceding line, and adjacents bullets cannot cross-contaminate.
+
             Titles shorter than 4 chars are skipped to avoid false matches.
             """
             lower = section.lower()
-            lines = lower.split('\n')
+            # Build semantic units: group lines until a blank line or a new list item.
+            units: "list[str]" = []
+            buf: "list[str]" = []
+            for ln in lower.split('\n'):
+                ls = ln.lstrip()
+                is_list_start = ls.startswith(('- ', '* ', '• '))
+                if not ls:
+                    # Blank line ends current unit
+                    if buf:
+                        units.append(' '.join(buf))
+                    buf = []
+                elif is_list_start and buf:
+                    # New bullet starts a new unit
+                    units.append(' '.join(buf))
+                    buf = [ln]
+                else:
+                    buf.append(ln)
+            if buf:
+                units.append(' '.join(buf))
+
             for title in titles:
                 t_lower = title.lower()
                 if len(t_lower) < 4:
                     continue  # too short to reliably match without false positives
-                for i, line in enumerate(lines):
-                    # Single-line check: title on one line without nearby hedge
-                    if t_lower in line and not any(h in line for h in markers):
+                for unit in units:
+                    if t_lower in unit and not any(h in unit for h in markers):
                         return True
-                    # Bigram check: title wrapped across this line + next line
-                    if i + 1 < len(lines):
-                        bigram = line + ' ' + lines[i + 1]
-                        if t_lower in bigram and not any(h in bigram for h in markers):
-                            return True
             return False
 
         for _chk_hdr in (
@@ -2863,9 +2883,12 @@ class RLMEngine:
                 break
 
         # If the advisory section header is already present AND no structural violation,
-        # gate is satisfied.  Check for the section header form ("## Marker") rather than
-        # a bare substring so an incidental mention in prose cannot suppress gate action.
-        if f"## {_MARKER}" in synthesis_output and not _STRUCTURAL_VIOLATION:
+        # gate is satisfied. Accept both ## and ### heading levels and ignore case so
+        # minor LLM heading variations don't cause unnecessary reinjection.
+        _marker_present = bool(_re.search(
+            r'#{2,3} ' + _re.escape(_MARKER), synthesis_output, _re.IGNORECASE
+        ))
+        if _marker_present and not _STRUCTURAL_VIOLATION:
             return None
 
         violation_note = ""

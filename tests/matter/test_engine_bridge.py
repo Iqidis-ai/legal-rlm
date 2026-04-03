@@ -3223,3 +3223,50 @@ def test_advocacy_gate_short_title_skipped_no_false_violation():
     result = engine._enforce_advocacy_gate(output)
     assert result is not None  # advisory injected because advocacy issue exists
     assert "STRUCTURAL VIOLATION" not in result  # short title was skipped
+
+
+def test_advocacy_gate_no_false_positive_when_hedge_on_continuation_line():
+    """Hedge on the next continuation line of the same bullet must clear the violation (HIGH fix)."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)  # issue titled "Breach of contract"
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # Title on line N, hedge on line N+1 (soft-wrapped bullet continuation).
+    # The semantic unit check must treat both lines as one unit — hedge clears violation.
+    output = (
+        "## Source Calibration Advisory\nAlready present.\n"
+        "### Key Findings\n"
+        "- Breach of contract\n"
+        "  has been alleged by plaintiff per complaint.\n"
+    )
+    result = engine._enforce_advocacy_gate(output)
+    assert result is None, (
+        "Hedge on a continuation line of the same bullet must clear the violation — "
+        "no false-positive reinjection when advisory already present"
+    )
+
+
+def test_advocacy_gate_no_false_positive_when_hedge_on_preceding_line():
+    """Hedge on the preceding line of a wrapped bullet must clear the violation (HIGH fix)."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)  # issue titled "Breach of contract"
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # Hedge "alleges" on line N, title continues on line N+1 (soft-wrapped).
+    output = (
+        "## Source Calibration Advisory\nAlready present.\n"
+        "### Key Findings\n"
+        "- Plaintiff alleges\n"
+        "  breach of contract occurred in January.\n"
+    )
+    result = engine._enforce_advocacy_gate(output)
+    assert result is None, (
+        "Hedge on the preceding line of the same bullet must clear the violation — "
+        "semantic unit grouping must join continuation lines"
+    )
