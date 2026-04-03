@@ -2455,10 +2455,10 @@ class RLMEngine:
         open_issues = self._matter_model.issues.get_open_issues(min_materiality=0.4)
         for issue in open_issues:
             issue_id = issue["id"]
-            # Count supporting OR establishing assertions (both satisfy evidentiary coverage)
+            # Count supporting assertions (only valid relation_type for issue coverage)
             row = self._matter_model.db.execute(
                 """SELECT COUNT(*) FROM assertion_issue_link
-                   WHERE issue_id=? AND relation_type IN ('supports', 'establishes')""",
+                   WHERE issue_id=? AND relation_type='supports'""",
                 (issue_id,),
             ).fetchone()
             if row and row[0] == 0:
