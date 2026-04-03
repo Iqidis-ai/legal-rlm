@@ -241,6 +241,33 @@ def test_record_fact_issue_link_is_idempotent(model):
     assert len(linked) == 1
 
 
+def test_record_fact_attacks_issue(model):
+    """record_fact(issue_link_type='attacks') must link the assertion as attacking the issue (SO-4).
+
+    Not all facts that are relevant to an issue support it.  A defense assertion
+    ('plaintiff failed to mitigate damages') attacks the damages claim.  The engine
+    must be able to tag extracted facts as attacking an issue — so that the issue
+    coverage report can show what works against the issue, not just what supports it.
+    """
+    issue_id, _ = model.issues.upsert_issue("Damages claim", IssueType.DAMAGES)
+    run_id = model.start_run("attack link test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    a_id = adapter.record_fact(
+        "Plaintiff failed to take reasonable steps to mitigate their losses.",
+        document_id="answer.pdf",
+        issue_id=issue_id,
+        issue_link_type="attacks",
+    )
+
+    linked = model.issues.get_assertions_for_issue(issue_id)
+    assert len(linked) == 1
+    assert linked[0]["id"] == a_id
+    assert linked[0]["relation_type"] == "attacks", (
+        "record_fact with issue_link_type='attacks' must create an 'attacks' relation"
+    )
+
+
 # ---------------------------------------------------------------------------
 # SO-4: Multi-claim evidence coverage — the key correctness test
 # ---------------------------------------------------------------------------
