@@ -385,6 +385,43 @@ def test_correct_assertion_via_matter_model(model):
     assert record.belief_state == BeliefState.OPERATIVE.value
 
 
+def test_correct_assertion_propagates_to_downstream_dependents(model):
+    """correct_assertion() must propagate through the dependency graph (SO-2).
+
+    SO-2 test contract: 'A user correction changes not just that assertion but
+    also downstream conclusions that depended on it. The dependency graph is
+    traversed and updated.'
+
+    This is the end-to-end test through the user-facing correct_assertion() entry
+    point — not just the internal force_state() BFS.
+    """
+    from irys.matter.enums import AssertionLinkType
+
+    # A supports B: if A is withdrawn, B should no longer be INFERRED/OPERATIVE
+    a_id = add_assertion(model, "The contract was fully executed.", "contract.pdf")
+    b_id = add_assertion(model, "The payment obligation is enforceable.", "memo.pdf")
+
+    model.assertions.set_belief_state(a_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.set_belief_state(b_id, BeliefState.OPERATIVE, 0.8)
+    model.assertions.link(a_id, b_id, AssertionLinkType.SUPPORTS)
+
+    # User corrects A to WITHDRAWN (e.g., "actually this is a draft, not the executed version")
+    result = model.correct_assertion(
+        assertion_id=a_id,
+        new_state=BeliefState.WITHDRAWN,
+        note="Document is a draft, not the executed contract",
+    )
+
+    assert result.new_belief_state == BeliefState.WITHDRAWN
+
+    # B must have been revised — it cannot remain OPERATIVE when its only support is WITHDRAWN
+    b_record = model.assertions.get(b_id)
+    assert b_record.belief_state != BeliefState.OPERATIVE.value, (
+        "correct_assertion() must propagate through the dependency graph — "
+        "B's belief state must change when its support A is WITHDRAWN (SO-2)"
+    )
+
+
 def test_correct_assertion_writes_revision_event(model):
     a_id = add_assertion(model, "Payment was timely.")
     model.assertions.set_belief_state(a_id, BeliefState.ALLEGED, 0.5)
