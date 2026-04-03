@@ -1806,6 +1806,45 @@ def test_format_matter_context_emits_known_document_ids():
     )
 
 
+def test_format_matter_context_emits_answered_clarifications():
+    """_format_matter_context() must include answered clarifications so LLM uses user context (SO-3).
+
+    When a user answers a clarification question mid-run or before a run,
+    that information MUST appear in the orientation prompt.  Without it,
+    the LLM ignores user-supplied strategic context — a direct SO-3 violation.
+    The 'User-supplied context' block must include both the question and the answer.
+    """
+    from irys.rlm.engine import _format_matter_context
+    from irys.matter.runtime import QueryMatterContext
+
+    ctx = QueryMatterContext(
+        matter_id="m_test",
+        matter_name="Test Matter",
+        existing_assertion_count=0,
+        open_issues=[],
+        open_gaps=[],
+        known_actors=[],
+        known_document_ids=[],
+        answered_clarifications=[
+            {
+                "id": "cl_001",
+                "question_text": "Do you have the signed amendment No. 2?",
+                "answer_text": "No, the client confirmed it was never executed.",
+            }
+        ],
+    )
+    result = _format_matter_context(ctx)
+    assert "User-supplied context" in result or "answered" in result.lower(), (
+        "_format_matter_context must label the user-supplied context block (SO-3)"
+    )
+    assert "signed amendment" in result.lower(), (
+        "Clarification question must appear in formatted context (SO-3)"
+    )
+    assert "never executed" in result.lower(), (
+        "Clarification answer must appear in formatted context (SO-3)"
+    )
+
+
 def test_format_matter_context_emits_key_predicates():
     """_format_matter_context() must surface key_predicates from SPO graph (SO-2)."""
     from irys.rlm.engine import _format_matter_context
