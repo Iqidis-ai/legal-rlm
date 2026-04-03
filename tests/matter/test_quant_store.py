@@ -383,3 +383,44 @@ def test_adapter_record_quants_batch_persists_all_records(model):
     assert len(amounts) == 2
     rates = model.quant.get_by_kind("rate")
     assert len(rates) == 1
+
+
+# ---------------------------------------------------------------------------
+# SO-6: MatterModel.reconcile() payment reconciliation
+# ---------------------------------------------------------------------------
+
+def test_matter_model_reconcile_shows_payment_exposure(model):
+    """model.reconcile() must expose invoiced vs. paid totals from quant facts (SO-6).
+
+    SO-6 test contract: 'Given documents with payment histories, the system can
+    produce a reconciliation showing what was invoiced, what was paid, what is
+    disputed, and what the claimed exposure is.'
+
+    reconcile() groups by subject_type so invoice and payment totals are
+    independently retrievable — the caller computes exposure = invoiced - paid.
+    """
+    # Record three invoices and two payments
+    model.quant.record(quant_kind="amount", raw_text="Invoice #1: $80,000",
+                       amount_value=80_000.0, currency="USD", subject_type="invoice")
+    model.quant.record(quant_kind="amount", raw_text="Invoice #2: $20,000",
+                       amount_value=20_000.0, currency="USD", subject_type="invoice")
+    model.quant.record(quant_kind="amount", raw_text="Payment Mar 15: $60,000",
+                       amount_value=60_000.0, currency="USD", subject_type="payment")
+    model.quant.record(quant_kind="amount", raw_text="Payment Apr 1: $15,000",
+                       amount_value=15_000.0, currency="USD", subject_type="payment")
+
+    rec = model.reconcile(currency="USD")
+
+    assert "invoice" in rec, "Reconciliation must include invoice totals (SO-6)"
+    assert "payment" in rec, "Reconciliation must include payment totals (SO-6)"
+
+    invoiced = rec["invoice"]["total"]
+    paid = rec["payment"]["total"]
+    assert invoiced == 100_000.0, f"Expected $100k invoiced, got {invoiced}"
+    assert paid == 75_000.0, f"Expected $75k paid, got {paid}"
+
+    # Exposure = invoiced - paid (what SO-6 calls 'claimed exposure')
+    exposure = invoiced - paid
+    assert exposure == 25_000.0, (
+        "reconcile() must support computing exposure = invoiced - paid (SO-6 payment reconciliation)"
+    )
