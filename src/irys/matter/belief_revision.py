@@ -321,16 +321,25 @@ class BeliefRevisionEngine:
             attack_source_roles=neighbors["attack_source_roles"],
         )
 
-        if new_state == old_state and abs(new_confidence - old_confidence) < 0.01:
-            return None  # No change
+        # Do NOT short-circuit here based on the pre-tx snapshot. A concurrent writer
+        # could change the DB row between the pre-tx read above and the write_transaction
+        # below, causing us to skip a real update. The authoritative no-change check is
+        # performed INSIDE the transaction using the in-tx re-read.
 
-        # Persist the state change
+        # _actual_old_* will be overridden with the committed in-tx values so that the
+        # returned RevisionResult accurately reflects what was recorded in the audit trail.
+        _actual_old_state: BeliefState = old_state
+        _actual_old_conf: float = old_confidence
+
+        # Persist the state change.
+        # write_transaction() uses BEGIN IMMEDIATE to acquire the write lock before the
+        # in-tx SELECT, preventing WAL deferred-read-to-write upgrade failures
+        # (SQLITE_BUSY_SNAPSHOT) under concurrent writers.
+        # NOTE: write_transaction() inside a nested deferred transaction falls back to
+        # a SAVEPOINT, which does not acquire an early write lock. There are no current
+        # call paths that nest _revise_one() inside an outer deferred transaction.
         now = _now()
         with self.db.write_transaction():
-            # Re-read with BEGIN IMMEDIATE so the write lock is held from the start,
-            # preventing WAL deferred-read-to-write upgrade failures under concurrent
-            # writers (Tier 1 MEDIUM). The in-tx values are authoritative for both
-            # diff-detection and old_value_json in assertion_revision (Tier 1 HIGH).
             _intx_row = self.db.execute(
                 "SELECT belief_state, confidence FROM assertion WHERE id=?",
                 (assertion_id,),
@@ -339,8 +348,11 @@ class BeliefRevisionEngine:
                 return None
             _intx_old_state = BeliefState(_intx_row["belief_state"])
             _intx_old_conf = float(_intx_row["confidence"])
+            _actual_old_state = _intx_old_state
+            _actual_old_conf = _intx_old_conf
 
             # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
+            # Use in-tx values for both diff detection and old_value_json.
             _rev_rows: list[tuple[str, str, str]] = []
             if new_state != _intx_old_state:
                 _rev_rows.append((
@@ -354,11 +366,16 @@ class BeliefRevisionEngine:
                     _json_mod.dumps(_intx_old_conf),
                     _json_mod.dumps(new_confidence),
                 ))
-            if _rev_rows:
-                self.assertion_store.write_revision_rows(
-                    assertion_id, _rev_rows, _id(),
-                    cause.value, "system", run_id, note,
-                )
+
+            if not _rev_rows:
+                # In-tx state already matches the BFS target; nothing to write.
+                # Commits an empty transaction (harmless) and returns None.
+                return None
+
+            self.assertion_store.write_revision_rows(
+                assertion_id, _rev_rows, _id(),
+                cause.value, "system", run_id, note,
+            )
             self.assertion_store.set_belief_state(assertion_id, new_state, new_confidence)
             self.db.execute(
                 """INSERT INTO belief_revision_event
@@ -377,9 +394,9 @@ class BeliefRevisionEngine:
 
         return RevisionResult(
             assertion_id=assertion_id,
-            old_belief_state=old_state,
+            old_belief_state=_actual_old_state,
             new_belief_state=new_state,
-            old_confidence=old_confidence,
+            old_confidence=_actual_old_conf,
             new_confidence=new_confidence,
             cause=cause,
         )
@@ -401,15 +418,15 @@ class BeliefRevisionEngine:
         if record is None:
             raise ValueError(f"Assertion {assertion_id} not found")
 
-        old_state = BeliefState(record.belief_state)
-        old_confidence = record.confidence
+        # _actual_old_* will be overridden with committed in-tx values so that
+        # RevisionResult matches what was recorded in the audit trail.
+        _actual_old_state: BeliefState = BeliefState(record.belief_state)
+        _actual_old_conf: float = record.confidence
         now = _now()
 
+        # write_transaction() uses BEGIN IMMEDIATE to acquire the write lock before the
+        # in-tx SELECT, preventing WAL deferred-read-to-write upgrade failures.
         with self.db.write_transaction():
-            # Re-read with BEGIN IMMEDIATE so the write lock is held from the start,
-            # preventing WAL deferred-read-to-write upgrade failures under concurrent
-            # writers (Tier 1 MEDIUM). The in-tx values are authoritative for both
-            # diff-detection and old_value_json in assertion_revision (Tier 1 HIGH).
             _fs_intx_row = self.db.execute(
                 "SELECT belief_state, confidence FROM assertion WHERE id=?",
                 (assertion_id,),
@@ -418,6 +435,8 @@ class BeliefRevisionEngine:
                 raise ValueError(f"Assertion {assertion_id} disappeared before write")
             _fs_intx_old_state = BeliefState(_fs_intx_row["belief_state"])
             _fs_intx_old_conf = float(_fs_intx_row["confidence"])
+            _actual_old_state = _fs_intx_old_state
+            _actual_old_conf = _fs_intx_old_conf
 
             # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
             # actor_kind="user" for direct force_state corrections.
@@ -457,9 +476,9 @@ class BeliefRevisionEngine:
 
         result = RevisionResult(
             assertion_id=assertion_id,
-            old_belief_state=old_state,
+            old_belief_state=_actual_old_state,
             new_belief_state=new_state,
-            old_confidence=old_confidence,
+            old_confidence=_actual_old_conf,
             new_confidence=new_confidence,
             cause=cause,
         )
