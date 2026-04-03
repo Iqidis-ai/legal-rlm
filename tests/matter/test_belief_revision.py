@@ -319,6 +319,38 @@ def test_withdrawn_attacker_does_not_trigger_disputed(model):
     )
 
 
+def test_alleged_supporter_does_not_elevate_to_inferred(model):
+    """An ALLEGED supporter must not elevate a UNKNOWN assertion to INFERRED (SO-5).
+
+    ALLEGED means "asserted by an advocacy source" — a party's claim, not an operative fact.
+    Elevating an assertion to INFERRED solely on the basis of an ALLEGED supporter would
+    amplify advocacy material (e.g. complaint allegations) to a higher epistemic status
+    than they deserve.  Only OPERATIVE supporters must trigger INFERRED — this is the
+    core SO-5 source calibration invariant in the belief revision engine.
+    """
+    central_id = add(model, "Defendant failed to pay $100,000.")
+
+    # Add an ALLEGED supporter (e.g., a complaint allegation)
+    alleged_id = add(model, "Complaint says defendant owes $100,000.", speech_act=SpeechAct.ALLEGED)
+    model.assertions.set_belief_state(alleged_id, BeliefState.ALLEGED, 0.7)
+    model.assertions.link(alleged_id, central_id, AssertionLinkType.SUPPORTS)
+
+    # Trigger revision on central — ALLEGED supporter should not elevate to INFERRED
+    model.belief.apply(
+        seed_assertion_ids=[central_id],
+        cause=RevisionCause.NEW_EVIDENCE,
+    )
+
+    central_record = model.assertions.get(central_id)
+    assert central_record.belief_state != BeliefState.INFERRED.value, (
+        f"ALLEGED supporter must not elevate assertion to INFERRED — "
+        f"only OPERATIVE supporters cause INFERRED state (SO-5). Got: {central_record.belief_state}"
+    )
+    assert central_record.belief_state != BeliefState.OPERATIVE.value, (
+        "ALLEGED supporter must not make assertion OPERATIVE (SO-5 source calibration)"
+    )
+
+
 def test_revision_event_stores_note_and_run_id():
     """belief_revision_event must store the note and run_id for traceability (SO-3).
 
