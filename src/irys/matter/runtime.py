@@ -173,6 +173,9 @@ class MatterRuntimeAdapter:
         self._run_started_at: str = datetime.now(timezone.utc).isoformat()
         # Track which clarification IDs have already been injected this run
         self._injected_clarification_ids: set[str] = set()
+        # In-memory stop flag: once set True it stays True, avoiding repeated DB reads.
+        # Checked on every lead/doc boundary — must be O(1) not O(DB).
+        self._stop_flag: bool = False
 
     # ------------------------------------------------------------------
     # Called from engine._orient()
@@ -443,6 +446,7 @@ class MatterRuntimeAdapter:
 
     def request_stop(self) -> None:
         """Signal the engine to stop after the current iteration."""
+        self._stop_flag = True
         self.model.ledger.request_stop(self.run_id)
         self.model.ledger.append_event(
             run_id=self.run_id,
@@ -451,7 +455,17 @@ class MatterRuntimeAdapter:
         )
 
     def is_stop_requested(self) -> bool:
-        return self.model.ledger.is_stop_requested(self.run_id)
+        # Fast path: in-memory flag avoids a DB round-trip on every lead/doc boundary.
+        # The flag is set in request_stop() before the DB write, so it is never stale
+        # within the same adapter instance (one adapter = one run = one process).
+        if self._stop_flag:
+            return True
+        # Slow path: first call after a cross-process stop (e.g. API call on another
+        # thread). Only reached when the flag hasn't been set locally yet.
+        result = self.model.ledger.is_stop_requested(self.run_id)
+        if result:
+            self._stop_flag = True  # cache for all future calls
+        return result
 
     def record_actor(
         self,
