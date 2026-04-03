@@ -1921,8 +1921,27 @@ class RLMEngine:
             citations=citations_text or "No citations collected",
         )
 
-        # Use PRO for final synthesis
-        response = await self.client.complete(prompt, tier=ModelTier.PRO)
+        # Synthesis cache (SO-1): same prompt → skip PRO LLM call on warm runs.
+        # Key hashes the full prompt text (which captures facts, gaps, quant, citations).
+        import hashlib as _sh
+        _syn_key = _sh.sha256(prompt.encode()).hexdigest()
+        _cached_response = None
+        if self._matter_model is not None:
+            try:
+                _cached_response = self._matter_model.cache.get("synthesis", _syn_key)
+            except Exception:
+                pass
+
+        if _cached_response is not None:
+            response = _cached_response
+        else:
+            # Use PRO for final synthesis
+            response = await self.client.complete(prompt, tier=ModelTier.PRO)
+            if self._matter_model is not None:
+                try:
+                    self._matter_model.cache.put("synthesis", _syn_key, response)
+                except Exception:
+                    pass
 
         state.findings["final_output"] = response
         self._emit_step(state, StepType.SYNTHESIS, "Analysis complete")
