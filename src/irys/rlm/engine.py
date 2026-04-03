@@ -1791,8 +1791,12 @@ class RLMEngine:
                         if not raw:
                             continue
                         value = nf.get("value")
-                        amount = float(value) if kind == "amount" and value is not None else None
-                        rate = float(value) if kind == "rate" and value is not None else None
+                        try:
+                            amount = float(value) if kind == "amount" and value is not None else None
+                            rate = float(value) if kind == "rate" and value is not None else None
+                        except (TypeError, ValueError, OverflowError):
+                            amount = None
+                            rate = None
                         date_val = raw if kind == "date" else None
                         # Ground to source assertion: prefer explicit assertion_idx from LLM
                         # (direct index into key_facts), fall back to string matching.
