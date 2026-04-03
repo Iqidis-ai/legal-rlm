@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-03 (post-adversarial-audit #021 + Tier 1 correctness CLEAN)
+Last updated: 2026-04-03 (adversarial audit #022: 5 PASSes + SO-4 predicate production wiring)
 Branch: SebihSpecial
 
 ---
@@ -17,11 +17,13 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 | Outcome | Status | Notes |
 |---------|--------|-------|
-| SO-1: Durable Matter Model | **PARTIAL** | Audit #019: reuse opportunistic, no >70% gate. Schema v29 adds measurable reuse_rate to run_session; target in get_so_metrics() |
-| SO-2: Typed Assertion Graph + Truth Maintenance | **PARTIAL** | Audit #021: correct_assertion() now triggers proof_state recompute (stale issue steering fixed). MAX_WORK truncation surfaces in ledger. Remaining: correction doesn't re-trigger loop reprioritization in real-time |
-| SO-3: User-Steerable Reasoning | **PASS** | Audit #021 PASS — stop/redirect/correction/clarification/annotations/trust all wired |
-| SO-4: Issue-Driven Architecture | **PARTIAL** | Audit #021: proof_state.sufficiency overlay removed (was bypassing weighted coverage). Bare-string facts no longer auto-credited as supports. Predicate resolver matter-scoped + atomic. Remaining: issue_predicate.resolved writer absent in production |
-| SO-5: Source-Aware Intelligence | **PARTIAL** | Multi-source ambiguity now surfaced: list_recent_for_hydration() returns source_roles_csv; engine shows MULTI-SOURCE[OPERATIVE,ADVOCACY] labels. Remaining: no scoring differentiation per role mix |
+| SO-1: Durable Matter Model | **PASS** | Audit #022 PASS — hot path genuinely reuses persisted state via run-start context, hydration, and caches |
+| SO-2: Typed Assertion Graph + Truth Maintenance | **PARTIAL** | Audit #022: belief revision + proof_state recompute real and visible to next iteration. Remaining: engine accepts flat string facts without SPO structure |
+| SO-3: User-Steerable Reasoning | **PASS** | Audit #022 PASS — stop/redirect/correction/clarification/annotations/trust all wired |
+| SO-4: Issue-Driven Architecture | **PARTIAL** | Audit #022: weighted coverage used by loop. Predicate resolution now wired in production (ANALYZE_FINDINGS_PROMPT step 5 → resolve_predicate_by_description). Remaining: _focus_issue_id attribution is heuristic |
+| SO-5: Source-Aware Intelligence | **PASS** | Audit #022 PASS — source-role classification, trust overrides, advocacy-only gating are real behavioral changes |
+| SO-6: Quantitative Intelligence | **PASS** | Audit #022 PASS — numeric facts structured, persisted, reconciled, conflict-checked, force-surfaced |
+| SO-7: Missingness Modeled | **PASS** | Audit #022 PASS — gaps tied to issues/assertions, surfaced in synthesis, converted to clarifications |
 | SO-6: Quantitative Intelligence | **PARTIAL** | Audit #021: quant is a sidecar subsystem, not core retrieval/proof backbone. Real gates + reconciliation, but not mandatory in all proof paths |
 | SO-7: Missingness Modeled | **PASS** | Audit #021 PASS — gaps recorded, proof gaps detected, high-materiality gaps generate clarifications |
 
@@ -92,14 +94,36 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | #019 | SO-2/4/5/6/7 PASS; SO-1/3 PARTIAL | SO-1 downgraded (no reuse gate); SO-3 ledger actionability gap |
 | #020 | SO-3/7 PASS; SO-1/2/5/6 PARTIAL; SO-4 FAIL → FIXED | coverage_fraction was count heuristic; fixed to belief-state-weighted |
 | #021 | SO-3/7 PASS; SO-1/2/4/5/6 PARTIAL | proof_state override removed; correct_assertion now refreshes proof_state; bare-string inflation fixed |
+| #022 | **SO-1/3/5/6/7 PASS; SO-2/4 PARTIAL** | 5 PASSes. Predicate resolution wired in production. SO-4 remaining: _focus_issue_id attribution heuristic |
 
-**Tier 1 reviews:** Correctness CLEAN (predicate resolver matter-scoped + atomic; correct_assertion batched; SO-4/SO-5 fixes committed). Performance in progress.
+**Tier 1 reviews:** CLEAN — predicate resolver matter-scoped + atomic, correct_assertion batched, SO-4 predicate production wiring with allowlist + gating, all Tier 1 HIGH/MEDIUM resolved.
 
 ---
 
 ## Active Work
 
-### JUST COMPLETED — Tier 1 Correctness CLEAN
+### JUST COMPLETED — Adversarial Audit #022 + SO-4 Predicate Production Wiring
+
+**Audit #022 results: 5 PASSes (SO-1/3/5/6/7)**
+- SO-1 PASS: hot path genuinely reuses persisted state (run-start context, hydration, caches)
+- SO-5 PASS: source-role classification + advocacy gating are real behavioral changes
+- SO-6 PASS: numeric facts structured, persisted, reconciled, conflict-checked
+- SO-7 PASS: gaps tied to issues/assertions, surfaced in synthesis, converted to clarifications
+
+**SO-4 predicate production wiring (post-audit #022):**
+- `ANALYZE_FINDINGS_PROMPT` now includes step 5 asking LLM to identify which Issue Focus elements are established by the extracted facts
+- `resolve_predicate_by_description()` called for each satisfied predicate after fact recording
+- Allowlist guards: only predicates shown in Issue Focus block (limit=2) are eligible
+- Gate: only resolves when `any(_search_assertion_ids)` — supporting facts actually persisted
+- Cache key includes predicate hash so changing predicates invalidates cached analysis
+- `_build_issue_focus_block()` now returns `(block, pred_descs)` tuple eliminating duplicate DB read
+
+**Tier 1 loop CLEAN:** 6 Codex sessions (correctness + performance) all clean after fixes.
+
+HEAD: 38aea9f
+Tests: 721 / 721
+
+### PREVIOUSLY COMPLETED — Tier 1 Correctness CLEAN
 
 **Predicate resolver correctness (Tier 1 HIGH/MEDIUM from predicate review):**
 - `resolve_predicate()` matter-scoped: WHERE clause now JOINs through issue.matter_id — prevents cross-matter predicate resolution.
@@ -146,10 +170,10 @@ None active.
 
 - Tests passing: 721 / 721
 - Schema version: v33
-- SO-3, SO-7: PASS; SO-1, SO-2, SO-4, SO-5, SO-6: PARTIAL
-- Tier 1 correctness: **CLEAN** (predicate resolver matter-scoped + atomic; correct_assertion batched; SO-5 multi-source surfaced)
-- Tier 1 performance: in progress (reviewing predicate resolver subqueries, correct_assertion chunking, list_recent_for_hydration GROUP_CONCAT)
-- Adversarial audit #021: DONE + FIXED
+- SO-1/3/5/6/7: **PASS**; SO-2/4: **PARTIAL**
+- Tier 1: **CLEAN** (all HIGH/MEDIUM resolved across correctness + performance loops)
+- Adversarial audit #022: DONE — 5 PASSes, SO-2/4 PARTIAL
+- Next: SO-2 remaining gap (flat-string facts without SPO); SO-4 remaining (_focus_issue_id attribution)
 
 ## Architectural Backlog (Tier 2 HIGH remaining)
 
@@ -157,7 +181,8 @@ None active.
 - **Q6 LOW**: get_ledger_steering_surface() steering snapshot caching — not blocking
 - **Q7 MEDIUM**: _run_snapshots dict not persistent for multi-worker/clustered — not blocking for single-worker
 - **SO-4 PARTIAL**: issue_predicate.status='resolved' writer absent in production (only in tests) — predicates always 0% satisfied; predicate-aware coverage formula never reaches full benefit
-- **SO-5 PARTIAL**: Multi-source display labels added. Remaining: no scoring differentiation per role mix; display only, no downstream effect on coverage
+- **SO-2 PARTIAL**: Engine accepts flat string facts without SPO structure; success signal only checks revision event presence
+- **SO-4 PARTIAL**: _focus_issue_id attribution is heuristic (initial searches assigned by position); predicate resolution can target wrong issue when attribution is wrong
 - **SO-2 PARTIAL**: Corrections propagate to proof_state now, but don't trigger real-time loop re-prioritization in the same iteration
 - **SO-1 PARTIAL**: reuse_rate metric is assertion-count ratio, not measured reuse behavior
 - **SO-6 PARTIAL**: Quant is sidecar subsystem, not core retrieval/proof backbone
