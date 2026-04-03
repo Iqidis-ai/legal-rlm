@@ -1271,23 +1271,43 @@ class RLMEngine:
         # Format results for LLM
         results_text = self._format_search_results(results)
 
-        prompt = ANALYZE_FINDINGS_PROMPT.format(
-            query=state.query,
-            hypothesis=state.hypothesis or "No hypothesis yet",
-            search_term=results.query,
-            search_results=results_text,
-        )
+        # Search-analysis cache (SO-1): same search term + same top-5 hits → skip FLASH call.
+        # Cache key hashes search_term + query prefix + top-hit filenames to detect staleness.
+        import hashlib as _hl
+        _top_names = ",".join(sorted(h.filename for h in results.top(5)))
+        _analysis_key = _hl.sha256(
+            f"{results.query}\n{state.query[:80]}\n{_top_names}".encode()
+        ).hexdigest()
+        _cached_analysis = None
+        if self._matter_model is not None:
+            try:
+                _cached_analysis = self._matter_model.cache.get("search_analysis", _analysis_key)
+            except Exception:
+                pass
 
-        # Use FLASH for analysis
-        response = await self.client.complete(prompt, tier=ModelTier.FLASH)
-
-        # Parse with safe defaults
-        analysis = self._parse_json_safe(response, {
-            "key_facts": [],
-            "new_leads": [],
-            "hypothesis_update": None,
-            "next_searches": [],
-        })
+        if _cached_analysis is not None:
+            analysis = _cached_analysis
+        else:
+            prompt = ANALYZE_FINDINGS_PROMPT.format(
+                query=state.query,
+                hypothesis=state.hypothesis or "No hypothesis yet",
+                search_term=results.query,
+                search_results=results_text,
+            )
+            # Use FLASH for analysis
+            response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+            analysis = self._parse_json_safe(response, {
+                "key_facts": [],
+                "new_leads": [],
+                "hypothesis_update": None,
+                "next_searches": [],
+            })
+            # Cache for warm runs
+            if self._matter_model is not None:
+                try:
+                    self._matter_model.cache.put("search_analysis", _analysis_key, analysis)
+                except Exception:
+                    pass
 
         # Store key facts with per-fact source attribution (SO-5 provenance fix).
         # Facts from the LLM may be bare strings (legacy) or dicts with "fact" and
