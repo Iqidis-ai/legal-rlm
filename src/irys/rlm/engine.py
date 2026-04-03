@@ -2455,7 +2455,21 @@ class RLMEngine:
             # Both are best-effort — failures must never block the pipeline.
             if _mm is not None:
                 try:
-                    _mm.proof_state.compute_all()
+                    if _recorded_ids:
+                        # Targeted: only recompute proof states for issues linked to
+                        # assertions from this document. Avoids recomputing all open
+                        # issues on every document ingest (performance fix).
+                        _issue_rows = _mm.db.execute(
+                            "SELECT DISTINCT issue_id FROM assertion_issue_link"
+                            " WHERE assertion_id IN ({})".format(
+                                ",".join("?" * len(_recorded_ids))
+                            ),
+                            _recorded_ids,
+                        ).fetchall()
+                        for _irow in _issue_rows:
+                            _mm.proof_state.compute_and_store(_irow["issue_id"])
+                    # If no assertions were recorded, proof state is unchanged — skip update.
+                    # Post-synthesis compute_all() at end of run catches any remaining gaps.
                 except Exception:
                     pass
                 if analysis and analysis.get("quotes"):
