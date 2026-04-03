@@ -693,6 +693,49 @@ def test_document_trust_override_high_increases_attacker_weight(model):
     )
 
 
+def test_both_sides_confidence_is_balance_aware():
+    """Both-sides-present DISPUTED confidence must reflect trust-weighted balance (SO-5).
+
+    Equal weights → confidence = 0.4 (midpoint of [0.3, 0.5))
+    Support-dominant (operative support vs advocacy attack) → confidence closer to 0.5
+    Attack-dominant (operative attack vs advocacy support) → confidence closer to 0.3
+    """
+    # Equal trust: operative support (1.0) vs operative attack (1.0) → 0.3 + 0.2 * 0.5 = 0.4
+    _, conf_equal = _compute_belief_state(
+        BeliefState.OPERATIVE,
+        support_states=[BeliefState.OPERATIVE],
+        attack_states=[BeliefState.ALLEGED],
+        support_source_roles=["operative"],
+        attack_source_roles=["operative"],
+    )
+
+    # Support-dominant: operative support (1.0) vs advocacy attack (0.3)
+    # sup_frac = 1.0 / 1.3 ≈ 0.769; confidence = 0.3 + 0.2 * 0.769 ≈ 0.4538
+    _, conf_support_dom = _compute_belief_state(
+        BeliefState.OPERATIVE,
+        support_states=[BeliefState.OPERATIVE],
+        attack_states=[BeliefState.ALLEGED],
+        support_source_roles=["operative"],
+        attack_source_roles=["advocacy"],
+    )
+
+    # Attack-dominant: advocacy support (0.3) vs operative attack (1.0)
+    # sup_frac = 0.3 / 1.3 ≈ 0.231; confidence = 0.3 + 0.2 * 0.231 ≈ 0.3462
+    _, conf_attack_dom = _compute_belief_state(
+        BeliefState.OPERATIVE,
+        support_states=[BeliefState.ALLEGED],  # solid: ALLEGED is not in _UNDERMINING
+        attack_states=[BeliefState.OPERATIVE],
+        support_source_roles=["advocacy"],
+        attack_source_roles=["operative"],
+    )
+
+    assert conf_support_dom > conf_equal > conf_attack_dom, (
+        f"Both-sides confidence must reflect trust balance: "
+        f"support-dominant ({conf_support_dom}) > equal ({conf_equal}) > attack-dominant ({conf_attack_dom})"
+    )
+    assert abs(conf_equal - 0.4) < 1e-4, f"Equal trust must yield 0.4; got {conf_equal}"
+
+
 def test_mixed_attacker_weights_accumulate_correctly():
     """Effective attack weight must accumulate across multiple attackers with different trust levels.
 

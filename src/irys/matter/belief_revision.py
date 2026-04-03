@@ -114,7 +114,13 @@ def _compute_belief_state(
 
     if active_attack_weights and strong_support_weights:
         # Both sides present → disputed
-        return BeliefState.DISPUTED, 0.4
+        # Confidence reflects the trust-weighted balance: support-dominant → closer to 0.5 (weakly disputed)
+        # attack-dominant → closer to 0.3 (strongly disputed). Range: [0.3, 0.5)
+        _eff_atk = sum(active_attack_weights)
+        _eff_sup = sum(strong_support_weights)
+        _total = _eff_atk + _eff_sup
+        _sup_frac = _eff_sup / _total if _total > 0 else 0.5
+        return BeliefState.DISPUTED, round(0.3 + 0.2 * _sup_frac, 4)
 
     if support_states and not strong_support_weights and not active_attack_weights:
         # Assertion has supporters, but NONE are solid (all disputed/unknown/superseded/withdrawn)
