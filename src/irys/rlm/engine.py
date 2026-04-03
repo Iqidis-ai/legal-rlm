@@ -1508,13 +1508,26 @@ class RLMEngine:
                     )
                     if not found_in_repo and _adp is not None and ref_words:
                         from ..matter.enums import GapType
+                        # Link gap to an issue if available; otherwise link to the first
+                        # assertion extracted from this document (SO-7 impact grounding).
+                        # A referenced-but-absent document is most likely to affect the
+                        # assertions from the document that cites it.
+                        if focus_issue_id:
+                            _gap_aff_type: Optional[str] = "issue"
+                            _gap_aff_id: Optional[str] = focus_issue_id
+                        elif _recorded_ids:
+                            _gap_aff_type = "assertion"
+                            _gap_aff_id = _recorded_ids[0]
+                        else:
+                            _gap_aff_type = None
+                            _gap_aff_id = None
                         _adp.record_gap(
                             description=f"Referenced document not found in repository: '{ref}' (mentioned in {Path(file_path).name})",
                             gap_type=GapType.MISSING_DOCUMENT,
                             expected_artifact=ref,
                             materiality=0.5,
-                            affected_type="issue" if focus_issue_id else None,
-                            affected_id=focus_issue_id,
+                            affected_type=_gap_aff_type,
+                            affected_id=_gap_aff_id,
                         )
 
             # Mark document as fully ingested so future runs take the hot path (SO-1)
