@@ -2649,12 +2649,10 @@ def test_record_facts_batch_unknown_default_falls_back_to_filename_heuristic(mod
 # ---------------------------------------------------------------------------
 
 def test_record_assertion_link_invalid_link_type_does_not_raise(model):
-    """record_assertion_link() with an invalid link_type must not raise.
-
-    The invalid type is dropped, a warning is logged, and fact recording continues
-    (SO-3: failures must not silently hide — they go to Python logger as fallback).
+    """record_assertion_link() with an invalid link_type must not raise AND must
+    produce a SYSTEM_WARNING ledger event (SO-3: failures must not be silently hidden).
     """
-    import logging
+    from irys.matter.enums import LedgerEventType
 
     run_id = model.start_run("SO-3 link type test")
     adapter = MatterRuntimeAdapter(model, run_id)
@@ -2662,8 +2660,19 @@ def test_record_assertion_link_invalid_link_type_does_not_raise(model):
     a_id = adapter.record_fact("Plaintiff filed complaint.", "complaint.pdf")
     b_id = adapter.record_fact("Defendant answered.", "answer.pdf")
 
-    # This must not raise, even with a nonsense link_type
+    # Must not raise — invalid type is dropped with a warning
     adapter.record_assertion_link(a_id, b_id, "nonexistent_relation_type_xyz")
+
+    # SYSTEM_WARNING ledger event must exist (SO-3 diagnostic visibility)
+    events = model.ledger.get_events(run_id)
+    warning_events = [e for e in events if e["event_type"] == LedgerEventType.SYSTEM_WARNING.value]
+    assert len(warning_events) >= 1, (
+        "Invalid link_type must produce a SYSTEM_WARNING ledger event — "
+        "failures must not be silently hidden (SO-3)"
+    )
+    assert "nonexistent_relation_type_xyz" in warning_events[0].get("summary", ""), (
+        "SYSTEM_WARNING must mention the invalid link_type for diagnostic traceability"
+    )
 
     # The edge must not have been created (invalid type dropped)
     links = model.db.execute(
