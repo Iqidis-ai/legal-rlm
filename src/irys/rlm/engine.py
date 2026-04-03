@@ -1326,9 +1326,12 @@ class RLMEngine:
             _search_assertion_ids: list[str] = []
             if adapter is not None:
                 issue_id = lead.focus_issue_id if lead is not None else None
-                for fact_text, _lbl, doc_id in facts_to_add:
-                    _aid = adapter.record_fact(fact_text, document_id=doc_id, issue_id=issue_id)
-                    _search_assertion_ids.append(_aid)
+                # Batch all facts into one outer transaction — inner per-fact transactions
+                # become savepoints, collapsing N disk syncs into 1 (perf SO-1).
+                _search_assertion_ids = adapter.record_facts_batch(
+                    [(fact_text, doc_id) for fact_text, _lbl, doc_id in facts_to_add],
+                    issue_id=issue_id,
+                )
                 if facts_to_add:
                     unique_docs = {d for _, _, d in facts_to_add}
                     adapter.log_step(
@@ -1558,14 +1561,18 @@ class RLMEngine:
                 from ..matter.runtime import infer_source_role as _infer_role
                 _src_label = _infer_role(doc.filename).value.upper()
                 state.add_facts([f"[{_src_label}] {f}" for f in facts_to_add])
-                # Also record into matter model if enabled; pass issue_id if from targeted lead
+                # Also record into matter model if enabled; pass issue_id if from targeted lead.
+                # Use record_facts_batch() so N facts → 1 outer transaction (savepoints inside).
                 adapter = getattr(state, "_matter_adapter", None)
                 if adapter is not None:
-                    for fact_text in facts_to_add:
-                        # Use _rel_path (repo-relative, stable) not doc.filename (basename only)
-                        # so same-basename files in different dirs don't alias in assertion_occurrence
-                        _aid = adapter.record_fact(fact_text, document_id=_rel_path, issue_id=focus_issue_id)
-                        _recorded_ids.append(_aid)
+                    # _rel_path: repo-relative stable path (not basename) to prevent
+                    # same-name files in different dirs aliasing in assertion_occurrence.
+                    _recorded_ids.extend(
+                        adapter.record_facts_batch(
+                            [(f, _rel_path) for f in facts_to_add],
+                            issue_id=focus_issue_id,
+                        )
+                    )
 
                     # Build assertion dependency graph from LLM-identified relationships (SO-2)
                     # Uses 0-based indices into facts_to_add / _recorded_ids

@@ -208,6 +208,29 @@ class MatterRuntimeAdapter:
 
         return assertion_id
 
+    def record_facts_batch(
+        self,
+        facts: list[tuple[str, str]],
+        issue_id: Optional[str] = None,
+    ) -> list[str]:
+        """Record multiple facts in a single outer transaction to reduce per-fact commit overhead.
+
+        Each element of `facts` is (proposition_text, document_id).  The list is
+        processed inside one outer ``with self.model.db.transaction()`` so that the
+        inner per-fact transactions become savepoints instead of full BEGIN/COMMITs,
+        collapsing N disk syncs into 1.
+
+        Returns list of assertion IDs in the same order as `facts`.
+        """
+        if not facts:
+            return []
+        assertion_ids = []
+        with self.model.db.transaction():
+            for proposition_text, document_id in facts:
+                aid = self.record_fact(proposition_text, document_id=document_id, issue_id=issue_id)
+                assertion_ids.append(aid)
+        return assertion_ids
+
     def record_assertion_link(
         self,
         src_assertion_id: str,
