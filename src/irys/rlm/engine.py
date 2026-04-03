@@ -1596,9 +1596,11 @@ class RLMEngine:
             # Extract and store structured numeric facts (SO-6).
             # Ground each quant fact to an assertion_id by searching the already-recorded
             # key_facts for the raw numeric text. This gives provenance for reconciliation.
+            # Batch into record_quants_batch() — one transaction for all numeric facts.
             if analysis.get("numeric_facts"):
                 _adp = getattr(state, "_matter_adapter", None)
                 if _adp is not None:
+                    _quant_specs: list[dict] = []
                     for nf in analysis["numeric_facts"][:20]:  # limit to avoid noise
                         if not isinstance(nf, dict):
                             continue
@@ -1623,16 +1625,18 @@ class RLMEngine:
                                 if _raw_lower and _raw_lower in _ft.lower():
                                     _nf_assertion_id = _fa
                                     break
-                        _adp.record_quant(
-                            quant_kind=kind,
-                            raw_text=f"{raw} — {nf.get('context', '')}",
-                            amount_value=amount,
-                            currency=nf.get("currency"),
-                            date_value=date_val,
-                            rate_value=rate,
-                            subject_type=nf.get("subject"),
-                            assertion_id=_nf_assertion_id,
-                        )
+                        _quant_specs.append({
+                            "quant_kind": kind,
+                            "raw_text": f"{raw} — {nf.get('context', '')}",
+                            "amount_value": amount,
+                            "currency": nf.get("currency"),
+                            "date_value": date_val,
+                            "rate_value": rate,
+                            "subject_type": nf.get("subject"),
+                            "assertion_id": _nf_assertion_id,
+                        })
+                    if _quant_specs:
+                        _adp.record_quants_batch(_quant_specs)
 
             # Extract and store entities
             if analysis.get("entities"):

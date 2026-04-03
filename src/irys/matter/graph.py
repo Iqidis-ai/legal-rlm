@@ -924,31 +924,79 @@ class QuantStore:
     ) -> str:
         """Persist a structured numeric fact. Returns quant_fact_id.
 
-        Idempotent on (matter_id, quant_kind, raw_text[:500]) — repeated engine
-        runs over the same document do not double-count the same extracted value.
+        Idempotent on (matter_id, quant_kind, raw_text[:500]) via INSERT OR IGNORE
+        backed by ux_quant_fact_key unique index (added in migration v13).
         """
-        raw_text_key = raw_text[:500]
-        existing = self.db.execute(
-            "SELECT id FROM quant_fact WHERE matter_id=? AND quant_kind=? AND raw_text=?",
-            (self.matter_id, quant_kind, raw_text_key),
-        ).fetchone()
-        if existing is not None:
-            return existing["id"]
-
         qf_id = _id()
         now = _now()
+        raw_key = raw_text[:500]
         with self.db.transaction():
-            self.db.execute(
-                """INSERT INTO quant_fact
+            cur = self.db.execute(
+                """INSERT OR IGNORE INTO quant_fact
                    (id, matter_id, quant_kind, amount_value, date_value, date_end_value,
                     rate_value, currency, unit, raw_text, subject_type, subject_id,
                     span_id, assertion_id, created_at)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (qf_id, self.matter_id, quant_kind, amount_value, date_value, date_end_value,
-                 rate_value, currency, unit, raw_text[:500], subject_type, subject_id,
+                 rate_value, currency, unit, raw_key, subject_type, subject_id,
                  span_id, assertion_id, now),
             )
+            if cur.rowcount == 0:
+                # Already exists — return the existing ID
+                row = self.db.execute(
+                    "SELECT id FROM quant_fact WHERE matter_id=? AND quant_kind=? AND raw_text=?",
+                    (self.matter_id, quant_kind, raw_key),
+                ).fetchone()
+                return row["id"]
         return qf_id
+
+    def record_many(self, specs: list[dict]) -> list[str]:
+        """Bulk-insert multiple quant facts in a single transaction.
+
+        Each spec is a dict with the same keys as record() (quant_kind and
+        raw_text required; all others optional). Uses executemany + INSERT OR
+        IGNORE so duplicate raw_text entries are silently skipped.
+
+        Returns list of IDs (newly inserted or existing) in insertion order.
+        """
+        if not specs:
+            return []
+        now = _now()
+        rows = []
+        ids = []
+        for spec in specs:
+            qf_id = _id()
+            ids.append(qf_id)
+            rows.append((
+                qf_id, self.matter_id,
+                spec["quant_kind"],
+                spec.get("amount_value"),
+                spec.get("date_value"),
+                spec.get("date_end_value"),
+                spec.get("rate_value"),
+                spec.get("currency"),
+                spec.get("unit"),
+                spec["raw_text"][:500],
+                spec.get("subject_type"),
+                spec.get("subject_id"),
+                spec.get("span_id"),
+                spec.get("assertion_id"),
+                now,
+            ))
+
+        with self.db.transaction():
+            self.db.executemany(
+                """INSERT OR IGNORE INTO quant_fact
+                   (id, matter_id, quant_kind, amount_value, date_value, date_end_value,
+                    rate_value, currency, unit, raw_text, subject_type, subject_id,
+                    span_id, assertion_id, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                rows,
+            )
+        # Return candidate IDs; IDs for duplicate rows (IGNORED) are the candidate
+        # UUIDs which won't match the stored row — callers that need exact IDs must
+        # use record() individually. Engine call sites do not use the return value.
+        return ids
 
     def get_by_kind(self, quant_kind: str) -> list[dict]:
         """Return all quant facts of a given kind, sorted by date."""

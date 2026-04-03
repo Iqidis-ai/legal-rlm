@@ -426,6 +426,16 @@ class MatterRuntimeAdapter:
             assertion_id=assertion_id,
         )
 
+    def record_quants_batch(self, specs: list[dict]) -> None:
+        """Bulk-insert multiple quant facts in a single transaction.
+
+        Each spec is a dict with keys matching record_quant() parameters
+        (quant_kind and raw_text required; all others optional). Wraps
+        QuantStore.record_many() — uses INSERT OR IGNORE with executemany
+        so N numeric facts → 1 outer transaction commit.
+        """
+        self.model.quant.record_many(specs)
+
     def set_trust_override(
         self,
         document_pattern: str,
@@ -520,6 +530,9 @@ class NullMatterAdapter:
 
     def record_quant(self, quant_kind: str, raw_text: str, **kwargs) -> str:
         return ""
+
+    def record_quants_batch(self, specs: list) -> None:
+        pass
 
     def record_assertion_link(
         self,
