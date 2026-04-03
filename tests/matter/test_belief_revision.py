@@ -386,3 +386,35 @@ def test_revision_event_stores_note_and_run_id():
     assert last["run_id"] == run_id, (
         "run_id must be stored in belief_revision_event so corrections are traceable to their run (SO-3)"
     )
+
+
+def test_corroborates_link_supports_belief_revision(model):
+    """A CORROBORATES link with OPERATIVE corroborator must elevate to INFERRED (SO-2).
+
+    CORROBORATES is a weaker form of support — 'this fact is consistent with / bolsters
+    the central claim.'  Like SUPPORTS, it must be included in the belief revision's
+    supporter set so an operative corroborating fact can elevate the central assertion.
+
+    This verifies end-to-end: get_supports() includes CORROBORATES → _compute_belief_state()
+    sees the OPERATIVE corroborator → central claim becomes INFERRED.
+    """
+    central_id = add(model, "Payment of $50,000 was received on January 15.")
+
+    # OPERATIVE corroborator from a different document
+    corroborator_id = add(model, "Bank wire confirmation shows $50k transfer on Jan 15.",
+                          doc="bank_statement.pdf", speech_act=SpeechAct.OPERATIVE)
+    model.assertions.set_belief_state(corroborator_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.link(corroborator_id, central_id, AssertionLinkType.CORROBORATES)
+
+    # Trigger belief revision on central
+    model.belief.apply(
+        seed_assertion_ids=[central_id],
+        cause=RevisionCause.NEW_EVIDENCE,
+    )
+
+    central_record = model.assertions.get(central_id)
+    # CORROBORATES from OPERATIVE source must cause INFERRED (not remain UNKNOWN)
+    assert central_record.belief_state == BeliefState.INFERRED.value, (
+        f"OPERATIVE corroborator must elevate central assertion to INFERRED (SO-2); "
+        f"got {central_record.belief_state}"
+    )
