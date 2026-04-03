@@ -204,12 +204,27 @@ class AssertionStore:
         return [r[0] for r in rows]
 
     def get_supports(self, assertion_id: str) -> list[str]:
-        """Return assertion IDs that support this assertion.
-        Link direction: supporter --SUPPORTS--> assertion_id
+        """Return assertion IDs that support or corroborate this assertion.
+        Link direction: supporter --SUPPORTS/CORROBORATES--> assertion_id
+
+        corroborates = independently confirms; treated as support for belief state
+        computation so convergent evidence from multiple sources raises confidence.
         """
         rows = self.db.execute(
             """SELECT src_assertion_id FROM assertion_link
-               WHERE dst_assertion_id=? AND link_type='supports'""",
+               WHERE dst_assertion_id=? AND link_type IN ('supports','corroborates')""",
+            (assertion_id,),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_superseding(self, assertion_id: str) -> list[str]:
+        """Return assertion IDs that supersede this assertion.
+        Link direction: newer --SUPERSEDES--> assertion_id
+        If any superseding assertion exists, this assertion should be SUPERSEDED.
+        """
+        rows = self.db.execute(
+            """SELECT src_assertion_id FROM assertion_link
+               WHERE dst_assertion_id=? AND link_type='supersedes'""",
             (assertion_id,),
         ).fetchall()
         return [r[0] for r in rows]

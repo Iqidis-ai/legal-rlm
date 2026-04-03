@@ -41,9 +41,10 @@ def _compute_belief_state(
     current_state: BeliefState,
     support_states: list[BeliefState],
     attack_states: list[BeliefState],
+    has_superseding: bool = False,
 ) -> tuple[BeliefState, float]:
     """
-    Compute new belief state and confidence from support/attack graph.
+    Compute new belief state and confidence from support/attack/supersedes graph.
 
     Returns (new_belief_state, new_confidence).
     """
@@ -53,6 +54,10 @@ def _compute_belief_state(
 
     if current_state == BeliefState.WITHDRAWN:
         return BeliefState.WITHDRAWN, 0.0
+
+    # SUPERSEDES link: a newer assertion explicitly replaces this one → terminal
+    if has_superseding:
+        return BeliefState.SUPERSEDED, 0.1
 
     _INERT = (BeliefState.WITHDRAWN, BeliefState.SUPERSEDED, BeliefState.UNKNOWN)
 
@@ -165,9 +170,10 @@ class BeliefRevisionEngine:
         old_state = BeliefState(record.belief_state)
         old_confidence = record.confidence
 
-        # Get support and attack states
+        # Get support, attack, and supersedes states
         support_ids = self.assertion_store.get_supports(assertion_id)
         attack_ids = self.assertion_store.get_attackers(assertion_id)
+        superseding_ids = self.assertion_store.get_superseding(assertion_id)
 
         support_states = []
         for sid in support_ids:
@@ -182,7 +188,8 @@ class BeliefRevisionEngine:
                 attack_states.append(BeliefState(r.belief_state))
 
         new_state, new_confidence = _compute_belief_state(
-            old_state, support_states, attack_states
+            old_state, support_states, attack_states,
+            has_superseding=bool(superseding_ids),
         )
 
         if new_state == old_state and abs(new_confidence - old_confidence) < 0.01:
