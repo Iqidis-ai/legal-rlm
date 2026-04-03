@@ -2987,3 +2987,83 @@ def test_enforce_gate_no_model_returns_none():
 
     result = engine._enforce_quant_threshold_gate("Some synthesis output")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# SO-5 advocacy gate tests
+# ---------------------------------------------------------------------------
+
+def _seed_advocacy_issue(model):
+    """Helper: create an open issue with advocacy_only proof state."""
+    from irys.matter.enums import IssueType, SpeechAct, SourceRole
+    from irys.matter.models import AssertionCandidate, AssertionKind
+    # Create an open issue
+    issue_id, _ = model.issues.upsert_issue(
+        title="Breach of contract", issue_type=IssueType.CLAIM,
+    )
+    # Create an assertion from advocacy source (pleading)
+    cand = AssertionCandidate(
+        proposition_text="Defendant breached the contract",
+        speech_act=SpeechAct.ALLEGED,
+        source_role=SourceRole.ADVOCACY,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="complaint.pdf",
+    )
+    a_id, _ = model.assertions.upsert_occurrence(cand)
+    model.issues.link_assertion(a_id, issue_id, "supports")
+    # Compute proof state so advocacy_only is stored
+    model.proof_state.compute_and_store(issue_id)
+    return issue_id
+
+
+def test_advocacy_gate_injects_advisory_when_absent():
+    """Gate must append Source Calibration Advisory when advocacy-only issues exist."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    output = "## Executive Summary\nPlaintiff claims breach of contract."
+    result = engine._enforce_advocacy_gate(output)
+
+    assert result is not None, "Gate must inject advisory when advocacy-only issues present"
+    assert "Source Calibration Advisory" in result
+    assert "advocacy-only" in result.lower()
+
+
+def test_advocacy_gate_no_action_when_marker_present():
+    """Gate must return None when Source Calibration Advisory is already in output."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    output = "## Executive Summary\nBrief.\n## Source Calibration Advisory\nAlready flagged.\n"
+    result = engine._enforce_advocacy_gate(output)
+    assert result is None, "Gate must return None when advisory marker already present"
+
+
+def test_advocacy_gate_no_action_when_no_advocacy_issues():
+    """Gate must return None when no open issues are advocacy-only."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()  # empty model, no advocacy proof state
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._enforce_advocacy_gate("## Executive Summary\nNo advocacy issues.")
+    assert result is None, "Gate must return None when no advocacy-only open issues"
+
+
+def test_advocacy_gate_no_action_when_no_model():
+    """Gate must return None gracefully when no matter model is set."""
+    from irys.rlm.engine import RLMEngine
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = None
+
+    result = engine._enforce_advocacy_gate("Some synthesis output")
+    assert result is None
