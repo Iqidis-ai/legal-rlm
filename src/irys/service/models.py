@@ -218,6 +218,13 @@ class SyncInvestigateResponse(BaseModel):
     documents_processed: int
     duration_seconds: float
     s3_prefix: Optional[str] = Field(None, description="S3 prefix if files were kept")
+    # SO-3: matter_id so the caller can steer, stop, or redirect this run's matter model.
+    matter_id: Optional[str] = Field(None, description="Persistent matter model ID (SO-3/SO-7)")
+    # SO-7: pending clarification questions generated from high-materiality gaps.
+    pending_clarifications: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Clarification questions from open gaps (SO-7)",
+    )
 
 
 # === S3 URL Models ===

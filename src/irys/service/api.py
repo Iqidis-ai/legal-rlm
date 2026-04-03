@@ -931,7 +931,7 @@ async def upload_investigate_sync(
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
-        _wire_matter_model(irys, str(temp_dir), sync_corpus_key, config)
+        sync_matter_id = _wire_matter_model(irys, str(temp_dir), sync_corpus_key, config)
 
         result = await irys.investigate(
             query=query,
@@ -961,6 +961,8 @@ async def upload_investigate_sync(
             entities=entities,
             documents_processed=result.state.documents_read,
             duration_seconds=round(duration, 2),
+            matter_id=sync_matter_id,
+            pending_clarifications=getattr(result.state, "pending_clarifications", []),
         )
 
         # Add S3 prefix to response if files kept (s3 mode only)
@@ -1213,7 +1215,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
         urls_corpus_key = _compute_corpus_key(",".join(sorted(request.s3_urls)))
-        _wire_matter_model(irys, str(temp_dir), urls_corpus_key, config)
+        urls_matter_id = _wire_matter_model(irys, str(temp_dir), urls_corpus_key, config)
 
         result = await irys.investigate(
             query=request.query,
@@ -1234,6 +1236,8 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             entities=entities,
             documents_processed=result.state.documents_read,
             duration_seconds=round(duration, 2),
+            matter_id=urls_matter_id,
+            pending_clarifications=getattr(result.state, "pending_clarifications", []),
         )
 
     except HTTPException:
