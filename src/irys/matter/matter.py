@@ -204,6 +204,53 @@ class MatterModel:
             note=note,
         )
 
+    def set_trust_override(
+        self,
+        document_pattern: str,
+        trust_level: str,
+        note: Optional[str] = None,
+    ) -> str:
+        """Set a document trust override and trigger belief revision on affected assertions.
+
+        This is the high-level entry point for SO-3 trust steering.  It:
+        1. Persists the trust override to document_trust_override (SO-3).
+        2. Finds all assertions whose primary document matches the pattern.
+        3. Triggers belief revision (RevisionCause.TRUST_OVERRIDE) on those assertions
+           so the new effective source_role weight flows through to stored belief states (SO-2).
+
+        Belief revision failure does not block the override — the override is persisted
+        regardless of whether propagation succeeds.
+
+        Returns the override_id.
+        """
+        override_id = self.trust_overrides.set(document_pattern, trust_level, note)
+
+        # Trigger belief revision on all assertions from the affected document
+        try:
+            from pathlib import Path
+            occurrence_rows = self.db.execute(
+                """SELECT DISTINCT assertion_id, document_id FROM assertion_occurrence
+                   WHERE assertion_id IN (SELECT id FROM assertion WHERE matter_id=?)""",
+                (self.matter_id,),
+            ).fetchall()
+            pat_norm = document_pattern.replace("\\\\", "/").replace("\\", "/")
+            affected_ids = []
+            for row in occurrence_rows:
+                doc = (row["document_id"] or "").replace("\\\\", "/").replace("\\", "/")
+                basename = Path(doc).name
+                if pat_norm == doc or pat_norm == basename:
+                    affected_ids.append(row["assertion_id"])
+            if affected_ids:
+                self.belief.apply(
+                    affected_ids,
+                    cause=RevisionCause.TRUST_OVERRIDE,
+                    note=f"Document trust override set to '{trust_level}' for {document_pattern!r}",
+                )
+        except Exception:
+            pass  # revision failure does not abort the override
+
+        return override_id
+
     def mine_contradictions(self) -> list[dict]:
         """
         Run the contradiction mining pass over all assertions in this matter.

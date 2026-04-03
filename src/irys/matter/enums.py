@@ -91,6 +91,7 @@ class RevisionCause(str, Enum):
     CONFLICT_DETECTION = "conflict_detection"
     SUPERSESSION = "supersession"
     ADMISSION = "admission"
+    TRUST_OVERRIDE = "trust_override"
 
 
 class GapType(str, Enum):

@@ -1441,7 +1441,7 @@ async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
     """
     model = _get_matter_model_or_404(matter_id)
     try:
-        override_id = model.trust_overrides.set(
+        override_id = model.set_trust_override(
             request.document_pattern, request.trust_level, request.note
         )
     except ValueError as e:
