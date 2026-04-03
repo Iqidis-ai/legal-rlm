@@ -3067,3 +3067,36 @@ def test_advocacy_gate_no_action_when_no_model():
 
     result = engine._enforce_advocacy_gate("Some synthesis output")
     assert result is None
+
+
+def test_advocacy_gate_cleared_by_high_trust_override():
+    """High trust override on the advocacy document must suppress the advocacy gate (SO-3 → SO-5).
+
+    Workflow:
+    1. Issue starts advocacy_only=True (backed only by complaint.pdf advocacy assertions).
+    2. User sets high trust for complaint.pdf via MatterModel.set_trust_override().
+    3. proof_state is automatically recomputed → advocacy_only=False (effective weight=1.0).
+    4. _enforce_advocacy_gate() returns None — no advisory injected.
+    """
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)  # creates issue backed by complaint.pdf (advocacy)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # Gate fires before trust override
+    output = "## Executive Summary\nPlaintiff claims breach."
+    result_before = engine._enforce_advocacy_gate(output)
+    assert result_before is not None, "Gate must fire before trust override (baseline)"
+
+    # User promotes complaint.pdf to high trust (SO-3 steering)
+    # This triggers: proof_state.compute_all() → advocacy_only=False
+    model.set_trust_override("complaint.pdf", "high", note="Court-verified complaint")
+
+    # Gate must NOT fire after high-trust override
+    result_after = engine._enforce_advocacy_gate(output)
+    assert result_after is None, (
+        "Advocacy gate must not fire when document trust override elevates assertion "
+        "above ADVOCACY_TRUST_THRESHOLD (SO-3 → SO-5 integration)"
+    )
