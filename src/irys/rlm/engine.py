@@ -1385,7 +1385,9 @@ class RLMEngine:
                         if (isinstance(_fi, int) and isinstance(_ti, int)
                                 and 0 <= _fi < len(_recorded_ids)
                                 and 0 <= _ti < len(_recorded_ids)
-                                and _fi != _ti):
+                                and _fi != _ti
+                                # Same proposition text deduplicates to same assertion_id
+                                and _recorded_ids[_fi] != _recorded_ids[_ti]):
                             adapter.record_assertion_link(
                                 _recorded_ids[_fi], _recorded_ids[_ti], _rt
                             )

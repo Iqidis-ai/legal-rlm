@@ -416,3 +416,11 @@ class NullMatterAdapter:
 
     def record_quant(self, quant_kind: str, raw_text: str, **kwargs) -> str:
         return ""
+
+    def record_assertion_link(
+        self,
+        src_assertion_id: str,
+        dst_assertion_id: str,
+        link_type: str,
+    ) -> None:
+        pass
