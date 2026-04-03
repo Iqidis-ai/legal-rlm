@@ -18,6 +18,7 @@ def test_in_memory_db_creates_schema():
         "matter", "assertion", "assertion_occurrence",
         "assertion_link", "belief_revision_event",
         "run_session", "ledger_event", "schema_version",
+        "document_trust_override", "document_annotation",
     ]:
         assert required in tables, f"Missing table: {required}"
 

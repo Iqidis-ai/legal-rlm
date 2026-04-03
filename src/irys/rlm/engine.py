@@ -819,12 +819,20 @@ class RLMEngine:
             matter_context=_format_matter_context(matter_ctx),
         )
 
-        # Orientation cache key: sha256 of normalized query + total file count.
-        # total_files is a cheap repo-change proxy: adding/removing documents
-        # invalidates the cache so stale plans are not reused.
+        # Orientation cache key: sha256 of normalized query + total file count +
+        # annotation/trust-override count (so user context changes invalidate the cache).
         import hashlib as _hashlib
+        _annotation_count = (
+            len(self._matter_model.annotations.list_recent())
+            if self._matter_model is not None else 0
+        )
+        _trust_count = (
+            len(self._matter_model.trust_overrides.list_all())
+            if self._matter_model is not None else 0
+        )
         _orient_key = _hashlib.sha256(
-            f"{state.query.lower().strip()}\n{stats.total_files}".encode()
+            f"{state.query.lower().strip()}\n{stats.total_files}"
+            f"\n{_annotation_count}\n{_trust_count}".encode()
         ).hexdigest()
 
         _plan_defaults = {
