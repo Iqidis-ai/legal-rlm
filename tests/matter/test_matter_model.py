@@ -176,6 +176,32 @@ def test_gap_recorded_and_retrieved(model):
     assert open_gaps[0]["gap_type"] == GapType.MISSING_DOCUMENT.value
 
 
+def test_count_open_gaps_excludes_resolved_gaps(model):
+    """count_open() must not count resolved or closed gaps (SO-7 stats correctness).
+
+    stats() shows 'open_gap_count' to give the user a dashboard of how many
+    outstanding gaps remain.  If resolved gaps still count, the dashboard overstates
+    missingness — a misleading picture that could cause unnecessary investigation.
+    """
+    gap_id = model.record_gap(
+        gap_type=GapType.MISSING_DOCUMENT,
+        description="Amendment #2 not found",
+        materiality=0.7,
+    )
+    assert model.gaps.count_open() == 1
+
+    # Resolve the gap (as would happen when the document is provided)
+    model.db.execute("UPDATE gap SET status='resolved' WHERE id=?", (gap_id,))
+
+    assert model.gaps.count_open() == 0, (
+        "count_open() must exclude resolved gaps — stats() open_gap_count must go to 0 "
+        "after a gap is resolved (SO-7 dashboard correctness)"
+    )
+    assert model.stats()["open_gap_count"] == 0, (
+        "stats() must reflect gap resolution in open_gap_count"
+    )
+
+
 def test_open_gaps_min_materiality_filters_low_materiality_gaps(model):
     """open_gaps(min_materiality=X) must exclude gaps whose materiality is below X (SO-7).
 
