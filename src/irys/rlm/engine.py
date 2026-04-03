@@ -1377,8 +1377,11 @@ class RLMEngine:
 
             # Store findings with deduplication
             # key_facts can be strings or dicts with "fact" key
+            # Always initialize these so numeric_facts / gap grounding below can reference them
+            # even when key_facts is empty.
+            facts_to_add: list[str] = []
+            _recorded_ids: list[str] = []
             if analysis.get("key_facts"):
-                facts_to_add = []
                 for fact_item in analysis["key_facts"]:
                     if isinstance(fact_item, str):
                         facts_to_add.append(fact_item)
@@ -1391,7 +1394,6 @@ class RLMEngine:
                 # Also record into matter model if enabled; pass issue_id if from targeted lead
                 adapter = getattr(state, "_matter_adapter", None)
                 if adapter is not None:
-                    _recorded_ids: list[str] = []
                     for fact_text in facts_to_add:
                         # Use _rel_path (repo-relative, stable) not doc.filename (basename only)
                         # so same-basename files in different dirs don't alias in assertion_occurrence

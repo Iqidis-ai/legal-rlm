@@ -51,10 +51,14 @@ _SOURCE_ROLE_PATTERNS: list[tuple[re.Pattern, SourceRole]] = [
     # Authoritative: statutes, regulations, court orders, judicial decisions.
     # Check BEFORE operative so that "order_approving_settlement_agreement" is
     # classified AUTHORITATIVE (it is a court order) rather than OPERATIVE (settlement).
-    # "approv" catches "order_approving_X" and "approving_consent_order" patterns.
+    # Compound patterns (order_approv*, court_order, consent_order) avoid over-matching
+    # non-court uses of "approved" in operative documents like "board_approved_contract.pdf".
     (re.compile(
         r"(statute|regulation|rule|code|order|opinion|decision|judgment|judgement|"
-        r"mandate|injunction|ruling|decree|approv)",
+        r"mandate|injunction|ruling|decree|"
+        r"order[._-]approv|order[._-]grant|order[._-]enter|order[._-]deny|"
+        r"court[._-]order|consent[._-]order|final[._-]order|interim[._-]order|"
+        r"preliminary[._-]order|protective[._-]order|restraining[._-]order)",
         re.IGNORECASE,
     ), SourceRole.AUTHORITATIVE),
     # Operative: contracts, agreements, amendments, leases. Checked after authoritative
