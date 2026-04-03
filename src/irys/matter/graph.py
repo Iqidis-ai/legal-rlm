@@ -310,13 +310,13 @@ class AssertionStore:
                       GROUP_CONCAT(DISTINCT ao.document_id) AS documents_csv,
                       (SELECT ao2.document_id FROM assertion_occurrence ao2
                        WHERE ao2.assertion_id = a.id
-                       ORDER BY ao2.created_at ASC LIMIT 1) AS primary_document_id,
+                       ORDER BY ao2.created_at ASC, ao2.id ASC LIMIT 1) AS primary_document_id,
                       (SELECT ao2.source_role FROM assertion_occurrence ao2
                        WHERE ao2.assertion_id = a.id
-                       ORDER BY ao2.created_at ASC LIMIT 1) AS primary_source_role,
+                       ORDER BY ao2.created_at ASC, ao2.id ASC LIMIT 1) AS primary_source_role,
                       (SELECT ao2.speech_act FROM assertion_occurrence ao2
                        WHERE ao2.assertion_id = a.id
-                       ORDER BY ao2.created_at ASC LIMIT 1) AS primary_speech_act
+                       ORDER BY ao2.created_at ASC, ao2.id ASC LIMIT 1) AS primary_speech_act
                FROM assertion a
                LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
                WHERE a.matter_id=?
