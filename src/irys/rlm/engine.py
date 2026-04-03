@@ -22,17 +22,13 @@ from ..matter.runtime import infer_source_role as _infer_source_role
 from .state import InvestigationState, StepType, ThinkingStep, Citation, Lead, classify_query
 
 # SO-5: module-level map from LLM-returned doc_source_role strings to SourceRole enums.
-# Built once at import time; avoids dict reconstruction on every deep-read call.
+# Built automatically from enum values so it never drifts when new roles are added.
+# UNKNOWN is excluded (LLM "unknown" stays as UNKNOWN via .get() default below).
 _CONTENT_ROLE_MAP: dict[str, "_SourceRole"] = {
-    "advocacy": _SourceRole.ADVOCACY,
-    "operative": _SourceRole.OPERATIVE,
-    "authoritative": _SourceRole.AUTHORITATIVE,
-    "procedural": _SourceRole.PROCEDURAL,
-    "informal": _SourceRole.INFORMAL,
-    "draft": _SourceRole.DRAFT,
-    "post_hoc": _SourceRole.POST_HOC_EXPLANATORY,
-    "post_hoc_explanatory": _SourceRole.POST_HOC_EXPLANATORY,
+    role.value: role for role in _SourceRole if role != _SourceRole.UNKNOWN
 }
+# Alias: LLM may return "post_hoc_explanatory" (Python name) vs "post_hoc" (enum value).
+_CONTENT_ROLE_MAP["post_hoc_explanatory"] = _SourceRole.POST_HOC_EXPLANATORY
 
 logger = logging.getLogger(__name__)
 
