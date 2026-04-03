@@ -2600,7 +2600,7 @@ class RLMEngine:
             if total_count == 0:
                 return "No numeric facts extracted from documents."
 
-            reconciliation = self._matter_model.reconcile()
+            chain = self._matter_model.reconcile_payment_chain()
             conflicts = self._matter_model.quant.get_conflicts()
             date_facts = self._matter_model.quant.get_by_kind("date", limit=8)
             rate_facts = self._matter_model.quant.get_by_kind("rate", limit=5)
@@ -2609,9 +2609,37 @@ class RLMEngine:
 
         lines = [f"Extracted {total_count} numeric facts."]
 
-        if reconciliation:
+        # SO-6: structured payment reconciliation (invoiced / paid / disputed / exposure)
+        _ccy = chain.get("currency", "USD")
+        _inv = chain.get("invoiced", 0.0)
+        _paid = chain.get("paid", 0.0)
+        _disp = chain.get("disputed", 0.0)
+        _exp = chain.get("exposure", 0.0)
+        if _inv or _paid or _disp:
+            lines.append(f"Payment reconciliation ({_ccy}):")
+            lines.append(f"  Invoiced:  ${_inv:>14,.2f}")
+            lines.append(f"  Paid:      ${_paid:>14,.2f}")
+            if _disp:
+                lines.append(f"  Disputed:  ${_disp:>14,.2f}")
+            lines.append(f"  Exposure:  ${_exp:>14,.2f}  (invoiced − paid)")
+            _spans = chain.get("source_spans") or []
+            if _spans:
+                lines.append(f"  Grounded in {len(_spans)} source span(s).")
+
+        # Show all non-invoice/payment categories so claims, damages, fees, etc.
+        # are always visible regardless of whether a full chain was detected.
+        _by_cat = chain.get("by_category") or {}
+        _extra = {
+            k: v for k, v in _by_cat.items()
+            if k not in ("invoice", "payment", "unknown", None)
+        }
+        if _extra:
+            lines.append("Other monetary amounts by category:")
+            for subject, data in sorted(_extra.items(), key=lambda x: x[1]["total"], reverse=True):
+                lines.append(f"  • {subject}: ${data['total']:,.2f} ({data['count']} entries)")
+        elif not (_inv or _paid or _disp) and _by_cat:
             lines.append("Monetary amounts by category (USD unless noted):")
-            for subject, data in sorted(reconciliation.items(), key=lambda x: x[1]["total"], reverse=True):
+            for subject, data in sorted(_by_cat.items(), key=lambda x: x[1]["total"], reverse=True):
                 lines.append(f"  • {subject}: ${data['total']:,.2f} ({data['count']} entries)")
 
         if conflicts:

@@ -1348,6 +1348,92 @@ class QuantStore:
             }
         return result
 
+    def reconcile_payment_chain(self, currency: str = "USD") -> dict:
+        """Return structured payment reconciliation: invoiced, paid, disputed, exposure.
+
+        Satisfies SO-6: produces a reconciliation showing what was invoiced, what
+        was paid, what is disputed, and what the claimed exposure is, grounded in
+        source spans (span_id on each quant_fact).
+
+        'Disputed' = quant_facts linked (via assertion_id) to an assertion whose
+        belief_state is 'disputed' — captures facts that truth-maintenance has flagged
+        as contested. Falls back to conflict-detected amounts when no belief-revision
+        has occurred (heuristic: conflicting amounts for the same subject_id are treated
+        as disputed until resolved).
+
+        Returns dict with keys:
+          invoiced   — total invoiced amounts (subject_type='invoice')
+          paid       — total payment amounts (subject_type='payment')
+          disputed   — total amounts linked to disputed assertions
+          exposure   — invoiced − paid (claimed outstanding balance)
+          currency   — the currency used
+          by_category — raw reconcile_by_subject() output for all categories
+          source_spans — list of {quant_fact_id, subject_type, amount, span_id}
+                         for top 20 facts with a span link (SO-6 grounding)
+        """
+        by_cat = self.reconcile_by_subject(currency)
+        invoiced = by_cat.get("invoice", {}).get("total", 0.0)
+        paid = by_cat.get("payment", {}).get("total", 0.0)
+        exposure = round(invoiced - paid, 2)
+
+        # Disputed: quant_facts joined to assertion with belief_state='disputed'
+        disputed_row = self.db.execute(
+            """SELECT COALESCE(SUM(qf.amount_value), 0.0) AS total
+               FROM quant_fact qf
+               JOIN assertion a ON a.id = qf.assertion_id
+               WHERE qf.matter_id=? AND qf.quant_kind='amount'
+                 AND (qf.currency=? OR (qf.currency IS NULL AND ?='USD'))
+                 AND qf.amount_value IS NOT NULL
+                 AND a.belief_state = 'disputed'""",
+            (self.matter_id, currency, currency),
+        ).fetchone()
+        disputed = round(float(disputed_row["total"]) if disputed_row else 0.0, 2)
+
+        # If no belief-state disputed amounts, fall back to conflict-detected totals
+        # as a heuristic (conflicting values for same entity → treat as disputed)
+        if disputed == 0.0:
+            conflicts = self.get_conflicts()
+            disputed_heuristic = 0.0
+            for c in conflicts:
+                vals = c.get("values") or []
+                if vals:
+                    # Use the spread (max − min) as the disputed portion
+                    disputed_heuristic += round(max(vals) - min(vals), 2)
+            if disputed_heuristic > 0.0:
+                disputed = disputed_heuristic
+
+        # Source spans: top 20 quant_facts with a span_id for SO-6 grounding
+        span_rows = self.db.execute(
+            """SELECT id, subject_type, subject_id, amount_value, span_id
+               FROM quant_fact
+               WHERE matter_id=? AND quant_kind='amount'
+                 AND span_id IS NOT NULL
+                 AND amount_value IS NOT NULL
+               ORDER BY amount_value DESC
+               LIMIT 20""",
+            (self.matter_id,),
+        ).fetchall()
+        source_spans = [
+            {
+                "quant_fact_id": r["id"],
+                "subject_type": r["subject_type"],
+                "subject_id": r["subject_id"],
+                "amount": round(float(r["amount_value"]), 2),
+                "span_id": r["span_id"],
+            }
+            for r in span_rows
+        ]
+
+        return {
+            "invoiced": round(invoiced, 2),
+            "paid": round(paid, 2),
+            "disputed": disputed,
+            "exposure": exposure,
+            "currency": currency,
+            "by_category": by_cat,
+            "source_spans": source_spans,
+        }
+
 
 class DocumentInventoryStore:
     """

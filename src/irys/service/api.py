@@ -1557,6 +1557,22 @@ async def get_matter_issues(matter_id: str, min_materiality: float = 0.0):
 
 
 @app.get(
+    "/matter/{matter_id}/reconciliation",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_reconciliation(matter_id: str, currency: str = "USD"):
+    """Return structured payment reconciliation for a matter (SO-6).
+
+    Shows invoiced total, paid total, disputed amount (linked to disputed assertions),
+    and claimed exposure (invoiced − paid). Each figure is grounded via source_spans
+    linking back to the original document spans.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return model.reconcile_payment_chain(currency)
+
+
+@app.get(
     "/matter/{matter_id}/gaps",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

@@ -556,6 +556,14 @@ class MatterModel:
         """Return reconciliation summary grouped by subject_type for a currency."""
         return self.quant.reconcile_by_subject(currency)
 
+    def reconcile_payment_chain(self, currency: str = "USD") -> dict:
+        """Return structured payment reconciliation: invoiced, paid, disputed, exposure.
+
+        Satisfies SO-6: shows what was invoiced, paid, disputed, and the claimed
+        exposure, grounded in source spans from the quant_fact store.
+        """
+        return self.quant.reconcile_payment_chain(currency)
+
     # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
