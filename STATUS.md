@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-03 (Tier 1 CLEAN on _orient() field normalization + _parse_json_safe non-dict guard)
+Last updated: 2026-04-03 (SO-2/Q4 HIGH: assertion_revision schema v34 + SPO retry partial coverage)
 Branch: SebihSpecial
 
 ---
@@ -18,7 +18,7 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | Outcome | Status | Notes |
 |---------|--------|-------|
 | SO-1: Durable Matter Model | **PASS** | Audit #022 PASS — hot path genuinely reuses persisted state via run-start context, hydration, and caches |
-| SO-2: Typed Assertion Graph + Truth Maintenance | **PARTIAL** | Audit #022: belief revision + proof_state recompute real and visible to next iteration. Remaining: engine accepts flat string facts without SPO structure |
+| SO-2: Typed Assertion Graph + Truth Maintenance | **PARTIAL** | Audit #022: belief revision + proof_state recompute real. SPO retry now covers partial coverage. assertion_revision table (v34) closes Q4 HIGH. Remaining: success signal now exposes propagation_truncated; review SO-2 coverage rate |
 | SO-3: User-Steerable Reasoning | **PASS** | Audit #022 PASS — stop/redirect/correction/clarification/annotations/trust all wired |
 | SO-4: Issue-Driven Architecture | **PARTIAL** | Audit #022: weighted coverage used by loop. Predicate resolution now wired in production (ANALYZE_FINDINGS_PROMPT step 5 → resolve_predicate_by_description). Remaining: _focus_issue_id attribution is heuristic |
 | SO-5: Source-Aware Intelligence | **PASS** | Audit #022 PASS — source-role classification, trust overrides, advocacy-only gating are real behavioral changes |
@@ -102,7 +102,27 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ## Active Work
 
-### JUST COMPLETED — Tier 1 CLEAN: _orient() field normalization + _parse_json_safe
+### JUST COMPLETED — SO-2/Q4 HIGH: assertion_revision table + partial SPO retry
+
+**assertion_revision table (schema v34, 2026-04-03):**
+- New append-only `assertion_revision` table: field-level audit log for every mutation to assertion.belief_state, confidence (and future proposition_text changes)
+- `write_revision_rows()` in AssertionStore: inserts (changed_field, old_value_json, new_value_json, actor_kind, cause, batch_id) before each mutation
+- `force_state()` writes `actor_kind=user` revision rows before belief_state/confidence mutation
+- `_revise_one()` writes `actor_kind=system` rows for BFS-driven propagation
+- `upsert_occurrence()` upgrade path writes `cause=occurrence_upgrade` rows
+- `RevisionResult.propagation_truncated: bool` — True when BFS hit MAX_WORK; callers can now detect incomplete propagation
+- `BeliefRevisionEngine._apply_with_truncation()`: internal BFS driver returning (results, truncated); public `apply()` delegates to it
+- Schema v34, additive migration; no backfill possible for pre-v34 mutations
+- 4 new tests: assertion_revision on correction, BFS propagation, occurrence_upgrade, partial-SPO merge
+
+**SPO retry partial coverage (2026-04-03):**
+- Retry condition: `_spo_count < len(facts_to_add)` (was `== 0`) — fires when ANY facts lack SPO, not only when ALL are missing
+- Merge fix: `retry.get(i) if spo is None else spo` — preserves primary-extraction SPO, backfills missing slots
+- Test added for partial-SPO merge preservation
+
+HEAD: 9c62ef7 — Tests: 725/725
+
+### PREVIOUSLY COMPLETED — Tier 1 CLEAN: _orient() field normalization + _parse_json_safe
 
 **Tier 1 Correctness CLEAN confirmed (2026-04-03):**
 - `_parse_json_safe()`: `isinstance(result, dict)` guard after `json.loads()` — null/[]/string root returns defaults safely
@@ -179,22 +199,23 @@ None active.
 
 ## Key Metrics (Current)
 
-- Tests passing: 721 / 721
-- Schema version: v33
-- SO-1/3/5/6/7: **PASS**; SO-2/4: **PARTIAL**
-- Tier 1: **CLEAN** (all HIGH/MEDIUM resolved across correctness + performance loops)
+- Tests passing: 725 / 725
+- Schema version: v34
+- SO-1/3/5/6/7: **PASS**; SO-2/4: **PARTIAL** (SO-2 improving)
+- Tier 1: running on Q4/SO-2 changes
 - Adversarial audit #022: DONE — 5 PASSes, SO-2/4 PARTIAL
-- Next: SO-2 remaining gap (flat-string facts without SPO); SO-4 remaining (_focus_issue_id attribution)
+- Q4 HIGH: CLOSED — assertion_revision table (schema v34)
+- Next: Tier 1 CLEAN confirm; SO-4 attribution gap; SO-2 remaining coverage
 
 ## Architectural Backlog (Tier 2 HIGH remaining)
 
-- **Q4 HIGH**: No immutable provenance/version model for legal facts after revision — requires schema redesign (assertion revision records or valid-time slices); needs Codex design gate
+- **Q4 HIGH**: ~~No immutable provenance/version model~~ CLOSED — assertion_revision table (schema v34) provides field-level audit log for all mutations
 - **Q6 LOW**: get_ledger_steering_surface() steering snapshot caching — not blocking
 - **Q7 MEDIUM**: _run_snapshots dict not persistent for multi-worker/clustered — not blocking for single-worker
-- **SO-4 PARTIAL**: issue_predicate.status='resolved' writer absent in production (only in tests) — predicates always 0% satisfied; predicate-aware coverage formula never reaches full benefit
-- **SO-2 PARTIAL**: Engine accepts flat string facts without SPO structure; success signal only checks revision event presence
-- **SO-4 PARTIAL**: _focus_issue_id attribution is heuristic (initial searches assigned by position); predicate resolution can target wrong issue when attribution is wrong
+- **SO-4 PARTIAL**: ~~issue_predicate.status='resolved' writer absent in production~~ CLOSED — predicate resolution wired in production via ANALYZE_FINDINGS_PROMPT step 5 + allowlist guard (commit a07c0bf)
+- **SO-2 PARTIAL**: SPO retry now covers partial batches; success signal exposes propagation_truncated. Remaining: measure actual SPO coverage rate in production runs
+- **SO-4 PARTIAL**: _focus_issue_id attribution still heuristic for loop-phase leads; initial_searches now use LLM-provided issue_idx but fallback is still weakest_id
 - **SO-2 PARTIAL**: Corrections propagate to proof_state now, but don't trigger real-time loop re-prioritization in the same iteration
 - **SO-1 PARTIAL**: reuse_rate metric is assertion-count ratio, not measured reuse behavior
 - **SO-6 PARTIAL**: Quant is sidecar subsystem, not core retrieval/proof backbone
-- **Q4 HIGH**: No immutable provenance/version model — schema redesign needed (assertion revision records or valid-time slices)
+- **Q4 HIGH**: CLOSED — assertion_revision table (schema v34)
