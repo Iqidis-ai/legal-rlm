@@ -707,6 +707,11 @@ class InvestigationState:
     # DB ledger. Callers see the full structured trace without a separate API call.
     reasoning_trail: list[dict] = field(default_factory=list)
 
+    # Pending clarification questions (SO-7) — questions generated from high-materiality
+    # gaps at the end of the run. Included here so callers receive them in the default
+    # workflow without a separate API call to /matter/{id}/clarifications.
+    pending_clarifications: list[dict] = field(default_factory=list)
+
     @classmethod
     def create(cls, query: str, repository_path: str) -> "InvestigationState":
         return cls(
@@ -1727,6 +1732,7 @@ class InvestigationState:
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "reasoning_trail": self.reasoning_trail,
+            "pending_clarifications": self.pending_clarifications,
         }
 
     @classmethod
@@ -1838,6 +1844,7 @@ class InvestigationState:
         state.started_at = datetime.fromisoformat(data["started_at"]) if data.get("started_at") else None
         state.completed_at = datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None
         state.reasoning_trail = data.get("reasoning_trail", [])
+        state.pending_clarifications = data.get("pending_clarifications", [])
 
         return state
 

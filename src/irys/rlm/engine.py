@@ -879,6 +879,14 @@ class RLMEngine:
                     top_n=3,
                     min_materiality=0.5,
                 )
+                # Attach pending clarifications to state (SO-7) so callers receive
+                # them in the default workflow without a separate API call.
+                try:
+                    state.pending_clarifications = (
+                        self._matter_model.clarifications.get_pending()
+                    )
+                except Exception:
+                    pass  # non-fatal: endpoint still available at /clarifications
                 # Attach durable reasoning trail to state (SO-3) so callers see the
                 # full structured trace without a separate ledger query.
                 try:

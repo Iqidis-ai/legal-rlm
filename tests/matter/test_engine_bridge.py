@@ -1441,3 +1441,45 @@ def test_format_matter_context_emits_priority_focus_line():
     assert "Breach of payment obligation" in result, (
         "PRIORITY FOCUS line must include the issue title"
     )
+
+
+# ---------------------------------------------------------------------------
+# SO-7: pending_clarifications wired into InvestigationState (SO-7)
+# ---------------------------------------------------------------------------
+
+def test_investigation_state_serialization_includes_pending_clarifications():
+    """pending_clarifications must round-trip through to_dict/from_dict."""
+    from irys.rlm.state import InvestigationState
+
+    state = InvestigationState.create("test query", "/repo")
+    state.pending_clarifications = [
+        {
+            "id": "cl_001",
+            "question_text": "Do you have the signed amendment?",
+            "why_it_matters": "The amendment was referenced but not found.",
+            "expected_impact": "high",
+            "status": "pending",
+        }
+    ]
+
+    data = state.to_dict()
+    assert "pending_clarifications" in data
+    assert len(data["pending_clarifications"]) == 1
+    assert data["pending_clarifications"][0]["question_text"] == "Do you have the signed amendment?"
+
+    restored = InvestigationState.from_dict(data)
+    assert len(restored.pending_clarifications) == 1
+    assert restored.pending_clarifications[0]["id"] == "cl_001"
+
+
+def test_investigation_state_pending_clarifications_defaults_empty():
+    """pending_clarifications must default to [] when absent from serialized data."""
+    from irys.rlm.state import InvestigationState
+
+    state = InvestigationState.create("test query", "/repo")
+    data = state.to_dict()
+    # Remove the key to simulate old serialized data
+    data.pop("pending_clarifications", None)
+
+    restored = InvestigationState.from_dict(data)
+    assert restored.pending_clarifications == []
