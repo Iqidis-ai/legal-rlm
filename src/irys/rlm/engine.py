@@ -2029,7 +2029,9 @@ class RLMEngine:
         # - Case-insensitive + quote-strip comparison handles minor LLM formatting drift.
         _preds_satisfied = analysis.get("predicates_satisfied") or []
         if (isinstance(_preds_satisfied, list) and _focus_issue_id
-                and self._matter_model is not None and facts_to_add and _pred_allowlist):
+                and self._matter_model is not None
+                and analysis.get("key_facts")  # gate: no resolution without persisted facts
+                and _pred_allowlist):
             # Build lowercase lookup → original description for exact SQL match.
             _allowed = {
                 d.strip('"').strip("'").strip().lower(): d
