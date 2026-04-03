@@ -2601,6 +2601,7 @@ class RLMEngine:
                 return "No numeric facts extracted from documents."
 
             chain = self._matter_model.reconcile_payment_chain()
+            invoice_rows = self._matter_model.reconcile_invoice_chain()
             conflicts = self._matter_model.quant.get_conflicts()
             date_facts = self._matter_model.quant.get_by_kind("date", limit=8)
             rate_facts = self._matter_model.quant.get_by_kind("rate", limit=5)
@@ -2609,22 +2610,51 @@ class RLMEngine:
 
         lines = [f"Extracted {total_count} numeric facts."]
 
-        # SO-6: structured payment reconciliation (invoiced / paid / disputed / exposure)
-        _ccy = chain.get("currency", "USD")
-        _inv = chain.get("invoiced", 0.0)
-        _paid = chain.get("paid", 0.0)
-        _disp = chain.get("disputed", 0.0)
-        _exp = chain.get("exposure", 0.0)
-        if _inv or _paid or _disp:
-            lines.append(f"Payment reconciliation ({_ccy}):")
-            lines.append(f"  Invoiced:  ${_inv:>14,.2f}")
-            lines.append(f"  Paid:      ${_paid:>14,.2f}")
+        # SO-6: per-invoice breakdown when individual invoice data is available
+        if invoice_rows:
+            _ccy = (invoice_rows[0].get("currency") or "USD")
+            lines.append(f"Per-invoice reconciliation ({_ccy}):")
+            for inv in invoice_rows:
+                _iid = inv.get("invoice_id") or "(unknown)"
+                _iinv = inv.get("invoiced", 0.0)
+                _ipaid = inv.get("paid", 0.0)
+                _iout = inv.get("outstanding", 0.0)
+                lines.append(
+                    f"  Invoice {_iid}: invoiced ${_iinv:,.2f}  paid ${_ipaid:,.2f}"
+                    f"  outstanding ${_iout:,.2f}"
+                )
+            # Aggregate totals follow
+            _ccy = chain.get("currency", "USD")
+            _inv = chain.get("invoiced", 0.0)
+            _paid = chain.get("paid", 0.0)
+            _disp = chain.get("disputed", 0.0)
+            _exp = chain.get("exposure", 0.0)
+            lines.append(
+                f"  Total: invoiced ${_inv:,.2f}  payment ${_paid:,.2f}"
+                f"  exposure ${_exp:,.2f}"
+            )
             if _disp:
-                lines.append(f"  Disputed:  ${_disp:>14,.2f}")
-            lines.append(f"  Exposure:  ${_exp:>14,.2f}  (invoiced − paid)")
+                lines.append(f"  Disputed (assertion belief_state): ${_disp:,.2f}")
             _spans = chain.get("source_spans") or []
             if _spans:
                 lines.append(f"  Grounded in {len(_spans)} source span(s).")
+        else:
+            # SO-6: aggregate payment reconciliation (invoiced / paid / disputed / exposure)
+            _ccy = chain.get("currency", "USD")
+            _inv = chain.get("invoiced", 0.0)
+            _paid = chain.get("paid", 0.0)
+            _disp = chain.get("disputed", 0.0)
+            _exp = chain.get("exposure", 0.0)
+            if _inv or _paid or _disp:
+                lines.append(f"Payment reconciliation ({_ccy}):")
+                lines.append(f"  Invoiced:  ${_inv:>14,.2f}")
+                lines.append(f"  Paid:      ${_paid:>14,.2f}")
+                if _disp:
+                    lines.append(f"  Disputed:  ${_disp:>14,.2f}")
+                lines.append(f"  Exposure:  ${_exp:>14,.2f}  (invoiced − paid)")
+                _spans = chain.get("source_spans") or []
+                if _spans:
+                    lines.append(f"  Grounded in {len(_spans)} source span(s).")
 
         # Show all non-invoice/payment categories so claims, damages, fees, etc.
         # are always visible regardless of whether a full chain was detected.

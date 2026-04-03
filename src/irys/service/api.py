@@ -1573,6 +1573,22 @@ async def get_matter_reconciliation(matter_id: str, currency: str = "USD"):
 
 
 @app.get(
+    "/matter/{matter_id}/reconciliation/invoices",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_invoice_chain(matter_id: str, currency: str = "USD"):
+    """Return per-invoice reconciliation for a matter (SO-6).
+
+    Each row shows an individual invoice: how much was invoiced, how much
+    was paid against it, and what remains outstanding.  Payments are matched
+    to invoices by subject_id equality in the quant_fact store.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return model.reconcile_invoice_chain(currency)
+
+
+@app.get(
     "/matter/{matter_id}/gaps",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

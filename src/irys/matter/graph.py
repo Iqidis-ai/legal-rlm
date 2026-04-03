@@ -1425,6 +1425,156 @@ class QuantStore:
             "source_spans": source_spans,
         }
 
+    # Maximum number of distinct named invoice IDs processed in one reconciliation pass.
+    # SQLite has a default SQLITE_MAX_VARIABLE_NUMBER of 999; we stay well below it
+    # and bound memory for span_map construction.  In practice legal matters rarely
+    # exceed a few hundred invoices.
+    _MAX_INVOICE_IDS = 500
+
+    def reconcile_invoice_chain(self, currency: str = "USD") -> list:
+        """Return per-invoice reconciliation rows.
+
+        Each entry: {invoice_id, invoiced, paid, outstanding, currency, source_spans}.
+
+        Payments are matched to invoices by subject_id equality — a payment
+        quant_fact whose subject_id equals an invoice quant_fact's subject_id
+        is treated as a payment against that invoice.  NULL-subject_id invoice
+        and payment facts are bucketed together under invoice_id="".
+
+        Named invoices are capped at _MAX_INVOICE_IDS (sorted by descending invoiced
+        amount).  The NULL bucket is fetched via a separate query so it is never
+        excluded by the LIMIT applied to named invoices.
+
+        Returns an empty list when no invoice quant_facts exist.
+        """
+        _ccy_filter = "AND (currency=? OR (currency IS NULL AND ?='USD'))"
+
+        # Query 1a: top named (non-NULL subject_id) invoice amounts, capped.
+        named_rows = self.db.execute(
+            f"""SELECT subject_id, SUM(amount_value) AS invoiced
+                FROM quant_fact
+                WHERE matter_id=? AND subject_type='invoice' AND quant_kind='amount'
+                  AND subject_id IS NOT NULL AND amount_value IS NOT NULL
+                  {_ccy_filter}
+                GROUP BY subject_id
+                ORDER BY invoiced DESC
+                LIMIT ?""",
+            (self.matter_id, currency, currency, self._MAX_INVOICE_IDS),
+        ).fetchall()
+
+        # Query 1b: NULL-bucket invoice total (separate query — never excluded by cap).
+        # SUM returns NULL (not 0.0) when no rows match, so null_row["invoiced"] IS NULL
+        # means no NULL-subject invoice rows exist; 0.0 means rows exist but sum to zero.
+        null_row = self.db.execute(
+            f"""SELECT SUM(amount_value) AS invoiced
+                FROM quant_fact
+                WHERE matter_id=? AND subject_type='invoice' AND quant_kind='amount'
+                  AND subject_id IS NULL AND amount_value IS NOT NULL
+                  {_ccy_filter}""",
+            (self.matter_id, currency, currency),
+        ).fetchone()
+        has_null_bucket = null_row is not None and null_row["invoiced"] is not None
+        null_invoiced = float(null_row["invoiced"]) if has_null_bucket else 0.0
+
+        if not named_rows and not has_null_bucket:
+            return []
+
+        invoice_ids = [r["subject_id"] for r in named_rows]
+
+        # Query 2a: payment amounts matched to named invoices via IN list.
+        pay_map: "dict[str, float]" = {}
+        if invoice_ids:
+            placeholders = ",".join("?" * len(invoice_ids))
+            pay_rows = self.db.execute(
+                f"""SELECT subject_id, SUM(amount_value) AS paid
+                    FROM quant_fact
+                    WHERE matter_id=? AND subject_type='payment' AND quant_kind='amount'
+                      AND amount_value IS NOT NULL {_ccy_filter}
+                      AND subject_id IN ({placeholders})
+                    GROUP BY subject_id""",
+                (self.matter_id, currency, currency, *invoice_ids),
+            ).fetchall()
+            pay_map = {r["subject_id"]: float(r["paid"]) for r in pay_rows}
+
+        # Query 2b: payments with NULL subject_id matched to NULL-bucket invoices.
+        null_paid = 0.0
+        if has_null_bucket:
+            null_pay_row = self.db.execute(
+                f"""SELECT COALESCE(SUM(amount_value), 0.0) AS paid
+                    FROM quant_fact
+                    WHERE matter_id=? AND subject_type='payment' AND quant_kind='amount'
+                      AND subject_id IS NULL AND amount_value IS NOT NULL {_ccy_filter}""",
+                (self.matter_id, currency, currency),
+            ).fetchone()
+            null_paid = float(null_pay_row["paid"]) if null_pay_row else 0.0
+
+        # Query 3: up to 3 source spans per named invoice using a window function.
+        # ROW_NUMBER() OVER (PARTITION BY subject_id ORDER BY amount_value DESC) gives
+        # each invoice its own independent rank so no single invoice can starve others.
+        # Requires SQLite >= 3.25 (available as of Python 3.13 / SQLite 3.50).
+        span_map: "dict[str, list]" = {inv_id: [] for inv_id in invoice_ids}
+        if invoice_ids:
+            placeholders = ",".join("?" * len(invoice_ids))
+            span_rows = self.db.execute(
+                f"""SELECT id, subject_id, amount_value, span_id
+                    FROM (
+                        SELECT id, subject_id, amount_value, span_id,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY subject_id
+                                   ORDER BY amount_value DESC
+                               ) AS rn
+                        FROM quant_fact
+                        WHERE matter_id=? AND subject_type='invoice' AND quant_kind='amount'
+                          AND span_id IS NOT NULL AND amount_value IS NOT NULL
+                          AND subject_id IN ({placeholders})
+                    )
+                    WHERE rn <= 3""",
+                (self.matter_id, *invoice_ids),
+            ).fetchall()
+            for sr in span_rows:
+                sid = sr["subject_id"]
+                if sid in span_map:
+                    span_map[sid].append(
+                        {
+                            "quant_fact_id": sr["id"],
+                            "amount": round(float(sr["amount_value"]), 2),
+                            "span_id": sr["span_id"],
+                        }
+                    )
+
+        result = []
+        for r in named_rows:
+            sid = r["subject_id"]
+            invoiced = round(float(r["invoiced"]), 2)
+            paid = round(pay_map.get(sid, 0.0), 2)
+            result.append(
+                {
+                    "invoice_id": sid,
+                    "invoiced": invoiced,
+                    "paid": paid,
+                    "outstanding": round(invoiced - paid, 2),
+                    "currency": currency,
+                    "source_spans": span_map.get(sid, []),
+                }
+            )
+
+        if has_null_bucket:
+            invoiced = round(null_invoiced, 2)
+            paid = round(null_paid, 2)
+            result.append(
+                {
+                    "invoice_id": "",
+                    "invoiced": invoiced,
+                    "paid": paid,
+                    "outstanding": round(invoiced - paid, 2),
+                    "currency": currency,
+                    "source_spans": [],
+                }
+            )
+
+        result.sort(key=lambda x: x["invoiced"], reverse=True)
+        return result
+
 
 class DocumentInventoryStore:
     """

@@ -564,6 +564,13 @@ class MatterModel:
         """
         return self.quant.reconcile_payment_chain(currency)
 
+    def reconcile_invoice_chain(self, currency: str = "USD") -> list:
+        """Return per-invoice reconciliation rows (invoice_id, invoiced, paid, outstanding).
+
+        Satisfies SO-6 per-invoice tracking requirement.
+        """
+        return self.quant.reconcile_invoice_chain(currency)
+
     # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
