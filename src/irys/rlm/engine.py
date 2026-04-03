@@ -132,6 +132,12 @@ def _format_matter_context(ctx) -> str:
         for gap in ctx.open_gaps[:3]:
             desc = gap.get("description", "")[:100]
             lines.append(f"  * {desc}")
+    if getattr(ctx, "key_predicates", None):
+        preds_display = ", ".join(ctx.key_predicates[:8])
+        lines.append(
+            f"- Known relationship types (predicate graph): {preds_display} — "
+            "use these to target searches (e.g. '<party> {predicate} <object>')"
+        )
     if ctx.known_actors:
         lines.append(f"- Key parties already identified: {', '.join(ctx.known_actors[:8])}")
     if ctx.known_document_ids:

@@ -1483,3 +1483,59 @@ def test_investigation_state_pending_clarifications_defaults_empty():
 
     restored = InvestigationState.from_dict(data)
     assert restored.pending_clarifications == []
+
+
+def test_format_matter_context_emits_key_predicates():
+    """_format_matter_context() must surface key_predicates from SPO graph (SO-2)."""
+    from irys.rlm.engine import _format_matter_context
+    from irys.matter.runtime import QueryMatterContext
+
+    ctx = QueryMatterContext(
+        matter_id="m_test",
+        matter_name="Test Matter",
+        existing_assertion_count=10,
+        open_issues=[],
+        open_gaps=[],
+        known_actors=[],
+        known_document_ids=[],
+        key_predicates=["agreed_to_pay", "executed_contract", "disputes_claim"],
+    )
+    result = _format_matter_context(ctx)
+    assert "agreed_to_pay" in result, "key_predicates must appear in formatted context"
+    assert "predicate graph" in result.lower() or "relationship" in result.lower(), (
+        "formatted context must label predicate section"
+    )
+
+
+def test_build_query_context_populates_key_predicates():
+    """build_query_context() must populate key_predicates from assertion predicate_key values."""
+    from irys.matter import MatterModel, AssertionCandidate, SpeechAct, SourceRole
+    from irys.matter.enums import ModelLayer, AssertionKind, OriginKind
+
+    model = MatterModel.open_in_memory()
+    # Insert 3 distinct assertions with agreed_to_pay and 1 with executed_contract.
+    # Distinct proposition_texts → distinct assertion rows → honest frequency count.
+    entries = [
+        ("Party A agreed to pay $100k", "agreed_to_pay"),
+        ("Party A agreed to pay $50k by March", "agreed_to_pay"),
+        ("Party A agreed to pay late fee of $5k", "agreed_to_pay"),
+        ("Party B executed the contract on Jan 1", "executed_contract"),
+    ]
+    for prop, pred in entries:
+        c = AssertionCandidate(
+            proposition_text=prop,
+            speech_act=SpeechAct.ALLEGED,
+            source_role=SourceRole.ADVOCACY,
+            document_id="doc1.txt",
+            model_layer=ModelLayer.RECORD,
+            assertion_kind=AssertionKind.FACTUAL,
+            origin_kind=OriginKind.EXTRACTED,
+            predicate_key=pred,
+        )
+        model.assertions.upsert_occurrence(c)
+
+    ctx = model.build_query_context()
+    assert "agreed_to_pay" in ctx.key_predicates, "agreed_to_pay must appear in key_predicates"
+    assert "executed_contract" in ctx.key_predicates, "executed_contract must appear in key_predicates"
+    # agreed_to_pay has 3 rows vs 1 for executed_contract → must rank first
+    assert ctx.key_predicates[0] == "agreed_to_pay", "predicates ordered by frequency descending"

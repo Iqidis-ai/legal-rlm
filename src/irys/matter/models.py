@@ -119,6 +119,9 @@ class QueryMatterContext:
     answered_clarifications: list[dict] = field(default_factory=list)
     document_annotations: list[dict] = field(default_factory=list)
     weakest_issue_id: Optional[str] = None
+    # SO-2: top predicate_key values from the typed assertion graph.
+    # Used by orientation to generate SPO-aware search leads (e.g. "Party A owes_money_to Party B").
+    key_predicates: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

@@ -292,6 +292,19 @@ class MatterModel:
         # Document annotations: strategic notes from user (SO-3 annotation)
         document_annotations = self.annotations.list_recent(limit=10)
 
+        # SO-2: top predicate_key values from the typed assertion graph so orientation
+        # can generate SPO-aware search leads targeting known relationship types.
+        pred_rows = self.db.execute(
+            """SELECT predicate_key, COUNT(*) AS cnt
+               FROM assertion
+               WHERE matter_id=? AND predicate_key IS NOT NULL
+               GROUP BY predicate_key
+               ORDER BY cnt DESC
+               LIMIT 10""",
+            (self.matter_id,),
+        ).fetchall()
+        key_predicates = [r["predicate_key"] for r in pred_rows]
+
         return QueryMatterContext(
             matter_id=self.matter_id,
             matter_name=matter_name,
@@ -304,6 +317,7 @@ class MatterModel:
             answered_clarifications=answered_clarifications,
             document_annotations=document_annotations,
             weakest_issue_id=weakest_issue_id,
+            key_predicates=key_predicates,
         )
 
     def get_issue_coverage_report(self) -> list[dict]:
