@@ -2388,7 +2388,11 @@ class RLMEngine:
                      AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
                      AND (a.predicate_key IS NOT NULL OR a.subject_ref_id IS NOT NULL
                           OR a.object_json IS NOT NULL)
-                   ORDER BY a.created_at DESC
+                   ORDER BY
+                     (CASE WHEN a.predicate_key IS NOT NULL THEN 1 ELSE 0 END +
+                      CASE WHEN a.subject_ref_id IS NOT NULL THEN 1 ELSE 0 END +
+                      CASE WHEN a.object_json IS NOT NULL THEN 1 ELSE 0 END) DESC,
+                     a.created_at DESC
                    LIMIT 30""",
                 (self._matter_model.matter_id,),
             ).fetchall()
