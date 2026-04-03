@@ -496,6 +496,113 @@ class AssertionStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def detect_heuristic_contradictions(self) -> int:
+        """
+        Heuristically detect and link contradicting assertion pairs (SO-2).
+
+        For each open issue, compare active assertion pairs on the same issue using:
+        1. Word overlap (Jaccard ≥ 0.4 on significant tokens) — same topic.
+        2. Negation asymmetry (exactly one contains negation markers) — opposite polarity.
+
+        When both conditions hold, creates a 'contradicts' link (negated assertion
+        points at the positive one). This allows mine_and_mark_contradictions() to
+        propagate belief state for autonomously detected conflicts, not just pre-linked ones.
+
+        Caps at 50 assertions per issue to prevent O(n²) explosion on large graphs.
+        Returns the number of new contradiction links created.
+        """
+        _NEGATION_WORDS = frozenset(
+            ["not", "never", "cannot", "can't", "didn't", "wasn't", "hasn't",
+             "haven't", "don't", "doesn't", "isn't", "aren't", "failed",
+             "denied", "refused", "rejected", "absent", "missing", "void"]
+        )
+        _STOP_WORDS = frozenset(
+            ["the", "and", "or", "but", "in", "on", "at", "to", "for", "of",
+             "with", "by", "from", "as", "this", "that", "these", "those"]
+        )
+        _SIMILARITY_THRESHOLD = 0.4
+        _MAX_PER_ISSUE = 50
+
+        def _tokenize(text: str) -> frozenset:
+            return frozenset(
+                w.strip(".,;:()\"'!?")
+                for w in text.lower().split()
+                if len(w.strip(".,;:()\"'!?")) > 3
+                and w.strip(".,;:()\"'!?") not in _STOP_WORDS
+            )
+
+        def _has_negation(text: str) -> bool:
+            return any(
+                w.strip(".,;:()\"'!?") in _NEGATION_WORDS
+                for w in text.lower().split()
+            )
+
+        issue_rows = self.db.execute(
+            "SELECT id FROM issue WHERE matter_id=? AND status='open'",
+            (self.matter_id,),
+        ).fetchall()
+
+        existing_links: set = set()
+        for r in self.db.execute(
+            "SELECT src_assertion_id, dst_assertion_id FROM assertion_link "
+            "WHERE link_type IN ('attacks','contradicts')"
+        ).fetchall():
+            existing_links.add((r["src_assertion_id"], r["dst_assertion_id"]))
+            existing_links.add((r["dst_assertion_id"], r["src_assertion_id"]))
+
+        created = 0
+        now = _now()
+        for issue_row in issue_rows:
+            issue_id = issue_row["id"]
+            rows = self.db.execute(
+                """SELECT a.id, a.proposition_text
+                   FROM assertion a
+                   JOIN assertion_issue_link ail ON ail.assertion_id = a.id
+                   WHERE ail.issue_id=? AND a.matter_id=?
+                     AND a.belief_state NOT IN ('superseded','withdrawn','resolved')
+                   LIMIT ?""",
+                (issue_id, self.matter_id, _MAX_PER_ISSUE),
+            ).fetchall()
+            assertions = [dict(r) for r in rows]
+            if len(assertions) < 2:
+                continue
+
+            for i in range(len(assertions)):
+                for j in range(i + 1, len(assertions)):
+                    a, b = assertions[i], assertions[j]
+                    if (a["id"], b["id"]) in existing_links:
+                        continue
+                    ta = _tokenize(a["proposition_text"])
+                    tb = _tokenize(b["proposition_text"])
+                    if not ta or not tb:
+                        continue
+                    union = ta | tb
+                    if not union:
+                        continue
+                    similarity = len(ta & tb) / len(union)
+                    if similarity < _SIMILARITY_THRESHOLD:
+                        continue
+                    neg_a = _has_negation(a["proposition_text"])
+                    neg_b = _has_negation(b["proposition_text"])
+                    if neg_a == neg_b:
+                        continue  # both same polarity → not a contradiction
+                    src_id = a["id"] if neg_a else b["id"]
+                    dst_id = b["id"] if neg_a else a["id"]
+                    try:
+                        self.db.execute(
+                            """INSERT OR IGNORE INTO assertion_link
+                               (id, src_assertion_id, dst_assertion_id, link_type,
+                                weight, created_at)
+                               VALUES (?,?,?,?,?,?)""",
+                            (_id(), src_id, dst_id, "contradicts", 0.7, now),
+                        )
+                        existing_links.add((src_id, dst_id))
+                        existing_links.add((dst_id, src_id))
+                        created += 1
+                    except Exception:
+                        pass
+        return created
+
     def mine_and_mark_contradictions(
         self,
         gap_store: "GapStore",
@@ -504,7 +611,11 @@ class AssertionStore:
         """
         Run contradiction mining and enforce belief states.
 
-        For each conflict pair found by find_contradictions():
+        Step 1: auto-detect heuristic contradictions (SO-2) — creates 'contradicts'
+        links for assertion pairs that share topic context but have opposite polarity,
+        so mining is not limited to pre-existing manually-created links.
+
+        Step 2: for each conflict pair found by find_contradictions():
         - If the attacker has OPERATIVE or ADMITTED belief_state AND the attacked
           assertion is still OPERATIVE or ALLEGED: mark the attacked assertion as
           DISPUTED via the belief revision engine (cause=CONFLICT_DETECTION).
@@ -514,6 +625,8 @@ class AssertionStore:
         Returns the list of contradiction dicts (same shape as find_contradictions).
         """
         from .enums import RevisionCause, BeliefState, GapType
+        # SO-2: auto-discover heuristic contradictions before propagating
+        self.detect_heuristic_contradictions()
         conflicts = self.find_contradictions()
         _HIGH_TRUST = {"operative", "admitted"}
         _DISPUTABLE = {"operative", "alleged", "argued", "inferred"}

@@ -13,12 +13,16 @@ Verifies:
 10. mine_and_mark_contradictions() skips already-DISPUTED attacked assertions (no redundant revision)
 11. MatterModel.mine_contradictions() is a wired convenience wrapper
 12. mine_and_mark_contradictions() records belief_revision_event with CONFLICT_DETECTION cause
+13. detect_heuristic_contradictions() creates link for negation-pattern pair on same issue
+14. detect_heuristic_contradictions() does NOT link unrelated assertions on same issue
+15. detect_heuristic_contradictions() is idempotent (no duplicate links on repeat calls)
+16. mine_and_mark_contradictions() auto-discovers heuristic contradictions (SO-2 end-to-end)
 """
 
 import pytest
 from irys.matter import (
     MatterModel, BeliefState, AssertionLinkType, RevisionCause,
-    SpeechAct, SourceRole, AssertionKind, GapType,
+    SpeechAct, SourceRole, AssertionKind, GapType, IssueType,
 )
 from irys.matter.models import AssertionCandidate
 
@@ -216,3 +220,105 @@ def test_mine_records_belief_revision_event(model):
     ).fetchall()
     assert len(events) >= 1
     assert any(e["cause"] == RevisionCause.CONFLICT_DETECTION.value for e in events)
+
+
+# ---------------------------------------------------------------------------
+# 13-16. detect_heuristic_contradictions() — SO-2 autonomous detection
+# ---------------------------------------------------------------------------
+
+def _make_issue_assertion(model, issue_id, text, speech_act=SpeechAct.OPERATIVE,
+                           source_role=SourceRole.OPERATIVE):
+    """Add an assertion AND link it to the given issue."""
+    cand = AssertionCandidate(
+        proposition_text=text,
+        speech_act=speech_act,
+        source_role=source_role,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="doc.pdf",
+    )
+    aid, _ = model.assertions.upsert_occurrence(cand)
+    model.issues.link_assertion(aid, issue_id, "supports")
+    return aid
+
+
+def test_heuristic_detector_creates_link_for_negation_pair(model):
+    """Negation-pattern pair on same issue must get a 'contradicts' link."""
+    iid, _ = model.issues.upsert_issue("Payment dispute", IssueType.CLAIM)
+    _make_issue_assertion(model, iid, "Defendant paid the invoice in full")
+    _make_issue_assertion(model, iid, "Defendant did not pay the invoice in full")
+
+    count = model.assertions.detect_heuristic_contradictions()
+    assert count >= 1, "Expected at least one heuristic contradiction link to be created"
+
+    conflicts = model.assertions.find_contradictions()
+    assert len(conflicts) >= 1, "Heuristically detected link must appear in find_contradictions()"
+
+
+def test_heuristic_detector_ignores_unrelated_assertions(model):
+    """Assertions on the same issue with no topic overlap must not be linked."""
+    iid, _ = model.issues.upsert_issue("Contract dispute", IssueType.CLAIM)
+    _make_issue_assertion(model, iid, "The plaintiff filed the complaint in December")
+    _make_issue_assertion(model, iid, "The defendant never provided delivery confirmation")
+
+    count = model.assertions.detect_heuristic_contradictions()
+    # Different subjects, minimal overlap → should NOT create a link
+    # (we allow 0 links; a count of 1 would be a false positive)
+    conflicts = model.assertions.find_contradictions()
+    # Verify no link was created between unrelated assertions
+    assert count == 0, (
+        f"Unrelated assertions must not be linked as contradictions, got {count} links"
+    )
+
+
+def test_heuristic_detector_is_idempotent(model):
+    """Repeated calls to detect_heuristic_contradictions() must not create duplicate links."""
+    iid, _ = model.issues.upsert_issue("Breach dispute", IssueType.CLAIM)
+    _make_issue_assertion(model, iid, "Defendant breached the contract agreement")
+    _make_issue_assertion(model, iid, "Defendant did not breach the contract agreement")
+
+    count1 = model.assertions.detect_heuristic_contradictions()
+    count2 = model.assertions.detect_heuristic_contradictions()  # second call
+    assert count1 >= 1, "First call must create at least one link"
+    assert count2 == 0, "Second call must create zero new links (idempotent)"
+
+    # Total contradiction links must be exactly 1
+    all_links = model.db.execute(
+        "SELECT COUNT(*) FROM assertion_link WHERE link_type='contradicts'"
+    ).fetchone()[0]
+    assert all_links == 1
+
+
+def test_mine_contradictions_discovers_heuristic_contradictions_end_to_end(model):
+    """mine_and_mark_contradictions() must find heuristic contradictions without pre-linked edges.
+
+    This is the SO-2 end-to-end test: no explicit link is created before mining.
+    The system must autonomously detect and propagate the contradiction.
+    """
+    iid, _ = model.issues.upsert_issue("Payment breach", IssueType.CLAIM)
+    pos_id = _make_issue_assertion(
+        model, iid,
+        "The payment was received by the deadline",
+        speech_act=SpeechAct.OPERATIVE,
+        source_role=SourceRole.OPERATIVE,
+    )
+    neg_id = _make_issue_assertion(
+        model, iid,
+        "The payment was not received by the deadline",
+        speech_act=SpeechAct.OPERATIVE,
+        source_role=SourceRole.OPERATIVE,
+    )
+
+    # NO explicit link created — detection must be autonomous
+    assert model.assertions.find_contradictions() == [], (
+        "No contradictions should exist before mining"
+    )
+
+    conflicts = model.mine_contradictions()
+
+    assert len(conflicts) >= 1, (
+        "mine_contradictions() must detect the negation-pattern contradiction autonomously"
+    )
+    conflict_ids = {(c["attacker_id"], c["attacked_id"]) for c in conflicts}
+    involved = {pos_id, neg_id}
+    found = any(a in involved and b in involved for a, b in conflict_ids)
+    assert found, "Detected conflict must involve the two contradicting assertions"
