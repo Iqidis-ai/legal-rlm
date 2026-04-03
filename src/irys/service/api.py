@@ -2007,3 +2007,62 @@ async def get_damages_waterfall(matter_id: str, currency: str = "USD"):
     """
     model = _get_matter_model_or_404(matter_id)
     return model.get_damages_waterfall(currency=currency)
+
+
+# ---------------------------------------------------------------------------
+# Actor Resolution — alias matching and duplicate detection (SO-5)
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/matter/{matter_id}/actors/duplicates",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_actor_duplicates(matter_id: str, min_prefix_len: int = 6):
+    """Return pairs of actors whose normalized names share a common prefix.
+
+    Use this to identify actors that should be merged (e.g. "Acme Corp" and
+    "Acme Corporation").  Returns actor pairs with their shared prefix.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return model.actors.find_possible_duplicates(min_prefix_len=min_prefix_len)
+
+
+@app.post(
+    "/matter/{matter_id}/actors/{keep_id}/merge/{merge_id}",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def merge_actors(matter_id: str, keep_id: str, merge_id: str):
+    """Merge merge_id into keep_id.
+
+    Moves all aliases and assertion occurrence references from merge_id to
+    keep_id, then deletes merge_id.  The keep_id actor's canonical name is
+    preserved.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    try:
+        model.actors.merge_actors(keep_id=keep_id, merge_id=merge_id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"keep_id": keep_id, "merged_id": merge_id, "status": "merged"}
+
+
+@app.get(
+    "/matter/{matter_id}/actors/resolve",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def resolve_actor_by_name(matter_id: str, name: str):
+    """Resolve an actor_id from a name string using alias and substring matching.
+
+    Returns {actor_id, actor} if found, or {actor_id: null} if not resolved.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    actor_id = model.actors.resolve_by_name(name)
+    if actor_id is None:
+        return {"actor_id": None}
+    actor = next(
+        (a for a in model.actors.list_actors() if a["id"] == actor_id), None
+    )
+    return {"actor_id": actor_id, "actor": actor}

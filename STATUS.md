@@ -69,7 +69,7 @@ structural additions.
 
 | Component | Status | Spec Reference |
 |-----------|--------|----------------|
-| Decision-context overlays | NOT STARTED | §21 |
+| Decision-context overlays | IN PROGRESS | §21 |
 | Legal research layer (authorities as objects) | NOT STARTED | §28 |
 | Quantitative intelligence layer | NOT STARTED | §29 |
 | Proof-aware reasoning | NOT STARTED | §18 |
@@ -91,8 +91,21 @@ structural additions.
 
 ## Active Work
 
-No tasks in progress at session start 2026-04-02. Swarm Build is being initialized.
-Next step: Codex design gate for the persistent matter model architecture.
+### IN PROGRESS — Priority 1: Decision-context overlays — DecisionContextStore + synthesis integration
+
+**Status:** in_progress
+**Last updated:** 2026-04-03
+
+**Objective:** Allow users to set decision-maker type, objective (motion_practice/settlement/diligence), and strategic notes that influence prioritization and output framing without touching the canonical record model.
+
+**Implementation scope:**
+- `decision_context` table — migration v21
+- `DecisionContextStore` in `graph.py`
+- `MatterModel` accessor for decision context
+- `GET /matter/{id}/decision-context` and `PUT /matter/{id}/decision-context` API endpoints
+- `_build_decision_context_block()` in `engine.py` for synthesis prompt injection
+
+**Architecture note:** Decision context routes to the decision-context layer only (per Architecture Principle 6 — user corrections route to the correct layer). Strategic instructions must never bleed into the canonical record model or the assertion graph.
 
 ---
 
