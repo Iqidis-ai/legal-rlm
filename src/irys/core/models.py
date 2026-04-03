@@ -10,7 +10,8 @@ Tier Strategy:
 Cost optimization:
 - NANO + LITE cold-path: use Google Batch API (50% off, 24h turnaround)
 - FLASH + PRO: realtime only (user-interactive)
-- Context caching: pass cache_key to reuse hot prefixes (90% discount on cache reads)
+- Context caching: pass cached_content=<name> to complete() to reuse a cached prefix
+  (90% discount on cache reads). Create the cached resource with create_cached_content().
   Typical cached prefixes: system instructions, matter summary, active issue tree
 """
 
