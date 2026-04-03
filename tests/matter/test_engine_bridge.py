@@ -35,6 +35,9 @@ def test_null_adapter_all_methods():
     adapter.log_conflict("Contradiction: fact A conflicts with fact B")  # must not raise
     adapter.log_gap("Missing document", "contract.pdf")  # must not raise
     assert adapter.record_gap("Missing: signed amendment") == ""  # must not raise
+    # record_facts_batch must return a list of empty strings, same length as input
+    result = adapter.record_facts_batch([("fact a", "doc.pdf"), ("fact b", "doc.pdf")])
+    assert result == ["", ""]
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +66,24 @@ def test_engine_without_matter_model_uses_null_adapter():
 # ---------------------------------------------------------------------------
 # MatterRuntimeAdapter: records facts into assertion store
 # ---------------------------------------------------------------------------
+
+def test_record_facts_batch_single_transaction():
+    """record_facts_batch() stores all facts and returns correct assertion IDs."""
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Batch test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    facts = [
+        ("Contract was executed on 2023-01-01.", "contract.pdf"),
+        ("Payment of $10,000 is due on 2023-02-01.", "contract.pdf"),
+        ("Defendant breached the agreement.", "complaint.pdf"),
+    ]
+    ids = adapter.record_facts_batch(facts)
+
+    assert len(ids) == 3
+    assert len(set(ids)) == 3, "Each unique proposition must get a unique assertion ID"
+    assert model.assertions.count() == 3
+
 
 def test_adapter_records_facts_to_assertion_store():
     model = MatterModel.open_in_memory()
