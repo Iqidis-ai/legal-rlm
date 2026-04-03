@@ -418,10 +418,15 @@ class MatterRuntimeAdapter:
         rate_value: Optional[float] = None,
         unit: Optional[str] = None,
         subject_type: Optional[str] = None,
+        subject_id: Optional[str] = None,
         assertion_id: Optional[str] = None,
+        span_id: Optional[str] = None,
     ) -> str:
         """
         Persist a structured numeric fact to the quant store (SO-6).
+        subject_id: specific identifier (e.g. "Invoice #1042") for fine-grained
+                    reconciliation — prevents two distinct invoices from appearing
+                    as a conflict just because they share the same subject_type.
         Returns quant_fact_id.
         """
         return self.model.quant.record(
@@ -433,7 +438,9 @@ class MatterRuntimeAdapter:
             rate_value=rate_value,
             unit=unit,
             subject_type=subject_type,
+            subject_id=subject_id,
             assertion_id=assertion_id,
+            span_id=span_id,
         )
 
     def record_quants_batch(self, specs: list[dict]) -> None:

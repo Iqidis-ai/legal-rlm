@@ -204,6 +204,7 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
    For each number, provide a structured object:
    - kind: "amount" | "date" | "rate" | "balance" | "count"
    - subject: one-word subject type — "invoice" | "payment" | "fee" | "damages" | "balance" | "rate" | "deposit" | "penalty" | "other"
+   - subject_id: specific identifier if present (e.g. "Invoice #1042", "Payment #3", null if none)
    - raw: exact text from document
    - value: numeric value if parseable (null otherwise)
    - currency: "USD" etc. for amounts (null if not monetary)
@@ -232,7 +233,7 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
     "key_facts": [{{"fact": "...", "page": N, "issue_relation": "supports"}}],
     "quotes": [{{"text": "...", "page": N}}],
     "entities": {{"people": ["name1"], "dates": ["date1"], "amounts": ["$X"], "companies": ["co1"]}},
-    "numeric_facts": [{{"kind": "amount", "subject": "invoice", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due", "assertion_idx": 2}}],
+    "numeric_facts": [{{"kind": "amount", "subject": "invoice", "subject_id": "Invoice #1042", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due", "assertion_idx": 2}}],
     "fact_relationships": [{{"from_idx": 0, "to_idx": 2, "relation": "supports"}}],
     "connections": ["doc reference 1"],
     "concerns": ["issue 1"]
@@ -1644,7 +1645,7 @@ class RLMEngine:
                             _nf_assertion_id = _recorded_ids[_aidx]
                         else:
                             _raw_lower = raw.lower()
-                            for _ft, _fa in zip(facts_to_add, _recorded_ids):
+                            for (_ft, _frel), _fa in zip(facts_to_add, _recorded_ids):
                                 if _raw_lower and _raw_lower in _ft.lower():
                                     _nf_assertion_id = _fa
                                     break
@@ -1656,6 +1657,7 @@ class RLMEngine:
                             "date_value": date_val,
                             "rate_value": rate,
                             "subject_type": nf.get("subject"),
+                            "subject_id": nf.get("subject_id"),
                             "assertion_id": _nf_assertion_id,
                         })
                     if _quant_specs:
