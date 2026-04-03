@@ -134,8 +134,9 @@ Search Results for "{search_term}":
 ANALYZE THESE RESULTS CAREFULLY:
 
 1. KEY FACTS: Extract ONLY the 10 most important specific facts (STRICT LIMIT: 10 maximum):
-   - Format each fact as: {"fact": "...", "source_file": "filename_if_determinable"}
-   - source_file should be the filename from the search results where the fact appears
+   - Format each fact as: {"fact": "...", "source_file": "filename_if_determinable", "issue_relation": "supports|attacks|neutral"}
+   - source_file: the filename from the search results where the fact appears
+   - issue_relation: whether this fact SUPPORTS the current hypothesis, ATTACKS/undermines it, or is NEUTRAL
    - Directly relevant to the query
    - Supported by the document text
    - Include dates, amounts, party names where found
@@ -159,7 +160,7 @@ ANALYZE THESE RESULTS CAREFULLY:
 
 Respond in COMPACT JSON (keep under 3000 chars):
 {{
-    "key_facts": [{{"fact": "fact text", "source_file": "filename.pdf"}}, ...],
+    "key_facts": [{{"fact": "fact text", "source_file": "filename.pdf", "issue_relation": "supports"}}, ...],
     "fact_relationships": [{{"from_idx": 0, "to_idx": 1, "relation": "corroborates|contradicts|supersedes|supports"}}],
     "new_leads": [{{"desc": "...", "priority": 0.8}}],
     "hypothesis_update": "string or null",
@@ -184,6 +185,8 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
    - Directly relevant to the query/focus
    - Specific (include dates, amounts, names)
    - Keep each fact under 100 characters
+   - Format each fact as: {"fact": "...", "page": N, "issue_relation": "supports|attacks|neutral"}
+   - issue_relation: whether the fact SUPPORTS the investigation focus, ATTACKS/undermines it, or is NEUTRAL
 
 2. CRITICAL QUOTES (STRICT LIMIT: 3 maximum): Identify the most important passages:
    - Direct admissions or acknowledgments
@@ -226,7 +229,7 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
 
 Respond in COMPACT JSON (STRICT: under 4000 chars total):
 {{
-    "key_facts": [{{"fact": "...", "page": N}}],
+    "key_facts": [{{"fact": "...", "page": N, "issue_relation": "supports"}}],
     "quotes": [{{"text": "...", "page": N}}],
     "entities": {{"people": ["name1"], "dates": ["date1"], "amounts": ["$X"], "companies": ["co1"]}},
     "numeric_facts": [{{"kind": "amount", "subject": "invoice", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due", "assertion_idx": 2}}],
@@ -1147,7 +1150,7 @@ class RLMEngine:
         if self._matter_model is None:
             return
         try:
-            recent = self._matter_model.assertions.list_recent(limit=30)
+            recent = self._matter_model.assertions.list_recent(limit=200)
         except Exception as _e:
             logger.warning("Matter model hydration failed — proceeding without prior facts: %s", _e)
             return
@@ -1304,13 +1307,16 @@ class RLMEngine:
             else:
                 _fallback_doc_id = "unknown"
 
-            facts_to_add: list[tuple[str, str, str]] = []  # (text, src_label, doc_id)
+            facts_to_add: list[tuple[str, str, str, str]] = []  # (text, src_label, doc_id, issue_relation)
             for fact_item in analysis["key_facts"]:
                 if isinstance(fact_item, str):
-                    facts_to_add.append((fact_item, _fallback_src_label, _fallback_doc_id))
+                    facts_to_add.append((fact_item, _fallback_src_label, _fallback_doc_id, "supports"))
                 elif isinstance(fact_item, dict) and "fact" in fact_item:
                     fact_text = fact_item["fact"]
                     src_file = fact_item.get("source_file") or ""
+                    issue_rel = fact_item.get("issue_relation") or "supports"
+                    if issue_rel not in ("supports", "attacks", "neutral"):
+                        issue_rel = "supports"
                     # Try to resolve source_file to a known hit
                     hit = _hit_by_name.get(src_file) or _hit_by_name.get(src_file.lower())
                     if hit is not None:
@@ -1322,10 +1328,10 @@ class RLMEngine:
                     else:
                         src_label = _fallback_src_label
                         doc_id = _fallback_doc_id
-                    facts_to_add.append((fact_text, src_label, doc_id))
+                    facts_to_add.append((fact_text, src_label, doc_id, issue_rel))
 
             # Add to state with per-fact source-role prefix (SO-5)
-            state.add_facts([f"[{lbl}] {txt}" for txt, lbl, _ in facts_to_add])
+            state.add_facts([f"[{lbl}] {txt}" for txt, lbl, _, _rel in facts_to_add])
 
             # Record into matter model with correct per-fact doc_id; collect assertion IDs
             # for graph-edge creation below (SO-2 assertion links in search analysis path).
@@ -1336,11 +1342,11 @@ class RLMEngine:
                 # Batch all facts into one outer transaction — inner per-fact transactions
                 # become savepoints, collapsing N disk syncs into 1 (perf SO-1).
                 _search_assertion_ids = adapter.record_facts_batch(
-                    [(fact_text, doc_id) for fact_text, _lbl, doc_id in facts_to_add],
+                    [(fact_text, doc_id, issue_rel) for fact_text, _lbl, doc_id, issue_rel in facts_to_add],
                     issue_id=issue_id,
                 )
                 if facts_to_add:
-                    unique_docs = {d for _, _, d in facts_to_add}
+                    unique_docs = {d for _, _, d, _ in facts_to_add}
                     adapter.log_step(
                         f"Recorded {len(facts_to_add)} facts from search: {results.query[:60]}",
                         why=f"Sources: {', '.join(sorted(unique_docs)[:3])}",
@@ -1556,18 +1562,21 @@ class RLMEngine:
             # key_facts can be strings or dicts with "fact" key
             # Always initialize these so numeric_facts / gap grounding below can reference them
             # even when key_facts is empty.
-            facts_to_add: list[str] = []
+            facts_to_add: list[tuple[str, str]] = []  # (text, issue_relation)
             _recorded_ids: list[str] = []
             if analysis.get("key_facts"):
                 for fact_item in analysis["key_facts"]:
                     if isinstance(fact_item, str):
-                        facts_to_add.append(fact_item)
+                        facts_to_add.append((fact_item, "supports"))
                     elif isinstance(fact_item, dict) and "fact" in fact_item:
-                        facts_to_add.append(fact_item["fact"])
+                        issue_rel = fact_item.get("issue_relation") or "supports"
+                        if issue_rel not in ("supports", "attacks", "neutral"):
+                            issue_rel = "supports"
+                        facts_to_add.append((fact_item["fact"], issue_rel))
                 # Prefix each fact with its source role (SO-5 per-fact calibration)
                 from ..matter.runtime import infer_source_role as _infer_role
                 _src_label = _infer_role(doc.filename).value.upper()
-                state.add_facts([f"[{_src_label}] {f}" for f in facts_to_add])
+                state.add_facts([f"[{_src_label}] {f}" for f, _ in facts_to_add])
                 # Also record into matter model if enabled; pass issue_id if from targeted lead.
                 # Use record_facts_batch() so N facts → 1 outer transaction (savepoints inside).
                 adapter = getattr(state, "_matter_adapter", None)
@@ -1576,7 +1585,7 @@ class RLMEngine:
                     # same-name files in different dirs aliasing in assertion_occurrence.
                     _recorded_ids.extend(
                         adapter.record_facts_batch(
-                            [(f, _rel_path) for f in facts_to_add],
+                            [(f, _rel_path, issue_rel) for f, issue_rel in facts_to_add],
                             issue_id=focus_issue_id,
                         )
                     )
