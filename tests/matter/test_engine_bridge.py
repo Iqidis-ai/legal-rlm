@@ -789,3 +789,63 @@ def test_record_facts_batch_four_tuple_temporal(model):
         (aids[0], aids[1]),
     ).fetchall()
     assert all(r["temporal_scope_start"] == "2024-01-15" for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# SO-4: Typed issue parsing — _orient() maps LLM type strings to IssueType enum
+# ---------------------------------------------------------------------------
+
+def test_orient_typed_issues_stored_with_correct_issue_type(model):
+    """_orient() must store typed issues from LLM plan with the correct IssueType.
+
+    Covers the _issue_type_map path added to resolve the ambiguous all-CLAIM fallback
+    that occurred when the prompt listed the wrong type tokens.
+    """
+    import asyncio
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.matter.runtime import MatterRuntimeAdapter
+    from irys.matter.enums import IssueType
+    from irys.core.repository import RepositoryStats
+
+    # LLM returns a plan with four distinct typed issues
+    fake_plan = {
+        "issues": [
+            {"title": "Breach of payment obligation", "type": "claim"},
+            {"title": "Limitation of liability defense", "type": "defense"},
+            {"title": "Lost profits exposure", "type": "damages"},
+            {"title": "Ambiguity in exclusivity clause", "type": "contract_question"},
+        ],
+        "relevant_folders": [],
+        "initial_searches": ["payment", "exclusivity"],
+        "hypothesis": "Plaintiff alleges non-payment under the agreement.",
+    }
+
+    mock_client = MagicMock()
+    mock_client.complete = AsyncMock(return_value=json.dumps(fake_plan))
+
+    engine = RLMEngine(gemini_client=mock_client, config=RLMConfig(), matter_model=model)
+
+    # Minimal repo mock — _orient() only needs stats + structure
+    mock_repo = MagicMock()
+    mock_repo.get_stats.return_value = RepositoryStats(
+        total_files=5, total_size_bytes=1024, files_by_type={".pdf": 5}, folders=["pleadings"],
+    )
+    mock_repo.get_structure.return_value = {"pleadings": 3, "contracts": 2}
+
+    from irys.rlm.state import InvestigationState
+    run_id = model.start_run("typed issue test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    state = InvestigationState(id="test-run-1", query="Breach of contract claim", repository_path="/tmp/test")
+    state._matter_adapter = adapter
+
+    asyncio.run(engine._orient(state, mock_repo))
+
+    open_issues = model.issues.get_open_issues()
+    issue_map = {i["title"]: i["issue_type"] for i in open_issues}
+
+    assert issue_map.get("Breach of payment obligation") == IssueType.CLAIM.value
+    assert issue_map.get("Limitation of liability defense") == IssueType.DEFENSE.value
+    assert issue_map.get("Lost profits exposure") == IssueType.DAMAGES.value
+    assert issue_map.get("Ambiguity in exclusivity clause") == IssueType.CONTRACT_QUESTION.value
