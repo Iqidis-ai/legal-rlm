@@ -662,6 +662,35 @@ def test_document_annotation_surfaces_in_matter_context():
     assert ctx.document_annotations[0]["document_pattern"] == "complaint.pdf"
 
 
+def test_document_annotation_get_for_document_filters_correctly():
+    """get_for_document() must return only annotations matching the document_id (SO-5 + SO-3).
+
+    Annotations are user trust signals injected per-document during processing.
+    If get_for_document() returns annotations from other documents, the engine
+    would apply the wrong trust calibration — a high-severity SO-5 bug.
+    """
+    model = MatterModel.open_in_memory()
+
+    model.annotations.add("expert_report.pdf",
+                           "Expert hired by opposing counsel; treat as advocacy.")
+    model.annotations.add("signed_contract.pdf",
+                           "Fully executed; treat as operative.")
+    model.annotations.add("email_chain.pdf",
+                           "Informal; use only for context.")
+
+    # Only expert_report.pdf annotations must come back
+    anns = model.annotations.get_for_document("expert_report.pdf")
+    assert len(anns) == 1, "get_for_document must return only annotations for that document"
+    assert "advocacy" in anns[0]["annotation_text"], "Must return the correct annotation text"
+
+    # Verify adapter list_annotations(document_id=...) routes to get_for_document
+    run_id = model.start_run("annotation filter test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    result = adapter.list_annotations(document_id="signed_contract.pdf")
+    assert len(result) == 1
+    assert "operative" in result[0]["annotation_text"]
+
+
 def test_null_adapter_annotation():
     """NullMatterAdapter annotation methods must not raise and return safe defaults."""
     adapter = NullMatterAdapter()
