@@ -4454,6 +4454,13 @@ class RLMEngine:
                 return defaults
 
             result = json.loads(json_str)
+            # Guard: LLM may return valid JSON that is not an object (null, [], "x", etc.)
+            if not isinstance(result, dict):
+                logger.warning(
+                    "LLM returned non-dict JSON root (%s), using defaults",
+                    type(result).__name__,
+                )
+                return defaults
             # Merge with defaults for any missing keys
             for key, value in defaults.items():
                 if key not in result:
