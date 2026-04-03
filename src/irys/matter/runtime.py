@@ -51,14 +51,18 @@ _SOURCE_ROLE_PATTERNS: list[tuple[re.Pattern, SourceRole]] = [
     # Authoritative: statutes, regulations, court orders, judicial decisions.
     # Check BEFORE operative so that "order_approving_settlement_agreement" is
     # classified AUTHORITATIVE (it is a court order) rather than OPERATIVE (settlement).
-    # Compound patterns (order_approv*, court_order, consent_order) avoid over-matching
-    # non-court uses of "approved" in operative documents like "board_approved_contract.pdf".
+    # Bare "order" is NOT included because "purchase_order", "change_order", and
+    # "work_order" would falsely match. Court orders are identified by compound patterns
+    # (court_order, order_approv*, final_order, etc.) or by unambiguous terms
+    # (statute, ruling, injunction, etc.). A standalone "order.pdf" resolves as UNKNOWN.
     (re.compile(
-        r"(statute|regulation|rule|code|order|opinion|decision|judgment|judgement|"
+        r"(statute|regulation|rule|code|opinion|decision|judgment|judgement|"
         r"mandate|injunction|ruling|decree|"
-        r"order[._-]approv|order[._-]grant|order[._-]enter|order[._-]deny|"
+        r"order[._-]approv\w*|order[._-]grant\w*|order[._-]enter\w*|"
+        r"order[._-]den[yi]\w*|order[._-]enjoin\w*|order[._-]dismiss\w*|"
         r"court[._-]order|consent[._-]order|final[._-]order|interim[._-]order|"
-        r"preliminary[._-]order|protective[._-]order|restraining[._-]order)",
+        r"preliminary[._-]order|protective[._-]order|restraining[._-]order|"
+        r"show[._-]cause)",
         re.IGNORECASE,
     ), SourceRole.AUTHORITATIVE),
     # Operative: contracts, agreements, amendments, leases. Checked after authoritative
