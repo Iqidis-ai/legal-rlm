@@ -258,3 +258,28 @@ def test_matter_model_get_operative_document_version_wrapper(model):
 
     result = model.get_operative_document_version(v1)
     assert result == v2
+
+
+# ---------------------------------------------------------------------------
+# get_doc_row() — path/status lookup by doc_id
+# ---------------------------------------------------------------------------
+
+def test_get_doc_row_returns_row(model):
+    doc_id = _add_doc(model, "exhibit_a.pdf")
+    row = model.inventory.get_doc_row(doc_id)
+    assert row is not None
+    assert row["id"] == doc_id
+    assert row["relative_path"] == "exhibit_a.pdf"
+    assert row["ingest_status"] == "pending"
+
+
+def test_get_doc_row_unknown_id_returns_none(model):
+    row = model.inventory.get_doc_row("nonexistent-id")
+    assert row is None
+
+
+def test_get_doc_row_reflects_mark_ingested(model):
+    doc_id = _add_doc(model, "order.pdf")
+    model.inventory.mark_ingested(doc_id)
+    row = model.inventory.get_doc_row(doc_id)
+    assert row["ingest_status"] == "complete"

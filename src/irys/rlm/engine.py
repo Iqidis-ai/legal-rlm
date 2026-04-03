@@ -2062,6 +2062,35 @@ class RLMEngine:
                     )
                     _inventory_doc_id = _inv_id
 
+                    # SO-1: Operative version enforcement.
+                    # If this document is superseded by a newer version that is
+                    # already fully ingested, skip redundant cold-path analysis and
+                    # prefer the operative (HEAD) document.  This ensures reasoning
+                    # reads the binding version, not an earlier draft.
+                    try:
+                        _operative_id = _mm.inventory.get_operative_version(_inventory_doc_id)
+                        if _operative_id != _inventory_doc_id:
+                            _op_row = _mm.inventory.get_doc_row(_operative_id)
+                            _op_label = (_op_row["relative_path"] if _op_row else _operative_id)
+                            self._emit_step(
+                                state, StepType.READING,
+                                f"SO-1: {_fp.name} is superseded — operative version: {_op_label}",
+                            )
+                            if not hasattr(state, "_superseded_docs"):
+                                state._superseded_docs = {}
+                            state._superseded_docs[_inventory_doc_id] = _operative_id
+                            # If the operative version is already ingested, skip deep
+                            # analysis of this superseded document entirely.
+                            if _op_row and _op_row.get("ingest_status") == "complete":
+                                state.documents_read += 1
+                                state.documents_from_cache += 1
+                                return
+                    except Exception as _op_err:
+                        logger.debug(
+                            "Operative version check failed for %s: %s",
+                            _rel_path, _op_err,
+                        )
+
                     if _mm.inventory.is_ingested(_rel_path):
                         # HOT PATH: sha256 verified current; already fully ingested in a prior run.
                         # Assertion-to-issue linking for hot-path docs is intentionally omitted:

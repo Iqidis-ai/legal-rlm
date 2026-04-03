@@ -1905,6 +1905,14 @@ class DocumentInventoryStore:
         ).fetchall()
         return [r["relative_path"] for r in rows]
 
+    def get_doc_row(self, doc_id: str) -> Optional[dict]:
+        """Return the document_inventory row for a given doc_id, or None."""
+        row = self.db.execute(
+            "SELECT id, relative_path, ingest_status, sha256 FROM document_inventory WHERE id=?",
+            (doc_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
     def count(self) -> int:
         row = self.db.execute(
             "SELECT COUNT(*) FROM document_inventory WHERE matter_id=?",
