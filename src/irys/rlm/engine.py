@@ -350,7 +350,7 @@ Investigation Summary:
 
 Working Hypothesis: {hypothesis}
 
-Source Calibration (CRITICAL — read before analyzing facts):
+{advocacy_gate_block}Source Calibration (CRITICAL — read before analyzing facts):
 {source_calibration}
 
 {decision_context_block}
@@ -2562,6 +2562,10 @@ class RLMEngine:
         # Build source-role calibration from matter model (SO-5)
         source_calibration = self._build_source_calibration(state)
 
+        # Build advocacy-only gate block (SO-5): issues with no operative/authoritative
+        # support get a mandatory hedging instruction at the top of the synthesis prompt.
+        advocacy_gate_block = self._build_advocacy_gate_block()
+
         # Build quantitative reconciliation summary (SO-6)
         quant_summary = self._build_quant_summary()
 
@@ -2589,6 +2593,7 @@ class RLMEngine:
             citation_count=len(state.citations),
             max_depth=state.max_depth_reached,
             hypothesis=state.hypothesis or "No specific hypothesis formed",
+            advocacy_gate_block=advocacy_gate_block,
             source_calibration=source_calibration,
             decision_context_block=decision_context_block,
             quant_summary=quant_summary,
@@ -2731,6 +2736,59 @@ class RLMEngine:
                 )
             except Exception:
                 pass
+
+    def _build_advocacy_gate_block(self) -> str:
+        """Build a mandatory hedging gate for issues supported only by advocacy sources (SO-5).
+
+        When an issue has advocacy_only=True in proof_state, synthesis MUST present
+        conclusions about that issue with explicit hedging language — not confident
+        statements. This converts the advisory annotation into a hard synthesis gate:
+        the instruction block appears at the TOP of the synthesis prompt, before source
+        calibration, so the LLM reads the constraint before any facts.
+
+        Returns empty string when no advocacy-only issues exist (no prompt pollution).
+        """
+        if self._matter_model is None:
+            return ""
+        try:
+            ps_rows = self._matter_model.proof_state.get_all()
+        except Exception:
+            return ""
+
+        advocacy_issues = [ps for ps in ps_rows if ps.get("advocacy_only")]
+        if not advocacy_issues:
+            return ""
+
+        issue_index: dict = {}
+        try:
+            report = self._matter_model.get_issue_coverage_report()
+            issue_index = {
+                item["id"]: item.get("title", "Untitled")
+                for item in report
+                if item.get("id")
+            }
+        except Exception:
+            pass
+
+        lines = [
+            "⚠ ADVOCACY-ONLY GATE (SO-5 — MANDATORY — DO NOT OVERRIDE):",
+            "The following issues have NO support from operative or authoritative sources.",
+            "Every conclusion about these issues MUST use hedging language:",
+            '  e.g. "Plaintiff alleges...", "Defendant contends...", '
+            '"According to [party]\'s complaint..."',
+            "NEVER present these as established facts. NEVER omit the hedge, even in summary.",
+            "",
+            "Issues requiring mandatory hedging:",
+        ]
+        for ps in advocacy_issues:
+            iid = ps.get("issue_id", "")
+            title = issue_index.get(iid, iid[:12] if iid else "unknown")
+            suf = float(ps.get("sufficiency", 0.0))
+            lines.append(
+                f"  • {title}: {int(suf * 100)}% sufficiency — ADVOCACY SOURCES ONLY"
+            )
+        lines.append("")  # blank line before next block
+        return "\n".join(lines) + "\n"
 
     def _build_source_calibration(self, state: InvestigationState) -> str:
         """

@@ -2680,3 +2680,74 @@ def test_record_assertion_link_invalid_link_type_does_not_raise(model):
         (a_id, b_id),
     ).fetchall()
     assert len(links) == 0, "Invalid link type must be dropped (edge not created)"
+
+
+# ---------------------------------------------------------------------------
+# SO-5: _build_advocacy_gate_block() — mandatory hedging for advocacy-only issues
+# ---------------------------------------------------------------------------
+
+def test_advocacy_gate_block_empty_when_no_advocacy_issues():
+    """Gate block must be empty string when no advocacy-only issues exist."""
+    from irys.rlm.engine import RLMEngine
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue("Breach", IssueType.CLAIM)
+
+    # Add an operative assertion linked to the issue → advocacy_only=False
+    from irys.matter.enums import SourceRole as SR
+    run_id = model.start_run("gate test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_fact(
+        "Contract requires payment.",
+        document_id="contract.pdf",
+        source_role=SR.OPERATIVE,
+        issue_id=iid,
+        issue_link_type="supports",
+    )
+    model.proof_state.compute_all()
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    block = engine._build_advocacy_gate_block()
+    assert block == "", f"Expected empty gate block when no advocacy-only issues, got: {block!r}"
+
+
+def test_advocacy_gate_block_present_when_advocacy_only():
+    """Gate block must name advocacy-only issues and include mandatory hedging instruction."""
+    from irys.rlm.engine import RLMEngine
+    from irys.matter.enums import IssueType, SourceRole
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue("Damages claim", IssueType.CLAIM)
+
+    # Add only an advocacy assertion (complaint), linked to the issue
+    run_id = model.start_run("gate advocacy test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_fact(
+        "Plaintiff suffered $500k in damages.",
+        document_id="complaint.pdf",
+        source_role=SourceRole.ADVOCACY,
+        issue_id=iid,
+        issue_link_type="supports",
+    )
+    model.proof_state.compute_all()
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    block = engine._build_advocacy_gate_block()
+    assert block, "Gate block must be non-empty when advocacy-only issues exist"
+    assert "ADVOCACY-ONLY GATE" in block, "Gate block must contain the gate header"
+    assert "MANDATORY" in block, "Gate block must include MANDATORY instruction"
+    assert "alleges" in block.lower() or "contends" in block.lower(), (
+        "Gate block must include example hedging language"
+    )
+
+
+def test_advocacy_gate_block_no_model():
+    """Gate block must return empty string gracefully when no matter model is set."""
+    from irys.rlm.engine import RLMEngine
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = None
+    block = engine._build_advocacy_gate_block()
+    assert block == ""
