@@ -17,7 +17,7 @@ from .db import SQLiteMatterDB
 from .graph import (
     AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
     DocumentInventoryStore, ReasoningCacheStore, TrustOverrideStore, DocumentAnnotationStore,
-    DecisionContextStore, AuthorityStore,
+    DecisionContextStore, AuthorityStore, ProofStateStore,
 )
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
@@ -68,6 +68,7 @@ class MatterModel:
         self.annotations = DocumentAnnotationStore(db, matter_id)
         self.decision_context = DecisionContextStore(db, matter_id)
         self.authority = AuthorityStore(db, matter_id)
+        self.proof_state = ProofStateStore(db, matter_id)
 
     # ------------------------------------------------------------------
     # Factory methods

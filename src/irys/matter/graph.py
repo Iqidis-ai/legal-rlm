@@ -2224,3 +2224,248 @@ class AuthorityStore:
             else:
                 d[field] = []
         return d
+
+
+class ProofStateStore:
+    """Tracks proof coverage per issue (SO-4 proof-aware reasoning).
+
+    For each issue the store maintains a computed snapshot of:
+    - sufficiency: float 0..1 — how well-proved the issue is
+    - supporting/attacking assertion counts
+    - predicate satisfaction ratio
+    - categorical proof_status
+
+    Call compute_and_store(issue_id) after adding assertions or resolving
+    predicates to refresh the snapshot.  Reads are always from the stored
+    snapshot — never recomputed on read — so hot-path reads are cheap.
+
+    proof_status values:
+        insufficient — sufficiency < 0.25, or zero supporting assertions
+        partial      — sufficiency 0.25..0.75
+        sufficient   — sufficiency > 0.75
+        contested    — attacking_count >= supporting_count > 0
+    """
+
+    SUFFICIENT_THRESHOLD = 0.75
+    PARTIAL_THRESHOLD = 0.25
+
+    def __init__(self, db: "SQLiteMatterDB", matter_id: str) -> None:
+        self.db = db
+        self.matter_id = matter_id
+
+    # ------------------------------------------------------------------
+    # Compute + store
+    # ------------------------------------------------------------------
+
+    def compute_and_store(self, issue_id: str) -> dict:
+        """Recompute proof state for an issue and persist it.
+
+        Derives counts from live assertion_issue_link and issue_predicate rows,
+        so it always reflects the current model state.
+
+        Returns the newly computed proof state dict.
+        """
+        now = _now()
+
+        # Count supporting and attacking assertions linked to this issue.
+        sup_row = self.db.execute(
+            """SELECT COUNT(*) AS n FROM assertion_issue_link ail
+               JOIN assertion a ON a.id = ail.assertion_id
+               WHERE ail.issue_id=?
+                 AND ail.relation_type IN ('supports', 'establishes')
+                 AND a.belief_state NOT IN ('superseded', 'withdrawn')""",
+            (issue_id,),
+        ).fetchone()
+        atk_row = self.db.execute(
+            """SELECT COUNT(*) AS n FROM assertion_issue_link ail
+               JOIN assertion a ON a.id = ail.assertion_id
+               WHERE ail.issue_id=?
+                 AND ail.relation_type IN ('attacks', 'negates')
+                 AND a.belief_state NOT IN ('superseded', 'withdrawn')""",
+            (issue_id,),
+        ).fetchone()
+        supporting = sup_row["n"] if sup_row else 0
+        attacking = atk_row["n"] if atk_row else 0
+
+        # Count total and satisfied predicates.
+        total_pred_row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM issue_predicate WHERE issue_id=?",
+            (issue_id,),
+        ).fetchone()
+        sat_pred_row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM issue_predicate WHERE issue_id=? AND status='resolved'",
+            (issue_id,),
+        ).fetchone()
+        total_predicates = total_pred_row["n"] if total_pred_row else 0
+        satisfied_predicates = sat_pred_row["n"] if sat_pred_row else 0
+
+        # Compute sufficiency score.
+        sufficiency = self._score(
+            supporting, attacking, total_predicates, satisfied_predicates
+        )
+
+        # Categorise.
+        if attacking >= supporting > 0:
+            proof_status = "contested"
+        elif sufficiency >= self.SUFFICIENT_THRESHOLD:
+            proof_status = "sufficient"
+        elif sufficiency >= self.PARTIAL_THRESHOLD:
+            proof_status = "partial"
+        else:
+            proof_status = "insufficient"
+
+        # Upsert.
+        existing = self.db.execute(
+            "SELECT id FROM proof_state WHERE matter_id=? AND issue_id=?",
+            (self.matter_id, issue_id),
+        ).fetchone()
+
+        if existing:
+            ps_id = existing["id"]
+            self.db.execute(
+                """UPDATE proof_state
+                   SET sufficiency=?, supporting_count=?, attacking_count=?,
+                       total_predicate_count=?, satisfied_predicate_count=?,
+                       proof_status=?, notes=NULL, computed_at=?
+                   WHERE id=?""",
+                (sufficiency, supporting, attacking,
+                 total_predicates, satisfied_predicates,
+                 proof_status, now, ps_id),
+            )
+        else:
+            ps_id = _id()
+            self.db.execute(
+                """INSERT INTO proof_state
+                   (id, matter_id, issue_id, sufficiency, supporting_count,
+                    attacking_count, total_predicate_count, satisfied_predicate_count,
+                    proof_status, notes, computed_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,NULL,?)""",
+                (ps_id, self.matter_id, issue_id, sufficiency,
+                 supporting, attacking, total_predicates, satisfied_predicates,
+                 proof_status, now),
+            )
+
+        return {
+            "id": ps_id,
+            "matter_id": self.matter_id,
+            "issue_id": issue_id,
+            "sufficiency": sufficiency,
+            "supporting_count": supporting,
+            "attacking_count": attacking,
+            "total_predicate_count": total_predicates,
+            "satisfied_predicate_count": satisfied_predicates,
+            "proof_status": proof_status,
+            "computed_at": now,
+        }
+
+    # ------------------------------------------------------------------
+    # Read
+    # ------------------------------------------------------------------
+
+    def get(self, issue_id: str) -> Optional[dict]:
+        """Return the stored proof state for an issue, or None if never computed."""
+        row = self.db.execute(
+            "SELECT * FROM proof_state WHERE matter_id=? AND issue_id=?",
+            (self.matter_id, issue_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_all(self, min_sufficiency: float = 0.0) -> list[dict]:
+        """Return proof states for all issues, filtered by min sufficiency.
+
+        Ordered by sufficiency ascending (weakest proof first — drives attention).
+        """
+        rows = self.db.execute(
+            """SELECT * FROM proof_state
+               WHERE matter_id=? AND sufficiency >= ?
+               ORDER BY sufficiency ASC, proof_status""",
+            (self.matter_id, min_sufficiency),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_by_status(self, proof_status: str) -> list[dict]:
+        """Return all proof states with a given proof_status."""
+        rows = self.db.execute(
+            """SELECT * FROM proof_state
+               WHERE matter_id=? AND proof_status=?
+               ORDER BY sufficiency ASC""",
+            (self.matter_id, proof_status),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_gaps(self, threshold: float = PARTIAL_THRESHOLD) -> list[dict]:
+        """Return proof states with sufficiency below threshold — the weakest issues.
+
+        These are the issues most in need of additional evidence.
+        """
+        rows = self.db.execute(
+            """SELECT * FROM proof_state
+               WHERE matter_id=? AND sufficiency < ?
+               ORDER BY sufficiency ASC""",
+            (self.matter_id, threshold),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_summary(self) -> dict:
+        """Return aggregate proof coverage statistics for the matter."""
+        rows = self.db.execute(
+            """SELECT proof_status, COUNT(*) AS n, AVG(sufficiency) AS avg_suf
+               FROM proof_state
+               WHERE matter_id=?
+               GROUP BY proof_status""",
+            (self.matter_id,),
+        ).fetchall()
+
+        total_row = self.db.execute(
+            "SELECT COUNT(*) AS n, AVG(sufficiency) AS avg_suf FROM proof_state WHERE matter_id=?",
+            (self.matter_id,),
+        ).fetchone()
+
+        by_status = {r["proof_status"]: r["n"] for r in rows}
+        return {
+            "total_issues_tracked": total_row["n"] if total_row else 0,
+            "avg_sufficiency": round(total_row["avg_suf"] or 0.0, 3) if total_row else 0.0,
+            "by_status": by_status,
+            "gap_count": by_status.get("insufficient", 0) + by_status.get("partial", 0),
+        }
+
+    def compute_all(self) -> list[dict]:
+        """Recompute proof state for every open issue in the matter.
+
+        Returns the list of updated proof state dicts.
+        """
+        rows = self.db.execute(
+            "SELECT id FROM issue WHERE matter_id=? AND status='open'",
+            (self.matter_id,),
+        ).fetchall()
+        return [self.compute_and_store(r["id"]) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _score(
+        supporting: int,
+        attacking: int,
+        total_predicates: int,
+        satisfied_predicates: int,
+    ) -> float:
+        """Compute a 0..1 sufficiency score.
+
+        Formula:
+        - If predicates exist: predicate_ratio × assertion_ratio
+        - If no predicates: assertion_ratio alone (softer signal)
+
+        assertion_ratio = supporting / (supporting + attacking + 1)
+            The +1 prevents division-by-zero and penalises zero supporting.
+        """
+        assertion_ratio = supporting / (supporting + attacking + 1)
+
+        if total_predicates > 0:
+            predicate_ratio = satisfied_predicates / total_predicates
+            score = predicate_ratio * assertion_ratio
+        else:
+            score = assertion_ratio
+
+        return round(min(max(score, 0.0), 1.0), 4)

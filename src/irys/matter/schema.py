@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -583,6 +583,28 @@ CREATE INDEX IF NOT EXISTS ix_authority_issue_link_issue
     ON authority_issue_link(issue_id);
 """
 
+_DDL_PROOF_STATE = """
+CREATE TABLE IF NOT EXISTS proof_state (
+    id                          TEXT PRIMARY KEY,
+    matter_id                   TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    issue_id                    TEXT NOT NULL REFERENCES issue(id) ON DELETE CASCADE,
+    sufficiency                 REAL NOT NULL DEFAULT 0.0,
+    supporting_count            INTEGER NOT NULL DEFAULT 0,
+    attacking_count             INTEGER NOT NULL DEFAULT 0,
+    total_predicate_count       INTEGER NOT NULL DEFAULT 0,
+    satisfied_predicate_count   INTEGER NOT NULL DEFAULT 0,
+    proof_status                TEXT NOT NULL DEFAULT 'insufficient',
+    notes                       TEXT,
+    computed_at                 TEXT NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_proof_state_issue
+    ON proof_state(matter_id, issue_id);
+
+CREATE INDEX IF NOT EXISTS ix_proof_state_status
+    ON proof_state(matter_id, proof_status);
+"""
+
 _DDL_DECISION_CONTEXT = """
 CREATE TABLE IF NOT EXISTS decision_context (
     id                   TEXT PRIMARY KEY,
@@ -1097,6 +1119,19 @@ def _migration_v22(conn) -> None:
             conn.execute(stmt)
 
 
+def _migration_v23(conn) -> None:
+    """Add proof_state table (proof-aware reasoning layer).
+
+    proof_state: one row per issue per matter.  Stores a computed snapshot of
+    each issue's proof coverage: sufficiency score, assertion counts,
+    predicate satisfaction ratio, and a categorical proof_status.
+    """
+    for stmt in _DDL_PROOF_STATE.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            conn.execute(stmt)
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1123,6 +1158,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (20, _migration_v20),
     (21, _migration_v21),
     (22, _migration_v22),
+    (23, _migration_v23),
 ]
 
 

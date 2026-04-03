@@ -1863,3 +1863,78 @@ async def get_issue_authorities(matter_id: str, issue_id: str):
     """Return all authorities linked to an issue, with their relevance."""
     model = _get_matter_model_or_404(matter_id)
     return model.authority.list_for_issue(issue_id)
+
+
+# ---------------------------------------------------------------------------
+# Proof-Aware Reasoning — ProofState endpoints (SO-4)
+# ---------------------------------------------------------------------------
+
+@app.post(
+    "/matter/{matter_id}/proof-state/compute",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def compute_proof_state(matter_id: str):
+    """Recompute proof state for all open issues in the matter.
+
+    Should be called after adding assertions, resolving predicates, or making
+    other changes that affect evidence coverage.  Returns per-issue proof states.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    states = model.proof_state.compute_all()
+    return {"matter_id": matter_id, "updated_count": len(states), "states": states}
+
+
+@app.post(
+    "/matter/{matter_id}/issues/{issue_id}/proof-state/compute",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def compute_issue_proof_state(matter_id: str, issue_id: str):
+    """Recompute proof state for a single issue."""
+    model = _get_matter_model_or_404(matter_id)
+    state = model.proof_state.compute_and_store(issue_id)
+    return state
+
+
+@app.get(
+    "/matter/{matter_id}/proof-state",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_proof_state_summary(matter_id: str):
+    """Return proof coverage summary for the matter.
+
+    Includes aggregate stats (avg sufficiency, count by status) and the full
+    list of per-issue proof states ordered by sufficiency ascending.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    summary = model.proof_state.get_summary()
+    all_states = model.proof_state.get_all()
+    return {"matter_id": matter_id, "summary": summary, "issues": all_states}
+
+
+@app.get(
+    "/matter/{matter_id}/issues/{issue_id}/proof-state",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_issue_proof_state(matter_id: str, issue_id: str):
+    """Return stored proof state for a single issue, or null if not yet computed."""
+    model = _get_matter_model_or_404(matter_id)
+    return model.proof_state.get(issue_id)
+
+
+@app.get(
+    "/matter/{matter_id}/proof-state/gaps",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_proof_gaps(matter_id: str, threshold: float = 0.25):
+    """Return issues with sufficiency below threshold — the weakest proof points.
+
+    threshold: float 0..1, default 0.25.  Issues with sufficiency < threshold
+    are surfaced as requiring additional evidence.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return model.proof_state.get_gaps(threshold=threshold)

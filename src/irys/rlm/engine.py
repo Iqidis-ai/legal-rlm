@@ -2586,6 +2586,13 @@ class RLMEngine:
             except Exception:
                 pass  # best-effort; never block synthesis output
 
+        # Refresh proof state for all open issues (SO-4 proof-aware reasoning).
+        if self._matter_model is not None:
+            try:
+                self._matter_model.proof_state.compute_all()
+            except Exception:
+                pass
+
         self._emit_step(state, StepType.SYNTHESIS, "Analysis complete")
 
     def _extract_and_store_authorities(self, text: str) -> None:
