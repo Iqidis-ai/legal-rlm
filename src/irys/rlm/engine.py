@@ -1255,8 +1255,11 @@ class RLMEngine:
 
             # SO-4 Leak-1+3: re-score leads by live issue coverage weakness each
             # iteration so weaker issues attract more budget as the run progresses.
+            # Guard: only query DB when at least one issue-targeted lead exists in
+            # the queue — avoids 3 unnecessary SQL queries on neutral-only iterations.
             _cov_map: "dict[str, tuple[float, bool, int]]" = {}
-            if self._matter_model is not None:
+            if (self._matter_model is not None
+                    and any(_l.focus_issue_id for _l in pending_leads)):
                 _cov_map = self._get_issue_coverage_map()
                 if _cov_map:
                     _ISSUE_BOOST = 0.35   # α — boost per unit weakness (1 - coverage_fraction)
@@ -1307,20 +1310,15 @@ class RLMEngine:
                     if _boot_preds:
                         _boot_text = (_boot_preds[0].get("description") or "").strip()
                         if _boot_text:
-                            state.add_lead(
+                            _boot_lead = state.add_lead(
                                 description=f"Gap bootstrap: {_boot_text}",
                                 source="coverage_bootstrap",
                                 priority=self.config.min_lead_priority + 0.01,
                                 search_term=_boot_text,
                                 focus_issue_id=_boot_id,
                             )
-                            _boot_fresh = state.get_pending_leads()
-                            _boot_hit = next(
-                                (_l for _l in _boot_fresh if _l.source == "coverage_bootstrap"),
-                                None,
-                            )
-                            if _boot_hit:
-                                leads_to_process.append(_boot_hit)
+                            if _boot_lead is not None:
+                                leads_to_process.append(_boot_lead)
 
             if not leads_to_process:
                 iteration += 1
