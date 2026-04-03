@@ -955,11 +955,16 @@ def _migration_v19(conn) -> None:
         except Exception:
             pass  # column already exists
 
-        # Back-fill existing rows
-        rows = conn.execute(
-            "SELECT id, quant_kind, subject_id, raw_text FROM quant_fact WHERE quant_dedup_key = ''"
-        ).fetchall()
-        if rows:
+        # Back-fill existing rows in chunks of 500 to bound memory use and lock window.
+        _CHUNK = 500
+        while True:
+            rows = conn.execute(
+                "SELECT id, quant_kind, subject_id, raw_text FROM quant_fact"
+                " WHERE quant_dedup_key = '' LIMIT ?",
+                (_CHUNK,),
+            ).fetchall()
+            if not rows:
+                break
             updates = []
             for row in rows:
                 payload = f"{row[1]}:{row[2] or ''}:{(row[3] or '')[:200]}"
