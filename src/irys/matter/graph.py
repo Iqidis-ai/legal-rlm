@@ -646,6 +646,9 @@ class AssertionStore:
             attacker_belief = conflict["attacker_belief"]
             attacked_belief = conflict["attacked_belief"]
 
+            # Keep each operation isolated so force_state failure does not also
+            # suppress gap recording (SO-7 signal must not be lost when belief
+            # revision fails on the same pair).
             try:
                 # Mark attacked assertion as DISPUTED when attacker is high-trust.
                 if (
@@ -662,7 +665,10 @@ class AssertionStore:
                             f"assertion {conflict['attacker_id']}"
                         ),
                     )
+            except Exception:
+                pass  # belief revision failure does not abort gap recording
 
+            try:
                 # Record gap for any open conflict that isn't already resolved.
                 if attacked_belief not in ("superseded", "withdrawn", "resolved"):
                     gap_store.record(
@@ -676,9 +682,7 @@ class AssertionStore:
                         affected_id=attacked_id,
                     )
             except Exception:
-                # One bad pair must not abort the rest of the mining pass.
-                # Mining is re-runnable; partial progress is better than none.
-                pass
+                pass  # gap recording failure does not abort the mining pass
 
         return conflicts
 
@@ -3215,7 +3219,7 @@ class ProofStateStore:
         rows = self.db.execute(
             """SELECT * FROM proof_state
                WHERE matter_id=? AND advocacy_only=1
-               ORDER BY sufficiency ASC""",
+               ORDER BY sufficiency ASC, proof_status""",
             (self.matter_id,),
         ).fetchall()
         return [self._row_to_dict(r) for r in rows]
