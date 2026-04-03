@@ -114,6 +114,37 @@ def test_gap_recorded_and_retrieved(model):
     assert open_gaps[0]["gap_type"] == GapType.MISSING_DOCUMENT.value
 
 
+def test_open_gaps_min_materiality_filters_low_materiality_gaps(model):
+    """open_gaps(min_materiality=X) must exclude gaps whose materiality is below X (SO-7).
+
+    High-materiality gaps are those whose absence materially affects the analysis.
+    Low-materiality gaps (e.g. minor CC emails) should not surface in most contexts.
+    The filter must correctly exclude low-materiality gaps so the system only
+    surfaces actionable missingness.
+    """
+    # High-materiality gap (0.9) — should appear with min_materiality=0.5
+    model.record_gap(
+        gap_type=GapType.MISSING_DOCUMENT,
+        description="Signed amendment not found",
+        materiality=0.9,
+    )
+    # Low-materiality gap (0.1) — should NOT appear with min_materiality=0.5
+    model.record_gap(
+        gap_type=GapType.MISSING_DOCUMENT,
+        description="CC email chain not found",
+        materiality=0.1,
+    )
+
+    high_gaps = model.gaps.open_gaps(min_materiality=0.5)
+    all_gaps = model.gaps.open_gaps(min_materiality=0.0)
+
+    assert len(all_gaps) == 2, "Both gaps must be stored"
+    assert len(high_gaps) == 1, (
+        "open_gaps(min_materiality=0.5) must exclude the gap with materiality=0.1"
+    )
+    assert high_gaps[0]["description"] == "Signed amendment not found"
+
+
 # ---------------------------------------------------------------------------
 # Test 5: NullMatterAdapter is a safe no-op
 # ---------------------------------------------------------------------------
