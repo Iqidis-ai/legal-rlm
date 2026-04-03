@@ -2468,9 +2468,9 @@ class RLMEngine:
         mid = self._matter_model.matter_id
 
         rows = self._matter_model.db.execute(
-            """SELECT i.id, i.title, i.materiality_score
+            """SELECT i.id, i.title, i.materiality
                FROM issue i
-               WHERE i.matter_id=? AND i.status='open' AND i.materiality_score >= 0.4
+               WHERE i.matter_id=? AND i.status='open' AND i.materiality >= 0.4
                  AND NOT EXISTS (
                      SELECT 1 FROM assertion_issue_link ail
                      WHERE ail.issue_id=i.id
@@ -2492,7 +2492,7 @@ class RLMEngine:
                 gap_type=GapType.MISSING_DOCUMENT,
                 description=f"No supporting evidence found for issue: '{row['title']}'",
                 expected_artifact=f"Evidence supporting: {row['title']}",
-                materiality=row["materiality_score"] or 0.5,
+                materiality=row["materiality"] or 0.5,
                 affected_type="issue",
                 affected_id=row["id"],
             )

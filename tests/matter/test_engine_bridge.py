@@ -367,3 +367,63 @@ def test_so5_same_proposition_complaint_vs_contract(model):
     source_roles = {occ["source_role"] for occ in occurrences}
     assert "advocacy" in source_roles, "Complaint must be tagged as advocacy source"
     assert "operative" in source_roles, "Contract must be tagged as operative source"
+
+
+# ---------------------------------------------------------------------------
+# SO-7: _detect_proof_gaps() SQL correctness
+# ---------------------------------------------------------------------------
+
+def test_detect_proof_gaps_records_gap_for_unsupported_issue(model):
+    """_detect_proof_gaps() must record exactly one proof-gap for issues with no supporting assertions.
+
+    Tests:
+    - Only issues with materiality >= 0.4 get proof-gap records
+    - Issues that already have a supporting assertion are not gapped
+    - Already-gapped issues are not duplicated
+    - SQL column names are correct (regression test for materiality vs materiality_score)
+    """
+    from irys.matter.enums import IssueType, GapType
+
+    # Create three issues
+    issue_low, _ = model.issues.upsert_issue(
+        title="Minor procedural claim",
+        issue_type=IssueType.CLAIM,
+        materiality=0.2,   # below threshold — should NOT be gapped
+        salience=0.5,
+    )
+    issue_high, _ = model.issues.upsert_issue(
+        title="Breach of contract",
+        issue_type=IssueType.CLAIM,
+        materiality=0.8,   # above threshold — should be gapped (no support)
+        salience=0.5,
+    )
+    issue_supported, _ = model.issues.upsert_issue(
+        title="Payment amount",
+        issue_type=IssueType.CLAIM,
+        materiality=0.7,   # above threshold but HAS supporting assertion
+        salience=0.5,
+    )
+
+    # Add a supporting assertion for issue_supported
+    run_id = model.start_run("Proof gap test")
+    from irys.matter.runtime import MatterRuntimeAdapter
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid = adapter.record_fact("Payment was $50,000 per the contract.", "contract.pdf",
+                               issue_id=issue_supported)
+
+    # Verify the link was created
+    assert model.assertions.count() == 1
+
+    # Run _detect_proof_gaps() via a minimal engine
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    engine._detect_proof_gaps()
+
+    open_gaps = model.gaps.open_gaps(min_materiality=0.0)
+    # Only issue_high (materiality=0.8, no support) should produce a proof gap
+    assert len(open_gaps) == 1
+    assert "Breach of contract" in open_gaps[0]["description"]
+
+    # Running again must not create a duplicate
+    engine._detect_proof_gaps()
+    assert len(model.gaps.open_gaps()) == 1, "duplicate proof-gap runs must be idempotent"
