@@ -98,6 +98,31 @@ def infer_source_role(document_id: str) -> SourceRole:
     return SourceRole.UNKNOWN
 
 
+_SOURCE_SIDE_PLAINTIFF_PATTERN = re.compile(
+    r"(plaintiff|plaintif|petitioner|claimant|complainant|prosecution|relator)",
+    re.IGNORECASE,
+)
+_SOURCE_SIDE_DEFENDANT_PATTERN = re.compile(
+    r"(defendant|respondent|defense|defence|accused)",
+    re.IGNORECASE,
+)
+
+
+def infer_source_side(document_id: str) -> Optional[str]:
+    """Infer litigation side from document filename/path keywords.
+
+    Returns "plaintiff", "defendant", or None (neutral/unknown).
+    Neutral documents (court orders, third-party records) return None.
+    """
+    # Check full path in case directory names encode side (e.g. "plaintiff_docs/")
+    path_str = document_id.replace("\\", "/").lower()
+    if _SOURCE_SIDE_PLAINTIFF_PATTERN.search(path_str):
+        return "plaintiff"
+    if _SOURCE_SIDE_DEFENDANT_PATTERN.search(path_str):
+        return "defendant"
+    return None
+
+
 class MatterRuntimeAdapter:
     """
     Thin adapter used by RLMEngine when enable_matter_model=True.
@@ -187,6 +212,7 @@ class MatterRuntimeAdapter:
             document_id=document_id,
             span_id=span_id,
             source_role=source_role,
+            source_side=infer_source_side(document_id),
             speech_act=speech_act,
             origin_kind=OriginKind.EXTRACTED,
         )
