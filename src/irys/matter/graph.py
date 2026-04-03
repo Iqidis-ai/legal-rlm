@@ -511,16 +511,20 @@ class AssertionStore:
         Caps at 50 assertions per issue to prevent O(n²) explosion on large graphs.
         Returns the number of new contradiction links created.
         """
+        # Conservative negation markers only: unambiguous grammatical negation.
+        # Removed: 'failed', 'denied', 'refused', 'rejected', 'absent', 'missing',
+        # 'void' — these carry independent semantic content and trigger false positives
+        # (e.g. 'failed to deliver' vs 'failed to pay' are not contradictions).
         _NEGATION_WORDS = frozenset(
             ["not", "never", "cannot", "can't", "didn't", "wasn't", "hasn't",
-             "haven't", "don't", "doesn't", "isn't", "aren't", "failed",
-             "denied", "refused", "rejected", "absent", "missing", "void"]
+             "haven't", "don't", "doesn't", "isn't", "aren't"]
         )
         _STOP_WORDS = frozenset(
             ["the", "and", "or", "but", "in", "on", "at", "to", "for", "of",
              "with", "by", "from", "as", "this", "that", "these", "those"]
         )
         _SIMILARITY_THRESHOLD = 0.4
+        _MIN_OVERLAP_COUNT = 2   # require ≥2 shared significant words, not just ratio
         _MAX_PER_ISSUE = 50
 
         def _tokenize(text: str) -> frozenset:
@@ -560,6 +564,7 @@ class AssertionStore:
                    JOIN assertion_issue_link ail ON ail.assertion_id = a.id
                    WHERE ail.issue_id=? AND a.matter_id=?
                      AND a.belief_state NOT IN ('superseded','withdrawn','resolved')
+                   ORDER BY a.created_at
                    LIMIT ?""",
                 (issue_id, self.matter_id, _MAX_PER_ISSUE),
             ).fetchall()
@@ -579,7 +584,12 @@ class AssertionStore:
                     union = ta | tb
                     if not union:
                         continue
-                    similarity = len(ta & tb) / len(union)
+                    intersection = ta & tb
+                    # Require both ratio threshold AND minimum absolute overlap count
+                    # to reduce false positives from short assertions with few tokens.
+                    if len(intersection) < _MIN_OVERLAP_COUNT:
+                        continue
+                    similarity = len(intersection) / len(union)
                     if similarity < _SIMILARITY_THRESHOLD:
                         continue
                     neg_a = _has_negation(a["proposition_text"])

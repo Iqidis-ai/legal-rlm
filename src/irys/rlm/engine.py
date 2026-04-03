@@ -2796,7 +2796,24 @@ class RLMEngine:
         except Exception:
             return ""
 
-        advocacy_issues = [ps for ps in ps_rows if ps.get("advocacy_only")]
+        # Restrict to open issues only (Tier 1 correctness fix: stale closed-issue
+        # proof states must not over-constrain synthesis).
+        try:
+            open_issue_ids = {
+                row["id"]
+                for row in self._matter_model.db.execute(
+                    "SELECT id FROM issue WHERE matter_id=? AND status='open'",
+                    (self._matter_model.matter_id,),
+                ).fetchall()
+            }
+        except Exception:
+            open_issue_ids = None  # fallback: do not filter
+
+        advocacy_issues = [
+            ps for ps in ps_rows
+            if ps.get("advocacy_only")
+            and (open_issue_ids is None or ps.get("issue_id") in open_issue_ids)
+        ]
         if not advocacy_issues:
             return ""
 
