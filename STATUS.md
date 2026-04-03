@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-03 (post-adversarial-audit #018 + schema v28)
+Last updated: 2026-04-03 (post-adversarial-audit #019 + schema v29)
 Branch: SebihSpecial
 
 ---
@@ -17,12 +17,12 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 | Outcome | Status | Notes |
 |---------|--------|-------|
-| SO-1: Durable Matter Model | **PASS** | DocumentInventoryStore; operative version enforced; SHA256-keyed re-ingest |
-| SO-2: Typed Assertion Graph + Truth Maintenance | **PARTIAL** | Adversarial #018 PARTIAL — incremental backlog; core trust-weighted belief revision PASS |
-| SO-3: User-Steerable Reasoning | **PARTIAL** | Adversarial #018 PARTIAL — incremental backlog; steering mechanisms PASS |
-| SO-4: Issue-Driven Architecture | **PARTIAL** | Adversarial #018 PARTIAL — incremental backlog; issue model backbone PASS |
-| SO-5: Source-Aware Intelligence | **PASS** | Per-title hedge check (±300 char window); Factual Background scan; expanded hedge markers; 3 new structural violation tests |
-| SO-6: Quantitative Intelligence | **PARTIAL** | Adversarial #018 PARTIAL — incremental backlog; quant gate PASS |
+| SO-1: Durable Matter Model | **PARTIAL** | Audit #019: reuse opportunistic, no >70% gate. Schema v29 adds measurable reuse_rate to run_session; target in get_so_metrics() |
+| SO-2: Typed Assertion Graph + Truth Maintenance | **PASS** | Audit #019 PASS — BFS propagation confirmed; belief revision chain tested |
+| SO-3: User-Steerable Reasoning | **PARTIAL** | Audit #019: steering mechanisms PASS; ledger actionability gap. Added get_ledger_steering_surface() — structured action affordances |
+| SO-4: Issue-Driven Architecture | **PASS** | Audit #019 PASS — live issue-coverage weakness drives lead scoring; per-claim reporting confirmed |
+| SO-5: Source-Aware Intelligence | **PASS** | Tier 1 r8 CLEAN; structural violation gate; per-title hedge check |
+| SO-6: Quantitative Intelligence | **PASS** | Audit #019 PASS — QuantStore read and used; reconcile_payment_chain() flows to user |
 | SO-7: Missingness Modeled | **PASS** | Total gap count surfaced in synthesis; gap recording isolated |
 
 ---
@@ -88,45 +88,36 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | #015 | SO-1/2/3/4/5/7 PASS; SO-6 PARTIAL | Hard quant gate added |
 | #016 | SO-1/2/3/4/7 PASS; SO-5/6 PARTIAL | Hard advocacy + quant gates added |
 | #017 | SO-1–SO-6 PASS; SO-7 PARTIAL → **FIXED** | Gap count now shows total vs filtered |
+| #018 | SO-1/5/7 PASS; SO-2/3/4/6 PARTIAL | SO-5 FAIL fixed; incremental backlog for others |
+| #019 | SO-2/4/5/6/7 PASS; SO-1/3 PARTIAL | SO-1 downgraded (no reuse gate); SO-3 ledger actionability gap |
 
-**Tier 1 reviews:** Correctness R2 CLEAN. Performance R2/R3/R4: all MEDIUMs in progress/addressed.
+**Tier 1 reviews:** Correctness r8 CLEAN. Performance r3 CLEAN.
 
 ---
 
 ## Active Work
 
-### JUST COMPLETED — SO-5 Tier 1 loop (8 correctness rounds + 3 performance rounds)
+### JUST COMPLETED — Adversarial Audit #019 + SO-1/SO-3 PARTIAL fixes
 
-Tier 1 loop for SO-5 advocacy gate is now CLEAN after extensive hardening:
+**Audit #019 results:** SO-2/4/5/6/7 all PASS. SO-1 downgraded (reuse opportunistic, no measurable threshold).
+SO-3 PARTIAL maintained (steering mechanisms work; ledger surface was raw event logs).
 
-1. **BFS override cache** — `BeliefRevisionEngine.apply()` pre-fetches trust overrides once; passes
-   `_override_cache` through `_revise_one()` → `get_neighbor_belief_states()`. Eliminates 1 DB
-   query per BFS node during belief propagation. (`belief_revision.py`, `graph.py`)
+**SO-1 fix (schema v29):**
+- `run_session` gains `assertions_at_start INTEGER` + `reuse_rate REAL` columns
+- `start_run()` snapshots assertion count; `complete_run()` computes `at_start / at_end`
+- `get_so_metrics()` averages reuse_rate over 5 recent completed runs; target 0.70 in targets/targets_met
+- 7 new tests verify snapshot, computation, and metric aggregation
 
-2. **CTE-based neighbor lookup** — `get_neighbor_belief_states()` replaced 2×N correlated scalar
-   subqueries with a single CTE + `ROW_NUMBER()` window pass over `assertion_occurrence`. (`graph.py`)
+**SO-3 fix — `get_ledger_steering_surface()`:**
+- New `MatterModel.get_ledger_steering_surface(run_id, limit)` method
+- Derives structured steering actions from: active conflicts, low-coverage issues,
+  high-materiality missing-doc gaps, pending clarifications, disputed/unknown assertions
+- Each action: `action_type`, `description`, `params` (ready to pass to API), `rationale`, `priority`, `impact`
+- Sorted high → medium → low priority; 8 new tests
 
-3. **CTE-based proof state computation** — `compute_and_store()` replaced two separate queries
-   (each with N correlated subqueries) with one CTE covering both sup/atk. (`graph.py`)
+Previous session: SO-5 Tier 1 loop (8 correctness rounds + 3 performance rounds) CLEAN.
 
-4. **Targeted per-document proof recompute** — `engine._deep_read_document()` now resolves
-   impacted issue IDs via `assertion_issue_link` and calls `compute_and_store()` only for those
-   issues instead of `compute_all()` on every document ingest. (`engine.py`)
-
-5. **Targeted proof recompute in set_trust_override()** — already done in prior session:
-   resolves affected issues from `assertion_issue_link` rather than `compute_all()`. (`matter.py`)
-
-6. **SO-7 gap transparency** — `_build_gap_summary()` now fetches all open gaps and surfaces total
-   count with explicit note about omitted lower-materiality gaps. Adversarial audit #017 PARTIAL fixed.
-
-Previous session (Tier 1 correctness, also CLEAN):
-- Zip alignment guard in `_compute_belief_state()`
-- `ORDER BY ao.id ASC` tiebreaker in `_doc_subq` and `_doc_subquery`
-- Backslash LIKE fix (`'%\\'` → single backslash Windows path matching)
-- Narrowed `except Exception` → `(sqlite3.Error, ValueError, RuntimeError)` + logging
-- BFS enqueued set for O(V) queue size on dense graphs
-
-HEAD: 58a134e
+HEAD: 4834db0
 
 ---
 
@@ -138,10 +129,10 @@ None active.
 
 ## Key Metrics (Current)
 
-- Tests passing: 690 / 690
-- Schema version: v28
-- SO-1, SO-5, SO-7: PASS; SO-2, SO-3, SO-4, SO-6: PARTIAL (adversarial #018)
+- Tests passing: 705 / 705
+- Schema version: v29
+- SO-2, SO-4, SO-5, SO-6, SO-7: PASS; SO-1, SO-3: PARTIAL (adversarial #019)
 - Tier 1 correctness: **CLEAN** (r8 — 8 rounds on SO-5 advocacy gate)
 - Tier 1 performance: **CLEAN** (r3 — patterns hoisted to module-level constants)
-- Adversarial audit #018: DONE — SO-5 FAIL fixed; SO-2/3/4/6/7 PARTIAL (incremental)
-- Next adversarial audit (#019): due NOW (8+ Codex sessions since #018)
+- Adversarial audit #019: DONE — SO-2/4/6 upgraded to PASS; SO-1 downgraded; SO-3 PARTIAL
+- Next adversarial audit (#020): due after ~5 more Codex sessions
