@@ -162,6 +162,13 @@ def _serialize_result(result) -> tuple[list, dict]:
     return citations, entities
 
 
+def _url_to_str(u) -> str:
+    """Normalize UrlInput (str or UrlWithMetadata) to a plain URL string."""
+    if isinstance(u, str):
+        return u
+    return str(getattr(u, "url", u))
+
+
 def _compute_corpus_key(descriptor: str) -> str:
     """Derive a stable 16-char hex key from a corpus descriptor string.
 
@@ -1074,7 +1081,7 @@ async def _run_urls_investigation(
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
-        corpus_key = _compute_corpus_key(",".join(sorted(request.s3_urls)))
+        corpus_key = _compute_corpus_key(",".join(sorted(_url_to_str(u) for u in request.s3_urls)))
         matter_id = _wire_matter_model(irys, str(temp_dir), corpus_key, config)
         if matter_id:
             job.matter_id = matter_id
@@ -1214,7 +1221,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
-        urls_corpus_key = _compute_corpus_key(",".join(sorted(request.s3_urls)))
+        urls_corpus_key = _compute_corpus_key(",".join(sorted(_url_to_str(u) for u in request.s3_urls)))
         urls_matter_id = _wire_matter_model(irys, str(temp_dir), urls_corpus_key, config)
 
         result = await irys.investigate(
