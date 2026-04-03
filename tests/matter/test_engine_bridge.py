@@ -1568,3 +1568,88 @@ def test_build_query_context_populates_key_predicates():
     assert "executed_contract" in ctx.key_predicates, "executed_contract must appear in key_predicates"
     # agreed_to_pay has 3 rows vs 1 for executed_contract → must rank first
     assert ctx.key_predicates[0] == "agreed_to_pay", "predicates ordered by frequency descending"
+
+
+# ---------------------------------------------------------------------------
+# SO-4: _build_issue_coverage_summary()
+# ---------------------------------------------------------------------------
+
+def test_build_issue_coverage_summary_no_model():
+    """_build_issue_coverage_summary() with no matter model returns safe fallback."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = None
+
+    result = engine._build_issue_coverage_summary()
+    assert "available" in result.lower() or "no" in result.lower()
+
+
+def test_build_issue_coverage_summary_no_issues():
+    """_build_issue_coverage_summary() with no open issues returns 'No open issues'."""
+    model = MatterModel.open_in_memory()
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_issue_coverage_summary()
+    assert "no open issues" in result.lower()
+
+
+def test_build_issue_coverage_summary_shows_coverage():
+    """_build_issue_coverage_summary() must show each issue with strength label and assertion count."""
+    from irys.matter import MatterModel, AssertionCandidate
+    from irys.matter.enums import SpeechAct, OriginKind, AssertionKind, ModelLayer, SourceRole
+
+    model = MatterModel.open_in_memory()
+
+    # Create an issue
+    from irys.matter.enums import IssueType
+    issue_id, _ = model.issues.upsert_issue(
+        title="Breach of payment obligation",
+        issue_type=IssueType.CLAIM,
+        materiality=0.9,
+    )
+
+    # Record 2 assertions and link both to the issue
+    for i in range(2):
+        c = AssertionCandidate(
+            proposition_text=f"Defendant failed to pay invoice {i}",
+            assertion_kind=AssertionKind.FACTUAL,
+            speech_act=SpeechAct.ALLEGED,
+            origin_kind=OriginKind.EXTRACTED,
+            model_layer=ModelLayer.RECORD,
+            source_role=SourceRole.ADVOCACY,
+            document_id="complaint.pdf",
+        )
+        aid, _ = model.record_assertion(c)
+        model.issues.link_assertion(aid, issue_id, "supports")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_issue_coverage_summary()
+
+    assert "Breach of payment obligation" in result, f"Issue title missing from: {result}"
+    # 2 supporting assertions → coverage_fraction = 2/3 ≈ 0.67 → STRONG
+    assert "STRONG" in result, f"Expected STRONG coverage label: {result}"
+    assert "2" in result, f"Expected assertion count 2 in: {result}"
+
+
+def test_build_issue_coverage_summary_weak_coverage_no_assertions():
+    """An issue with zero supporting assertions must be labeled WEAK."""
+    model = MatterModel.open_in_memory()
+
+    from irys.matter.enums import IssueType
+    model.issues.upsert_issue(
+        title="Fraud claim",
+        issue_type=IssueType.CLAIM,
+        materiality=0.8,
+    )  # return value not needed — we just need the issue to exist
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_issue_coverage_summary()
+
+    assert "Fraud claim" in result
+    assert "WEAK" in result, f"Expected WEAK label for zero-assertion issue: {result}"
+    assert "0" in result, f"Expected 0 supporting assertions in: {result}"
