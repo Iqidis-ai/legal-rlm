@@ -531,3 +531,47 @@ def test_get_supports_empty_when_no_links(model):
         make_candidate("Isolated assertion with no support.", doc_id="doc.pdf"))
 
     assert model.assertions.get_supports(isolated_id) == []
+
+
+# ---------------------------------------------------------------------------
+# SO-5: Multi-source ambiguity in list_recent_for_hydration
+# ---------------------------------------------------------------------------
+
+def test_list_recent_for_hydration_surfaces_multi_source_roles(model):
+    """list_recent_for_hydration() must expose source_roles_csv when a proposition
+    appears in both advocacy and operative documents (SO-5 multi-source ambiguity).
+
+    The same proposition in a complaint (advocacy) and a signed contract (operative)
+    represents a fundamentally different evidentiary situation than either alone.
+    The hydration path must preserve this ambiguity so the display label shows
+    MULTI-SOURCE[OPERATIVE,ADVOCACY] rather than just OPERATIVE.
+    """
+    # Same proposition appears in both an advocacy document and an operative document.
+    assert_id, _ = model.assertions.upsert_occurrence(
+        make_candidate(
+            "The payment of $100,000 was due on January 1.",
+            doc_id="complaint.pdf",
+            speech_act=SpeechAct.ALLEGED,
+            source_role=SourceRole.ADVOCACY,
+        )
+    )
+    # Second occurrence — same assertion, different source role
+    model.assertions.upsert_occurrence(
+        make_candidate(
+            "The payment of $100,000 was due on January 1.",
+            doc_id="contract.pdf",
+            speech_act=SpeechAct.OPERATIVE,
+            source_role=SourceRole.OPERATIVE,
+        )
+    )
+
+    rows = model.assertions.list_recent_for_hydration(limit=10)
+    matching = [r for r in rows if r["id"] == assert_id]
+    assert len(matching) == 1, "Assertion must be deduplicated to one row"
+
+    row = matching[0]
+    csv = row.get("source_roles_csv") or ""
+    roles = set(csv.split(",")) if csv else set()
+    assert "advocacy" in roles, "source_roles_csv must include 'advocacy'"
+    assert "operative" in roles, "source_roles_csv must include 'operative'"
+    assert len(roles) >= 2, "Multi-source assertion must expose both distinct roles"

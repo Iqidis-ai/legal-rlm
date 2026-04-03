@@ -1639,7 +1639,23 @@ class RLMEngine:
             if belief_state in _inactive_states:
                 continue
             source_role = row.get("primary_source_role") or row.get("source_role") or "unknown"
-            label = source_role.upper()
+            # Surface multi-source ambiguity (SO-5): when the same proposition appears in
+            # both advocacy and operative documents, show all distinct roles so the LLM
+            # can distinguish "contract clause alleged by plaintiff" from
+            # "operative contract clause". Collapse only if truly single-source.
+            _roles_csv = row.get("source_roles_csv") or ""
+            _all_roles = [r for r in _roles_csv.split(",") if r] if _roles_csv else []
+            if len(_all_roles) > 1:
+                # Sort by trust descending for readability; de-dup preserving order
+                _seen = set()
+                _deduped = []
+                for _r in _all_roles:
+                    if _r not in _seen:
+                        _seen.add(_r)
+                        _deduped.append(_r)
+                label = "MULTI-SOURCE[" + ",".join(r.upper() for r in _deduped) + "]"
+            else:
+                label = source_role.upper()
             # Strip any existing [ROLE] prefix to prevent double-labeling legacy rows
             prop_clean = _strip_role_prefix('', prop)
             # Prepend structured SPO annotation when the DB has typed fields (SO-2 read-back).

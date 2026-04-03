@@ -515,7 +515,10 @@ class AssertionStore:
                          WHEN 'draft'         THEN 1
                          WHEN 'unknown'       THEN 1
                          WHEN 'advocacy'      THEN 0
-                         ELSE 1 END DESC, ao.created_at ASC LIMIT 1) AS source_role
+                         ELSE 1 END DESC, ao.created_at ASC LIMIT 1) AS source_role,
+                      (SELECT GROUP_CONCAT(DISTINCT ao2.source_role)
+                       FROM assertion_occurrence ao2
+                       WHERE ao2.assertion_id = a.id) AS source_roles_csv
                FROM assertion a
                WHERE a.matter_id=?
                  AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
