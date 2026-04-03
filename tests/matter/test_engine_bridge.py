@@ -199,6 +199,34 @@ def test_adapter_log_step_writes_ledger_event():
     assert "payment" in step_events[0]["summary"].lower()
 
 
+def test_adapter_log_step_stores_why_field():
+    """log_step(why=...) must persist the 'why' field in the ledger event (SO-3).
+
+    The reasoning ledger is 'structured, user-facing, and actionable' (SO-3).
+    The 'why' field explains WHY the engine is taking a step — it's critical
+    context for the user to understand and steer the investigation.  If 'why'
+    is silently discarded, the ledger loses its most actionable field.
+    """
+    from irys.matter import LedgerEventType
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Why-field test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    adapter.log_step(
+        "Searching for payment records",
+        why="Causation element requires payment history; no payment assertions found yet"
+    )
+
+    events = model.ledger.get_events(run_id)
+    step_events = [e for e in events if e["event_type"] == LedgerEventType.PROGRESS_NOTE.value]
+    assert len(step_events) >= 1
+    assert step_events[0].get("why") is not None, (
+        "log_step() must persist the 'why' field to the ledger — it is part of the actionable "
+        "reasoning ledger that makes the system user-steerable (SO-3)"
+    )
+    assert "payment" in step_events[0]["why"].lower() or "causation" in step_events[0]["why"].lower()
+
+
 def test_adapter_log_warning_writes_system_warning_event():
     """log_warning() must write a SYSTEM_WARNING ledger event (SO-3).
 
