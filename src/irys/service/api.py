@@ -1553,6 +1553,34 @@ async def correct_assertion(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
+    # SO-3 active-run steering: inject correction as a synthetic clarification
+    # so the currently-running investigation loop re-examines related evidence.
+    try:
+        assertion_record = model.assertions.get(assertion_id)
+        if assertion_record is not None:
+            active_run = model.db.execute(
+                "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
+                " ORDER BY started_at DESC LIMIT 1",
+                (matter_id,),
+            ).fetchone()
+            if active_run is not None:
+                prop_text = assertion_record.proposition_text[:100]
+                synth_note = request.note or ""
+                synth_q_id = model.clarifications.add_question(
+                    question_text=(
+                        f"User correction: '{prop_text}' → {request.new_belief_state}"
+                    ),
+                    run_id=active_run["id"],
+                    why_it_matters="User directly corrected an assertion during this run",
+                )
+                model.clarifications.answer_question(
+                    synth_q_id,
+                    f"Assertion '{prop_text}' corrected to {request.new_belief_state}. "
+                    f"Re-examine evidence related to this claim. {synth_note}".strip(),
+                )
+    except Exception:
+        pass  # steering injection is best-effort; never block the response
+
     return {
         "assertion_id": assertion_id,
         "old_belief_state": result.old_belief_state.value,
