@@ -2373,7 +2373,11 @@ class RLMEngine:
         if self._matter_model is None:
             return ""
         try:
-            rows = self._matter_model.assertions.db.execute(
+            # Fetch 60 most-recent typed assertions using the existing
+            # ix_assertion_matter_created index (no full-scan), then sort
+            # by SPO completeness in Python to avoid an unindexable ORDER BY
+            # CASE expression that would force a full matter-scan.
+            _candidates = self._matter_model.assertions.db.execute(
                 """SELECT a.proposition_text, a.predicate_key, a.subject_ref_id,
                           a.object_json, a.belief_state,
                           (SELECT ao.source_role FROM assertion_occurrence ao
@@ -2388,14 +2392,20 @@ class RLMEngine:
                      AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
                      AND (a.predicate_key IS NOT NULL OR a.subject_ref_id IS NOT NULL
                           OR a.object_json IS NOT NULL)
-                   ORDER BY
-                     (CASE WHEN a.predicate_key IS NOT NULL THEN 1 ELSE 0 END +
-                      CASE WHEN a.subject_ref_id IS NOT NULL THEN 1 ELSE 0 END +
-                      CASE WHEN a.object_json IS NOT NULL THEN 1 ELSE 0 END) DESC,
-                     a.created_at DESC
-                   LIMIT 30""",
+                   ORDER BY a.created_at DESC
+                   LIMIT 60""",
                 (self._matter_model.matter_id,),
             ).fetchall()
+            # Sort by completeness score (count of non-null SPO fields) then keep top 30
+            rows = sorted(
+                _candidates,
+                key=lambda r: (
+                    (1 if r["predicate_key"] else 0) +
+                    (1 if r["subject_ref_id"] else 0) +
+                    (1 if r["object_json"] else 0)
+                ),
+                reverse=True,
+            )[:30]
         except Exception:
             return ""
 
