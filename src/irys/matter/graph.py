@@ -1995,3 +1995,232 @@ class DecisionContextStore:
             "DELETE FROM decision_context WHERE matter_id=?",
             (self.matter_id,),
         )
+
+
+class AuthorityStore:
+    """Stores legal authorities as structured objects (SO-4 legal research layer).
+
+    Authorities are cases, statutes, regulations, rules, and secondary sources
+    cited in the matter analysis.  Each authority is uniquely identified by its
+    citation within a matter.
+
+    Valid authority_type values:
+        case, statute, regulation, rule, secondary, unknown
+
+    Valid weight values:
+        binding, persuasive, neutral, unknown
+
+    Valid relevance values (for issue links):
+        supporting, attacking, neutral
+    """
+
+    VALID_TYPES = frozenset({
+        "case", "statute", "regulation", "rule", "secondary", "unknown",
+    })
+    VALID_WEIGHTS = frozenset({
+        "binding", "persuasive", "neutral", "unknown",
+    })
+    VALID_RELEVANCE = frozenset({
+        "supporting", "attacking", "neutral",
+    })
+
+    def __init__(self, db: "SQLiteMatterDB", matter_id: str) -> None:
+        self.db = db
+        self.matter_id = matter_id
+
+    # ------------------------------------------------------------------
+    # Write
+    # ------------------------------------------------------------------
+
+    def upsert(
+        self,
+        citation: str,
+        authority_type: str = "case",
+        name: Optional[str] = None,
+        jurisdiction: Optional[str] = None,
+        decided_at: Optional[str] = None,
+        holdings: Optional[list] = None,
+        key_rules: Optional[list] = None,
+        weight: str = "persuasive",
+        applicability: Optional[str] = None,
+        source_doc_id: Optional[str] = None,
+        source_span_id: Optional[str] = None,
+    ) -> tuple[str, bool]:
+        """Create or update an authority by citation.
+
+        Returns (authority_id, is_new).
+        holdings and key_rules are stored as JSON arrays.
+        """
+        import json as _json
+
+        citation = citation.strip()
+        if not citation:
+            raise ValueError("citation must not be blank")
+        if authority_type not in self.VALID_TYPES:
+            authority_type = "unknown"
+        if weight not in self.VALID_WEIGHTS:
+            weight = "unknown"
+
+        holdings_json = _json.dumps(holdings) if holdings is not None else None
+        key_rules_json = _json.dumps(key_rules) if key_rules is not None else None
+        now = _now()
+
+        with self.db.transaction():
+            row = self.db.execute(
+                "SELECT id FROM authority WHERE matter_id=? AND citation=?",
+                (self.matter_id, citation),
+            ).fetchone()
+
+            if row is not None:
+                auth_id = row["id"]
+                self.db.execute(
+                    """UPDATE authority
+                       SET authority_type=?, name=?, jurisdiction=?, decided_at=?,
+                           holdings=?, key_rules=?, weight=?, applicability=?,
+                           source_doc_id=?, source_span_id=?, updated_at=?
+                       WHERE id=?""",
+                    (authority_type, name, jurisdiction, decided_at,
+                     holdings_json, key_rules_json, weight, applicability,
+                     source_doc_id, source_span_id, now, auth_id),
+                )
+                return auth_id, False
+
+            auth_id = _id()
+            self.db.execute(
+                """INSERT INTO authority
+                   (id, matter_id, authority_type, citation, name, jurisdiction,
+                    decided_at, holdings, key_rules, weight, applicability,
+                    source_doc_id, source_span_id, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (auth_id, self.matter_id, authority_type, citation, name,
+                 jurisdiction, decided_at, holdings_json, key_rules_json,
+                 weight, applicability, source_doc_id, source_span_id, now, now),
+            )
+        return auth_id, True
+
+    def link_to_issue(
+        self,
+        authority_id: str,
+        issue_id: str,
+        relevance: str = "supporting",
+    ) -> None:
+        """Link an authority to an issue.  Idempotent."""
+        if relevance not in self.VALID_RELEVANCE:
+            relevance = "neutral"
+        now = _now()
+        self.db.execute(
+            """INSERT OR REPLACE INTO authority_issue_link
+               (authority_id, issue_id, relevance, created_at)
+               VALUES (?,?,?,?)""",
+            (authority_id, issue_id, relevance, now),
+        )
+
+    def unlink_from_issue(self, authority_id: str, issue_id: str) -> None:
+        """Remove an authority-issue link."""
+        self.db.execute(
+            "DELETE FROM authority_issue_link WHERE authority_id=? AND issue_id=?",
+            (authority_id, issue_id),
+        )
+
+    # ------------------------------------------------------------------
+    # Read
+    # ------------------------------------------------------------------
+
+    def get(self, authority_id: str) -> Optional[dict]:
+        """Return a single authority by id, or None."""
+        row = self.db.execute(
+            "SELECT * FROM authority WHERE id=?",
+            (authority_id,),
+        ).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def get_by_citation(self, citation: str) -> Optional[dict]:
+        """Return an authority by citation string, or None."""
+        row = self.db.execute(
+            "SELECT * FROM authority WHERE matter_id=? AND citation=?",
+            (self.matter_id, citation.strip()),
+        ).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def list_all(
+        self,
+        authority_type: Optional[str] = None,
+        weight: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Return authorities, optionally filtered by type or weight."""
+        params: list = [self.matter_id]
+        clauses: list[str] = ["matter_id=?"]
+
+        if authority_type:
+            clauses.append("authority_type=?")
+            params.append(authority_type)
+        if weight:
+            clauses.append("weight=?")
+            params.append(weight)
+
+        params.append(limit)
+        rows = self.db.execute(
+            "SELECT * FROM authority WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY weight DESC, citation ASC LIMIT ?",
+            params,
+        ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    def list_for_issue(self, issue_id: str) -> list[dict]:
+        """Return all authorities linked to an issue, with their relevance."""
+        rows = self.db.execute(
+            """SELECT a.*, l.relevance AS link_relevance
+               FROM authority a
+               JOIN authority_issue_link l ON l.authority_id = a.id
+               WHERE l.issue_id=?
+               ORDER BY a.weight DESC, a.citation ASC""",
+            (issue_id,),
+        ).fetchall()
+        results = []
+        for r in rows:
+            d = self._row_to_dict(r)
+            d["link_relevance"] = r["link_relevance"]
+            results.append(d)
+        return results
+
+    def count(self) -> int:
+        """Total authority records for this matter."""
+        row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM authority WHERE matter_id=?",
+            (self.matter_id,),
+        ).fetchone()
+        return row["n"] if row else 0
+
+    def search(self, query: str, limit: int = 20) -> list[dict]:
+        """Substring search across citation and name fields."""
+        pattern = f"%{query}%"
+        rows = self.db.execute(
+            """SELECT * FROM authority
+               WHERE matter_id=?
+                 AND (citation LIKE ? OR name LIKE ?)
+               ORDER BY weight DESC, citation ASC
+               LIMIT ?""",
+            (self.matter_id, pattern, pattern, limit),
+        ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_dict(row) -> dict:
+        import json as _json
+        d = dict(row)
+        for field in ("holdings", "key_rules"):
+            raw = d.get(field)
+            if raw is not None:
+                try:
+                    d[field] = _json.loads(raw)
+                except (TypeError, ValueError):
+                    d[field] = []
+            else:
+                d[field] = []
+        return d

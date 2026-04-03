@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -543,6 +543,46 @@ CREATE INDEX IF NOT EXISTS ix_annotation_recent
     ON document_annotation(matter_id, created_at DESC);
 """
 
+_DDL_AUTHORITY = """
+CREATE TABLE IF NOT EXISTS authority (
+    id               TEXT PRIMARY KEY,
+    matter_id        TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    authority_type   TEXT NOT NULL DEFAULT 'case',
+    citation         TEXT NOT NULL,
+    name             TEXT,
+    jurisdiction     TEXT,
+    decided_at       TEXT,
+    holdings         TEXT,
+    key_rules        TEXT,
+    weight           TEXT NOT NULL DEFAULT 'persuasive',
+    applicability    TEXT,
+    source_doc_id    TEXT,
+    source_span_id   TEXT,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_authority_citation
+    ON authority(matter_id, citation);
+
+CREATE INDEX IF NOT EXISTS ix_authority_type
+    ON authority(matter_id, authority_type);
+
+CREATE INDEX IF NOT EXISTS ix_authority_weight
+    ON authority(matter_id, weight);
+
+CREATE TABLE IF NOT EXISTS authority_issue_link (
+    authority_id  TEXT NOT NULL REFERENCES authority(id) ON DELETE CASCADE,
+    issue_id      TEXT NOT NULL REFERENCES issue(id) ON DELETE CASCADE,
+    relevance     TEXT NOT NULL DEFAULT 'supporting',
+    created_at    TEXT NOT NULL,
+    PRIMARY KEY (authority_id, issue_id)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_authority_issue_link_issue
+    ON authority_issue_link(issue_id);
+"""
+
 _DDL_DECISION_CONTEXT = """
 CREATE TABLE IF NOT EXISTS decision_context (
     id                   TEXT PRIMARY KEY,
@@ -1041,6 +1081,22 @@ def _migration_v21(conn) -> None:
             conn.execute(stmt)
 
 
+def _migration_v22(conn) -> None:
+    """Add authority and authority_issue_link tables (legal research layer).
+
+    authority: one row per unique citation per matter.  Stores structured
+    metadata about legal authorities (cases, statutes, regulations, rules,
+    secondary sources) used in the matter analysis.
+
+    authority_issue_link: many-to-many relationship between authorities and
+    issues, with a relevance label (supporting/attacking/neutral).
+    """
+    for stmt in _DDL_AUTHORITY.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            conn.execute(stmt)
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1066,6 +1122,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (19, _migration_v19),
     (20, _migration_v20),
     (21, _migration_v21),
+    (22, _migration_v22),
 ]
 
 

@@ -1743,3 +1743,123 @@ async def correct_assertion(
         "propagated_to": result.propagated_to or [],
         "cause": result.cause.value,
     }
+
+
+# ---------------------------------------------------------------------------
+# Legal Research Layer — Authority endpoints (SO-4)
+# ---------------------------------------------------------------------------
+
+@app.post(
+    "/matter/{matter_id}/authorities",
+    tags=["Matter Model"],
+    status_code=201,
+    responses={404: {"model": ErrorResponse}},
+)
+async def upsert_authority(matter_id: str, payload: dict):
+    """Create or update a legal authority for a matter.
+
+    Required: citation (string).
+    Optional: authority_type, name, jurisdiction, decided_at, holdings (list),
+    key_rules (list), weight, applicability, source_doc_id, source_span_id.
+
+    Duplicate citations are updated in place.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    citation = payload.get("citation", "").strip()
+    if not citation:
+        raise HTTPException(status_code=422, detail="citation is required")
+
+    auth_id, is_new = model.authority.upsert(
+        citation=citation,
+        authority_type=payload.get("authority_type", "case"),
+        name=payload.get("name"),
+        jurisdiction=payload.get("jurisdiction"),
+        decided_at=payload.get("decided_at"),
+        holdings=payload.get("holdings"),
+        key_rules=payload.get("key_rules"),
+        weight=payload.get("weight", "persuasive"),
+        applicability=payload.get("applicability"),
+        source_doc_id=payload.get("source_doc_id"),
+        source_span_id=payload.get("source_span_id"),
+    )
+    return {"id": auth_id, "matter_id": matter_id, "is_new": is_new}
+
+
+@app.get(
+    "/matter/{matter_id}/authorities",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def list_authorities(
+    matter_id: str,
+    authority_type: Optional[str] = None,
+    weight: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 100,
+):
+    """List authorities for a matter.
+
+    Optionally filter by authority_type or weight, or provide a search query
+    for substring matching on citation/name.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    if search:
+        return model.authority.search(search, limit=limit)
+    return model.authority.list_all(authority_type=authority_type, weight=weight, limit=limit)
+
+
+@app.get(
+    "/matter/{matter_id}/authorities/{authority_id}",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_authority(matter_id: str, authority_id: str):
+    """Return a single authority by id."""
+    model = _get_matter_model_or_404(matter_id)
+    auth = model.authority.get(authority_id)
+    if auth is None:
+        raise HTTPException(status_code=404, detail="Authority not found")
+    return auth
+
+
+@app.post(
+    "/matter/{matter_id}/authorities/{authority_id}/issues/{issue_id}",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def link_authority_to_issue(
+    matter_id: str,
+    authority_id: str,
+    issue_id: str,
+    relevance: str = "supporting",
+):
+    """Link an authority to an issue with a relevance label.
+
+    relevance: supporting | attacking | neutral
+    """
+    model = _get_matter_model_or_404(matter_id)
+    model.authority.link_to_issue(authority_id, issue_id, relevance=relevance)
+    return {"authority_id": authority_id, "issue_id": issue_id, "relevance": relevance, "status": "linked"}
+
+
+@app.delete(
+    "/matter/{matter_id}/authorities/{authority_id}/issues/{issue_id}",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def unlink_authority_from_issue(matter_id: str, authority_id: str, issue_id: str):
+    """Remove an authority-issue link."""
+    model = _get_matter_model_or_404(matter_id)
+    model.authority.unlink_from_issue(authority_id, issue_id)
+    return {"authority_id": authority_id, "issue_id": issue_id, "status": "unlinked"}
+
+
+@app.get(
+    "/matter/{matter_id}/issues/{issue_id}/authorities",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_issue_authorities(matter_id: str, issue_id: str):
+    """Return all authorities linked to an issue, with their relevance."""
+    model = _get_matter_model_or_404(matter_id)
+    return model.authority.list_for_issue(issue_id)

@@ -2578,7 +2578,107 @@ class RLMEngine:
                     pass
 
         state.findings["final_output"] = response
+
+        # Persist legal citations found in synthesis output to authority store (SO-4).
+        if self._matter_model is not None:
+            try:
+                self._extract_and_store_authorities(response)
+            except Exception:
+                pass  # best-effort; never block synthesis output
+
         self._emit_step(state, StepType.SYNTHESIS, "Analysis complete")
+
+    def _extract_and_store_authorities(self, text: str) -> None:
+        """Extract legal citations from synthesis text and persist to AuthorityStore.
+
+        Recognises the most common citation forms used in U.S. legal writing:
+        - Case law: Smith v. Jones, 123 F.3d 456 (9th Cir. 2001)
+        - U.S. Reports: 550 U.S. 544 (2007)
+        - Federal statutes: 42 U.S.C. § 1983
+        - Federal regulations: 29 C.F.R. § 825.100
+        - State statutes: Cal. Civ. Code § 1750
+
+        Citations are stored with weight='persuasive' by default (binding
+        status requires jurisdictional analysis outside the engine).
+        """
+        import re
+
+        # Pattern: "Name v. Name, VolNo Reporter PageNo (Court Year)"
+        # Captures full citation including optional court/year parenthetical.
+        _CASE_PATTERN = re.compile(
+            r"\b([A-Z][A-Za-z\s,'\.]+(?:Corp\.|Inc\.|LLC|Ltd\.)?)\s+v\.\s+"
+            r"([A-Z][A-Za-z\s,'\.]+?),\s*"
+            r"(\d+\s+[A-Za-z\.]+\s+\d+)"
+            r"(?:\s+\([^)]{3,40}\))?",
+            re.MULTILINE,
+        )
+        # Pattern: federal statute, 42 U.S.C. § 1983 or §§ 1331-1340
+        _STATUTE_PATTERN = re.compile(
+            r"\b(\d+)\s+(U\.S\.C\.|C\.F\.R\.|U\.S\.C\.A\.)\s+§{1,2}\s*([\d\-\.a-z]+)",
+            re.IGNORECASE,
+        )
+        # Pattern: state code abbreviations, e.g., Cal. Civ. Code § 1750
+        _STATE_STATUTE_PATTERN = re.compile(
+            r"\b([A-Z][a-z]+\.(?:\s+[A-Z][a-z]+\.)+)\s+§{1,2}\s*([\d\-\.a-z]+)",
+        )
+
+        seen: set[str] = set()
+        authority_store = self._matter_model.authority
+
+        for m in _CASE_PATTERN.finditer(text):
+            party1 = m.group(1).strip().rstrip(",")
+            party2 = m.group(2).strip().rstrip(",")
+            reporter = m.group(3).strip()
+            citation = f"{party1} v. {party2}, {reporter}"
+            # Normalise whitespace
+            citation = " ".join(citation.split())
+            if citation in seen:
+                continue
+            seen.add(citation)
+            try:
+                authority_store.upsert(
+                    citation=citation,
+                    authority_type="case",
+                    weight="persuasive",
+                )
+            except Exception:
+                pass
+
+        for m in _STATUTE_PATTERN.finditer(text):
+            title = m.group(1).strip()
+            code = m.group(2).strip()
+            section = m.group(3).strip()
+            citation = f"{title} {code} § {section}"
+            citation = " ".join(citation.split())
+            if citation in seen:
+                continue
+            seen.add(citation)
+            auth_type = "regulation" if "C.F.R." in code else "statute"
+            try:
+                authority_store.upsert(
+                    citation=citation,
+                    authority_type=auth_type,
+                    weight="binding",  # federal statutes and regulations are binding
+                )
+            except Exception:
+                pass
+
+        for m in _STATE_STATUTE_PATTERN.finditer(text):
+            code = m.group(1).strip()
+            section = m.group(2).strip()
+            citation = f"{code} § {section}"
+            citation = " ".join(citation.split())
+            if citation in seen or len(citation) < 8:
+                continue
+            seen.add(citation)
+            try:
+                authority_store.upsert(
+                    citation=citation,
+                    authority_type="statute",
+                    weight="persuasive",  # state statutes — jurisdiction-dependent
+                )
+            except Exception:
+                pass
 
     def _build_source_calibration(self, state: InvestigationState) -> str:
         """
