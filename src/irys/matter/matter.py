@@ -846,6 +846,75 @@ class MatterModel:
         }
 
     # ------------------------------------------------------------------
+    # Damages waterfall (Priority 2 visual work product)
+    # ------------------------------------------------------------------
+
+    def get_damages_waterfall(self, currency: str = "USD") -> list[dict]:
+        """Return a structured damages breakdown by category (subject_type).
+
+        Each entry:
+          component       — subject_type label (e.g. "damages", "invoice", "fee")
+          claimed_amount  — total of all amounts in this category
+          source_count    — number of distinct quant_fact entries
+          amounts         — list of {raw_text, amount_value, subject_id, assertion_id}
+          conflicts       — list of conflicting amounts when multiple values exist
+                            and the range is > 20% of the max value
+
+        Ordered by claimed_amount descending (largest exposure first).
+        Only 'amount'-kind quant facts for the given currency are included.
+        Categories with subject_type IS NULL are grouped under "(uncategorised)".
+        """
+        rows = self.db.execute(
+            """SELECT id, subject_type, subject_id, amount_value, raw_text, assertion_id
+               FROM quant_fact
+               WHERE matter_id=? AND quant_kind='amount'
+                 AND (currency=? OR (currency IS NULL AND ?='USD'))
+               ORDER BY subject_type, amount_value DESC""",
+            (self.matter_id, currency, currency),
+        ).fetchall()
+
+        if not rows:
+            return []
+
+        # Group by subject_type.
+        from collections import defaultdict
+        groups: dict = defaultdict(list)
+        for row in rows:
+            key = row["subject_type"] or "(uncategorised)"
+            groups[key].append({
+                "raw_text": (row["raw_text"] or "")[:200],
+                "amount_value": row["amount_value"],
+                "subject_id": row["subject_id"],
+                "assertion_id": row["assertion_id"],
+            })
+
+        waterfall = []
+        for component, entries in groups.items():
+            values = [e["amount_value"] for e in entries if e["amount_value"] is not None]
+            total = sum(values) if values else 0.0
+            max_val = max(values) if values else 0.0
+
+            # Detect conflicts: multiple distinct amounts where spread > 20% of max.
+            unique_vals = sorted(set(values), reverse=True)
+            conflicts = []
+            if len(unique_vals) >= 2 and max_val > 0:
+                spread = unique_vals[0] - unique_vals[-1]
+                if spread / max_val > 0.20:
+                    conflicts = [f"${v:,.2f}" for v in unique_vals[:5]]
+
+            waterfall.append({
+                "component": component,
+                "claimed_amount": round(total, 2),
+                "source_count": len(entries),
+                "currency": currency,
+                "amounts": entries[:20],  # cap for readability
+                "conflicts": conflicts,
+            })
+
+        waterfall.sort(key=lambda x: x["claimed_amount"], reverse=True)
+        return waterfall
+
+    # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
 

@@ -1991,3 +1991,19 @@ async def get_communication_map(matter_id: str):
     """
     model = _get_matter_model_or_404(matter_id)
     return model.get_communication_map()
+
+
+@app.get(
+    "/matter/{matter_id}/damages-waterfall",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_damages_waterfall(matter_id: str, currency: str = "USD"):
+    """Return a structured damages breakdown by category.
+
+    Groups amount-type quant facts by subject_type and computes totals.
+    Ordered by claimed_amount descending.  Includes conflict detection when
+    multiple sources cite different amounts for the same component.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return model.get_damages_waterfall(currency=currency)
