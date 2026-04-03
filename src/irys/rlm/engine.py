@@ -1306,6 +1306,11 @@ class RLMEngine:
         if _cached_analysis is not None:
             analysis = _cached_analysis
         else:
+            # Re-check stop before the FLASH LLM call (SO-3 cooperative stop).
+            # If the user stopped the run while we were formatting results, skip the call.
+            _adp_pre = getattr(state, "_matter_adapter", None)
+            if _adp_pre is not None and _adp_pre.is_stop_requested():
+                return
             prompt = ANALYZE_FINDINGS_PROMPT.format(
                 query=state.query,
                 hypothesis=state.hypothesis or "No hypothesis yet",
@@ -1574,6 +1579,11 @@ class RLMEngine:
             doc = repo.read(file_path)
 
             state.documents_read += 1
+
+            # Re-check stop before the LITE LLM call (SO-3 cooperative stop).
+            _adp_dr = getattr(state, "_matter_adapter", None)
+            if _adp_dr is not None and _adp_dr.is_stop_requested():
+                return None
 
             # Use excerpt for analysis
             content = doc.get_excerpt(self.config.excerpt_chars)
