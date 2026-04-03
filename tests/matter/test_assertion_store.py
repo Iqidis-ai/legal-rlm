@@ -214,6 +214,37 @@ def test_set_belief_state(model):
     assert record.belief_state == BeliefState.OPERATIVE.value
 
 
+def test_belief_state_upgrades_when_stronger_occurrence_arrives(model):
+    """Ingestion-order must not bias canonical belief_state.
+
+    When complaint.pdf (ALLEGED, 0.3) is ingested before contract.pdf (OPERATIVE, 0.8),
+    the canonical assertion must be promoted to OPERATIVE — not stay ALLEGED.
+    Without the upgrade logic, first-writer-wins produces wrong belief state.
+    """
+    proposition = "Payment of $50,000 was due by January 15."
+
+    # First: complaint (ALLEGED → low confidence seed)
+    c_alleged = make_candidate(proposition, doc_id="complaint.pdf",
+                                speech_act=SpeechAct.ALLEGED, source_role=SourceRole.ADVOCACY)
+    aid, is_new = model.assertions.upsert_occurrence(c_alleged)
+    assert is_new is True
+    assert model.assertions.get(aid).belief_state == BeliefState.ALLEGED.value
+
+    # Second: contract (OPERATIVE → higher confidence)
+    c_operative = make_candidate(proposition, doc_id="contract.pdf",
+                                  speech_act=SpeechAct.OPERATIVE, source_role=SourceRole.OPERATIVE)
+    aid2, is_new2 = model.assertions.upsert_occurrence(c_operative)
+    assert aid2 == aid, "Same proposition → same assertion_id"
+    assert is_new2 is False
+
+    # Canonical belief_state must be promoted to OPERATIVE
+    record = model.assertions.get(aid)
+    assert record.belief_state == BeliefState.OPERATIVE.value, (
+        "Contract occurrence (OPERATIVE) must upgrade canonical state from ALLEGED — "
+        "first-writer-wins bias must not survive."
+    )
+
+
 # ---------------------------------------------------------------------------
 # SO-2: Truth maintenance via corroborates/supersedes traversal
 # ---------------------------------------------------------------------------

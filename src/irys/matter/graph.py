@@ -83,7 +83,7 @@ class AssertionStore:
             # Check for existing canonical assertion — must match matter, layer, AND prop key
             # so the same text proposition can coexist in separate reasoning layers (SO-2/arch §2)
             row = self.db.execute(
-                "SELECT id, belief_state FROM assertion WHERE matter_id=? AND model_layer=? AND proposition_key=?",
+                "SELECT id, belief_state, confidence FROM assertion WHERE matter_id=? AND model_layer=? AND proposition_key=?",
                 (self.matter_id, candidate.model_layer.value, prop_key),
             ).fetchone()
 
@@ -120,6 +120,16 @@ class AssertionStore:
             else:
                 assertion_id = row["id"]
                 is_new = False
+                # Upgrade canonical belief_state if the new occurrence provides stronger evidence.
+                # e.g. complaint (ALLEGED, 0.3) arrives first, then contract (OPERATIVE, 0.8):
+                # without this, the canonical stays ALLEGED — first-writer-wins bias.
+                _new_state, _new_conf = _initial_belief_state(candidate.speech_act)
+                _current_conf = row["confidence"] if row["confidence"] is not None else 0.5
+                if _new_conf > _current_conf:
+                    self.db.execute(
+                        "UPDATE assertion SET belief_state=?, confidence=?, updated_at=? WHERE id=?",
+                        (_new_state.value, _new_conf, now, assertion_id),
+                    )
 
             # Always insert an occurrence (even for known assertions from new docs)
             occ_id = _id()
