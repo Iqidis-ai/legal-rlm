@@ -99,11 +99,11 @@ def infer_source_role(document_id: str) -> SourceRole:
 
 
 _SOURCE_SIDE_PLAINTIFF_PATTERN = re.compile(
-    r"(?<![a-zA-Z])(plaintiff|plaintif|petitioner|claimant|complainant|prosecution|relator)(?![a-zA-Z])",
+    r"(?<![a-zA-Z])(plaintiff|plaintif|petitioner|claimant|complainant|prosecution|relator)s?(?![a-zA-Z])",
     re.IGNORECASE,
 )
 _SOURCE_SIDE_DEFENDANT_PATTERN = re.compile(
-    r"(?<![a-zA-Z])(defendant|respondent|defense|defence|accused)(?![a-zA-Z])",
+    r"(?<![a-zA-Z])(defendant|respondent|defense|defence|accused)s?(?![a-zA-Z])",
     re.IGNORECASE,
 )
 

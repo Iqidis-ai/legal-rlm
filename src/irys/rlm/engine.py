@@ -77,7 +77,9 @@ Respond in JSON format:
 
 Issue types: claim=a party's primary legal claim, defense=an affirmative defense,
 damages=a damages component or exposure, contract_question=a disputed contract interpretation,
-procedural=a procedural barrier or threshold issue, evidentiary=an evidentiary bottleneck.
+procedural=a procedural barrier or threshold issue, evidentiary=an evidentiary bottleneck,
+condition_precedent=a condition that must be satisfied, waiver=a waiver/estoppel defense,
+diligence_red_flag=a due-diligence risk item, compliance_failure=a regulatory violation.
 """
 
 
@@ -936,6 +938,10 @@ class RLMEngine:
                 "contract_question": IssueType.CONTRACT_QUESTION,
                 "procedural": IssueType.PROCEDURAL_BARRIER,
                 "evidentiary": IssueType.EVIDENTIARY_BOTTLENECK,
+                "condition_precedent": IssueType.CONDITION_PRECEDENT,
+                "waiver": IssueType.WAIVER,
+                "diligence_red_flag": IssueType.DILIGENCE_RED_FLAG,
+                "compliance_failure": IssueType.COMPLIANCE_FAILURE,
             }
             for issue_item in plan.get("issues", []):
                 # Accept both legacy string format and new {title, type} dict format
@@ -943,9 +949,15 @@ class RLMEngine:
                     issue_title = issue_item.strip()
                     issue_type = IssueType.CLAIM
                 elif isinstance(issue_item, dict) and "title" in issue_item:
-                    issue_title = issue_item["title"].strip()
+                    # Guard against None or non-string title from LLM
+                    _raw_title = issue_item["title"]
+                    if not isinstance(_raw_title, str):
+                        continue
+                    issue_title = _raw_title.strip()
+                    _raw_type = issue_item.get("type")
                     issue_type = _issue_type_map.get(
-                        (issue_item.get("type") or "claim").lower(), IssueType.CLAIM
+                        (_raw_type.lower() if isinstance(_raw_type, str) else "claim"),
+                        IssueType.CLAIM,
                     )
                 else:
                     continue

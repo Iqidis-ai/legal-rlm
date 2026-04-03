@@ -936,3 +936,122 @@ def test_stopped_lead_remains_pending(model):
     assert not lead.investigated, \
         "Lead must remain pending (not investigated) when stop fires during analysis"
     assert adapter.is_stop_requested()
+
+
+# ---------------------------------------------------------------------------
+# SO-4: issue_type_map handles null/non-string title + all 10 IssueType values
+# ---------------------------------------------------------------------------
+
+def test_orient_null_title_is_skipped(model):
+    """_orient() must not crash when LLM returns null title — skips the item."""
+    import asyncio
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.matter.runtime import MatterRuntimeAdapter
+    from irys.core.repository import RepositoryStats
+
+    fake_plan = {
+        "issues": [
+            {"title": None, "type": "claim"},          # null title — must skip
+            {"title": "Valid breach claim", "type": "claim"},
+        ],
+        "relevant_folders": [],
+        "initial_searches": [],
+        "hypothesis": "Breach of contract.",
+    }
+
+    mock_client = MagicMock()
+    mock_client.complete = AsyncMock(return_value=json.dumps(fake_plan))
+    engine = RLMEngine(gemini_client=mock_client, config=RLMConfig(), matter_model=model)
+
+    mock_repo = MagicMock()
+    mock_repo.get_stats.return_value = RepositoryStats(
+        total_files=1, total_size_bytes=512, files_by_type={}, folders=[],
+    )
+    mock_repo.get_structure.return_value = {}
+
+    from irys.rlm.state import InvestigationState
+    run_id = model.start_run("null title test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    state = InvestigationState(id="t-null", query="breach", repository_path="/tmp/test")
+    state._matter_adapter = adapter
+
+    asyncio.run(engine._orient(state, mock_repo))  # must not raise
+
+    open_issues = model.issues.get_open_issues()
+    assert len(open_issues) == 1
+    assert open_issues[0]["title"] == "Valid breach claim"
+
+
+def test_orient_full_issue_type_map(model):
+    """_orient() must map all 10 IssueType enum values from LLM plan without fallback."""
+    import asyncio
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.matter.runtime import MatterRuntimeAdapter
+    from irys.matter.enums import IssueType
+    from irys.core.repository import RepositoryStats
+
+    all_types = [
+        ("Primary claim", "claim", IssueType.CLAIM),
+        ("Affirmative defense", "defense", IssueType.DEFENSE),
+        ("Damages component", "damages", IssueType.DAMAGES),
+        ("Contract ambiguity", "contract_question", IssueType.CONTRACT_QUESTION),
+        ("Procedural threshold", "procedural", IssueType.PROCEDURAL_BARRIER),
+        ("Evidentiary issue", "evidentiary", IssueType.EVIDENTIARY_BOTTLENECK),
+        ("Condition not met", "condition_precedent", IssueType.CONDITION_PRECEDENT),
+        ("Waiver argument", "waiver", IssueType.WAIVER),
+        ("Diligence risk", "diligence_red_flag", IssueType.DILIGENCE_RED_FLAG),
+        ("Compliance issue", "compliance_failure", IssueType.COMPLIANCE_FAILURE),
+    ]
+
+    fake_plan = {
+        "issues": [{"title": t[0], "type": t[1]} for t in all_types],
+        "relevant_folders": [],
+        "initial_searches": [],
+        "hypothesis": "Full type coverage test.",
+    }
+
+    mock_client = MagicMock()
+    mock_client.complete = AsyncMock(return_value=json.dumps(fake_plan))
+    engine = RLMEngine(gemini_client=mock_client, config=RLMConfig(), matter_model=model)
+
+    mock_repo = MagicMock()
+    mock_repo.get_stats.return_value = RepositoryStats(
+        total_files=1, total_size_bytes=512, files_by_type={}, folders=[],
+    )
+    mock_repo.get_structure.return_value = {}
+
+    from irys.rlm.state import InvestigationState
+    run_id = model.start_run("full type map test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    state = InvestigationState(id="t-full", query="test", repository_path="/tmp/test")
+    state._matter_adapter = adapter
+
+    asyncio.run(engine._orient(state, mock_repo))
+
+    open_issues = model.issues.get_open_issues()
+    issue_map = {i["title"]: i["issue_type"] for i in open_issues}
+
+    for title, _, expected_type in all_types:
+        assert issue_map.get(title) == expected_type.value, \
+            f"Issue '{title}' expected type {expected_type.value}, got {issue_map.get(title)}"
+
+
+# ---------------------------------------------------------------------------
+# SO-5: infer_source_side — plural/possessive forms
+# ---------------------------------------------------------------------------
+
+def test_infer_source_side_plural_forms():
+    """Plural and possessive side labels must be recognized (e.g. plaintiffs_, defendants_)."""
+    from irys.matter.runtime import infer_source_side
+    # Plurals with underscore separator (common in filenames)
+    assert infer_source_side("plaintiffs_exhibit_001.pdf") == "plaintiff"
+    assert infer_source_side("defendants_motion_to_dismiss.pdf") == "defendant"
+    assert infer_source_side("respondents_brief.pdf") == "defendant"
+    assert infer_source_side("petitioners_reply.pdf") == "plaintiff"
+    # Original singular forms still work
+    assert infer_source_side("plaintiff_complaint.pdf") == "plaintiff"
+    assert infer_source_side("defendant_answer.pdf") == "defendant"
