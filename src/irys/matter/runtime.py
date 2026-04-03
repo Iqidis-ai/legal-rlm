@@ -11,7 +11,6 @@ When enabled:
 """
 
 import re
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -175,14 +174,10 @@ class MatterRuntimeAdapter:
         # Track which clarification IDs have already been injected this run
         self._injected_clarification_ids: set[str] = set()
         # In-memory stop flag: once set True it stays True, avoiding repeated DB reads.
-        # Checked on every lead/doc boundary — must be O(1) not O(DB).
+        # Checked on every lead/doc boundary — same-process stops are O(1); cross-process
+        # stops (API call from another thread) require a DB read on every check to maintain
+        # the "detects stop between every pair of consecutive check points" contract.
         self._stop_flag: bool = False
-        # Timestamp of the last DB stop-check when the result was False.
-        # Avoids a SQLite round-trip on every engine boundary during normal (no-stop) runs.
-        # Cross-process stops are detected within _STOP_CACHE_TTL seconds.
-        self._stop_last_check: float = 0.0
-        _STOP_CACHE_TTL: float = 1.0  # re-poll DB at most once per second per adapter
-        self._stop_cache_ttl: float = _STOP_CACHE_TTL
 
     # ------------------------------------------------------------------
     # Called from engine._orient()
@@ -326,20 +321,26 @@ class MatterRuntimeAdapter:
         try:
             lt = AssertionLinkType(link_type)
         except ValueError:
-            self.log_warning(
-                f"record_assertion_link: unknown link_type '{link_type}' — edge dropped "
-                f"({src_assertion_id[:8]}→{dst_assertion_id[:8]})"
-            )
+            try:
+                self.log_warning(
+                    f"record_assertion_link: unknown link_type '{link_type}' — edge dropped "
+                    f"({src_assertion_id[:8]}→{dst_assertion_id[:8]})"
+                )
+            except Exception:
+                pass  # warning must not block fact recording
             return
         try:
             self.model.assertions.link(src_assertion_id, dst_assertion_id, lt)
         except Exception as exc:
             # Link write must not block already-recorded facts, but the failure is
             # observable via the ledger so the dependency graph gap is diagnosed.
-            self.log_warning(
-                f"record_assertion_link: write failed ({src_assertion_id[:8]}→"
-                f"{dst_assertion_id[:8]}, {link_type}): {str(exc)[:120]}"
-            )
+            try:
+                self.log_warning(
+                    f"record_assertion_link: write failed ({src_assertion_id[:8]}→"
+                    f"{dst_assertion_id[:8]}, {link_type}): {str(exc)[:120]}"
+                )
+            except Exception:
+                pass  # warning must not block fact recording
 
     def flush_revisions(self) -> int:
         """
@@ -479,20 +480,16 @@ class MatterRuntimeAdapter:
         )
 
     def is_stop_requested(self) -> bool:
-        # Fast path 1: in-memory flag — O(1), never stale for same-process stops.
+        # Fast path: in-memory flag — O(1), never stale for same-process stops.
+        # The flag is set in request_stop() before the DB write, so it is never stale
+        # within the same adapter instance (one adapter = one run = one process).
         if self._stop_flag:
             return True
-        # Fast path 2: TTL cache for negative result — avoids a DB round-trip on every
-        # engine boundary during normal (no-stop) runs. Cross-process stops (API call on
-        # another thread/process) are detected within _stop_cache_ttl seconds.
-        now = time.monotonic()
-        if now - self._stop_last_check < self._stop_cache_ttl:
-            return False
-        # Slow path: TTL expired — re-poll DB to detect cross-process stops.
-        self._stop_last_check = now
+        # DB check: necessary for cross-process stops (e.g. API call on another thread).
+        # SQLite single-row SELECT is sub-millisecond; negligible vs. LLM call latency.
         result = self.model.ledger.is_stop_requested(self.run_id)
         if result:
-            self._stop_flag = True  # promote to permanent in-memory flag
+            self._stop_flag = True  # cache for all future same-process calls
         return result
 
     def record_actor(
