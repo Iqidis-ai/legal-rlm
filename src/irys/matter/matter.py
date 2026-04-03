@@ -751,6 +751,101 @@ class MatterModel:
         }
 
     # ------------------------------------------------------------------
+    # Communication map (Priority 2 visual work product)
+    # ------------------------------------------------------------------
+
+    def get_communication_map(self) -> dict:
+        """Return the actor-document interaction graph.
+
+        Structure:
+        {
+          "actors": [{"id": ..., "name": ..., "actor_type": ..., "home_side": ...}],
+          "documents": ["doc_a.pdf", "doc_b.pdf", ...],
+          "actor_document_edges": [
+            {"actor_id": ..., "actor_name": ..., "document_id": ..., "occurrence_count": N}
+          ],
+          "actor_actor_edges": [
+            {"actor_a_id": ..., "actor_b_id": ..., "shared_documents": N, "documents": [...]}
+          ],
+        }
+
+        actor_document_edges: actor X appeared in document Y in N assertion occurrences.
+        actor_actor_edges: actors A and B both appeared in at least one common document.
+        Only actors with at least one occurrence are included.
+        """
+        # Actor-document occurrence counts.
+        occ_rows = self.db.execute(
+            """SELECT ao.speaker_actor_id AS actor_id,
+                      ao.document_id,
+                      COUNT(*) AS cnt
+               FROM assertion_occurrence ao
+               JOIN actor ac ON ac.id = ao.speaker_actor_id
+               WHERE ac.matter_id=? AND ao.speaker_actor_id IS NOT NULL
+               GROUP BY ao.speaker_actor_id, ao.document_id""",
+            (self.matter_id,),
+        ).fetchall()
+
+        actor_ids_seen: set = set()
+        docs_seen: set = set()
+        actor_doc_edges: list = []
+        # actor_id → set of documents
+        actor_docs: dict = {}
+
+        # Build a lookup for actor names.
+        actor_rows = self.db.execute(
+            "SELECT id, canonical_name, actor_type, home_side FROM actor WHERE matter_id=?",
+            (self.matter_id,),
+        ).fetchall()
+        actor_map = {r["id"]: dict(r) for r in actor_rows}
+
+        for row in occ_rows:
+            aid = row["actor_id"]
+            doc = row["document_id"] or "(unknown)"
+            actor_ids_seen.add(aid)
+            docs_seen.add(doc)
+            if aid not in actor_docs:
+                actor_docs[aid] = set()
+            actor_docs[aid].add(doc)
+            actor_doc_edges.append({
+                "actor_id": aid,
+                "actor_name": actor_map.get(aid, {}).get("canonical_name", aid),
+                "document_id": doc,
+                "occurrence_count": row["cnt"],
+            })
+
+        # Build actor-actor co-appearance edges.
+        actor_actor_edges: list = []
+        actor_list = sorted(actor_ids_seen)
+        for i, a1 in enumerate(actor_list):
+            for a2 in actor_list[i + 1:]:
+                shared = actor_docs.get(a1, set()) & actor_docs.get(a2, set())
+                if shared:
+                    actor_actor_edges.append({
+                        "actor_a_id": a1,
+                        "actor_b_id": a2,
+                        "shared_documents": len(shared),
+                        "documents": sorted(shared),
+                    })
+
+        actors_out = [
+            {
+                "id": aid,
+                "name": actor_map[aid]["canonical_name"],
+                "actor_type": actor_map[aid]["actor_type"],
+                "home_side": actor_map[aid]["home_side"],
+            }
+            for aid in actor_ids_seen
+            if aid in actor_map
+        ]
+
+        return {
+            "actors": actors_out,
+            "documents": sorted(docs_seen),
+            "actor_document_edges": actor_doc_edges,
+            "actor_actor_edges": actor_actor_edges,
+        }
+
+    # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
 

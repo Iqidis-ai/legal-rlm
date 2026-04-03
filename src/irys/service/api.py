@@ -1974,3 +1974,20 @@ async def get_evidence_matrix(matter_id: str):
     """
     model = _get_matter_model_or_404(matter_id)
     return model.get_evidence_matrix()
+
+
+@app.get(
+    "/matter/{matter_id}/communication-map",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_communication_map(matter_id: str):
+    """Return the actor-document interaction graph.
+
+    Shows which actors appeared in which documents (actor_document_edges) and
+    which actors co-appear in the same documents (actor_actor_edges).
+    Useful for mapping communication patterns, principal relationships, and
+    identifying which parties are most active in document production.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return model.get_communication_map()
