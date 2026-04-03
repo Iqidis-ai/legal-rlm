@@ -32,12 +32,19 @@ def test_null_adapter_all_methods():
     assert adapter.is_stop_requested() is False
     adapter.request_stop()   # must not raise
     adapter.log_step("retrieving", "initial search")  # must not raise
+    adapter.log_objective("Determine whether breach occurred")  # must not raise
+    adapter.log_warning("Low-confidence extraction")  # must not raise
     adapter.log_conflict("Contradiction: fact A conflicts with fact B")  # must not raise
     adapter.log_gap("Missing document", "contract.pdf")  # must not raise
     assert adapter.record_gap("Missing: signed amendment") == ""  # must not raise
     # record_facts_batch must return a list of empty strings, same length as input
     result = adapter.record_facts_batch([("fact a", "doc.pdf"), ("fact b", "doc.pdf")])
     assert result == ["", ""]
+    # Quant recording
+    assert adapter.record_quant("amount", "Invoice total $50,000") == ""
+    adapter.record_quants_batch([{"quant_kind": "amount", "raw_text": "$100"}])  # must not raise
+    # Assertion link recording
+    adapter.record_assertion_link("id1", "id2", "supports")  # must not raise
     # Mid-run steering — NullMatterAdapter must return empty for clarifications
     assert adapter.get_new_answered_clarifications() == []
     # Redirect — NullMatterAdapter must return safe defaults
