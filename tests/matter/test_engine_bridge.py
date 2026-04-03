@@ -851,6 +851,53 @@ def test_orient_typed_issues_stored_with_correct_issue_type(model):
     assert issue_map.get("Ambiguity in exclusivity clause") == IssueType.CONTRACT_QUESTION.value
 
 
+def test_orient_legacy_string_issues_default_to_claim(model):
+    """Legacy string-format issues (plain strings, not dicts) must default to IssueType.CLAIM."""
+    import asyncio
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.matter.runtime import MatterRuntimeAdapter
+    from irys.matter.enums import IssueType
+    from irys.core.repository import RepositoryStats
+
+    fake_plan = {
+        "issues": [
+            "Breach of contract",           # legacy string format
+            "Damages sought",               # legacy string format
+            {"title": "Defense raised", "type": "defense"},  # new format alongside
+        ],
+        "relevant_folders": [],
+        "initial_searches": [],
+        "hypothesis": "Test.",
+    }
+
+    mock_client = MagicMock()
+    mock_client.complete = AsyncMock(return_value=json.dumps(fake_plan))
+    engine = RLMEngine(gemini_client=mock_client, config=RLMConfig(), matter_model=model)
+
+    mock_repo = MagicMock()
+    mock_repo.get_stats.return_value = RepositoryStats(
+        total_files=1, total_size_bytes=512, files_by_type={}, folders=[],
+    )
+    mock_repo.get_structure.return_value = {}
+
+    from irys.rlm.state import InvestigationState
+    run_id = model.start_run("legacy string test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    state = InvestigationState(id="t-legacy", query="breach", repository_path="/tmp/test")
+    state._matter_adapter = adapter
+
+    asyncio.run(engine._orient(state, mock_repo))
+
+    open_issues = model.issues.get_open_issues()
+    issue_map = {i["title"]: i["issue_type"] for i in open_issues}
+
+    assert issue_map.get("Breach of contract") == IssueType.CLAIM.value
+    assert issue_map.get("Damages sought") == IssueType.CLAIM.value
+    assert issue_map.get("Defense raised") == IssueType.DEFENSE.value
+
+
 # ---------------------------------------------------------------------------
 # SO-2: Pre-synthesis refresh — superseded assertions excluded from hydration
 # ---------------------------------------------------------------------------
