@@ -6,6 +6,7 @@ No vectors. Direct file access, reading, and search.
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Iterator
+from collections import OrderedDict
 import os
 import logging
 
@@ -67,7 +68,11 @@ class MatterRepository:
             raise ValueError(f"Repository path is not a directory: {base_path}")
 
         self.reader = DocumentReader()
-        self._doc_cache: dict[str, DocumentContent] = {}  # Global document cache
+        # LRU document cache capped at 200 entries (~200-400MB for typical legal docs).
+        # Prevents unbounded RAM growth when searching broad corpora. OrderedDict maintains
+        # insertion order so the oldest entry is always first (LRU eviction).
+        self._doc_cache: OrderedDict[str, DocumentContent] = OrderedDict()
+        self._doc_cache_maxsize = 200
         self.search_engine = DocumentSearch(self.reader)
         self.search_engine._doc_cache = self._doc_cache  # Share cache
         self._file_cache: Optional[list[FileInfo]] = None
@@ -160,7 +165,13 @@ class MatterRepository:
 
         if cache_key not in self._doc_cache:
             logger.debug(f"Reading document: {full_path.name}")
+            if len(self._doc_cache) >= self._doc_cache_maxsize:
+                # Evict the oldest entry (LRU: first item in insertion order)
+                self._doc_cache.popitem(last=False)
             self._doc_cache[cache_key] = self.reader.read(full_path)
+        else:
+            # Move to end to mark as recently used
+            self._doc_cache.move_to_end(cache_key)
 
         return self._doc_cache[cache_key]
 

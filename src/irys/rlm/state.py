@@ -682,6 +682,12 @@ class InvestigationState:
     hypothesis: Optional[str] = None
     query_classification: Optional[dict] = None  # Result of classify_query()
 
+    # In-flight dedup: tracks repo-relative paths currently on the cold path in this run.
+    # Prevents the same document from being LLM-analyzed multiple times within a single
+    # investigate() call when multiple parallel leads surface the same top-ranked file.
+    # asyncio is single-threaded so a plain set is safe (check+add is atomic between awaits).
+    _reading_in_progress: set = field(default_factory=set)
+
     # Metrics
     documents_read: int = 0
     searches_performed: int = 0

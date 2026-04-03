@@ -1263,6 +1263,13 @@ class RLMEngine:
                 # file_path is outside base_path (e.g., external/S3 URI) — use as-is
                 _rel_path = file_path
 
+            # Within-run dedup: multiple parallel leads can surface the same top file.
+            # Once a coroutine reaches the cold path for a file, mark it in-flight so
+            # other coroutines skip it (asyncio is single-threaded; check+add is atomic).
+            if _rel_path in state._reading_in_progress:
+                return
+            state._reading_in_progress.add(_rel_path)
+
             if _mm is not None:
                 import hashlib as _hl
                 try:
