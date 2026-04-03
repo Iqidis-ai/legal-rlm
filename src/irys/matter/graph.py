@@ -2361,13 +2361,15 @@ class AuthorityStore:
 
 
 class ProofStateStore:
-    """Tracks proof coverage per issue (SO-4 proof-aware reasoning).
+    """Tracks proof coverage per issue (SO-4/SO-5 proof-aware reasoning).
 
     For each issue the store maintains a computed snapshot of:
     - sufficiency: float 0..1 — how well-proved the issue is
     - supporting/attacking assertion counts
     - predicate satisfaction ratio
     - categorical proof_status
+    - trust_weighted_support: source-role-weighted evidence score (SO-5)
+    - advocacy_only: True when all supporting assertions come from advocacy sources
 
     Call compute_and_store(issue_id) after adding assertions or resolving
     predicates to refresh the snapshot.  Reads are always from the stored
@@ -2378,10 +2380,36 @@ class ProofStateStore:
         partial      — sufficiency 0.25..0.75
         sufficient   — sufficiency > 0.75
         contested    — attacking_count >= supporting_count > 0
+
+    Source trust weights (SO-5 enforcement):
+        operative / authoritative: 1.0  — signed orders, contracts, statutes
+        procedural: 0.7                 — court filings, process documents
+        informal: 0.5                   — emails, notes
+        unknown: 0.5                    — no role assigned
+        draft: 0.4                      — not final, can be revised
+        advocacy: 0.3                   — pleadings, briefs, demand letters
+        post_hoc: 0.3                   — memos written to explain past events
     """
 
     SUFFICIENT_THRESHOLD = 0.75
     PARTIAL_THRESHOLD = 0.25
+
+    # Source role trust weights (SO-5). Lower weight = evidence is less
+    # dispositive. An issue backed only by advocacy sources will have a
+    # lower trust_weighted_support and will be flagged advocacy_only.
+    SOURCE_TRUST: dict[str, float] = {
+        "operative": 1.0,
+        "authoritative": 1.0,
+        "procedural": 0.7,
+        "informal": 0.5,
+        "unknown": 0.5,
+        "draft": 0.4,
+        "advocacy": 0.3,
+        "post_hoc": 0.3,
+    }
+    # Trust threshold below which an assertion is considered "low-trust" for
+    # the advocacy_only flag.
+    ADVOCACY_TRUST_THRESHOLD = 0.35
 
     def __init__(self, db: "SQLiteMatterDB", matter_id: str) -> None:
         self.db = db
@@ -2401,25 +2429,50 @@ class ProofStateStore:
         """
         now = _now()
 
-        # Count supporting and attacking assertions linked to this issue.
-        sup_row = self.db.execute(
-            """SELECT COUNT(*) AS n FROM assertion_issue_link ail
+        # Count supporting and attacking assertions linked to this issue,
+        # and gather source roles for trust weighting (SO-5).
+        sup_rows = self.db.execute(
+            """SELECT COALESCE(ao.source_role, 'unknown') AS source_role
+               FROM assertion_issue_link ail
                JOIN assertion a ON a.id = ail.assertion_id
+               LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
                WHERE ail.issue_id=?
                  AND ail.relation_type IN ('supports', 'establishes')
                  AND a.belief_state NOT IN ('superseded', 'withdrawn')""",
             (issue_id,),
-        ).fetchone()
-        atk_row = self.db.execute(
-            """SELECT COUNT(*) AS n FROM assertion_issue_link ail
+        ).fetchall()
+        atk_rows = self.db.execute(
+            """SELECT COALESCE(ao.source_role, 'unknown') AS source_role
+               FROM assertion_issue_link ail
                JOIN assertion a ON a.id = ail.assertion_id
+               LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
                WHERE ail.issue_id=?
                  AND ail.relation_type IN ('attacks', 'negates')
                  AND a.belief_state NOT IN ('superseded', 'withdrawn')""",
             (issue_id,),
-        ).fetchone()
-        supporting = sup_row["n"] if sup_row else 0
-        attacking = atk_row["n"] if atk_row else 0
+        ).fetchall()
+        supporting = len(sup_rows)
+        attacking = len(atk_rows)
+
+        # Compute trust-weighted scores for SO-5 source role enforcement.
+        def _tw(rows: list) -> float:
+            return sum(
+                self.SOURCE_TRUST.get(r["source_role"], 0.5) for r in rows
+            )
+
+        trust_weighted_support = round(_tw(sup_rows), 4)
+        trust_weighted_attack = round(_tw(atk_rows), 4)
+
+        # advocacy_only: True when every supporting assertion has trust <= threshold
+        # (i.e., evidence is exclusively from advocacy/post_hoc sources).
+        if sup_rows:
+            advocacy_only = all(
+                self.SOURCE_TRUST.get(r["source_role"], 0.5)
+                <= self.ADVOCACY_TRUST_THRESHOLD
+                for r in sup_rows
+            )
+        else:
+            advocacy_only = False
 
         # Count total and satisfied predicates.
         total_pred_row = self.db.execute(
@@ -2454,17 +2507,24 @@ class ProofStateStore:
             (self.matter_id, issue_id),
         ).fetchone()
 
+        import json as _json
+        trust_notes = _json.dumps({
+            "trust_weighted_support": trust_weighted_support,
+            "trust_weighted_attack": trust_weighted_attack,
+            "advocacy_only": advocacy_only,
+        })
+
         if existing:
             ps_id = existing["id"]
             self.db.execute(
                 """UPDATE proof_state
                    SET sufficiency=?, supporting_count=?, attacking_count=?,
                        total_predicate_count=?, satisfied_predicate_count=?,
-                       proof_status=?, notes=NULL, computed_at=?
+                       proof_status=?, notes=?, computed_at=?
                    WHERE id=?""",
                 (sufficiency, supporting, attacking,
                  total_predicates, satisfied_predicates,
-                 proof_status, now, ps_id),
+                 proof_status, trust_notes, now, ps_id),
             )
         else:
             ps_id = _id()
@@ -2473,10 +2533,10 @@ class ProofStateStore:
                    (id, matter_id, issue_id, sufficiency, supporting_count,
                     attacking_count, total_predicate_count, satisfied_predicate_count,
                     proof_status, notes, computed_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,NULL,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (ps_id, self.matter_id, issue_id, sufficiency,
                  supporting, attacking, total_predicates, satisfied_predicates,
-                 proof_status, now),
+                 proof_status, trust_notes, now),
             )
 
         return {
@@ -2489,6 +2549,9 @@ class ProofStateStore:
             "total_predicate_count": total_predicates,
             "satisfied_predicate_count": satisfied_predicates,
             "proof_status": proof_status,
+            "trust_weighted_support": trust_weighted_support,
+            "trust_weighted_attack": trust_weighted_attack,
+            "advocacy_only": advocacy_only,
             "computed_at": now,
         }
 
@@ -2496,13 +2559,34 @@ class ProofStateStore:
     # Read
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _unpack_notes(d: dict) -> dict:
+        """Parse trust metadata from the notes JSON field and merge into dict."""
+        import json as _json
+        notes = d.pop("notes", None)
+        if notes:
+            try:
+                trust = _json.loads(notes)
+                d["trust_weighted_support"] = trust.get("trust_weighted_support", 0.0)
+                d["trust_weighted_attack"] = trust.get("trust_weighted_attack", 0.0)
+                d["advocacy_only"] = trust.get("advocacy_only", False)
+            except (ValueError, TypeError):
+                d["trust_weighted_support"] = 0.0
+                d["trust_weighted_attack"] = 0.0
+                d["advocacy_only"] = False
+        else:
+            d["trust_weighted_support"] = 0.0
+            d["trust_weighted_attack"] = 0.0
+            d["advocacy_only"] = False
+        return d
+
     def get(self, issue_id: str) -> Optional[dict]:
         """Return the stored proof state for an issue, or None if never computed."""
         row = self.db.execute(
             "SELECT * FROM proof_state WHERE matter_id=? AND issue_id=?",
             (self.matter_id, issue_id),
         ).fetchone()
-        return dict(row) if row else None
+        return self._unpack_notes(dict(row)) if row else None
 
     def get_all(self, min_sufficiency: float = 0.0) -> list[dict]:
         """Return proof states for all issues, filtered by min sufficiency.
@@ -2515,7 +2599,7 @@ class ProofStateStore:
                ORDER BY sufficiency ASC, proof_status""",
             (self.matter_id, min_sufficiency),
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [self._unpack_notes(dict(r)) for r in rows]
 
     def get_by_status(self, proof_status: str) -> list[dict]:
         """Return all proof states with a given proof_status."""
@@ -2525,7 +2609,7 @@ class ProofStateStore:
                ORDER BY sufficiency ASC""",
             (self.matter_id, proof_status),
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [self._unpack_notes(dict(r)) for r in rows]
 
     def get_gaps(self, threshold: float = PARTIAL_THRESHOLD) -> list[dict]:
         """Return proof states with sufficiency below threshold — the weakest issues.
@@ -2538,7 +2622,7 @@ class ProofStateStore:
                ORDER BY sufficiency ASC""",
             (self.matter_id, threshold),
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [self._unpack_notes(dict(r)) for r in rows]
 
     def get_summary(self) -> dict:
         """Return aggregate proof coverage statistics for the matter."""
