@@ -858,11 +858,18 @@ class RLMEngine:
         # filtered as blank/non-string), fall back: weakest issue title → query tokens.
         # Use _initial_searches (post-filter) so sanitized-empty plans hit this branch.
         if not _initial_searches:
+            _fallback_issue_id: Optional[str] = None
             if matter_ctx and matter_ctx.weakest_issue_id and matter_ctx.open_issues:
                 weakest_issues = [i for i in matter_ctx.open_issues
                                   if i.get("id") == matter_ctx.weakest_issue_id]
-                fallback_term = weakest_issues[0]["title"] if weakest_issues else state.query
-                _fallback_issue_id = matter_ctx.weakest_issue_id
+                if weakest_issues:
+                    # Issue found — use its title as search term and link to it
+                    fallback_term = weakest_issues[0]["title"]
+                    _fallback_issue_id = matter_ctx.weakest_issue_id
+                else:
+                    # weakest_issue_id not in open_issues — generic query, first new issue
+                    fallback_term = state.query
+                    _fallback_issue_id = _issue_pool[0] if _issue_pool else None
             else:
                 fallback_term = state.query
                 _fallback_issue_id = _issue_pool[0] if _issue_pool else None
