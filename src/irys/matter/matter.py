@@ -260,16 +260,16 @@ class MatterModel:
         # coverage_fraction = supporting_count / (supporting_count + 1) to avoid zero-division.
         weakest_issue_id = None
         if open_issues:
-            # Get supporting-assertion count per issue in one query
-            issue_ids = [i["id"] for i in open_issues]
-            placeholders = ",".join("?" * len(issue_ids))
+            # Get supporting-assertion count per open issue via JOIN — avoids IN-list
+            # variable-count limits on large matters.
             support_rows = self.db.execute(
-                f"""SELECT issue_id, COUNT(*) AS cnt
-                    FROM assertion_issue_link
-                    WHERE issue_id IN ({placeholders})
-                      AND relation_type IN ('supports','establishes')
-                    GROUP BY issue_id""",
-                issue_ids,
+                """SELECT ail.issue_id, COUNT(*) AS cnt
+                   FROM assertion_issue_link ail
+                   JOIN issue i ON i.id=ail.issue_id
+                   WHERE i.matter_id=? AND i.status='open'
+                     AND ail.relation_type IN ('supports','establishes')
+                   GROUP BY ail.issue_id""",
+                (self.matter_id,),
             ).fetchall()
             support_counts = {r["issue_id"]: r["cnt"] for r in support_rows}
 
