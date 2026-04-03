@@ -377,6 +377,13 @@ Note any conflicting evidence or unresolved issues. Flag where only [ADVOCACY] s
 Rate overall evidence as: Strong / Moderate / Weak
 Explain basis for rating. Note proportion of advocacy vs. operative sources.
 
+## Financial Analysis
+(Include ONLY if the Quantitative Summary contains non-trivial data; omit section if no numeric facts were extracted.)
+- Payment reconciliation: total invoiced/claimed amounts vs. total paid/settled amounts; net balance
+- Claimed exposure: identify the party's asserted damages or outstanding amounts with source citations
+- Unresolved numeric conflicts: list any discrepancies flagged in the Quantitative Summary with the conflicting sources
+- Dates and deadlines: key contractual or statutory dates relevant to the dispute
+
 ## Entities & Relationships
 Key parties and their roles established by evidence.
 
