@@ -3083,6 +3083,29 @@ class ProofStateStore:
         # the highest-trust role across all its occurrences.  A plain
         # LEFT JOIN returns one row per occurrence, inflating counts and
         # trust sums when an assertion appears in multiple documents.
+        # Fetch non-normal trust overrides once so they can be applied to assertion rows
+        _override_rows = self.db.execute(
+            """SELECT document_pattern, trust_level FROM document_trust_override
+               WHERE matter_id=? AND trust_level != 'normal'
+               ORDER BY LENGTH(document_pattern) DESC""",
+            (self.matter_id,),
+        ).fetchall()
+        _overrides = [(r["document_pattern"], r["trust_level"]) for r in _override_rows]
+
+        def _effective_trust(source_role: str, primary_doc_id: "str | None") -> float:
+            """Apply document trust override if set; otherwise use stored source_role weight."""
+            if _overrides and primary_doc_id:
+                from pathlib import Path
+                doc_norm = primary_doc_id.replace("\\\\", "/").replace("\\", "/")
+                basename = Path(doc_norm).name
+                for pat, lvl in _overrides:
+                    pat_norm = pat.replace("\\\\", "/").replace("\\", "/")
+                    if pat_norm == doc_norm or pat_norm == basename:
+                        return self.SOURCE_TRUST.get(
+                            "advocacy" if lvl == "low" else "operative", 0.5
+                        )
+            return self.SOURCE_TRUST.get(source_role, 0.5)
+
         _role_subquery = """(
             SELECT ao.source_role FROM assertion_occurrence ao
             WHERE ao.assertion_id = a.id
@@ -3096,8 +3119,13 @@ class ProofStateStore:
                 WHEN 'unknown'       THEN 1
                 WHEN 'advocacy'      THEN 0
                 ELSE 1 END DESC LIMIT 1)"""
+        _doc_subquery = """(
+            SELECT ao.document_id FROM assertion_occurrence ao
+            WHERE ao.assertion_id = a.id
+            ORDER BY ao.created_at ASC LIMIT 1)"""
         sup_rows = self.db.execute(
-            f"""SELECT COALESCE({_role_subquery}, 'unknown') AS source_role
+            f"""SELECT COALESCE({_role_subquery}, 'unknown') AS source_role,
+                       {_doc_subquery} AS primary_doc_id
                FROM assertion_issue_link ail
                JOIN assertion a ON a.id = ail.assertion_id
                WHERE ail.issue_id=?
@@ -3106,7 +3134,8 @@ class ProofStateStore:
             (issue_id,),
         ).fetchall()
         atk_rows = self.db.execute(
-            f"""SELECT COALESCE({_role_subquery}, 'unknown') AS source_role
+            f"""SELECT COALESCE({_role_subquery}, 'unknown') AS source_role,
+                       {_doc_subquery} AS primary_doc_id
                FROM assertion_issue_link ail
                JOIN assertion a ON a.id = ail.assertion_id
                WHERE ail.issue_id=?
@@ -3118,19 +3147,21 @@ class ProofStateStore:
         attacking = len(atk_rows)
 
         # Compute trust-weighted scores for SO-5 source role enforcement.
+        # _effective_trust() applies document trust overrides when set.
         def _tw(rows: list) -> float:
             return sum(
-                self.SOURCE_TRUST.get(r["source_role"], 0.5) for r in rows
+                _effective_trust(r["source_role"], r["primary_doc_id"])
+                for r in rows
             )
 
         trust_weighted_support = round(_tw(sup_rows), 4)
         trust_weighted_attack = round(_tw(atk_rows), 4)
 
-        # advocacy_only: True when every supporting assertion has trust <= threshold
-        # (i.e., evidence is exclusively from advocacy/post_hoc sources).
+        # advocacy_only: True when every supporting assertion has effective trust <= threshold
+        # (i.e., evidence is exclusively from advocacy/post_hoc sources after applying overrides).
         if sup_rows:
             advocacy_only = all(
-                self.SOURCE_TRUST.get(r["source_role"], 0.5)
+                _effective_trust(r["source_role"], r["primary_doc_id"])
                 <= self.ADVOCACY_TRUST_THRESHOLD
                 for r in sup_rows
             )

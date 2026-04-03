@@ -211,3 +211,75 @@ def test_recompute_updates_advocacy_only(model, issue_id):
     _add(model, issue_id, SourceRole.OPERATIVE)
     result2 = model.proof_state.compute_and_store(issue_id)
     assert result2["advocacy_only"] is False
+
+
+# ---------------------------------------------------------------------------
+# 16. Document trust override flows through compute_and_store (SO-3 → SO-5)
+# ---------------------------------------------------------------------------
+
+def test_trust_override_low_flips_advocacy_only_in_proof_state(model, issue_id):
+    """A 'low' document trust override must flip advocacy_only=True in proof state (SO-3 → SO-5).
+
+    An assertion from a document marked as low-trust must be treated as 'advocacy'-weighted
+    in compute_and_store() — even if its stored source_role was 'unknown' or higher.
+    """
+    import uuid
+    doc_name = f"report_{uuid.uuid4().hex[:8]}.pdf"
+
+    cand = AssertionCandidate(
+        proposition_text="Report says defendant liable.",
+        speech_act=SpeechAct.ALLEGED,
+        source_role=SourceRole.UNKNOWN,  # neutral source_role, no override yet
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id=doc_name,
+    )
+    aid, _ = model.assertions.upsert_occurrence(cand)
+    model.issues.link_assertion(aid, issue_id, relation_type="supports")
+
+    # Without override: unknown weight = 0.5, above ADVOCACY_TRUST_THRESHOLD (0.35) → not advocacy_only
+    result_before = model.proof_state.compute_and_store(issue_id)
+    assert result_before["advocacy_only"] is False, "Unknown source_role should not be advocacy_only"
+
+    # Set low-trust override for the document
+    model.trust_overrides.set(doc_name, "low")
+
+    # With override: effective trust = advocacy (0.3) ≤ 0.35 → advocacy_only = True
+    result_after = model.proof_state.compute_and_store(issue_id)
+    assert result_after["advocacy_only"] is True, (
+        "Low-trust override must flip advocacy_only=True in proof state (SO-3 → SO-5 integration)"
+    )
+    assert result_after["trust_weighted_support"] == pytest.approx(0.3, abs=0.01), (
+        "Low-trust override must reduce trust_weighted_support to advocacy weight 0.3"
+    )
+
+
+def test_trust_override_high_removes_advocacy_only_in_proof_state(model, issue_id):
+    """A 'high' document trust override must clear advocacy_only in proof state (SO-3 → SO-5)."""
+    import uuid
+    doc_name = f"complaint_{uuid.uuid4().hex[:8]}.pdf"
+
+    cand = AssertionCandidate(
+        proposition_text="Complaint alleges breach.",
+        speech_act=SpeechAct.ALLEGED,
+        source_role=SourceRole.ADVOCACY,  # advocacy source → would be advocacy_only
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id=doc_name,
+    )
+    aid, _ = model.assertions.upsert_occurrence(cand)
+    model.issues.link_assertion(aid, issue_id, relation_type="supports")
+
+    # Without override: advocacy weight = 0.3, below threshold → advocacy_only = True
+    result_before = model.proof_state.compute_and_store(issue_id)
+    assert result_before["advocacy_only"] is True, "Advocacy source should be advocacy_only"
+
+    # Set high-trust override — user says this document is actually authoritative
+    model.trust_overrides.set(doc_name, "high")
+
+    # With override: effective trust = operative (1.0) > 0.35 → advocacy_only = False
+    result_after = model.proof_state.compute_and_store(issue_id)
+    assert result_after["advocacy_only"] is False, (
+        "High-trust override must clear advocacy_only=False (SO-3 → SO-5 integration)"
+    )
+    assert result_after["trust_weighted_support"] == pytest.approx(1.0, abs=0.01), (
+        "High-trust override must boost trust_weighted_support to operative weight 1.0"
+    )

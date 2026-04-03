@@ -249,6 +249,13 @@ class MatterModel:
         except Exception:
             pass  # revision failure does not abort the override
 
+        # Recompute proof states so advocacy_only and trust_weighted_support
+        # reflect the new effective trust for the affected document (SO-5 → SO-4 integration).
+        try:
+            self.proof_state.compute_all()
+        except Exception:
+            pass  # proof state refresh failure does not abort the override
+
         return override_id
 
     def mine_contradictions(self) -> list[dict]:
