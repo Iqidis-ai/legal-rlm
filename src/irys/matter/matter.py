@@ -272,8 +272,24 @@ class MatterModel:
                         _batch,
                     ).fetchall()
                     issue_ids_to_recompute.update(r["issue_id"] for r in _rows)
-                for _iid in issue_ids_to_recompute:
-                    self.proof_state.compute_and_store(_iid)
+                if issue_ids_to_recompute:
+                    # Pre-load trust overrides once — avoids one DB query per issue
+                    # (same pattern as compute_all()).
+                    _override_rows = self.db.execute(
+                        """SELECT document_pattern, trust_level FROM document_trust_override
+                           WHERE matter_id=? AND trust_level != 'normal'
+                           ORDER BY LENGTH(document_pattern) DESC""",
+                        (self.matter_id,),
+                    ).fetchall()
+                    _overrides = [
+                        (r["document_pattern"], r["trust_level"]) for r in _override_rows
+                    ]
+                    # Batch all writes in one transaction — N→1 BEGIN/COMMIT cycles.
+                    with self.db.transaction():
+                        for _iid in issue_ids_to_recompute:
+                            self.proof_state.compute_and_store(
+                                _iid, _preloaded_overrides=_overrides
+                            )
         except Exception as exc:
             _log.warning(
                 "proof_state recompute after correct_assertion failed for %r: %s",

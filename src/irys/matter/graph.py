@@ -500,30 +500,46 @@ class AssertionStore:
 
         Returns: [{id, proposition_text, belief_state, source_role}]
         """
+        # Pre-aggregate source roles for the filtered set in a single CTE pass
+        # instead of two correlated subqueries per row (resolves Tier 1 perf MEDIUM).
+        # filtered_ids: the LIMIT-200 candidate set.
+        # src_agg: GROUP_CONCAT and best-rank computation done once over those IDs.
         rows = self.db.execute(
-            """SELECT a.id, a.proposition_text, a.belief_state,
+            """WITH filtered_ids AS (
+                   SELECT id FROM assertion
+                   WHERE matter_id=?
+                     AND belief_state NOT IN ('disputed','withdrawn','superseded')
+                   ORDER BY created_at DESC
+                   LIMIT ?
+               ),
+               src_agg AS (
+                   SELECT ao.assertion_id,
+                          GROUP_CONCAT(DISTINCT ao.source_role) AS source_roles_csv,
+                          (SELECT ao2.source_role FROM assertion_occurrence ao2
+                           WHERE ao2.assertion_id = ao.assertion_id
+                           ORDER BY CASE ao2.source_role
+                             WHEN 'authoritative' THEN 6
+                             WHEN 'operative'     THEN 5
+                             WHEN 'procedural'    THEN 4
+                             WHEN 'post_hoc'      THEN 3
+                             WHEN 'informal'      THEN 2
+                             WHEN 'draft'         THEN 1
+                             WHEN 'unknown'       THEN 1
+                             WHEN 'advocacy'      THEN 0
+                             ELSE 1 END DESC, ao2.created_at ASC LIMIT 1
+                          ) AS source_role
+                   FROM assertion_occurrence ao
+                   WHERE ao.assertion_id IN (SELECT id FROM filtered_ids)
+                   GROUP BY ao.assertion_id
+               )
+               SELECT a.id, a.proposition_text, a.belief_state,
                       a.subject_ref_type, a.subject_ref_id,
                       a.predicate_key, a.object_json,
-                      (SELECT ao.source_role FROM assertion_occurrence ao
-                       WHERE ao.assertion_id = a.id
-                       ORDER BY CASE ao.source_role
-                         WHEN 'authoritative' THEN 6
-                         WHEN 'operative'     THEN 5
-                         WHEN 'procedural'    THEN 4
-                         WHEN 'post_hoc'      THEN 3
-                         WHEN 'informal'      THEN 2
-                         WHEN 'draft'         THEN 1
-                         WHEN 'unknown'       THEN 1
-                         WHEN 'advocacy'      THEN 0
-                         ELSE 1 END DESC, ao.created_at ASC LIMIT 1) AS source_role,
-                      (SELECT GROUP_CONCAT(DISTINCT ao2.source_role)
-                       FROM assertion_occurrence ao2
-                       WHERE ao2.assertion_id = a.id) AS source_roles_csv
-               FROM assertion a
-               WHERE a.matter_id=?
-                 AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
-               ORDER BY a.created_at DESC
-               LIMIT ?""",
+                      sa.source_role, sa.source_roles_csv
+               FROM filtered_ids fi
+               JOIN assertion a ON a.id = fi.id
+               LEFT JOIN src_agg sa ON sa.assertion_id = a.id
+               ORDER BY a.created_at DESC""",
             (self.matter_id, limit),
         ).fetchall()
         return [dict(r) for r in rows]
