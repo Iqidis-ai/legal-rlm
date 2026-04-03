@@ -849,3 +849,41 @@ def test_orient_typed_issues_stored_with_correct_issue_type(model):
     assert issue_map.get("Limitation of liability defense") == IssueType.DEFENSE.value
     assert issue_map.get("Lost profits exposure") == IssueType.DAMAGES.value
     assert issue_map.get("Ambiguity in exclusivity clause") == IssueType.CONTRACT_QUESTION.value
+
+
+# ---------------------------------------------------------------------------
+# SO-2: Pre-synthesis refresh — superseded assertions excluded from hydration
+# ---------------------------------------------------------------------------
+
+def test_hydrate_skips_superseded_assertions(model):
+    """_hydrate_from_matter_model() must exclude assertions revised to inactive belief states.
+
+    This is the core SO-2 mechanism: a user correction that supersedes an assertion
+    must not re-appear in accumulated_facts when synthesis re-hydrates from the model.
+    """
+    from irys.matter.enums import BeliefState
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.rlm.state import InvestigationState
+    from unittest.mock import MagicMock
+
+    # Record two assertions
+    run_id = model.start_run("hydration test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid_active = adapter.record_fact("Payment was due on January 15.", "contract.pdf")
+    aid_superseded = adapter.record_fact("Original invoice amount was $10,000.", "invoice_v1.pdf")
+
+    # Simulate a user correction: mark the second assertion superseded
+    model.assertions.set_belief_state(aid_superseded, BeliefState.SUPERSEDED)
+
+    engine = RLMEngine(gemini_client=MagicMock(), config=RLMConfig(), matter_model=model)
+    state = InvestigationState(id="test-2", query="test", repository_path="/tmp/test")
+
+    engine._hydrate_from_matter_model(state)
+
+    facts = state.findings.get("accumulated_facts", [])
+    # Active assertion must be present
+    assert any("Payment was due on January 15." in f for f in facts), \
+        "Active assertion must appear in accumulated_facts"
+    # Superseded assertion must be excluded
+    assert not any("Original invoice amount was $10,000." in f for f in facts), \
+        "Superseded assertion must not appear in accumulated_facts after user correction"
