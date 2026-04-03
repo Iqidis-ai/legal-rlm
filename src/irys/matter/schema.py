@@ -778,19 +778,31 @@ def _migration_v13(conn) -> None:
     rowid per key group) so that CREATE UNIQUE INDEX does not fail on
     databases that accumulated duplicates via the old SELECT-then-INSERT
     race pattern.
+
+    Both the DELETE and the CREATE UNIQUE INDEX run inside a single explicit
+    transaction so that if the process dies between them the migration is
+    either fully applied or fully not applied (recoverable on next open).
+    SQLiteMatterDB uses isolation_level=None (autocommit), so we manage the
+    transaction explicitly here.
     """
-    conn.execute(
-        """DELETE FROM quant_fact
-           WHERE rowid NOT IN (
-               SELECT MIN(rowid)
-               FROM quant_fact
-               GROUP BY matter_id, quant_kind, raw_text
-           )"""
-    )
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS ux_quant_fact_key"
-        " ON quant_fact(matter_id, quant_kind, raw_text)"
-    )
+    conn.execute("BEGIN")
+    try:
+        conn.execute(
+            """DELETE FROM quant_fact
+               WHERE rowid NOT IN (
+                   SELECT MIN(rowid)
+                   FROM quant_fact
+                   GROUP BY matter_id, quant_kind, raw_text
+               )"""
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_quant_fact_key"
+            " ON quant_fact(matter_id, quant_kind, raw_text)"
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
 
 
 # Ordered migrations: (target_version, callable).

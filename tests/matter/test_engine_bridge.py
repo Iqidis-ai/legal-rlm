@@ -661,3 +661,71 @@ def test_disputed_assertion_does_not_count_as_coverage(model):
     gaps = model.gaps.open_gaps(min_materiality=0.0)
     assert len(gaps) == 1
     assert "Breach of contract" in gaps[0]["description"]
+
+
+# ---------------------------------------------------------------------------
+# infer_source_side — litigation side inference from document name
+# ---------------------------------------------------------------------------
+
+def test_infer_source_side_plaintiff():
+    from irys.matter.runtime import infer_source_side
+    assert infer_source_side("plaintiff_complaint.pdf") == "plaintiff"
+    assert infer_source_side("docs/petitioner_brief.pdf") == "plaintiff"
+    assert infer_source_side("claimant_exhibit.pdf") == "plaintiff"
+
+
+def test_infer_source_side_defendant():
+    from irys.matter.runtime import infer_source_side
+    assert infer_source_side("defendant_answer.pdf") == "defendant"
+    assert infer_source_side("defense_memo.pdf") == "defendant"
+    assert infer_source_side("respondent_filing.pdf") == "defendant"
+
+
+def test_infer_source_side_neutral():
+    from irys.matter.runtime import infer_source_side
+    assert infer_source_side("contract_agreement.pdf") is None
+    assert infer_source_side("court_order.pdf") is None
+    assert infer_source_side("email_thread.pdf") is None
+
+
+# ---------------------------------------------------------------------------
+# list_recent_for_hydration — lightweight assertion query
+# ---------------------------------------------------------------------------
+
+def test_list_recent_for_hydration_filters_inactive(model):
+    from irys.matter.enums import BeliefState
+    run_id = model.start_run("hydration test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid1 = adapter.record_fact("Active fact.", "doc1.pdf")
+    aid2 = adapter.record_fact("Disputed fact.", "doc2.pdf")
+    model.correct_assertion(aid2, BeliefState.DISPUTED)
+
+    rows = model.assertions.list_recent_for_hydration(limit=50)
+    assert any(r["id"] == aid1 for r in rows)
+    assert any(r["id"] == aid2 for r in rows)  # method returns all; filtering is in engine
+    # Verify belief_state is present in each row for the engine's filter
+    assert all("belief_state" in r for r in rows)
+    assert all("proposition_text" in r for r in rows)
+    assert all("source_role" in r for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# record_facts_batch — neutral relation does not create issue link
+# ---------------------------------------------------------------------------
+
+def test_neutral_fact_not_linked_to_issue(model):
+    from irys.matter.enums import IssueType
+    issue_id, _ = model.issues.upsert_issue("Payment claim", IssueType.CLAIM)
+    run_id = model.start_run("neutral test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aids = adapter.record_facts_batch(
+        [("Payment was made in full.", "receipt.pdf", "supports"),
+         ("Invoice was issued.", "invoice.pdf", "neutral")],
+        issue_id=issue_id,
+    )
+    assert len(aids) == 2
+    assertions_for_issue = model.issues.get_assertions_for_issue(issue_id)
+    linked_ids = {a["id"] for a in assertions_for_issue}
+    # Only the 'supports' fact is linked; 'neutral' is not
+    assert aids[0] in linked_ids
+    assert aids[1] not in linked_ids
