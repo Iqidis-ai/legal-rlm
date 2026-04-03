@@ -407,6 +407,8 @@ class AssertionStore:
         """
         rows = self.db.execute(
             """SELECT a.id, a.proposition_text, a.belief_state,
+                      a.subject_ref_type, a.subject_ref_id,
+                      a.predicate_key, a.object_json,
                       (SELECT ao.source_role FROM assertion_occurrence ao
                        WHERE ao.assertion_id = a.id
                        ORDER BY CASE ao.source_role

@@ -1303,6 +1303,27 @@ class RLMEngine:
             label = source_role.upper()
             # Strip any existing [ROLE] prefix to prevent double-labeling legacy rows
             prop_clean = _strip_role_prefix('', prop)
+            # Prepend structured SPO annotation when the DB has typed fields (SO-2 read-back).
+            # This makes structured assertions more useful to the LLM during orientation —
+            # it sees not just the prose fact but the explicit subject/predicate/object.
+            _subj_id = row.get("subject_ref_id")
+            _pred = row.get("predicate_key")
+            _obj_raw = row.get("object_json")
+            _obj = None
+            if _obj_raw:
+                try:
+                    _obj = json.loads(_obj_raw)
+                except Exception:
+                    _obj = _obj_raw
+            if _subj_id or _pred or _obj:
+                _spo_parts = []
+                if _subj_id:
+                    _spo_parts.append(f"SUBJ:{_subj_id}")
+                if _pred:
+                    _spo_parts.append(f"PRED:{_pred}")
+                if _obj:
+                    _spo_parts.append(f"OBJ:{str(_obj)[:60]}")
+                prop_clean = f"[{' | '.join(_spo_parts)}] {prop_clean}"
             state.add_facts([f"[{label}] {prop_clean}"])
             loaded += 1
 
