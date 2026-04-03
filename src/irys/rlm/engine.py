@@ -1727,9 +1727,10 @@ class RLMEngine:
         # AND a short hash of the prompt template itself so that prompt/model upgrades
         # automatically invalidate cached analysis from old template versions.
         import hashlib as _hl
+        _focus_issue_id = lead.focus_issue_id if lead is not None else None
         _top_names = ",".join(sorted(h.filename for h in results.top(5)))
         _analysis_key = _hl.sha256(
-            f"{_ANALYZE_PROMPT_VER}\n{results.query}\n{state.query}\n{state.hypothesis or ''}\n{_top_names}\n{results_text}".encode()
+            f"{_ANALYZE_PROMPT_VER}\n{results.query}\n{state.query}\n{state.hypothesis or ''}\n{_top_names}\n{results_text}\n{_focus_issue_id or ''}".encode()
         ).hexdigest()
         _cached_analysis = None
         if self._matter_model is not None:
@@ -1746,7 +1747,6 @@ class RLMEngine:
             _adp_pre = getattr(state, "_matter_adapter", None)
             if _adp_pre is not None and _adp_pre.is_stop_requested():
                 return
-            _focus_issue_id = lead.focus_issue_id if lead is not None else None
             _issue_focus = self._build_issue_focus_block(_focus_issue_id)
             prompt = ANALYZE_FINDINGS_PROMPT.format(
                 query=state.query,
@@ -2705,11 +2705,12 @@ class RLMEngine:
         if not high_violations:
             return None  # no action when no HIGH violations
 
-        # Check if Financial Analysis section is already present in the output.
-        _has_section = (
-            "## Financial Analysis" in synthesis_output
-            or "Financial Analysis" in synthesis_output
-            or "## Financial" in synthesis_output
+        # Check if a Financial Analysis section is already present.
+        # Use case-insensitive regex anchored to heading markers to avoid false
+        # positives from body text that mentions "financial analysis" in prose.
+        import re as _re
+        _has_section = bool(
+            _re.search(r"^#{1,6}\s+financial\s+analysis", synthesis_output, _re.IGNORECASE | _re.MULTILINE)
         )
         if _has_section:
             return None  # LLM already addressed it — gate is satisfied
@@ -2860,7 +2861,11 @@ class RLMEngine:
                 for p in predicates:
                     lines.append(f"  Element to prove: \"{p.get('description', '')}\"")
             lines.append("  → Extract facts that support OR disprove these specific elements.")
-            return "\n".join(lines) + "\n"
+            block = "\n".join(lines) + "\n"
+            # Escape braces so the block is safe to pass through str.format() in the
+            # ANALYZE_FINDINGS_PROMPT template — issue titles/predicates could contain
+            # literal { } characters that would otherwise be misinterpreted as slots.
+            return block.replace("{", "{{").replace("}", "}}")
         except Exception:
             return ""
 
