@@ -819,6 +819,105 @@ class RLMEngine:
             self._semaphore_doc_count = self._doc_count
         return self._operation_semaphore
 
+    # How often to poll is_stop_requested() while waiting for in-flight tasks (seconds).
+    # 0.25s gives sub-second cancellation latency while keeping DB read overhead low:
+    # each is_stop_requested() call is O(1) in-memory when stop is not yet requested
+    # (fast path: _stop_flag check); the DB read only fires when stop has not been set,
+    # costing <1ms per poll — negligible against 1–30s LLM round-trips.
+    _CANCEL_POLL_SECS: float = 0.25
+    # Maximum seconds to wait for cancelled tasks to acknowledge cancellation before
+    # giving up and continuing.  This bounds the drain time in the pathological case
+    # where a task's finally block is slow or a sync operation inside it is blocking.
+    _CANCEL_DRAIN_TIMEOUT_SECS: float = 5.0
+
+    async def _gather_with_cancellation(
+        self,
+        state: "InvestigationState",
+        tasks: "list[asyncio.Task]",
+    ) -> list:
+        """Await tasks concurrently with true in-flight cancellation support (SO-3).
+
+        Polls ``is_stop_requested()`` every ``_CANCEL_POLL_SECS`` seconds.  When a
+        stop is detected, all still-running tasks are cancelled via
+        ``asyncio.Task.cancel()`` so LLM calls awaited inside those tasks receive
+        ``asyncio.CancelledError`` at their next suspension point — not just at the
+        next cooperative check in ``_investigate_lead``.
+
+        Leads whose tasks are cancelled are NOT marked investigated; they remain
+        pending so a resumed run can retry them (same semantics as the cooperative
+        stop check at the top of ``_investigate_lead``).
+
+        Falls back to plain ``asyncio.gather`` when no adapter is attached (tests,
+        standalone runs) so behaviour is identical to the prior implementation.
+        """
+        _adapter = getattr(state, "_matter_adapter", None)
+        if _adapter is None:
+            return list(await asyncio.gather(*tasks, return_exceptions=True))
+
+        pending: "set[asyncio.Task]" = set(tasks)
+        done: "set[asyncio.Task]" = set()
+
+        async def _drain(to_drain: "set[asyncio.Task]") -> None:
+            """Wait up to _CANCEL_DRAIN_TIMEOUT_SECS for tasks to finish after cancel."""
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*to_drain, return_exceptions=True),
+                    timeout=self._CANCEL_DRAIN_TIMEOUT_SECS,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "_gather_with_cancellation: %d task(s) did not acknowledge "
+                    "cancellation within %.1fs; continuing",
+                    len(to_drain),
+                    self._CANCEL_DRAIN_TIMEOUT_SECS,
+                )
+
+        try:
+            while pending:
+                # Wait up to _CANCEL_POLL_SECS for any task to finish.
+                finished, pending = await asyncio.wait(
+                    pending, timeout=self._CANCEL_POLL_SECS
+                )
+                done.update(finished)
+
+                if not pending:
+                    break  # All tasks completed naturally.
+
+                if _adapter.is_stop_requested():
+                    # Cancel all in-flight tasks — injects CancelledError at next await.
+                    for t in pending:
+                        t.cancel()
+                    # Drain with timeout so a slow finally block can't block shutdown.
+                    await _drain(pending)
+                    done.update(pending)
+                    pending = set()
+                    break
+
+        except (asyncio.CancelledError, BaseException):
+            # If THIS coroutine is cancelled from outside, propagate cancel to children.
+            for t in pending:
+                t.cancel()
+            await _drain(pending)
+            raise
+
+        # Reconstruct results in original task order.
+        # Guard t.done() first: if the drain timed out, a task may still be running
+        # and calling t.exception() on a running task raises InvalidStateError.
+        results = []
+        for t in tasks:
+            if not t.done():
+                # Drain timed out and task is still running — treat as cancelled
+                # (lead stays pending for resume; the orphaned task will eventually
+                # finish or be garbage-collected when the event loop exits).
+                results.append(None)
+            elif t.cancelled():
+                results.append(None)  # Cancelled lead stays pending for resume.
+            elif t.exception() is not None:
+                results.append(t.exception())
+            else:
+                results.append(t.result())
+        return results
+
     def _adapt_config_for_repo_size(self, doc_count: int):
         """Adjust config parameters based on repository size."""
         self._doc_count = doc_count
@@ -1340,14 +1439,17 @@ class RLMEngine:
                     why=f"Leads: {lead_summaries}",
                 )
 
-            # Process leads in parallel
-            tasks = [
-                self._investigate_lead(state, repo, lead)
+            # Process leads in parallel with true cancellation support (SO-3).
+            # asyncio.create_task() makes each lead a real Task so Task.cancel()
+            # can inject CancelledError at in-flight LLM awaits, not just at the
+            # next cooperative is_stop_requested() check.
+            _lead_tasks = [
+                asyncio.create_task(self._investigate_lead(state, repo, lead))
                 for lead in leads_to_process
             ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            results = await self._gather_with_cancellation(state, _lead_tasks)
 
-            # Log any errors
+            # Log any errors (None = task was cancelled by stop request — not an error)
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     logger.error(f"Lead investigation failed: {leads_to_process[i].description}: {result}")

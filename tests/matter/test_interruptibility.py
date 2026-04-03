@@ -436,3 +436,105 @@ def test_correct_assertion_writes_revision_event(model):
     assert events[-1]["cause"] == RevisionCause.USER_CORRECTION.value
     assert events[-1]["new_belief_state"] == BeliefState.DISPUTED.value
     assert "deposition" in (events[-1]["note"] or "")
+
+# ---------------------------------------------------------------------------
+# _gather_with_cancellation — true in-flight cancellation (SO-3)
+# ---------------------------------------------------------------------------
+
+import asyncio
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_gather_with_cancellation_no_stop():
+    """_gather_with_cancellation completes all tasks when no stop is requested."""
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.rlm.state import InvestigationState
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._CANCEL_POLL_SECS = 0.05
+
+    async def _fast_task(n):
+        await asyncio.sleep(0)
+        return n * 2
+
+    tasks = [asyncio.create_task(_fast_task(i)) for i in range(4)]
+
+    # State with no adapter — fallback path
+    state = InvestigationState(id="t", query="q", repository_path="/tmp")
+    results = await engine._gather_with_cancellation(state, tasks)
+
+    assert results == [0, 2, 4, 6], f"All tasks must complete: {results}"
+
+
+@pytest.mark.asyncio
+async def test_gather_with_cancellation_cancels_on_stop(model):
+    """_gather_with_cancellation cancels in-flight tasks when stop is requested."""
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.rlm.state import InvestigationState
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._CANCEL_POLL_SECS = 0.05  # Fast poll for test
+
+    run_id = model.start_run("cancel test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    state = InvestigationState(id="t", query="q", repository_path="/tmp")
+    state._matter_adapter = adapter
+
+    completed = []
+
+    async def _slow_task(n):
+        await asyncio.sleep(10)  # Long sleep — should be cancelled
+        completed.append(n)
+        return n
+
+    tasks = [asyncio.create_task(_slow_task(i)) for i in range(3)]
+
+    # Request stop before starting the gather
+    adapter.request_stop()
+
+    results = await engine._gather_with_cancellation(state, tasks)
+
+    # All tasks should be cancelled (None), none should have completed
+    assert all(r is None for r in results), (
+        f"Cancelled tasks must return None: {results}"
+    )
+    assert completed == [], "Long-sleeping tasks must not complete after cancellation"
+
+
+@pytest.mark.asyncio
+async def test_gather_with_cancellation_partial_completion(model):
+    """Tasks that complete before stop is requested return their results normally."""
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.rlm.state import InvestigationState
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._CANCEL_POLL_SECS = 0.05
+
+    run_id = model.start_run("partial cancel test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    state = InvestigationState(id="t", query="q", repository_path="/tmp")
+    state._matter_adapter = adapter
+
+    async def _instant_task(n):
+        await asyncio.sleep(0)
+        return n
+
+    async def _slow_task(n):
+        await asyncio.sleep(10)
+        return n
+
+    # Mix of fast (completes before stop) and slow (cancelled) tasks
+    fast = asyncio.create_task(_instant_task(42))
+    slow = asyncio.create_task(_slow_task(99))
+
+    # Let fast task complete first
+    await asyncio.sleep(0.01)
+
+    adapter.request_stop()
+    results = await engine._gather_with_cancellation(state, [fast, slow])
+
+    assert results[0] == 42, "Fast task that completed before stop must keep its result"
+    assert results[1] is None, "Slow task cancelled after stop must return None"
