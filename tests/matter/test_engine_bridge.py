@@ -2816,3 +2816,61 @@ def test_enrich_search_term_no_model_returns_unchanged():
 
     result = engine._enrich_search_term_with_issue_context("payment default", "any-issue-id")
     assert result == "payment default"
+
+
+# ---------------------------------------------------------------------------
+# SO-4: _build_issue_focus_block() — issue-element context in analysis prompt
+# ---------------------------------------------------------------------------
+
+def test_build_issue_focus_block_with_predicates():
+    """Issue focus block must include issue title and predicate description."""
+    from irys.rlm.engine import RLMEngine
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue("Breach of payment obligation", IssueType.CLAIM)
+    model.issues.add_predicate(iid, "plaintiff delivered goods conforming to the contract")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    block = engine._build_issue_focus_block(iid)
+    assert block, "Issue focus block must be non-empty when issue and predicates exist"
+    assert "Breach of payment obligation" in block, "Must include issue title"
+    assert "plaintiff delivered goods" in block, "Must include predicate description"
+    assert "SO-4" in block, "Must reference SO-4 for traceability"
+
+
+def test_build_issue_focus_block_no_predicates_still_shows_title():
+    """Issue focus block must still include issue title even when no predicates exist."""
+    from irys.rlm.engine import RLMEngine
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue("Fraudulent misrepresentation", IssueType.CLAIM)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    block = engine._build_issue_focus_block(iid)
+    assert block, "Issue focus block must be non-empty when issue exists (even without predicates)"
+    assert "Fraudulent misrepresentation" in block
+
+
+def test_build_issue_focus_block_no_issue_id_returns_empty():
+    """Without a focus issue id, block must return empty string."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    block = engine._build_issue_focus_block(None)
+    assert block == ""
+
+
+def test_build_issue_focus_block_no_model_returns_empty():
+    """Without a matter model, block must return empty string."""
+    from irys.rlm.engine import RLMEngine
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = None
+
+    block = engine._build_issue_focus_block("any-issue-id")
+    assert block == ""

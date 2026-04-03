@@ -175,7 +175,7 @@ ANALYZE_FINDINGS_PROMPT = """You are a senior legal analyst extracting evidence 
 
 Query: {query}
 Current Hypothesis: {hypothesis}
-
+{issue_focus}
 Search Results for "{search_term}":
 {search_results}
 
@@ -1746,9 +1746,12 @@ class RLMEngine:
             _adp_pre = getattr(state, "_matter_adapter", None)
             if _adp_pre is not None and _adp_pre.is_stop_requested():
                 return
+            _focus_issue_id = lead.focus_issue_id if lead is not None else None
+            _issue_focus = self._build_issue_focus_block(_focus_issue_id)
             prompt = ANALYZE_FINDINGS_PROMPT.format(
                 query=state.query,
                 hypothesis=state.hypothesis or "No hypothesis yet",
+                issue_focus=_issue_focus,
                 search_term=results.query,
                 search_results=results_text,
             )
@@ -2759,6 +2762,34 @@ class RLMEngine:
                 )
             except Exception:
                 pass
+
+    def _build_issue_focus_block(self, focus_issue_id: Optional[str]) -> str:
+        """Build an issue-focus context block for the analysis prompt (SO-4).
+
+        When a lead targets a specific issue, inject the issue title and first
+        open predicate into the analysis prompt so the LLM prioritizes facts
+        that address the issue's specific proof elements — not just query-token
+        surface matches.
+
+        Returns empty string when no issue context is available (no prompt noise).
+        """
+        if not focus_issue_id or self._matter_model is None:
+            return ""
+        try:
+            issue = self._matter_model.issues.get_issue(focus_issue_id)
+            if not issue:
+                return ""
+            title = issue.get("title", "")
+            predicates = self._matter_model.issues.get_predicates(focus_issue_id, limit=2)
+            lines = [f"Issue Focus (SO-4 — prioritize facts addressing these elements):"]
+            lines.append(f"  Issue: \"{title}\"")
+            if predicates:
+                for p in predicates:
+                    lines.append(f"  Element to prove: \"{p.get('description', '')}\"")
+            lines.append("  → Extract facts that support OR disprove these specific elements.")
+            return "\n".join(lines) + "\n"
+        except Exception:
+            return ""
 
     def _enrich_search_term_with_issue_context(
         self, search_term: str, focus_issue_id: str
