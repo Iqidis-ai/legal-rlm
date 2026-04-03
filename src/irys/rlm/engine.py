@@ -1798,8 +1798,25 @@ class RLMEngine:
         import hashlib as _hl
         _focus_issue_id = lead.focus_issue_id if lead is not None else None
         _top_names = ",".join(sorted(h.filename for h in results.top(5)))
+        # Compute the exact predicate descriptions shown in the Issue Focus block.
+        # These are used for: (a) resolution allowlist — only LLM-visible predicates
+        # may be resolved; (b) cache key dependency — when predicates change (e.g.
+        # one resolves and the top-2 open set shifts), old cached analysis is invalid.
+        _pred_allowlist: list[str] = []
+        if _focus_issue_id and self._matter_model is not None:
+            try:
+                _open_preds = self._matter_model.issues.get_predicates(_focus_issue_id, limit=2)
+                _pred_allowlist = [
+                    p.get("description", "")
+                    for p in _open_preds
+                    if p.get("status") == "open" and p.get("description")
+                ]
+            except Exception:
+                pass
+        _pred_key_frag = ",".join(_pred_allowlist)
         _analysis_key = _hl.sha256(
-            f"{_ANALYZE_PROMPT_VER}\n{results.query}\n{state.query}\n{state.hypothesis or ''}\n{_top_names}\n{results_text}\n{_focus_issue_id or ''}".encode()
+            f"{_ANALYZE_PROMPT_VER}\n{results.query}\n{state.query}\n{state.hypothesis or ''}"
+            f"\n{_top_names}\n{results_text}\n{_focus_issue_id or ''}\n{_pred_key_frag}".encode()
         ).hexdigest()
         _cached_analysis = None
         if self._matter_model is not None:
@@ -2004,15 +2021,29 @@ class RLMEngine:
                         )
 
         # Resolve issue predicates when LLM identifies them as satisfied (SO-4).
-        # predicates_satisfied contains verbatim predicate descriptions from the Issue Focus
-        # block; resolve_predicate_by_description() matches them exactly.
+        # Guard rails:
+        # - Only resolve predicates that were in the Issue Focus block shown to the LLM
+        #   (_pred_allowlist); prevents resolving predicates the LLM never saw evidence for.
+        # - Gate on facts_to_add: do not mark elements satisfied if no supporting facts
+        #   were persisted from this analysis pass.
+        # - Case-insensitive + quote-strip comparison handles minor LLM formatting drift.
         _preds_satisfied = analysis.get("predicates_satisfied") or []
-        if isinstance(_preds_satisfied, list) and _focus_issue_id and self._matter_model:
-            for _ps in _preds_satisfied[:8]:  # cap: guard against LLM over-reporting
-                if isinstance(_ps, str) and _ps.strip():
+        if (isinstance(_preds_satisfied, list) and _focus_issue_id
+                and self._matter_model is not None and facts_to_add and _pred_allowlist):
+            # Build lowercase lookup → original description for exact SQL match.
+            _allowed = {
+                d.strip('"').strip("'").strip().lower(): d
+                for d in _pred_allowlist
+            }
+            for _ps in _preds_satisfied:
+                if not isinstance(_ps, str):
+                    continue
+                _ps_key = _ps.strip().strip('"').strip("'").strip().lower()
+                _orig = _allowed.get(_ps_key)
+                if _orig:
                     try:
                         self._matter_model.issues.resolve_predicate_by_description(
-                            _focus_issue_id, _ps.strip()
+                            _focus_issue_id, _orig
                         )
                     except Exception:
                         pass
