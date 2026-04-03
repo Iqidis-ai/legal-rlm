@@ -140,6 +140,15 @@ def test_actor_home_side(model):
     # Post-hoc explanatory
     ("Expert_Report_damages.pdf", SourceRole.POST_HOC_EXPLANATORY),
     ("Audit_findings.pdf", SourceRole.POST_HOC_EXPLANATORY),
+    # Authoritative (statutes, court orders, judicial decisions)
+    ("Court_Order_Granting_Summary_Judgment.pdf", SourceRole.AUTHORITATIVE),
+    ("Statute_of_Frauds_California.pdf", SourceRole.AUTHORITATIVE),
+    ("Final_Judgment_and_Decree.pdf", SourceRole.AUTHORITATIVE),
+    ("Preliminary_Injunction.pdf", SourceRole.AUTHORITATIVE),
+    ("Consent_Order_2024.pdf", SourceRole.AUTHORITATIVE),
+    # 'order.pdf' alone must NOT match (purchase orders, change orders, etc.)
+    ("order.pdf", SourceRole.UNKNOWN),
+    ("purchase_order_42.pdf", SourceRole.UNKNOWN),
     # Unknown (no match)
     ("document_001.pdf", SourceRole.UNKNOWN),
     ("scan_0042.tiff", SourceRole.UNKNOWN),
