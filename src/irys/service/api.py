@@ -416,11 +416,17 @@ async def _run_investigation(
         job.duration_seconds = (
             job.completed_at - job.created_at).total_seconds()
 
-        # Record run_id from the matter model's most recent run
+        # Record run_id, pending_clarifications, open_gaps from the matter model (SO-7)
+        job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
         if job.matter_id and job.matter_id in _active_matter_models:
-            recent = _active_matter_models[job.matter_id].ledger.recent_runs(1)
+            _mm = _active_matter_models[job.matter_id]
+            recent = _mm.ledger.recent_runs(1)
             if recent:
                 job.run_id = recent[0]["id"]
+            try:
+                job.open_gaps = _mm.gaps.open_gaps(min_materiality=0.3)
+            except Exception:
+                pass
 
         logger.info(f"Job {job_id} completed in {job.duration_seconds:.1f}s")
 
@@ -1114,10 +1120,16 @@ async def _run_urls_investigation(
             job.completed_at - job.created_at
         ).total_seconds()
 
+        job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
         if job.matter_id and job.matter_id in _active_matter_models:
-            recent = _active_matter_models[job.matter_id].ledger.recent_runs(1)
+            _url_mm = _active_matter_models[job.matter_id]
+            recent = _url_mm.ledger.recent_runs(1)
             if recent:
                 job.run_id = recent[0]["id"]
+            try:
+                job.open_gaps = _url_mm.gaps.open_gaps(min_materiality=0.3)
+            except Exception:
+                pass
 
         logger.info(f"URLs job {job_id} completed in {job.duration_seconds:.1f}s")
 

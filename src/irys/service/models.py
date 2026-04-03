@@ -76,6 +76,9 @@ class JobResult(BaseModel):
     matter_id: Optional[str] = None
     run_id: Optional[str] = None
     corpus_key: Optional[str] = None  # Stable corpus identity; matter DB is keyed to this
+    # SO-7: open gaps and clarifications included so no extra fetch needed after async job
+    pending_clarifications: list[dict[str, Any]] = []
+    open_gaps: list[dict[str, Any]] = []
 
 
 # === Matter Model API Models ===
