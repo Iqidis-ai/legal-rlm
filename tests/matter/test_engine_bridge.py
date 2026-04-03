@@ -15,6 +15,11 @@ from irys.matter import MatterModel
 from irys.matter.runtime import MatterRuntimeAdapter, NullMatterAdapter
 
 
+@pytest.fixture
+def model():
+    return MatterModel.open_in_memory()
+
+
 # ---------------------------------------------------------------------------
 # NullAdapter: safe no-op contract
 # ---------------------------------------------------------------------------
@@ -325,3 +330,40 @@ def test_null_adapter_annotation():
     assert adapter.annotate_document("doc.pdf", "some note") == ""
     assert adapter.list_annotations() == []
     assert adapter.list_annotations(document_id="doc.pdf") == []
+
+
+# ---------------------------------------------------------------------------
+# SO-5: Source calibration end-to-end — same proposition, two source roles
+# ---------------------------------------------------------------------------
+
+def test_so5_same_proposition_complaint_vs_contract(model):
+    """SO-5 end-to-end: same proposition from complaint (advocacy→alleged) and
+    contract (operative→operative) must produce 1 assertion + 2 occurrences
+    with distinct speech_acts, so advocacy is never amplified as operative.
+    """
+    from irys.matter.enums import SpeechAct
+    run_id = model.start_run("SO-5 test run")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    proposition = "Payment of $50,000 was due by January 15, 2024."
+
+    # complaint.pdf → inferred source_role=ADVOCACY → speech_act=ALLEGED
+    a1 = adapter.record_fact(proposition, document_id="complaint.pdf")
+    # contract.pdf → inferred source_role=OPERATIVE → speech_act=OPERATIVE
+    a2 = adapter.record_fact(proposition, document_id="Service_Agreement_v3.pdf")
+
+    # Same proposition → same assertion_id (dedup)
+    assert a1 == a2, "Same proposition must map to the same assertion (dedup)"
+
+    # Two occurrences with distinct speech_acts
+    occurrences = model.assertions.get_occurrences(a1)
+    assert len(occurrences) == 2, "Complaint and contract occurrences must both be recorded"
+
+    speech_acts = {occ["speech_act"] for occ in occurrences}
+    assert SpeechAct.ALLEGED.value in speech_acts, "Complaint occurrence must be ALLEGED"
+    assert SpeechAct.OPERATIVE.value in speech_acts, "Contract occurrence must be OPERATIVE"
+
+    # Source roles must reflect the document origin
+    source_roles = {occ["source_role"] for occ in occurrences}
+    assert "advocacy" in source_roles, "Complaint must be tagged as advocacy source"
+    assert "operative" in source_roles, "Contract must be tagged as operative source"
