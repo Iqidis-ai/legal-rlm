@@ -16,7 +16,7 @@ from typing import Optional
 from .db import SQLiteMatterDB
 from .graph import (
     AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
-    DocumentInventoryStore,
+    DocumentInventoryStore, ReasoningCacheStore,
 )
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
@@ -62,6 +62,7 @@ class MatterModel:
         self.ledger = ReasoningLedgerStore(db, matter_id)
         self.belief = BeliefRevisionEngine(db, self.assertions)
         self.inventory = DocumentInventoryStore(db, matter_id)
+        self.cache = ReasoningCacheStore(db, matter_id)
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -251,10 +252,33 @@ class MatterModel:
         ).fetchall()
         known_document_ids = [r["document_id"] for r in rows]
 
-        # Find weakest issue (lowest materiality × salience score)
+        # Find the weakest issue: the highest-priority issue with the least evidentiary support.
+        # "Weakest" means most important AND least covered — where work will have most impact.
+        # Priority = materiality × salience × (1 - coverage_fraction).
+        # coverage_fraction = supporting_count / (supporting_count + 1) to avoid zero-division.
         weakest_issue_id = None
         if open_issues:
-            weakest = min(open_issues, key=lambda i: (i["materiality"] * i["salience"], i["id"]))
+            # Get supporting-assertion count per issue in one query
+            issue_ids = [i["id"] for i in open_issues]
+            placeholders = ",".join("?" * len(issue_ids))
+            support_rows = self.db.execute(
+                f"""SELECT issue_id, COUNT(*) AS cnt
+                    FROM assertion_issue_link
+                    WHERE issue_id IN ({placeholders})
+                      AND relation_type='supports'
+                    GROUP BY issue_id""",
+                issue_ids,
+            ).fetchall()
+            support_counts = {r["issue_id"]: r["cnt"] for r in support_rows}
+
+            def _weakness(issue: dict) -> tuple:
+                cnt = support_counts.get(issue["id"], 0)
+                coverage = cnt / (cnt + 1.0)
+                priority = issue["materiality"] * issue["salience"] * (1.0 - coverage)
+                # Higher priority = higher weakness; negate for min()
+                return (-priority, issue["id"])
+
+            weakest = min(open_issues, key=_weakness)
             weakest_issue_id = weakest["id"]
 
         # Answered clarifications: inject user context into orientation

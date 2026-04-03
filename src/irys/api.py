@@ -43,7 +43,7 @@ class IrysConfig:
     cache_ttl_seconds: int = 3600
     output_format: str = "markdown"
     log_level: str = "INFO"
-    enable_matter_model: bool = False  # When True, persist intelligence to durable SQLite store
+    enable_matter_model: bool = True  # Persist intelligence to durable SQLite store (default on)
 
 
 class Irys:

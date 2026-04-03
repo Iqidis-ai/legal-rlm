@@ -221,26 +221,53 @@ class AssertionStore:
         return row[0]
 
     def list_recent(self, limit: int = 50, offset: int = 0) -> list[dict]:
-        """Return recent assertions with their first occurrence's source metadata."""
+        """Return recent assertions with all occurrence source metadata aggregated.
+
+        Each row includes:
+        - occurrence_count: total number of times this proposition was observed
+        - source_roles: JSON-encoded list of distinct source roles seen
+        - documents: JSON-encoded list of document_ids that contain this assertion
+        - primary_document_id / primary_source_role / primary_speech_act: earliest
+          occurrence values (backward compat)
+
+        This closes the SO-5 single-occurrence collapse where an assertion appearing
+        in both a complaint (ADVOCACY) and a contract (OPERATIVE) would show only the
+        first-seen source role.
+        """
+        import json
         rows = self.db.execute(
             """SELECT a.id, a.proposition_text, a.model_layer, a.assertion_kind,
                       a.belief_state, a.confidence, a.created_at,
-                      ao.document_id, ao.source_role, ao.speech_act
+                      COUNT(ao.id) AS occurrence_count,
+                      GROUP_CONCAT(DISTINCT ao.source_role) AS source_roles_csv,
+                      GROUP_CONCAT(DISTINCT ao.speech_act) AS speech_acts_csv,
+                      GROUP_CONCAT(DISTINCT ao.document_id) AS documents_csv,
+                      MIN(ao.document_id) AS primary_document_id,
+                      MIN(ao.source_role) AS primary_source_role,
+                      MIN(ao.speech_act) AS primary_speech_act
                FROM assertion a
-               LEFT JOIN assertion_occurrence ao
-                 ON ao.assertion_id = a.id
-                 AND ao.id = (
-                     SELECT id FROM assertion_occurrence
-                     WHERE assertion_id = a.id
-                     ORDER BY created_at
-                     LIMIT 1
-                 )
+               LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
                WHERE a.matter_id=?
+               GROUP BY a.id
                ORDER BY a.created_at DESC
                LIMIT ? OFFSET ?""",
             (self.matter_id, limit, offset),
         ).fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            # Expand CSV aggregates into proper lists
+            d["source_roles"] = [
+                s for s in (d.pop("source_roles_csv") or "").split(",") if s
+            ]
+            d["speech_acts"] = [
+                s for s in (d.pop("speech_acts_csv") or "").split(",") if s
+            ]
+            d["documents"] = [
+                s for s in (d.pop("documents_csv") or "").split(",") if s
+            ]
+            result.append(d)
+        return result
 
     def get_by_proposition(self, proposition_text: str) -> Optional[AssertionRecord]:
         """Look up an assertion by normalized proposition text."""
@@ -900,3 +927,52 @@ class DocumentInventoryStore:
             (self.matter_id,),
         ).fetchone()
         return row[0]
+
+
+class ReasoningCacheStore:
+    """
+    Cache for expensive LLM reasoning steps (e.g. orientation planning).
+
+    Keyed on (matter_id, stage, cache_key) where cache_key is a
+    sha256 hash of the query and repo-state proxy computed by the caller.
+    On warm runs the engine checks this store before calling the LLM,
+    skipping the FLASH model call when the query and repo structure are
+    unchanged (SO-1 hot path).
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def get(self, stage: str, cache_key: str) -> Optional[dict]:
+        """Return cached plan dict or None on cache miss."""
+        import json
+        row = self.db.execute(
+            "SELECT id, plan_json FROM reasoning_cache"
+            " WHERE matter_id=? AND stage=? AND cache_key=?",
+            (self.matter_id, stage, cache_key),
+        ).fetchone()
+        if row is None:
+            return None
+        self.db.execute(
+            "UPDATE reasoning_cache SET last_hit_at=? WHERE id=?",
+            (_now(), row["id"]),
+        )
+        try:
+            return json.loads(row["plan_json"])
+        except Exception:
+            return None
+
+    def put(self, stage: str, cache_key: str, plan: dict) -> None:
+        """Upsert a cache entry (insert or overwrite on key collision)."""
+        import json
+        now = _now()
+        self.db.execute(
+            """INSERT INTO reasoning_cache
+               (id, matter_id, stage, cache_key, plan_json, created_at, last_hit_at)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(matter_id, stage, cache_key)
+               DO UPDATE SET plan_json=excluded.plan_json,
+                             last_hit_at=excluded.last_hit_at""",
+            (_id(), self.matter_id, stage, cache_key, json.dumps(plan), now, now),
+        )

@@ -127,10 +127,12 @@ Search Results for "{search_term}":
 ANALYZE THESE RESULTS CAREFULLY:
 
 1. KEY FACTS: Extract ONLY the 10 most important specific facts (STRICT LIMIT: 10 maximum):
+   - Format each fact as: {"fact": "...", "source_file": "filename_if_determinable"}
+   - source_file should be the filename from the search results where the fact appears
    - Directly relevant to the query
    - Supported by the document text
    - Include dates, amounts, party names where found
-   - Keep each fact under 100 characters
+   - Keep each fact text under 100 characters
 
 2. NEW LEADS: Identify specific avenues to investigate:
    - Referenced documents that should be examined
@@ -150,7 +152,7 @@ ANALYZE THESE RESULTS CAREFULLY:
 
 Respond in COMPACT JSON (keep under 3000 chars):
 {{
-    "key_facts": ["fact 1", "fact 2", ...],
+    "key_facts": [{{"fact": "fact text", "source_file": "filename.pdf"}}, ...],
     "new_leads": [{{"desc": "...", "priority": 0.8}}],
     "hypothesis_update": "string or null",
     "next_searches": ["term1", "term2"]
@@ -643,14 +645,22 @@ class RLMEngine:
         self.on_citation = on_citation
         self.on_progress = on_progress
         self._matter_model = matter_model
-        # Global semaphore to limit concurrent CPU-intensive operations
+        # Per-investigation semaphore to limit concurrent CPU-intensive operations.
+        # Recreated when doc_count changes so the limit stays calibrated.
+        # Never reset to None mid-investigation — that would corrupt concurrent waiters.
         self._operation_semaphore: Optional[asyncio.Semaphore] = None
+        self._semaphore_doc_count: int = -1  # sentinel: semaphore not yet calibrated
         self._doc_count: int = 0  # Track document count for adaptive behavior
 
     def _get_semaphore(self) -> asyncio.Semaphore:
-        """Get or create the operation semaphore."""
-        if self._operation_semaphore is None:
-            # Limit concurrent operations based on document count
+        """Get or create the operation semaphore.
+
+        Recreates if _doc_count has changed since the semaphore was last created
+        (e.g. a new investigation on a different-sized repo) but never nulls out
+        an existing semaphore while coroutines may be waiting on it.
+        """
+        if (self._operation_semaphore is None
+                or self._semaphore_doc_count != self._doc_count):
             # Small repos (<=5 docs): max 2 concurrent ops
             # Medium repos (6-20 docs): max 3 concurrent ops
             # Large repos (>20 docs): max 5 concurrent ops
@@ -661,6 +671,7 @@ class RLMEngine:
             else:
                 max_concurrent = 5
             self._operation_semaphore = asyncio.Semaphore(max_concurrent)
+            self._semaphore_doc_count = self._doc_count
         return self._operation_semaphore
 
     def _adapt_config_for_repo_size(self, doc_count: int):
@@ -702,12 +713,11 @@ class RLMEngine:
         # regardless of CWD changes (e.g., FastAPI background tasks).
         state = InvestigationState.create(query, str(repo.base_path))
 
-        # Adapt configuration based on repository size
+        # Adapt configuration based on repository size.
+        # _doc_count update triggers semaphore recreation in _get_semaphore() so
+        # the concurrency limit stays calibrated without nulling out mid-flight waiters.
         stats = repo.get_stats()
         self._adapt_config_for_repo_size(stats.total_files)
-
-        # Reset semaphore for new investigation
-        self._operation_semaphore = None
 
         # Build matter adapter — real or null depending on config + injected model
         if self.config.enable_matter_model and self._matter_model is not None:
@@ -798,15 +808,40 @@ class RLMEngine:
             matter_context=_format_matter_context(matter_ctx),
         )
 
-        # Use FLASH for intelligent planning
-        response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+        # Orientation cache key: sha256 of normalized query + total file count.
+        # total_files is a cheap repo-change proxy: adding/removing documents
+        # invalidates the cache so stale plans are not reused.
+        import hashlib as _hashlib
+        _orient_key = _hashlib.sha256(
+            f"{state.query.lower().strip()}\n{stats.total_files}".encode()
+        ).hexdigest()
 
-        plan = self._parse_json_safe(response, {
+        _plan_defaults = {
             "issues": [],
             "relevant_folders": [],
             "initial_searches": [],
             "hypothesis": "Investigating query across available documents",
-        })
+        }
+
+        # On warm runs (prior issues in matter model) check reasoning cache first
+        # to avoid repeating the FLASH orientation call (SO-1 hot path).
+        plan = None
+        if (matter_ctx is not None
+                and matter_ctx.open_issues
+                and self._matter_model is not None):
+            plan = self._matter_model.cache.get("orient", _orient_key)
+
+        if plan is None:
+            # Cache miss or cold run: call LLM
+            response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+            plan = self._parse_json_safe(response, _plan_defaults)
+            # Persist for future warm runs
+            if self._matter_model is not None:
+                self._matter_model.cache.put("orient", _orient_key, plan)
+        else:
+            self._emit_step(
+                state, StepType.THINKING, "Orientation cache hit — reusing prior plan"
+            )
 
         state.hypothesis = plan.get("hypothesis")
         state.findings["issues"] = plan.get("issues", [])
@@ -1161,43 +1196,70 @@ class RLMEngine:
             "next_searches": [],
         })
 
-        # Store key facts with deduplication
-        # key_facts can be strings or dicts with "fact" key
+        # Store key facts with per-fact source attribution (SO-5 provenance fix).
+        # Facts from the LLM may be bare strings (legacy) or dicts with "fact" and
+        # optional "source_file" keys. We use the per-fact source_file when present
+        # so each fact is labeled and recorded against its actual source document
+        # rather than always being attributed to the single top search hit.
         if analysis.get("key_facts"):
-            facts_to_add = []
+            from ..matter.runtime import infer_source_role as _infer_role
+
+            # Build a name→(relative_path, SearchHit) lookup for all top hits
+            _hit_by_name: dict[str, object] = {}
+            for _h in results.top(5):
+                _hit_by_name[_h.filename] = _h
+                _hit_by_name[_h.filename.lower()] = _h
+
+            # Fallback: top-hit doc_id and source role for facts with no source_file
+            _top_hits = results.top(1)
+            _fallback_hit = _top_hits[0] if _top_hits else None
+            _fallback_src_label = (
+                _infer_role(_fallback_hit.filename).value.upper()
+                if _fallback_hit else "UNKNOWN"
+            )
+            if _fallback_hit:
+                _fb_fp = Path(_fallback_hit.file_path)
+                try:
+                    _fallback_doc_id = str(_fb_fp.relative_to(repo.base_path))
+                except ValueError:
+                    _fallback_doc_id = _fallback_hit.filename
+            else:
+                _fallback_doc_id = "unknown"
+
+            facts_to_add: list[tuple[str, str, str]] = []  # (text, src_label, doc_id)
             for fact_item in analysis["key_facts"]:
                 if isinstance(fact_item, str):
-                    facts_to_add.append(fact_item)
+                    facts_to_add.append((fact_item, _fallback_src_label, _fallback_doc_id))
                 elif isinstance(fact_item, dict) and "fact" in fact_item:
-                    facts_to_add.append(fact_item["fact"])
-            # Prefix each fact with its source role so the synthesis LLM sees labeled facts
-            # rather than bare strings — closes the SO-5 per-fact calibration gap identified
-            # by Adversarial Audit #2.  Aggregate source-role counts remain in {source_calibration}.
-            from ..matter.runtime import infer_source_role as _infer_role
-            _top = results.top(1)
-            _src_label = _infer_role(_top[0].filename).value.upper() if _top else "UNKNOWN"
-            state.add_facts([f"[{_src_label}] {f}" for f in facts_to_add])
-            # Also record into matter model if enabled
+                    fact_text = fact_item["fact"]
+                    src_file = fact_item.get("source_file") or ""
+                    # Try to resolve source_file to a known hit
+                    hit = _hit_by_name.get(src_file) or _hit_by_name.get(src_file.lower())
+                    if hit is not None:
+                        src_label = _infer_role(hit.filename).value.upper()
+                        try:
+                            doc_id = str(Path(hit.file_path).relative_to(repo.base_path))
+                        except ValueError:
+                            doc_id = hit.filename
+                    else:
+                        src_label = _fallback_src_label
+                        doc_id = _fallback_doc_id
+                    facts_to_add.append((fact_text, src_label, doc_id))
+
+            # Add to state with per-fact source-role prefix (SO-5)
+            state.add_facts([f"[{lbl}] {txt}" for txt, lbl, _ in facts_to_add])
+
+            # Record into matter model with correct per-fact doc_id
             adapter = getattr(state, "_matter_adapter", None)
             if adapter is not None:
-                # Use repo-relative path (stable, not basename) so assertion_occurrence
-                # document_id is consistent with the inventory key used in _deep_read_document.
-                _top_hit = results.top(1)
-                if _top_hit:
-                    _hit_fp = Path(_top_hit[0].file_path)
-                    try:
-                        doc_id = str(_hit_fp.relative_to(repo.base_path))
-                    except ValueError:
-                        doc_id = _top_hit[0].filename  # fallback for external paths
-                else:
-                    doc_id = "unknown"
                 issue_id = lead.focus_issue_id if lead is not None else None
-                for fact_text in facts_to_add:
+                for fact_text, _lbl, doc_id in facts_to_add:
                     adapter.record_fact(fact_text, document_id=doc_id, issue_id=issue_id)
                 if facts_to_add:
+                    unique_docs = {d for _, _, d in facts_to_add}
                     adapter.log_step(
                         f"Recorded {len(facts_to_add)} facts from search: {results.query[:60]}",
-                        why=f"Source: {doc_id}",
+                        why=f"Sources: {', '.join(sorted(unique_docs)[:3])}",
                     )
 
         # Update hypothesis if changed
@@ -1221,7 +1283,9 @@ class RLMEngine:
             if self.on_citation:
                 self.on_citation(citation)
 
-        # Add new leads (handle both "description" and compact "desc" formats)
+        # Add new leads (handle both "description" and compact "desc" formats).
+        # Propagate focus_issue_id so issue focus does not decay on follow-on leads (SO-4).
+        _follow_on_issue_id = lead.focus_issue_id if lead is not None else None
         for lead_data in analysis.get("new_leads", [])[:3]:
             if isinstance(lead_data, dict):
                 desc = lead_data.get("description") or lead_data.get("desc")
@@ -1230,6 +1294,7 @@ class RLMEngine:
                         description=desc,
                         source=f"Analysis of '{results.query}'",
                         priority=lead_data.get("priority", 0.5),
+                        focus_issue_id=_follow_on_issue_id,
                     )
 
         # Deep read top documents in parallel
@@ -1281,6 +1346,7 @@ class RLMEngine:
         """Perform deep analysis of a document."""
         self._emit_step(state, StepType.READING, f"Deep reading: {Path(file_path).name}")
 
+        _rel_path: Optional[str] = None  # set before _reading_in_progress; used in except
         try:
             # Cold/hot split (SO-1): check inventory BEFORE the expensive repo.read()
             # so hot-path documents skip PDF parsing entirely, not just LLM calls.
@@ -1543,6 +1609,10 @@ class RLMEngine:
 
         except Exception as e:
             self._emit_step(state, StepType.ERROR, f"Failed to read {file_path}: {e}")
+            # Remove from in-progress so a subsequent lead can retry on transient failures.
+            # Permanent failures (corrupted file) will re-fail and re-record the gap below.
+            if _rel_path is not None:
+                state._reading_in_progress.discard(_rel_path)
             # Record as gap: document exists in search index but could not be read (SO-7)
             _adp = getattr(state, "_matter_adapter", None)
             if _adp is not None:

@@ -208,14 +208,56 @@ def _wire_matter_model(irys_instance, temp_dir: str, corpus_key: str, config) ->
     return matter_id
 
 
+def _try_rehydrate_matter_model(matter_id: str, config: ServiceConfig) -> Optional[Any]:
+    """Scan matter_db_dir for a persistent DB containing matter_id.
+
+    Called when a matter_id is not in the in-memory registry (service restart
+    or post-cleanup request). Iterates corpus_key subdirectories of matter_db_dir
+    looking for a DB where the matter row exists.  Rehydrating re-opens the
+    connection without re-running ingestion.
+    """
+    matter_db_dir = Path(config.matter_db_dir)
+    if not matter_db_dir.exists():
+        return None
+    try:
+        from irys.matter.matter import MatterModel
+        from irys.matter.db import SQLiteMatterDB
+        for corpus_dir in matter_db_dir.iterdir():
+            if not corpus_dir.is_dir():
+                continue
+            db_path = corpus_dir / ".irys" / "matter.sqlite3"
+            if not db_path.exists():
+                continue
+            try:
+                db = SQLiteMatterDB(db_path)
+                row = db.execute(
+                    "SELECT id FROM matter WHERE id=?", (matter_id,)
+                ).fetchone()
+                if row is not None:
+                    return MatterModel(db, matter_id)
+            except Exception:
+                continue
+    except Exception as e:
+        logger.debug(f"Matter model rehydration failed for {matter_id}: {e}")
+    return None
+
+
 def _get_matter_model_or_404(matter_id: str):
     model = _active_matter_models.get(matter_id)
-    if model is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Matter model '{matter_id}' not found or no longer active",
-        )
-    return model
+    if model is not None:
+        return model
+    # Try rehydrating from persistent storage (service restart recovery)
+    config = get_config()
+    if config.enable_matter_model and config.matter_db_dir:
+        model = _try_rehydrate_matter_model(matter_id, config)
+        if model is not None:
+            _active_matter_models[matter_id] = model
+            logger.info(f"Rehydrated matter model {matter_id} from persistent storage")
+            return model
+    raise HTTPException(
+        status_code=404,
+        detail=f"Matter model '{matter_id}' not found or no longer active",
+    )
 
 
 # === ENDPOINTS ===

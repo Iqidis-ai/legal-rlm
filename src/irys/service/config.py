@@ -47,8 +47,8 @@ class ServiceConfig:
     # Storage mode: "local" for dev (files on disk), "s3" for production (stream to S3)
     storage_mode: str = "s3"
 
-    # Matter model: when True, all investigations build a persistent SQLite matter model
-    enable_matter_model: bool = False
+    # Matter model: all investigations build a persistent SQLite matter model (default on)
+    enable_matter_model: bool = True
 
     @classmethod
     def from_env(cls) -> "ServiceConfig":
@@ -84,7 +84,7 @@ class ServiceConfig:
             # Storage mode
             storage_mode=os.getenv("IRYS_STORAGE_MODE", "s3"),
             # Matter model
-            enable_matter_model=os.getenv("IRYS_ENABLE_MATTER_MODEL", "false").lower() == "true",
+            enable_matter_model=os.getenv("IRYS_ENABLE_MATTER_MODEL", "true").lower() == "true",
         )
 
     def validate(self) -> list[str]:

@@ -178,9 +178,12 @@ def test_build_query_context_includes_issues(model):
     assert len(ctx.open_issues) == 2
     assert ctx.weakest_issue_id is not None
 
-    # Weakest issue should be Issue B (0.5 * 0.5 = 0.25 < 0.8 * 0.9 = 0.72)
+    # Weakest issue = highest-priority issue with least evidentiary support.
+    # Neither issue has supporting assertions, so coverage_fraction=0 for both.
+    # Issue A: 0.8 * 0.9 * (1-0) = 0.72 > Issue B: 0.5 * 0.5 * (1-0) = 0.25
+    # Issue A is the most important uncovered issue → it gets priority for retrieval.
     weakest = next(i for i in ctx.open_issues if i["id"] == ctx.weakest_issue_id)
-    assert weakest["title"] == "Issue B"
+    assert weakest["title"] == "Issue A"
 
 
 def test_stats_includes_issue_count(model):

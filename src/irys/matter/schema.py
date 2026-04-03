@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -366,6 +366,8 @@ CREATE TABLE IF NOT EXISTS gap_link (
 
 CREATE INDEX IF NOT EXISTS ix_gap_link_affected
     ON gap_link(affected_type, affected_id);
+CREATE INDEX IF NOT EXISTS ix_gap_link_gap_id
+    ON gap_link(gap_id);
 """
 
 _DDL_ASSUMPTIONS = """
@@ -466,6 +468,21 @@ CREATE INDEX IF NOT EXISTS ix_clarification_matter_status
 
 CREATE INDEX IF NOT EXISTS ix_clarification_matter_text
     ON clarification_question(matter_id, question_text);
+"""
+
+_DDL_REASONING_CACHE = """
+CREATE TABLE IF NOT EXISTS reasoning_cache (
+    id          TEXT PRIMARY KEY,
+    matter_id   TEXT NOT NULL REFERENCES matter(id),
+    stage       TEXT NOT NULL,
+    cache_key   TEXT NOT NULL,
+    plan_json   TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    last_hit_at TEXT
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_reasoning_cache
+    ON reasoning_cache(matter_id, stage, cache_key);
 """
 
 _DDL_SCHEMA_VERSION = """
@@ -612,6 +629,31 @@ def _migration_v6(conn) -> None:
     conn.execute("DROP INDEX IF EXISTS ux_inventory_hash")
 
 
+def _migration_v7(conn) -> None:
+    """Add gap_id index on gap_link for efficient per-gap link lookups.
+
+    generate_clarifications_from_gaps() queries gap_link by gap_id.
+    The existing ix_gap_link_affected index is on (affected_type, affected_id),
+    not gap_id, so each lookup was a full scan of gap_link.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_gap_link_gap_id ON gap_link(gap_id)"
+    )
+
+
+def _migration_v8(conn) -> None:
+    """Add reasoning_cache table for SO-1 hot-path orientation reuse.
+
+    Caches expensive LLM orientation plans by (matter_id, stage, cache_key)
+    so warm runs can skip the FLASH model call when the query and repo structure
+    are unchanged.
+    """
+    for stmt in _DDL_REASONING_CACHE.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            conn.execute(stmt)
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -622,6 +664,8 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (4, _migration_v4),
     (5, _migration_v5),
     (6, _migration_v6),
+    (7, _migration_v7),
+    (8, _migration_v8),
 ]
 
 
