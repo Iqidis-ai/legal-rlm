@@ -48,18 +48,22 @@ _SOURCE_ROLE_PATTERNS: list[tuple[re.Pattern, SourceRole]] = [
         r"subpoena|deposition|interrogator|exhibit|affidavit)",
         re.IGNORECASE,
     ), SourceRole.PROCEDURAL),
-    # Operative: contracts, agreements, orders, amendments, leases
+    # Authoritative: statutes, regulations, court orders, judicial decisions.
+    # Check BEFORE operative so that "order_approving_settlement_agreement" is
+    # classified AUTHORITATIVE (it is a court order) rather than OPERATIVE (settlement).
+    # "approv" catches "order_approving_X" and "approving_consent_order" patterns.
+    (re.compile(
+        r"(statute|regulation|rule|code|order|opinion|decision|judgment|judgement|"
+        r"mandate|injunction|ruling|decree|approv)",
+        re.IGNORECASE,
+    ), SourceRole.AUTHORITATIVE),
+    # Operative: contracts, agreements, amendments, leases. Checked after authoritative
+    # so that court orders that approve settlements are not misclassified as operative.
     (re.compile(
         r"(contract|agreement|msa|sow|nda|lease|license|amendment|addendum|"
         r"settlement|deed|covenant|warrant|indenture|resolution)",
         re.IGNORECASE,
     ), SourceRole.OPERATIVE),
-    # Authoritative: statutes, regulations, court orders, decisions
-    (re.compile(
-        r"(statute|regulation|rule|code|order|opinion|decision|judgment|judgement|"
-        r"mandate|injunction|ruling|decree)",
-        re.IGNORECASE,
-    ), SourceRole.AUTHORITATIVE),
     # Informal: emails, messages, notes, chats, texts
     (re.compile(
         r"(email|mail|message|note|chat|text|sms|slack|teams|whatsapp|"

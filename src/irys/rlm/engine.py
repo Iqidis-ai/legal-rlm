@@ -1417,7 +1417,9 @@ class RLMEngine:
                                 _recorded_ids[_fi], _recorded_ids[_ti], _rt
                             )
 
-            # Extract and store structured numeric facts (SO-6)
+            # Extract and store structured numeric facts (SO-6).
+            # Ground each quant fact to an assertion_id by searching the already-recorded
+            # key_facts for the raw numeric text. This gives provenance for reconciliation.
             if analysis.get("numeric_facts"):
                 _adp = getattr(state, "_matter_adapter", None)
                 if _adp is not None:
@@ -1432,6 +1434,13 @@ class RLMEngine:
                         amount = float(value) if kind == "amount" and value is not None else None
                         rate = float(value) if kind == "rate" and value is not None else None
                         date_val = raw if kind == "date" else None
+                        # Ground to the first key_fact assertion that mentions this raw value
+                        _nf_assertion_id: Optional[str] = None
+                        _raw_lower = raw.lower()
+                        for _ft, _fa in zip(facts_to_add, _recorded_ids):
+                            if _raw_lower and _raw_lower in _ft.lower():
+                                _nf_assertion_id = _fa
+                                break
                         _adp.record_quant(
                             quant_kind=kind,
                             raw_text=f"{raw} — {nf.get('context', '')}",
@@ -1440,6 +1449,7 @@ class RLMEngine:
                             date_value=date_val,
                             rate_value=rate,
                             subject_type=nf.get("subject"),
+                            assertion_id=_nf_assertion_id,
                         )
 
             # Extract and store entities
