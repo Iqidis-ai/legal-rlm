@@ -2763,6 +2763,9 @@ class RLMEngine:
                 ).fetchall()
             }
         except Exception:
+            # On DB failure, open_issue_ids = None causes all advocacy issues
+            # to be included — intentionally conservative (false-positive advisory
+            # is preferable to a false-negative that misses an open issue).
             open_issue_ids = None
 
         active_advocacy = [
@@ -2899,8 +2902,11 @@ class RLMEngine:
         # minor LLM heading variations don't cause unnecessary reinjection.
         # Anchor marker check to line-start so an incidental embedded occurrence
         # in prose, lists, or quoted text cannot suppress gate action.
+        # Accept optional trailing colon (e.g. "## Source Calibration Advisory:").
         _marker_present = bool(_re.search(
-            r'(?:^|\n)#{2,3} ' + _re.escape(_MARKER), synthesis_output, _re.IGNORECASE
+            r'(?:^|\n)#{2,3} ' + _re.escape(_MARKER) + r':?',
+            synthesis_output,
+            _re.IGNORECASE,
         ))
         if _marker_present and not _STRUCTURAL_VIOLATION:
             return None
