@@ -1482,7 +1482,8 @@ class RLMEngine:
                 elif isinstance(fact_item, dict) and "fact" in fact_item:
                     fact_text = fact_item["fact"]
                     src_file = fact_item.get("source_file") or ""
-                    issue_rel = fact_item.get("issue_relation") or "neutral"
+                    _raw_rel = fact_item.get("issue_relation")
+                    issue_rel = _raw_rel.lower().strip() if isinstance(_raw_rel, str) else "neutral"
                     if issue_rel not in ("supports", "attacks", "neutral"):
                         issue_rel = "neutral"
                     # Try to resolve source_file to a known hit
@@ -1749,7 +1750,8 @@ class RLMEngine:
                     if isinstance(fact_item, str):
                         facts_to_add.append((fact_item, _bare_rel_dr, None))
                     elif isinstance(fact_item, dict) and "fact" in fact_item:
-                        issue_rel = fact_item.get("issue_relation") or "neutral"
+                        _raw_rel_dr = fact_item.get("issue_relation")
+                        issue_rel = _raw_rel_dr.lower().strip() if isinstance(_raw_rel_dr, str) else "neutral"
                         if issue_rel not in ("supports", "attacks", "neutral"):
                             issue_rel = "neutral"
                         effective_date = fact_item.get("effective_date")

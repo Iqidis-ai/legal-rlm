@@ -601,8 +601,15 @@ class GapStore:
                         "open", now, now,
                     ))
                 key_to_id[key] = gap_id
-                if n["affected_type"] and n["affected_id"]:
-                    link_checks.append((gap_id, n["affected_type"], n["affected_id"]))
+
+            # Collect gap_links from ALL original specs (not just deduped first-occurrence)
+            # so intra-batch duplicates with different affected_type/affected_id targets
+            # all get their dependency links recorded. (SO-7 dependency lineage)
+            link_checks = []
+            for spec, key in zip(specs, spec_keys):
+                gap_id = key_to_id.get(key)
+                if gap_id and spec.get("affected_type") and spec.get("affected_id"):
+                    link_checks.append((gap_id, spec["affected_type"], spec["affected_id"]))
 
             if insert_rows:
                 self.db.executemany(
