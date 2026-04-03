@@ -787,6 +787,11 @@ class IssueStore:
                 descs.append(norm)
         if not descs:
             return []
+        # SQLite hard-limits bind params to ~999; cap to avoid runtime errors.
+        # At the current _orient() call site descs is capped to 4, so this is
+        # a safety net for any future callers with larger lists.
+        _SQL_PARAM_LIMIT = 900
+        descs = descs[:_SQL_PARAM_LIMIT - 1]  # -1 for the issue_id param in SELECT
         with self.db.transaction():
             for d in descs:
                 self.db.execute(

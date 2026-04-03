@@ -944,7 +944,9 @@ class RLMEngine:
         # Record issues in matter model if enabled; collect new IDs so initial leads can
         # be linked to freshly-created issues even on the first run (SO-4 backbone fix).
         adapter = getattr(state, "_matter_adapter", None)
-        _new_issue_ids: list[str] = []
+        # Collect all issue IDs produced by this orientation pass (new AND existing).
+        # Used to build the predicate-lead pool and fallback lead targets.
+        _orient_issue_ids: list[str] = []
         if adapter is not None and self._matter_model is not None:
             from ..matter.enums import IssueType
             _issue_type_map = {
@@ -984,7 +986,7 @@ class RLMEngine:
                     issue_type=issue_type,
                     salience=0.7,
                 )
-                _new_issue_ids.append(issue_id)
+                _orient_issue_ids.append(issue_id)
                 adapter.log_step(
                     f"Issue identified ({issue_type.value}): {issue_title[:100]}",
                     why="From orientation analysis",
@@ -1006,7 +1008,7 @@ class RLMEngine:
         # Use weakest prior-run issue if it exists; otherwise rotate through freshly
         # created issues so run-1 facts are linked to issues from the start.
         weakest_id = matter_ctx.weakest_issue_id if matter_ctx else None
-        _issue_pool = _new_issue_ids  # fallback pool: distribute leads across new issues
+        _issue_pool = _orient_issue_ids  # fallback pool: distribute leads across orientation issues
         _initial_searches = [s for s in plan.get("initial_searches", [])[:5]
                              if isinstance(s, str) and s.strip()]
         for _idx, search_term in enumerate(_initial_searches):
@@ -1057,8 +1059,8 @@ class RLMEngine:
         # Predicates are more specific than issue titles — each one is a concrete
         # searchable element (e.g. "failure to perform" vs "Breach of contract").
         # Limit to 3 predicates per orientation to stay within lead budget.
-        if self._matter_model is not None and _new_issue_ids:
-            _pred_target_id = weakest_id or _new_issue_ids[0]
+        if self._matter_model is not None and _orient_issue_ids:
+            _pred_target_id = weakest_id or _orient_issue_ids[0]
             _issue_predicates = self._matter_model.issues.get_predicates(_pred_target_id, limit=3)
             for _pred_row in _issue_predicates:
                 _pred_text = _pred_row.get("description", "").strip()
