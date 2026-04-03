@@ -468,3 +468,31 @@ def test_compute_corpus_key_url_order_independent():
     k1 = _compute_corpus_key(",".join(sorted(urls_a)))
     k2 = _compute_corpus_key(",".join(sorted(urls_b)))
     assert k1 == k2
+
+
+def test_url_to_str_normalizes_plain_string():
+    """_url_to_str must return a plain string unchanged."""
+    from irys.service.api import _url_to_str
+    assert _url_to_str("https://example.com/contract.pdf") == "https://example.com/contract.pdf"
+
+
+def test_url_to_str_normalizes_url_with_metadata():
+    """_url_to_str must extract .url from UrlWithMetadata objects."""
+    from irys.service.api import _url_to_str
+    from irys.service.models import UrlWithMetadata
+    u = UrlWithMetadata(url="https://example.com/contract.pdf", name="contract.pdf")
+    assert _url_to_str(u) == "https://example.com/contract.pdf"
+
+
+def test_corpus_key_stable_with_url_with_metadata():
+    """Corpus key must be stable when URL list contains UrlWithMetadata objects."""
+    from irys.service.api import _compute_corpus_key, _url_to_str
+    from irys.service.models import UrlWithMetadata
+    urls = [
+        UrlWithMetadata(url="https://s3.example.com/doc1.pdf", name="doc1.pdf"),
+        "https://s3.example.com/doc2.pdf",
+    ]
+    # Should not raise TypeError (UrlWithMetadata has no __lt__)
+    key = _compute_corpus_key(",".join(sorted(_url_to_str(u) for u in urls)))
+    assert len(key) == 16
+    assert all(c in "0123456789abcdef" for c in key)
