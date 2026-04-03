@@ -37,16 +37,31 @@ class ReasoningLedgerStore:
         # from DB on first write per run, incremented in-memory thereafter).
         self._seq_cache: dict[str, int] = {}
 
-    def start_run(self, query: str, objective: Optional[str] = None) -> str:
-        """Start a new run session. Returns run_id."""
+    def start_run(
+        self,
+        query: str,
+        objective: Optional[str] = None,
+        assertions_at_start: Optional[int] = None,
+    ) -> str:
+        """Start a new run session. Returns run_id.
+
+        ``assertions_at_start`` should be the assertion count snapshotted
+        immediately before calling this method so that ``reuse_rate`` can be
+        computed when the run completes.
+        """
         run_id = _id()
         now = _now()
         with self.db.transaction():
             self.db.execute(
                 """INSERT INTO run_session
-                   (id, matter_id, query, objective, status, started_at)
-                   VALUES (?,?,?,?,?,?)""",
-                (run_id, self.matter_id, query, objective, RunStatus.RUNNING.value, now),
+                   (id, matter_id, query, objective, status, started_at,
+                    assertions_at_start)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (
+                    run_id, self.matter_id, query, objective,
+                    RunStatus.RUNNING.value, now,
+                    assertions_at_start,
+                ),
             )
             # Seed the first ledger event
             self._append_event(
@@ -122,13 +137,23 @@ class ReasoningLedgerStore:
         )
         return event_id
 
-    def complete_run(self, run_id: str, summary: Optional[str] = None) -> None:
-        """Mark a run session as completed."""
+    def complete_run(
+        self,
+        run_id: str,
+        summary: Optional[str] = None,
+        reuse_rate: Optional[float] = None,
+    ) -> None:
+        """Mark a run session as completed.
+
+        ``reuse_rate`` is the fraction of the final assertion count that
+        pre-existed when the run started (assertions_at_start / assertions_at_end).
+        Pass this if the caller has computed it; otherwise the column stays NULL.
+        """
         now = _now()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE run_session SET status=?, completed_at=? WHERE id=?",
-                (RunStatus.COMPLETED.value, now, run_id),
+                "UPDATE run_session SET status=?, completed_at=?, reuse_rate=? WHERE id=?",
+                (RunStatus.COMPLETED.value, now, reuse_rate, run_id),
             )
             self._append_event(
                 run_id=run_id,
@@ -228,6 +253,8 @@ class ReasoningLedgerStore:
             redirect_requested=bool(d.get("redirect_requested", 0)),
             next_action=d.get("next_action"),
             completed_at=d.get("completed_at"),
+            assertions_at_start=d.get("assertions_at_start"),
+            reuse_rate=d.get("reuse_rate"),
         )
 
     def recent_runs(self, limit: int = 10) -> list[dict]:

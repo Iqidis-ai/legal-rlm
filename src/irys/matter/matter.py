@@ -136,11 +136,27 @@ class MatterModel:
     # ------------------------------------------------------------------
 
     def start_run(self, query: str, objective: Optional[str] = None) -> str:
-        """Start a new investigation run. Returns run_id."""
-        return self.ledger.start_run(query, objective)
+        """Start a new investigation run. Returns run_id.
+
+        Snapshots the current assertion count so that ``complete_run`` can
+        compute a measurable reuse_rate (SO-1 success criterion: > 0.70 on
+        repeated queries over a stable matter).
+        """
+        assertions_at_start = self.assertions.count()
+        return self.ledger.start_run(query, objective, assertions_at_start)
 
     def complete_run(self, run_id: str, summary: Optional[str] = None) -> None:
-        self.ledger.complete_run(run_id, summary)
+        """Complete a run and compute reuse_rate from assertion count delta."""
+        assertions_at_end = self.assertions.count()
+        # Fetch the snapshot stored at run start
+        row = self.db.execute(
+            "SELECT assertions_at_start FROM run_session WHERE id=?", (run_id,)
+        ).fetchone()
+        at_start: Optional[int] = row["assertions_at_start"] if row else None
+        reuse_rate: Optional[float] = None
+        if at_start is not None and assertions_at_end > 0:
+            reuse_rate = round(at_start / assertions_at_end, 4)
+        self.ledger.complete_run(run_id, summary, reuse_rate)
 
     def fail_run(self, run_id: str, reason: str) -> None:
         self.ledger.fail_run(run_id, reason)
@@ -1152,14 +1168,6 @@ class MatterModel:
         except Exception:
             belief_revision = None  # table missing or schema mismatch
 
-        targets = {
-            "assertion_structure_rate": 1.0,
-            "source_role_known_rate": 0.9,
-            "issue_coverage_avg": 0.8,
-            "steerability": True,
-            "belief_revision": True,
-        }
-
         def _pass(metric: str, value: "float | bool | None") -> "bool | None":
             if value is None:
                 return None
@@ -1168,6 +1176,29 @@ class MatterModel:
                 return bool(value) == target
             return float(value) >= float(target)  # type: ignore[arg-type]
 
+        # SO-1 reuse_rate: fraction of final assertions that pre-existed at run start.
+        # Averaged over the most recent 5 completed runs so a single anomalous run
+        # doesn't dominate.  None if no completed runs exist yet.
+        _reuse_rows = self.db.execute(
+            """SELECT reuse_rate FROM run_session
+               WHERE matter_id=? AND status='completed' AND reuse_rate IS NOT NULL
+               ORDER BY completed_at DESC LIMIT 5""",
+            (self.matter_id,),
+        ).fetchall()
+        _reuse_vals = [float(r["reuse_rate"]) for r in _reuse_rows if r["reuse_rate"] is not None]
+        reuse_rate_avg: "float | None" = (
+            round(sum(_reuse_vals) / len(_reuse_vals), 4) if _reuse_vals else None
+        )
+
+        targets = {
+            "assertion_structure_rate": 1.0,
+            "source_role_known_rate": 0.9,
+            "issue_coverage_avg": 0.8,
+            "reuse_rate": 0.7,
+            "steerability": True,
+            "belief_revision": True,
+        }
+
         return {
             "matter_id": self.matter_id,
             # Measurable SO metrics
@@ -1175,12 +1206,12 @@ class MatterModel:
             "source_role_known_rate": source_role_known_rate,
             "issue_coverage_avg": issue_coverage_avg,
             "issues_with_proof_gap": issues_with_proof_gap,
+            # SO-1: reuse rate averaged over recent completed runs (target > 0.70)
+            "reuse_rate": reuse_rate_avg,
             # SO-3: steerability is a capability flag (infrastructure always wired)
             "steerability": steerability,
             # SO-2: True if belief_revision_event records exist (revisions have occurred)
             "belief_revision": belief_revision,
-            # Requires run telemetry or ground truth — not yet measured
-            "reuse_rate": None,
             "gap_detection_recall": None,
             "numeric_extraction_rate": None,
             # Raw counts
@@ -1199,6 +1230,7 @@ class MatterModel:
                 "assertion_structure_rate": _pass("assertion_structure_rate", assertion_structure_rate),
                 "source_role_known_rate": _pass("source_role_known_rate", source_role_known_rate),
                 "issue_coverage_avg": _pass("issue_coverage_avg", issue_coverage_avg),
+                "reuse_rate": _pass("reuse_rate", reuse_rate_avg),
                 "steerability": _pass("steerability", steerability),
                 "belief_revision": _pass("belief_revision", belief_revision),
             },

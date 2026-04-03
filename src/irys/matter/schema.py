@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1160,6 +1160,29 @@ def _migration_v24(conn) -> None:
     )
 
 
+def _migration_v29(conn) -> None:
+    """Add reuse-rate tracking columns to run_session (SO-1 measurability).
+
+    Adds two columns so the system can record and surface the fraction of
+    matter-model assertions that were read from the persistent store versus
+    freshly extracted during each investigation run:
+
+      assertions_at_start INTEGER — assertion count snapshotted before the run
+      reuse_rate          REAL    — assertions_at_start / assertions_at_end,
+                                    computed when the run completes
+
+    A reuse_rate of 1.0 means no new assertions were created (full reuse);
+    0.0 means the matter was empty at start (first run).  The target from
+    CLAUDE.md is > 0.70 on repeated queries over a stable matter.
+    """
+    conn.execute(
+        "ALTER TABLE run_session ADD COLUMN assertions_at_start INTEGER"
+    )
+    conn.execute(
+        "ALTER TABLE run_session ADD COLUMN reuse_rate REAL"
+    )
+
+
 def _migration_v28(conn) -> None:
     """Add covering index on assertion_link for get_neighbor_belief_states() CTE.
 
@@ -1278,6 +1301,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (26, _migration_v26),
     (27, _migration_v27),
     (28, _migration_v28),
+    (29, _migration_v29),
 ]
 
 

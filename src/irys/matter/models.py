@@ -142,3 +142,5 @@ class RunSessionRecord:
     redirect_requested: bool = False
     next_action: Optional[str] = None
     completed_at: Optional[str] = None
+    assertions_at_start: Optional[int] = None
+    reuse_rate: Optional[float] = None

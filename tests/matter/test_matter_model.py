@@ -684,3 +684,118 @@ def test_get_so_metrics_api_endpoint(model):
         assert "targets_met" in data
     finally:
         _active_matter_models.pop(model.matter_id, None)
+
+
+# ---------------------------------------------------------------------------
+# SO-1 reuse_rate tracking (schema v29)
+# ---------------------------------------------------------------------------
+
+def _add_assertion(model, text, doc="test.pdf"):
+    from irys.matter.enums import OriginKind
+    c = AssertionCandidate(
+        proposition_text=text,
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id=doc,
+        speech_act=SpeechAct.EXTRACTED,
+        source_role=SourceRole.UNKNOWN,
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    aid, _ = model.record_assertion(c)
+    return aid
+
+
+def test_start_run_snapshots_assertion_count(model):
+    """start_run stores assertions_at_start matching count at call time."""
+    _add_assertion(model, "Pre-existing fact A")
+    _add_assertion(model, "Pre-existing fact B")
+
+    run_id = model.start_run("test query")
+
+    row = model.db.execute(
+        "SELECT assertions_at_start FROM run_session WHERE id=?", (run_id,)
+    ).fetchone()
+    assert row is not None
+    assert row["assertions_at_start"] == 2
+
+
+def test_complete_run_computes_reuse_rate_stable_matter(model):
+    """reuse_rate is >= 0.7 when most assertions pre-existed before the run."""
+    # Load 10 pre-existing assertions
+    for i in range(10):
+        _add_assertion(model, f"Pre-existing fact {i}")
+
+    run_id = model.start_run("second query on stable matter")
+
+    # Simulate a run that adds only 2 new assertions (90% reuse)
+    _add_assertion(model, "New fact found during run A")
+    _add_assertion(model, "New fact found during run B")
+
+    model.complete_run(run_id)
+
+    row = model.db.execute(
+        "SELECT assertions_at_start, reuse_rate FROM run_session WHERE id=?", (run_id,)
+    ).fetchone()
+    assert row["assertions_at_start"] == 10
+    # reuse_rate = 10 / 12 ≈ 0.8333
+    assert row["reuse_rate"] is not None
+    assert row["reuse_rate"] >= 0.7, f"Expected reuse_rate >= 0.7, got {row['reuse_rate']}"
+
+
+def test_complete_run_reuse_rate_zero_on_first_run(model):
+    """reuse_rate is 0.0 on the very first run (empty matter at start)."""
+    run_id = model.start_run("first ever query")  # matter empty → assertions_at_start = 0
+    _add_assertion(model, "First extracted fact")
+    model.complete_run(run_id)
+
+    row = model.db.execute(
+        "SELECT assertions_at_start, reuse_rate FROM run_session WHERE id=?", (run_id,)
+    ).fetchone()
+    assert row["assertions_at_start"] == 0
+    assert row["reuse_rate"] == 0.0
+
+
+def test_get_so_metrics_returns_reuse_rate_from_recent_runs(model):
+    """get_so_metrics() reports reuse_rate averaged over completed runs."""
+    # Run 1: empty start → reuse_rate 0.0 (doesn't factor once run 2 happens)
+    run1 = model.start_run("run 1")
+    for i in range(5):
+        _add_assertion(model, f"Run1 fact {i}")
+    model.complete_run(run1)
+
+    # Run 2: 5 pre-existing, adds 1 new → reuse_rate = 5/6 ≈ 0.8333
+    run2 = model.start_run("run 2")
+    _add_assertion(model, "Run2 new fact")
+    model.complete_run(run2)
+
+    metrics = model.get_so_metrics()
+    assert metrics["reuse_rate"] is not None
+    # Average of run1 (0.0) and run2 (0.8333) = 0.4167 — but run1 is first run effect.
+    # The important thing is the metric is computed and returned, not None.
+    # For a stable matter (run2 alone), reuse_rate would be > 0.7.
+    assert isinstance(metrics["reuse_rate"], float)
+    assert "reuse_rate" in metrics["targets"]
+    assert metrics["targets"]["reuse_rate"] == 0.7
+    assert "reuse_rate" in metrics["targets_met"]
+
+
+def test_get_so_metrics_reuse_rate_none_when_no_completed_runs(model):
+    """get_so_metrics() returns reuse_rate=None when no runs have completed."""
+    # Start a run but don't complete it
+    model.start_run("incomplete run")
+    metrics = model.get_so_metrics()
+    assert metrics["reuse_rate"] is None
+
+
+def test_get_run_exposes_reuse_rate_fields(model):
+    """get_run() returns RunSessionRecord with assertions_at_start and reuse_rate."""
+    _add_assertion(model, "Fact before run")
+    run_id = model.start_run("query with reuse tracking")
+    _add_assertion(model, "New fact during run")
+    model.complete_run(run_id)
+
+    record = model.ledger.get_run(run_id)
+    assert record is not None
+    assert record.assertions_at_start == 1
+    assert record.reuse_rate is not None
+    assert record.reuse_rate == 0.5  # 1 / 2

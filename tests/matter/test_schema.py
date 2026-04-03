@@ -311,3 +311,20 @@ def test_set_trust_override_same_basename_different_paths():
 
     # Both assertions should have been revised (no assertion should have been missed)
     # (No assertion state check needed — just verifying no crash on same-basename multi-match)
+
+
+def test_migration_v29_adds_reuse_rate_columns():
+    """v29 adds assertions_at_start and reuse_rate columns to run_session."""
+    from irys.matter.db import SQLiteMatterDB
+
+    db = SQLiteMatterDB.in_memory()
+    col_names = {
+        row[1]
+        for row in db.execute("PRAGMA table_info(run_session)").fetchall()
+    }
+    assert "assertions_at_start" in col_names, (
+        "assertions_at_start column must exist in run_session after v29"
+    )
+    assert "reuse_rate" in col_names, (
+        "reuse_rate column must exist in run_session after v29"
+    )
