@@ -2466,8 +2466,24 @@ class RLMEngine:
                             ),
                             _recorded_ids,
                         ).fetchall()
-                        for _irow in _issue_rows:
-                            _mm.proof_state.compute_and_store(_irow["issue_id"])
+                        if _issue_rows:
+                            # Pre-fetch overrides once for all targeted issue recomputes
+                            # rather than fetching inside each compute_and_store() call.
+                            _ov_rows = _mm.db.execute(
+                                """SELECT document_pattern, trust_level
+                                   FROM document_trust_override
+                                   WHERE matter_id=? AND trust_level != 'normal'
+                                   ORDER BY LENGTH(document_pattern) DESC""",
+                                (_mm.matter_id,),
+                            ).fetchall()
+                            _pre_ov = [
+                                (r["document_pattern"], r["trust_level"])
+                                for r in _ov_rows
+                            ]
+                            for _irow in _issue_rows:
+                                _mm.proof_state.compute_and_store(
+                                    _irow["issue_id"], _preloaded_overrides=_pre_ov
+                                )
                     # If no assertions were recorded, proof state is unchanged — skip update.
                     # Post-synthesis compute_all() at end of run catches any remaining gaps.
                 except Exception:

@@ -230,9 +230,8 @@ class MatterModel:
         override_id = self.trust_overrides.set(document_pattern, trust_level, note)
 
         # Trigger belief revision on all assertions from the affected document.
-        # SQL JOIN + LIKE pre-filter narrows to plausible matches before Python does
-        # exact basename-normalized comparison. Avoids full-table scan at large scale.
-        # Both '/' and '\' separators are tried so Windows and POSIX paths are covered.
+        # Uses indexed doc_basename column (schema v27) for exact basename lookup —
+        # replaces leading-wildcard LIKE ('%/basename') which was not sargable.
         affected_ids: list[str] = []
         try:
             pat_norm = document_pattern.replace("\\\\", "/").replace("\\", "/")
@@ -244,9 +243,8 @@ class MatterModel:
                    WHERE a.matter_id = ?
                      AND ao.document_id IS NOT NULL
                      AND (ao.document_id = ?
-                          OR ao.document_id LIKE ?
-                          OR ao.document_id LIKE ?)""",
-                (self.matter_id, document_pattern, '%/' + basename, '%\\' + basename),
+                          OR ao.doc_basename = ?)""",
+                (self.matter_id, document_pattern, basename),
             ).fetchall()
             for row in occurrence_rows:
                 doc = (row["document_id"] or "").replace("\\\\", "/").replace("\\", "/")
@@ -272,8 +270,21 @@ class MatterModel:
                     ),
                     affected_ids,
                 ).fetchall()
-                for row in issue_rows:
-                    self.proof_state.compute_and_store(row["issue_id"])
+                if issue_rows:
+                    # Pre-fetch overrides once for all targeted issue recomputes.
+                    _ov_rows = self.db.execute(
+                        """SELECT document_pattern, trust_level FROM document_trust_override
+                           WHERE matter_id=? AND trust_level != 'normal'
+                           ORDER BY LENGTH(document_pattern) DESC""",
+                        (self.matter_id,),
+                    ).fetchall()
+                    _preloaded = [
+                        (r["document_pattern"], r["trust_level"]) for r in _ov_rows
+                    ]
+                    for row in issue_rows:
+                        self.proof_state.compute_and_store(
+                            row["issue_id"], _preloaded_overrides=_preloaded
+                        )
             else:
                 # No assertions matched — still run full recompute in case the override
                 # pattern will match future assertions (eager proof state refresh).

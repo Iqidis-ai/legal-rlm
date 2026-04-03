@@ -137,15 +137,18 @@ class AssertionStore:
             # Capture the cursor so we can detect whether the row was actually inserted
             # (rowcount=1) or silently ignored due to the UNIQUE index (rowcount=0).
             occ_id = _id()
+            _doc_norm = (candidate.document_id or "").replace("\\\\", "/").replace("\\", "/")
+            _doc_basename = pathlib.Path(_doc_norm).name if _doc_norm else None
             _occ_cur = self.db.execute(
                 """INSERT OR IGNORE INTO assertion_occurrence
-                   (id, assertion_id, document_id, span_id,
+                   (id, assertion_id, document_id, doc_basename, span_id,
                     speaker_actor_id, source_role, source_side,
                     speech_act, origin_kind, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     occ_id, assertion_id,
                     candidate.document_id,
+                    _doc_basename,
                     candidate.span_id,
                     candidate.speaker_actor_id,
                     candidate.source_role.value,

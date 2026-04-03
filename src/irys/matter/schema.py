@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1160,6 +1160,37 @@ def _migration_v24(conn) -> None:
     )
 
 
+def _migration_v27(conn) -> None:
+    """Add doc_basename column to assertion_occurrence for indexed basename lookup.
+
+    set_trust_override() previously used leading-wildcard LIKE ('%/basename')
+    to find assertions by document basename — not sargable on the document_id
+    index.  This migration adds a pre-computed, indexed doc_basename column so
+    the query can use an equality check instead.
+
+    Existing rows are backfilled by normalizing document_id to forward slashes
+    and extracting the basename in Python (no SQLite BASENAME() function exists).
+    """
+    import pathlib as _pathlib
+    conn.execute(
+        "ALTER TABLE assertion_occurrence ADD COLUMN doc_basename TEXT"
+    )
+    rows = conn.execute(
+        "SELECT id, document_id FROM assertion_occurrence WHERE document_id IS NOT NULL"
+    ).fetchall()
+    for row in rows:
+        doc_norm = row[1].replace("\\\\", "/").replace("\\", "/")
+        basename = _pathlib.Path(doc_norm).name
+        conn.execute(
+            "UPDATE assertion_occurrence SET doc_basename=? WHERE id=?",
+            (basename, row[0]),
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_occurrence_doc_basename"
+        " ON assertion_occurrence(doc_basename)"
+    )
+
+
 def _migration_v26(conn) -> None:
     """Add leading link_type index on assertion_link for find_contradictions().
 
@@ -1223,6 +1254,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (24, _migration_v24),
     (25, _migration_v25),
     (26, _migration_v26),
+    (27, _migration_v27),
 ]
 
 
