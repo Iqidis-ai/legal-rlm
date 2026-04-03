@@ -507,3 +507,59 @@ def test_unrelated_gap_does_not_suppress_proof_gap(model):
     assert any("No supporting evidence found" in d for d in descriptions), (
         "Proof gap description must appear alongside the unrelated gap"
     )
+
+
+# ---------------------------------------------------------------------------
+# SO-4: per-issue coverage report
+# ---------------------------------------------------------------------------
+
+def test_get_issue_coverage_report(model):
+    """get_issue_coverage_report() returns per-claim coverage ordered by weakness (SO-4)."""
+    from irys.matter.enums import IssueType
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    issue_weak_id, _ = model.issues.upsert_issue(
+        title="Breach of contract",
+        issue_type=IssueType.CLAIM,
+        materiality=0.8, salience=0.8,
+    )
+    issue_strong_id, _ = model.issues.upsert_issue(
+        title="Damages calculation",
+        issue_type=IssueType.CLAIM,
+        materiality=0.7, salience=0.7,
+    )
+
+    # Add two supporting assertions to issue_strong only
+    run_id = model.start_run("Coverage test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_fact("Damages total $200,000.", "invoice.pdf", issue_id=issue_strong_id)
+    adapter.record_fact("Expert report confirms damages.", "expert.pdf", issue_id=issue_strong_id)
+
+    report = model.get_issue_coverage_report()
+
+    # Two issues returned
+    assert len(report) == 2
+
+    # Ordered weakest first
+    assert report[0]["id"] == issue_weak_id, "breach (0 support) should be first"
+    assert report[1]["id"] == issue_strong_id
+
+    # Coverage fractions
+    assert report[0]["supporting_count"] == 0
+    assert report[0]["coverage_fraction"] == 0.0
+    assert report[1]["supporting_count"] == 2
+    assert report[1]["coverage_fraction"] > 0.5
+
+    # has_proof_gap: both False (no _detect_proof_gaps has been run yet)
+    assert not report[0]["has_proof_gap"]
+    assert not report[1]["has_proof_gap"]
+
+    # After running detect, weak issue should have has_proof_gap=True
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    engine._detect_proof_gaps()
+    report2 = model.get_issue_coverage_report()
+    weak_row = next(r for r in report2 if r["id"] == issue_weak_id)
+    strong_row = next(r for r in report2 if r["id"] == issue_strong_id)
+    assert weak_row["has_proof_gap"], "unsupported issue must have proof gap flagged"
+    assert not strong_row["has_proof_gap"], "supported issue must not have a proof gap"

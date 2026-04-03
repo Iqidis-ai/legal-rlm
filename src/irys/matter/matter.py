@@ -303,6 +303,66 @@ class MatterModel:
             weakest_issue_id=weakest_issue_id,
         )
 
+    def get_issue_coverage_report(self) -> list[dict]:
+        """Return per-issue evidence coverage for all open issues (SO-4).
+
+        Each entry contains:
+          - id, title, issue_type, materiality, salience
+          - supporting_count: number of supporting/establishing assertion links
+          - coverage_fraction: supporting_count / (supporting_count + 1), [0, 1)
+          - has_proof_gap: True if an open MISSING_ISSUE_PREDICATE gap is linked
+          - gap_id: id of that gap, or None
+
+        Ordered by coverage_fraction ascending (weakest coverage first).
+        """
+        open_issues = self.issues.get_open_issues(min_materiality=0.0)
+        if not open_issues:
+            return []
+
+        issue_ids = [i["id"] for i in open_issues]
+        placeholders = ",".join("?" * len(issue_ids))
+
+        support_rows = self.db.execute(
+            f"""SELECT issue_id, COUNT(*) AS cnt
+                FROM assertion_issue_link
+                WHERE issue_id IN ({placeholders})
+                  AND relation_type IN ('supports','establishes')
+                GROUP BY issue_id""",
+            issue_ids,
+        ).fetchall()
+        support_counts = {r["issue_id"]: r["cnt"] for r in support_rows}
+
+        proof_gap_rows = self.db.execute(
+            f"""SELECT gl.affected_id AS issue_id, g.id AS gap_id
+                FROM gap g
+                JOIN gap_link gl ON gl.gap_id=g.id
+                WHERE g.matter_id=? AND g.status='open'
+                  AND g.gap_type='missing_issue_predicate'
+                  AND gl.affected_type='issue'
+                  AND gl.affected_id IN ({placeholders})""",
+            [self.matter_id] + issue_ids,
+        ).fetchall()
+        proof_gaps = {r["issue_id"]: r["gap_id"] for r in proof_gap_rows}
+
+        report = []
+        for issue in open_issues:
+            cnt = support_counts.get(issue["id"], 0)
+            coverage = cnt / (cnt + 1.0)
+            report.append({
+                "id": issue["id"],
+                "title": issue.get("title", ""),
+                "issue_type": issue.get("issue_type", ""),
+                "materiality": issue.get("materiality", 0.0),
+                "salience": issue.get("salience", 0.0),
+                "supporting_count": cnt,
+                "coverage_fraction": round(coverage, 4),
+                "has_proof_gap": issue["id"] in proof_gaps,
+                "gap_id": proof_gaps.get(issue["id"]),
+            })
+
+        report.sort(key=lambda x: x["coverage_fraction"])
+        return report
+
     # ------------------------------------------------------------------
     # Clarification engine (SO-7, SO-3)
     # ------------------------------------------------------------------
