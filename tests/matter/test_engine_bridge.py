@@ -729,3 +729,63 @@ def test_neutral_fact_not_linked_to_issue(model):
     # Only the 'supports' fact is linked; 'neutral' is not
     assert aids[0] in linked_ids
     assert aids[1] not in linked_ids
+
+
+# ---------------------------------------------------------------------------
+# infer_source_side — ambiguous and directory-name cases
+# ---------------------------------------------------------------------------
+
+def test_infer_source_side_ambiguous_returns_none():
+    """Filename containing both plaintiff and defendant keywords must return None."""
+    from irys.matter.runtime import infer_source_side
+    # Both patterns match the basename → ambiguous → None
+    assert infer_source_side("defendant_answer_to_plaintiff_complaint.pdf") is None
+    assert infer_source_side("plaintiff_response_to_defendant_motion.pdf") is None
+
+
+def test_infer_source_side_directory_precedence():
+    """Basename takes precedence over parent dir; parent dir used only as fallback."""
+    from irys.matter.runtime import infer_source_side
+    # Basename signal wins over conflicting parent dir
+    assert infer_source_side("plaintiff_exhibits/defendant_answer.pdf") == "defendant"
+    assert infer_source_side("defendant_productions/plaintiff_complaint.pdf") == "plaintiff"
+    # No basename signal → fall back to immediate parent dir
+    assert infer_source_side("defendant_motions/court_order_granting.pdf") == "defendant"
+    assert infer_source_side("plaintiff_exhibits/exhibit_001.pdf") == "plaintiff"
+    # Neutral basename AND neutral parent → None
+    assert infer_source_side("court_records/order_granting.pdf") is None
+
+
+# ---------------------------------------------------------------------------
+# record_facts_batch — 4-tuple with temporal_scope_start
+# ---------------------------------------------------------------------------
+
+def test_record_facts_batch_four_tuple_temporal(model):
+    """4-tuple (text, doc_id, issue_rel, temporal_scope_start) must be stored."""
+    from irys.matter.enums import IssueType
+    issue_id, _ = model.issues.upsert_issue("Contract term", IssueType.CLAIM)
+    run_id = model.start_run("temporal test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    aids = adapter.record_facts_batch(
+        [
+            ("Payment due by 2024-01-15.", "contract.pdf", "supports", "2024-01-15"),
+            ("Late fee applies after 2024-01-15.", "contract.pdf", "supports", "2024-01-15"),
+        ],
+        issue_id=issue_id,
+    )
+    assert len(aids) == 2
+    assert all(aid for aid in aids)  # non-empty IDs
+
+    # Both facts must be linked to the issue (supports, not neutral)
+    assertions_for_issue = model.issues.get_assertions_for_issue(issue_id)
+    linked_ids = {a["id"] for a in assertions_for_issue}
+    assert aids[0] in linked_ids
+    assert aids[1] in linked_ids
+
+    # temporal_scope_start must be stored in the assertion row
+    rows = model.db.execute(
+        "SELECT temporal_scope_start FROM assertion WHERE id IN (?, ?)",
+        (aids[0], aids[1]),
+    ).fetchall()
+    assert all(r["temporal_scope_start"] == "2024-01-15" for r in rows)

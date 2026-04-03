@@ -783,11 +783,18 @@ class RLMEngine:
 
             # Phase 2.75: Detect gaps BEFORE synthesis so they appear in the memo (SO-7).
             # Running these here means _build_gap_summary() in _synthesize() finds them.
+            # Each detector is isolated so one failure never suppresses the other.
             if run_id is not None:
-                # Detect numeric conflicts → gaps (SO-6 + SO-7)
-                self._matter_model.detect_quant_conflicts()
-                # Detect issues with zero supporting assertions → proof gaps (SO-7)
-                self._detect_proof_gaps()
+                try:
+                    # Detect numeric conflicts → gaps (SO-6 + SO-7)
+                    self._matter_model.detect_quant_conflicts()
+                except Exception as _qc_exc:
+                    logger.warning("Quant conflict detection failed, continuing: %s", _qc_exc)
+                try:
+                    # Detect issues with zero supporting assertions → proof gaps (SO-7)
+                    self._detect_proof_gaps()
+                except Exception as _pg_exc:
+                    logger.warning("Proof gap detection failed, continuing: %s", _pg_exc)
 
             # Phase 3: Final synthesis (reads gaps via _build_gap_summary)
             await self._synthesize(state)
@@ -1278,14 +1285,15 @@ class RLMEngine:
         results_text = self._format_search_results(results)
 
         # Search-analysis cache (SO-1): same search term + same top-5 hits → skip FLASH call.
-        # Cache key hashes search_term + query prefix + top-hit filenames to detect staleness.
+        # Cache key must cover everything that feeds the FLASH prompt: full search query,
+        # full investigation query, full hypothesis, full results text, top-hit filenames,
+        # AND a short hash of the prompt template itself so that prompt/model upgrades
+        # automatically invalidate cached analysis from old template versions.
         import hashlib as _hl
         _top_names = ",".join(sorted(h.filename for h in results.top(5)))
-        # Include a content fingerprint (first 512 chars of formatted results) so that
-        # if document content changes while filenames stay the same, the cache is invalidated.
-        _content_fp = results_text[:512]
+        _prompt_ver = _hl.sha256(ANALYZE_FINDINGS_PROMPT.encode()).hexdigest()[:12]
         _analysis_key = _hl.sha256(
-            f"{results.query}\n{state.query[:80]}\n{_top_names}\n{_content_fp}".encode()
+            f"{_prompt_ver}\n{results.query}\n{state.query}\n{state.hypothesis or ''}\n{_top_names}\n{results_text}".encode()
         ).hexdigest()
         _cached_analysis = None
         if self._matter_model is not None:
@@ -1876,6 +1884,15 @@ class RLMEngine:
             return  # Skip synthesis if user stopped the run
         self._emit_step(state, StepType.SYNTHESIS, "Synthesizing final analysis...")
 
+        # Pre-synthesis refresh: rebuild accumulated_facts from the truth-maintained
+        # assertion graph so that any belief-state revisions made during this run
+        # (user corrections, superseded assertions) are reflected in synthesis. (SO-2)
+        # All facts extracted during investigation are already persisted to the matter
+        # model via record_facts_batch(), so the re-hydration is complete and correct.
+        if self._matter_model is not None:
+            state.findings["accumulated_facts"] = []
+            self._hydrate_from_matter_model(state)
+
         # Log synthesis entry to reasoning ledger (SO-3)
         adapter = getattr(state, "_matter_adapter", None)
         if adapter is not None:
@@ -1990,6 +2007,25 @@ class RLMEngine:
             role = row["source_role"] if row["source_role"] else "unknown"
             label = _role_labels.get(role, f"{role.upper()} — calibrate appropriately")
             lines.append(f"  • {row['cnt']} assertions from {label}")
+
+        # Add litigation-side breakdown so the LLM knows whose documents produced facts (SO-5).
+        try:
+            side_rows = self._matter_model.db.execute(
+                """SELECT COALESCE(ao.source_side, 'neutral/unknown') AS side,
+                          COUNT(DISTINCT a.id) AS cnt
+                   FROM assertion a
+                   JOIN assertion_occurrence ao ON ao.assertion_id = a.id
+                   WHERE a.matter_id = ?
+                   GROUP BY side ORDER BY cnt DESC""",
+                (self._matter_model.matter_id,),
+            ).fetchall()
+            if side_rows:
+                lines.append("\nLitigation-side origin of extracted facts:")
+                for sr in side_rows:
+                    lines.append(f"  • {sr['cnt']} assertions from {sr['side']} documents")
+        except Exception:
+            pass
+
         lines.append(
             "\nWARNING: Facts from ADVOCACY sources represent one party's position, not "
             "established truth. Do not amplify advocacy material as if it were operative fact."

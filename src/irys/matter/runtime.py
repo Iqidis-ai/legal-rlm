@@ -99,26 +99,54 @@ def infer_source_role(document_id: str) -> SourceRole:
 
 
 _SOURCE_SIDE_PLAINTIFF_PATTERN = re.compile(
-    r"(plaintiff|plaintif|petitioner|claimant|complainant|prosecution|relator)",
+    r"(?<![a-zA-Z])(plaintiff|plaintif|petitioner|claimant|complainant|prosecution|relator)(?![a-zA-Z])",
     re.IGNORECASE,
 )
 _SOURCE_SIDE_DEFENDANT_PATTERN = re.compile(
-    r"(defendant|respondent|defense|defence|accused)",
+    r"(?<![a-zA-Z])(defendant|respondent|defense|defence|accused)(?![a-zA-Z])",
     re.IGNORECASE,
 )
 
 
 def infer_source_side(document_id: str) -> Optional[str]:
-    """Infer litigation side from document filename/path keywords.
+    """Infer litigation side from document filename keywords.
 
     Returns "plaintiff", "defendant", or None (neutral/unknown).
     Neutral documents (court orders, third-party records) return None.
+
+    Strategy:
+    1. Examine the basename first. If it has a clear, unambiguous side signal,
+       use it. Word boundaries prevent "counterclaimant" matching "claimant".
+    2. If the basename carries no signal, fall back to the immediate parent
+       directory name only (not the full path). This handles common layouts
+       like "defendant/answer.pdf" without the broader false-positive risk
+       of scanning the entire path (e.g. "plaintiff_exhibits/defendant_answer.pdf"
+       correctly returns "defendant" from the basename in step 1).
+    3. If both patterns match at any level, return None (ambiguous).
     """
-    # Check full path in case directory names encode side (e.g. "plaintiff_docs/")
-    path_str = document_id.replace("\\", "/").lower()
-    if _SOURCE_SIDE_PLAINTIFF_PATTERN.search(path_str):
+    import os as _os
+    parts = document_id.replace("\\", "/").split("/")
+    basename = parts[-1].lower()
+    parent = parts[-2].lower() if len(parts) >= 2 else ""
+
+    b_plt = bool(_SOURCE_SIDE_PLAINTIFF_PATTERN.search(basename))
+    b_def = bool(_SOURCE_SIDE_DEFENDANT_PATTERN.search(basename))
+
+    if b_plt and b_def:
+        return None  # Ambiguous basename
+    if b_plt:
         return "plaintiff"
-    if _SOURCE_SIDE_DEFENDANT_PATTERN.search(path_str):
+    if b_def:
+        return "defendant"
+
+    # Basename has no signal — check immediate parent directory as fallback
+    p_plt = bool(_SOURCE_SIDE_PLAINTIFF_PATTERN.search(parent))
+    p_def = bool(_SOURCE_SIDE_DEFENDANT_PATTERN.search(parent))
+    if p_plt and p_def:
+        return None
+    if p_plt:
+        return "plaintiff"
+    if p_def:
         return "defendant"
     return None
 
