@@ -199,6 +199,39 @@ def test_resolved_predicates_raise_score(model, issue_id):
 
 
 # ---------------------------------------------------------------------------
+# resolve_predicate matter-scoping and edge cases
+# ---------------------------------------------------------------------------
+
+def test_resolve_predicate_cannot_cross_matter(model, issue_id):
+    """resolve_predicate() must not resolve a predicate in another matter."""
+    m_b = MatterModel.open_in_memory()
+    iid_b, _ = m_b.issues.upsert_issue("Claim B", IssueType.CLAIM)
+    pred_id_b = m_b.issues.add_predicate(iid_b, "Foreign element")
+
+    # Matter A tries to resolve a predicate that belongs to Matter B
+    result = model.issues.resolve_predicate(pred_id_b)
+    assert result is False, "resolve_predicate must refuse cross-matter predicate IDs"
+
+
+def test_resolve_predicate_by_description_none_guard(model, issue_id):
+    """resolve_predicate_by_description() must not raise on empty/None description."""
+    assert model.issues.resolve_predicate_by_description(issue_id, "") is False
+    assert model.issues.resolve_predicate_by_description(issue_id, "   ") is False
+
+
+def test_resolve_predicate_by_description_full_text(model, issue_id):
+    """Lookup must use full stripped description (no 300-char truncation)."""
+    long_desc = "Element " + "x" * 310  # > 300 chars
+    pred_id = model.issues.add_predicate(issue_id, long_desc)
+    result = model.issues.resolve_predicate_by_description(issue_id, long_desc)
+    assert result is True
+    row = model.db.execute(
+        "SELECT status FROM issue_predicate WHERE id=?", (pred_id,)
+    ).fetchone()
+    assert row["status"] == "resolved"
+
+
+# ---------------------------------------------------------------------------
 # compute_all
 # ---------------------------------------------------------------------------
 

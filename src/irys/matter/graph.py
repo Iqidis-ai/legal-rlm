@@ -1504,12 +1504,14 @@ class IssueStore:
         """Mark an issue predicate as resolved (SO-4 predicate-aware coverage).
 
         Returns True if the predicate existed and was updated; False if not found.
+        Matter-scoped: only resolves predicates belonging to this matter.
         Called when a supporting assertion is confirmed to satisfy a claim element.
         """
         with self.db.transaction():
             cursor = self.db.execute(
-                "UPDATE issue_predicate SET status='resolved' WHERE id=?",
-                (predicate_id,),
+                "UPDATE issue_predicate SET status='resolved'"
+                " WHERE id=? AND issue_id IN (SELECT id FROM issue WHERE matter_id=?)",
+                (predicate_id, self.matter_id),
             )
         return cursor.rowcount > 0
 
@@ -1517,16 +1519,26 @@ class IssueStore:
         """Mark the first open predicate matching description as resolved.
 
         Returns True if a predicate was found and resolved; False otherwise.
+        Atomic (single UPDATE with subquery) and matter-scoped.
         Useful when the engine knows a predicate description was satisfied but does not
         have the predicate_id.
         """
-        row = self.db.execute(
-            "SELECT id FROM issue_predicate WHERE issue_id=? AND description=? AND status='open'",
-            (issue_id, description.strip()[:300]),
-        ).fetchone()
-        if row is None:
+        if not description:
             return False
-        return self.resolve_predicate(row["id"])
+        desc = description.strip()
+        with self.db.transaction():
+            cursor = self.db.execute(
+                "UPDATE issue_predicate SET status='resolved'"
+                " WHERE id = ("
+                "   SELECT ip.id FROM issue_predicate ip"
+                "   JOIN issue i ON i.id = ip.issue_id"
+                "   WHERE ip.issue_id=? AND ip.description=? AND ip.status='open'"
+                "     AND i.matter_id=?"
+                "   ORDER BY ip.created_at LIMIT 1"
+                ")",
+                (issue_id, desc, self.matter_id),
+            )
+        return cursor.rowcount > 0
 
     def get_issue(self, issue_id: str) -> Optional[dict]:
         """Fetch a single issue by ID. Returns dict or None."""
@@ -3486,8 +3498,12 @@ class ProofStateStore:
         """Compute a 0..1 sufficiency score.
 
         Formula:
-        - If predicates exist: predicate_ratio × assertion_ratio
-        - If no predicates: assertion_ratio alone (softer signal)
+        - If predicates defined AND at least one resolved:
+              predicate_ratio × assertion_ratio
+              where predicate_ratio = satisfied / total
+        - Otherwise (no predicates, or predicates defined but none yet resolved):
+              assertion_ratio alone — fallback prevents unfair 0-scoring before
+              resolve_predicate() is wired in (SO-4).
 
         assertion_ratio = supporting / (supporting + attacking + 1)
             The +1 prevents division-by-zero and penalises zero supporting.

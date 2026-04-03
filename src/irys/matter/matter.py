@@ -257,21 +257,23 @@ class MatterModel:
             # Deduplicate to avoid SQLite bind-variable overrun on large propagation sets.
             # dict.fromkeys preserves order while deduplicating.
             affected = list(dict.fromkeys([assertion_id] + (result.propagated_to or [])))
-            # SQLite bind limit ~999; cap to avoid runtime errors on pathological chains.
-            _SQL_PARAM_LIMIT = 900
-            if len(affected) > _SQL_PARAM_LIMIT:
-                affected = affected[:_SQL_PARAM_LIMIT]
             if affected:
-                issue_rows = self.db.execute(
-                    "SELECT DISTINCT issue_id FROM assertion_issue_link"
-                    " WHERE assertion_id IN ({})".format(
-                        ",".join("?" * len(affected))
-                    ),
-                    affected,
-                ).fetchall()
-                if issue_rows:
-                    for row in issue_rows:
-                        self.proof_state.compute_and_store(row["issue_id"])
+                # SQLite bind limit ~999: chunk the assertion list so ALL affected
+                # issues are discovered, even when propagation chains exceed 900 nodes.
+                _SQL_PARAM_LIMIT = 900
+                issue_ids_to_recompute: set[str] = set()
+                for _batch_start in range(0, len(affected), _SQL_PARAM_LIMIT):
+                    _batch = affected[_batch_start:_batch_start + _SQL_PARAM_LIMIT]
+                    _rows = self.db.execute(
+                        "SELECT DISTINCT issue_id FROM assertion_issue_link"
+                        " WHERE assertion_id IN ({})".format(
+                            ",".join("?" * len(_batch))
+                        ),
+                        _batch,
+                    ).fetchall()
+                    issue_ids_to_recompute.update(r["issue_id"] for r in _rows)
+                for _iid in issue_ids_to_recompute:
+                    self.proof_state.compute_and_store(_iid)
         except Exception as exc:
             _log.warning(
                 "proof_state recompute after correct_assertion failed for %r: %s",
