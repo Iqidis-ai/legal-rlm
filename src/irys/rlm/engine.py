@@ -1159,7 +1159,7 @@ class RLMEngine:
         if self._matter_model is None:
             return
         try:
-            recent = self._matter_model.assertions.list_recent(limit=200)
+            recent = self._matter_model.assertions.list_recent_for_hydration(limit=200)
         except Exception as _e:
             logger.warning("Matter model hydration failed — proceeding without prior facts: %s", _e)
             return
