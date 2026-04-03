@@ -887,3 +887,52 @@ def test_hydrate_skips_superseded_assertions(model):
     # Superseded assertion must be excluded
     assert not any("Original invoice amount was $10,000." in f for f in facts), \
         "Superseded assertion must not appear in accumulated_facts after user correction"
+
+
+# ---------------------------------------------------------------------------
+# SO-3: Stopped lead stays pending — not marked investigated after stop
+# ---------------------------------------------------------------------------
+
+def test_stopped_lead_remains_pending(model):
+    """_investigate_lead() must NOT mark a lead as investigated when stop fires.
+
+    After the stop, the lead must remain pending so a resumed run can retry
+    the full analysis (SO-3 resume correctness).
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.rlm.state import InvestigationState, Lead
+    from irys.matter.runtime import MatterRuntimeAdapter
+    from irys.core.search import SearchResults
+
+    run_id = model.start_run("stop-lead test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    engine = RLMEngine(gemini_client=MagicMock(), config=RLMConfig(), matter_model=model)
+
+    lead = Lead.create(description="Payment obligation", source="orient", search_term="payment")
+    state = InvestigationState(id="test-stop", query="breach", repository_path="/tmp/test")
+    state._matter_adapter = adapter
+    state.leads.append(lead)
+    state.recursion_depth = 0
+
+    # repo.search() returns one result so the analysis path is reached
+    mock_results = SearchResults(query="payment", hits=[MagicMock(
+        file_path="/tmp/test/contract.pdf", snippet="Payment due Jan 15", score=0.9
+    )], files_searched=5, total_matches=1)
+
+    mock_repo = MagicMock()
+    mock_repo.search = MagicMock(return_value=mock_results)
+
+    # _analyze_search_results sets the stop flag mid-analysis
+    async def fake_analyze(st, repo, results, ld):
+        adapter.request_stop()
+
+    with patch.object(engine, "_analyze_search_results", side_effect=fake_analyze):
+        asyncio.run(engine._investigate_lead(state, mock_repo, lead))
+
+    # Lead must still be pending — stop fired before mark_lead_investigated
+    assert not lead.investigated, \
+        "Lead must remain pending (not investigated) when stop fires during analysis"
+    assert adapter.is_stop_requested()
