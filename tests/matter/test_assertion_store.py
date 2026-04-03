@@ -277,15 +277,25 @@ def test_duplicate_ingest_does_not_overwrite_terminal_belief_state(model):
     # Confirm old_a is SUPERSEDED
     assert model.assertions.get(old_a).belief_state == BeliefState.SUPERSEDED.value
 
-    # Now simulate a duplicate re-ingest of old_a's document — same candidate
+    # Case 1: duplicate re-ingest from same document (rowcount=0 — INSERT OR IGNORE no-op)
     old_a2, is_new2 = model.assertions.upsert_occurrence(c_old)
     assert old_a2 == old_a
     assert is_new2 is False
+    assert model.assertions.get(old_a).belief_state == BeliefState.SUPERSEDED.value, (
+        "SUPERSEDED must survive duplicate ingest from same document"
+    )
 
-    # SUPERSEDED must survive the duplicate ingest — not be revived to OPERATIVE
-    record = model.assertions.get(old_a)
-    assert record.belief_state == BeliefState.SUPERSEDED.value, (
-        "Terminal state SUPERSEDED must not be overwritten by duplicate re-ingest"
+    # Case 2: new occurrence from a DIFFERENT document (rowcount=1 — INSERT succeeds)
+    # Without the terminal-state guard, this triggers the upgrade path and revives the
+    # assertion to OPERATIVE. With the guard, SUPERSEDED is preserved.
+    c_old_other = make_candidate(old_text, doc_id="exhibit_a.pdf",
+                                  speech_act=SpeechAct.OPERATIVE, source_role=SourceRole.OPERATIVE)
+    old_a3, is_new3 = model.assertions.upsert_occurrence(c_old_other)
+    assert old_a3 == old_a   # same proposition → same assertion
+    assert is_new3 is False
+    # Terminal guard must block the confidence upgrade even though this is a new occurrence
+    assert model.assertions.get(old_a).belief_state == BeliefState.SUPERSEDED.value, (
+        "Terminal state SUPERSEDED must not be revived even by a new occurrence from a different doc"
     )
 
 
