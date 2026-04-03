@@ -117,6 +117,34 @@ def test_generate_clarifications_does_not_duplicate(model):
     assert model.clarifications.count_pending() == 1
 
 
+def test_generate_clarifications_top_n_limits_questions(model):
+    """generate_clarifications_from_gaps(top_n=N) must create at most N questions (SO-7).
+
+    The engine should not spam the user with clarifications for every gap.
+    top_n controls how many questions are generated per run — the highest-materiality
+    gaps are selected first.  Gaps beyond top_n are deferred.
+    """
+    run_id = model.start_run("Top-N test")
+
+    # Record 5 gaps with different materiality scores
+    for i, mat in enumerate([0.9, 0.85, 0.8, 0.75, 0.7]):
+        model.gaps.record(
+            gap_type=GapType.MISSING_DOCUMENT,
+            description=f"Missing document priority {i+1}",
+            materiality=mat,
+        )
+
+    # Generate at most 3 clarification questions
+    question_ids = model.generate_clarifications_from_gaps(run_id=run_id, top_n=3, min_materiality=0.5)
+
+    assert len(question_ids) == 3, (
+        f"generate_clarifications_from_gaps(top_n=3) must create exactly 3 questions, got {len(question_ids)}"
+    )
+    assert model.clarifications.count_pending() == 3, (
+        "Only top-3 questions must be pending — gaps beyond top_n deferred (SO-7 focused surfacing)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # QueryMatterContext includes answered clarifications
 # ---------------------------------------------------------------------------
