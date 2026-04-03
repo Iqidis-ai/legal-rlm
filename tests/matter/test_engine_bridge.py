@@ -1143,3 +1143,171 @@ def test_infer_source_side_plural_forms():
     # Original singular forms still work
     assert infer_source_side("plaintiff_complaint.pdf") == "plaintiff"
     assert infer_source_side("defendant_answer.pdf") == "defendant"
+
+
+# ---------------------------------------------------------------------------
+# ReasoningLedgerStore: seq_no cache correctness (commit e33b084)
+# ---------------------------------------------------------------------------
+
+def test_ledger_seq_no_cache_no_duplicates():
+    """Multiple appends to the same run_id must produce strictly increasing seq_nos."""
+    from irys.matter.enums import LedgerEventType
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("seq_no test")
+
+    # Append several additional events
+    for i in range(5):
+        model.ledger.append_event(
+            run_id=run_id,
+            event_type=LedgerEventType.PROGRESS_NOTE,
+            summary=f"step {i}",
+        )
+
+    events = model.ledger.get_events(run_id)
+    seq_nos = [e["seq_no"] for e in events]
+    # seq_nos must be strictly increasing (no duplicates)
+    assert seq_nos == sorted(set(seq_nos)), "seq_nos must be unique and increasing"
+    assert len(seq_nos) >= 6  # 1 from start_run + 5 appended
+
+
+def test_ledger_seq_no_cache_multiple_runs():
+    """seq_no cache must be per-run_id (two runs must not share seq_no state)."""
+    from irys.matter.enums import LedgerEventType
+    model = MatterModel.open_in_memory()
+    run_id_a = model.start_run("run A")
+    run_id_b = model.start_run("run B")
+
+    model.ledger.append_event(run_id_a, LedgerEventType.PROGRESS_NOTE, "A step 1")
+    model.ledger.append_event(run_id_b, LedgerEventType.PROGRESS_NOTE, "B step 1")
+    model.ledger.append_event(run_id_a, LedgerEventType.PROGRESS_NOTE, "A step 2")
+
+    events_a = model.ledger.get_events(run_id_a)
+    events_b = model.ledger.get_events(run_id_b)
+    seq_a = [e["seq_no"] for e in events_a]
+    seq_b = [e["seq_no"] for e in events_b]
+    assert seq_a == sorted(set(seq_a)), "run A seq_nos must be unique and increasing"
+    assert seq_b == sorted(set(seq_b)), "run B seq_nos must be unique and increasing"
+
+
+# ---------------------------------------------------------------------------
+# InvestigationState serialization — query_classification + facts_per_iteration
+# + reasoning_trail (commits 21bbe3d, e86b9ff)
+# ---------------------------------------------------------------------------
+
+def test_investigation_state_serialization_roundtrip():
+    """to_dict() / from_dict() must preserve query_classification, facts_per_iteration,
+    and reasoning_trail without loss."""
+    from irys.rlm.state import InvestigationState
+
+    state = InvestigationState.create("Test query", "/repo")
+    state.query_classification = {"complexity": "high", "type": "analytical"}
+    state.facts_per_iteration = [3, 5, 2, 0]
+    state.reasoning_trail = [{"seq_no": 0, "summary": "Run started"}, {"seq_no": 1, "summary": "Searching"}]
+
+    data = state.to_dict()
+    restored = InvestigationState.from_dict(data)
+
+    assert restored.query_classification == {"complexity": "high", "type": "analytical"}
+    assert restored.facts_per_iteration == [3, 5, 2, 0]
+    assert restored.reasoning_trail == [{"seq_no": 0, "summary": "Run started"}, {"seq_no": 1, "summary": "Searching"}]
+
+
+def test_investigation_state_serialization_defaults():
+    """from_dict() on old-format dict (missing new fields) must use safe defaults."""
+    from irys.rlm.state import InvestigationState
+
+    minimal = {"id": "abc123", "query": "test", "repository_path": "/repo"}
+    state = InvestigationState.from_dict(minimal)
+
+    assert state.query_classification is None
+    assert state.facts_per_iteration == []
+    assert state.reasoning_trail == []
+
+
+# ---------------------------------------------------------------------------
+# AssertionStore.list_recent_for_hydration — SPO columns returned (commit 35ccc45)
+# ---------------------------------------------------------------------------
+
+def test_list_recent_for_hydration_returns_spo_columns():
+    """list_recent_for_hydration() must include subject_ref_id, predicate_key,
+    object_json columns when SPO fields are stored."""
+    from irys.matter import AssertionCandidate, SpeechAct, SourceRole, ModelLayer, AssertionKind
+    from irys.matter.enums import OriginKind
+
+    model = MatterModel.open_in_memory()
+
+    # Record an assertion with full SPO fields
+    candidate = AssertionCandidate(
+        proposition_text="Acme Corp agreed to pay $50,000 by March 2023.",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="contract.pdf",
+        speech_act=SpeechAct.OPERATIVE,
+        source_role=SourceRole.OPERATIVE,
+        origin_kind=OriginKind.EXTRACTED,
+        subject_ref_type="free_text",
+        subject_ref_id="Acme Corp",
+        predicate_key="agreed_to_pay",
+        object_json='"$50,000 by March 2023"',
+    )
+    model.assertions.upsert_occurrence(candidate)
+
+    rows = model.assertions.list_recent_for_hydration(limit=10)
+    assert len(rows) >= 1
+
+    row = rows[0]
+    assert "subject_ref_id" in row or row.get("subject_ref_id") == "Acme Corp"
+    assert row.get("subject_ref_id") == "Acme Corp"
+    assert row.get("predicate_key") == "agreed_to_pay"
+    assert row.get("object_json") == '"$50,000 by March 2023"'
+
+
+# ---------------------------------------------------------------------------
+# _build_structured_relationships — completeness ordering (commit f882894)
+# ---------------------------------------------------------------------------
+
+def test_build_structured_relationships_completeness_ordering():
+    """Assertions with all 3 SPO fields must appear before partial ones."""
+    from irys.matter import AssertionCandidate, SpeechAct, SourceRole, ModelLayer, AssertionKind
+    from irys.matter.enums import OriginKind
+    import json
+
+    model = MatterModel.open_in_memory()
+
+    # Record partial assertion (subject only)
+    partial = AssertionCandidate(
+        proposition_text="Partial: subject only.",
+        model_layer=ModelLayer.RECORD, assertion_kind=AssertionKind.FACTUAL,
+        document_id="doc1.pdf", speech_act=SpeechAct.ALLEGED, source_role=SourceRole.ADVOCACY,
+        origin_kind=OriginKind.EXTRACTED,
+        subject_ref_id="Plaintiff",
+    )
+    # Record complete assertion (all 3 SPO)
+    complete = AssertionCandidate(
+        proposition_text="Complete: Acme Corp agreed to pay $50,000.",
+        model_layer=ModelLayer.RECORD, assertion_kind=AssertionKind.FACTUAL,
+        document_id="doc2.pdf", speech_act=SpeechAct.OPERATIVE, source_role=SourceRole.OPERATIVE,
+        origin_kind=OriginKind.EXTRACTED,
+        subject_ref_id="Acme Corp",
+        predicate_key="agreed_to_pay",
+        object_json=json.dumps("$50,000"),
+    )
+    model.assertions.upsert_occurrence(partial)
+    model.assertions.upsert_occurrence(complete)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_structured_relationships()
+    assert result  # non-empty: at least one typed assertion exists
+
+    # _build_structured_relationships formats as: [ROLE/belief] subj →[pred]→ obj
+    # The complete triple uses subject_ref_id="Acme Corp" and predicate_key="agreed_to_pay"
+    # The partial only has subject_ref_id="Plaintiff" (pred and obj are "?")
+    idx_complete = result.find("agreed_to_pay")  # predicate of complete triple
+    idx_partial = result.find("Plaintiff")         # subject of partial triple
+    assert idx_complete != -1, "complete triple predicate must appear in output"
+    assert idx_partial != -1, "partial triple subject must appear in output"
+    assert idx_complete < idx_partial, (
+        "Fully-structured triple (3 fields) must appear before partial (1 field) in synthesis block"
+    )
