@@ -225,6 +225,88 @@ def test_proof_gap_clarification_asks_for_evidence_not_document(model):
     )
 
 
+# ---------------------------------------------------------------------------
+# SO-3: get_new_answered_clarifications() mid-run steering (de-dup + time filter)
+# ---------------------------------------------------------------------------
+
+def test_get_new_answered_clarifications_returns_post_run_answers(model):
+    """get_new_answered_clarifications() must return questions answered AFTER run started (SO-3).
+
+    The adapter tracks _run_started_at at construction time.  Only answers recorded
+    after that timestamp should appear — so the engine can pick up user responses
+    that arrived mid-run without re-processing answers from earlier sessions.
+    """
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    # Create the run/adapter FIRST — this sets _run_started_at to now
+    run_id = model.start_run("mid-run steering test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Add and answer a question AFTER adapter creation — must appear
+    q_id = model.clarifications.add_question("Do you have the signed amendment?")
+    model.clarifications.answer_question(q_id, "Yes, it's in the contract folder.")
+
+    new_answers = adapter.get_new_answered_clarifications()
+    assert len(new_answers) == 1
+    assert new_answers[0]["id"] == q_id
+
+
+def test_get_new_answered_clarifications_deduplicates_across_calls(model):
+    """get_new_answered_clarifications() must return each answer only once (SO-3).
+
+    The adapter tracks _injected_clarification_ids to de-dup across multiple loop
+    iterations.  A second call must not re-return the same clarification as a new lead.
+    """
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    run_id = model.start_run("dedup test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    q_id = model.clarifications.add_question("Is the payment record in the repository?")
+    model.clarifications.answer_question(q_id, "No, we need to request it.")
+
+    # First call: should return the answer
+    first = adapter.get_new_answered_clarifications()
+    assert len(first) == 1
+
+    # Second call: must be empty — already injected
+    second = adapter.get_new_answered_clarifications()
+    assert len(second) == 0, (
+        "get_new_answered_clarifications() must de-dup: same answer must not be returned twice"
+    )
+
+
+def test_get_new_answered_clarifications_pre_run_answers_excluded(model):
+    """Answers recorded BEFORE the run started must not appear in get_new_answered_clarifications.
+
+    The _run_started_at filter ensures answers from prior sessions or before this
+    run began are not re-injected as 'new' steering inputs.  Simulated by setting
+    _run_started_at to a future time so all answers appear to be 'before' the run.
+    """
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    # Answer a question first
+    q_id = model.clarifications.add_question("Is Exhibit B signed?")
+    model.clarifications.answer_question(q_id, "Yes.")
+
+    # Now start run
+    run_id = model.start_run("pre-run filter test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Override _run_started_at to simulate "run started just now, after the answer"
+    # (which is the normal case — answer was before, run started after)
+    # To make the filter clear, set it to a far-future time so the existing answer
+    # appears to have been answered "in the past" relative to the run start.
+    import datetime
+    future_iso = "2099-01-01T00:00:00+00:00"
+    adapter._run_started_at = future_iso
+
+    answers = adapter.get_new_answered_clarifications()
+    assert len(answers) == 0, (
+        "Answers recorded before _run_started_at must not appear in get_new_answered_clarifications"
+    )
+
+
 def test_gap_linked_to_assertion_produces_assertion_impact_statement(model):
     """A gap linked to an assertion must mention the assertion in the impact (SO-7).
 
