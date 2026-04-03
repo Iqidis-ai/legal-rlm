@@ -17,7 +17,22 @@ import logging
 from ..core.models import GeminiClient, ModelTier
 from ..core.repository import MatterRepository
 from ..core.search import SearchResults
+from ..matter.enums import SourceRole as _SourceRole
+from ..matter.runtime import infer_source_role as _infer_source_role
 from .state import InvestigationState, StepType, ThinkingStep, Citation, Lead, classify_query
+
+# SO-5: module-level map from LLM-returned doc_source_role strings to SourceRole enums.
+# Built once at import time; avoids dict reconstruction on every deep-read call.
+_CONTENT_ROLE_MAP: dict[str, "_SourceRole"] = {
+    "advocacy": _SourceRole.ADVOCACY,
+    "operative": _SourceRole.OPERATIVE,
+    "authoritative": _SourceRole.AUTHORITATIVE,
+    "procedural": _SourceRole.PROCEDURAL,
+    "informal": _SourceRole.INFORMAL,
+    "draft": _SourceRole.DRAFT,
+    "post_hoc": _SourceRole.POST_HOC_EXPLANATORY,
+    "post_hoc_explanatory": _SourceRole.POST_HOC_EXPLANATORY,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -1580,7 +1595,8 @@ class RLMEngine:
         # so each fact is labeled and recorded against its actual source document
         # rather than always being attributed to the single top search hit.
         if analysis.get("key_facts"):
-            from ..matter.runtime import infer_source_role as _infer_role
+            # _infer_source_role is the module-level import; alias for readability here.
+            _infer_role = _infer_source_role
 
             # Build a name→(relative_path, SearchHit) lookup for all prompt-visible hits.
             # Key by full file_path (stable, unique) and filename (convenience lookup).
@@ -1987,25 +2003,14 @@ class RLMEngine:
                 # SO-5: resolve source role using content-based classification first,
                 # then fall back to filename heuristic.  The LLM classifies by document
                 # content (not filename) so adversarial naming cannot spoof calibration.
-                from ..matter.runtime import infer_source_role as _infer_role
-                from ..matter.enums import SourceRole as _SourceRole
-                _CONTENT_ROLE_MAP: dict[str, "_SourceRole"] = {
-                    "advocacy": _SourceRole.ADVOCACY,
-                    "operative": _SourceRole.OPERATIVE,
-                    "authoritative": _SourceRole.AUTHORITATIVE,
-                    "procedural": _SourceRole.PROCEDURAL,
-                    "informal": _SourceRole.INFORMAL,
-                    "draft": _SourceRole.DRAFT,
-                    "post_hoc": _SourceRole.POST_HOC_EXPLANATORY,
-                    "post_hoc_explanatory": _SourceRole.POST_HOC_EXPLANATORY,
-                }
+                # _CONTENT_ROLE_MAP and _SourceRole are module-level constants.
                 _llm_role_str = (analysis.get("doc_source_role") or "").lower().strip()
                 _content_role = _CONTENT_ROLE_MAP.get(_llm_role_str, _SourceRole.UNKNOWN)
                 # Effective role: content-based when available; filename heuristic as fallback
                 _effective_role = (
                     _content_role
                     if _content_role != _SourceRole.UNKNOWN
-                    else _infer_role(doc.filename)
+                    else _infer_source_role(doc.filename)
                 )
                 _src_label = _effective_role.value.upper()
                 state.add_facts([f"[{_src_label}] {f}" for f, _, _d, _spo in facts_to_add])
