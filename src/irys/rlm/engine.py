@@ -669,6 +669,10 @@ class RLMEngine:
         self._operation_semaphore: Optional[asyncio.Semaphore] = None
         self._semaphore_doc_count: int = -1  # sentinel: semaphore not yet calibrated
         self._doc_count: int = 0  # Track document count for adaptive behavior
+        # Per-run cache for repo filename lookup (SO-7 connection gap detection).
+        # Reset to None at the start of each run() call. Populated lazily on first use
+        # inside _deep_read_document() — avoids repeated repo.list_files() walks.
+        self._known_filenames: Optional[set] = None
 
     def _get_semaphore(self) -> asyncio.Semaphore:
         """Get or create the operation semaphore.
@@ -736,6 +740,8 @@ class RLMEngine:
         # the concurrency limit stays calibrated without nulling out mid-flight waiters.
         stats = repo.get_stats()
         self._adapt_config_for_repo_size(stats.total_files)
+        # Reset per-run filename cache so a new investigation always gets a fresh snapshot.
+        self._known_filenames = None
 
         # Build matter adapter — real or null depending on config + injected model
         if self.config.enable_matter_model and self._matter_model is not None:
@@ -1721,11 +1727,15 @@ class RLMEngine:
             # LLM-driven gap detection: check referenced documents against repo (SO-7)
             connections = analysis.get("connections", [])
             if connections:
-                # Build a quick lookup of known filenames (lowercase)
-                known_names = {
-                    f.filename.lower()
-                    for f in repo.list_files()
-                }
+                # Build filename lookup once per investigation run (not per document).
+                # repo.list_files() does a recursive filesystem walk — doing it per-document
+                # on a large matter is an avoidable O(docs × files) hotspot.
+                if self._known_filenames is None:
+                    self._known_filenames = {
+                        f.filename.lower()
+                        for f in repo.list_files()
+                    }
+                known_names = self._known_filenames
                 _adp = getattr(state, "_matter_adapter", None)
                 for ref in connections[:5]:  # limit to avoid noise
                     if not isinstance(ref, str) or not ref.strip():
