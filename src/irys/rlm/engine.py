@@ -2806,7 +2806,7 @@ class RLMEngine:
         # somehow replicated our exact phrasing — both mean the gate is satisfied.
         _violation_descs = [v.get("description", "") for v in high_violations]
         _has_violation_content = any(
-            desc and len(desc) >= 20 and desc[:60] in synthesis_output
+            desc and desc[:60] in synthesis_output
             for desc in _violation_descs
         )
         if _has_violation_content:
