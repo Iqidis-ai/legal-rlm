@@ -233,8 +233,10 @@ def test_get_issues_with_counts(client, register_model):
     assert resp.status_code == 200
     issues = resp.json()
     assert len(issues) == 1
-    assert issues[0]["supporting_assertions"] == 1
-    assert issues[0]["attacking_assertions"] == 0
+    # API now returns get_issue_coverage_report() fields (SO-4)
+    assert issues[0]["supporting_count"] == 1
+    assert "coverage_fraction" in issues[0]
+    assert "has_proof_gap" in issues[0]
 
 
 # ---------------------------------------------------------------------------

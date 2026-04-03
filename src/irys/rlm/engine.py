@@ -257,6 +257,9 @@ Source Calibration (CRITICAL — read before analyzing facts):
 Quantitative Summary (SO-6 — extracted monetary amounts):
 {quant_summary}
 
+Known Gaps & Missing Evidence (SO-7 — MUST surface in Gaps & Limitations section):
+{gap_summary}
+
 Key Entities Identified:
 {entities}
 
@@ -770,16 +773,20 @@ class RLMEngine:
             # Phase 2.5: Verify citations
             await self._verify_citations(state, repo)
 
-            # Phase 3: Final synthesis
+            # Phase 2.75: Detect gaps BEFORE synthesis so they appear in the memo (SO-7).
+            # Running these here means _build_gap_summary() in _synthesize() finds them.
+            if run_id is not None:
+                # Detect numeric conflicts → gaps (SO-6 + SO-7)
+                self._matter_model.detect_quant_conflicts()
+                # Detect issues with zero supporting assertions → proof gaps (SO-7)
+                self._detect_proof_gaps()
+
+            # Phase 3: Final synthesis (reads gaps via _build_gap_summary)
             await self._synthesize(state)
 
             state.complete()
             if run_id is not None:
                 self._matter_model.complete_run(run_id)
-                # Detect numeric conflicts → gaps (SO-6 + SO-7)
-                self._matter_model.detect_quant_conflicts()
-                # Detect issues with zero supporting assertions → proof gaps (SO-7)
-                self._detect_proof_gaps()
                 # Generate clarification questions from open gaps (SO-7)
                 self._matter_model.generate_clarifications_from_gaps(
                     run_id=run_id,
@@ -1851,6 +1858,10 @@ class RLMEngine:
         # Build quantitative reconciliation summary (SO-6)
         quant_summary = self._build_quant_summary()
 
+        # Build structured gap summary (SO-7) — gaps must be in the prompt so the
+        # LLM surfaces them in the Gaps & Limitations section, not silently ignores them.
+        gap_summary = self._build_gap_summary()
+
         prompt = SYNTHESIS_PROMPT.format(
             query=state.query,
             docs_analyzed=state.documents_read,
@@ -1860,6 +1871,7 @@ class RLMEngine:
             hypothesis=state.hypothesis or "No specific hypothesis formed",
             source_calibration=source_calibration,
             quant_summary=quant_summary,
+            gap_summary=gap_summary,
             entities=entities_text or "No entities identified",
             findings=findings_text or "No specific findings accumulated",
             citations=citations_text or "No citations collected",
@@ -1956,6 +1968,30 @@ class RLMEngine:
                 values = [f"${v:,.2f}" for v in (c.get("values") or [])[:4]]
                 lines.append(f"  ⚠ {subject} ({currency}): {', '.join(values)} — UNRESOLVED DISCREPANCY")
 
+        return "\n".join(lines)
+
+    def _build_gap_summary(self) -> str:
+        """Build a structured gap block for the synthesis prompt (SO-7).
+
+        Pulls open gaps from the matter model so the LLM is explicitly aware
+        of what is missing and can surface them in the Gaps & Limitations section
+        rather than silently skipping absent evidence.
+        """
+        if self._matter_model is None:
+            return "No gap data available."
+        try:
+            gaps = self._matter_model.gaps.open_gaps(min_materiality=0.3)
+        except Exception:
+            return "Gap data unavailable."
+        if not gaps:
+            return "No significant gaps identified."
+        lines = [f"{len(gaps)} open gap(s) detected:"]
+        for gap in gaps[:8]:  # cap to prevent prompt bloat
+            gap_type = gap.get("gap_type", "unknown").replace("_", " ")
+            description = gap.get("description", "")
+            materiality = gap.get("materiality_score", 0.0)
+            label = "HIGH" if materiality >= 0.7 else "MED" if materiality >= 0.4 else "LOW"
+            lines.append(f"  [{label}] {gap_type}: {description}")
         return "\n".join(lines)
 
     # ==========================================================================

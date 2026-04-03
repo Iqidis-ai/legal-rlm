@@ -1478,28 +1478,18 @@ async def get_matter_assertions(matter_id: str, limit: int = 50, offset: int = 0
     responses={404: {"model": ErrorResponse}},
 )
 async def get_matter_issues(matter_id: str, min_materiality: float = 0.0):
-    """Return open issues with assertion coverage counts (SO-4).
+    """Return open issues with assertion coverage stats ordered by weakness (SO-4).
 
-    Each issue includes the count of supporting and attacking assertions
-    so clients can see which claims are well-evidenced vs. proof-gap-exposed.
+    Uses get_issue_coverage_report() for consistent, belief-state-filtered counts
+    including coverage_fraction, has_proof_gap, and gap_id — the canonical SO-4
+    coverage view used internally by the investigation engine.
     """
     model = _get_matter_model_or_404(matter_id)
-    issues = model.issues.get_open_issues(min_materiality=min_materiality)
-    result = []
-    for issue in issues:
-        assertions = model.issues.get_assertions_for_issue(issue["id"])
-        _inactive = {"disputed", "withdrawn", "superseded", "denied"}
-        issue["supporting_assertions"] = sum(
-            1 for a in assertions
-            if a.get("relation_type") in ("supports", "establishes")
-            and a.get("belief_state") not in _inactive
-        )
-        issue["attacking_assertions"] = sum(
-            1 for a in assertions if a.get("relation_type") in ("attacks", "negates")
-        )
-        issue["total_assertions"] = len(assertions)
-        result.append(issue)
-    return result
+    report = model.get_issue_coverage_report()
+    # Filter by materiality post-hoc (get_issue_coverage_report returns all issues)
+    if min_materiality > 0.0:
+        report = [r for r in report if r.get("materiality", 0.0) >= min_materiality]
+    return report
 
 
 @app.get(
