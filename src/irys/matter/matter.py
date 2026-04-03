@@ -16,7 +16,7 @@ from typing import Optional
 from .db import SQLiteMatterDB
 from .graph import (
     AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
-    DocumentInventoryStore, ReasoningCacheStore,
+    DocumentInventoryStore, ReasoningCacheStore, TrustOverrideStore,
 )
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
@@ -63,6 +63,7 @@ class MatterModel:
         self.belief = BeliefRevisionEngine(db, self.assertions)
         self.inventory = DocumentInventoryStore(db, matter_id)
         self.cache = ReasoningCacheStore(db, matter_id)
+        self.trust_overrides = TrustOverrideStore(db, matter_id)
 
     # ------------------------------------------------------------------
     # Factory methods

@@ -1,5 +1,5 @@
 """AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
-DocumentInventoryStore.
+DocumentInventoryStore, TrustOverrideStore, ReasoningCacheStore.
 
 The assertion store is the heart of the intelligence layer. It maintains
 typed assertions with speech-act classification, support/attack links,
@@ -1015,3 +1015,85 @@ class ReasoningCacheStore:
             )
         except Exception:
             pass  # non-critical; next run will populate from LLM
+
+
+class TrustOverrideStore:
+    """User-set trust overrides for specific documents (SO-3 trust steering, SO-5 calibration).
+
+    A trust override lets a user mark a document pattern as 'low' or 'high' trust,
+    which overrides the automatic source-role inference in record_fact().
+
+    trust_level values:
+      'low'    — force speech_act to ALLEGED regardless of source role
+      'normal' — use automatic inference (default, no override)
+      'high'   — promote ALLEGED → OPERATIVE (user asserts this document is authoritative)
+
+    document_pattern is matched against:
+      1. The full relative document_id (e.g. "pleadings/complaint.pdf")
+      2. The basename only (e.g. "complaint.pdf")
+    First match wins; patterns are checked by length descending (more specific wins).
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def set(
+        self,
+        document_pattern: str,
+        trust_level: str,
+        note: Optional[str] = None,
+    ) -> str:
+        """Upsert a trust override. Returns override id."""
+        if trust_level not in ("low", "normal", "high"):
+            raise ValueError(f"trust_level must be 'low', 'normal', or 'high', got {trust_level!r}")
+        override_id = _id()
+        now = _now()
+        self.db.execute(
+            """INSERT INTO document_trust_override
+               (id, matter_id, document_pattern, trust_level, note, created_at)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(matter_id, document_pattern)
+               DO UPDATE SET trust_level=excluded.trust_level,
+                             note=excluded.note""",
+            (override_id, self.matter_id, document_pattern, trust_level, note, now),
+        )
+        return override_id
+
+    def get(self, document_id: str) -> Optional[str]:
+        """Return trust_level for a document_id, or None if no override set.
+
+        Matches against full document_id path first, then basename only.
+        Among multiple matching patterns, the longest (most specific) wins.
+        """
+        from pathlib import Path
+        basename = Path(document_id).name
+        rows = self.db.execute(
+            """SELECT document_pattern, trust_level FROM document_trust_override
+               WHERE matter_id=? AND trust_level != 'normal'
+               ORDER BY LENGTH(document_pattern) DESC""",
+            (self.matter_id,),
+        ).fetchall()
+        for row in rows:
+            pattern = row["document_pattern"]
+            if pattern == document_id or pattern == basename:
+                return row["trust_level"]
+        return None
+
+    def list_all(self) -> list[dict]:
+        """Return all trust overrides for this matter."""
+        rows = self.db.execute(
+            """SELECT id, document_pattern, trust_level, note, created_at
+               FROM document_trust_override WHERE matter_id=?
+               ORDER BY created_at DESC""",
+            (self.matter_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete(self, document_pattern: str) -> bool:
+        """Remove a trust override. Returns True if a row was deleted."""
+        self.db.execute(
+            "DELETE FROM document_trust_override WHERE matter_id=? AND document_pattern=?",
+            (self.matter_id, document_pattern),
+        )
+        return True

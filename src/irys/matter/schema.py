@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -485,6 +485,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_reasoning_cache
     ON reasoning_cache(matter_id, stage, cache_key);
 """
 
+_DDL_TRUST_OVERRIDE = """
+CREATE TABLE IF NOT EXISTS document_trust_override (
+    id              TEXT PRIMARY KEY,
+    matter_id       TEXT NOT NULL REFERENCES matter(id),
+    document_pattern TEXT NOT NULL,
+    trust_level     TEXT NOT NULL,
+    note            TEXT,
+    created_at      TEXT NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_trust_override
+    ON document_trust_override(matter_id, document_pattern);
+"""
+
 _DDL_SCHEMA_VERSION = """
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL,
@@ -654,6 +668,19 @@ def _migration_v8(conn) -> None:
             conn.execute(stmt)
 
 
+def _migration_v9(conn) -> None:
+    """Add document_trust_override table for SO-3 user trust steering.
+
+    Allows users to mark specific documents as low-trust (forcing ALLEGED speech act)
+    or high-trust (promoting ALLEGED → OPERATIVE) so source calibration respects
+    user domain knowledge rather than relying solely on filename heuristics.
+    """
+    for stmt in _DDL_TRUST_OVERRIDE.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            conn.execute(stmt)
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -666,6 +693,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (6, _migration_v6),
     (7, _migration_v7),
     (8, _migration_v8),
+    (9, _migration_v9),
 ]
 
 

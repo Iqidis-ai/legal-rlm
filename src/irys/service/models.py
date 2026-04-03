@@ -107,6 +107,19 @@ class AnswerClarificationRequest(BaseModel):
     answer_text: str = Field(..., description="User's answer to the clarification question")
 
 
+class TrustOverrideRequest(BaseModel):
+    """User trust override for a document (SO-3 trust steering, SO-5 calibration)."""
+    document_pattern: str = Field(
+        ...,
+        description="Document filename or relative path to override (exact match)",
+    )
+    trust_level: str = Field(
+        ...,
+        description="Trust level: 'low' (force ALLEGED), 'normal' (reset to auto), 'high' (promote ALLEGED→OPERATIVE)",
+    )
+    note: Optional[str] = Field(None, description="Reason for the override")
+
+
 class CorrectAssertionRequest(BaseModel):
     """User correction to an assertion's belief state (SO-2 belief revision)."""
     new_belief_state: str = Field(

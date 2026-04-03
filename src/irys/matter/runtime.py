@@ -170,6 +170,15 @@ class MatterRuntimeAdapter:
             elif source_role in (SourceRole.OPERATIVE, SourceRole.AUTHORITATIVE):
                 speech_act = SpeechAct.OPERATIVE
 
+        # Apply user trust override (SO-3 trust steering, SO-5 calibration).
+        # 'low'  → force ALLEGED regardless of inferred role
+        # 'high' → promote ALLEGED → OPERATIVE (user asserts this document is authoritative)
+        trust = self.model.trust_overrides.get(document_id)
+        if trust == "low":
+            speech_act = SpeechAct.ALLEGED
+        elif trust == "high" and speech_act == SpeechAct.ALLEGED:
+            speech_act = SpeechAct.OPERATIVE
+
         candidate = AssertionCandidate(
             proposition_text=proposition_text,
             model_layer=model_layer,
@@ -393,6 +402,23 @@ class MatterRuntimeAdapter:
             assertion_id=assertion_id,
         )
 
+    def set_trust_override(
+        self,
+        document_pattern: str,
+        trust_level: str,
+        note: Optional[str] = None,
+    ) -> str:
+        """Set a trust override for a document pattern (SO-3 trust steering).
+
+        trust_level: 'low' | 'normal' | 'high'
+        Returns override_id.
+        """
+        return self.model.trust_overrides.set(document_pattern, trust_level, note)
+
+    def list_trust_overrides(self) -> list[dict]:
+        """Return all trust overrides for this matter."""
+        return self.model.trust_overrides.list_all()
+
 
 class NullMatterAdapter:
     """
@@ -459,4 +485,10 @@ class NullMatterAdapter:
         pass
 
     def get_new_answered_clarifications(self) -> list[dict]:
+        return []
+
+    def set_trust_override(self, document_pattern: str, trust_level: str, **kwargs) -> str:
+        return ""
+
+    def list_trust_overrides(self) -> list[dict]:
         return []

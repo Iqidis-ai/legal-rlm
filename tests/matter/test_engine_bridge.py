@@ -207,3 +207,82 @@ def test_null_adapter_record_actor():
     adapter = NullMatterAdapter()
     result = adapter.record_actor("Jane Smith")
     assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# SO-3: Trust overrides — source trust steering
+# ---------------------------------------------------------------------------
+
+def test_trust_override_low_forces_alleged():
+    """Low trust override must force speech_act to ALLEGED regardless of filename."""
+    from irys.matter.enums import SpeechAct
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Trust test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Mark contract.pdf as low-trust (adversarial, should not be treated as operative)
+    model.trust_overrides.set("contract.pdf", "low", note="Disputed authenticity")
+
+    # Record a fact from contract.pdf — normally operative, but low trust → alleged
+    aid = adapter.record_fact("Payment of $50,000 was due.", document_id="contract.pdf")
+    assert aid
+
+    # Check the occurrence's speech_act was forced to ALLEGED
+    occurrences = model.assertions.get_occurrences(aid)
+    assert len(occurrences) >= 1
+    assert any(o["speech_act"] == SpeechAct.ALLEGED.value for o in occurrences)
+
+
+def test_trust_override_high_promotes_alleged():
+    """High trust override must promote ALLEGED → OPERATIVE for advocacy docs."""
+    from irys.matter.enums import SpeechAct
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Trust promote test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # complaint.pdf normally infers ADVOCACY → ALLEGED; 'high' trust should promote to OPERATIVE
+    model.trust_overrides.set("complaint.pdf", "high", note="Verified by court order")
+
+    aid = adapter.record_fact("Defendant owes $100,000.", document_id="complaint.pdf")
+    assert aid
+
+    occurrences = model.assertions.get_occurrences(aid)
+    assert any(o["speech_act"] == SpeechAct.OPERATIVE.value for o in occurrences)
+
+
+def test_trust_override_basename_matching():
+    """Trust override by basename must match a full relative path document_id."""
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Basename match test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    model.trust_overrides.set("contract.pdf", "low")
+
+    # document_id is a relative path — basename match should still apply
+    aid = adapter.record_fact("Clause 3 requires X.", document_id="pleadings/contract.pdf")
+    assert aid
+    from irys.matter.enums import SpeechAct
+    occurrences = model.assertions.get_occurrences(aid)
+    assert any(o["speech_act"] == SpeechAct.ALLEGED.value for o in occurrences)
+
+
+def test_trust_override_list_and_upsert():
+    """set() is idempotent; list_all() returns current overrides."""
+    model = MatterModel.open_in_memory()
+
+    model.trust_overrides.set("doc1.pdf", "low", note="First")
+    model.trust_overrides.set("doc1.pdf", "high", note="Corrected")  # upsert
+    model.trust_overrides.set("doc2.pdf", "low")
+
+    overrides = model.trust_overrides.list_all()
+    assert len(overrides) == 2
+    doc1 = next(o for o in overrides if o["document_pattern"] == "doc1.pdf")
+    assert doc1["trust_level"] == "high"  # latest value after upsert
+    assert doc1["note"] == "Corrected"
+
+
+def test_null_adapter_trust_override():
+    """NullMatterAdapter trust methods must not raise and return safe defaults."""
+    adapter = NullMatterAdapter()
+    assert adapter.set_trust_override("anything.pdf", "low") == ""
+    assert adapter.list_trust_overrides() == []

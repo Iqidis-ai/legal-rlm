@@ -38,6 +38,7 @@ from .models import (
     RedirectRunRequest,
     AnswerClarificationRequest,
     CorrectAssertionRequest,
+    TrustOverrideRequest,
 )
 from .s3_repository import S3Repository
 
@@ -1359,6 +1360,39 @@ async def answer_clarification(
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"status": "answered", "question_id": question_id}
+
+
+@app.post(
+    "/matter/{matter_id}/trust-overrides",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
+    """Set or update a trust override for a document pattern (SO-3 trust steering).
+
+    Marks a document as low-trust (force ALLEGED speech act regardless of filename
+    heuristics), normal (reset to auto-inference), or high-trust (promote ALLEGED
+    facts to OPERATIVE). Takes effect on the next investigation run.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    try:
+        override_id = model.trust_overrides.set(
+            request.document_pattern, request.trust_level, request.note
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "set", "override_id": override_id}
+
+
+@app.get(
+    "/matter/{matter_id}/trust-overrides",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def list_trust_overrides(matter_id: str):
+    """List all document trust overrides for a matter."""
+    model = _get_matter_model_or_404(matter_id)
+    return {"overrides": model.trust_overrides.list_all()}
 
 
 @app.get(
