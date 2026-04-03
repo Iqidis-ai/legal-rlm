@@ -448,6 +448,13 @@ class GapStore:
         self.db = db
         self.matter_id = matter_id
 
+    @staticmethod
+    def _gap_key(gap_type_value: str, description: str) -> str:
+        """Compute dedup key: sha256(gap_type:normalized_description)[:32]."""
+        import hashlib
+        normalized = description.lower().strip()
+        return hashlib.sha256(f"{gap_type_value}:{normalized}".encode()).hexdigest()[:32]
+
     def record(
         self,
         gap_type: GapType,
@@ -458,23 +465,54 @@ class GapStore:
         affected_type: Optional[str] = None,
         affected_id: Optional[str] = None,
     ) -> str:
-        """Record a gap. Returns gap_id."""
+        """Record a gap. Returns gap_id (existing, reopened, or new).
+
+        Idempotent with three cases (SO-7 dedup):
+        - Open gap exists with same description → return existing id (no-op)
+        - Closed gap exists with same description → reopen it, return its id
+        - No matching gap → insert new, return new id
+
+        This prevents repeated runs from duplicating the open-gap list while
+        still allowing gaps that were resolved and then re-detected to resurface.
+        """
         gap_id = _id()
         now = _now()
+        desc_key = self._gap_key(gap_type.value, description)
         with self.db.transaction():
-            self.db.execute(
-                """INSERT INTO gap
-                   (id, matter_id, gap_type, description, expected_artifact,
-                    materiality_score, blocker_score, status, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (gap_id, self.matter_id, gap_type.value, description,
-                 expected_artifact, materiality, blocker_score, "open", now, now),
-            )
-            if affected_type and affected_id:
+            existing = self.db.execute(
+                """SELECT id, status FROM gap
+                   WHERE matter_id=? AND gap_type=? AND description_key=?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (self.matter_id, gap_type.value, desc_key),
+            ).fetchone()
+            if existing:
+                gap_id = existing["id"]
+                if existing["status"] != "open":
+                    # Reopen closed/resolved gap that is still relevant
+                    self.db.execute(
+                        "UPDATE gap SET status='open', updated_at=? WHERE id=?",
+                        (now, gap_id),
+                    )
+            else:
                 self.db.execute(
-                    "INSERT INTO gap_link (id, gap_id, affected_type, affected_id, created_at) VALUES (?,?,?,?,?)",
-                    (_id(), gap_id, affected_type, affected_id, now),
+                    """INSERT INTO gap
+                       (id, matter_id, gap_type, description, description_key,
+                        expected_artifact, materiality_score, blocker_score,
+                        status, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    (gap_id, self.matter_id, gap_type.value, description, desc_key,
+                     expected_artifact, materiality, blocker_score, "open", now, now),
                 )
+            if affected_type and affected_id:
+                existing_link = self.db.execute(
+                    "SELECT id FROM gap_link WHERE gap_id=? AND affected_type=? AND affected_id=?",
+                    (gap_id, affected_type, affected_id),
+                ).fetchone()
+                if not existing_link:
+                    self.db.execute(
+                        "INSERT INTO gap_link (id, gap_id, affected_type, affected_id, created_at) VALUES (?,?,?,?,?)",
+                        (_id(), gap_id, affected_type, affected_id, now),
+                    )
         return gap_id
 
     def record_many(self, specs: list[dict]) -> list[str]:
@@ -485,41 +523,25 @@ class GapStore:
           blocker_score, affected_type, affected_id (all optional except
           gap_type and description).
 
+        Idempotent — applies the same open/reopen/insert logic as record()
+        for each spec. (SO-7)
+
         Returns list of gap IDs in insertion order.
         """
-        now = _now()
-        gap_rows = []
-        link_rows = []
         gap_ids = []
-        for spec in specs:
-            gap_id = _id()
-            gap_ids.append(gap_id)
-            gap_rows.append((
-                gap_id,
-                self.matter_id,
-                spec["gap_type"].value if hasattr(spec["gap_type"], "value") else spec["gap_type"],
-                spec["description"],
-                spec.get("expected_artifact"),
-                spec.get("materiality", 0.5),
-                spec.get("blocker_score", 0.0),
-                "open", now, now,
-            ))
-            if spec.get("affected_type") and spec.get("affected_id"):
-                link_rows.append((_id(), gap_id, spec["affected_type"], spec["affected_id"], now))
-
         with self.db.transaction():
-            self.db.executemany(
-                """INSERT INTO gap
-                   (id, matter_id, gap_type, description, expected_artifact,
-                    materiality_score, blocker_score, status, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                gap_rows,
-            )
-            if link_rows:
-                self.db.executemany(
-                    "INSERT INTO gap_link (id, gap_id, affected_type, affected_id, created_at) VALUES (?,?,?,?,?)",
-                    link_rows,
+            for spec in specs:
+                gap_id = self.record(
+                    gap_type=spec["gap_type"] if isinstance(spec["gap_type"], GapType)
+                              else GapType(spec["gap_type"]),
+                    description=spec["description"],
+                    expected_artifact=spec.get("expected_artifact"),
+                    materiality=spec.get("materiality", 0.5),
+                    blocker_score=spec.get("blocker_score", 0.0),
+                    affected_type=spec.get("affected_type"),
+                    affected_id=spec.get("affected_id"),
                 )
+                gap_ids.append(gap_id)
         return gap_ids
 
     def open_gaps(self, min_materiality: float = 0.0) -> list[dict]:

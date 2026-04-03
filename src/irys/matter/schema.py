@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -882,6 +882,52 @@ def _migration_v16(conn) -> None:
         raise
 
 
+def _migration_v18(conn) -> None:
+    """Add description_key column and lookup index for idempotent gap inserts.
+
+    Without this, every engine run that detects the same structural gap inserts a new
+    duplicate row, causing the open-gap list to fill with identical entries and the
+    synthesis gap summary to show the same gap N times.
+
+    description_key = sha256(gap_type + ':' + normalized_description)[:32].
+    The index on (matter_id, gap_type, description_key) allows record() to quickly
+    find an existing gap with the same description before deciding to INSERT vs. reopen.
+    A closed gap that is re-detected is reopened rather than duplicated.
+
+    Does NOT use a UNIQUE index because a closed gap and a new open gap with the same
+    description would conflict; instead the application layer handles dedup logic.
+    """
+    import hashlib
+    conn.execute("SAVEPOINT _v18")
+    try:
+        try:
+            conn.execute("ALTER TABLE gap ADD COLUMN description_key TEXT")
+        except Exception:
+            pass  # column already exists
+
+        # Back-fill existing rows
+        rows = conn.execute("SELECT id, gap_type, description FROM gap").fetchall()
+        for row in rows:
+            key = hashlib.sha256(
+                f"{row[1]}:{(row[2] or '').lower().strip()}".encode()
+            ).hexdigest()[:32]
+            conn.execute(
+                "UPDATE gap SET description_key=? WHERE id=? AND description_key IS NULL",
+                (key, row[0]),
+            )
+
+        # Index for fast lookup by matter + type + key (non-unique — allows closed dupes)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_gap_dedup"
+            " ON gap(matter_id, gap_type, description_key)"
+        )
+        conn.execute("RELEASE _v18")
+    except Exception:
+        conn.execute("ROLLBACK TO _v18")
+        conn.execute("RELEASE _v18")
+        raise
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -903,6 +949,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (15, _migration_v15),
     (16, _migration_v16),
     (17, _migration_v17),
+    (18, _migration_v18),
 ]
 
 
