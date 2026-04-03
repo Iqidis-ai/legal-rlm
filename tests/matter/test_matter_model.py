@@ -579,3 +579,107 @@ def test_build_query_context_populates_existing_actor_count(model):
     assert ctx.existing_actor_count == 2, (
         "existing_actor_count must reflect the number of actors in the store (SO-5)"
     )
+
+# ---------------------------------------------------------------------------
+# get_so_metrics() — SO success criteria benchmark
+# ---------------------------------------------------------------------------
+
+def test_get_so_metrics_empty_model(model):
+    """get_so_metrics() returns safe values when model has no assertions or issues."""
+    m = model.get_so_metrics()
+    assert m["matter_id"] == model.matter_id
+    # No assertions yet — structure/role rates are None (not enough data)
+    assert m["assertion_structure_rate"] is None
+    assert m["source_role_known_rate"] is None
+    # Architecture guarantees always True
+    assert m["steerability"] is True
+    assert m["belief_revision"] is True
+    # Counts are zero
+    assert m["counts"]["assertions"] == 0
+    assert m["counts"]["quant_facts"] == 0
+
+
+def test_get_so_metrics_typed_assertions(model):
+    """get_so_metrics() reports 100% assertion_structure_rate when all assertions are typed."""
+    model.assertions.upsert_occurrence(
+        AssertionCandidate(
+            proposition_text="Contract was signed on Jan 1",
+            speech_act=SpeechAct.ALLEGED,
+            source_role=SourceRole.ADVOCACY,
+        )
+    )
+    model.assertions.upsert_occurrence(
+        AssertionCandidate(
+            proposition_text="Payment was made",
+            speech_act=SpeechAct.OPERATIVE,
+            source_role=SourceRole.OPERATIVE,
+        )
+    )
+    m = model.get_so_metrics()
+    assert m["assertion_structure_rate"] == 1.0, (
+        "All typed assertions must produce 100% assertion_structure_rate"
+    )
+    assert m["counts"]["assertions"] == 2
+
+
+def test_get_so_metrics_source_role_known_rate(model):
+    """source_role_known_rate reflects % of occurrences with non-unknown source_role."""
+    model.assertions.upsert_occurrence(
+        AssertionCandidate(
+            proposition_text="Known claim",
+            speech_act=SpeechAct.ALLEGED,
+            source_role=SourceRole.ADVOCACY,
+        )
+    )
+    model.assertions.upsert_occurrence(
+        AssertionCandidate(
+            proposition_text="Unknown source assertion",
+            speech_act=SpeechAct.EXTRACTED,
+            source_role=SourceRole.UNKNOWN,
+        )
+    )
+    m = model.get_so_metrics()
+    # 1 of 2 occurrences has a known source_role
+    assert m["source_role_known_rate"] == 0.5
+
+
+def test_get_so_metrics_targets_met(model):
+    """targets_met flags correctly when metrics are above/below threshold."""
+    # 3 typed, known-role assertions → 100% structure, 100% known role
+    for i in range(3):
+        model.assertions.upsert_occurrence(
+            AssertionCandidate(
+                proposition_text=f"Proposition {i}",
+                speech_act=SpeechAct.ALLEGED,
+                source_role=SourceRole.ADVOCACY,
+            )
+        )
+    m = model.get_so_metrics()
+    tm = m["targets_met"]
+    assert tm["assertion_structure_rate"] is True
+    assert tm["source_role_known_rate"] is True
+    # No issues → issue_coverage_avg is None → target_met is None (not enough data)
+    assert tm["issue_coverage_avg"] is None
+    assert tm["steerability"] is True
+    assert tm["belief_revision"] is True
+
+
+def test_get_so_metrics_api_endpoint(model):
+    """GET /matter/{id}/metrics returns SO metrics dict (SO success criteria API)."""
+    from fastapi.testclient import TestClient
+    from irys.service.api import app, _active_matter_models
+    _active_matter_models[model.matter_id] = model
+    try:
+        client = TestClient(app)
+        resp = client.get(f"/matter/{model.matter_id}/metrics")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "assertion_structure_rate" in data
+        assert "source_role_known_rate" in data
+        assert "issue_coverage_avg" in data
+        assert "steerability" in data
+        assert "belief_revision" in data
+        assert "targets" in data
+        assert "targets_met" in data
+    finally:
+        _active_matter_models.pop(model.matter_id, None)

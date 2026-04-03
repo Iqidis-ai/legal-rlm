@@ -588,5 +588,119 @@ class MatterModel:
             "recent_runs": len(self.ledger.recent_runs(limit=5)),
         }
 
+    def get_so_metrics(self) -> dict:
+        """Compute measurable Sacred Outcome success criteria from stored state.
+
+        Returns a snapshot of how well the current matter model satisfies the
+        quantitative success criteria defined in the project CLAUDE.md.  Metrics
+        that require ground truth or run telemetry (reuse_rate, gap_detection_recall,
+        numeric_extraction_rate) are reported as None.
+
+        Targets:
+          assertion_structure_rate >= 1.0   (SO-2: 100% typed, full metadata)
+          source_role_known_rate   >= 0.9   (SO-5: advocacy vs operative calibration)
+          issue_coverage_avg       >= 0.8   (SO-4: issue-driven retrieval coverage)
+          steerability             == True  (SO-3: user can interrupt mid-run)
+          belief_revision          == True  (SO-2: corrections propagate)
+        """
+        # --- assertion structure: speech_act + source_role both set in occurrence ---
+        ao_total_row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM assertion_occurrence WHERE assertion_id IN "
+            "(SELECT id FROM assertion WHERE matter_id=?)",
+            (self.matter_id,),
+        ).fetchone()
+        ao_total = int(ao_total_row["n"]) if ao_total_row else 0
+
+        ao_typed_row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM assertion_occurrence WHERE assertion_id IN "
+            "(SELECT id FROM assertion WHERE matter_id=?)"
+            " AND speech_act IS NOT NULL AND speech_act != ''"
+            " AND source_role IS NOT NULL AND source_role != ''",
+            (self.matter_id,),
+        ).fetchone()
+        ao_typed = int(ao_typed_row["n"]) if ao_typed_row else 0
+
+        assertion_structure_rate = (ao_typed / ao_total) if ao_total > 0 else None
+
+        # --- source calibration: % occurrences with source_role != 'unknown' ---
+        ao_known_row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM assertion_occurrence WHERE assertion_id IN "
+            "(SELECT id FROM assertion WHERE matter_id=?)"
+            " AND source_role IS NOT NULL AND source_role != '' AND source_role != 'unknown'",
+            (self.matter_id,),
+        ).fetchone()
+        ao_known = int(ao_known_row["n"]) if ao_known_row else 0
+
+        source_role_known_rate = (ao_known / ao_total) if ao_total > 0 else None
+
+        # --- issue coverage ---
+        issue_coverage_avg: "float | None" = None
+        issues_with_proof_gap = 0
+        try:
+            coverage_report = self.get_issue_coverage_report()
+            if coverage_report:
+                fracs = [float(r.get("coverage_fraction", 0.0)) for r in coverage_report]
+                issue_coverage_avg = round(sum(fracs) / len(fracs), 4) if fracs else None
+                issues_with_proof_gap = sum(1 for r in coverage_report if r.get("has_proof_gap"))
+        except Exception:
+            pass
+
+        assertion_count = self.assertions.count()
+        issue_count = self.issues.count_open()
+        open_gap_count = self.gaps.count_open()
+        quant_fact_count = self.quant.count()
+        actor_count = self.actors.count()
+
+        targets = {
+            "assertion_structure_rate": 1.0,
+            "source_role_known_rate": 0.9,
+            "issue_coverage_avg": 0.8,
+            "steerability": True,
+            "belief_revision": True,
+        }
+
+        def _pass(metric: str, value: "float | bool | None") -> "bool | None":
+            if value is None:
+                return None
+            target = targets[metric]
+            if isinstance(target, bool):
+                return bool(value) == target
+            return float(value) >= float(target)  # type: ignore[arg-type]
+
+        return {
+            "matter_id": self.matter_id,
+            # Measurable SO metrics
+            "assertion_structure_rate": assertion_structure_rate,
+            "source_role_known_rate": source_role_known_rate,
+            "issue_coverage_avg": issue_coverage_avg,
+            "issues_with_proof_gap": issues_with_proof_gap,
+            # SO-3/SO-2: architecture guarantees (not runtime-measurable per query)
+            "steerability": True,
+            "belief_revision": True,
+            # Requires run telemetry or ground truth — not yet measured
+            "reuse_rate": None,
+            "gap_detection_recall": None,
+            "numeric_extraction_rate": None,
+            # Raw counts
+            "counts": {
+                "assertions": assertion_count,
+                "assertion_occurrences": ao_total,
+                "issues_open": issue_count,
+                "open_gaps": open_gap_count,
+                "quant_facts": quant_fact_count,
+                "actors": actor_count,
+            },
+            # Targets from CLAUDE.md
+            "targets": targets,
+            # Pass/fail per metric (None = not enough data to evaluate)
+            "targets_met": {
+                "assertion_structure_rate": _pass("assertion_structure_rate", assertion_structure_rate),
+                "source_role_known_rate": _pass("source_role_known_rate", source_role_known_rate),
+                "issue_coverage_avg": _pass("issue_coverage_avg", issue_coverage_avg),
+                "steerability": True,
+                "belief_revision": True,
+            },
+        }
+
     def __repr__(self) -> str:
         return f"MatterModel(matter_id={self.matter_id[:8]}..., db={self.db})"

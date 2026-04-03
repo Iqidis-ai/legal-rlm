@@ -1589,6 +1589,22 @@ async def get_matter_invoice_chain(matter_id: str, currency: str = "USD"):
 
 
 @app.get(
+    "/matter/{matter_id}/metrics",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_so_metrics(matter_id: str):
+    """Return measurable Sacred Outcome success criteria for a matter.
+
+    Reports assertion_structure_rate, source_role_known_rate, issue_coverage_avg,
+    steerability, and belief_revision, with targets and pass/fail flags.
+    Metrics requiring ground truth or run telemetry are returned as null.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return model.get_so_metrics()
+
+
+@app.get(
     "/matter/{matter_id}/gaps",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
