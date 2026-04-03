@@ -979,7 +979,7 @@ class RLMEngine:
                     continue
                 if not issue_title:
                     continue
-                issue_id, _ = self._matter_model.issues.upsert_issue(
+                issue_id, _is_new_issue = self._matter_model.issues.upsert_issue(
                     title=issue_title,
                     issue_type=issue_type,
                     salience=0.7,
@@ -990,9 +990,10 @@ class RLMEngine:
                     why="From orientation analysis",
                 )
                 # Persist predicates for this issue (SO-4: issue predicate tree).
-                # add_predicate is idempotent at the table level — duplicates from
-                # warm-run cache hits are tolerated (same issue_id, same description).
-                if isinstance(issue_item, dict):
+                # Only write predicates when the issue is newly created — add_predicate()
+                # has no unique constraint, so warm-run cache hits (same issue_id returned
+                # by upsert) must not re-insert predicates that already exist.
+                if _is_new_issue and isinstance(issue_item, dict):
                     for _pred in issue_item.get("predicates", [])[:4]:
                         if isinstance(_pred, str) and _pred.strip():
                             self._matter_model.issues.add_predicate(
