@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-03 (adversarial audit #022: 5 PASSes + SO-4 predicate production wiring)
+Last updated: 2026-04-03 (Tier 1 CLEAN on _orient() field normalization + _parse_json_safe non-dict guard)
 Branch: SebihSpecial
 
 ---
@@ -96,13 +96,24 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | #021 | SO-3/7 PASS; SO-1/2/4/5/6 PARTIAL | proof_state override removed; correct_assertion now refreshes proof_state; bare-string inflation fixed |
 | #022 | **SO-1/3/5/6/7 PASS; SO-2/4 PARTIAL** | 5 PASSes. Predicate resolution wired in production. SO-4 remaining: _focus_issue_id attribution heuristic |
 
-**Tier 1 reviews:** CLEAN — predicate resolver matter-scoped + atomic, correct_assertion batched, SO-4 predicate production wiring with allowlist + gating, all Tier 1 HIGH/MEDIUM resolved.
+**Tier 1 reviews:** CLEAN — predicate resolver matter-scoped + atomic, correct_assertion batched, SO-4 predicate production wiring with allowlist + gating, _orient() field normalization + _parse_json_safe non-dict guard, all Tier 1 HIGH/MEDIUM resolved.
 
 ---
 
 ## Active Work
 
-### JUST COMPLETED — Adversarial Audit #022 + SO-4 Predicate Production Wiring
+### JUST COMPLETED — Tier 1 CLEAN: _orient() field normalization + _parse_json_safe
+
+**Tier 1 Correctness CLEAN confirmed (2026-04-03):**
+- `_parse_json_safe()`: `isinstance(result, dict)` guard after `json.loads()` — null/[]/string root returns defaults safely
+- `_orient()` hypothesis: `isinstance(_hyp, str)` normalization before assignment — non-string truthy values never reach `[:200]` slice
+- `_orient()` issues: `isinstance(..., list)` guard before storage AND iteration at L1216/1217/1241/1243
+- `_orient()` initial_searches: `isinstance(..., list)` guard before slice and iteration at L1296/1297/1299
+- `_ORIENTATION_CACHE_VERSION` bumped to "4" to invalidate stale cached plans
+- `_raw_idx_to_issue_id` mapping: raw LLM issue_idx → issue_id (fixes attribution when filtered issues shrink)
+- HEAD: 7b9f440 — Tests: 721/721
+
+### PREVIOUSLY COMPLETED — Adversarial Audit #022 + SO-4 Predicate Production Wiring
 
 **Audit #022 results: 5 PASSes (SO-1/3/5/6/7)**
 - SO-1 PASS: hot path genuinely reuses persisted state (run-start context, hydration, caches)
@@ -120,7 +131,7 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 **Tier 1 loop CLEAN:** 6 Codex sessions (correctness + performance) all clean after fixes.
 
-HEAD: 38aea9f
+HEAD: 7b9f440
 Tests: 721 / 721
 
 ### PREVIOUSLY COMPLETED — Tier 1 Correctness CLEAN
