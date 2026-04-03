@@ -1389,3 +1389,55 @@ def test_build_structured_relationships_completeness_ordering():
     assert idx_complete < idx_partial, (
         "Fully-structured triple (3 fields) must appear before partial (1 field) in synthesis block"
     )
+
+
+# ---------------------------------------------------------------------------
+# SO-4: ORIENTATION_PROMPT biases initial_searches toward weakest issue
+# ---------------------------------------------------------------------------
+
+def test_orientation_prompt_contains_priority_focus_instruction():
+    """ORIENTATION_PROMPT PRIORITIZE block must instruct the LLM to bias
+    initial_searches toward the PRIORITY FOCUS issue when one is present."""
+    from irys.rlm.engine import ORIENTATION_PROMPT
+    assert "PRIORITY FOCUS" in ORIENTATION_PROMPT, (
+        "ORIENTATION_PROMPT must reference PRIORITY FOCUS issue in PRIORITIZE block (SO-4)"
+    )
+    assert "initial_searches" in ORIENTATION_PROMPT, (
+        "ORIENTATION_PROMPT must mention initial_searches in the PRIORITY FOCUS instruction"
+    )
+
+
+def test_orientation_cache_version_bumped():
+    """_ORIENTATION_CACHE_VERSION must be '3' after SO-4 PRIORITIZE update."""
+    from irys.rlm.engine import _ORIENTATION_CACHE_VERSION
+    assert _ORIENTATION_CACHE_VERSION == "3", (
+        "_ORIENTATION_CACHE_VERSION must be bumped to '3' after ORIENTATION_PROMPT change "
+        "to invalidate stale cached plans (SO-1 stale-cache prevention)"
+    )
+
+
+def test_format_matter_context_emits_priority_focus_line():
+    """_format_matter_context() must emit 'PRIORITY FOCUS' line when weakest_issue_id is set."""
+    from irys.rlm.engine import _format_matter_context
+    from irys.matter.runtime import QueryMatterContext
+
+    ctx = QueryMatterContext(
+        matter_id="m_test",
+        matter_name="Test Matter",
+        existing_assertion_count=5,
+        open_issues=[
+            {"id": "iss_001", "title": "Breach of payment obligation"},
+            {"id": "iss_002", "title": "Damages calculation"},
+        ],
+        weakest_issue_id="iss_001",
+        open_gaps=[],
+        known_actors=[],
+        known_document_ids=[],
+    )
+    result = _format_matter_context(ctx)
+    assert "PRIORITY FOCUS" in result, (
+        "_format_matter_context must emit PRIORITY FOCUS line when weakest_issue_id is set"
+    )
+    assert "Breach of payment obligation" in result, (
+        "PRIORITY FOCUS line must include the issue title"
+    )

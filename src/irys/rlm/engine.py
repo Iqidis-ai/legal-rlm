@@ -69,6 +69,7 @@ PRIORITIZE:
 - Primary source documents (contracts, pleadings) over secondary (correspondence)
 - Documents with dates matching key events
 - Files mentioning specific parties or amounts
+- If a PRIORITY FOCUS issue is listed in Existing Matter Intelligence, direct the first 2-3 `initial_searches` specifically toward that issue before broadening to general exploration
 
 Respond in JSON format:
 {{
@@ -102,7 +103,7 @@ Predicates drive targeted document search — make them concrete and searchable.
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "2"
+_ORIENTATION_CACHE_VERSION = "3"
 
 
 def _format_matter_context(ctx) -> str:
