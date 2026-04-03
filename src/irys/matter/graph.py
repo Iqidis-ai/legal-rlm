@@ -742,8 +742,12 @@ class IssueStore:
         """
         Add a testable predicate to an issue. Idempotent: if a predicate with the
         same (issue_id, description) already exists, the existing row is returned.
+        Raises ValueError for blank descriptions.
         Returns predicate_id.
         """
+        description = description.strip()
+        if not description:
+            raise ValueError("Predicate description must not be blank")
         pred_id = _id()
         now = _now()
         with self.db.transaction():

@@ -842,9 +842,11 @@ def _migration_v16(conn) -> None:
 
     Deduplicates any pre-existing duplicate rows (keeping the earliest by rowid per
     key group) before creating the index, mirroring the safe pattern from v13.
-    Both steps run inside an explicit transaction for atomicity.
+
+    Uses SAVEPOINT instead of BEGIN so the migration is safe when called
+    within an outer transaction (nested-transaction safe).
     """
-    conn.execute("BEGIN")
+    conn.execute("SAVEPOINT _v16")
     try:
         conn.execute(
             """DELETE FROM issue_predicate
@@ -858,9 +860,9 @@ def _migration_v16(conn) -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_predicate_unique"
             " ON issue_predicate(issue_id, description)"
         )
-        conn.execute("COMMIT")
+        conn.execute("RELEASE _v16")
     except Exception:
-        conn.execute("ROLLBACK")
+        conn.execute("ROLLBACK TO _v16")
         raise
 
 
