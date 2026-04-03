@@ -1460,6 +1460,22 @@ async def list_trust_overrides(matter_id: str):
     return {"overrides": model.trust_overrides.list_all()}
 
 
+@app.delete(
+    "/matter/{matter_id}/trust-overrides/{document_pattern:path}",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def delete_trust_override(matter_id: str, document_pattern: str):
+    """Remove a trust override for a document pattern (SO-3 trust steering).
+
+    Restores auto-inferred trust for the matching document pattern.
+    Returns 404 if the matter is not found.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    model.trust_overrides.delete(document_pattern)
+    return {"status": "deleted", "document_pattern": document_pattern}
+
+
 @app.post(
     "/matter/{matter_id}/annotations",
     tags=["Matter Model"],
@@ -1492,6 +1508,22 @@ async def list_document_annotations(matter_id: str, document: Optional[str] = No
     if document:
         return {"annotations": model.annotations.get_for_document(document)}
     return {"annotations": model.annotations.list_recent()}
+
+
+@app.delete(
+    "/matter/{matter_id}/annotations/{annotation_id}",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def delete_document_annotation(matter_id: str, annotation_id: str):
+    """Remove a document annotation (SO-3 annotation).
+
+    Returns 404 if the matter is not found; returns deleted=false if annotation_id
+    does not exist (idempotent delete).
+    """
+    model = _get_matter_model_or_404(matter_id)
+    deleted = model.annotations.delete(annotation_id)
+    return {"status": "deleted" if deleted else "not_found", "annotation_id": annotation_id}
 
 
 @app.get(
