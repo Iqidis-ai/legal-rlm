@@ -1724,6 +1724,7 @@ class InvestigationState:
             "error": self.error,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "reasoning_trail": self.reasoning_trail,
         }
 
     @classmethod
@@ -1832,6 +1833,7 @@ class InvestigationState:
         state.error = data.get("error")
         state.started_at = datetime.fromisoformat(data["started_at"]) if data.get("started_at") else None
         state.completed_at = datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None
+        state.reasoning_trail = data.get("reasoning_trail", [])
 
         return state
 
