@@ -2787,7 +2787,10 @@ class RLMEngine:
             pass
 
         advocacy_titles = [
-            issue_index.get(ps.get("issue_id", ""), ps.get("issue_id", "")[:24])
+            issue_index.get(
+                ps.get("issue_id", ""),
+                str(ps.get("issue_id") or "")[:24],  # str() guard: issue_id may be non-string
+            )
             for ps in active_advocacy
         ]
 
@@ -2817,17 +2820,22 @@ class RLMEngine:
         def _extract_section(text: str, hdr: str) -> str:
             """Return text from hdr to the next header of equal or higher level.
 
-            Case-insensitive match against hdr (and a trailing-colon variant) so
-            heading-casing drift from LLM output does not silently skip the check.
+            Anchors header search to line-start (start of text OR after \\n) so
+            a heading phrase that appears in prose does not trigger the gate.
+            Case-insensitive; also tries a trailing-colon variant.
             """
-            text_lower = text.lower()
             hdr_lower = hdr.lower()
             for search in (hdr_lower, hdr_lower.rstrip(':') + ':'):
-                if search in text_lower:
-                    start = text_lower.index(search)
+                # Require header to appear at the start of a line.
+                pat = _re.compile(r'(?:^|\n)' + _re.escape(search), _re.IGNORECASE)
+                m_hdr = pat.search(text)
+                if m_hdr:
+                    start = m_hdr.start()
+                    if start > 0 and text[start] == '\n':
+                        start += 1  # skip the leading newline — point to '#'
                     level = min(3, len(hdr) - len(hdr.lstrip("#")))
-                    m = _HDR_RE[level].search(text, start + len(search))
-                    return text[start:(m.start() if m else len(text))]
+                    m_end = _HDR_RE[level].search(text, start + len(search))
+                    return text[start:(m_end.start() if m_end else len(text))]
             return ""
 
         def _section_has_unhedged_title(
@@ -2842,12 +2850,15 @@ class RLMEngine:
             Titles shorter than 4 chars are skipped to avoid false matches.
             """
             lower = section.lower()
+            # Compiled pattern for list-item starters: unordered (- * •) and
+            # ordered (1. / 1) / a. / a)) so ordered bullets start new semantic units.
+            _LIST_PAT = _re.compile(r'^(?:[-*•]|\d+[.)][^\S\n]|[a-z][.)][^\S\n])\s')
             # Build semantic units: group lines until a blank line or a new list item.
             units: "list[str]" = []
             buf: "list[str]" = []
             for ln in lower.split('\n'):
                 ls = ln.lstrip()
-                is_list_start = ls.startswith(('- ', '* ', '• '))
+                is_list_start = bool(_LIST_PAT.match(ls))
                 if not ls:
                     # Blank line ends current unit
                     if buf:
@@ -2885,8 +2896,10 @@ class RLMEngine:
         # If the advisory section header is already present AND no structural violation,
         # gate is satisfied. Accept both ## and ### heading levels and ignore case so
         # minor LLM heading variations don't cause unnecessary reinjection.
+        # Anchor marker check to line-start so an incidental embedded occurrence
+        # in prose, lists, or quoted text cannot suppress gate action.
         _marker_present = bool(_re.search(
-            r'#{2,3} ' + _re.escape(_MARKER), synthesis_output, _re.IGNORECASE
+            r'(?:^|\n)#{2,3} ' + _re.escape(_MARKER), synthesis_output, _re.IGNORECASE
         ))
         if _marker_present and not _STRUCTURAL_VIOLATION:
             return None
@@ -2912,7 +2925,7 @@ class RLMEngine:
         ]
         for ps in active_advocacy:
             issue_id = ps.get("issue_id", "?")
-            title = issue_index.get(issue_id, issue_id[:24])
+            title = issue_index.get(issue_id, str(issue_id or "?")[:24])
             tw = ps.get("trust_weighted_support", 0.0)
             lines.append(
                 f"- **{title}** — advocacy-only "
