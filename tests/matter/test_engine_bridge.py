@@ -2443,3 +2443,48 @@ def test_flush_revisions_writes_assertion_revised_event_on_state_change():
     assert any(e.get("changed_object_id") == a_id for e in revised_events), (
         "ASSERTION_REVISED event must reference the assertion whose belief state changed"
     )
+
+
+def test_flush_revisions_clears_pending_list_so_second_call_is_noop():
+    """flush_revisions() must clear _pending_assertion_ids after running (SO-2 correctness).
+
+    If flush_revisions() does NOT clear the pending list, a second call would
+    re-trigger belief revision on already-revised assertions — producing either
+    spurious ledger events or a runaway cascade.  The second call must be a no-op.
+    """
+    from irys.matter import LedgerEventType
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Flush idempotency test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Record two facts — they go into _pending_assertion_ids
+    adapter.record_fact("Fact A.", "doc1.pdf")
+    adapter.record_fact("Fact B.", "doc2.pdf")
+
+    # First flush: processes pending IDs
+    first_count = adapter.flush_revisions()
+    assert isinstance(first_count, int)
+
+    # Count ASSERTION_REVISED events after first flush
+    events_after_first = model.ledger.get_events(run_id)
+    revised_count_after_first = sum(
+        1 for e in events_after_first
+        if e["event_type"] == LedgerEventType.ASSERTION_REVISED.value
+    )
+
+    # Second flush: must not re-process (pending list cleared)
+    second_count = adapter.flush_revisions()
+    assert second_count == 0, (
+        "flush_revisions() called a second time must return 0 — "
+        "_pending_assertion_ids must be cleared after first flush (SO-2 correctness)"
+    )
+
+    # No new ASSERTION_REVISED events must have been added
+    events_after_second = model.ledger.get_events(run_id)
+    revised_count_after_second = sum(
+        1 for e in events_after_second
+        if e["event_type"] == LedgerEventType.ASSERTION_REVISED.value
+    )
+    assert revised_count_after_second == revised_count_after_first, (
+        "Second flush_revisions() must not produce additional ASSERTION_REVISED events"
+    )
