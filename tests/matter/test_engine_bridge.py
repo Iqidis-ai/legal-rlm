@@ -1146,6 +1146,84 @@ def test_infer_source_side_plural_forms():
 
 
 # ---------------------------------------------------------------------------
+# SO-2: _retry_spo_extraction — SPO retry logic (SO-2 validated extraction)
+# ---------------------------------------------------------------------------
+
+def test_retry_spo_extraction_returns_spo_dict():
+    """_retry_spo_extraction() must return index→spo mapping when LLM provides triples."""
+    import asyncio
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine.client = MagicMock()
+    engine.client.complete = AsyncMock(return_value=json.dumps([
+        {"index": 0, "subject": "Acme Corp", "predicate": "agreed_to_pay", "object": "$50,000"},
+        {"index": 2, "subject": "plaintiff", "predicate": "filed_complaint", "object": "breach_of_contract"},
+    ]))
+
+    fact_texts = [
+        "Acme Corp agreed to pay $50,000 by March 2023.",
+        "The case was filed in the Southern District.",
+        "Plaintiff filed a complaint for breach of contract.",
+    ]
+
+    result = asyncio.run(engine._retry_spo_extraction(fact_texts))
+
+    assert 0 in result
+    assert result[0]["subject_ref_id"] == "Acme Corp"
+    assert result[0]["predicate_key"] == "agreed_to_pay"
+    assert result[0]["object_json"] == '"$50,000"'
+    assert 2 in result
+    assert result[2]["predicate_key"] == "filed_complaint"
+    assert 1 not in result  # fact 1 was not in LLM response
+
+
+def test_retry_spo_extraction_empty_on_error():
+    """_retry_spo_extraction() must return empty dict if LLM call fails."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine.client = MagicMock()
+    engine.client.complete = AsyncMock(side_effect=RuntimeError("network error"))
+
+    result = asyncio.run(engine._retry_spo_extraction(["Some fact about the case."]))
+    assert result == {}
+
+
+def test_retry_spo_extraction_empty_input():
+    """_retry_spo_extraction() must return empty dict immediately for empty input."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine.client = MagicMock()  # should not be called
+
+    result = asyncio.run(engine._retry_spo_extraction([]))
+    assert result == {}
+    engine.client.complete.assert_not_called()
+
+
+def test_retry_spo_extraction_ignores_out_of_range_index():
+    """_retry_spo_extraction() must ignore items with index out of bounds."""
+    import asyncio
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine.client = MagicMock()
+    engine.client.complete = AsyncMock(return_value=json.dumps([
+        {"index": 99, "subject": "ghost", "predicate": "haunts", "object": "nobody"},  # out of range
+        {"index": 0, "subject": "defendant", "predicate": "breached", "object": "contract"},
+    ]))
+
+    result = asyncio.run(engine._retry_spo_extraction(["Defendant breached the contract."]))
+    assert 99 not in result
+    assert 0 in result
+
+
+# ---------------------------------------------------------------------------
 # ReasoningLedgerStore: seq_no cache correctness (commit e33b084)
 # ---------------------------------------------------------------------------
 

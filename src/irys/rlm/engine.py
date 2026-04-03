@@ -287,6 +287,27 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
 }}
 """
 
+# Used when the primary extraction returned zero SPO triples (SO-2 validated extraction).
+# A single targeted retry extracts structured triples from the already-extracted fact texts,
+# without re-reading the source document.
+SPO_RETRY_PROMPT = """Extract subject-predicate-object triples from these legal facts.
+
+For each fact that has a clear entity relationship, output:
+{{"index": N, "subject": "entity name", "predicate": "action_in_snake_case", "object": "target or value"}}
+
+Facts (0-indexed):
+{facts}
+
+Rules:
+- subject: party or entity performing the action (e.g. "defendant", "Acme_Corp", "plaintiff")
+- predicate: verb phrase in snake_case (e.g. "agreed_to_pay", "breached_contract", "filed_motion")
+- object: what the predicate applies to (amount, party, condition, date)
+- Omit purely procedural facts with no entity relationship
+- Keep response under 800 chars
+
+Respond with JSON array only: [{{"index": 0, "subject": "...", "predicate": "...", "object": "..."}}]
+"""
+
 SYNTHESIS_PROMPT = """You are a senior partner at a law firm drafting a legal memorandum.
 
 Original Query: {query}
@@ -1552,15 +1573,24 @@ class RLMEngine:
                         }
                     facts_to_add.append((fact_text, src_label, doc_id, issue_rel, spo))
 
-            # SO-2 validation: warn if LLM returned facts but omitted all SPO triples.
+            # SO-2 validation + retry: if primary extraction produced zero SPO triples,
+            # make one targeted FLASH retry to recover structured triples from the
+            # already-extracted fact texts (no re-reading of source documents).
             if facts_to_add:
                 _spo_count = sum(1 for _, _, _, _, _s in facts_to_add if _s is not None)
-                if _spo_count == 0:
+                if _spo_count == 0 and len(facts_to_add) >= 3:
                     self._emit_step(
                         state, StepType.REPLAN,
                         f"SPO extraction yielded 0 structured triples from {len(facts_to_add)} facts "
-                        f"(search: '{search_term[:60]}'). Synthesis will rely on prose only.",
+                        f"(search: '{search_term[:60]}'). Retrying SPO extraction.",
                     )
+                    _retry_texts = [txt for txt, _, _, _, _ in facts_to_add]
+                    _retry_spo = await self._retry_spo_extraction(_retry_texts)
+                    if _retry_spo:
+                        facts_to_add = [
+                            (txt, lbl, doc, rel, _retry_spo.get(i))
+                            for i, (txt, lbl, doc, rel, _) in enumerate(facts_to_add)
+                        ]
 
             # Add to state with per-fact source-role prefix (SO-5)
             state.add_facts([f"[{lbl}] {txt}" for txt, lbl, _, _rel, _spo in facts_to_add])
@@ -1850,12 +1880,19 @@ class RLMEngine:
                 # SO-2 validation: warn if LLM returned facts but omitted all SPO triples.
                 if facts_to_add:
                     _dr_spo_count = sum(1 for _, _, _, _s in facts_to_add if _s is not None)
-                    if _dr_spo_count == 0:
+                    if _dr_spo_count == 0 and len(facts_to_add) >= 3:
                         self._emit_step(
                             state, StepType.REPLAN,
                             f"SPO extraction yielded 0 structured triples from {len(facts_to_add)} facts "
-                            f"(deep-read: '{doc.filename[:60]}'). Synthesis will rely on prose only.",
+                            f"(deep-read: '{doc.filename[:60]}'). Retrying SPO extraction.",
                         )
+                        _dr_retry_texts = [f for f, _, _, _ in facts_to_add]
+                        _dr_retry_spo = await self._retry_spo_extraction(_dr_retry_texts)
+                        if _dr_retry_spo:
+                            facts_to_add = [
+                                (f, rel, eff, _dr_retry_spo.get(i))
+                                for i, (f, rel, eff, _) in enumerate(facts_to_add)
+                            ]
                 # Prefix each fact with its source role (SO-5 per-fact calibration)
                 from ..matter.runtime import infer_source_role as _infer_role
                 _src_label = _infer_role(doc.filename).value.upper()
@@ -2380,6 +2417,58 @@ class RLMEngine:
                 dep_strs = [f"{d['affected_type']}:{d['affected_id'][:8]}" for d in deps]
                 lines.append(f"         Affects: {', '.join(dep_strs)}")
         return "\n".join(lines)
+
+    async def _retry_spo_extraction(self, fact_texts: list[str]) -> dict[int, dict]:
+        """Best-effort SPO extraction retry (SO-2).
+
+        Called when primary extraction yielded zero SPO triples. Makes one
+        lightweight FLASH call with just the fact texts to extract structured
+        subject/predicate/object triples without re-reading the source document.
+
+        Returns a mapping of fact_index → spo_dict (only for facts where SPO
+        was successfully extracted). Empty dict if retry fails or produces nothing.
+        Non-fatal: caller continues with null-SPO behavior on any exception.
+        """
+        if not fact_texts:
+            return {}
+        lines = "\n".join(f"{i}: {t[:100]}" for i, t in enumerate(fact_texts))
+        prompt = SPO_RETRY_PROMPT.format(facts=lines)
+        try:
+            response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+            # Direct parse — response must be a JSON array; _parse_json_safe is dict-only
+            text = (response or "").strip()
+            if "```" in text:
+                start = text.find("```") + 3
+                if text[start : start + 4] == "json":
+                    start += 4
+                end = text.find("```", start)
+                text = text[start:end].strip() if end > start else text[start:].strip()
+            try:
+                parsed = json.loads(text)
+            except (json.JSONDecodeError, ValueError):
+                return {}
+            if not isinstance(parsed, list):
+                return {}
+            result: dict[int, dict] = {}
+            for item in parsed:
+                if not isinstance(item, dict):
+                    continue
+                idx = item.get("index")
+                if not isinstance(idx, int) or idx < 0 or idx >= len(fact_texts):
+                    continue
+                subj = str(item.get("subject") or "").strip()
+                pred = str(item.get("predicate") or "").strip()
+                obj = str(item.get("object") or "").strip()
+                if subj or pred or obj:
+                    result[idx] = {
+                        "subject_ref_type": "free_text" if subj else None,
+                        "subject_ref_id": subj if subj else None,
+                        "predicate_key": pred.lower().replace(" ", "_") if pred else None,
+                        "object_json": json.dumps(obj) if obj else None,
+                    }
+            return result
+        except Exception:
+            return {}
 
     def _build_structured_relationships(self) -> str:
         """Build a structured assertion block for the synthesis prompt (SO-2).
