@@ -2826,10 +2826,13 @@ class RLMEngine:
         def _section_has_unhedged_title(
             section: str, titles: "list[str]", markers: "tuple[str, ...]"
         ) -> bool:
-            """True if any title appears on a line that lacks a hedge marker.
+            """True if any title appears on a line (or line-pair) without a hedge marker.
 
-            Checks per-line so a hedge in one bullet cannot mask a violation on another.
-            Titles shorter than 4 chars are skipped to avoid substring false-matches.
+            Per-line check handles the common case of single-line bullets.
+            Bigram check (current line + next line joined) handles soft-wrapped
+            bullet continuation without the cross-bullet false-pass risk of a
+            wide character window.
+            Titles shorter than 4 chars are skipped to avoid false matches.
             """
             lower = section.lower()
             lines = lower.split('\n')
@@ -2837,13 +2840,20 @@ class RLMEngine:
                 t_lower = title.lower()
                 if len(t_lower) < 4:
                     continue  # too short to reliably match without false positives
-                for line in lines:
+                for i, line in enumerate(lines):
+                    # Single-line check: title on one line without nearby hedge
                     if t_lower in line and not any(h in line for h in markers):
                         return True
+                    # Bigram check: title wrapped across this line + next line
+                    if i + 1 < len(lines):
+                        bigram = line + ' ' + lines[i + 1]
+                        if t_lower in bigram and not any(h in bigram for h in markers):
+                            return True
             return False
 
         for _chk_hdr in (
             "### Key Findings",
+            "## Key Findings",
             "## Factual Background",
             "### Factual Background",
         ):
