@@ -1253,16 +1253,74 @@ class RLMEngine:
                 self._emit_step(state, StepType.THINKING, "No more leads to investigate")
                 break
 
-            # Take top leads up to limit
-            leads_to_process = [
-                lead for lead in pending_leads[:self.config.max_leads_per_level]
-                if lead.priority >= self.config.min_lead_priority
-            ]
+            # SO-4 Leak-1+3: re-score leads by live issue coverage weakness each
+            # iteration so weaker issues attract more budget as the run progresses.
+            _cov_map: "dict[str, tuple[float, bool, int]]" = {}
+            if self._matter_model is not None:
+                _cov_map = self._get_issue_coverage_map()
+                if _cov_map:
+                    _ISSUE_BOOST = 0.35   # α — boost per unit weakness (1 - coverage_fraction)
+                    _GAP_BOOST   = 0.20   # β — extra boost when a proof gap is open
+                    _NEUTRAL_DAMP = 0.15  # κ — dampening for non-issue-anchored leads
+                    _reweighted: "list[tuple[float, object]]" = []
+                    for _lead in pending_leads:
+                        if _lead.focus_issue_id and _lead.focus_issue_id in _cov_map:
+                            _frac, _gap, _ = _cov_map[_lead.focus_issue_id]
+                            _weakness = 1.0 - _frac
+                            _adj = _lead.priority * (
+                                1.0 + _ISSUE_BOOST * _weakness + (_GAP_BOOST if _gap else 0.0)
+                            )
+                        elif not _lead.focus_issue_id:
+                            _adj = _lead.priority * (1.0 - _NEUTRAL_DAMP)
+                        else:
+                            _adj = _lead.priority  # issue-targeted, issue not yet in map
+                        _reweighted.append((_adj, _lead))
+                    _reweighted.sort(key=lambda _x: _x[0], reverse=True)
+                    pending_leads = [_l for _, _l in _reweighted]
 
-            # Skip low priority leads
-            for lead in pending_leads[:self.config.max_leads_per_level]:
-                if lead.priority < self.config.min_lead_priority:
-                    state.mark_lead_investigated(lead.id, "Skipped - low priority")
+            # SO-4 Leak-4: partition into issue-targeted and neutral to guarantee a
+            # minimum issue-targeted quota — prevents neutral leads from crowding out
+            # issue focus when the queue is dominated by generic follow-on searches.
+            _i_pool = [_l for _l in pending_leads if _l.focus_issue_id]
+            _n_pool = [_l for _l in pending_leads if not _l.focus_issue_id]
+            _i_quota = max(1, (self.config.max_leads_per_level + 1) // 2)  # ceil(N/2)
+            _i_sel = _i_pool[:_i_quota]
+            _n_sel = _n_pool[:max(0, self.config.max_leads_per_level - len(_i_sel))]
+            _budget = _i_sel + _n_sel
+
+            leads_to_process = [_l for _l in _budget if _l.priority >= self.config.min_lead_priority]
+            for _l in _budget:
+                if _l.priority < self.config.min_lead_priority:
+                    state.mark_lead_investigated(_l.id, "Skipped - low priority")
+
+            # SO-4 Leak-6 emergency bootstrap: when a proof gap or weak issue exists
+            # but no issue-targeted lead cleared the priority threshold, inject one
+            # predicate-derived lead so coverage can advance even on neutral-heavy queues.
+            if (not any(_l for _l in leads_to_process if _l.focus_issue_id)
+                    and self._matter_model is not None and _cov_map):
+                _gapped = [(iid, fr) for iid, (fr, gap, _) in _cov_map.items() if gap]
+                _weak = [(iid, fr) for iid, (fr, _, _) in _cov_map.items() if fr < 0.3]
+                _boot_candidates = _gapped or _weak
+                if _boot_candidates:
+                    _boot_id = min(_boot_candidates, key=lambda kv: kv[1])[0]
+                    _boot_preds = self._matter_model.issues.get_predicates(_boot_id, limit=1)
+                    if _boot_preds:
+                        _boot_text = (_boot_preds[0].get("description") or "").strip()
+                        if _boot_text:
+                            state.add_lead(
+                                description=f"Gap bootstrap: {_boot_text}",
+                                source="coverage_bootstrap",
+                                priority=self.config.min_lead_priority + 0.01,
+                                search_term=_boot_text,
+                                focus_issue_id=_boot_id,
+                            )
+                            _boot_fresh = state.get_pending_leads()
+                            _boot_hit = next(
+                                (_l for _l in _boot_fresh if _l.source == "coverage_bootstrap"),
+                                None,
+                            )
+                            if _boot_hit:
+                                leads_to_process.append(_boot_hit)
 
             if not leads_to_process:
                 iteration += 1
@@ -1774,15 +1832,28 @@ class RLMEngine:
         # Add new leads (handle both "description" and compact "desc" formats).
         # Propagate focus_issue_id so issue focus does not decay on follow-on leads (SO-4).
         _follow_on_issue_id = lead.focus_issue_id if lead is not None else None
+        # SO-4 Leak-5 anchor tokens: parent's search term provides issue-specificity
+        # signals.  A follow-on lead must share at least one meaningful (>3 char) token
+        # with the parent to retain issue focus; otherwise it is demoted to neutral so it
+        # cannot silently inflate issue coverage with generic searches.
+        _anchor_tokens: "set[str]" = set()
+        if lead is not None:
+            _anchor_src = (lead.search_term or lead.description or "").lower()
+            _anchor_tokens = {_w for _w in _anchor_src.split() if len(_w) > 3}
         for lead_data in analysis.get("new_leads", [])[:3]:
             if isinstance(lead_data, dict):
                 desc = lead_data.get("description") or lead_data.get("desc")
                 if desc:
+                    _validated_fid = _follow_on_issue_id
+                    if _follow_on_issue_id and _anchor_tokens:
+                        _desc_toks = {_w for _w in desc.lower().split() if len(_w) > 3}
+                        if not (_anchor_tokens & _desc_toks):
+                            _validated_fid = None  # demote — too generic to claim issue focus
                     state.add_lead(
                         description=desc,
                         source=f"Analysis of '{results.query}'",
                         priority=lead_data.get("priority", 0.5),
-                        focus_issue_id=_follow_on_issue_id,
+                        focus_issue_id=_validated_fid,
                     )
 
         # Convert next_searches (bare search terms from analysis) into leads.
@@ -1790,12 +1861,18 @@ class RLMEngine:
         # as targeted follow-up searches that maintain issue focus.
         for _ns in analysis.get("next_searches", [])[:2]:
             if isinstance(_ns, str) and _ns.strip():
+                _ns_clean = _ns.strip()
+                _validated_fid_ns = _follow_on_issue_id
+                if _follow_on_issue_id and _anchor_tokens:
+                    _ns_toks = {_w for _w in _ns_clean.lower().split() if len(_w) > 3}
+                    if not (_anchor_tokens & _ns_toks):
+                        _validated_fid_ns = None
                 state.add_lead(
-                    description=f"Follow-up search: {_ns.strip()[:100]}",
+                    description=f"Follow-up search: {_ns_clean[:100]}",
                     source=f"Analysis of '{results.query}'",
                     priority=0.45,
-                    search_term=_ns.strip(),
-                    focus_issue_id=_follow_on_issue_id,
+                    search_term=_ns_clean,
+                    focus_issue_id=_validated_fid_ns,
                 )
 
         # Deep read top documents in parallel
@@ -2568,6 +2645,28 @@ class RLMEngine:
                 lines.append(f"  • {_rate_str} — {_ctx}" if _rate_str else f"  • {_ctx}")
 
         return "\n".join(lines)
+
+    def _get_issue_coverage_map(self) -> "dict[str, tuple[float, bool, int]]":
+        """Return {issue_id: (coverage_fraction, has_proof_gap, support_count)} from live DB.
+
+        Called once per investigation iteration to drive dynamic lead reweighting (SO-4).
+        Returns empty dict when no matter model is available or the call fails.
+        """
+        if self._matter_model is None:
+            return {}
+        try:
+            report = self._matter_model.get_issue_coverage_report()
+        except Exception:
+            return {}
+        return {
+            item["id"]: (
+                float(item.get("coverage_fraction", 0.0)),
+                bool(item.get("has_proof_gap", False)),
+                int(item.get("supporting_count", 0)),
+            )
+            for item in report
+            if item.get("id")
+        }
 
     def _build_issue_coverage_summary(self) -> str:
         """Build a per-issue evidence coverage block for the synthesis prompt (SO-4).
