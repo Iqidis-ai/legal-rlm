@@ -38,6 +38,12 @@ def test_null_adapter_all_methods():
     # record_facts_batch must return a list of empty strings, same length as input
     result = adapter.record_facts_batch([("fact a", "doc.pdf"), ("fact b", "doc.pdf")])
     assert result == ["", ""]
+    # Mid-run steering — NullMatterAdapter must return empty for clarifications
+    assert adapter.get_new_answered_clarifications() == []
+    # Redirect — NullMatterAdapter must return safe defaults
+    assert not adapter.is_redirect_requested()
+    assert adapter.get_redirect_issue_id() is None
+    adapter.clear_redirect()  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -1852,6 +1858,42 @@ def test_build_issue_coverage_summary_weak_coverage_no_assertions():
     assert "Fraud claim" in result
     assert "WEAK" in result, f"Expected WEAK label for zero-assertion issue: {result}"
     assert "0" in result, f"Expected 0 supporting assertions in: {result}"
+
+
+def test_build_issue_coverage_summary_shows_proof_gap_flag():
+    """_build_issue_coverage_summary() must show ⚠ PROOF GAP for issues with open proof gaps (SO-4+SO-7).
+
+    The proof-gap flag is the synthesis-level surface of SO-7's missingness tracking:
+    the LLM must see which issues have zero evidentiary support so it can surface
+    proof gaps in its analysis rather than synthesizing confidently over silence.
+    """
+    from irys.matter.enums import IssueType
+
+    model = MatterModel.open_in_memory()
+    issue_id, _ = model.issues.upsert_issue(
+        title="Tortious interference claim",
+        issue_type=IssueType.CLAIM,
+        materiality=0.9,
+    )
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # Before running proof-gap detection: no PROOF GAP flag
+    result_before = engine._build_issue_coverage_summary()
+    assert "PROOF GAP" not in result_before, (
+        "PROOF GAP must not appear before _detect_proof_gaps() runs"
+    )
+
+    # Run proof-gap detection — creates a gap linked to the issue
+    engine._detect_proof_gaps()
+
+    # After detection: PROOF GAP flag must appear in summary
+    result_after = engine._build_issue_coverage_summary()
+    assert "PROOF GAP" in result_after, (
+        f"_build_issue_coverage_summary must show ⚠ PROOF GAP for issues with open gaps: {result_after}"
+    )
+    assert "Tortious interference claim" in result_after
 
 
 def test_build_issue_coverage_summary_partial_coverage():
