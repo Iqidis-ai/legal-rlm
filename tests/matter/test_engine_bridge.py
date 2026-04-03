@@ -318,6 +318,46 @@ def test_build_quant_summary_shows_amounts():
     assert "claim" in result.lower() or "payment" in result.lower()
 
 
+def test_build_quant_summary_shows_reconciliation_by_category():
+    """_build_quant_summary() must show per-category monetary totals (SO-6 reconciliation)."""
+    model = MatterModel.open_in_memory()
+    model.quant.record(quant_kind="amount", raw_text="Invoice 1",
+                       amount_value=50_000.0, currency="USD", subject_type="invoice")
+    model.quant.record(quant_kind="amount", raw_text="Invoice 2",
+                       amount_value=30_000.0, currency="USD", subject_type="invoice")
+    model.quant.record(quant_kind="amount", raw_text="Payment",
+                       amount_value=40_000.0, currency="USD", subject_type="payment")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_quant_summary()
+
+    assert "invoice" in result.lower(), f"invoice category missing: {result}"
+    assert "payment" in result.lower(), f"payment category missing: {result}"
+    # invoice total = $80,000; payment total = $40,000
+    assert "80,000" in result, f"invoice total $80,000 missing: {result}"
+    assert "40,000" in result, f"payment total $40,000 missing: {result}"
+
+
+def test_build_quant_summary_shows_conflicts():
+    """_build_quant_summary() must surface NUMERIC CONFLICTS when get_conflicts() returns items (SO-6)."""
+    model = MatterModel.open_in_memory()
+    model.quant.record(quant_kind="amount", raw_text="version A",
+                       amount_value=50_000.0, currency="USD", subject_type="invoice")
+    model.quant.record(quant_kind="amount", raw_text="version B",
+                       amount_value=55_000.0, currency="USD", subject_type="invoice")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_quant_summary()
+
+    assert "CONFLICT" in result.upper(), f"Expected CONFLICTS section: {result}"
+    assert "invoice" in result.lower(), f"invoice must appear in conflict: {result}"
+    assert "UNRESOLVED" in result.upper(), f"UNRESOLVED DISCREPANCY label missing: {result}"
+
+
 # ---------------------------------------------------------------------------
 # SO-5: Actor store wiring
 # ---------------------------------------------------------------------------
