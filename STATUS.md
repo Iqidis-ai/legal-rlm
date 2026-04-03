@@ -117,7 +117,7 @@ SO-3 PARTIAL maintained (steering mechanisms work; ledger surface was raw event 
 
 Previous session: SO-5 Tier 1 loop (8 correctness rounds + 3 performance rounds) CLEAN.
 
-HEAD: 4834db0
+HEAD: ccbfbb5
 
 ---
 
@@ -129,10 +129,10 @@ None active.
 
 ## Key Metrics (Current)
 
-- Tests passing: 705 / 705
-- Schema version: v29
-- SO-2, SO-4, SO-5, SO-6, SO-7: PASS; SO-1, SO-3: PARTIAL (adversarial #019)
-- Tier 1 correctness: **CLEAN** (r8 — 8 rounds on SO-5 advocacy gate)
-- Tier 1 performance: **CLEAN** (r3 — patterns hoisted to module-level constants)
+- Tests passing: 708 / 708
+- Schema version: v30
+- SO-2, SO-4, SO-5, SO-6, SO-7: PASS; SO-1, SO-3: PARTIAL (adversarial #019, partially addressed)
+- Tier 1 correctness: **CLEAN** (r4 on SO-1/SO-3 changes; r8 total on this session's work)
+- Tier 1 performance: **CLEAN** (v30 index, in-memory snapshot)
 - Adversarial audit #019: DONE — SO-2/4/6 upgraded to PASS; SO-1 downgraded; SO-3 PARTIAL
-- Next adversarial audit (#020): due after ~5 more Codex sessions
+- Next adversarial audit (#020): due after ~3 more Codex sessions
