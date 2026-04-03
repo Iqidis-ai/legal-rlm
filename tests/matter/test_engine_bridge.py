@@ -226,6 +226,99 @@ def test_build_source_calibration_includes_trust_overrides():
 
 
 # ---------------------------------------------------------------------------
+# SO-7: _build_gap_summary() surfaces open gaps
+# ---------------------------------------------------------------------------
+
+def test_build_gap_summary_no_model():
+    """_build_gap_summary() with no matter model returns safe fallback."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = None
+
+    result = engine._build_gap_summary()
+    assert "available" in result.lower() or "no" in result.lower()
+
+
+def test_build_gap_summary_shows_gaps():
+    """_build_gap_summary() must list open gaps with type and materiality label."""
+    from irys.matter.enums import GapType
+
+    model = MatterModel.open_in_memory()
+    model.record_gap(
+        description="Missing signed amendment — critical to damages calculation",
+        gap_type=GapType.MISSING_DOCUMENT,
+        materiality=0.9,
+    )
+    model.record_gap(
+        description="Conflicting invoice amounts in two exhibits",
+        gap_type=GapType.UNRESOLVED_CONTRADICTION,
+        materiality=0.5,
+    )
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_gap_summary()
+
+    assert "Missing signed amendment" in result, f"Gap description missing: {result}"
+    assert "Conflicting invoice amounts" in result
+    assert "HIGH" in result or "MED" in result, f"Materiality label missing: {result}"
+    assert "2" in result, f"Gap count missing: {result}"
+
+
+def test_build_gap_summary_no_gaps():
+    """_build_gap_summary() with no open gaps returns 'No significant gaps'."""
+    model = MatterModel.open_in_memory()
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_gap_summary()
+    assert "no significant gaps" in result.lower() or "no gap" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# SO-6: _build_quant_summary() surfaces numeric facts
+# ---------------------------------------------------------------------------
+
+def test_build_quant_summary_no_model():
+    """_build_quant_summary() with no matter model returns safe fallback."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = None
+
+    result = engine._build_quant_summary()
+    assert "no" in result.lower() or "unavailable" in result.lower()
+
+
+def test_build_quant_summary_no_facts():
+    """_build_quant_summary() with no quant facts returns 'No numeric facts'."""
+    model = MatterModel.open_in_memory()
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_quant_summary()
+    assert "no numeric" in result.lower() or "0" in result
+
+
+def test_build_quant_summary_shows_amounts():
+    """_build_quant_summary() must surface monetary amounts from the quant store."""
+    model = MatterModel.open_in_memory()
+    model.quant.record(quant_kind="amount", raw_text="$500,000 total claim",
+                       amount_value=500_000.0, currency="USD", subject_type="claim")
+    model.quant.record(quant_kind="amount", raw_text="$250,000 paid to date",
+                       amount_value=250_000.0, currency="USD", subject_type="payment")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_quant_summary()
+
+    assert "500,000" in result or "500000" in result, f"Claim amount missing: {result}"
+    assert "250,000" in result or "250000" in result, f"Payment amount missing: {result}"
+    assert "claim" in result.lower() or "payment" in result.lower()
+
+
+# ---------------------------------------------------------------------------
 # SO-5: Actor store wiring
 # ---------------------------------------------------------------------------
 
