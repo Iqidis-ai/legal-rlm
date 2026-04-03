@@ -121,6 +121,33 @@ def test_adapter_deduplicates_same_fact_different_docs():
     assert len(occurrences) == 2
 
 
+def test_assertion_added_ledger_event_fires_only_once_for_duplicate_proposition():
+    """ASSERTION_ADDED ledger event must be written exactly once per unique proposition (SO-3).
+
+    When the same proposition is recorded from two different source documents,
+    the second call is a deduplication (is_new=False) and must NOT fire another
+    ASSERTION_ADDED event.  A user reading the reasoning ledger would see one
+    'new assertion' notice per unique fact — not one per occurrence document.
+    """
+    from irys.matter import LedgerEventType
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Dedup ledger test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    text = "Defendant failed to deliver the goods by the deadline."
+    adapter.record_fact(text, document_id="complaint.pdf")
+    adapter.record_fact(text, document_id="deposition.pdf")  # same proposition, new document
+
+    events = model.ledger.get_events(run_id)
+    added_events = [
+        e for e in events if e["event_type"] == LedgerEventType.ASSERTION_ADDED.value
+    ]
+    assert len(added_events) == 1, (
+        "ASSERTION_ADDED must fire exactly once per unique proposition — "
+        f"got {len(added_events)} events for 2 occurrences of the same fact"
+    )
+
+
 def test_adapter_run_session_written():
     model = MatterModel.open_in_memory()
     run_id = model.start_run("Evidence query")
