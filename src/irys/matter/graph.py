@@ -970,34 +970,48 @@ class ReasoningCacheStore:
         self.matter_id = matter_id
 
     def get(self, stage: str, cache_key: str) -> Optional[dict]:
-        """Return cached plan dict or None on cache miss."""
+        """Return cached plan dict or None on cache miss or DB error.
+
+        Wraps all DB access in try/except so a corrupt or missing cache table
+        never prevents the calling code (engine._orient) from falling through
+        to the LLM call.
+        """
         import json
-        row = self.db.execute(
-            "SELECT id, plan_json FROM reasoning_cache"
-            " WHERE matter_id=? AND stage=? AND cache_key=?",
-            (self.matter_id, stage, cache_key),
-        ).fetchone()
-        if row is None:
-            return None
-        self.db.execute(
-            "UPDATE reasoning_cache SET last_hit_at=? WHERE id=?",
-            (_now(), row["id"]),
-        )
         try:
+            row = self.db.execute(
+                "SELECT id, plan_json FROM reasoning_cache"
+                " WHERE matter_id=? AND stage=? AND cache_key=?",
+                (self.matter_id, stage, cache_key),
+            ).fetchone()
+            if row is None:
+                return None
+            try:
+                self.db.execute(
+                    "UPDATE reasoning_cache SET last_hit_at=? WHERE id=?",
+                    (_now(), row["id"]),
+                )
+            except Exception:
+                pass  # last_hit_at update is non-critical
             return json.loads(row["plan_json"])
         except Exception:
             return None
 
     def put(self, stage: str, cache_key: str, plan: dict) -> None:
-        """Upsert a cache entry (insert or overwrite on key collision)."""
+        """Upsert a cache entry (insert or overwrite on key collision).
+
+        Silently ignores errors — cache failures must never break the calling path.
+        """
         import json
-        now = _now()
-        self.db.execute(
-            """INSERT INTO reasoning_cache
-               (id, matter_id, stage, cache_key, plan_json, created_at, last_hit_at)
-               VALUES (?,?,?,?,?,?,?)
-               ON CONFLICT(matter_id, stage, cache_key)
-               DO UPDATE SET plan_json=excluded.plan_json,
-                             last_hit_at=excluded.last_hit_at""",
-            (_id(), self.matter_id, stage, cache_key, json.dumps(plan), now, now),
-        )
+        try:
+            now = _now()
+            self.db.execute(
+                """INSERT INTO reasoning_cache
+                   (id, matter_id, stage, cache_key, plan_json, created_at, last_hit_at)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(matter_id, stage, cache_key)
+                   DO UPDATE SET plan_json=excluded.plan_json,
+                                 last_hit_at=excluded.last_hit_at""",
+                (_id(), self.matter_id, stage, cache_key, json.dumps(plan), now, now),
+            )
+        except Exception:
+            pass  # non-critical; next run will populate from LLM
