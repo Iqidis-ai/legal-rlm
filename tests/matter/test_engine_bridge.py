@@ -992,6 +992,56 @@ def test_get_issue_coverage_report(model):
     assert not strong_row["has_proof_gap"], "supported issue must not have a proof gap"
 
 
+def test_coverage_fraction_uses_predicate_count_when_available(model):
+    """coverage_fraction uses predicate-aware formula when issue has claim elements.
+
+    Without predicates: count / (count + 1) — monotone heuristic.
+    With predicates: min(count, pred_count) / pred_count — caps at 1.0 only
+    when all required elements are evidenced.
+    """
+    from irys.matter.enums import IssueType
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    # Issue with 4 required predicates
+    issue_id, _ = model.issues.upsert_issue(
+        title="Contract formation elements",
+        issue_type=IssueType.CLAIM,
+        materiality=0.9, salience=0.8,
+    )
+    model.issues.add_predicates_batch(
+        issue_id,
+        ["Offer", "Acceptance", "Consideration", "Mutual assent"],
+    )
+
+    run_id = model.start_run("Predicate coverage test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Add 2 supporting assertions — should give 2/4 = 0.5
+    adapter.record_fact("Plaintiff sent written offer dated Jan 1.", "email.pdf", issue_id=issue_id)
+    adapter.record_fact("Defendant signed acceptance on Jan 3.", "contract.pdf", issue_id=issue_id)
+
+    report = model.get_issue_coverage_report()
+    row = next(r for r in report if r["id"] == issue_id)
+
+    assert row["predicate_count"] == 4
+    assert row["supporting_count"] == 2
+    # Predicate-aware: 2/4 = 0.5 (not the heuristic 2/3 ≈ 0.667)
+    assert row["coverage_fraction"] == 0.5
+
+    # Add 2 more supports → 4/4 = 1.0 full coverage
+    adapter.record_fact("Payment of $1,000 was consideration.", "invoice.pdf", issue_id=issue_id)
+    adapter.record_fact("Both parties understood the terms.", "deposition.pdf", issue_id=issue_id)
+    report2 = model.get_issue_coverage_report()
+    row2 = next(r for r in report2 if r["id"] == issue_id)
+    assert row2["coverage_fraction"] == 1.0
+
+    # Extra supports beyond predicate count don't exceed 1.0
+    adapter.record_fact("Additional corroborating note.", "memo.pdf", issue_id=issue_id)
+    report3 = model.get_issue_coverage_report()
+    row3 = next(r for r in report3 if r["id"] == issue_id)
+    assert row3["coverage_fraction"] == 1.0
+
+
 def test_disputed_assertion_does_not_count_as_coverage(model):
     """DISPUTED/WITHDRAWN/SUPERSEDED assertions must not inflate issue coverage (SO-2 correctness).
 

@@ -429,7 +429,7 @@ class MatterModel:
         # Find the weakest issue: the highest-priority issue with the least evidentiary support.
         # "Weakest" means most important AND least covered — where work will have most impact.
         # Priority = materiality × salience × (1 - coverage_fraction).
-        # coverage_fraction = supporting_count / (supporting_count + 1) to avoid zero-division.
+        # Uses predicate-aware coverage_fraction (see _coverage_fraction()).
         weakest_issue_id = None
         if open_issues:
             # Get supporting-assertion count per open issue via JOIN — avoids IN-list
@@ -448,9 +448,20 @@ class MatterModel:
             ).fetchall()
             support_counts = {r["issue_id"]: r["cnt"] for r in support_rows}
 
+            pred_rows_ctx = self.db.execute(
+                """SELECT ip.issue_id, COUNT(*) AS pred_count
+                   FROM issue_predicate ip
+                   JOIN issue i ON i.id = ip.issue_id
+                   WHERE i.matter_id=? AND i.status='open' AND ip.status='open'
+                   GROUP BY ip.issue_id""",
+                (self.matter_id,),
+            ).fetchall()
+            pred_counts_ctx = {r["issue_id"]: r["pred_count"] for r in pred_rows_ctx}
+
             def _weakness(issue: dict) -> tuple:
                 cnt = support_counts.get(issue["id"], 0)
-                coverage = cnt / (cnt + 1.0)
+                pred_cnt = pred_counts_ctx.get(issue["id"], 0)
+                coverage = self._coverage_fraction(cnt, pred_cnt)
                 priority = issue["materiality"] * issue["salience"] * (1.0 - coverage)
                 # Higher priority = higher weakness; negate for min()
                 return (-priority, issue["id"])
@@ -492,13 +503,36 @@ class MatterModel:
             key_predicates=key_predicates,
         )
 
+    @staticmethod
+    def _coverage_fraction(support_count: int, predicate_count: int) -> float:
+        """Compute evidence coverage fraction for a single issue.
+
+        When the issue has defined claim elements (predicates), coverage is the
+        fraction of those elements that have at least one supporting assertion:
+            min(support_count, predicate_count) / predicate_count
+
+        This caps coverage at 1.0 only when all required elements are addressed,
+        which is meaningfully different from an issue with many assertions but few
+        required elements.
+
+        When no predicates exist (predicate_count == 0), falls back to the
+        monotone heuristic count / (count + 1) to avoid zero-division and
+        preserve ordering by assertion count alone.
+        """
+        if predicate_count > 0:
+            return min(support_count, predicate_count) / float(predicate_count)
+        return support_count / (support_count + 1.0)
+
     def get_issue_coverage_report(self) -> list[dict]:
         """Return per-issue evidence coverage for all open issues (SO-4).
 
         Each entry contains:
           - id, title, issue_type, materiality, salience
-          - supporting_count: number of supporting/establishing assertion links
-          - coverage_fraction: supporting_count / (supporting_count + 1), [0, 1)
+          - supporting_count: number of active supporting/establishing assertion links
+          - predicate_count: number of open claim elements (predicates) for the issue
+          - coverage_fraction: predicate-aware fraction in [0, 1].
+            If predicates exist: min(supporting_count, predicate_count) / predicate_count.
+            If no predicates: supporting_count / (supporting_count + 1) [0, 1) fallback.
           - has_proof_gap: True if an open MISSING_ISSUE_PREDICATE gap is linked
           - gap_id: id of that gap, or None
 
@@ -526,6 +560,17 @@ class MatterModel:
         ).fetchall()
         support_counts = {r["issue_id"]: r["cnt"] for r in support_rows}
 
+        # Predicate counts per issue — used for predicate-aware coverage fraction.
+        pred_rows = self.db.execute(
+            """SELECT ip.issue_id, COUNT(*) AS pred_count
+               FROM issue_predicate ip
+               JOIN issue i ON i.id = ip.issue_id
+               WHERE i.matter_id=? AND i.status='open' AND ip.status='open'
+               GROUP BY ip.issue_id""",
+            (mid,),
+        ).fetchall()
+        pred_counts = {r["issue_id"]: r["pred_count"] for r in pred_rows}
+
         proof_gap_rows = self.db.execute(
             """SELECT gl.affected_id AS issue_id, g.id AS gap_id
                FROM gap g
@@ -542,7 +587,8 @@ class MatterModel:
         report = []
         for issue in open_issues:
             cnt = support_counts.get(issue["id"], 0)
-            coverage = cnt / (cnt + 1.0)
+            pred_cnt = pred_counts.get(issue["id"], 0)
+            coverage = self._coverage_fraction(cnt, pred_cnt)
             report.append({
                 "id": issue["id"],
                 "title": issue.get("title", ""),
@@ -550,6 +596,7 @@ class MatterModel:
                 "materiality": issue.get("materiality", 0.0),
                 "salience": issue.get("salience", 0.0),
                 "supporting_count": cnt,
+                "predicate_count": pred_cnt,
                 "coverage_fraction": round(coverage, 4),
                 "has_proof_gap": issue["id"] in proof_gaps,
                 "gap_id": proof_gaps.get(issue["id"]),
