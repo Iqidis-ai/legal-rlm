@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .db import SQLiteMatterDB
-from .enums import BeliefState, RevisionCause
+from .enums import BeliefState, RevisionCause, SOURCE_TRUST_WEIGHTS
 from .models import RevisionResult
 from .graph import AssertionStore
 
@@ -34,19 +34,9 @@ def _id() -> str:
 
 
 # Source role trust weights for belief revision (SO-5).
-# High-trust sources (operative, authoritative) have full impact.
-# Low-trust sources (advocacy, post_hoc) have reduced impact on confidence.
-# Mirrors ProofStateStore.SOURCE_TRUST — both must stay in sync if weights change.
-_SOURCE_TRUST: dict[str, float] = {
-    "operative": 1.0,
-    "authoritative": 1.0,
-    "procedural": 0.7,
-    "informal": 0.5,
-    "unknown": 0.5,
-    "draft": 0.4,
-    "advocacy": 0.3,
-    "post_hoc": 0.3,
-}
+# Canonical definition lives in enums.SOURCE_TRUST_WEIGHTS.
+# This alias preserves the existing API for callers and tests that reference _SOURCE_TRUST.
+_SOURCE_TRUST = SOURCE_TRUST_WEIGHTS
 
 # Belief state transition rules based on support/attack balance
 # A full truth-maintenance system would use JTMS; this is a practical

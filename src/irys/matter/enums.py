@@ -40,6 +40,21 @@ class SourceRole(str, Enum):
     UNKNOWN = "unknown"
 
 
+# Canonical trust weights for source roles (SO-5).
+# Lower weight = evidence is less dispositive in belief revision and proof state.
+# Imported by belief_revision.py and graph.py — ONE definition, no duplication.
+SOURCE_TRUST_WEIGHTS: dict[str, float] = {
+    "operative": 1.0,
+    "authoritative": 1.0,
+    "procedural": 0.7,
+    "informal": 0.5,
+    "unknown": 0.5,
+    "draft": 0.4,
+    "advocacy": 0.3,
+    "post_hoc": 0.3,
+}
+
+
 class BeliefState(str, Enum):
     """The system's current belief about the status of an assertion."""
     ALLEGED = "alleged"

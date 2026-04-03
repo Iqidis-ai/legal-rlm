@@ -12,9 +12,10 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .db import SQLiteMatterDB
+import pathlib
 from .enums import (
     BeliefState, SpeechAct, SourceRole, ModelLayer, AssertionKind,
-    AssertionLinkType, OriginKind, GapType, IssueType,
+    AssertionLinkType, OriginKind, GapType, IssueType, SOURCE_TRUST_WEIGHTS,
 )
 from .models import AssertionCandidate, AssertionRecord, RevisionResult
 
@@ -355,9 +356,8 @@ class AssertionStore:
             """Apply trust override if any pattern matches the document. Otherwise keep role."""
             if not overrides or not document_id:
                 return source_role
-            from pathlib import Path
             doc_norm = document_id.replace("\\\\", "/").replace("\\", "/")
-            basename = Path(doc_norm).name
+            basename = pathlib.Path(doc_norm).name
             for pattern, level in overrides:
                 pat_norm = pattern.replace("\\\\", "/").replace("\\", "/")
                 if pat_norm == doc_norm or pat_norm == basename:
@@ -2572,10 +2572,9 @@ class TrustOverrideStore:
         Among multiple matching patterns, the longest (most specific) wins.
         Path separators are normalized to forward slashes to handle Windows paths.
         """
-        from pathlib import Path
         # Normalize both sides to forward slashes before comparison
         _doc_normalized = document_id.replace("\\\\", "/").replace("\\", "/")
-        basename = Path(_doc_normalized).name
+        basename = pathlib.Path(_doc_normalized).name
         rows = self.db.execute(
             """SELECT document_pattern, trust_level FROM document_trust_override
                WHERE matter_id=? AND trust_level != 'normal'
@@ -2642,8 +2641,7 @@ class DocumentAnnotationStore:
 
     def get_for_document(self, document_id: str) -> list[dict]:
         """Return all annotations matching a document_id (by full path or basename)."""
-        from pathlib import Path
-        basename = Path(document_id).name
+        basename = pathlib.Path(document_id).name
         rows = self.db.execute(
             """SELECT id, document_pattern, annotation_text, annotation_type, created_at
                FROM document_annotation
@@ -3041,19 +3039,9 @@ class ProofStateStore:
     SUFFICIENT_THRESHOLD = 0.75
     PARTIAL_THRESHOLD = 0.25
 
-    # Source role trust weights (SO-5). Lower weight = evidence is less
-    # dispositive. An issue backed only by advocacy sources will have a
-    # lower trust_weighted_support and will be flagged advocacy_only.
-    SOURCE_TRUST: dict[str, float] = {
-        "operative": 1.0,
-        "authoritative": 1.0,
-        "procedural": 0.7,
-        "informal": 0.5,
-        "unknown": 0.5,
-        "draft": 0.4,
-        "advocacy": 0.3,
-        "post_hoc": 0.3,
-    }
+    # Source role trust weights (SO-5). Canonical in enums.SOURCE_TRUST_WEIGHTS.
+    # This class attribute preserves the existing API (ProofStateStore.SOURCE_TRUST[...]).
+    SOURCE_TRUST: dict[str, float] = SOURCE_TRUST_WEIGHTS
     # Trust threshold below which an assertion is considered "low-trust" for
     # the advocacy_only flag.
     ADVOCACY_TRUST_THRESHOLD = 0.35
@@ -3095,9 +3083,8 @@ class ProofStateStore:
         def _effective_trust(source_role: str, primary_doc_id: "str | None") -> float:
             """Apply document trust override if set; otherwise use stored source_role weight."""
             if _overrides and primary_doc_id:
-                from pathlib import Path
                 doc_norm = primary_doc_id.replace("\\\\", "/").replace("\\", "/")
-                basename = Path(doc_norm).name
+                basename = pathlib.Path(doc_norm).name
                 for pat, lvl in _overrides:
                     pat_norm = pat.replace("\\\\", "/").replace("\\", "/")
                     if pat_norm == doc_norm or pat_norm == basename:

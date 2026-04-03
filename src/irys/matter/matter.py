@@ -225,20 +225,28 @@ class MatterModel:
         """
         override_id = self.trust_overrides.set(document_pattern, trust_level, note)
 
-        # Trigger belief revision on all assertions from the affected document
+        # Trigger belief revision on all assertions from the affected document.
+        # SQL JOIN + LIKE pre-filter narrows to plausible matches before Python does
+        # exact basename-normalized comparison. Avoids full-table scan at large scale.
         try:
-            from pathlib import Path
-            occurrence_rows = self.db.execute(
-                """SELECT DISTINCT assertion_id, document_id FROM assertion_occurrence
-                   WHERE assertion_id IN (SELECT id FROM assertion WHERE matter_id=?)""",
-                (self.matter_id,),
-            ).fetchall()
             pat_norm = document_pattern.replace("\\\\", "/").replace("\\", "/")
+            basename = Path(pat_norm).name
+            occurrence_rows = self.db.execute(
+                """SELECT DISTINCT ao.assertion_id, ao.document_id
+                   FROM assertion_occurrence ao
+                   JOIN assertion a ON a.id = ao.assertion_id
+                   WHERE a.matter_id = ?
+                     AND ao.document_id IS NOT NULL
+                     AND (ao.document_id = ?
+                          OR ao.document_id LIKE ?
+                          OR ao.document_id LIKE ?)""",
+                (self.matter_id, document_pattern, '%/' + basename, '%\\\\' + basename),
+            ).fetchall()
             affected_ids = []
             for row in occurrence_rows:
                 doc = (row["document_id"] or "").replace("\\\\", "/").replace("\\", "/")
-                basename = Path(doc).name
-                if pat_norm == doc or pat_norm == basename:
+                doc_basename = Path(doc).name
+                if pat_norm == doc or pat_norm == doc_basename:
                     affected_ids.append(row["assertion_id"])
             if affected_ids:
                 self.belief.apply(
