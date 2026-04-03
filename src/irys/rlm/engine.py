@@ -2453,13 +2453,15 @@ class RLMEngine:
 
         An issue that exists in the model but has zero supporting-assertion links is
         a 'proof gap' — the system recognised the claim but found no evidence for it.
-        These are surfaced as GapType.MISSING_DOCUMENT with the issue linked so that
-        generate_clarifications_from_gaps() can generate targeted questions.
+        These are surfaced as GapType.MISSING_ISSUE_PREDICATE (the semantically correct
+        type: a predicate/element required to satisfy the issue is unproven) with the
+        issue linked so that generate_clarifications_from_gaps() can generate targeted
+        questions.
 
         Uses a single NOT EXISTS SQL query instead of two Python-level IN-list queries to:
           (a) avoid SQLite variable-count limits on large matters (>999 issues),
-          (b) scope the existing-gap check to proof-gap descriptions only, so an
-              unrelated issue-linked gap (e.g. "missing exhibit A") does not suppress
+          (b) scope the existing-gap check to proof-gap type only, so an unrelated
+              issue-linked gap (e.g. missing_document "exhibit A") does not suppress
               the zero-support proof gap.
         """
         if self._matter_model is None:
@@ -2480,8 +2482,7 @@ class RLMEngine:
                      SELECT 1 FROM gap g
                      JOIN gap_link gl ON gl.gap_id=g.id
                      WHERE g.matter_id=? AND g.status='open'
-                       AND g.gap_type='missing_document'
-                       AND g.description LIKE 'No supporting evidence found for issue:%'
+                       AND g.gap_type='missing_issue_predicate'
                        AND gl.affected_type='issue' AND gl.affected_id=i.id
                  )""",
             (mid, mid),
@@ -2489,7 +2490,7 @@ class RLMEngine:
 
         for row in rows:
             self._matter_model.gaps.record(
-                gap_type=GapType.MISSING_DOCUMENT,
+                gap_type=GapType.MISSING_ISSUE_PREDICATE,
                 description=f"No supporting evidence found for issue: '{row['title']}'",
                 expected_artifact=f"Evidence supporting: {row['title']}",
                 materiality=row["materiality"] or 0.5,
