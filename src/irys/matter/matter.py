@@ -174,9 +174,11 @@ class MatterModel:
         self.ledger.complete_run(run_id, summary, reuse_rate)
 
     def fail_run(self, run_id: str, reason: str) -> None:
+        self._run_snapshots.pop(run_id, None)  # prevent unbounded growth on non-completion paths
         self.ledger.fail_run(run_id, reason)
 
     def interrupt_run(self, run_id: str) -> None:
+        self._run_snapshots.pop(run_id, None)  # prevent unbounded growth on non-completion paths
         self.ledger.interrupt_run(run_id)
 
     # ------------------------------------------------------------------
