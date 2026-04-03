@@ -189,3 +189,38 @@ def test_bfs_stops_at_max_hops(model):
                 f"Should not have revised beyond MAX_HOPS, but {far_id} was revised"
     finally:
         BeliefRevisionEngine.MAX_HOPS = original_max
+
+
+def test_both_support_and_attack_results_in_disputed(model):
+    """An assertion with both active supports and active attacks must become DISPUTED.
+
+    This is the classic conflicting-evidence case in truth maintenance: a claim
+    that has at least one solid supporter AND at least one active attacker cannot
+    be resolved — it must be DISPUTED.  This path is exercised by SO-6 quant
+    conflicts: two assertions about the same invoice amount become mutually
+    contradicting (each attacks the other), but each also has its own supporting
+    document as OPERATIVE context.
+    """
+    # The central assertion whose belief state we're testing
+    central_id = add(model, "Invoice total is $50,000.")
+
+    # A solid supporter: this assertion supports the central claim
+    supporter_id = add(model, "Invoice document says $50,000.")
+    model.assertions.set_belief_state(supporter_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.link(supporter_id, central_id, AssertionLinkType.SUPPORTS)
+
+    # An active attacker: this assertion attacks the central claim
+    attacker_id = add(model, "Counter-document says $55,000.")
+    model.assertions.set_belief_state(attacker_id, BeliefState.ALLEGED, 0.7)
+    model.assertions.link(attacker_id, central_id, AssertionLinkType.CONTRADICTS)
+
+    # Trigger revision on the central assertion
+    result = model.belief.apply(
+        seed_assertion_ids=[central_id],
+        cause=RevisionCause.CONFLICT_DETECTION,
+    )
+
+    central_record = model.assertions.get(central_id)
+    assert central_record.belief_state == BeliefState.DISPUTED.value, (
+        f"Both support+attack must result in DISPUTED; got {central_record.belief_state}"
+    )
