@@ -978,7 +978,10 @@ def test_get_issue_coverage_report(model):
     assert report[0]["supporting_count"] == 0
     assert report[0]["coverage_fraction"] == 0.0
     assert report[1]["supporting_count"] == 2
-    assert report[1]["coverage_fraction"] > 0.0, "issue with 2 supports must have non-zero coverage"
+    # 2 × UNKNOWN (weight=0.3) → weighted_support=0.6; no predicates → 0.6/(0.6+1)=0.375
+    assert report[1]["coverage_fraction"] == pytest.approx(0.375), (
+        "2 UNKNOWN assertions with no predicates must give coverage 0.6/1.6 = 0.375"
+    )
 
     # has_proof_gap: both False (no _detect_proof_gaps has been run yet)
     assert not report[0]["has_proof_gap"]

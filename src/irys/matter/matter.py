@@ -433,13 +433,13 @@ class MatterModel:
         weakest_issue_id = None
         if open_issues:
             # Belief-state-weighted support sum (mirrors get_issue_coverage_report logic).
-            # operative/admitted/resolved = 1.0, alleged/argued/inferred/partial = 0.5,
+            # operative/admitted/resolved = 1.0, alleged/argued/inferred = 0.5,
             # other active states = 0.3; disputed/withdrawn/superseded excluded entirely.
             support_rows = self.db.execute(
                 """SELECT ail.issue_id,
                           SUM(CASE
                                 WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0
-                                WHEN a.belief_state IN ('alleged','argued','inferred','partial') THEN 0.5
+                                WHEN a.belief_state IN ('alleged','argued','inferred') THEN 0.5
                                 ELSE 0.3
                               END) AS weighted_support
                    FROM assertion_issue_link ail
@@ -518,7 +518,7 @@ class MatterModel:
         *weighted_support* is the trust-weighted sum of supporting assertions,
         where weights reflect proof strength by belief_state:
             operative / admitted / resolved → 1.0  (solid proof)
-            alleged / argued / inferred / partial  → 0.5  (contested/uncertain)
+            alleged / argued / inferred             → 0.5  (contested/uncertain)
             unknown / other active states           → 0.3
 
         When the issue has defined claim elements (predicates):
@@ -541,8 +541,8 @@ class MatterModel:
 
         Each entry contains:
           - id, title, issue_type, materiality, salience
-          - supporting_count: belief-state-weighted sum of active supporting assertions
-            (operative=1.0, alleged/argued=0.5, other active=0.3; see _coverage_fraction)
+          - supporting_count: raw integer count of active supporting assertions
+            (excludes disputed/withdrawn/superseded; includes all other belief states)
           - predicate_count: number of open claim elements (predicates) for the issue
           - coverage_fraction: proof-strength-aware fraction in [0, 1].
             If predicates exist: min(weighted_support, predicate_count) / predicate_count.
@@ -560,7 +560,7 @@ class MatterModel:
 
         # Use JOIN instead of IN-list to avoid SQLite variable-count limits (SO-4 scale).
         # Returns both raw count (for display) and belief-state-weighted sum (for fraction).
-        # Weights: operative/admitted/resolved = 1.0, alleged/argued/inferred/partial = 0.5,
+        # Weights: operative/admitted/resolved = 1.0, alleged/argued/inferred = 0.5,
         # other active states = 0.3; disputed/withdrawn/superseded excluded entirely.
         # This prevents alleged assertions from overstating coverage vs operative ones.
         support_rows = self.db.execute(
@@ -568,7 +568,7 @@ class MatterModel:
                       COUNT(*) AS raw_count,
                       SUM(CASE
                             WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0
-                            WHEN a.belief_state IN ('alleged','argued','inferred','partial') THEN 0.5
+                            WHEN a.belief_state IN ('alleged','argued','inferred') THEN 0.5
                             ELSE 0.3
                           END) AS weighted_support
                FROM assertion_issue_link ail
