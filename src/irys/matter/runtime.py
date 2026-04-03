@@ -201,6 +201,31 @@ class MatterRuntimeAdapter:
     # Called from engine._analyze_search_results() / _deep_read_document()
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _infer_model_layer(
+        assertion_kind: "AssertionKind",
+        origin_kind: "OriginKind",
+        explicit_layer: "ModelLayer",
+    ) -> "ModelLayer":
+        """Auto-select model layer when the caller left the default RECORD.
+
+        Enforcement rules (spec §24 — 5 layers must remain distinct):
+          NORMATIVE assertions (obligations/rights/duties) belong to the LEGAL
+            layer — they describe what the law says, not what the record says.
+          INFERRED-origin assertions belong to the REALITY layer — they represent
+            conclusions the system derived from record evidence, not direct quotes.
+          All other assertions stay in the RECORD layer (default).
+
+        Callers that explicitly pass a non-RECORD layer are never overridden.
+        """
+        if explicit_layer != ModelLayer.RECORD:
+            return explicit_layer
+        if assertion_kind == AssertionKind.NORMATIVE:
+            return ModelLayer.LEGAL
+        if origin_kind == OriginKind.INFERRED:
+            return ModelLayer.REALITY
+        return ModelLayer.RECORD
+
     def record_fact(
         self,
         proposition_text: str,
@@ -209,6 +234,7 @@ class MatterRuntimeAdapter:
         speech_act: SpeechAct = SpeechAct.EXTRACTED,
         model_layer: ModelLayer = ModelLayer.RECORD,
         assertion_kind: AssertionKind = AssertionKind.FACTUAL,
+        origin_kind: OriginKind = OriginKind.EXTRACTED,
         span_id: Optional[str] = None,
         issue_id: Optional[str] = None,
         issue_link_type: str = "supports",
@@ -224,6 +250,7 @@ class MatterRuntimeAdapter:
         Auto-infers source_role from document_id if not explicitly provided.
         Also auto-infers speech_act from source_role when speech_act is EXTRACTED
         (advocacy → alleged, operative → operative, authoritative → operative).
+        Auto-infers model_layer: NORMATIVE→LEGAL, INFERRED origin→REALITY, else RECORD.
         If issue_id is provided, links the assertion to that issue with issue_link_type.
         Optional subject_ref_type/subject_ref_id/predicate_key/object_json populate
         the typed SPO fields when the LLM extracts structured triples (SO-2).
@@ -249,6 +276,10 @@ class MatterRuntimeAdapter:
             # Promote both ALLEGED and EXTRACTED sources when user marks document as high-trust
             speech_act = SpeechAct.OPERATIVE
 
+        # Auto-assign model_layer based on assertion_kind and origin_kind (spec §24,
+        # 5-layer enforcement).  NORMATIVE→LEGAL, INFERRED origin→REALITY, else RECORD.
+        model_layer = self._infer_model_layer(assertion_kind, origin_kind, model_layer)
+
         candidate = AssertionCandidate(
             proposition_text=proposition_text,
             model_layer=model_layer,
@@ -258,7 +289,7 @@ class MatterRuntimeAdapter:
             source_role=source_role,
             source_side=infer_source_side(document_id),
             speech_act=speech_act,
-            origin_kind=OriginKind.EXTRACTED,
+            origin_kind=origin_kind,
             temporal_scope_start=temporal_scope_start,
             subject_ref_type=subject_ref_type,
             subject_ref_id=subject_ref_id,
