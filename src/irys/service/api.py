@@ -1958,3 +1958,19 @@ async def get_matter_timeline(matter_id: str, limit: int = 200):
     """
     model = _get_matter_model_or_404(matter_id)
     return model.get_timeline(limit=limit)
+
+
+@app.get(
+    "/matter/{matter_id}/evidence-matrix",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_evidence_matrix(matter_id: str):
+    """Return the evidence matrix: issues × source documents.
+
+    Rows = open issues; columns = source documents; cells = supporting/attacking
+    assertion counts per (issue, document) pair.  Useful for identifying which
+    sources contribute evidence to which claims and which issues lack source coverage.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return model.get_evidence_matrix()

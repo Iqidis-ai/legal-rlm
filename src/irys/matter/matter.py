@@ -648,6 +648,109 @@ class MatterModel:
         return events[:limit]
 
     # ------------------------------------------------------------------
+    # Evidence matrix (Priority 2 visual work product)
+    # ------------------------------------------------------------------
+
+    def get_evidence_matrix(self) -> dict:
+        """Return a coverage matrix: issues × source documents.
+
+        Structure:
+        {
+          "issues": [{"id": ..., "title": ..., "issue_type": ...}, ...],
+          "sources": ["doc_a.pdf", "doc_b.pdf", ...],
+          "cells": {
+            issue_id: {
+              doc_id: {"supporting": N, "attacking": N, "total": N}
+            }
+          },
+          "issue_totals": {issue_id: {"supporting": N, "attacking": N}},
+          "source_totals": {doc_id: {"supporting": N, "attacking": N}},
+        }
+
+        Only open issues with at least one assertion link are included.
+        Only document sources with at least one assertion link are included.
+        """
+        open_issues = self.issues.get_open_issues(min_materiality=0.0)
+        if not open_issues:
+            return {"issues": [], "sources": [], "cells": {}, "issue_totals": {}, "source_totals": {}}
+
+        # Query: assertion-issue links joined to occurrences to get document source.
+        rows = self.db.execute(
+            """SELECT ail.issue_id, ao.document_id, ail.relation_type, COUNT(*) AS cnt
+               FROM assertion_issue_link ail
+               JOIN issue i ON i.id = ail.issue_id
+               JOIN assertion a ON a.id = ail.assertion_id
+               JOIN assertion_occurrence ao ON ao.assertion_id = a.id
+               WHERE i.matter_id=? AND i.status='open'
+                 AND a.belief_state NOT IN ('superseded', 'withdrawn')
+               GROUP BY ail.issue_id, ao.document_id, ail.relation_type""",
+            (self.matter_id,),
+        ).fetchall()
+
+        # Build matrix.
+        cells: dict = {}
+        issue_totals: dict = {}
+        source_totals: dict = {}
+        sources_seen: set = set()
+        issues_seen: set = set()
+
+        for row in rows:
+            iid = row["issue_id"]
+            doc = row["document_id"] or "(unknown)"
+            rel = row["relation_type"]
+            cnt = row["cnt"]
+            is_support = rel in ("supports", "establishes")
+            is_attack = rel in ("attacks", "negates")
+
+            issues_seen.add(iid)
+            sources_seen.add(doc)
+
+            if iid not in cells:
+                cells[iid] = {}
+            if doc not in cells[iid]:
+                cells[iid][doc] = {"supporting": 0, "attacking": 0, "total": 0}
+            if is_support:
+                cells[iid][doc]["supporting"] += cnt
+            elif is_attack:
+                cells[iid][doc]["attacking"] += cnt
+            cells[iid][doc]["total"] += cnt
+
+            # Issue totals
+            if iid not in issue_totals:
+                issue_totals[iid] = {"supporting": 0, "attacking": 0}
+            if is_support:
+                issue_totals[iid]["supporting"] += cnt
+            elif is_attack:
+                issue_totals[iid]["attacking"] += cnt
+
+            # Source totals
+            if doc not in source_totals:
+                source_totals[doc] = {"supporting": 0, "attacking": 0}
+            if is_support:
+                source_totals[doc]["supporting"] += cnt
+            elif is_attack:
+                source_totals[doc]["attacking"] += cnt
+
+        issues_out = [
+            {
+                "id": i["id"],
+                "title": i.get("title", ""),
+                "issue_type": i.get("issue_type", ""),
+            }
+            for i in open_issues
+            if i["id"] in issues_seen
+        ]
+        sources_out = sorted(sources_seen)
+
+        return {
+            "issues": issues_out,
+            "sources": sources_out,
+            "cells": cells,
+            "issue_totals": issue_totals,
+            "source_totals": source_totals,
+        }
+
+    # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
 
