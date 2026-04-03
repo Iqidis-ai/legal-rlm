@@ -1148,7 +1148,8 @@ class RLMEngine:
             return
         try:
             recent = self._matter_model.assertions.list_recent(limit=30)
-        except Exception:
+        except Exception as _e:
+            logger.warning("Matter model hydration failed — proceeding without prior facts: %s", _e)
             return
         if not recent:
             return
