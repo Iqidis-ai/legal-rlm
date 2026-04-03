@@ -33,6 +33,9 @@ class ReasoningLedgerStore:
     def __init__(self, db: SQLiteMatterDB, matter_id: str):
         self.db = db
         self.matter_id = matter_id
+        # seq_no cache: avoids a SELECT per append_event call (initialized lazily
+        # from DB on first write per run, incremented in-memory thereafter).
+        self._seq_cache: dict[str, int] = {}
 
     def start_run(self, query: str, objective: Optional[str] = None) -> str:
         """Start a new run session. Returns run_id."""
@@ -90,12 +93,16 @@ class ReasoningLedgerStore:
         snapshot_json: Optional[str] = None,
     ) -> str:
         """Internal: append event (caller must hold transaction)."""
-        # Get next sequence number
-        row = self.db.execute(
-            "SELECT COALESCE(MAX(seq_no), -1) + 1 FROM ledger_event WHERE run_id=?",
-            (run_id,),
-        ).fetchone()
-        seq_no = row[0]
+        # Get next sequence number — initialize from DB once, then increment in-memory
+        # to avoid a SELECT round-trip on every event append.
+        if run_id not in self._seq_cache:
+            row = self.db.execute(
+                "SELECT COALESCE(MAX(seq_no), -1) + 1 FROM ledger_event WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            self._seq_cache[run_id] = row[0]
+        seq_no = self._seq_cache[run_id]
+        self._seq_cache[run_id] = seq_no + 1
 
         event_id = _id()
         now = _now()
