@@ -87,45 +87,50 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | #011–#014 | PASS/PARTIAL cycle | Progressive SO coverage |
 | #015 | SO-1/2/3/4/5/7 PASS; SO-6 PARTIAL | Hard quant gate added |
 | #016 | SO-1/2/3/4/7 PASS; SO-5/6 PARTIAL | Hard advocacy + quant gates added |
-| #017 | Due in ~4-5 Codex sessions | — |
+| #017 | SO-1–SO-6 PASS; SO-7 PARTIAL → **FIXED** | Gap count now shows total vs filtered |
 
-**Tier 1 reviews:** #016–#018: issues fixed; #019: 3 LOW findings (all fixed)
+**Tier 1 reviews:** Correctness R2 CLEAN. Performance R2/R3/R4: all MEDIUMs in progress/addressed.
 
 ---
 
 ## Active Work
 
-### JUST COMPLETED — Trust-Weighted Belief Revision + Trust Override Pipeline (SO-2, SO-3, SO-5)
+### JUST COMPLETED — Tier 1 Performance Loop (5 MEDIUMs closed)
 
-Full trust-aware intelligence layer implemented across 3 sessions:
+1. **BFS override cache** — `BeliefRevisionEngine.apply()` pre-fetches trust overrides once; passes
+   `_override_cache` through `_revise_one()` → `get_neighbor_belief_states()`. Eliminates 1 DB
+   query per BFS node during belief propagation. (`belief_revision.py`, `graph.py`)
 
-1. **Trust-weighted confidence in belief revision** — advocacy-source attackers (0.3) inflict
-   less damage than operative-source attackers (1.0). `get_neighbor_belief_states()` returns
-   source_role per neighbor; `_compute_belief_state()` accepts source_role lists.
+2. **CTE-based neighbor lookup** — `get_neighbor_belief_states()` replaced 2×N correlated scalar
+   subqueries with a single CTE + `ROW_NUMBER()` window pass over `assertion_occurrence`. (`graph.py`)
 
-2. **Document trust override → belief revision** — `MatterModel.set_trust_override()` persists
-   the override, triggers `belief.apply()` on all assertions from the affected document (BFS
-   propagates to dependents), then calls `proof_state.compute_all()`.
+3. **CTE-based proof state computation** — `compute_and_store()` replaced two separate queries
+   (each with N correlated subqueries) with one CTE covering both sup/atk. (`graph.py`)
 
-3. **Trust override → proof state (advocacy_only)** — `compute_and_store()` applies document
-   trust overrides when computing `trust_weighted_support` and `advocacy_only`. Low-trust
-   override flips `advocacy_only=True`; high-trust override clears it.
+4. **Targeted per-document proof recompute** — `engine._deep_read_document()` now resolves
+   impacted issue IDs via `assertion_issue_link` and calls `compute_and_store()` only for those
+   issues instead of `compute_all()` on every document ingest. (`engine.py`)
 
-4. **End-to-end SO-3→SO-5 pipeline** — test in `test_engine_bridge.py` verifies that
-   `set_trust_override('high')` → `compute_all()` → `advocacy_only=False` → advocacy gate silent.
+5. **Targeted proof recompute in set_trust_override()** — already done in prior session:
+   resolves affected issues from `assertion_issue_link` rather than `compute_all()`. (`matter.py`)
 
-5. **Structural cleanup (Tier 1 manual review)** — `SOURCE_TRUST_WEIGHTS` canonicalized in
-   `enums.py`; removed duplicate dict from `belief_revision.py` and `graph.py`. `pathlib.Path`
-   hoisted to module-level in `graph.py`. `set_trust_override()` SQL query uses JOIN + LIKE
-   pre-filter instead of full-table subquery.
+6. **SO-7 gap transparency** — `_build_gap_summary()` now fetches all open gaps and surfaces total
+   count with explicit note about omitted lower-materiality gaps. Adversarial audit #017 PARTIAL fixed.
 
-HEAD: db3f2ad
+Previous session (Tier 1 correctness, also CLEAN):
+- Zip alignment guard in `_compute_belief_state()`
+- `ORDER BY ao.id ASC` tiebreaker in `_doc_subq` and `_doc_subquery`
+- Backslash LIKE fix (`'%\\'` → single backslash Windows path matching)
+- Narrowed `except Exception` → `(sqlite3.Error, ValueError, RuntimeError)` + logging
+- BFS enqueued set for O(V) queue size on dense graphs
+
+HEAD: 58a134e
 
 ---
 
 ## Known Blockers
 
-None active. Codex rate limit cleared.
+None active.
 
 ---
 
@@ -133,6 +138,7 @@ None active. Codex rate limit cleared.
 
 - Tests passing: 679 / 679
 - Schema version: v26
-- All 7 Sacred Outcomes: PASS
-- Tier 1 reviews: manual review complete; awaiting Codex re-run
-- Adversarial audit #017: due after next ~3-4 Codex review sessions
+- All 7 Sacred Outcomes: PASS (SO-7 adversarial PARTIAL resolved)
+- Tier 1 correctness: CLEAN (R2)
+- Tier 1 performance: R4 in progress (expect CLEAN on correlated subquery fixes)
+- Adversarial audit #017: DONE — 6 PASS, 1 PARTIAL resolved
