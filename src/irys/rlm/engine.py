@@ -210,6 +210,7 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
    - value: numeric value if parseable (null otherwise)
    - currency: "USD" etc. for amounts (null if not monetary)
    - context: brief label of what this number represents (max 60 chars)
+   - page: page number where this number appears (integer, null if unknown)
    - assertion_idx: 0-based index into key_facts of the fact this number comes from (null if none)
 
 5. DOCUMENT RELATIONSHIPS:
@@ -234,7 +235,7 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
     "key_facts": [{{"fact": "...", "page": N, "issue_relation": "supports", "effective_date": "2023-03-15"}}],
     "quotes": [{{"text": "...", "page": N}}],
     "entities": {{"people": ["name1"], "dates": ["date1"], "amounts": ["$X"], "companies": ["co1"]}},
-    "numeric_facts": [{{"kind": "amount", "subject": "invoice", "subject_id": "Invoice #1042", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due", "assertion_idx": 2}}],
+    "numeric_facts": [{{"kind": "amount", "subject": "invoice", "subject_id": "Invoice #1042", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due", "page": 3, "assertion_idx": 2}}],
     "fact_relationships": [{{"from_idx": 0, "to_idx": 2, "relation": "supports"}}],
     "connections": ["doc reference 1"],
     "concerns": ["issue 1"]
@@ -1695,6 +1696,9 @@ class RLMEngine:
                                 if _raw_lower and _raw_lower in _ft.lower():
                                     _nf_assertion_id = _fa
                                     break
+                        # Build span_id from page number if the LLM provided it (SO-6 grounding)
+                        _nf_page = nf.get("page")
+                        _nf_span_id = f"page:{_nf_page}" if isinstance(_nf_page, int) else None
                         _quant_specs.append({
                             "quant_kind": kind,
                             "raw_text": f"{raw} — {nf.get('context', '')}",
@@ -1705,6 +1709,7 @@ class RLMEngine:
                             "subject_type": nf.get("subject"),
                             "subject_id": nf.get("subject_id"),
                             "assertion_id": _nf_assertion_id,
+                            "span_id": _nf_span_id,
                         })
                     if _quant_specs:
                         _adp.record_quants_batch(_quant_specs)
