@@ -2167,6 +2167,8 @@ class RLMEngine:
 
             reconciliation = self._matter_model.reconcile()
             conflicts = self._matter_model.quant.get_conflicts()
+            date_facts = self._matter_model.quant.get_by_kind("date")
+            rate_facts = self._matter_model.quant.get_by_kind("rate")
         except Exception:
             return "Quantitative data unavailable."
 
@@ -2184,6 +2186,21 @@ class RLMEngine:
                 currency = c.get("currency", "")
                 values = [f"${v:,.2f}" for v in (c.get("values") or [])[:4]]
                 lines.append(f"  ⚠ {subject} ({currency}): {', '.join(values)} — UNRESOLVED DISCREPANCY")
+
+        if date_facts:
+            lines.append("Key dates extracted (chronological):")
+            for df in date_facts[:8]:
+                _dv = df.get("date_value") or df.get("raw_text", "")[:60]
+                _ctx = df.get("raw_text", "")[:80]
+                lines.append(f"  • {_dv} — {_ctx}" if _dv != _ctx else f"  • {_dv}")
+
+        if rate_facts:
+            lines.append("Rates and percentages:")
+            for rf in rate_facts[:5]:
+                _rv = rf.get("rate_value")
+                _ctx = rf.get("raw_text", "")[:80]
+                _rate_str = f"{_rv:.4g}%" if _rv is not None else ""
+                lines.append(f"  • {_rate_str} — {_ctx}" if _rate_str else f"  • {_ctx}")
 
         return "\n".join(lines)
 

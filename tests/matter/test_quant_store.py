@@ -245,3 +245,41 @@ def test_detect_quant_conflicts_no_conflicts_returns_empty(model):
     model.quant.record(quant_kind="amount", raw_text="$50k", amount_value=50_000.0,
                        currency="USD", subject_type="invoice")
     assert model.detect_quant_conflicts() == []
+
+
+# ---------------------------------------------------------------------------
+# SO-6: date and rate quant kinds are readable (not write-only)
+# ---------------------------------------------------------------------------
+
+def test_get_by_kind_date_returns_dates(model):
+    """Date quant facts must be retrievable via get_by_kind('date') (SO-6)."""
+    model.quant.record(quant_kind="date", raw_text="January 15, 2024",
+                       date_value="2024-01-15")
+    model.quant.record(quant_kind="date", raw_text="March 3, 2024",
+                       date_value="2024-03-03")
+    model.quant.record(quant_kind="amount", raw_text="$10,000", amount_value=10000.0)
+
+    dates = model.quant.get_by_kind("date")
+    assert len(dates) == 2
+    assert all(d["quant_kind"] == "date" for d in dates)
+    # Must be sorted chronologically
+    assert dates[0]["date_value"] == "2024-01-15"
+    assert dates[1]["date_value"] == "2024-03-03"
+
+
+def test_get_by_kind_rate_returns_rates(model):
+    """Rate quant facts must be retrievable via get_by_kind('rate') (SO-6)."""
+    model.quant.record(quant_kind="rate", raw_text="8% annual interest rate",
+                       rate_value=8.0)
+    model.quant.record(quant_kind="rate", raw_text="1.5% monthly penalty",
+                       rate_value=1.5)
+
+    rates = model.quant.get_by_kind("rate")
+    assert len(rates) == 2
+    assert all(r["quant_kind"] == "rate" for r in rates)
+
+
+def test_get_by_kind_empty_when_no_facts(model):
+    """get_by_kind() returns [] when no facts of that kind exist."""
+    assert model.quant.get_by_kind("date") == []
+    assert model.quant.get_by_kind("rate") == []
