@@ -218,8 +218,9 @@ class SyncInvestigateResponse(BaseModel):
     documents_processed: int
     duration_seconds: float
     s3_prefix: Optional[str] = Field(None, description="S3 prefix if files were kept")
-    # SO-3: matter_id so the caller can steer, stop, or redirect this run's matter model.
+    # SO-3: matter_id + run_id so the caller can fetch reasoning events and steer.
     matter_id: Optional[str] = Field(None, description="Persistent matter model ID (SO-3/SO-7)")
+    run_id: Optional[str] = Field(None, description="Run session ID for fetching reasoning trail (SO-3)")
     # SO-7: pending clarification questions generated from high-materiality gaps.
     pending_clarifications: list[dict[str, Any]] = Field(
         default_factory=list,

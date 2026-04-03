@@ -969,6 +969,8 @@ async def upload_investigate_sync(
                     _sync_open_gaps = _sm.gaps.open_gaps(min_materiality=0.3)
             except Exception:
                 pass
+        _trail = getattr(result.state, "reasoning_trail", None) or []
+        _sync_run_id = _trail[0].get("run_id") if _trail else None
         response = SyncInvestigateResponse(
             query=query,
             analysis=result.output,
@@ -977,6 +979,7 @@ async def upload_investigate_sync(
             documents_processed=result.state.documents_read,
             duration_seconds=round(duration, 2),
             matter_id=sync_matter_id,
+            run_id=_sync_run_id,
             pending_clarifications=getattr(result.state, "pending_clarifications", []),
             open_gaps=_sync_open_gaps,
         )
@@ -1253,6 +1256,8 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
                     _urls_open_gaps = _um.gaps.open_gaps(min_materiality=0.3)
             except Exception:
                 pass
+        _urls_trail = getattr(result.state, "reasoning_trail", None) or []
+        _urls_run_id = _urls_trail[0].get("run_id") if _urls_trail else None
         return SyncInvestigateResponse(
             query=request.query,
             analysis=result.output,
@@ -1261,6 +1266,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             documents_processed=result.state.documents_read,
             duration_seconds=round(duration, 2),
             matter_id=urls_matter_id,
+            run_id=_urls_run_id,
             pending_clarifications=getattr(result.state, "pending_clarifications", []),
             open_gaps=_urls_open_gaps,
         )
