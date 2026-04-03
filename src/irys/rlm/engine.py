@@ -766,6 +766,8 @@ class RLMEngine:
                 self._matter_model.complete_run(run_id)
                 # Detect numeric conflicts → gaps (SO-6 + SO-7)
                 self._matter_model.detect_quant_conflicts()
+                # Detect issues with zero supporting assertions → proof gaps (SO-7)
+                self._detect_proof_gaps(run_id)
                 # Generate clarification questions from open gaps (SO-7)
                 self._matter_model.generate_clarifications_from_gaps(
                     run_id=run_id,
@@ -2391,6 +2393,36 @@ class RLMEngine:
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"JSON parse failed: {e}, response preview: {text[:200] if text else 'empty'}")
             return defaults
+
+    def _detect_proof_gaps(self, run_id: str) -> None:
+        """Record proof gaps for high-priority issues with no supporting assertions (SO-7).
+
+        An issue that exists in the model but has zero supporting-assertion links is
+        a 'proof gap' — the system recognised the claim but found no evidence for it.
+        These are surfaced as GapType.MISSING_DOCUMENT with the issue linked so that
+        generate_clarifications_from_gaps() can generate targeted questions.
+        """
+        if self._matter_model is None:
+            return
+        from ..matter.enums import GapType
+        open_issues = self._matter_model.issues.get_open_issues(min_materiality=0.4)
+        for issue in open_issues:
+            issue_id = issue["id"]
+            # Count supporting assertions
+            row = self._matter_model.db.execute(
+                """SELECT COUNT(*) FROM assertion_issue_link
+                   WHERE issue_id=? AND relation_type='supports'""",
+                (issue_id,),
+            ).fetchone()
+            if row and row[0] == 0:
+                self._matter_model.gaps.record(
+                    gap_type=GapType.MISSING_DOCUMENT,
+                    description=f"No supporting evidence found for issue: '{issue['title']}'",
+                    expected_artifact=f"Evidence supporting: {issue['title']}",
+                    materiality=issue.get("materiality", 0.5),
+                    affected_type="issue",
+                    affected_id=issue_id,
+                )
 
     def _save_checkpoint(self, state: InvestigationState, iteration: int):
         """Save investigation checkpoint."""
