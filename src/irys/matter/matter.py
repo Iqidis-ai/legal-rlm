@@ -1412,9 +1412,13 @@ class MatterModel:
         # SO-1 reuse_rate: fraction of final assertions that pre-existed at run start.
         # Averaged over the most recent 5 completed runs so a single anomalous run
         # doesn't dominate.  None if no completed runs exist yet.
+        # Exclude runs where assertions_at_start=0 (first-ever ingestion run on an empty matter).
+        # Those runs cannot reuse any prior state by definition — including them would
+        # artificially depress the average and hide genuine reuse patterns on subsequent runs.
         _reuse_rows = self.db.execute(
             """SELECT reuse_rate FROM run_session
                WHERE matter_id=? AND status='completed' AND reuse_rate IS NOT NULL
+                 AND assertions_at_start > 0
                ORDER BY completed_at DESC LIMIT 5""",
             (self.matter_id,),
         ).fetchall()

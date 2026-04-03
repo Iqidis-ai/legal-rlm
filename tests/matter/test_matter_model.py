@@ -837,3 +837,34 @@ def test_complete_run_db_fallback_when_snapshot_absent(model):
     assert record is not None
     # reuse_rate computed from DB fallback: 1 / 2 = 0.5
     assert record.reuse_rate == 0.5
+
+
+def test_so1_reuse_rate_hard_gate_stable_matter(model):
+    """SO-1 hard gate: targets_met['reuse_rate'] is True on repeated queries over stable matter.
+
+    This is the regression test the auditor requested to move SO-1 from PARTIAL to PASS.
+    Asserts the quantitative success criterion: reuse_rate >= 0.70 (from CLAUDE.md).
+    """
+    # Simulate prior ingestion run that built 20 assertions
+    run1 = model.start_run("initial ingestion run")
+    for i in range(20):
+        _add_assertion(model, f"Contract clause {i}: obligation text here", doc="contract.pdf")
+    model.complete_run(run1)
+
+    # Second run on stable matter (same docs, minimal new findings) — 2 new assertions
+    run2 = model.start_run("second query on stable matter")
+    _add_assertion(model, "New finding A from second pass", doc="contract.pdf")
+    _add_assertion(model, "New finding B from second pass", doc="contract.pdf")
+    model.complete_run(run2)
+
+    metrics = model.get_so_metrics()
+
+    # Hard gate: the reuse rate target must be met
+    assert metrics["targets_met"]["reuse_rate"] is True, (
+        f"SO-1 reuse rate target not met: reuse_rate={metrics['reuse_rate']}, "
+        f"target={metrics['targets']['reuse_rate']}"
+    )
+    # The actual rate should be at least 20/22 ≈ 0.909 (second run: 20 pre-existing, 2 new)
+    assert metrics["reuse_rate"] >= 0.7, (
+        f"Reuse rate {metrics['reuse_rate']} must be >= 0.70 for stable matter"
+    )
