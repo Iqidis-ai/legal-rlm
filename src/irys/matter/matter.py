@@ -342,7 +342,15 @@ class MatterModel:
 
             # Format question based on gap type
             gap_type = gap.get("gap_type", "")
-            if "document" in gap_type or "missing" in gap_type.lower():
+            if gap_type == "missing_issue_predicate":
+                # Proof gap: issue has zero supporting assertions — ask for evidence, not a doc
+                question = f"{description}. Can you provide documents, testimony, or other evidence relevant to this issue?"
+                why = "No supporting evidence was found for this legal issue in the current document set."
+                impact = (
+                    f"Providing supporting evidence ({materiality_label} materiality) will advance "
+                    f"proof coverage for this claim element and may alter case strength assessment."
+                )
+            elif "document" in gap_type:
                 question = f"We could not find the following in the repository: {description}. Do you have access to this document or information?"
                 why = "This document was referenced in the matter but is not present in the repository."
                 if link and link["affected_type"] == "issue":
