@@ -1211,7 +1211,8 @@ class RLMEngine:
                 state, StepType.THINKING, "Orientation cache hit — reusing prior plan"
             )
 
-        state.hypothesis = plan.get("hypothesis")
+        _hyp = plan.get("hypothesis")
+        state.hypothesis = _hyp if isinstance(_hyp, str) else None
         _plan_issues = plan.get("issues")
         state.findings["issues"] = _plan_issues if isinstance(_plan_issues, list) else []
         state.findings["initial_plan"] = plan
