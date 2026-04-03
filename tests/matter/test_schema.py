@@ -381,3 +381,17 @@ def test_migration_v32_adds_prop_nolayer_index():
     assert idx is not None, (
         "ix_assertion_prop_nolayer must be created by migration v32"
     )
+
+
+def test_migration_v33_adds_ail_covering_index():
+    """v33 adds ix_ail_issue_rel_assertion on assertion_issue_link(issue_id, relation_type, assertion_id)."""
+    from irys.matter.db import SQLiteMatterDB
+
+    db = SQLiteMatterDB.in_memory()
+    idx = db.execute(
+        "SELECT name FROM sqlite_master"
+        " WHERE type='index' AND name='ix_ail_issue_rel_assertion'"
+    ).fetchone()
+    assert idx is not None, (
+        "ix_ail_issue_rel_assertion must be created by migration v33"
+    )

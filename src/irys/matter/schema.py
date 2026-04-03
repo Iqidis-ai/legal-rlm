@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 32
+SCHEMA_VERSION = 33
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1345,6 +1345,27 @@ def _migration_v32(conn) -> None:
     )
 
 
+def _migration_v33(conn) -> None:
+    """Add covering index on assertion_issue_link for the SO-4 weighted coverage queries.
+
+    Both get_issue_coverage_report() and the _investigate_context() weakest-issue selector
+    join assertion_issue_link by (issue_id, relation_type) and then access assertion_id.
+
+    The existing ix_issue_assertions(issue_id, relation_type) does not include assertion_id,
+    so SQLite must return to the heap for each matched link to retrieve assertion_id before
+    doing the PK lookup on assertion. At scale (10k+ links per matter), this is one heap
+    fetch per link.
+
+    A covering (issue_id, relation_type, assertion_id) index eliminates the heap fetch
+    for the join step: the assertion_id value is read directly from the index leaf, and
+    the subsequent PK lookup on assertion(id) is the only remaining heap access.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_ail_issue_rel_assertion"
+        " ON assertion_issue_link(issue_id, relation_type, assertion_id)"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1381,6 +1402,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (30, _migration_v30),
     (31, _migration_v31),
     (32, _migration_v32),
+    (33, _migration_v33),
 ]
 
 
