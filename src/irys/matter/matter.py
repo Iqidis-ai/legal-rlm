@@ -250,8 +250,17 @@ class MatterModel:
         # Targeted proof_state recompute: find issues linked to this assertion
         # and any that were revised as dependents (result.propagated_to).
         # This ensures downstream issue/proof consumers see the corrected state.
+        # Note: when MAX_WORK truncation occurred, propagated_to may be incomplete;
+        # remaining issues will be refreshed on the next compute_all() or trust-override.
+        # The truncation SYSTEM_WARNING in the ledger makes this visible to users.
         try:
-            affected = [assertion_id] + (result.propagated_to or [])
+            # Deduplicate to avoid SQLite bind-variable overrun on large propagation sets.
+            # dict.fromkeys preserves order while deduplicating.
+            affected = list(dict.fromkeys([assertion_id] + (result.propagated_to or [])))
+            # SQLite bind limit ~999; cap to avoid runtime errors on pathological chains.
+            _SQL_PARAM_LIMIT = 900
+            if len(affected) > _SQL_PARAM_LIMIT:
+                affected = affected[:_SQL_PARAM_LIMIT]
             if affected:
                 issue_rows = self.db.execute(
                     "SELECT DISTINCT issue_id FROM assertion_issue_link"

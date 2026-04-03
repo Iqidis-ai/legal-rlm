@@ -1,0 +1,16 @@
+No `HIGH` findings.
+
+**Findings**
+- `MEDIUM` [matter.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L254): the new targeted proof-state refresh can silently skip all recomputes on large revisions. It builds one `IN (?, ..., ?)` clause from `[assertion_id] + result.propagated_to`; `propagated_to` is not deduped, so a large correction can exceed SQLite’s bind-variable limit. The broad `except` then logs and still returns success, leaving `proof_state` stale.
+- `MEDIUM` [matter.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L254) [belief_revision.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L200) [belief_revision.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L395): `result.propagated_to` is not fully reliable in truncation cases. `BeliefRevisionEngine.apply()` explicitly returns partial results when `MAX_WORK` is hit, so `correct_assertion()` can miss issues linked to unprocessed descendants and fail to refresh their `proof_state`.
+- `LOW` [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L3514) [test_attention_allocation.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/tests/matter/test_attention_allocation.py#L86): docs/tests still describe the old “overlay sufficiency into coverage” behavior. The current test only checks `frac >= 0.85`, which passes under both the old and new formulas for that fixture, so the new weighted-coverage behavior is not actually pinned down.
+- `LOW` [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1859) [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L2244) [test_engine_bridge.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/tests/matter/test_engine_bridge.py#L1193): the bare-string `"supports" -> "neutral"` change looks correct, but I could not find a test that exercises LLM bare-string `key_facts`. The nearest coverage only tests explicit adapter tuples.
+
+**Notes**
+- [matter.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L241): including `assertion_id` itself in `affected` is correct; the corrected assertion may be directly issue-linked.
+- [matter.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L18): `_log` is defined, so that `except` block is valid.
+- [matter.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L267): if `compute_and_store()` raises, the caller still gets the `RevisionResult`; the refresh is best-effort only.
+- [matter.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L596) [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L3534): `base[iid][0]` is the weighted `coverage_fraction` from `get_issue_coverage_report()`, not raw proof-state sufficiency.
+- [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L3547): under the current `proof_state.get_all()` contract, there is no realistic `KeyError` path here; a malformed non-dict row would just trip the outer `except` and fall back to base coverage.
+
+I did not rerun the test suite; this was a static review of `e79181d`.
