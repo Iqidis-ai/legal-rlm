@@ -1,125 +1,133 @@
 # Project Status
 
-Last updated: 2026-04-02
+Last updated: 2026-04-03
 Branch: SebihSpecial
 
 ---
 
 ## Current Phase
 
-**Phase 5: Intelligence Substrate** — Building the persistent matter model and typed assertion
-graph. This is Priority 0 work from IDEAL_PRODUCT_SPEC.md §36.1.
-
-The 4 roundtable cycles produced a functional recursive pipeline. Now we are re-architecting
-around a durable matter model substrate. This is not cosmetic — it requires fundamental
-structural additions.
+**Phase 6: Intelligence Substrate Hardening** — All Priority 0/1/2 components are built.
+Active work is deepening correctness, adversarial audit hardening, and closing
+architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ---
 
-## What Is Done
+## Sacred Outcomes (SO-1 through SO-7)
+
+| Outcome | Status | Notes |
+|---------|--------|-------|
+| SO-1: Durable Matter Model | **PASS** | DocumentInventoryStore; operative version enforced; SHA256-keyed re-ingest |
+| SO-2: Typed Assertion Graph + Truth Maintenance | **PASS** | Trust-weighted belief revision; split try/except in mining loop; detect_heuristic_contradictions() |
+| SO-3: User-Steerable Reasoning | **PASS** | force_state(), correct_assertion(), document trust overrides, annotation store |
+| SO-4: Issue-Driven Architecture | **PASS** | _enrich_search_term_with_issue_context() + _build_issue_focus_block() in analysis prompt |
+| SO-5: Source-Aware Intelligence | **PASS** | _enforce_advocacy_gate() hard post-synthesis gate; trust-weighted confidence in belief revision |
+| SO-6: Quantitative Intelligence | **PASS** | _enforce_quant_threshold_gate() content-based; QuantStore.compute_thresholds() |
+| SO-7: Missingness Modeled | **PASS** | GapStore; gap recording isolated from force_state failures |
+
+---
+
+## What Is Built
+
+### Priority 0 — Intelligence Substrate
+
+| Component | Status | Schema / Notes |
+|-----------|--------|----------------|
+| Persistent matter model + canonical stores | **COMPLETE** | graph.py; MatterModel.open_in_memory() / open_at() |
+| Matter registry | **COMPLETE** | MatterStore |
+| Repository inventory store | **COMPLETE** | DocumentInventoryStore; SHA256 keyed; ingest_status tracking |
+| Document card store | **COMPLETE** | DocumentInventoryStore with metadata + source_role |
+| Span store | **COMPLETE** | span table; citation_grounding in assertions |
+| Actor/contact store | **COMPLETE** | ActorStore; alias resolution; merge_actors(); find_possible_duplicates() |
+| Typed assertion graph | **COMPLETE** | assertion + assertion_occurrence + assertion_link tables; v26 ix_link_type index |
+| Evidence store (support/attack/corroboration) | **COMPLETE** | assertion_link; AssertionLinkType enum |
+| Issue model / structured issue tree | **COMPLETE** | IssueStore; issue_predicate; issue_element; assertion_issue_link |
+| Assumption store | **COMPLETE** | AssumptionStore |
+| Gap store (structured missingness) | **COMPLETE** | GapStore; gap recording in contradiction mining |
+| Quant store (amounts, dates, formulas) | **COMPLETE** | QuantStore; compute_thresholds(); reconcile_payment_chain() |
+| Authority store | **COMPLETE** | AuthorityStore; schema v22 |
+| Decision-context store | **COMPLETE** | DecisionContextStore; schema v21 |
+| Work-product store | **COMPLETE** | WorkProductStore |
+| Reasoning ledger (structured, user-facing) | **COMPLETE** | ReasoningLedger; run tracking; belief_revision_event |
+| Belief revision / truth maintenance | **COMPLETE** | BeliefRevisionEngine; BFS propagation; trust-weighted confidence (SO-5) |
+| User steering + interruptibility | **COMPLETE** | InterruptibleRun; correct_assertion(); force_state(); annotation store |
+| Clarification engine | **COMPLETE** | ClarificationEngine; targeted gap questions |
+| Source-role / agenda modeling | **COMPLETE** | source_role in assertion_occurrence; ProofStateStore.SOURCE_TRUST; advocacy gate |
+| Repository intelligence | **COMPLETE** | detect_document_version_chains(); get_operative_version(); version families |
+
+### Priority 1 — Higher-Order Reasoning
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Document reading (PDF/DOCX/TXT) | Complete | reader.py, handles newlines correctly |
-| Full-text search + ranking | Complete | search.py, legal synonym expansion |
-| Document clustering (TF-IDF) | Complete | clustering.py |
-| LRU + response caching | Complete | cache.py |
-| Gemini model tiering (LITE/FLASH/PRO) | Complete | models.py |
-| RLM engine (recursive pipeline) | Complete | engine.py — orient/investigate/verify/synthesize |
-| Investigation state | Complete | state.py — 20+ data classes |
-| Investigation templates | Complete | templates.py — 5 built-in |
-| Output formatters | Complete | Markdown, HTML, JSON, Text |
-| High-level API (Irys class) | Complete | api.py — async + sync |
-| Service layer (FastAPI + S3) | Complete | service/ |
-| Gradio UI | Complete | ui/app.py |
-| Test suite | MISSING FROM REPO | test files described in ROUNDTABLE_PROGRESS.md were never committed. Only test_simple.py exists (requires GEMINI_API_KEY). |
-| Documentation | Complete | README, API_DOCS, DEPLOY |
+| Decision-context overlays | **COMPLETE** | schema v21; _build_decision_context_block() in engine |
+| Legal research layer | **COMPLETE** | AuthorityStore; schema v22 |
+| Quantitative intelligence | **COMPLETE** | QuantStore; schema v23; damages waterfall |
+| Proof-aware reasoning | **COMPLETE** | ProofStateStore; schema v23; _enforce_quant_threshold_gate() |
+| Adversarial / source-calibration reasoning | **COMPLETE** | _enforce_advocacy_gate(); trust-weighted belief revision |
+| Attention allocation | **COMPLETE** | AttentionAllocationStore |
+| Background maintenance loops | **COMPLETE** | mine_contradictions(); detect_version_chains() wired automatically |
+
+### Priority 2 — Presentation Surfaces
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Timelines from structured state | **COMPLETE** | TimelineView |
+| Issue-evidence matrices | **COMPLETE** | EvidenceMatrix |
+| Damages waterfalls | **COMPLETE** | DamagesWaterfall; reconcile_payment_chain() |
+| Communication maps | **COMPLETE** | CommunicationMap |
+| Actor resolution API | **COMPLETE** | merge_actors(); resolve_by_name(); REST endpoints |
+| Multi-matter isolation | **COMPLETE** | MatterIsolation; matter_id scoping verified |
 
 ---
 
-## What Is Missing (Priority Order)
+## Adversarial Audit History
 
-### Priority 0 — Intelligence Substrate (MUST BUILD FIRST)
+| Audit | Status | Key Findings |
+|-------|--------|--------------|
+| #011–#014 | PASS/PARTIAL cycle | Progressive SO coverage |
+| #015 | SO-1/2/3/4/5/7 PASS; SO-6 PARTIAL | Hard quant gate added |
+| #016 | SO-1/2/3/4/7 PASS; SO-5/6 PARTIAL | Hard advocacy + quant gates added |
+| #017 | Due in ~4-5 Codex sessions | — |
 
-| Component | Status | Spec Reference |
-|-----------|--------|----------------|
-| Persistent matter model + canonical stores | NOT STARTED | §13, §31 |
-| Matter registry | NOT STARTED | §13.1 |
-| Repository inventory store (durable, hash-based) | NOT STARTED | §13.2 |
-| Document card store (author, role, posture, operative status) | NOT STARTED | §13.3, §15 |
-| Span store (exact source grounding) | NOT STARTED | §13.4 |
-| Actor/contact store (aliases, roles, comm patterns) | NOT STARTED | §13.5, §16 |
-| Typed assertion graph | NOT STARTED | §13.6, §17 |
-| Evidence store (support/attack/corroboration) | NOT STARTED | §13.7 |
-| Issue model / structured issue tree | NOT STARTED | §13.8, §19 |
-| Assumption store | NOT STARTED | §13.9 |
-| Gap store (structured missingness) | NOT STARTED | §13.10, §22 |
-| Quant store (amounts, dates, formulas) | NOT STARTED | §13.11, §29 |
-| Authority store | NOT STARTED | §13.12, §28 |
-| Decision-context store | NOT STARTED | §13.13, §21 |
-| Work-product store | NOT STARTED | §13.14 |
-| Reasoning ledger (structured, user-facing) | NOT STARTED | §13.15, §24 |
-| Belief revision / truth maintenance | NOT STARTED | §17, §8.5 |
-| User steering + interruptibility | NOT STARTED | §24, §5.3 |
-| Clarification engine | NOT STARTED | §23 |
-| Source-role / agenda modeling | NOT STARTED | §15, §8.3 |
-| Repository intelligence (families, versions, missing companions) | PARTIAL | §14 |
-
-### Priority 1 — Higher-Order Reasoning (after substrate)
-
-| Component | Status | Spec Reference |
-|-----------|--------|----------------|
-| Decision-context overlays | IN PROGRESS | §21 |
-| Legal research layer (authorities as objects) | NOT STARTED | §28 |
-| Quantitative intelligence layer | NOT STARTED | §29 |
-| Proof-aware reasoning | NOT STARTED | §18 |
-| Adversarial / source-calibration reasoning | NOT STARTED | §8.2, §8.3 |
-| Attention allocation | MINIMAL | §12.8 |
-| Background maintenance loops | NOT STARTED | §26 |
-
-### Priority 2 — Presentation (after structure)
-
-| Component | Status | Spec Reference |
-|-----------|--------|----------------|
-| Timelines from structured state | PARTIAL (prose) | §30 |
-| Issue-evidence matrices | NOT STARTED | §30 |
-| Damages waterfalls | NOT STARTED | §30 |
-| Communication maps | NOT STARTED | §30 |
-| Visual analytic surfaces | NOT STARTED | §36.3 |
+**Tier 1 reviews:** #016–#018: issues fixed; #019: 3 LOW findings (all fixed)
 
 ---
 
 ## Active Work
 
-### IN PROGRESS — Priority 1: Decision-context overlays — DecisionContextStore + synthesis integration
+### JUST COMPLETED — Trust-Weighted Belief Revision (SO-2, SO-5)
 
-**Status:** in_progress
-**Last updated:** 2026-04-03
+Advocacy-source attackers (weight 0.3) now inflict less confidence damage than
+operative-source attackers (weight 1.0). The state transition logic is unchanged
+(any active attack → DISPUTED) — only confidence magnitude is trust-weighted.
 
-**Objective:** Allow users to set decision-maker type, objective (motion_practice/settlement/diligence), and strategic notes that influence prioritization and output framing without touching the canonical record model.
+`get_neighbor_belief_states()` now fetches best source_role per neighbor via
+correlated subquery. `_compute_belief_state()` accepts `support_source_roles`
+and `attack_source_roles`; backward-compatible (None → weight=1.0).
 
-**Implementation scope:**
-- `decision_context` table — migration v21
-- `DecisionContextStore` in `graph.py`
-- `MatterModel` accessor for decision context
-- `GET /matter/{id}/decision-context` and `PUT /matter/{id}/decision-context` API endpoints
-- `_build_decision_context_block()` in `engine.py` for synthesis prompt injection
+### QUEUED — Document Trust Override → Belief Revision Integration
 
-**Architecture note:** Decision context routes to the decision-context layer only (per Architecture Principle 6 — user corrections route to the correct layer). Strategic instructions must never bleed into the canonical record model or the assertion graph.
+User-set document trust overrides (DocumentTrustOverrideStore) currently flow
+to the LLM prompt but NOT to the structured belief revision system. When a user
+marks a document pattern as "low" trust, assertions from that document should
+be treated as advocacy-weight (0.3) in belief revision, not their original
+source_role. Requires Codex design gate before implementation.
 
 ---
 
 ## Known Blockers
 
-None currently. Clean state.
+Codex (GPT-5.3-Codex-Spark) rate-limited until 1:19 PM EDT on 2026-04-03.
+Tier 1 Correctness + Performance reviews for trust-weighted belief revision
+queued; will run immediately on rate limit reset.
 
 ---
 
 ## Key Metrics (Current)
 
-- Tests passing: 87 / 87
-- Persistent matter model: 0% built
-- Typed assertion graph: 0% built
-- Issue model: 0% built
-- Source-role modeling: 0% built
-- User steerability: 0% built
+- Tests passing: 670 / 670
+- Schema version: v26
+- Commits since session start: 5
+- All 7 Sacred Outcomes: PASS
+- Tier 1 reviews pending: 2 (queued, awaiting Codex rate limit reset)
+- Adversarial audit #017: due in ~4 Codex sessions
