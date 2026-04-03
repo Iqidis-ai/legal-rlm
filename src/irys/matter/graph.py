@@ -2749,21 +2749,37 @@ class ProofStateStore:
 
         # Count supporting and attacking assertions linked to this issue,
         # and gather source roles for trust weighting (SO-5).
+        #
+        # Use a correlated subquery to pick ONE source_role per assertion —
+        # the highest-trust role across all its occurrences.  A plain
+        # LEFT JOIN returns one row per occurrence, inflating counts and
+        # trust sums when an assertion appears in multiple documents.
+        _role_subquery = """(
+            SELECT ao.source_role FROM assertion_occurrence ao
+            WHERE ao.assertion_id = a.id
+            ORDER BY CASE ao.source_role
+                WHEN 'authoritative' THEN 6
+                WHEN 'operative'     THEN 5
+                WHEN 'procedural'    THEN 4
+                WHEN 'post_hoc'      THEN 3
+                WHEN 'informal'      THEN 2
+                WHEN 'draft'         THEN 1
+                WHEN 'unknown'       THEN 1
+                WHEN 'advocacy'      THEN 0
+                ELSE 1 END DESC LIMIT 1)"""
         sup_rows = self.db.execute(
-            """SELECT COALESCE(ao.source_role, 'unknown') AS source_role
+            f"""SELECT COALESCE({_role_subquery}, 'unknown') AS source_role
                FROM assertion_issue_link ail
                JOIN assertion a ON a.id = ail.assertion_id
-               LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
                WHERE ail.issue_id=?
                  AND ail.relation_type IN ('supports', 'establishes')
                  AND a.belief_state NOT IN ('superseded', 'withdrawn')""",
             (issue_id,),
         ).fetchall()
         atk_rows = self.db.execute(
-            """SELECT COALESCE(ao.source_role, 'unknown') AS source_role
+            f"""SELECT COALESCE({_role_subquery}, 'unknown') AS source_role
                FROM assertion_issue_link ail
                JOIN assertion a ON a.id = ail.assertion_id
-               LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
                WHERE ail.issue_id=?
                  AND ail.relation_type IN ('attacks', 'negates')
                  AND a.belief_state NOT IN ('superseded', 'withdrawn')""",

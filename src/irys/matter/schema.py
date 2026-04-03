@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1160,6 +1160,22 @@ def _migration_v24(conn) -> None:
     )
 
 
+def _migration_v25(conn) -> None:
+    """Add UNIQUE constraint to document_relation (idempotency fix).
+
+    link_documents() used INSERT OR IGNORE but document_relation had no
+    UNIQUE constraint, so duplicate (source, target, relation_type) triples
+    were silently inserted on repeated runs.  This adds the constraint.
+
+    SQLite does not support ADD CONSTRAINT, so we create a UNIQUE INDEX
+    which has the same enforcement effect.
+    """
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_doc_relation_triple"
+        " ON document_relation(source_doc_id, target_doc_id, relation_type)"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1188,6 +1204,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (22, _migration_v22),
     (23, _migration_v23),
     (24, _migration_v24),
+    (25, _migration_v25),
 ]
 
 
