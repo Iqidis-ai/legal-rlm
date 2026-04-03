@@ -331,7 +331,7 @@ class AssertionStore:
                              ELSE 1 END DESC LIMIT 1)"""
         _doc_subq = """(SELECT ao.document_id FROM assertion_occurrence ao
                         WHERE ao.assertion_id = a.id
-                        ORDER BY ao.created_at ASC LIMIT 1)"""
+                        ORDER BY ao.created_at ASC, ao.id ASC LIMIT 1)"""
         rows = self.db.execute(
             f"""SELECT al.link_type, a.belief_state,
                        COALESCE({_role_subq}, 'unknown') AS source_role,
@@ -3054,11 +3054,19 @@ class ProofStateStore:
     # Compute + store
     # ------------------------------------------------------------------
 
-    def compute_and_store(self, issue_id: str) -> dict:
+    def compute_and_store(
+        self,
+        issue_id: str,
+        _preloaded_overrides: "list[tuple[str, str]] | None" = None,
+    ) -> dict:
         """Recompute proof state for an issue and persist it.
 
         Derives counts from live assertion_issue_link and issue_predicate rows,
         so it always reflects the current model state.
+
+        _preloaded_overrides — optional pre-fetched list of (document_pattern, trust_level)
+            for non-normal overrides.  When provided, the per-call DB query is skipped.
+            Callers like compute_all() batch this once to avoid N fetches for N issues.
 
         Returns the newly computed proof state dict.
         """
@@ -3071,14 +3079,18 @@ class ProofStateStore:
         # the highest-trust role across all its occurrences.  A plain
         # LEFT JOIN returns one row per occurrence, inflating counts and
         # trust sums when an assertion appears in multiple documents.
-        # Fetch non-normal trust overrides once so they can be applied to assertion rows
-        _override_rows = self.db.execute(
-            """SELECT document_pattern, trust_level FROM document_trust_override
-               WHERE matter_id=? AND trust_level != 'normal'
-               ORDER BY LENGTH(document_pattern) DESC""",
-            (self.matter_id,),
-        ).fetchall()
-        _overrides = [(r["document_pattern"], r["trust_level"]) for r in _override_rows]
+        # Trust overrides: use caller-supplied list when available (batch path from
+        # compute_all) to avoid one DB query per issue.  Otherwise fetch here.
+        if _preloaded_overrides is not None:
+            _overrides = _preloaded_overrides
+        else:
+            _override_rows = self.db.execute(
+                """SELECT document_pattern, trust_level FROM document_trust_override
+                   WHERE matter_id=? AND trust_level != 'normal'
+                   ORDER BY LENGTH(document_pattern) DESC""",
+                (self.matter_id,),
+            ).fetchall()
+            _overrides = [(r["document_pattern"], r["trust_level"]) for r in _override_rows]
 
         def _effective_trust(source_role: str, primary_doc_id: "str | None") -> float:
             """Apply document trust override if set; otherwise use stored source_role weight."""
@@ -3109,7 +3121,7 @@ class ProofStateStore:
         _doc_subquery = """(
             SELECT ao.document_id FROM assertion_occurrence ao
             WHERE ao.assertion_id = a.id
-            ORDER BY ao.created_at ASC LIMIT 1)"""
+            ORDER BY ao.created_at ASC, ao.id ASC LIMIT 1)"""
         sup_rows = self.db.execute(
             f"""SELECT COALESCE({_role_subquery}, 'unknown') AS source_role,
                        {_doc_subquery} AS primary_doc_id
@@ -3338,13 +3350,25 @@ class ProofStateStore:
     def compute_all(self) -> list[dict]:
         """Recompute proof state for every open issue in the matter.
 
+        Fetches trust overrides once and passes them into each per-issue call
+        to avoid N separate override queries for N issues.
+
         Returns the list of updated proof state dicts.
         """
+        # Batch fetch overrides once for all issues in this invocation.
+        override_rows = self.db.execute(
+            """SELECT document_pattern, trust_level FROM document_trust_override
+               WHERE matter_id=? AND trust_level != 'normal'
+               ORDER BY LENGTH(document_pattern) DESC""",
+            (self.matter_id,),
+        ).fetchall()
+        preloaded = [(r["document_pattern"], r["trust_level"]) for r in override_rows]
+
         rows = self.db.execute(
             "SELECT id FROM issue WHERE matter_id=? AND status='open'",
             (self.matter_id,),
         ).fetchall()
-        return [self.compute_and_store(r["id"]) for r in rows]
+        return [self.compute_and_store(r["id"], _preloaded_overrides=preloaded) for r in rows]
 
     # ------------------------------------------------------------------
     # Internal

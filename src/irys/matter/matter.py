@@ -8,10 +8,14 @@ Usage:
     model.complete_run(run_id)
 """
 
+import logging
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+_log = logging.getLogger(__name__)
 
 from .db import SQLiteMatterDB
 from .graph import (
@@ -228,6 +232,8 @@ class MatterModel:
         # Trigger belief revision on all assertions from the affected document.
         # SQL JOIN + LIKE pre-filter narrows to plausible matches before Python does
         # exact basename-normalized comparison. Avoids full-table scan at large scale.
+        # Both '/' and '\' separators are tried so Windows and POSIX paths are covered.
+        affected_ids: list[str] = []
         try:
             pat_norm = document_pattern.replace("\\\\", "/").replace("\\", "/")
             basename = Path(pat_norm).name
@@ -240,9 +246,8 @@ class MatterModel:
                      AND (ao.document_id = ?
                           OR ao.document_id LIKE ?
                           OR ao.document_id LIKE ?)""",
-                (self.matter_id, document_pattern, '%/' + basename, '%\\\\' + basename),
+                (self.matter_id, document_pattern, '%/' + basename, '%\\' + basename),
             ).fetchall()
-            affected_ids = []
             for row in occurrence_rows:
                 doc = (row["document_id"] or "").replace("\\\\", "/").replace("\\", "/")
                 doc_basename = Path(doc).name
@@ -254,15 +259,27 @@ class MatterModel:
                     cause=RevisionCause.TRUST_OVERRIDE,
                     note=f"Document trust override set to '{trust_level}' for {document_pattern!r}",
                 )
-        except Exception:
-            pass  # revision failure does not abort the override
+        except (sqlite3.Error, ValueError, RuntimeError) as exc:
+            _log.warning("Trust override belief revision failed for %r: %s", document_pattern, exc)
 
-        # Recompute proof states so advocacy_only and trust_weighted_support
-        # reflect the new effective trust for the affected document (SO-5 → SO-4 integration).
+        # Targeted proof state recompute: only recompute issues linked to affected assertions.
+        # Falls back to compute_all() when affected_ids is empty (pattern matched nothing).
         try:
-            self.proof_state.compute_all()
-        except Exception:
-            pass  # proof state refresh failure does not abort the override
+            if affected_ids:
+                issue_rows = self.db.execute(
+                    "SELECT DISTINCT issue_id FROM assertion_issue_link WHERE assertion_id IN ({})".format(
+                        ",".join("?" * len(affected_ids))
+                    ),
+                    affected_ids,
+                ).fetchall()
+                for row in issue_rows:
+                    self.proof_state.compute_and_store(row["issue_id"])
+            else:
+                # No assertions matched — still run full recompute in case the override
+                # pattern will match future assertions (eager proof state refresh).
+                self.proof_state.compute_all()
+        except (sqlite3.Error, ValueError, RuntimeError) as exc:
+            _log.warning("Trust override proof state refresh failed for %r: %s", document_pattern, exc)
 
         return override_id
 

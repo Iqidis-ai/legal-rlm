@@ -73,7 +73,19 @@ def _compute_belief_state(
     if has_superseding:
         return BeliefState.SUPERSEDED, 0.1
 
-    # Compute trust weights — 1.0 when no role info (fully backward compatible)
+    # Compute trust weights — 1.0 when no role info (fully backward compatible).
+    # Validate list alignment: mismatched lengths would cause zip() to silently
+    # truncate the longer list, producing wrong trust weights.
+    if support_source_roles is not None and len(support_source_roles) != len(support_states):
+        raise ValueError(
+            f"support_source_roles length {len(support_source_roles)} != "
+            f"support_states length {len(support_states)}"
+        )
+    if attack_source_roles is not None and len(attack_source_roles) != len(attack_states):
+        raise ValueError(
+            f"attack_source_roles length {len(attack_source_roles)} != "
+            f"attack_states length {len(attack_states)}"
+        )
     sup_weights = (
         [_SOURCE_TRUST.get(r, 0.5) for r in support_source_roles]
         if support_source_roles is not None
@@ -162,6 +174,7 @@ class BeliefRevisionEngine:
         """
         results: list[RevisionResult] = []
         visited: set[str] = set()
+        enqueued: set[str] = set(seed_assertion_ids)  # tracks what's in queue/next_queue
         seeds = set(seed_assertion_ids)
         queue = list(seed_assertion_ids)
         hop = 0
@@ -183,10 +196,11 @@ class BeliefRevisionEngine:
                 # still be visited so they can be marked SUPERSEDED.
                 # Non-seed propagation only happens on state change to avoid runaway BFS.
                 if result is not None or assertion_id in seeds:
-                    dependents = self.assertion_store.get_dependents(assertion_id)
-                    next_queue.extend(
-                        d for d in dependents if d not in visited
-                    )
+                    for d in self.assertion_store.get_dependents(assertion_id):
+                        # Deduplicate at enqueue time to avoid O(E) queue size on dense graphs.
+                        if d not in visited and d not in enqueued:
+                            enqueued.add(d)
+                            next_queue.append(d)
 
             # Seeds only get special always-propagate treatment on hop 0.
             # After hop 0, only changed assertions propagate further.
