@@ -182,26 +182,14 @@ class BeliefRevisionEngine:
         old_state = BeliefState(record.belief_state)
         old_confidence = record.confidence
 
-        # Get support, attack, and supersedes states
-        support_ids = self.assertion_store.get_supports(assertion_id)
-        attack_ids = self.assertion_store.get_attackers(assertion_id)
-        superseding_ids = self.assertion_store.get_superseding(assertion_id)
-
-        support_states = []
-        for sid in support_ids:
-            r = self.assertion_store.get(sid)
-            if r:
-                support_states.append(BeliefState(r.belief_state))
-
-        attack_states = []
-        for aid in attack_ids:
-            r = self.assertion_store.get(aid)
-            if r:
-                attack_states.append(BeliefState(r.belief_state))
+        # Batch-load all neighbor belief states in one query (avoids N+1)
+        neighbors = self.assertion_store.get_neighbor_belief_states(assertion_id)
 
         new_state, new_confidence = _compute_belief_state(
-            old_state, support_states, attack_states,
-            has_superseding=bool(superseding_ids),
+            old_state,
+            neighbors["support_states"],
+            neighbors["attack_states"],
+            has_superseding=neighbors["has_superseding"],
             current_confidence=old_confidence,
         )
 

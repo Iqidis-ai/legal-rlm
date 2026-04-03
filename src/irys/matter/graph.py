@@ -284,6 +284,38 @@ class AssertionStore:
         ).fetchall()
         return [r[0] for r in rows]
 
+    def get_neighbor_belief_states(self, assertion_id: str) -> dict:
+        """Batch-load support/attack/supersedes neighbor belief states in one query.
+
+        Returns dict with keys 'support_states', 'attack_states', 'has_superseding'.
+        Avoids N+1 pattern in belief revision (3 queries total, not 3 + N + M).
+        """
+        rows = self.db.execute(
+            """SELECT al.link_type, a.belief_state
+               FROM assertion_link al
+               JOIN assertion a ON a.id = al.src_assertion_id
+               WHERE al.dst_assertion_id=?
+                 AND al.link_type IN ('supports','corroborates','attacks','contradicts','supersedes')""",
+            (assertion_id,),
+        ).fetchall()
+        support_states = []
+        attack_states = []
+        has_superseding = False
+        for row in rows:
+            lt = row["link_type"]
+            bs = BeliefState(row["belief_state"])
+            if lt in ("supports", "corroborates"):
+                support_states.append(bs)
+            elif lt in ("attacks", "contradicts"):
+                attack_states.append(bs)
+            elif lt == "supersedes":
+                has_superseding = True
+        return {
+            "support_states": support_states,
+            "attack_states": attack_states,
+            "has_superseding": has_superseding,
+        }
+
     def count(self) -> int:
         row = self.db.execute(
             "SELECT COUNT(*) FROM assertion WHERE matter_id=?", (self.matter_id,)
