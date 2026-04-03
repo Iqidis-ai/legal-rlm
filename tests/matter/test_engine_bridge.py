@@ -2571,3 +2571,103 @@ def test_flush_revisions_clears_pending_list_so_second_call_is_noop():
     assert revised_count_after_second == revised_count_after_first, (
         "Second flush_revisions() must not produce additional ASSERTION_REVISED events"
     )
+
+
+# ---------------------------------------------------------------------------
+# SO-5: content-based source role inference via record_facts_batch
+# ---------------------------------------------------------------------------
+
+def test_record_facts_batch_default_source_role_overrides_filename_heuristic(model):
+    """record_facts_batch(default_source_role=ADVOCACY) must store assertions with
+    ADVOCACY source role even when the document filename looks operative.
+
+    This verifies SO-5 fix: content-based role (from doc_source_role LLM field)
+    takes precedence over filename heuristic in infer_source_role().
+    """
+    from irys.matter.enums import SourceRole, SpeechAct
+
+    run_id = model.start_run("SO-5 source role override test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Document filename looks like an operative document, but content is advocacy
+    advocate_doc_id = "signed_agreement.pdf"  # filename → operative by heuristic
+
+    adapter.record_facts_batch(
+        [("Plaintiff demands payment of $500,000 immediately.", advocate_doc_id)],
+        default_source_role=SourceRole.ADVOCACY,  # content-based override
+    )
+
+    assertions = model.assertions.list_recent(limit=100)
+    assert len(assertions) >= 1, "Fact must be recorded"
+
+    # The assertion must carry ADVOCACY source role (not OPERATIVE from filename)
+    occurrences = model.db.execute(
+        "SELECT source_role FROM assertion_occurrence WHERE assertion_id=?",
+        (assertions[0]["id"],),
+    ).fetchall()
+    assert len(occurrences) >= 1
+    assert occurrences[0]["source_role"] == SourceRole.ADVOCACY.value, (
+        f"Content-based source role (ADVOCACY) must override filename heuristic. "
+        f"Got: {occurrences[0]['source_role']!r}"
+    )
+
+
+def test_record_facts_batch_unknown_default_falls_back_to_filename_heuristic(model):
+    """record_facts_batch(default_source_role=UNKNOWN) must infer source role from filename.
+
+    When the LLM does not provide doc_source_role (returns 'unknown'), the existing
+    filename heuristic is the fallback — no regression from prior behavior.
+    """
+    from irys.matter.enums import SourceRole
+
+    run_id = model.start_run("SO-5 filename fallback test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Filename clearly indicates OPERATIVE; default_source_role=UNKNOWN → filename fallback
+    adapter.record_facts_batch(
+        [("The parties executed the master services agreement.", "contract_msa.pdf")],
+        default_source_role=SourceRole.UNKNOWN,  # explicit: use filename fallback
+    )
+
+    assertions = model.assertions.list_recent(limit=100)
+    assert len(assertions) >= 1
+
+    occurrences = model.db.execute(
+        "SELECT source_role FROM assertion_occurrence WHERE assertion_id=?",
+        (assertions[0]["id"],),
+    ).fetchall()
+    assert len(occurrences) >= 1
+    # Filename "contract_msa.pdf" → OPERATIVE via heuristic
+    assert occurrences[0]["source_role"] == SourceRole.OPERATIVE.value, (
+        f"Filename heuristic fallback must infer OPERATIVE from 'contract_msa.pdf'. "
+        f"Got: {occurrences[0]['source_role']!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# SO-3: record_assertion_link exception paths use logger, not silent pass
+# ---------------------------------------------------------------------------
+
+def test_record_assertion_link_invalid_link_type_does_not_raise(model):
+    """record_assertion_link() with an invalid link_type must not raise.
+
+    The invalid type is dropped, a warning is logged, and fact recording continues
+    (SO-3: failures must not silently hide — they go to Python logger as fallback).
+    """
+    import logging
+
+    run_id = model.start_run("SO-3 link type test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    a_id = adapter.record_fact("Plaintiff filed complaint.", "complaint.pdf")
+    b_id = adapter.record_fact("Defendant answered.", "answer.pdf")
+
+    # This must not raise, even with a nonsense link_type
+    adapter.record_assertion_link(a_id, b_id, "nonexistent_relation_type_xyz")
+
+    # The edge must not have been created (invalid type dropped)
+    links = model.db.execute(
+        "SELECT id FROM assertion_link WHERE src_assertion_id=? AND dst_assertion_id=?",
+        (a_id, b_id),
+    ).fetchall()
+    assert len(links) == 0, "Invalid link type must be dropped (edge not created)"

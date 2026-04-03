@@ -10,9 +10,12 @@ When enabled:
 - conflicts trigger BeliefRevision after each write batch
 """
 
+import logging
 import re
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from .matter import MatterModel
 from .enums import (
@@ -287,6 +290,7 @@ class MatterRuntimeAdapter:
         self,
         facts: list,
         issue_id: Optional[str] = None,
+        default_source_role: SourceRole = SourceRole.UNKNOWN,
     ) -> list[str]:
         """Record multiple facts in a single outer transaction to reduce per-fact commit overhead.
 
@@ -309,6 +313,10 @@ class MatterRuntimeAdapter:
             "object_json": str|None,
             "temporal_scope_end": str|None,
           }
+
+        default_source_role: when provided (not UNKNOWN), used as the source_role for all
+        facts in the batch instead of filename-based heuristic inference (SO-5 content fix).
+        Individual facts may still be overridden via record_fact(source_role=...) if needed.
 
         Processed inside one outer ``with self.model.db.transaction()`` so that inner
         per-fact transactions become savepoints instead of full BEGIN/COMMITs,
@@ -345,6 +353,7 @@ class MatterRuntimeAdapter:
                 aid = self.record_fact(
                     proposition_text,
                     document_id=document_id,
+                    source_role=default_source_role,
                     issue_id=issue_id,
                     issue_link_type=issue_link_type,
                     temporal_scope_start=temporal_scope_start,
@@ -371,26 +380,31 @@ class MatterRuntimeAdapter:
         try:
             lt = AssertionLinkType(link_type)
         except ValueError:
+            _warn_msg = (
+                f"record_assertion_link: unknown link_type '{link_type}' — edge dropped "
+                f"({src_assertion_id[:8]}→{dst_assertion_id[:8]})"
+            )
             try:
-                self.log_warning(
-                    f"record_assertion_link: unknown link_type '{link_type}' — edge dropped "
-                    f"({src_assertion_id[:8]}→{dst_assertion_id[:8]})"
-                )
-            except Exception:
-                pass  # warning must not block fact recording
+                self.log_warning(_warn_msg)
+            except Exception as _warn_exc:
+                # Ledger write failed — fall back to Python logger so the failure
+                # is always observable (SO-3: no silent swallowing of diagnostic events).
+                logger.warning("%s (ledger write failed: %s)", _warn_msg, _warn_exc)
             return
         try:
             self.model.assertions.link(src_assertion_id, dst_assertion_id, lt)
         except Exception as exc:
             # Link write must not block already-recorded facts, but the failure is
             # observable via the ledger so the dependency graph gap is diagnosed.
+            _link_warn = (
+                f"record_assertion_link: write failed ({src_assertion_id[:8]}→"
+                f"{dst_assertion_id[:8]}, {link_type}): {str(exc)[:120]}"
+            )
             try:
-                self.log_warning(
-                    f"record_assertion_link: write failed ({src_assertion_id[:8]}→"
-                    f"{dst_assertion_id[:8]}, {link_type}): {str(exc)[:120]}"
-                )
-            except Exception:
-                pass  # warning must not block fact recording
+                self.log_warning(_link_warn)
+            except Exception as _warn_exc:
+                # Ledger write failed — fall back to Python logger (SO-3: no silent swallowing).
+                logger.warning("%s (ledger write failed: %s)", _link_warn, _warn_exc)
 
     def flush_revisions(self) -> int:
         """

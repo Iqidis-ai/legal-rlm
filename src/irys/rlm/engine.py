@@ -282,6 +282,17 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
    - Contradictions within the document
    - Issues requiring legal interpretation
 
+8. DOC SOURCE ROLE (SO-5 — classify this document by its content, NOT its filename):
+   Choose exactly one of: advocacy, operative, authoritative, procedural, informal, draft, post_hoc, unknown
+   - advocacy: pleadings, demand letters, briefs, position papers authored by a party to advance their interest
+   - operative: signed contracts, executed agreements, court orders, deeds, leases with binding effect
+   - authoritative: statutes, regulations, binding case law, official government publications
+   - procedural: court filings, discovery materials, motions, notices, subpoenas
+   - informal: emails, messages, notes, chats, texts, internal memos not constituting operative documents
+   - draft: unsigned or unapproved versions — not yet operative
+   - post_hoc: expert reports, declarations, analysis written after the events to explain or opine
+   - unknown: cannot determine from document content alone
+
 Respond in COMPACT JSON (STRICT: under 4000 chars total):
 {{
     "key_facts": [{{"fact": "...", "page": N, "issue_relation": "supports", "effective_date": "2023-03-15", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD"}}],
@@ -290,7 +301,8 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
     "numeric_facts": [{{"kind": "amount", "subject": "invoice", "subject_id": "Invoice #1042", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due", "page": 3, "assertion_idx": 2}}],
     "fact_relationships": [{{"from_idx": 0, "to_idx": 2, "relation": "supports"}}],
     "connections": ["doc reference 1"],
-    "concerns": ["issue 1"]
+    "concerns": ["issue 1"],
+    "doc_source_role": "advocacy|operative|authoritative|procedural|informal|draft|post_hoc|unknown"
 }}
 """
 
@@ -1972,9 +1984,30 @@ class RLMEngine:
                                 (f, rel, eff, _dr_retry_spo.get(i))
                                 for i, (f, rel, eff, _) in enumerate(facts_to_add)
                             ]
-                # Prefix each fact with its source role (SO-5 per-fact calibration)
+                # SO-5: resolve source role using content-based classification first,
+                # then fall back to filename heuristic.  The LLM classifies by document
+                # content (not filename) so adversarial naming cannot spoof calibration.
                 from ..matter.runtime import infer_source_role as _infer_role
-                _src_label = _infer_role(doc.filename).value.upper()
+                from ..matter.enums import SourceRole as _SourceRole
+                _CONTENT_ROLE_MAP: dict[str, "_SourceRole"] = {
+                    "advocacy": _SourceRole.ADVOCACY,
+                    "operative": _SourceRole.OPERATIVE,
+                    "authoritative": _SourceRole.AUTHORITATIVE,
+                    "procedural": _SourceRole.PROCEDURAL,
+                    "informal": _SourceRole.INFORMAL,
+                    "draft": _SourceRole.DRAFT,
+                    "post_hoc": _SourceRole.POST_HOC_EXPLANATORY,
+                    "post_hoc_explanatory": _SourceRole.POST_HOC_EXPLANATORY,
+                }
+                _llm_role_str = (analysis.get("doc_source_role") or "").lower().strip()
+                _content_role = _CONTENT_ROLE_MAP.get(_llm_role_str, _SourceRole.UNKNOWN)
+                # Effective role: content-based when available; filename heuristic as fallback
+                _effective_role = (
+                    _content_role
+                    if _content_role != _SourceRole.UNKNOWN
+                    else _infer_role(doc.filename)
+                )
+                _src_label = _effective_role.value.upper()
                 state.add_facts([f"[{_src_label}] {f}" for f, _, _d, _spo in facts_to_add])
                 # Also record into matter model if enabled; pass issue_id if from targeted lead.
                 # Use record_facts_batch() so N facts → 1 outer transaction (savepoints inside).
@@ -1999,6 +2032,7 @@ class RLMEngine:
                         adapter.record_facts_batch(
                             _dr_batch,
                             issue_id=focus_issue_id,
+                            default_source_role=_effective_role,
                         )
                     )
 
