@@ -1943,6 +1943,66 @@ def test_log_conflict_writes_conflict_detected_event():
 # SO-6: _build_quant_summary() surfaces date and rate facts
 # ---------------------------------------------------------------------------
 
+def test_log_gap_writes_gap_identified_event():
+    """MatterRuntimeAdapter.log_gap() must write a GAP_IDENTIFIED ledger event (SO-3 + SO-7).
+
+    Gaps are user-visible findings — the reasoning ledger must record them so the
+    user can see what is missing and interrupt/redirect accordingly (SO-3).
+    This also verifies SO-7: missingness is not silently skipped but logged.
+    """
+    from irys.matter import LedgerEventType
+
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("gap log test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    adapter.log_gap("Missing signed amendment — referenced in §4.2 but absent from repository")
+
+    events = model.ledger.get_events(run_id)
+    gap_events = [
+        e for e in events if e["event_type"] == LedgerEventType.GAP_IDENTIFIED.value
+    ]
+    assert len(gap_events) == 1, "log_gap must write exactly one GAP_IDENTIFIED event"
+    assert "amendment" in gap_events[0]["summary"].lower(), (
+        "Gap summary must appear in ledger event"
+    )
+
+
+def test_adapter_record_gap_writes_gap_store_and_ledger():
+    """adapter.record_gap() must persist the gap in the gap store AND write a ledger event (SO-3 + SO-7).
+
+    record_gap() is the compound call that both records missingness structurally
+    (SO-7) and surfaces it in the user-visible reasoning ledger (SO-3).
+    """
+    from irys.matter import LedgerEventType
+    from irys.matter.enums import GapType
+
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("adapter record_gap test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    gap_id = adapter.record_gap(
+        description="Exhibit B referenced but not produced",
+        gap_type=GapType.MISSING_DOCUMENT,
+        materiality=0.75,
+    )
+
+    assert gap_id, "record_gap must return a gap_id"
+
+    # Gap store: the gap must be persisted and open
+    open_gaps = model.gaps.open_gaps(min_materiality=0.0)
+    assert len(open_gaps) == 1
+    assert open_gaps[0]["id"] == gap_id
+
+    # Ledger: a GAP_IDENTIFIED event must reference the gap
+    events = model.ledger.get_events(run_id)
+    gap_events = [e for e in events if e["event_type"] == LedgerEventType.GAP_IDENTIFIED.value]
+    assert len(gap_events) == 1
+    assert "Exhibit B" in gap_events[0]["summary"], (
+        "Gap description must appear in ledger event summary"
+    )
+
+
 def test_build_quant_summary_shows_dates_and_rates():
     """_build_quant_summary() must include date and rate facts alongside monetary amounts (SO-6).
 

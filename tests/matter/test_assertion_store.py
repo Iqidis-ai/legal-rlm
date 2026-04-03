@@ -427,3 +427,61 @@ def test_contradicts_link_is_idempotent(model):
     assert link1 == link2, "Idempotent: same CONTRADICTS link must not be duplicated"
     attackers = model.assertions.get_attackers(b_id)
     assert attackers.count(a_id) == 1, "get_attackers must not return duplicates"
+
+
+# ---------------------------------------------------------------------------
+# get_supports() — supports and corroborates retrieval (SO-2)
+# ---------------------------------------------------------------------------
+
+def test_get_supports_returns_supports_link(model):
+    """get_supports() must return IDs of assertions that SUPPORT the target (SO-2).
+
+    The belief revision engine calls get_supports() to collect the support base
+    for each assertion during graph propagation.  A missing SUPPORTS link here
+    would cause an assertion with strong backing to be incorrectly UNKNOWN.
+    """
+    a_id, _ = model.assertions.upsert_occurrence(
+        make_candidate("Contract was duly executed.", doc_id="contract.pdf",
+                       speech_act=SpeechAct.OPERATIVE))
+    b_id, _ = model.assertions.upsert_occurrence(
+        make_candidate("Both parties signed the contract.", doc_id="witness.pdf",
+                       speech_act=SpeechAct.OPERATIVE))
+
+    # b SUPPORTS a
+    model.assertions.link(b_id, a_id, AssertionLinkType.SUPPORTS)
+
+    supporters = model.assertions.get_supports(a_id)
+    assert b_id in supporters, "SUPPORTS link must appear in get_supports()"
+    assert a_id not in supporters, "An assertion must not appear as its own supporter"
+
+
+def test_get_supports_includes_corroborates_link(model):
+    """get_supports() must include CORROBORATES links — independent confirmation
+    raises confidence just like an explicit support link (SO-2).
+
+    Corroborating evidence from a different source is treated as support for
+    belief state computation so convergent evidence from multiple documents
+    increases confidence.
+    """
+    claim_id, _ = model.assertions.upsert_occurrence(
+        make_candidate("Delivery was completed on March 5.", doc_id="logistics.pdf",
+                       speech_act=SpeechAct.OPERATIVE))
+    corroborator_id, _ = model.assertions.upsert_occurrence(
+        make_candidate("Recipient signed delivery confirmation on March 5.",
+                       doc_id="signature_log.pdf", speech_act=SpeechAct.OPERATIVE))
+
+    # corroborator CORROBORATES claim (independent confirmation)
+    model.assertions.link(corroborator_id, claim_id, AssertionLinkType.CORROBORATES)
+
+    supporters = model.assertions.get_supports(claim_id)
+    assert corroborator_id in supporters, (
+        "CORROBORATES link must appear in get_supports() — convergent evidence counts as support"
+    )
+
+
+def test_get_supports_empty_when_no_links(model):
+    """get_supports() must return empty list when no SUPPORTS or CORROBORATES links exist."""
+    isolated_id, _ = model.assertions.upsert_occurrence(
+        make_candidate("Isolated assertion with no support.", doc_id="doc.pdf"))
+
+    assert model.assertions.get_supports(isolated_id) == []
