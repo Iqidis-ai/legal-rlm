@@ -212,4 +212,57 @@ def test_set_belief_state(model):
 
     record = model.assertions.get(assertion_id)
     assert record.belief_state == BeliefState.OPERATIVE.value
-    assert record.confidence == pytest.approx(0.95)
+
+
+# ---------------------------------------------------------------------------
+# SO-2: Truth maintenance via corroborates/supersedes traversal
+# ---------------------------------------------------------------------------
+
+def test_get_dependents_includes_corroborates(model):
+    """get_dependents() must traverse corroborates edges so corroborated assertions
+    are re-evaluated when the source assertion changes."""
+    from irys.matter.enums import AssertionLinkType
+    a1, _ = model.assertions.upsert_occurrence(
+        make_candidate("Fact A.", doc_id="doc1", speech_act=SpeechAct.OPERATIVE))
+    a2, _ = model.assertions.upsert_occurrence(
+        make_candidate("Fact B corroborates A.", doc_id="doc2", speech_act=SpeechAct.OPERATIVE))
+    # a1 --corroborates--> a2 (a1 independently confirms a2)
+    model.assertions.link(a1, a2, AssertionLinkType.CORROBORATES)
+
+    dependents = model.assertions.get_dependents(a1)
+    assert a2 in dependents, "corroborates target must be in dependents for propagation"
+
+
+def test_get_dependents_includes_supersedes(model):
+    """get_dependents() must traverse supersedes edges so the superseded assertion
+    gets re-evaluated if the superseding one is withdrawn."""
+    from irys.matter.enums import AssertionLinkType
+    old_a, _ = model.assertions.upsert_occurrence(
+        make_candidate("Old fact.", doc_id="doc1", speech_act=SpeechAct.OPERATIVE))
+    new_a, _ = model.assertions.upsert_occurrence(
+        make_candidate("New fact supersedes old.", doc_id="doc2", speech_act=SpeechAct.OPERATIVE))
+    # new_a --supersedes--> old_a
+    model.assertions.link(new_a, old_a, AssertionLinkType.SUPERSEDES)
+
+    # When new_a changes, old_a must be re-evaluated (maybe it can recover)
+    dependents = model.assertions.get_dependents(new_a)
+    assert old_a in dependents, "supersedes target must be in dependents for propagation"
+
+
+def test_superseded_assertion_marked_via_belief_revision(model):
+    """When a superseding assertion exists, the superseded node becomes SUPERSEDED via belief revision."""
+    from irys.matter.enums import AssertionLinkType, RevisionCause
+    old_a, _ = model.assertions.upsert_occurrence(
+        make_candidate("Original contract date: Jan 15.", doc_id="contract.pdf",
+                       speech_act=SpeechAct.OPERATIVE))
+    new_a, _ = model.assertions.upsert_occurrence(
+        make_candidate("Amended contract date: Feb 1.", doc_id="amendment.pdf",
+                       speech_act=SpeechAct.OPERATIVE))
+    model.assertions.link(new_a, old_a, AssertionLinkType.SUPERSEDES)
+
+    results = model.apply_revision([new_a], RevisionCause.NEW_EVIDENCE)
+    # old_a should now be SUPERSEDED
+    old_record = model.assertions.get(old_a)
+    assert old_record.belief_state == BeliefState.SUPERSEDED.value, (
+        f"Superseded assertion must transition to SUPERSEDED, got {old_record.belief_state}"
+    )

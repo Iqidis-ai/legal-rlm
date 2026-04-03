@@ -127,6 +127,7 @@ class BeliefRevisionEngine:
         """
         results: list[RevisionResult] = []
         visited: set[str] = set()
+        seeds = set(seed_assertion_ids)
         queue = list(seed_assertion_ids)
         hop = 0
 
@@ -140,12 +141,21 @@ class BeliefRevisionEngine:
                 result = self._revise_one(assertion_id, cause, run_id, note)
                 if result is not None:
                     results.append(result)
-                    # Propagate to dependents if this assertion changed
+
+                # Always propagate from seed assertions, even when they didn't change.
+                # A newly-recorded superseding assertion has OPERATIVE belief state
+                # (no change from itself), but its dependents (superseded nodes) must
+                # still be visited so they can be marked SUPERSEDED.
+                # Non-seed propagation only happens on state change to avoid runaway BFS.
+                if result is not None or assertion_id in seeds:
                     dependents = self.assertion_store.get_dependents(assertion_id)
                     next_queue.extend(
                         d for d in dependents if d not in visited
                     )
 
+            # Seeds only get special always-propagate treatment on hop 0.
+            # After hop 0, only changed assertions propagate further.
+            seeds = set()
             queue = next_queue
             hop += 1
 
