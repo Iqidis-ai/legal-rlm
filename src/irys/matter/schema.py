@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -454,6 +454,9 @@ CREATE INDEX IF NOT EXISTS ix_quant_kind
 
 CREATE INDEX IF NOT EXISTS ix_quant_subject
     ON quant_fact(subject_type, subject_id);
+
+CREATE INDEX IF NOT EXISTS ix_quant_matter_kind
+    ON quant_fact(matter_id, quant_kind);
 """
 
 _DDL_CLARIFICATION = """
@@ -805,6 +808,20 @@ def _migration_v13(conn) -> None:
         raise
 
 
+def _migration_v14(conn) -> None:
+    """Add composite index ix_quant_matter_kind on (matter_id, quant_kind).
+
+    The conflict-detection query in get_conflicts() filters by matter_id AND
+    quant_kind='amount' before grouping. Without a covering index on both
+    columns, SQLite must scan all quant_fact rows for the matter. This index
+    makes the aggregation O(amount-facts-in-matter) instead of O(all-quant-facts).
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_quant_matter_kind"
+        " ON quant_fact(matter_id, quant_kind)"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -822,6 +839,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (11, _migration_v11),
     (12, _migration_v12),
     (13, _migration_v13),
+    (14, _migration_v14),
 ]
 
 

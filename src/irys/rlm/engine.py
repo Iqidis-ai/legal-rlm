@@ -1295,6 +1295,12 @@ class RLMEngine:
                 # Analyze top results
                 await self._analyze_search_results(state, repo, results, lead)
 
+                # Do NOT mark investigated if stop fired inside the analysis — the lead
+                # must remain pending so a resumed run can retry the full analysis.
+                # (Mirrors the stop check at the top of this function.)
+                _adp_post = getattr(state, "_matter_adapter", None)
+                if _adp_post is not None and _adp_post.is_stop_requested():
+                    return
                 state.mark_lead_investigated(lead.id, f"Found {len(results.hits)} matches")
 
             finally:
