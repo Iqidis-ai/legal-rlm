@@ -61,7 +61,9 @@ class MatterRepository:
     SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt"}
 
     def __init__(self, base_path: str | Path):
-        self.base_path = Path(base_path)
+        # Always resolve to absolute path so that relative_to() and read_bytes() work
+        # correctly regardless of the process CWD (e.g., FastAPI background tasks).
+        self.base_path = Path(base_path).resolve()
         if not self.base_path.exists():
             raise ValueError(f"Repository path does not exist: {base_path}")
         if not self.base_path.is_dir():

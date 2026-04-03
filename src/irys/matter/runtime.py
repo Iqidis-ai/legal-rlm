@@ -181,6 +181,26 @@ class MatterRuntimeAdapter:
 
         return assertion_id
 
+    def record_assertion_link(
+        self,
+        src_assertion_id: str,
+        dst_assertion_id: str,
+        link_type: str,
+    ) -> None:
+        """Create a directed edge between two assertions in the dependency graph (SO-2).
+
+        Called after deep-read relationship extraction to populate the assertion graph
+        from LLM-identified logical relationships within a document.
+        """
+        try:
+            lt = AssertionLinkType(link_type)
+        except ValueError:
+            return  # unknown link type — skip silently
+        try:
+            self.model.assertions.link(src_assertion_id, dst_assertion_id, lt)
+        except Exception:
+            pass  # link building must not block fact recording
+
     def flush_revisions(self) -> int:
         """
         Trigger belief revision for all assertions added since last flush.

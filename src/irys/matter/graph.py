@@ -187,7 +187,7 @@ class AssertionStore:
         """
         rows = self.db.execute(
             """SELECT dst_assertion_id FROM assertion_link
-               WHERE src_assertion_id=? AND link_type IN ('supports', 'attacks', 'negates')""",
+               WHERE src_assertion_id=? AND link_type IN ('supports', 'attacks', 'negates', 'contradicts')""",
             (assertion_id,),
         ).fetchall()
         return [r[0] for r in rows]

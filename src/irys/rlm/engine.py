@@ -201,7 +201,13 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
    - Prior agreements or communications mentioned
    - Events that require corroboration elsewhere
 
-5. RED FLAGS & CONCERNS:
+6. FACT RELATIONSHIPS (SO-2 — up to 5 most important): Identify logical relationships
+   BETWEEN the key_facts you listed above, using their 0-based indices.
+   Relation types: "supports" (A reinforces B), "attacks" (A undermines B),
+   "contradicts" (A directly conflicts with B), "corroborates" (A independently confirms B),
+   "supersedes" (A replaces B as the authoritative statement).
+
+7. RED FLAGS & CONCERNS:
    - Ambiguous or potentially misleading language
    - Missing expected provisions
    - Contradictions within the document
@@ -213,6 +219,7 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
     "quotes": [{{"text": "...", "page": N}}],
     "entities": {{"people": ["name1"], "dates": ["date1"], "amounts": ["$X"], "companies": ["co1"]}},
     "numeric_facts": [{{"kind": "amount", "subject": "invoice", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due"}}],
+    "fact_relationships": [{{"from_idx": 0, "to_idx": 2, "relation": "supports"}}],
     "connections": ["doc reference 1"],
     "concerns": ["issue 1"]
 }}
@@ -1295,8 +1302,11 @@ class RLMEngine:
                             f"Hot path (already ingested): {_fp.name}",
                         )
                         return
-                except Exception:
-                    pass  # inventory failure must not block analysis
+                except Exception as _inv_err:
+                    logger.warning(
+                        "Inventory failure for %s (proceeding to cold path): %s",
+                        _rel_path, _inv_err,
+                    )
 
             # COLD PATH: full document parsing + LLM analysis
             doc = repo.read(file_path)
@@ -1322,6 +1332,7 @@ class RLMEngine:
                 "quotes": [],
                 "entities": {"people": [], "companies": [], "dates": [], "amounts": []},
                 "numeric_facts": [],
+                "fact_relationships": [],
                 "connections": [],
                 "concerns": [],
             })
@@ -1355,10 +1366,29 @@ class RLMEngine:
                 # Also record into matter model if enabled; pass issue_id if from targeted lead
                 adapter = getattr(state, "_matter_adapter", None)
                 if adapter is not None:
+                    _recorded_ids: list[str] = []
                     for fact_text in facts_to_add:
                         # Use _rel_path (repo-relative, stable) not doc.filename (basename only)
                         # so same-basename files in different dirs don't alias in assertion_occurrence
-                        adapter.record_fact(fact_text, document_id=_rel_path, issue_id=focus_issue_id)
+                        _aid = adapter.record_fact(fact_text, document_id=_rel_path, issue_id=focus_issue_id)
+                        _recorded_ids.append(_aid)
+
+                    # Build assertion dependency graph from LLM-identified relationships (SO-2)
+                    # Uses 0-based indices into facts_to_add / _recorded_ids
+                    _rels = analysis.get("fact_relationships") or []
+                    for _rel in _rels[:5]:  # cap to 5 edges per document
+                        if not isinstance(_rel, dict):
+                            continue
+                        _fi = _rel.get("from_idx")
+                        _ti = _rel.get("to_idx")
+                        _rt = _rel.get("relation", "")
+                        if (isinstance(_fi, int) and isinstance(_ti, int)
+                                and 0 <= _fi < len(_recorded_ids)
+                                and 0 <= _ti < len(_recorded_ids)
+                                and _fi != _ti):
+                            adapter.record_assertion_link(
+                                _recorded_ids[_fi], _recorded_ids[_ti], _rt
+                            )
 
             # Extract and store structured numeric facts (SO-6)
             if analysis.get("numeric_facts"):
