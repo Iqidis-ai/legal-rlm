@@ -1728,6 +1728,14 @@ class RLMEngine:
                     _fi = _rel.get("from_idx")
                     _ti = _rel.get("to_idx")
                     _rt = _rel.get("relation", "")
+                    if _rt and _rt not in _VALID_ASSERTION_LINK_TYPES:
+                        # SO-3: invalid relation from LLM is dropped but must not be silently
+                        # hidden.  Use debug-level Python logger to avoid spamming the user-
+                        # visible reasoning ledger with LLM hallucinations.
+                        logger.debug(
+                            "Dropped invalid assertion relation '%s' from search analysis "
+                            "(not in _VALID_ASSERTION_LINK_TYPES)", _rt
+                        )
                     if (isinstance(_fi, int) and isinstance(_ti, int)
                             and 0 <= _fi < len(_search_assertion_ids)
                             and 0 <= _ti < len(_search_assertion_ids)
@@ -2050,6 +2058,13 @@ class RLMEngine:
                         _fi = _rel.get("from_idx")
                         _ti = _rel.get("to_idx")
                         _rt = _rel.get("relation", "")
+                        if _rt and _rt not in _VALID_ASSERTION_LINK_TYPES:
+                            # SO-3: dropped relation must not be silently hidden.
+                            # Debug-level to avoid spamming ledger with LLM noise.
+                            logger.debug(
+                                "Dropped invalid assertion relation '%s' from deep-read "
+                                "(not in _VALID_ASSERTION_LINK_TYPES)", _rt
+                            )
                         if (isinstance(_fi, int) and isinstance(_ti, int)
                                 and 0 <= _fi < len(_recorded_ids)
                                 and 0 <= _ti < len(_recorded_ids)
