@@ -562,3 +562,53 @@ def test_get_neighbor_belief_states_returns_source_roles(model):
     assert len(neighbors["attack_source_roles"]) == len(neighbors["attack_states"]), (
         "attack_source_roles and attack_states must be parallel lists of equal length"
     )
+
+
+def test_mixed_attacker_weights_accumulate_correctly():
+    """Effective attack weight must accumulate across multiple attackers with different trust levels.
+
+    Three attackers: operative (1.0) + advocacy (0.3) + draft (0.4) = 1.7 total weight.
+    Expected confidence = max(0.1, 0.5 - 0.1 * 1.7) = max(0.1, 0.33) = 0.33.
+    All produce DISPUTED state.
+    """
+    state, confidence = _compute_belief_state(
+        BeliefState.OPERATIVE,
+        support_states=[],
+        attack_states=[BeliefState.OPERATIVE, BeliefState.ALLEGED, BeliefState.ALLEGED],
+        support_source_roles=[],
+        attack_source_roles=["operative", "advocacy", "draft"],
+    )
+
+    assert state == BeliefState.DISPUTED, "Multiple attackers must produce DISPUTED state"
+    expected = max(0.1, 0.5 - 0.1 * (1.0 + 0.3 + 0.4))
+    assert abs(confidence - expected) < 1e-9, (
+        f"Expected confidence {expected} for mixed-trust attackers, got {confidence}"
+    )
+
+
+def test_multiple_operative_supporters_accumulate_confidence():
+    """Two operative-source OPERATIVE supporters must produce higher INFERRED confidence than one.
+
+    single supporter: confidence = min(0.9, 0.5 + 0.1 * 1.0) = 0.6
+    two supporters:   confidence = min(0.9, 0.5 + 0.1 * 2.0) = 0.7
+    """
+    _, conf_one = _compute_belief_state(
+        BeliefState.UNKNOWN,
+        support_states=[BeliefState.OPERATIVE],
+        attack_states=[],
+        support_source_roles=["operative"],
+        attack_source_roles=[],
+    )
+    _, conf_two = _compute_belief_state(
+        BeliefState.UNKNOWN,
+        support_states=[BeliefState.OPERATIVE, BeliefState.OPERATIVE],
+        attack_states=[],
+        support_source_roles=["operative", "operative"],
+        attack_source_roles=[],
+    )
+
+    assert conf_two > conf_one, (
+        f"Two operative supporters ({conf_two}) must produce higher confidence than one ({conf_one})"
+    )
+    assert abs(conf_one - 0.6) < 1e-9, f"Expected 0.6, got {conf_one}"
+    assert abs(conf_two - 0.7) < 1e-9, f"Expected 0.7, got {conf_two}"
