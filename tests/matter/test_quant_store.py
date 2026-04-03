@@ -424,3 +424,87 @@ def test_matter_model_reconcile_shows_payment_exposure(model):
     assert exposure == 25_000.0, (
         "reconcile() must support computing exposure = invoiced - paid (SO-6 payment reconciliation)"
     )
+
+
+# ---------------------------------------------------------------------------
+# SO-6: compute_thresholds() — hard threshold detection and gap creation
+# ---------------------------------------------------------------------------
+
+def _add_quant(model, subject_type, amount, currency="USD", subject_id=None):
+    """Helper: add a quant_fact of kind=amount."""
+    model.quant.record(
+        quant_kind="amount",
+        raw_text=f"{subject_type} {amount} {currency}",
+        subject_type=subject_type,
+        subject_id=subject_id,
+        amount_value=amount,
+        currency=currency,
+    )
+
+
+def test_compute_thresholds_positive_exposure_creates_gap():
+    """Positive exposure (invoiced > paid) must create a gap."""
+    model = MatterModel.open_in_memory()
+    _add_quant(model, "invoice", 50_000.0)
+    _add_quant(model, "payment", 30_000.0)
+
+    violations = model.compute_quant_thresholds()
+
+    assert len(violations) >= 1, "Positive exposure must produce at least one violation"
+    exposure_violation = next(
+        (v for v in violations if v["threshold"] == "positive_exposure"), None
+    )
+    assert exposure_violation is not None, "Must have a 'positive_exposure' threshold violation"
+    assert exposure_violation["amount"] == pytest.approx(20_000.0, abs=0.01)
+    assert exposure_violation["level"] in ("HIGH", "MED")
+
+    gaps = model.gaps.open_gaps()
+    assert any("exposure" in g["description"].lower() for g in gaps), (
+        "compute_thresholds() must record an exposure gap in the gap store"
+    )
+
+
+def test_compute_thresholds_no_violation_when_paid_in_full():
+    """No threshold violation when invoiced == paid."""
+    model = MatterModel.open_in_memory()
+    _add_quant(model, "invoice", 100_000.0)
+    _add_quant(model, "payment", 100_000.0)
+
+    violations = model.compute_quant_thresholds()
+    exposure_violations = [v for v in violations if v["threshold"] == "positive_exposure"]
+    assert len(exposure_violations) == 0, "Zero exposure must not produce exposure violation"
+
+
+def test_compute_thresholds_numeric_conflict_creates_gap():
+    """Numeric conflict for same subject must create an UNRESOLVED_CONTRADICTION gap."""
+    model = MatterModel.open_in_memory()
+    # Two different amounts for the same invoice subject_id
+    _add_quant(model, "invoice", 50_000.0, subject_id="INV-001")
+    _add_quant(model, "invoice", 60_000.0, subject_id="INV-001")
+
+    violations = model.compute_quant_thresholds()
+    conflict_violations = [v for v in violations if v["threshold"] == "numeric_conflict"]
+    assert len(conflict_violations) >= 1, (
+        "Conflicting amounts for same subject_id must produce a numeric_conflict violation"
+    )
+
+    gaps = model.gaps.open_gaps()
+    assert any("conflict" in g["description"].lower() or "INV-001" in g["description"]
+               for g in gaps), "Numeric conflict must create a gap record"
+
+
+def test_compute_thresholds_is_idempotent():
+    """Repeated calls must not create duplicate gap records."""
+    model = MatterModel.open_in_memory()
+    _add_quant(model, "invoice", 25_000.0)
+    _add_quant(model, "payment", 10_000.0)
+
+    model.compute_quant_thresholds()
+    model.compute_quant_thresholds()
+    model.compute_quant_thresholds()
+
+    gaps = model.gaps.open_gaps()
+    exposure_gaps = [g for g in gaps if "exposure" in g["description"].lower()]
+    assert len(exposure_gaps) == 1, (
+        "Repeated compute_thresholds() calls must not create duplicate gap records"
+    )

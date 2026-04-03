@@ -1930,6 +1930,99 @@ class QuantStore:
         result.sort(key=lambda x: x["invoiced"], reverse=True)
         return result
 
+    def compute_thresholds(self, gap_store: "GapStore", currency: str = "USD") -> list[dict]:
+        """Detect quantitative threshold violations and record them as gaps (SO-6).
+
+        Thresholds checked:
+        1. Positive exposure (invoiced > paid) → MISSING_DOCUMENT gap so synthesis
+           must address the outstanding balance with hard specificity.
+        2. High disputed fraction (>10% of invoiced) → UNRESOLVED_CONTRADICTION gap.
+        3. Numeric conflicts → UNRESOLVED_CONTRADICTION gap per conflict group.
+
+        Returns list of violation dicts:
+          {threshold: str, level: 'HIGH'|'MED'|'LOW', description: str, amount: float|None}
+
+        Idempotent: underlying gap_store.record() deduplicates by description.
+        """
+        violations = []
+        try:
+            chain = self.reconcile_payment_chain(currency)
+        except Exception:
+            return violations
+
+        exposure = chain.get("exposure", 0.0)
+        invoiced = chain.get("invoiced", 0.0)
+        disputed = chain.get("disputed", 0.0)
+
+        # Threshold 1: positive financial exposure
+        if exposure > 0:
+            level = "HIGH" if exposure >= 10_000 else "MED"
+            desc = (
+                f"Claimed financial exposure: {currency} {exposure:,.2f} "
+                f"(invoiced {currency} {invoiced:,.2f} − paid {currency} {chain.get('paid', 0):,.2f})"
+            )
+            try:
+                gap_store.record(
+                    gap_type=GapType.MISSING_DOCUMENT,
+                    description=desc,
+                    materiality=0.9 if exposure >= 10_000 else 0.6,
+                    affected_type="quant",
+                    affected_id="exposure",
+                )
+            except Exception:
+                pass
+            violations.append({"threshold": "positive_exposure", "level": level,
+                                "description": desc, "amount": exposure})
+
+        # Threshold 2: high disputed fraction
+        if invoiced > 0 and disputed > 0:
+            frac = disputed / invoiced
+            if frac >= 0.10:
+                level = "HIGH" if frac >= 0.30 else "MED"
+                desc = (
+                    f"Disputed amounts ({currency} {disputed:,.2f}) represent "
+                    f"{frac:.0%} of total invoiced — significant contested balance"
+                )
+                try:
+                    gap_store.record(
+                        gap_type=GapType.UNRESOLVED_CONTRADICTION,
+                        description=desc,
+                        materiality=0.8 if frac >= 0.30 else 0.5,
+                        affected_type="quant",
+                        affected_id="disputed_fraction",
+                    )
+                except Exception:
+                    pass
+                violations.append({"threshold": "disputed_fraction", "level": level,
+                                    "description": desc, "amount": disputed})
+
+        # Threshold 3: numeric conflicts
+        try:
+            conflicts = self.get_conflicts()
+        except Exception:
+            conflicts = []
+        for conflict in conflicts[:5]:  # cap at 5 to bound gap store growth
+            sid = conflict.get("subject_id") or conflict.get("subject_type", "unknown")
+            vals = conflict.get("values", [])
+            desc = (
+                f"Numeric conflict for '{sid}': "
+                f"multiple sources report different values — {vals}"
+            )
+            try:
+                gap_store.record(
+                    gap_type=GapType.UNRESOLVED_CONTRADICTION,
+                    description=desc[:200],
+                    materiality=0.75,
+                    affected_type="quant",
+                    affected_id=str(sid)[:64],
+                )
+            except Exception:
+                pass
+            violations.append({"threshold": "numeric_conflict", "level": "HIGH",
+                                "description": desc, "amount": None})
+
+        return violations
+
 
 class DocumentInventoryStore:
     """

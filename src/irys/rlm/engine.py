@@ -2969,6 +2969,24 @@ class RLMEngine:
 
         lines = [f"Extracted {total_count} numeric facts."]
 
+        # SO-6: Hard threshold constraints — detected violations MUST appear in synthesis.
+        # Run threshold computation (idempotent; records gaps to gap store as side effect).
+        try:
+            violations = self._matter_model.compute_quant_thresholds()
+            if violations:
+                lines.append(
+                    "⚠ QUANTITATIVE THRESHOLD VIOLATIONS (SO-6 — MANDATORY in Financial Analysis):"
+                )
+                for v in violations:
+                    level = v.get("level", "MED")
+                    desc = v.get("description", "")
+                    lines.append(f"  [{level}] {desc}")
+                lines.append(
+                    "  → These items MUST appear in the Financial Analysis section with source citations."
+                )
+        except Exception:
+            pass
+
         # SO-6: per-invoice breakdown when individual invoice data is available
         if invoice_rows:
             _ccy = (invoice_rows[0].get("currency") or "USD")

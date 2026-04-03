@@ -240,6 +240,15 @@ class MatterModel:
         """
         return self.inventory.get_operative_version(doc_id)
 
+    def compute_quant_thresholds(self, currency: str = "USD") -> list[dict]:
+        """Detect quantitative threshold violations and record them as gaps (SO-6).
+
+        Checks positive exposure, high disputed fraction, and numeric conflicts.
+        Records violations as gaps in the gap store for downstream synthesis.
+        Returns list of violation dicts with threshold, level, description, amount.
+        """
+        return self.quant.compute_thresholds(self.gaps, currency=currency)
+
     # ------------------------------------------------------------------
     # Gap management
     # ------------------------------------------------------------------
