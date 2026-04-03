@@ -1857,6 +1857,10 @@ class RLMEngine:
                 except Exception:
                     pass
 
+        # Initialize sentinel: facts actually persisted from this analysis pass.
+        # Used by the predicate resolution block below; must always be bound.
+        _search_assertion_ids: list[str] = []
+
         # Store key facts with per-fact source attribution (SO-5 provenance fix).
         # Facts from the LLM may be bare strings (legacy) or dicts with "fact" and
         # optional "source_file" keys. We use the per-fact source_file when present
@@ -2030,7 +2034,7 @@ class RLMEngine:
         _preds_satisfied = analysis.get("predicates_satisfied") or []
         if (isinstance(_preds_satisfied, list) and _focus_issue_id
                 and self._matter_model is not None
-                and analysis.get("key_facts")  # gate: no resolution without persisted facts
+                and any(_search_assertion_ids)  # gate: facts must have actually persisted
                 and _pred_allowlist):
             # Build lowercase lookup → original description for exact SQL match.
             _allowed = {
