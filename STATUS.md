@@ -95,39 +95,44 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ## Active Work
 
-### JUST COMPLETED — Trust-Weighted Belief Revision (SO-2, SO-5)
+### JUST COMPLETED — Trust-Weighted Belief Revision + Trust Override Pipeline (SO-2, SO-3, SO-5)
 
-Advocacy-source attackers (weight 0.3) now inflict less confidence damage than
-operative-source attackers (weight 1.0). The state transition logic is unchanged
-(any active attack → DISPUTED) — only confidence magnitude is trust-weighted.
+Full trust-aware intelligence layer implemented across 3 sessions:
 
-`get_neighbor_belief_states()` now fetches best source_role per neighbor via
-correlated subquery. `_compute_belief_state()` accepts `support_source_roles`
-and `attack_source_roles`; backward-compatible (None → weight=1.0).
+1. **Trust-weighted confidence in belief revision** — advocacy-source attackers (0.3) inflict
+   less damage than operative-source attackers (1.0). `get_neighbor_belief_states()` returns
+   source_role per neighbor; `_compute_belief_state()` accepts source_role lists.
 
-### QUEUED — Document Trust Override → Belief Revision Integration
+2. **Document trust override → belief revision** — `MatterModel.set_trust_override()` persists
+   the override, triggers `belief.apply()` on all assertions from the affected document (BFS
+   propagates to dependents), then calls `proof_state.compute_all()`.
 
-User-set document trust overrides (DocumentTrustOverrideStore) currently flow
-to the LLM prompt but NOT to the structured belief revision system. When a user
-marks a document pattern as "low" trust, assertions from that document should
-be treated as advocacy-weight (0.3) in belief revision, not their original
-source_role. Requires Codex design gate before implementation.
+3. **Trust override → proof state (advocacy_only)** — `compute_and_store()` applies document
+   trust overrides when computing `trust_weighted_support` and `advocacy_only`. Low-trust
+   override flips `advocacy_only=True`; high-trust override clears it.
+
+4. **End-to-end SO-3→SO-5 pipeline** — test in `test_engine_bridge.py` verifies that
+   `set_trust_override('high')` → `compute_all()` → `advocacy_only=False` → advocacy gate silent.
+
+5. **Structural cleanup (Tier 1 manual review)** — `SOURCE_TRUST_WEIGHTS` canonicalized in
+   `enums.py`; removed duplicate dict from `belief_revision.py` and `graph.py`. `pathlib.Path`
+   hoisted to module-level in `graph.py`. `set_trust_override()` SQL query uses JOIN + LIKE
+   pre-filter instead of full-table subquery.
+
+HEAD: db3f2ad
 
 ---
 
 ## Known Blockers
 
-Codex (GPT-5.3-Codex-Spark) rate-limited until 1:19 PM EDT on 2026-04-03.
-Tier 1 Correctness + Performance reviews for trust-weighted belief revision
-queued; will run immediately on rate limit reset.
+None active. Codex rate limit cleared.
 
 ---
 
 ## Key Metrics (Current)
 
-- Tests passing: 670 / 670
+- Tests passing: 679 / 679
 - Schema version: v26
-- Commits since session start: 5
 - All 7 Sacred Outcomes: PASS
-- Tier 1 reviews pending: 2 (queued, awaiting Codex rate limit reset)
-- Adversarial audit #017: due in ~4 Codex sessions
+- Tier 1 reviews: manual review complete; awaiting Codex re-run
+- Adversarial audit #017: due after next ~3-4 Codex review sessions
