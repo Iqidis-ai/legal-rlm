@@ -91,33 +91,45 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | #018 | SO-1/5/7 PASS; SO-2/3/4/6 PARTIAL | SO-5 FAIL fixed; incremental backlog for others |
 | #019 | SO-2/4/5/6/7 PASS; SO-1/3 PARTIAL | SO-1 downgraded (no reuse gate); SO-3 ledger actionability gap |
 
-**Tier 1 reviews:** Correctness r8 CLEAN. Performance r3 CLEAN.
+**Tier 1 reviews:** Correctness r3 CLEAN. Performance r2 CLEAN (this session).
 
 ---
 
 ## Active Work
 
-### JUST COMPLETED — Adversarial Audit #019 + SO-1/SO-3 PARTIAL fixes
+### JUST COMPLETED — Tier 2 Architecture+Scaling milestone review fixes
 
-**Audit #019 results:** SO-2/4/5/6/7 all PASS. SO-1 downgraded (reuse opportunistic, no measurable threshold).
-SO-3 PARTIAL maintained (steering mechanisms work; ledger surface was raw event logs).
+**Tier 2 review findings addressed this session:**
 
-**SO-1 fix (schema v29):**
-- `run_session` gains `assertions_at_start INTEGER` + `reuse_rate REAL` columns
-- `start_run()` snapshots assertion count; `complete_run()` computes `at_start / at_end`
-- `get_so_metrics()` averages reuse_rate over 5 recent completed runs; target 0.70 in targets/targets_met
-- 7 new tests verify snapshot, computation, and metric aggregation
+**Q1 HIGH — Layer-aware proposition lookup:**
+- `AssertionStore.get_by_proposition()` now accepts `model_layer: Optional[str]` parameter
+- When supplied, adds `AND model_layer=?` to query; without layer adds `ORDER BY created_at ASC LIMIT 1` for determinism
+- New test: `test_get_by_proposition_layer_filter_isolates_layers` verifies layer isolation
 
-**SO-3 fix — `get_ledger_steering_surface()`:**
-- New `MatterModel.get_ledger_steering_surface(run_id, limit)` method
-- Derives structured steering actions from: active conflicts, low-coverage issues,
-  high-materiality missing-doc gaps, pending clarifications, disputed/unknown assertions
-- Each action: `action_type`, `description`, `params` (ready to pass to API), `rationale`, `priority`, `impact`
-- Sorted high → medium → low priority; 8 new tests
+**Q2 HIGH — Fixpoint BFS belief revision:**
+- `BeliefRevisionEngine.apply()` replaced hop-based visited-once BFS with fixpoint convergence engine
+- `MAX_HOPS=10` replaced by `MAX_WORK=500` (total node-visits budget)
+- Nodes re-enqueued when state changes, not blocked by visited set
+- `WARNING` logged when MAX_WORK exhausted; partial-result behavior documented in docstring
+- New test: `test_fixpoint_converges_on_convergent_evidence_graph` validates diamond topology
 
-Previous session: SO-5 Tier 1 loop (8 correctness rounds + 3 performance rounds) CLEAN.
+**Q3 MEDIUM — Predicate-aware coverage fraction:**
+- New `MatterModel._coverage_fraction(support_count, predicate_count)` static helper
+- Formula: `min(support, preds)/preds` when predicates exist; `count/(count+1)` fallback
+- Both `get_issue_coverage_report()` and `build_query_context()` weakest-issue selector updated
+- Report now includes `predicate_count` field
+- New test: `test_coverage_fraction_uses_predicate_count_when_available`
 
-HEAD: ccbfbb5
+**Q5 MEDIUM — Missing hot-path indexes (schema v31):**
+- `ix_assertion_belief_state ON assertion(matter_id, belief_state, updated_at DESC)` — steering surface disputed query
+- `ix_gap_matter_type ON gap(matter_id, status, gap_type, materiality_score DESC)` — gap selectivity
+
+**Schema v32 — Tier 1 performance fix:**
+- `ix_assertion_prop_nolayer ON assertion(matter_id, proposition_key, created_at)` — no-layer get_by_proposition seekable
+
+Previous sessions: SO-5 Tier 1 loop CLEAN; SO-1/SO-3 PARTIAL fixes; adversarial audit #019.
+
+HEAD: d2bfc75
 
 ---
 
@@ -129,10 +141,16 @@ None active.
 
 ## Key Metrics (Current)
 
-- Tests passing: 708 / 708
-- Schema version: v30
-- SO-2, SO-4, SO-5, SO-6, SO-7: PASS; SO-1, SO-3: PARTIAL (adversarial #019, partially addressed)
-- Tier 1 correctness: **CLEAN** (r4 on SO-1/SO-3 changes; r8 total on this session's work)
-- Tier 1 performance: **CLEAN** (v30 index, in-memory snapshot)
+- Tests passing: 715 / 715
+- Schema version: v32
+- SO-2, SO-4, SO-5, SO-6, SO-7: PASS; SO-1, SO-3: PARTIAL
+- Tier 1 correctness: **CLEAN** (r3 this session)
+- Tier 1 performance: **CLEAN** (r2 this session)
 - Adversarial audit #019: DONE — SO-2/4/6 upgraded to PASS; SO-1 downgraded; SO-3 PARTIAL
-- Next adversarial audit (#020): due after ~3 more Codex sessions
+- Next adversarial audit (#020): due after ~2 more Codex sessions
+
+## Architectural Backlog (Tier 2 HIGH remaining)
+
+- **Q4 HIGH**: No immutable provenance/version model for legal facts after revision — requires schema redesign (assertion revision records or valid-time slices); needs design gate
+- **Q6 LOW**: get_ledger_steering_surface() steering snapshot caching — not blocking
+- **Q7 MEDIUM**: _run_snapshots dict not persistent for multi-worker/clustered — not blocking for single-worker
