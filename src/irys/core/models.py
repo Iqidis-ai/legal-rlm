@@ -283,11 +283,16 @@ class GeminiClient:
         # Track usage — prefer actual token counts from usage_metadata when available.
         # cached_content_token_count is the portion of prompt tokens served from cache
         # (billed at 10% of input rate); prompt_token_count excludes cached tokens.
+        # Track usage — prefer actual token counts from usage_metadata when available.
+        # Gemini's prompt_token_count is the TOTAL prompt size INCLUDING cached tokens.
+        # cached_content_token_count is the cached subset (billed at 10% of input rate).
+        # Non-cached input = prompt_token_count - cached_content_token_count.
         um = getattr(response, "usage_metadata", None)
         if um is not None:
-            actual_input = getattr(um, "prompt_token_count", None) or 0
+            total_prompt = getattr(um, "prompt_token_count", None) or 0
             actual_output = getattr(um, "candidates_token_count", None) or 0
             actual_cache = getattr(um, "cached_content_token_count", None) or 0
+            actual_input = max(total_prompt - actual_cache, 0)
         else:
             # Fallback estimate when metadata is unavailable
             actual_input = len(prompt) // 4
