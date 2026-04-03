@@ -1748,6 +1748,42 @@ def test_build_issue_coverage_summary_weak_coverage_no_assertions():
     assert "0" in result, f"Expected 0 supporting assertions in: {result}"
 
 
+def test_build_issue_coverage_summary_partial_coverage():
+    """An issue with 1 supporting assertion must be labeled PARTIAL (coverage ~0.5)."""
+    from irys.matter import MatterModel, AssertionCandidate
+    from irys.matter.enums import (
+        SpeechAct, OriginKind, AssertionKind, ModelLayer, SourceRole, IssueType,
+    )
+
+    model = MatterModel.open_in_memory()
+    issue_id, _ = model.issues.upsert_issue(
+        title="Causation element",
+        issue_type=IssueType.CLAIM,
+        materiality=0.8,
+    )
+    c = AssertionCandidate(
+        proposition_text="The breach caused the financial loss.",
+        assertion_kind=AssertionKind.FACTUAL,
+        speech_act=SpeechAct.ALLEGED,
+        origin_kind=OriginKind.EXTRACTED,
+        model_layer=ModelLayer.RECORD,
+        source_role=SourceRole.ADVOCACY,
+        document_id="complaint.pdf",
+    )
+    aid, _ = model.record_assertion(c)
+    model.issues.link_assertion(aid, issue_id, "supports")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_issue_coverage_summary()
+
+    # 1 assertion → coverage_fraction = 1/2 = 0.5 → PARTIAL
+    assert "Causation element" in result
+    assert "PARTIAL" in result, f"Expected PARTIAL coverage label for 1 assertion: {result}"
+    assert "1" in result
+
+
 # ---------------------------------------------------------------------------
 # SO-1: documents_from_cache / reuse_rate serialization and get_summary()
 # ---------------------------------------------------------------------------
