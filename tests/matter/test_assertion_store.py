@@ -252,6 +252,43 @@ def test_belief_state_upgrades_when_stronger_occurrence_arrives(model):
     )
 
 
+def test_duplicate_ingest_does_not_overwrite_terminal_belief_state(model):
+    """A SUPERSEDED or WITHDRAWN assertion must not be revived by duplicate ingestion.
+
+    Without the terminal-state guard, a second occurrence from the same document
+    (duplicate re-ingest) could call the upgrade path with a higher-confidence speech_act
+    and overwrite the terminal state, undoing belief revision results.
+    """
+    from irys.matter.enums import AssertionLinkType, RevisionCause
+
+    # Setup: old assertion gets superseded by a new one
+    old_text = "Original payment date: Jan 15."
+    c_old = make_candidate(old_text, doc_id="contract.pdf", speech_act=SpeechAct.OPERATIVE,
+                           source_role=SourceRole.OPERATIVE)
+    old_a, _ = model.assertions.upsert_occurrence(c_old)
+
+    new_text = "Amended payment date: Feb 1."
+    c_new = make_candidate(new_text, doc_id="amendment.pdf", speech_act=SpeechAct.OPERATIVE,
+                           source_role=SourceRole.OPERATIVE)
+    new_a, _ = model.assertions.upsert_occurrence(c_new)
+    model.assertions.link(new_a, old_a, AssertionLinkType.SUPERSEDES)
+    model.apply_revision([new_a], RevisionCause.NEW_EVIDENCE)
+
+    # Confirm old_a is SUPERSEDED
+    assert model.assertions.get(old_a).belief_state == BeliefState.SUPERSEDED.value
+
+    # Now simulate a duplicate re-ingest of old_a's document — same candidate
+    old_a2, is_new2 = model.assertions.upsert_occurrence(c_old)
+    assert old_a2 == old_a
+    assert is_new2 is False
+
+    # SUPERSEDED must survive the duplicate ingest — not be revived to OPERATIVE
+    record = model.assertions.get(old_a)
+    assert record.belief_state == BeliefState.SUPERSEDED.value, (
+        "Terminal state SUPERSEDED must not be overwritten by duplicate re-ingest"
+    )
+
+
 # ---------------------------------------------------------------------------
 # SO-2: Truth maintenance via corroborates/supersedes traversal
 # ---------------------------------------------------------------------------

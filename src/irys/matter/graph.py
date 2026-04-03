@@ -125,20 +125,12 @@ class AssertionStore:
             else:
                 assertion_id = row["id"]
                 is_new = False
-                # Upgrade canonical belief_state if the new occurrence provides stronger evidence.
-                # e.g. complaint (ALLEGED, 0.3) arrives first, then contract (OPERATIVE, 0.8):
-                # without this, the canonical stays ALLEGED — first-writer-wins bias.
-                _new_state, _new_conf = _initial_belief_state(candidate.speech_act)
-                _current_conf = row["confidence"] if row["confidence"] is not None else 0.5
-                if _new_conf > _current_conf:
-                    self.db.execute(
-                        "UPDATE assertion SET belief_state=?, confidence=?, updated_at=? WHERE id=?",
-                        (_new_state.value, _new_conf, now, assertion_id),
-                    )
 
-            # Always insert an occurrence (even for known assertions from new docs)
+            # Always attempt to insert an occurrence (even for known assertions from new docs).
+            # Capture the cursor so we can detect whether the row was actually inserted
+            # (rowcount=1) or silently ignored due to the UNIQUE index (rowcount=0).
             occ_id = _id()
-            self.db.execute(
+            _occ_cur = self.db.execute(
                 """INSERT OR IGNORE INTO assertion_occurrence
                    (id, assertion_id, document_id, span_id,
                     speaker_actor_id, source_role, source_side,
@@ -156,6 +148,21 @@ class AssertionStore:
                     now,
                 ),
             )
+
+            # Upgrade canonical belief_state only when:
+            #   (a) the occurrence was actually new (not a duplicate re-ingest), AND
+            #   (b) the assertion is not in a terminal state (SUPERSEDED/WITHDRAWN).
+            # Running the upgrade before the INSERT OR IGNORE would overwrite user-corrected
+            # or graph-derived states on duplicate ingestion with no new evidence.
+            if not is_new and _occ_cur.rowcount > 0:
+                _new_state, _new_conf = _initial_belief_state(candidate.speech_act)
+                _current_conf = row["confidence"] if row["confidence"] is not None else 0.5
+                _TERMINAL = (BeliefState.SUPERSEDED.value, BeliefState.WITHDRAWN.value)
+                if _new_conf > _current_conf and row["belief_state"] not in _TERMINAL:
+                    self.db.execute(
+                        "UPDATE assertion SET belief_state=?, confidence=?, updated_at=? WHERE id=?",
+                        (_new_state.value, _new_conf, now, assertion_id),
+                    )
 
         return assertion_id, is_new
 
