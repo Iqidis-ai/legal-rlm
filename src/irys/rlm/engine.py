@@ -333,6 +333,9 @@ Source Calibration (CRITICAL — read before analyzing facts):
 Quantitative Summary (SO-6 — extracted monetary amounts):
 {quant_summary}
 
+Issue Coverage (SO-4 — per-claim evidence status):
+{issue_coverage}
+
 Known Gaps & Missing Evidence (SO-7 — MUST surface in Gaps & Limitations section):
 {gap_summary}
 
@@ -2249,6 +2252,10 @@ class RLMEngine:
         # explicit structured relationships, not just prose text.
         structured_relationships = self._build_structured_relationships()
 
+        # Build per-issue evidence coverage summary (SO-4) — shows which claims are
+        # well-supported vs. proof-gap-exposed so the synthesis reflects issue strengths.
+        issue_coverage = self._build_issue_coverage_summary()
+
         prompt = SYNTHESIS_PROMPT.format(
             query=state.query,
             docs_analyzed=state.documents_read,
@@ -2258,6 +2265,7 @@ class RLMEngine:
             hypothesis=state.hypothesis or "No specific hypothesis formed",
             source_calibration=source_calibration,
             quant_summary=quant_summary,
+            issue_coverage=issue_coverage,
             gap_summary=gap_summary,
             structured_relationships=structured_relationships or "No typed relationships extracted.",
             entities=entities_text or "No entities identified",
@@ -2460,6 +2468,42 @@ class RLMEngine:
                     _rate_str = ""
                 lines.append(f"  • {_rate_str} — {_ctx}" if _rate_str else f"  • {_ctx}")
 
+        return "\n".join(lines)
+
+    def _build_issue_coverage_summary(self) -> str:
+        """Build a per-issue evidence coverage block for the synthesis prompt (SO-4).
+
+        Shows each open issue with its supporting assertion count, a coverage
+        fraction, and whether a proof gap is present — so the LLM can surface
+        which claims are well-evidenced vs. proof-gap-exposed rather than treating
+        all claims uniformly.
+        """
+        if self._matter_model is None:
+            return "No issue model available."
+        try:
+            report = self._matter_model.get_issue_coverage_report()
+        except Exception:
+            return "Issue coverage data unavailable."
+        if not report:
+            return "No open issues in matter model."
+
+        lines = [f"{len(report)} open issue(s):"]
+        for item in report:
+            title = (item.get("title") or "Untitled")[:60]
+            cnt = item.get("supporting_count", 0)
+            frac = item.get("coverage_fraction", 0.0)
+            pct = int(frac * 100)
+            gap_flag = " ⚠ PROOF GAP" if item.get("has_proof_gap") else ""
+            # Strength label based on coverage fraction
+            if frac >= 0.6:
+                strength = "STRONG"
+            elif frac >= 0.3:
+                strength = "PARTIAL"
+            else:
+                strength = "WEAK"
+            lines.append(
+                f"  [{strength}] {title}: {cnt} supporting assertion(s) ({pct}%){gap_flag}"
+            )
         return "\n".join(lines)
 
     def _build_gap_summary(self) -> str:
