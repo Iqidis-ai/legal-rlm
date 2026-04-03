@@ -427,3 +427,46 @@ def test_detect_proof_gaps_records_gap_for_unsupported_issue(model):
     # Running again must not create a duplicate
     engine._detect_proof_gaps()
     assert len(model.gaps.open_gaps()) == 1, "duplicate proof-gap runs must be idempotent"
+
+
+def test_unrelated_gap_does_not_suppress_proof_gap(model):
+    """An issue-linked gap with a different description must not suppress a proof-gap record.
+
+    Before the NOT EXISTS + description-filter fix, ANY open gap linked to an issue
+    would block _detect_proof_gaps() from recording the zero-support proof gap —
+    even a 'missing exhibit A' gap that is semantically unrelated to the
+    'no supporting assertions' condition.
+    """
+    from irys.matter.enums import IssueType, GapType
+
+    issue_id, _ = model.issues.upsert_issue(
+        title="Breach of contract",
+        issue_type=IssueType.CLAIM,
+        materiality=0.8,
+        salience=0.5,
+    )
+
+    # Record an UNRELATED gap linked to the same issue (e.g., missing exhibit)
+    model.gaps.record(
+        gap_type=GapType.MISSING_DOCUMENT,
+        description="Signed amendment referenced but not provided",
+        materiality=0.6,
+        affected_type="issue",
+        affected_id=issue_id,
+    )
+    assert len(model.gaps.open_gaps()) == 1
+
+    # Now run _detect_proof_gaps() — issue has no supporting assertions
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    engine._detect_proof_gaps()
+
+    # The proof gap must be created even though an unrelated gap already links to this issue
+    open_gaps = model.gaps.open_gaps(min_materiality=0.0)
+    assert len(open_gaps) == 2, (
+        "Unrelated gap must not suppress proof-gap — both must coexist"
+    )
+    descriptions = {g["description"] for g in open_gaps}
+    assert any("No supporting evidence found" in d for d in descriptions), (
+        "Proof gap description must appear alongside the unrelated gap"
+    )
