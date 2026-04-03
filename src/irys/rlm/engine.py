@@ -1578,12 +1578,14 @@ class RLMEngine:
             # COLD PATH: full document parsing + LLM analysis
             doc = repo.read(file_path)
 
-            state.documents_read += 1
-
             # Re-check stop before the LITE LLM call (SO-3 cooperative stop).
+            # Increment documents_read AFTER the stop check so the counter only
+            # reflects documents that were fully analyzed, not files we opened and skipped.
             _adp_dr = getattr(state, "_matter_adapter", None)
             if _adp_dr is not None and _adp_dr.is_stop_requested():
                 return None
+
+            state.documents_read += 1
 
             # Use excerpt for analysis
             content = doc.get_excerpt(self.config.excerpt_chars)
