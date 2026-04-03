@@ -196,3 +196,55 @@ def test_build_query_context_with_data(model):
     ctx = model.build_query_context()
     assert ctx.existing_assertion_count == 3
     assert len(ctx.open_gaps) == 1
+
+
+# ---------------------------------------------------------------------------
+# Gap store deduplication (SO-7: idempotent gap recording)
+# ---------------------------------------------------------------------------
+
+def test_gap_record_idempotent_same_description(model):
+    """Calling record() twice with the same gap_type+description returns the same gap_id."""
+    id1 = model.gaps.record(GapType.MISSING_DOCUMENT, "Amendment #1 not found")
+    id2 = model.gaps.record(GapType.MISSING_DOCUMENT, "Amendment #1 not found")
+    assert id1 == id2
+    assert len(model.gaps.open_gaps(min_materiality=0.0)) == 1
+
+
+def test_gap_record_idempotent_normalizes_whitespace(model):
+    """Trailing spaces and case differences collapse to the same gap."""
+    id1 = model.gaps.record(GapType.MISSING_DOCUMENT, "  Amendment #1 not found  ")
+    id2 = model.gaps.record(GapType.MISSING_DOCUMENT, "Amendment #1 Not Found")
+    assert id1 == id2
+
+
+def test_gap_record_different_types_not_deduplicated(model):
+    """Same description with different gap_type creates distinct gaps."""
+    id1 = model.gaps.record(GapType.MISSING_DOCUMENT, "Amendment #1 not found")
+    id2 = model.gaps.record(GapType.MISSING_ISSUE_PREDICATE, "Amendment #1 not found")
+    assert id1 != id2
+    assert len(model.gaps.open_gaps(min_materiality=0.0)) == 2
+
+
+def test_gap_record_reopen_closed_gap(model):
+    """Re-detecting a gap that was closed reopens it rather than creating a duplicate."""
+    gap_id = model.gaps.record(GapType.MISSING_DOCUMENT, "Exhibit A not attached")
+    # Close it
+    model.db.execute("UPDATE gap SET status='resolved' WHERE id=?", (gap_id,))
+    assert len(model.gaps.open_gaps(min_materiality=0.0)) == 0
+
+    # Re-detect the same gap
+    reopened_id = model.gaps.record(GapType.MISSING_DOCUMENT, "Exhibit A not attached")
+    assert reopened_id == gap_id
+    assert len(model.gaps.open_gaps(min_materiality=0.0)) == 1
+
+
+def test_gap_record_many_idempotent(model):
+    """record_many() returns existing ids when specs duplicate existing gaps."""
+    specs = [
+        {"gap_type": GapType.MISSING_DOCUMENT, "description": "Missing invoice #42"},
+        {"gap_type": GapType.MISSING_DOCUMENT, "description": "Missing payment receipt"},
+    ]
+    ids_first = model.gaps.record_many(specs)
+    ids_second = model.gaps.record_many(specs)
+    assert ids_first == ids_second
+    assert len(model.gaps.open_gaps(min_materiality=0.0)) == 2

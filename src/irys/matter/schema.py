@@ -905,21 +905,22 @@ def _migration_v18(conn) -> None:
         except Exception:
             pass  # column already exists
 
-        # Back-fill existing rows
-        rows = conn.execute("SELECT id, gap_type, description FROM gap").fetchall()
-        for row in rows:
-            key = hashlib.sha256(
-                f"{row[1]}:{(row[2] or '').lower().strip()}".encode()
-            ).hexdigest()[:32]
-            conn.execute(
-                "UPDATE gap SET description_key=? WHERE id=? AND description_key IS NULL",
-                (key, row[0]),
-            )
+        # Back-fill existing rows using executemany (avoids N×individual UPDATEs)
+        rows = conn.execute("SELECT id, gap_type, description FROM gap WHERE description_key IS NULL").fetchall()
+        if rows:
+            updates = []
+            for row in rows:
+                key = hashlib.sha256(
+                    f"{row[1]}:{(row[2] or '').lower().strip()}".encode()
+                ).hexdigest()[:32]
+                updates.append((key, row[0]))
+            conn.executemany("UPDATE gap SET description_key=? WHERE id=?", updates)
 
-        # Index for fast lookup by matter + type + key (non-unique — allows closed dupes)
+        # Index for fast lookup by matter + type + key, with created_at trailing to
+        # cover ORDER BY created_at DESC in record() (non-unique — allows closed dupes)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS ix_gap_dedup"
-            " ON gap(matter_id, gap_type, description_key)"
+            " ON gap(matter_id, gap_type, description_key, created_at)"
         )
         conn.execute("RELEASE _v18")
     except Exception:

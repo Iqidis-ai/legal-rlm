@@ -6,6 +6,7 @@ typed assertions with speech-act classification, support/attack links,
 and revisable belief states.
 """
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -451,7 +452,6 @@ class GapStore:
     @staticmethod
     def _gap_key(gap_type_value: str, description: str) -> str:
         """Compute dedup key: sha256(gap_type:normalized_description)[:32]."""
-        import hashlib
         normalized = description.lower().strip()
         return hashlib.sha256(f"{gap_type_value}:{normalized}".encode()).hexdigest()[:32]
 
@@ -523,25 +523,102 @@ class GapStore:
           blocker_score, affected_type, affected_id (all optional except
           gap_type and description).
 
-        Idempotent — applies the same open/reopen/insert logic as record()
-        for each spec. (SO-7)
+        Idempotent: duplicate descriptions (same matter/type/description) return
+        existing gap_ids; closed gaps matching a spec are reopened. (SO-7)
+
+        Uses batch SELECT + executemany INSERT for performance — avoids the
+        N×(SELECT+INSERT) per-row overhead of calling record() sequentially.
 
         Returns list of gap IDs in insertion order.
         """
-        gap_ids = []
+        if not specs:
+            return []
+        now = _now()
+        # Normalize specs and compute dedup keys up front
+        normalized = []
+        for spec in specs:
+            gt_val = spec["gap_type"].value if hasattr(spec["gap_type"], "value") else spec["gap_type"]
+            desc_key = self._gap_key(gt_val, spec["description"])
+            normalized.append({
+                "id": _id(),
+                "gt": gt_val,
+                "description": spec["description"],
+                "desc_key": desc_key,
+                "expected_artifact": spec.get("expected_artifact"),
+                "materiality": spec.get("materiality", 0.5),
+                "blocker_score": spec.get("blocker_score", 0.0),
+                "affected_type": spec.get("affected_type"),
+                "affected_id": spec.get("affected_id"),
+            })
+
         with self.db.transaction():
-            for spec in specs:
-                gap_id = self.record(
-                    gap_type=spec["gap_type"] if isinstance(spec["gap_type"], GapType)
-                              else GapType(spec["gap_type"]),
-                    description=spec["description"],
-                    expected_artifact=spec.get("expected_artifact"),
-                    materiality=spec.get("materiality", 0.5),
-                    blocker_score=spec.get("blocker_score", 0.0),
-                    affected_type=spec.get("affected_type"),
-                    affected_id=spec.get("affected_id"),
-                )
+            # Batch lookup: one query for all keys via IN clause
+            all_keys = [(n["gt"], n["desc_key"]) for n in normalized]
+            # Build a VALUES lookup without hitting SQLite param limit
+            # (batch is typically small — gap detection emits ~5-20 per run)
+            existing_map: dict[tuple, dict] = {}
+            if all_keys:
+                placeholders = ",".join("(?,?)" for _ in all_keys)
+                flat_params = [v for pair in all_keys for v in pair]
+                rows = self.db.execute(
+                    f"""SELECT id, gap_type, description_key, status
+                        FROM gap
+                        WHERE matter_id=? AND (gap_type, description_key) IN ({placeholders})
+                        ORDER BY created_at DESC""",
+                    [self.matter_id] + flat_params,
+                ).fetchall()
+                for r in rows:
+                    key = (r["gap_type"], r["description_key"])
+                    if key not in existing_map:  # keep most recent per key
+                        existing_map[key] = dict(r)
+
+            gap_ids = []
+            insert_rows = []
+            reopen_ids = []
+            link_checks = []
+
+            for n in normalized:
+                key = (n["gt"], n["desc_key"])
+                ex = existing_map.get(key)
+                if ex:
+                    gap_id = ex["id"]
+                    if ex["status"] != "open":
+                        reopen_ids.append((now, gap_id))
+                else:
+                    gap_id = n["id"]
+                    insert_rows.append((
+                        gap_id, self.matter_id, n["gt"], n["description"], n["desc_key"],
+                        n["expected_artifact"], n["materiality"], n["blocker_score"],
+                        "open", now, now,
+                    ))
                 gap_ids.append(gap_id)
+                if n["affected_type"] and n["affected_id"]:
+                    link_checks.append((gap_id, n["affected_type"], n["affected_id"]))
+
+            if insert_rows:
+                self.db.executemany(
+                    """INSERT INTO gap
+                       (id, matter_id, gap_type, description, description_key,
+                        expected_artifact, materiality_score, blocker_score,
+                        status, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    insert_rows,
+                )
+            if reopen_ids:
+                self.db.executemany(
+                    "UPDATE gap SET status='open', updated_at=? WHERE id=?",
+                    reopen_ids,
+                )
+            for gap_id, at, ai in link_checks:
+                existing_link = self.db.execute(
+                    "SELECT id FROM gap_link WHERE gap_id=? AND affected_type=? AND affected_id=?",
+                    (gap_id, at, ai),
+                ).fetchone()
+                if not existing_link:
+                    self.db.execute(
+                        "INSERT INTO gap_link (id, gap_id, affected_type, affected_id, created_at) VALUES (?,?,?,?,?)",
+                        (_id(), gap_id, at, ai, now),
+                    )
         return gap_ids
 
     def open_gaps(self, min_materiality: float = 0.0) -> list[dict]:
