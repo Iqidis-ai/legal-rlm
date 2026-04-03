@@ -1,9 +1,17 @@
 """Model tiering system for Gemini API access.
 
 Tier Strategy:
-- LITE: Flash-Lite for workhorse tasks (reading, extraction, basic processing)
+- NANO: Flash-Lite with short output budget for triage/classification tasks
+         (doc type, actor spotting, section headers, relevance scoring)
+- LITE: Flash-Lite for full document reading and assertion extraction
 - FLASH: Flash for intelligent tasks (search decisions, routing, planning)
 - PRO: Pro for final synthesis (polished legal output)
+
+Cost optimization:
+- NANO + LITE cold-path: use Google Batch API (50% off, 24h turnaround)
+- FLASH + PRO: realtime only (user-interactive)
+- Context caching: pass cache_key to reuse hot prefixes (90% discount on cache reads)
+  Typical cached prefixes: system instructions, matter summary, active issue tree
 """
 
 from enum import Enum
@@ -21,9 +29,10 @@ logger = logging.getLogger(__name__)
 
 class ModelTier(Enum):
     """Model tiers for different task complexities."""
-    LITE = "lite"      # Workhorse: reading, extraction
-    FLASH = "flash"    # Intelligent: search, routing, planning
-    PRO = "pro"        # Synthesis: final polished output
+    NANO = "nano"      # Triage: doc classification, actor spotting, relevance scoring
+    LITE = "lite"      # Workhorse: full document reading, assertion extraction
+    FLASH = "flash"    # Intelligent: search, routing, planning, gap detection
+    PRO = "pro"        # Synthesis: final polished output, legal research
 
 
 @dataclass
@@ -38,26 +47,36 @@ class ModelConfig:
 
 
 # Model configurations per tier
-# Pricing verified April 2026 (see experiments/EXPERIMENTS.md EXP-009)
+# Pricing verified April 2026 (see experiments/EXPERIMENTS.md EXP-009, D-007)
+# NANO and LITE use the same model (gemini-2.5-flash-lite) — distinction is token budget:
+#   NANO: short output (≤2048 tokens) for triage/classification tasks
+#   LITE: full output (≤8192 tokens) for document reading and extraction
 MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
+    ModelTier.NANO: ModelConfig(
+        model_id="gemini-2.5-flash-lite",
+        thinking_level="",
+        max_output_tokens=2048,  # Triage tasks only; narrow scope
+        cost_per_1m_input=0.10,
+        cost_per_1m_output=0.40,
+    ),
     ModelTier.LITE: ModelConfig(
         model_id="gemini-2.5-flash-lite",
         thinking_level="",
-        max_output_tokens=8192,  # Increased from 4096 to reduce truncation
+        max_output_tokens=8192,
         cost_per_1m_input=0.10,
         cost_per_1m_output=0.40,
     ),
     ModelTier.FLASH: ModelConfig(
         model_id="gemini-2.5-flash",
         thinking_level="",
-        max_output_tokens=16384,  # Increased from 8192 to reduce JSON truncation
+        max_output_tokens=16384,
         cost_per_1m_input=0.30,
         cost_per_1m_output=2.50,
     ),
     ModelTier.PRO: ModelConfig(
         model_id="gemini-2.5-pro",
         thinking_level="",
-        max_output_tokens=32768,  # Increased from 16384 for thorough analysis
+        max_output_tokens=32768,
         cost_per_1m_input=1.25,
         cost_per_1m_output=10.00,
     ),
@@ -66,17 +85,26 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
 
 @dataclass
 class UsageStats:
-    """Token usage and cost tracking."""
+    """Token usage and cost tracking per tier."""
     input_tokens: int = 0
     output_tokens: int = 0
     requests: int = 0
+    # Tier is set at construction time so cost_per_1m_* can be looked up
+    tier: Optional["ModelTier"] = field(default=None, repr=False)
 
     @property
     def estimated_cost(self) -> float:
-        """Estimate cost based on default Flash pricing (verified Apr 2026)."""
+        """Estimate cost using per-tier pricing from MODEL_CONFIGS."""
+        if self.tier is not None and self.tier in MODEL_CONFIGS:
+            mc = MODEL_CONFIGS[self.tier]
+            return (
+                self.input_tokens * mc.cost_per_1m_input / 1_000_000
+                + self.output_tokens * mc.cost_per_1m_output / 1_000_000
+            )
+        # Fallback: Flash pricing
         return (
-            self.input_tokens * 0.30 / 1_000_000 +
-            self.output_tokens * 2.50 / 1_000_000
+            self.input_tokens * 0.30 / 1_000_000
+            + self.output_tokens * 2.50 / 1_000_000
         )
 
     def add(self, input_tokens: int, output_tokens: int):
@@ -159,7 +187,7 @@ class GeminiClient:
 
         self.client = genai.Client(api_key=self.api_key)
         self.timeout = timeout
-        self._usage: dict[ModelTier, UsageStats] = {t: UsageStats() for t in ModelTier}
+        self._usage: dict[ModelTier, UsageStats] = {t: UsageStats(tier=t) for t in ModelTier}
         self._rate_limiter = RateLimiter(requests_per_minute, burst_size)
 
     def _get_config(self, tier: ModelTier) -> types.GenerateContentConfig:
@@ -180,14 +208,31 @@ class GeminiClient:
         system_prompt: Optional[str] = None,
         tools: Optional[list] = None,
         timeout: Optional[float] = None,
+        cached_content: Optional[str] = None,
     ) -> str:
-        """Generate completion using specified tier with timeout."""
+        """Generate completion using specified tier with timeout.
+
+        Args:
+            prompt: The user prompt.
+            tier: Model tier to use (NANO/LITE/FLASH/PRO).
+            system_prompt: Optional system-level instruction prepended to prompt.
+            tools: Optional tool definitions for function calling.
+            timeout: Per-call timeout override (seconds).
+            cached_content: Optional Gemini cached-content name (resource ID returned
+                by the caching API). When provided, the cached prefix is reused and
+                Gemini charges only the 10% cache-read rate instead of full input cost.
+                Use for hot reusable prefixes: system instructions, matter summaries,
+                active issue tree. Do NOT cache individual document content.
+        """
         mc = MODEL_CONFIGS[tier]
         config = self._get_config(tier)
         request_timeout = timeout or self.timeout
 
         if tools:
             config.tools = tools
+
+        if cached_content:
+            config.cached_content = cached_content
 
         contents = []
         if system_prompt:
@@ -305,6 +350,42 @@ class GeminiClient:
         tasks = [process_one(p) for p in prompts]
         return await asyncio.gather(*tasks)
 
+    def create_cached_content(
+        self,
+        content: str,
+        tier: ModelTier = ModelTier.FLASH,
+        ttl_seconds: int = 300,
+        display_name: Optional[str] = None,
+    ) -> Optional[str]:
+        """Create a Gemini cached content resource and return its name (resource ID).
+
+        Use this for hot reusable prefixes that are injected into many calls within
+        a run: system instructions, matter summaries, active issue tree text.
+        Pass the returned name as `cached_content` in subsequent `complete()` calls.
+
+        Charges: cache write is 1.25x input cost; cache reads cost 10% of input cost.
+        Minimum cache size is 32,768 tokens. TTL default is 5 minutes (300s).
+
+        Returns None on failure (caching is a performance optimization, never critical).
+        """
+        try:
+            mc = MODEL_CONFIGS[tier]
+            cached = self.client.caches.create(
+                model=mc.model_id,
+                config=types.CreateCachedContentConfig(
+                    contents=[types.Content(
+                        role="user",
+                        parts=[types.Part(text=content)],
+                    )],
+                    ttl=f"{ttl_seconds}s",
+                    display_name=display_name,
+                ),
+            )
+            return cached.name
+        except Exception as e:
+            logger.warning("Context caching failed (non-critical): %s", e)
+            return None
+
     def get_usage(self) -> dict[str, UsageStats]:
         """Get usage statistics per tier."""
         return {tier.value: stats for tier, stats in self._usage.items()}
@@ -313,11 +394,9 @@ class GeminiClient:
         """Get total estimated cost across all tiers."""
         total = 0.0
         for tier, stats in self._usage.items():
-            mc = MODEL_CONFIGS[tier]
-            total += stats.input_tokens * mc.cost_per_1m_input / 1_000_000
-            total += stats.output_tokens * mc.cost_per_1m_output / 1_000_000
+            total += stats.estimated_cost
         return total
 
     def reset_usage(self):
         """Reset usage counters."""
-        self._usage = {t: UsageStats() for t in ModelTier}
+        self._usage = {t: UsageStats(tier=t) for t in ModelTier}

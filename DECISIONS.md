@@ -103,6 +103,39 @@ improvements, advanced presentation surfaces.
 
 ---
 
+## D-007: Single-Provider Model Architecture (NANO via routing, not new vendor)
+
+**Date:** 2026-04-03
+**Status:** Active — extends D-001
+
+**Decision:** Irys RLM will remain single-provider for production matter-content traffic.
+NANO is a routing budget on `gemini-2.5-flash-lite` (shorter prompts, narrower output),
+not a second vendor. The system maximizes ROI through Google Batch API for cold-path
+NANO/LITE ingestion and selective Gemini context caching of hot reusable prefixes
+(system instructions, matter summaries, issue context).
+
+**Rationale:** At 1,000 queries/day, adding a second NANO provider (Together AI, Groq)
+changes total-system cost by at most $3–5/month while materially increasing routing
+complexity, testing surface, failure modes, and data-governance burden for tasks that feed
+the durable matter model (SO-1, SO-2, SO-5, SO-7). The 90% Gemini cache-read discount
+erases the second-provider advantage with as few as 3,600 cached tokens per NANO call.
+Data sovereignty: raw matter content must stay on Google (paid API, no training use by
+default); Together requires explicit ZDR configuration; Groq adds a second processor.
+
+**Implementation plan:**
+1. Add `ModelTier.NANO` as a routing budget concept on `gemini-2.5-flash-lite`
+   (max_output_tokens=2048, for triage/classification calls)
+2. Add `use_batch=True` flag to `GeminiClient.complete()` for cold-path ingestion
+3. Add `cache_key` param for reusable prefix caching via Gemini context caching API
+4. Route engine triage tasks (doc type, actor spotting) to NANO tier
+
+**Revisit if:** Vertex AI migration is complete and a second provider can prove materially
+lower total cost without handling raw matter text.
+
+**Source:** Codex Design Gate review 2026-04-03 (codex_design_gate_model_tiers.txt).
+
+---
+
 ## D-006: Swarm Build as Governance Framework
 
 **Date:** 2026-04-02
