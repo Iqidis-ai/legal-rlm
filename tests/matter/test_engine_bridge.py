@@ -2911,8 +2911,12 @@ def test_enforce_gate_appends_section_when_missing():
     )
 
 
-def test_enforce_gate_no_action_when_section_present():
-    """Gate must return None (no action) when Financial Analysis section already exists."""
+def test_enforce_gate_fires_when_heading_present_but_figures_absent():
+    """Gate fires even when a heading is present if violation figures are absent.
+
+    A structural heading without the specific violation figures is not compliance —
+    the gate must still inject the actual quantitative risk data.
+    """
     from irys.rlm.engine import RLMEngine
     model = MatterModel.open_in_memory()
     _seed_high_exposure(model)
@@ -2920,9 +2924,38 @@ def test_enforce_gate_no_action_when_section_present():
     engine = RLMEngine.__new__(RLMEngine)
     engine._matter_model = model
 
+    # Output has a heading but NOT the specific violation description text.
     output = "## Executive Summary\nBrief.\n\n## Financial Analysis\n$80k exposure.\n"
     result = engine._enforce_quant_threshold_gate(output)
-    assert result is None, "Gate must return None when Financial Analysis section is already present"
+    assert result is not None, (
+        "Gate must fire when heading exists but specific violation figures are absent"
+    )
+    assert "Claimed financial exposure" in result, (
+        "Gate must inject specific violation description even when heading present"
+    )
+
+
+def test_enforce_gate_no_action_when_violation_figures_present():
+    """Gate must return None when the specific violation description is already in output.
+
+    This covers the case where the gate already fired on a prior synthesis pass
+    and the violation figures are present verbatim (content-based check).
+    """
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_high_exposure(model)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # Get the actual violation description text so we can embed it.
+    violations = model.quant.compute_thresholds(model.gaps)
+    assert violations, "Expected HIGH violations from seeded data"
+    desc = violations[0]["description"]
+
+    output = f"## Financial Analysis\n{desc}\nSee above for reconciliation.\n"
+    result = engine._enforce_quant_threshold_gate(output)
+    assert result is None, "Gate must return None when violation figures are already present"
 
 
 def test_enforce_gate_no_action_when_no_high_violations():
