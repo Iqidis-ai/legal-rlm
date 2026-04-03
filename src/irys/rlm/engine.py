@@ -39,6 +39,46 @@ _VALID_ASSERTION_LINK_TYPES: frozenset[str] = frozenset(
     {"supports", "attacks", "depends_on", "supersedes", "contradicts", "corroborates"}
 )
 
+# ── SO-5 advocacy gate: module-level compiled patterns ────────────────────────
+# Hoisted from _enforce_advocacy_gate() so they are compiled once at import time,
+# not on each synthesis call.
+import re as _re_engine
+
+# Heading boundary regex per level: matches \n followed by 1..level '#' chars + space.
+_ADVOCACY_HDR_RE: "dict[int, _re_engine.Pattern[str]]" = {
+    lvl: _re_engine.compile(r'\n#{1,' + str(lvl) + r'} ') for lvl in (2, 3)
+}
+
+# List-item starter pattern (applied to each stripped line in semantic unit builder).
+_ADVOCACY_LIST_PAT: "_re_engine.Pattern[str]" = _re_engine.compile(
+    r'^(?:[-*+•]|\d+[.)]|[a-zA-Z][.)])\s'
+)
+
+# Section header patterns: (header_str, search_regex) pairs including colon variant.
+# Each pattern is anchored to line-start; case-insensitive.
+_ADVOCACY_SECTIONS: "list[tuple[str, _re_engine.Pattern[str]]]" = []
+for _hdr in (
+    "### Key Findings",
+    "## Key Findings",
+    "## Factual Background",
+    "### Factual Background",
+):
+    _hdr_lower = _hdr.lower()
+    for _search in (_hdr_lower, _hdr_lower.rstrip(':') + ':'):
+        _ADVOCACY_SECTIONS.append((
+            _hdr,
+            _re_engine.compile(r'(?:^|\n)' + _re_engine.escape(_search), _re_engine.IGNORECASE),
+        ))
+del _hdr, _hdr_lower, _search  # clean up loop variables at module scope
+
+# Advisory marker presence pattern.
+_ADVOCACY_MARKER_NAME = "Source Calibration Advisory"
+_ADVOCACY_MARKER_PAT: "_re_engine.Pattern[str]" = _re_engine.compile(
+    r'(?:^|\n)#{2,3} ' + _re_engine.escape(_ADVOCACY_MARKER_NAME) + r':?[ \t]*(?:\n|$)',
+    _re_engine.IGNORECASE,
+)
+# ── end SO-5 advocacy gate constants ─────────────────────────────────────────
+
 
 @dataclass
 class RLMConfig:
@@ -2775,7 +2815,7 @@ class RLMEngine:
         if not active_advocacy:
             return None
 
-        _MARKER = "Source Calibration Advisory"
+        # Use module-level _ADVOCACY_MARKER_NAME for the injected section header.
 
         # Build issue index for human-readable names before structural check.
         issue_index: dict = {}
@@ -2818,32 +2858,21 @@ class RLMEngine:
         # \n work correctly on Windows-originated output or CRLF LLM responses.
         synthesis_output = synthesis_output.replace('\r\n', '\n')
 
-        import re as _re
-        # Precompile per-level heading boundary patterns (at most 3 levels needed).
-        _HDR_RE: dict = {
-            lvl: _re.compile(r'\n#{1,' + str(lvl) + r'} ') for lvl in (2, 3)
-        }
+        # Use module-level compiled patterns (_ADVOCACY_HDR_RE, _ADVOCACY_LIST_PAT,
+        # _ADVOCACY_SECTIONS, _ADVOCACY_MARKER_PAT) — hoisted from per-call scope
+        # to avoid repeated re.compile() on every synthesis invocation.
 
-        def _extract_section(text: str, hdr: str) -> str:
-            """Return text from hdr to the next header of equal or higher level.
-
-            Anchors header search to line-start (start of text OR after \\n) so
-            a heading phrase that appears in prose does not trigger the gate.
-            Case-insensitive; also tries a trailing-colon variant.
-            """
-            hdr_lower = hdr.lower()
-            for search in (hdr_lower, hdr_lower.rstrip(':') + ':'):
-                # Require header to appear at the start of a line.
-                pat = _re.compile(r'(?:^|\n)' + _re.escape(search), _re.IGNORECASE)
-                m_hdr = pat.search(text)
-                if m_hdr:
-                    start = m_hdr.start()
-                    if start > 0 and text[start] == '\n':
-                        start += 1  # skip the leading newline — point to '#'
-                    level = min(3, len(hdr) - len(hdr.lstrip("#")))
-                    m_end = _HDR_RE[level].search(text, start + len(search))
-                    return text[start:(m_end.start() if m_end else len(text))]
-            return ""
+        def _extract_section(text: str, hdr: str, hdr_pat: "_re_engine.Pattern[str]") -> str:
+            """Return text from hdr to the next header of equal or higher level."""
+            m_hdr = hdr_pat.search(text)
+            if not m_hdr:
+                return ""
+            start = m_hdr.start()
+            if start > 0 and text[start] == '\n':
+                start += 1  # skip leading newline — point to '#'
+            level = min(3, len(hdr) - len(hdr.lstrip("#")))
+            m_end = _ADVOCACY_HDR_RE[level].search(text, start + len(hdr))
+            return text[start:(m_end.start() if m_end else len(text))]
 
         def _section_has_unhedged_title(
             section: str, titles: "list[str]", markers: "tuple[str, ...]"
@@ -2852,30 +2881,22 @@ class RLMEngine:
 
             Groups continuation lines into semantic units (bullet items / paragraphs)
             so that a hedge on a continuation line of the same bullet clears the title
-            on the preceding line, and adjacents bullets cannot cross-contaminate.
+            on the preceding line, and adjacent bullets cannot cross-contaminate.
 
             Titles shorter than 4 chars are skipped to avoid false matches.
             """
             lower = section.lower()
-            # Compiled pattern for list-item starters: unordered (- * + •) and
-            # ordered (1. / 1) / a. / a)) so ordered bullets start new semantic units.
-            # Includes '+' bullets and task-list markers (- [ ] / - [x] already
-            # matched by the '-' branch since ls starts with '- ').
-            # One \s after the marker token to require trailing whitespace.
-            _LIST_PAT = _re.compile(r'^(?:[-*+•]|\d+[.)]|[a-zA-Z][.)])\s')
             # Build semantic units: group lines until a blank line or a new list item.
             units: "list[str]" = []
             buf: "list[str]" = []
             for ln in lower.split('\n'):
                 ls = ln.lstrip()
-                is_list_start = bool(_LIST_PAT.match(ls))
+                is_list_start = bool(_ADVOCACY_LIST_PAT.match(ls))
                 if not ls:
-                    # Blank line ends current unit
                     if buf:
                         units.append(' '.join(buf))
                     buf = []
                 elif is_list_start and buf:
-                    # New bullet starts a new unit
                     units.append(' '.join(buf))
                     buf = [ln]
                 else:
@@ -2886,35 +2907,29 @@ class RLMEngine:
             for title in titles:
                 t_lower = title.lower()
                 if len(t_lower) < 4:
-                    continue  # too short to reliably match without false positives
+                    continue
                 for unit in units:
                     if t_lower in unit and not any(h in unit for h in markers):
                         return True
             return False
 
-        for _chk_hdr in (
-            "### Key Findings",
-            "## Key Findings",
-            "## Factual Background",
-            "### Factual Background",
-        ):
-            _sec = _extract_section(synthesis_output, _chk_hdr)
-            if _sec and _section_has_unhedged_title(_sec, advocacy_titles, _HEDGE_MARKERS):
-                _STRUCTURAL_VIOLATION = True
-                break
+        # Check each candidate section (Key Findings, Factual Background) using
+        # precompiled header patterns from _ADVOCACY_SECTIONS.
+        _seen_hdrs: "set[str]" = set()
+        for _chk_hdr, _chk_pat in _ADVOCACY_SECTIONS:
+            if _chk_hdr in _seen_hdrs:
+                continue  # skip colon-variant if base already matched
+            _sec = _extract_section(synthesis_output, _chk_hdr, _chk_pat)
+            if _sec:
+                _seen_hdrs.add(_chk_hdr)
+                if _section_has_unhedged_title(_sec, advocacy_titles, _HEDGE_MARKERS):
+                    _STRUCTURAL_VIOLATION = True
+                    break
 
         # If the advisory section header is already present AND no structural violation,
-        # gate is satisfied. Accept both ## and ### heading levels and ignore case so
-        # minor LLM heading variations don't cause unnecessary reinjection.
-        # Anchor marker check to line-start and end-of-line so only an exact
-        # heading match ("## Source Calibration Advisory" / "### ...") satisfies
-        # the gate — a heading with extra words (e.g. "(Internal Note)") does not.
-        _marker_present = bool(_re.search(
-            r'(?:^|\n)#{2,3} ' + _re.escape(_MARKER) + r':?[ \t]*(?:\n|$)',
-            synthesis_output,
-            _re.IGNORECASE,
-        ))
-        if _marker_present and not _STRUCTURAL_VIOLATION:
+        # gate is satisfied. Uses module-level _ADVOCACY_MARKER_PAT (anchored to
+        # line-start + end-of-line; accepts ## and ###; case-insensitive).
+        if _ADVOCACY_MARKER_PAT.search(synthesis_output) and not _STRUCTURAL_VIOLATION:
             return None
 
         violation_note = ""
@@ -2927,7 +2942,7 @@ class RLMEngine:
 
         lines = [
             "",
-            f"## {_MARKER}",
+            f"## {_ADVOCACY_MARKER_NAME}",
             "*(Auto-generated by SO-5 advocacy gate — the following issues lack operative "
             "or authoritative corroboration.)*",
             violation_note,
