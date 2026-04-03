@@ -1746,3 +1746,58 @@ def test_build_issue_coverage_summary_weak_coverage_no_assertions():
     assert "Fraud claim" in result
     assert "WEAK" in result, f"Expected WEAK label for zero-assertion issue: {result}"
     assert "0" in result, f"Expected 0 supporting assertions in: {result}"
+
+
+# ---------------------------------------------------------------------------
+# SO-1: documents_from_cache / reuse_rate serialization and get_summary()
+# ---------------------------------------------------------------------------
+
+def test_investigation_state_documents_from_cache_roundtrip():
+    """documents_from_cache must survive to_dict/from_dict (SO-1 metric persistence)."""
+    from irys.rlm.state import InvestigationState
+
+    state = InvestigationState.create("reuse test", "/repo")
+    state.documents_read = 10
+    state.documents_from_cache = 7
+
+    data = state.to_dict()
+    assert data.get("documents_from_cache") == 7
+
+    restored = InvestigationState.from_dict(data)
+    assert restored.documents_from_cache == 7
+    assert restored.documents_read == 10
+
+
+def test_investigation_state_documents_from_cache_defaults_zero():
+    """from_dict() on old-format dict (missing documents_from_cache) must default to 0."""
+    from irys.rlm.state import InvestigationState
+
+    minimal = {"id": "abc", "query": "test", "repository_path": "/repo"}
+    state = InvestigationState.from_dict(minimal)
+    assert state.documents_from_cache == 0
+
+
+def test_get_summary_reuse_rate_computed():
+    """get_summary() must compute reuse_rate = documents_from_cache / documents_read (SO-1)."""
+    from irys.rlm.state import InvestigationState
+
+    state = InvestigationState.create("reuse rate test", "/repo")
+    state.documents_read = 8
+    state.documents_from_cache = 6
+
+    summary = state.get_summary()
+    metrics = summary.get("metrics", {})
+    assert metrics.get("documents_from_cache") == 6
+    assert metrics.get("reuse_rate") == pytest.approx(0.75, abs=0.001), (
+        f"Expected reuse_rate 0.75, got {metrics.get('reuse_rate')}"
+    )
+
+
+def test_get_summary_reuse_rate_zero_when_no_docs_read():
+    """get_summary() reuse_rate must be 0.0 when documents_read=0 (no division by zero)."""
+    from irys.rlm.state import InvestigationState
+
+    state = InvestigationState.create("empty state", "/repo")
+    summary = state.get_summary()
+    metrics = summary.get("metrics", {})
+    assert metrics.get("reuse_rate") == 0.0
