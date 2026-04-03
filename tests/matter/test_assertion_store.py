@@ -381,3 +381,49 @@ def test_superseded_assertion_marked_via_belief_revision(model):
     assert old_record.belief_state == BeliefState.SUPERSEDED.value, (
         f"Superseded assertion must transition to SUPERSEDED, got {old_record.belief_state}"
     )
+
+
+# ---------------------------------------------------------------------------
+# CONTRADICTS link — SO-2/SO-6 numeric conflict wiring
+# ---------------------------------------------------------------------------
+
+def test_contradicts_link_bidirectional_attack(model):
+    """CONTRADICTS links must be retrievable via get_attackers() on both sides.
+
+    When detect_quant_conflicts() wires two assertions with CONTRADICTS links,
+    each assertion should appear as an attacker of the other.  This verifies
+    that the SO-6→SO-2 link propagation drives truth maintenance correctly.
+    """
+    a_id, _ = model.assertions.upsert_occurrence(
+        make_candidate("Invoice #X totals $50,000.", doc_id="inv_A.pdf",
+                       speech_act=SpeechAct.ALLEGED))
+    b_id, _ = model.assertions.upsert_occurrence(
+        make_candidate("Invoice #X totals $55,000.", doc_id="inv_B.pdf",
+                       speech_act=SpeechAct.ALLEGED))
+
+    # Wire CONTRADICTS links (both directions, as detect_quant_conflicts does)
+    model.assertions.link(a_id, b_id, AssertionLinkType.CONTRADICTS)
+    model.assertions.link(b_id, a_id, AssertionLinkType.CONTRADICTS)
+
+    # Each assertion should see the other as an attacker
+    assert b_id in model.assertions.get_attackers(a_id), (
+        "b must appear as attacker of a via CONTRADICTS link"
+    )
+    assert a_id in model.assertions.get_attackers(b_id), (
+        "a must appear as attacker of b via CONTRADICTS link"
+    )
+
+
+def test_contradicts_link_is_idempotent(model):
+    """Wiring the same CONTRADICTS link twice must not create duplicate rows."""
+    a_id, _ = model.assertions.upsert_occurrence(
+        make_candidate("Amount owed: $10,000.", doc_id="doc_a.pdf"))
+    b_id, _ = model.assertions.upsert_occurrence(
+        make_candidate("Amount owed: $12,000.", doc_id="doc_b.pdf"))
+
+    link1 = model.assertions.link(a_id, b_id, AssertionLinkType.CONTRADICTS)
+    link2 = model.assertions.link(a_id, b_id, AssertionLinkType.CONTRADICTS)
+
+    assert link1 == link2, "Idempotent: same CONTRADICTS link must not be duplicated"
+    attackers = model.assertions.get_attackers(b_id)
+    assert attackers.count(a_id) == 1, "get_attackers must not return duplicates"
