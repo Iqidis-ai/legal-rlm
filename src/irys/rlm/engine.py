@@ -167,9 +167,10 @@ ANALYZE THESE RESULTS CAREFULLY:
    - Format each fact as: {"fact": "...", "source_file": "filename_if_determinable", "issue_relation": "supports|attacks|neutral", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD by March 2023"}
    - source_file: the filename from the search results where the fact appears
    - issue_relation: whether this fact SUPPORTS the current hypothesis, ATTACKS/undermines it, or is NEUTRAL
-   - subject: the entity performing the action (person, company, or concept) — null if unclear
-   - predicate: verb/action in snake_case (e.g. "agreed_to_pay", "was_employed_by", "terminated") — null if unclear
-   - object: what the predicate applies to (amount, party, date, condition) — null if unclear
+   - subject: entity performing the action (person, company) — REQUIRED; provide best-effort even if uncertain (e.g. "plaintiff", "defendant", "contracting_party")
+   - predicate: verb/action in snake_case — REQUIRED; describe the relationship (e.g. "agreed_to_pay", "was_employed_by", "executed_contract", "disputes_claim")
+   - object: what the predicate applies to (amount, party, date, condition) — REQUIRED; include the key value or description
+   - Omit subject/predicate/object ONLY when the fact is purely procedural with no entity relationship
    - Directly relevant to the query
    - Supported by the document text
    - Include dates, amounts, party names where found
@@ -228,9 +229,10 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
    - Format each fact as: {"fact": "...", "page": N, "issue_relation": "supports|attacks|neutral", "effective_date": "YYYY-MM-DD or null", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD by March 2023"}
    - issue_relation: whether the fact SUPPORTS the investigation focus, ATTACKS/undermines it, or is NEUTRAL
    - effective_date: ISO date when this fact became effective/occurred (null if not temporally scoped)
-   - subject: entity performing the action (person, company, or concept) — null if unclear
-   - predicate: verb/action in snake_case (e.g. "agreed_to_pay", "was_employed_by", "terminated") — null if unclear
-   - object: what the predicate applies to (amount, party, date, condition) — null if unclear
+   - subject: entity performing the action (person, company) — REQUIRED; provide best-effort (e.g. "plaintiff", "defendant", "contracting_party")
+   - predicate: verb/action in snake_case — REQUIRED (e.g. "agreed_to_pay", "was_employed_by", "executed_contract", "disputes_claim")
+   - object: what the predicate applies to (amount, party, date, condition) — REQUIRED; include the key value
+   - Omit subject/predicate/object ONLY when the fact has no entity relationship (purely procedural)
 
 2. CRITICAL QUOTES (STRICT LIMIT: 3 maximum): Identify the most important passages:
    - Direct admissions or acknowledgments
@@ -1550,6 +1552,16 @@ class RLMEngine:
                         }
                     facts_to_add.append((fact_text, src_label, doc_id, issue_rel, spo))
 
+            # SO-2 validation: warn if LLM returned facts but omitted all SPO triples.
+            if facts_to_add:
+                _spo_count = sum(1 for _, _, _, _, _s in facts_to_add if _s is not None)
+                if _spo_count == 0:
+                    self._emit_step(
+                        state, StepType.REPLAN,
+                        f"SPO extraction yielded 0 structured triples from {len(facts_to_add)} facts "
+                        f"(search: '{search_term[:60]}'). Synthesis will rely on prose only.",
+                    )
+
             # Add to state with per-fact source-role prefix (SO-5)
             state.add_facts([f"[{lbl}] {txt}" for txt, lbl, _, _rel, _spo in facts_to_add])
 
@@ -1835,6 +1847,15 @@ class RLMEngine:
                                 "object_json": json.dumps(str(_obj)) if _obj else None,
                             }
                         facts_to_add.append((fact_item["fact"], issue_rel, effective_date, spo))
+                # SO-2 validation: warn if LLM returned facts but omitted all SPO triples.
+                if facts_to_add:
+                    _dr_spo_count = sum(1 for _, _, _, _s in facts_to_add if _s is not None)
+                    if _dr_spo_count == 0:
+                        self._emit_step(
+                            state, StepType.REPLAN,
+                            f"SPO extraction yielded 0 structured triples from {len(facts_to_add)} facts "
+                            f"(deep-read: '{doc.filename[:60]}'). Synthesis will rely on prose only.",
+                        )
                 # Prefix each fact with its source role (SO-5 per-fact calibration)
                 from ..matter.runtime import infer_source_role as _infer_role
                 _src_label = _infer_role(doc.filename).value.upper()
