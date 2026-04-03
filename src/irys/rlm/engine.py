@@ -1014,6 +1014,20 @@ class RLMEngine:
                     self._detect_proof_gaps()
                 except Exception as _pg_exc:
                     logger.warning("Proof gap detection failed, continuing: %s", _pg_exc)
+                try:
+                    # Background maintenance: mine contradictions (SO-2) — auto-discovers
+                    # heuristic contradiction links and propagates belief state changes.
+                    self._matter_model.mine_contradictions()
+                except Exception as _mc_exc:
+                    logger.warning("Contradiction mining failed, continuing: %s", _mc_exc)
+                try:
+                    # Background maintenance: detect document version chains (SO-1) —
+                    # links versioned documents and records gaps for missing base versions.
+                    self._matter_model.detect_document_version_chains()
+                except Exception as _vc_exc:
+                    logger.warning(
+                        "Version chain detection failed, continuing: %s", _vc_exc
+                    )
 
             # Phase 3: Final synthesis (reads gaps via _build_gap_summary)
             await self._synthesize(state)
