@@ -1844,10 +1844,10 @@ def test_orientation_prompt_contains_priority_focus_instruction():
 
 
 def test_orientation_cache_version_bumped():
-    """_ORIENTATION_CACHE_VERSION must be '3' after SO-4 PRIORITIZE update."""
+    """_ORIENTATION_CACHE_VERSION must be '4' after initial_searches issue_idx update."""
     from irys.rlm.engine import _ORIENTATION_CACHE_VERSION
-    assert _ORIENTATION_CACHE_VERSION == "3", (
-        "_ORIENTATION_CACHE_VERSION must be bumped to '3' after ORIENTATION_PROMPT change "
+    assert _ORIENTATION_CACHE_VERSION == "4", (
+        "_ORIENTATION_CACHE_VERSION must be bumped to '4' after ORIENTATION_PROMPT change "
         "to invalidate stale cached plans (SO-1 stale-cache prevention)"
     )
 

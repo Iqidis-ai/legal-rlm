@@ -132,7 +132,7 @@ Respond in JSON format:
         }}
     ],
     "relevant_folders": ["folder1", "folder2", ...],
-    "initial_searches": ["term1", "term2", ...],
+    "initial_searches": [{{"term": "search term", "issue_idx": 0}}, {{"term": "term2", "issue_idx": 1}}, ...],
     "search_rationale": "Why these search terms will find relevant evidence",
     "document_priority": ["most important doc type", "second most important", ...],
     "hypothesis": "Your initial hypothesis based on query analysis"
@@ -148,13 +148,17 @@ For each issue, include 2-4 "predicates": the specific testable elements that mu
 established to prove or defeat that issue (e.g., for breach of contract: ["contract
 existence and terms", "defendant's obligation", "failure to perform", "resulting damages"]).
 Predicates drive targeted document search — make them concrete and searchable.
+
+For initial_searches: each entry must include "term" (the search string) and "issue_idx"
+(0-based index into the issues array above identifying which issue this search targets).
+This enables the system to link discovered facts to the correct issue.
 """
 
 # Bump this version string whenever ORIENTATION_PROMPT structure changes.
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "3"
+_ORIENTATION_CACHE_VERSION = "4"
 
 
 def _format_matter_context(ctx) -> str:
@@ -1279,11 +1283,26 @@ class RLMEngine:
         # created issues so run-1 facts are linked to issues from the start.
         weakest_id = matter_ctx.weakest_issue_id if matter_ctx else None
         _issue_pool = _orient_issue_ids  # fallback pool: distribute leads across orientation issues
-        _initial_searches = [s for s in plan.get("initial_searches", [])[:5]
-                             if isinstance(s, str) and s.strip()]
-        for _idx, search_term in enumerate(_initial_searches):
-            # Assign focus_issue_id: prefer weakest from prior run, else rotate new issues
-            if weakest_id:
+        # Parse initial_searches: support new dict form {"term": "...", "issue_idx": N}
+        # and legacy string form for backward compatibility.
+        _raw_searches = plan.get("initial_searches", [])[:5]
+        _initial_searches: list[tuple[str, int | None]] = []
+        for _s in _raw_searches:
+            if isinstance(_s, str) and _s.strip():
+                _initial_searches.append((_s.strip(), None))
+            elif isinstance(_s, dict):
+                _term = _s.get("term", "")
+                if isinstance(_term, str) and _term.strip():
+                    _iidx = _s.get("issue_idx")
+                    _initial_searches.append((_term.strip(), _iidx if isinstance(_iidx, int) else None))
+        for _idx, (_search_term, _lm_issue_idx) in enumerate(_initial_searches):
+            # Assign focus_issue_id using priority order:
+            # 1. LLM-specified issue_idx (semantic attribution from orientation)
+            # 2. Weakest issue from prior run (steer toward proof gap)
+            # 3. Round-robin across new issues (fallback for first run)
+            if _lm_issue_idx is not None and 0 <= _lm_issue_idx < len(_issue_pool):
+                _focus_id = _issue_pool[_lm_issue_idx]
+            elif weakest_id:
                 _focus_id = weakest_id
             elif _issue_pool:
                 _focus_id = _issue_pool[_idx % len(_issue_pool)]
@@ -1291,10 +1310,10 @@ class RLMEngine:
                 _focus_id = None
             priority = 0.9 if (_focus_id and _idx == 0) else 0.8
             state.add_lead(
-                description=f"Search for: {search_term}",
+                description=f"Search for: {_search_term}",
                 source="initial_plan",
                 priority=priority,
-                search_term=search_term.strip(),
+                search_term=_search_term,
                 focus_issue_id=_focus_id,
             )
 
