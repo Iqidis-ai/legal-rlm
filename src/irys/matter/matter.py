@@ -576,6 +576,78 @@ class MatterModel:
         return self.quant.reconcile_invoice_chain(currency)
 
     # ------------------------------------------------------------------
+    # Timeline view (SO-6, Priority 2 visual work product)
+    # ------------------------------------------------------------------
+
+    def get_timeline(self, limit: int = 200) -> list[dict]:
+        """Return a chronological event list derived from quant dates and assertions.
+
+        Each event has:
+          date         — ISO date string or raw text when not parseable
+          event        — human-readable description
+          source_doc   — document the event came from
+          quant_id     — quant_fact.id when sourced from quant store, else None
+          assertion_id — assertion.id when sourced from assertion store, else None
+          subject      — subject_type/subject_id when available
+          kind         — 'date' | 'date_range' | 'temporal_assertion'
+
+        Ordered by date ascending (None dates last).
+        """
+        events: list[dict] = []
+
+        # Pull date-type quant facts.
+        date_facts = self.quant.get_by_kind("date", limit=limit)
+        date_range_facts = self.quant.get_by_kind("date_range", limit=limit)
+
+        for qf in date_facts + date_range_facts:
+            date_val = qf.get("date_value") or qf.get("date_end_value") or qf.get("raw_text", "")[:60]
+            events.append({
+                "date": date_val,
+                "event": qf.get("raw_text", "")[:200],
+                "source_doc": qf.get("span_id"),
+                "quant_id": qf.get("id"),
+                "assertion_id": qf.get("assertion_id"),
+                "subject": qf.get("subject_id") or qf.get("subject_type"),
+                "kind": qf.get("quant_kind", "date"),
+            })
+
+        # Pull assertions that have a temporal scope, with their document source.
+        temporal_rows = self.db.execute(
+            """SELECT a.id, a.proposition_text, a.temporal_scope_start,
+                      MIN(ao.document_id) AS doc_id
+               FROM assertion a
+               LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
+               WHERE a.matter_id=? AND a.temporal_scope_start IS NOT NULL
+               GROUP BY a.id
+               ORDER BY a.temporal_scope_start
+               LIMIT ?""",
+            (self.matter_id, limit),
+        ).fetchall()
+
+        for row in temporal_rows:
+            date_val = row["temporal_scope_start"]
+            desc = (row["proposition_text"] or "")[:200]
+            events.append({
+                "date": date_val,
+                "event": desc,
+                "source_doc": row["doc_id"],
+                "quant_id": None,
+                "assertion_id": row["id"],
+                "subject": None,
+                "kind": "temporal_assertion",
+            })
+
+        # Sort: events with parseable dates first, None/empty last.
+        def _sort_key(e):
+            d = e.get("date") or ""
+            # ISO dates sort correctly as strings (YYYY-MM-DD).
+            # Prefix None-like with "~" so they sort last.
+            return d if d else "~"
+
+        events.sort(key=_sort_key)
+        return events[:limit]
+
+    # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
 

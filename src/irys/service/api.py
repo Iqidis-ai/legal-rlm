@@ -1938,3 +1938,23 @@ async def get_proof_gaps(matter_id: str, threshold: float = 0.25):
     """
     model = _get_matter_model_or_404(matter_id)
     return model.proof_state.get_gaps(threshold=threshold)
+
+
+# ---------------------------------------------------------------------------
+# Visual Work Product — Timeline view (Priority 2)
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/matter/{matter_id}/timeline",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_timeline(matter_id: str, limit: int = 200):
+    """Return a chronological event list derived from date-type quant facts and
+    temporally-scoped assertions.
+
+    Events are ordered by date ascending (undated events last).
+    Each entry has: date, event, source_doc, quant_id, assertion_id, subject, kind.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return model.get_timeline(limit=limit)
