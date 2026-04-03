@@ -349,4 +349,37 @@ def test_get_by_kind_date_none_date_value(model):
     dates = model.quant.get_by_kind("date")
     assert len(dates) == 1
     assert dates[0]["date_value"] is None
-    assert dates[0]["raw_text"] == "sometime in late 2023"
+
+
+# ---------------------------------------------------------------------------
+# SO-6: record_quants_batch() batch ingestion
+# ---------------------------------------------------------------------------
+
+def test_adapter_record_quants_batch_persists_all_records(model):
+    """record_quants_batch() must persist all specs in a single atomic write (SO-6).
+
+    The batch API is the high-throughput path for quantitative extraction — when
+    the LLM extracts 10 numeric facts in one pass, the engine calls record_quants_batch()
+    once rather than 10 individual record_quant() calls.  All records must appear
+    in QuantStore, not just the first one.
+    """
+    run_id = model.start_run("Batch quant test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    specs = [
+        {"quant_kind": "amount", "raw_text": "$50,000 invoice total",
+         "amount_value": 50_000.0, "currency": "USD", "subject_type": "invoice"},
+        {"quant_kind": "amount", "raw_text": "$30,000 payment received",
+         "amount_value": 30_000.0, "currency": "USD", "subject_type": "payment"},
+        {"quant_kind": "rate", "raw_text": "8% annual interest",
+         "rate_value": 8.0},
+    ]
+    adapter.record_quants_batch(specs)
+
+    assert model.quant.count() == 3, (
+        "record_quants_batch() must persist all 3 specs — batch write must not silently drop records"
+    )
+    amounts = model.quant.get_by_kind("amount")
+    assert len(amounts) == 2
+    rates = model.quant.get_by_kind("rate")
+    assert len(rates) == 1

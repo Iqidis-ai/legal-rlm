@@ -63,6 +63,42 @@ def test_stats_reflects_current_state(model):
     )
 
 
+def test_stats_covers_all_substrate_dimensions(model):
+    """stats() must report actor_count, quant_fact_count, and pending_clarifications (SO-1).
+
+    The SO-1 success criterion is that the user can see how much intelligence has
+    been accumulated.  stats() is that dashboard — if it silently omits counters,
+    the user cannot assess matter model completeness.
+    """
+    from irys.matter.runtime import MatterRuntimeAdapter
+    from irys.matter.enums import IssueType
+
+    run_id = model.start_run("full stats test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Record two actors
+    adapter.record_actor("Alice Johnson", "plaintiff's_counsel")
+    adapter.record_actor("Bob Smith", "defendant")
+
+    # Record two quant facts
+    model.quant.record(quant_kind="amount", raw_text="$100k",
+                       amount_value=100_000.0, currency="USD")
+    model.quant.record(quant_kind="rate", raw_text="5% interest",
+                       rate_value=5.0)
+
+    # Add a pending clarification
+    model.clarifications.add_question("Do you have the signed amendment?")
+
+    # Add a completed run
+    model.complete_run(run_id)
+
+    stats = model.stats()
+    assert stats["actor_count"] == 2, "stats() must count actors (SO-5)"
+    assert stats["quant_fact_count"] == 2, "stats() must count quant facts (SO-6)"
+    assert stats["pending_clarifications"] == 1, "stats() must count pending clarifications (SO-7)"
+    assert stats["recent_runs"] >= 1, "stats() must report recent run count (SO-1)"
+
+
 def test_run_lifecycle(model):
     run_id = model.start_run("What are the payment obligations?")
     assert run_id
