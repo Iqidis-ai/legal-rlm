@@ -124,3 +124,60 @@ def test_migration_v15_drops_redundant_quant_index():
         "SELECT name FROM sqlite_master WHERE type='index' AND name='ux_quant_fact_key'"
     ).fetchone()
     assert row is not None, "ux_quant_fact_key must be present after migration"
+
+
+def test_migration_v16_unique_predicate_index():
+    """Migration v16 must create ix_predicate_unique on issue_predicate(issue_id, description)."""
+    import sqlite3
+    from irys.matter.schema import apply_schema
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='ix_predicate_unique'"
+    ).fetchone()
+    assert row is not None, "ix_predicate_unique must be created by migration v16"
+
+
+def test_migration_v16_deduplicates_existing_predicates():
+    """Migration v16 must remove duplicate predicate rows before creating unique index."""
+    import sqlite3
+    from irys.matter.schema import apply_schema, _migration_v16
+
+    # Build a DB at v15 with duplicate issue_predicate rows.
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+
+    # Drop the v16 unique index so we can insert duplicates
+    conn.execute("DROP INDEX IF EXISTS ix_predicate_unique")
+    conn.commit()
+
+    # Insert an issue and two duplicate predicate rows
+    conn.execute(
+        "INSERT INTO matter (id, name, repository_root, created_at, updated_at)"
+        " VALUES ('m1','Test','/tmp/test',datetime('now'),datetime('now'))"
+    )
+    conn.execute(
+        "INSERT INTO issue (id, matter_id, title, issue_type, materiality, salience, status, sort_order, created_at, updated_at)"
+        " VALUES ('i1','m1','Test issue','claim',0.5,0.5,'open',0,datetime('now'),datetime('now'))"
+    )
+    conn.execute(
+        "INSERT INTO issue_predicate (id, issue_id, description, status, created_at)"
+        " VALUES ('p1','i1','Element A','open',datetime('now'))"
+    )
+    conn.execute(
+        "INSERT INTO issue_predicate (id, issue_id, description, status, created_at)"
+        " VALUES ('p2','i1','Element A','open',datetime('now'))"  # duplicate
+    )
+    conn.commit()
+
+    # Applying v16 migration should deduplicate and create the index
+    _migration_v16(conn)
+
+    rows = conn.execute(
+        "SELECT id FROM issue_predicate WHERE issue_id='i1' AND description='Element A'"
+    ).fetchall()
+    assert len(rows) == 1, "Migration v16 must deduplicate existing predicate rows"

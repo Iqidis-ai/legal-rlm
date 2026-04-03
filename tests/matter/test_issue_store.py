@@ -380,3 +380,25 @@ def test_get_predicates_limit(model):
 
     all_preds = model.issues.get_predicates(issue_id)
     assert len(all_preds) == 5
+
+
+def test_add_predicates_batch_empty_input(model):
+    """Empty or all-whitespace input returns [] without writing any rows."""
+    issue_id, _ = model.issues.upsert_issue("Claim empty", IssueType.CLAIM)
+    result = model.issues.add_predicates_batch(issue_id, [])
+    assert result == []
+    assert len(model.issues.get_predicates(issue_id)) == 0
+
+    result2 = model.issues.add_predicates_batch(issue_id, ["   ", "", "  "])
+    assert result2 == []
+    assert len(model.issues.get_predicates(issue_id)) == 0
+
+
+def test_add_predicates_batch_deduplicates_input(model):
+    """Duplicate entries in input are collapsed to one predicate row."""
+    issue_id, _ = model.issues.upsert_issue("Claim dedup", IssueType.CLAIM)
+    ids = model.issues.add_predicates_batch(
+        issue_id, ["Element A", "Element A", "Element B"]
+    )
+    assert len(ids) == 2
+    assert len(model.issues.get_predicates(issue_id)) == 2

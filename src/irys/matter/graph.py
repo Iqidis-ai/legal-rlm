@@ -767,15 +767,24 @@ class IssueStore:
     ) -> list[str]:
         """
         Add multiple predicates for an issue in a single transaction. Idempotent.
-        Returns list of predicate IDs (existing or newly created).
+        Deduplicates inputs; duplicate descriptions are treated as one predicate.
+        Returns unordered list of predicate IDs (existing or newly created).
         """
         now = _now()
-        pairs = [(issue_id, d.strip()[:300]) for d in descriptions
-                 if isinstance(d, str) and d.strip()]
-        if not pairs:
+        # Deduplicate while preserving first occurrence order; filter blanks.
+        seen: set[str] = set()
+        descs: list[str] = []
+        for d in descriptions:
+            if not isinstance(d, str):
+                continue
+            norm = d.strip()[:300]
+            if norm and norm not in seen:
+                seen.add(norm)
+                descs.append(norm)
+        if not descs:
             return []
         with self.db.transaction():
-            for d in [p[1] for p in pairs]:
+            for d in descs:
                 self.db.execute(
                     """INSERT OR IGNORE INTO issue_predicate
                        (id, issue_id, description, burden_side, status, created_at)
@@ -783,9 +792,10 @@ class IssueStore:
                     (_id(), issue_id, d, burden_side, "open", now),
                 )
         rows = self.db.execute(
-            f"SELECT id FROM issue_predicate WHERE issue_id=? AND description IN "
-            f"({','.join('?' * len(pairs))})",
-            [issue_id] + [p[1] for p in pairs],
+            f"SELECT id FROM issue_predicate"
+            f" WHERE issue_id=? AND description IN ({','.join('?' * len(descs))})"
+            f" ORDER BY created_at",
+            [issue_id] + descs,
         ).fetchall()
         return [r["id"] for r in rows]
 

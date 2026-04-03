@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -834,6 +834,36 @@ def _migration_v15(conn) -> None:
     conn.execute("DROP INDEX IF EXISTS ix_quant_matter_kind")
 
 
+def _migration_v16(conn) -> None:
+    """Add UNIQUE constraint on issue_predicate(issue_id, description).
+
+    Enables INSERT OR IGNORE idempotency in add_predicate() / add_predicates_batch(),
+    preventing duplicate predicate rows on warm-run cache hits.
+
+    Deduplicates any pre-existing duplicate rows (keeping the earliest by rowid per
+    key group) before creating the index, mirroring the safe pattern from v13.
+    Both steps run inside an explicit transaction for atomicity.
+    """
+    conn.execute("BEGIN")
+    try:
+        conn.execute(
+            """DELETE FROM issue_predicate
+               WHERE rowid NOT IN (
+                   SELECT MIN(rowid)
+                   FROM issue_predicate
+                   GROUP BY issue_id, description
+               )"""
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_predicate_unique"
+            " ON issue_predicate(issue_id, description)"
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -853,6 +883,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (13, _migration_v13),
     (14, _migration_v14),
     (15, _migration_v15),
+    (16, _migration_v16),
 ]
 
 
