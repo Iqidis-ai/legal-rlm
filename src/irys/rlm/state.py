@@ -1714,6 +1714,8 @@ class InvestigationState:
             ],
             "findings": self.findings,
             "hypothesis": self.hypothesis,
+            "query_classification": self.query_classification,
+            "facts_per_iteration": self.facts_per_iteration,
             "documents_read": self.documents_read,
             "searches_performed": self.searches_performed,
             "recursion_depth": self.recursion_depth,
@@ -1823,6 +1825,8 @@ class InvestigationState:
         # Restore other fields
         state.findings = data.get("findings", {})
         state.hypothesis = data.get("hypothesis")
+        state.query_classification = data.get("query_classification")
+        state.facts_per_iteration = data.get("facts_per_iteration", [])
         state.documents_read = data.get("documents_read", 0)
         state.searches_performed = data.get("searches_performed", 0)
         state.recursion_depth = data.get("recursion_depth", 0)
