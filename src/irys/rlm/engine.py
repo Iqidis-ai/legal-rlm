@@ -1275,8 +1275,11 @@ class RLMEngine:
         # Cache key hashes search_term + query prefix + top-hit filenames to detect staleness.
         import hashlib as _hl
         _top_names = ",".join(sorted(h.filename for h in results.top(5)))
+        # Include a content fingerprint (first 512 chars of formatted results) so that
+        # if document content changes while filenames stay the same, the cache is invalidated.
+        _content_fp = results_text[:512]
         _analysis_key = _hl.sha256(
-            f"{results.query}\n{state.query[:80]}\n{_top_names}".encode()
+            f"{results.query}\n{state.query[:80]}\n{_top_names}\n{_content_fp}".encode()
         ).hexdigest()
         _cached_analysis = None
         if self._matter_model is not None:
