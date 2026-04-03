@@ -299,6 +299,59 @@ def test_matter_model_persists_assertions_across_reopens(tmp_path):
     assert stats["assertion_count"] == 1
 
 
+# ---------------------------------------------------------------------------
+# SO-7: open_gaps() includes dependencies (gap → issue/assertion link)
+# ---------------------------------------------------------------------------
+
+def test_open_gaps_includes_dependencies(model):
+    """open_gaps() must include a 'dependencies' key with linked entity info (SO-7).
+
+    The core SO-7 value is: the system identifies *which conclusions depend on*
+    the missing document or predicate.  open_gaps() pre-fetches gap_link rows
+    and attaches them under 'dependencies' so callers (e.g. _build_gap_summary)
+    can surface the Affects: line without a second query.
+    """
+    from irys.matter.enums import GapType, IssueType
+
+    issue_id, _ = model.issues.upsert_issue(
+        title="Damages calculation", issue_type=IssueType.DAMAGES, materiality=0.9
+    )
+
+    gap_id = model.gaps.record(
+        gap_type=GapType.MISSING_DOCUMENT,
+        description="Expert damages report referenced but not found",
+        materiality=0.8,
+        affected_type="issue",
+        affected_id=issue_id,
+    )
+
+    gaps = model.gaps.open_gaps(min_materiality=0.0)
+    assert len(gaps) == 1
+
+    gap = gaps[0]
+    assert "dependencies" in gap, "open_gaps() must include a 'dependencies' key (SO-7)"
+    deps = gap["dependencies"]
+    assert len(deps) == 1, f"Expected 1 dependency, got {deps}"
+    assert deps[0]["affected_type"] == "issue"
+    assert deps[0]["affected_id"] == issue_id
+
+
+def test_open_gaps_no_deps_returns_empty_list(model):
+    """Gaps without any gap_links must have dependencies=[] (not absent key)."""
+    from irys.matter.enums import GapType
+
+    model.gaps.record(
+        gap_type=GapType.MISSING_DOCUMENT,
+        description="Exhibit A not provided",
+        materiality=0.6,
+    )
+
+    gaps = model.gaps.open_gaps(min_materiality=0.0)
+    assert gaps[0]["dependencies"] == [], (
+        "Unlinked gap must have dependencies=[] (empty list, not missing key)"
+    )
+
+
 def test_matter_model_hot_path_survives_reopen(tmp_path):
     """A document marked as ingested must still appear ingested on next open (SO-1 hot-path)."""
     model1 = MatterModel.open(tmp_path)

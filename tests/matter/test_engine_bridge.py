@@ -304,6 +304,44 @@ def test_build_gap_summary_no_gaps():
     assert "no significant gaps" in result.lower() or "no gap" in result.lower()
 
 
+def test_build_gap_summary_shows_affects_line_for_linked_gap():
+    """_build_gap_summary() must show 'Affects:' line for gaps linked to issues/assertions (SO-7).
+
+    The 'Affects:' line tells the LLM which conclusions depend on the missing document —
+    this is SO-7's core promise: 'identifies which conclusions depend on it'.
+    Without the 'Affects:' line the LLM cannot surface the dependency in its analysis.
+    """
+    from irys.matter.enums import GapType, IssueType
+
+    model = MatterModel.open_in_memory()
+
+    issue_id, _ = model.issues.upsert_issue(
+        title="Damages exposure", issue_type=IssueType.DAMAGES, materiality=0.9
+    )
+
+    model.gaps.record(
+        gap_type=GapType.MISSING_DOCUMENT,
+        description="Expert damages analysis not in repository",
+        materiality=0.85,
+        affected_type="issue",
+        affected_id=issue_id,
+    )
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_gap_summary()
+
+    assert "Expert damages analysis" in result, f"Gap description missing: {result}"
+    assert "Affects" in result or "affect" in result.lower(), (
+        f"_build_gap_summary must show 'Affects:' dependency line for linked gaps (SO-7): {result}"
+    )
+    # The affected entity's type and ID prefix must appear
+    assert "issue" in result.lower(), (
+        f"Affects line must reference the affected entity type: {result}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # SO-6: _build_quant_summary() surfaces numeric facts
 # ---------------------------------------------------------------------------
