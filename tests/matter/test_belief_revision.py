@@ -226,6 +226,68 @@ def test_both_support_and_attack_results_in_disputed(model):
     )
 
 
+def test_all_supporters_disputed_collapses_to_unknown(model):
+    """When ALL of an assertion's supporters are DISPUTED, support base collapses to UNKNOWN.
+
+    In _compute_belief_state(), if support_states is non-empty but none qualify as
+    strong_supports (because all supporters are DISPUTED/UNKNOWN/WITHDRAWN/SUPERSEDED),
+    the assertion reverts to UNKNOWN.  This prevents an assertion from remaining
+    OPERATIVE when all its evidence has been challenged.
+
+    Example: 'Contract is enforceable' (C) was supported by 'Contract was duly signed' (B).
+    If B is disputed (forgery alleged), C has no solid backing and must drop to UNKNOWN.
+    """
+    c_id = add(model, "Contract is fully enforceable.")
+    b_id = add(model, "Contract was duly signed by both parties.")
+
+    # B supports C; B starts OPERATIVE
+    model.assertions.set_belief_state(b_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.link(b_id, c_id, AssertionLinkType.SUPPORTS)
+
+    # Mark B as DISPUTED (forgery claim)
+    model.assertions.set_belief_state(b_id, BeliefState.DISPUTED, 0.3)
+
+    # Trigger revision on C — its only supporter is now DISPUTED → should become UNKNOWN
+    model.belief.apply(
+        seed_assertion_ids=[c_id],
+        cause=RevisionCause.CONFLICT_DETECTION,
+    )
+
+    c_record = model.assertions.get(c_id)
+    assert c_record.belief_state == BeliefState.UNKNOWN.value, (
+        f"Assertion whose only supporter is DISPUTED must collapse to UNKNOWN; "
+        f"got {c_record.belief_state}"
+    )
+
+
+def test_bfs_does_not_loop_on_circular_dependency(model):
+    """BFS revision must not loop infinitely when assertions form a mutual-support cycle.
+
+    The BFS uses a 'visited' set to avoid re-processing the same assertion_id.
+    If A supports B and B supports A (circular), the apply() call must terminate.
+    This is an invariant of the BFS implementation — not just a MAX_HOPS check.
+    """
+    a_id = add(model, "Fact A — mutually supports B.")
+    b_id = add(model, "Fact B — mutually supports A.")
+
+    # Circular support: A → B and B → A
+    model.assertions.link(a_id, b_id, AssertionLinkType.SUPPORTS)
+    model.assertions.link(b_id, a_id, AssertionLinkType.SUPPORTS)
+
+    model.assertions.set_belief_state(a_id, BeliefState.OPERATIVE, 0.8)
+    model.assertions.set_belief_state(b_id, BeliefState.OPERATIVE, 0.8)
+
+    # This must not hang or stack-overflow
+    results = model.belief.apply(
+        seed_assertion_ids=[a_id],
+        cause=RevisionCause.NEW_EVIDENCE,
+    )
+
+    # Both assertions should still be accessible (no crash)
+    assert model.assertions.get(a_id) is not None
+    assert model.assertions.get(b_id) is not None
+
+
 def test_withdrawn_attacker_does_not_trigger_disputed(model):
     """A WITHDRAWN attacker must not count as an active attack (SO-2 INERT filtering).
 
