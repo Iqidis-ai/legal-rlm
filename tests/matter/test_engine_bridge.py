@@ -165,6 +165,30 @@ def test_adapter_log_step_writes_ledger_event():
     assert "payment" in step_events[0]["summary"].lower()
 
 
+def test_adapter_log_objective_writes_objective_set_event():
+    """log_objective() must write an OBJECTIVE_SET ledger event (SO-3).
+
+    The reasoning ledger is user-facing and actionable.  When the engine sets
+    its investigation objective, that must appear in the ledger so the user
+    can see what question the system is working on — not just a hidden log line.
+    """
+    from irys.matter import LedgerEventType
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Objective test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    adapter.log_objective("Determine whether the defendant breached the payment clause.")
+
+    events = model.ledger.get_events(run_id)
+    obj_events = [e for e in events if e["event_type"] == LedgerEventType.OBJECTIVE_SET.value]
+    assert len(obj_events) >= 1, (
+        "log_objective() must write an OBJECTIVE_SET event to the reasoning ledger (SO-3)"
+    )
+    assert "breach" in obj_events[0]["summary"].lower() or "objective" in obj_events[0]["summary"].lower(), (
+        "OBJECTIVE_SET event summary must include the objective text"
+    )
+
+
 # ---------------------------------------------------------------------------
 # SO-5: _build_source_calibration() reflects actual assertion source roles
 # ---------------------------------------------------------------------------
