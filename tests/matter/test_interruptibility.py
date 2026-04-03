@@ -137,6 +137,31 @@ def test_record_assertion_link_unknown_type_logs_warning(model):
     assert "link_type" in warnings[0]["summary"] or "definitely_not_a_real_link_type" in warnings[0]["summary"]
 
 
+def test_record_assertion_link_valid_type_creates_link(model):
+    """record_assertion_link() with a valid link type must create the assertion link (SO-2).
+
+    The adapter's record_assertion_link() is how the engine wires semantic
+    relationships between extracted assertions.  A SUPPORTS link must be
+    retrievable via get_supports() — the dependency graph must actually contain
+    the link, not just acknowledge the call.
+    """
+    run_id = model.start_run("valid link test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Create two facts
+    src_id = adapter.record_fact("Contract requires 30-day notice.", "contract.pdf")
+    dst_id = adapter.record_fact("Plaintiff gave only 10-day notice.", "complaint.pdf")
+
+    # Wire the src as supporting (or in this case, contradicting) dst
+    adapter.record_assertion_link(src_id, dst_id, "contradicts")
+
+    # The link must appear in the dependency graph
+    attackers = model.assertions.get_attackers(dst_id)
+    assert src_id in attackers, (
+        "record_assertion_link('contradicts') must create an attackable edge in the assertion graph (SO-2)"
+    )
+
+
 def test_ledger_events_monotonic_sequence(model):
     run_id = model.start_run("Sequence test")
     adapter = MatterRuntimeAdapter(model, run_id)
