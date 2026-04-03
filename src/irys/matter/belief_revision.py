@@ -33,6 +33,21 @@ def _id() -> str:
     return uuid.uuid4().hex
 
 
+# Source role trust weights for belief revision (SO-5).
+# High-trust sources (operative, authoritative) have full impact.
+# Low-trust sources (advocacy, post_hoc) have reduced impact on confidence.
+# Mirrors ProofStateStore.SOURCE_TRUST — both must stay in sync if weights change.
+_SOURCE_TRUST: dict[str, float] = {
+    "operative": 1.0,
+    "authoritative": 1.0,
+    "procedural": 0.7,
+    "informal": 0.5,
+    "unknown": 0.5,
+    "draft": 0.4,
+    "advocacy": 0.3,
+    "post_hoc": 0.3,
+}
+
 # Belief state transition rules based on support/attack balance
 # A full truth-maintenance system would use JTMS; this is a practical
 # approximation sufficient for legal intelligence at current scale.
@@ -43,9 +58,17 @@ def _compute_belief_state(
     attack_states: list[BeliefState],
     has_superseding: bool = False,
     current_confidence: float = 0.5,
+    support_source_roles: "list[str] | None" = None,
+    attack_source_roles: "list[str] | None" = None,
 ) -> tuple[BeliefState, float]:
     """
     Compute new belief state and confidence from support/attack/supersedes graph.
+
+    State transitions are binary (presence of attack/support determines the
+    transition). Confidence is trust-weighted: an advocacy-authored attacker
+    (weight 0.3) has less impact on confidence than an operative attacker (1.0).
+
+    When source_roles are None, defaults to weight 1.0 for all (backward compatible).
 
     Returns (new_belief_state, new_confidence).
     """
@@ -60,40 +83,54 @@ def _compute_belief_state(
     if has_superseding:
         return BeliefState.SUPERSEDED, 0.1
 
+    # Compute trust weights — 1.0 when no role info (fully backward compatible)
+    sup_weights = (
+        [_SOURCE_TRUST.get(r, 0.5) for r in support_source_roles]
+        if support_source_roles is not None
+        else [1.0] * len(support_states)
+    )
+    atk_weights = (
+        [_SOURCE_TRUST.get(r, 0.5) for r in attack_source_roles]
+        if attack_source_roles is not None
+        else [1.0] * len(attack_states)
+    )
+
     _INERT = (BeliefState.WITHDRAWN, BeliefState.SUPERSEDED, BeliefState.UNKNOWN)
-
-    # Active attacks: states that genuinely challenge the assertion
-    active_attacks = [s for s in attack_states if s not in _INERT]
-
-    # Strong supports: states that genuinely reinforce the assertion.
-    # DISPUTED/UNKNOWN/WITHDRAWN/SUPERSEDED supports do not count as solid backing.
     _UNDERMINING = (BeliefState.DISPUTED, BeliefState.WITHDRAWN,
                     BeliefState.SUPERSEDED, BeliefState.UNKNOWN)
-    strong_supports = [s for s in support_states if s not in _UNDERMINING]
-    operative_supports = [s for s in strong_supports if s == BeliefState.OPERATIVE]
 
-    if active_attacks and not strong_supports:
+    # Build trust-weighted filtered lists (state + weight pairs → weights only)
+    active_attack_weights = [w for s, w in zip(attack_states, atk_weights) if s not in _INERT]
+    strong_support_weights = [w for s, w in zip(support_states, sup_weights) if s not in _UNDERMINING]
+    operative_support_weights = [
+        w for s, w in zip(support_states, sup_weights)
+        if s not in _UNDERMINING and s == BeliefState.OPERATIVE
+    ]
+
+    if active_attack_weights and not strong_support_weights:
         # Actively attacked with no solid support → disputed
-        return BeliefState.DISPUTED, max(0.1, 0.5 - 0.1 * len(active_attacks))
+        # Confidence penalty scales with effective attack weight (SO-5: advocacy attacks hurt less)
+        return BeliefState.DISPUTED, max(0.1, 0.5 - 0.1 * sum(active_attack_weights))
 
-    if active_attacks and strong_supports:
+    if active_attack_weights and strong_support_weights:
         # Both sides present → disputed
         return BeliefState.DISPUTED, 0.4
 
-    if support_states and not strong_supports and not active_attacks:
+    if support_states and not strong_support_weights and not active_attack_weights:
         # Assertion has supporters, but NONE are solid (all disputed/unknown/superseded/withdrawn)
         # — the support base has collapsed; revert to UNKNOWN
         return BeliefState.UNKNOWN, 0.3
 
-    if operative_supports and not active_attacks:
+    if operative_support_weights and not active_attack_weights:
         # Solid operative support with no attacks → inferred
-        confidence = min(0.9, 0.5 + 0.1 * len(operative_supports))
+        # Confidence boost scales with effective operative weight (SO-5: advocacy-source operative = less boost)
+        confidence = min(0.9, 0.5 + 0.1 * sum(operative_support_weights))
         return BeliefState.INFERRED, confidence
 
-    if strong_supports and not active_attacks:
+    if strong_support_weights and not active_attack_weights:
         # Non-operative but solid support, no attacks → keep current with mild boost
         # Never downgrade below current_confidence — seeded values should not be clobbered
-        base_confidence = max(current_confidence, min(0.8, 0.5 + 0.05 * len(strong_supports)))
+        base_confidence = max(current_confidence, min(0.8, 0.5 + 0.05 * sum(strong_support_weights)))
         return current_state, base_confidence
 
     # No conclusive signal — keep current state and preserve existing confidence
@@ -191,6 +228,8 @@ class BeliefRevisionEngine:
             neighbors["attack_states"],
             has_superseding=neighbors["has_superseding"],
             current_confidence=old_confidence,
+            support_source_roles=neighbors["support_source_roles"],
+            attack_source_roles=neighbors["attack_source_roles"],
         )
 
         if new_state == old_state and abs(new_confidence - old_confidence) < 0.01:

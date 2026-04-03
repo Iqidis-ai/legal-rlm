@@ -12,6 +12,7 @@ from irys.matter import (
     RevisionCause,
 )
 from irys.matter.enums import OriginKind
+from irys.matter.belief_revision import _compute_belief_state, _SOURCE_TRUST
 
 
 @pytest.fixture
@@ -417,4 +418,147 @@ def test_corroborates_link_supports_belief_revision(model):
     assert central_record.belief_state == BeliefState.INFERRED.value, (
         f"OPERATIVE corroborator must elevate central assertion to INFERRED (SO-2); "
         f"got {central_record.belief_state}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Trust-weighted belief revision (SO-5 + SO-2)
+# ---------------------------------------------------------------------------
+
+def test_advocacy_attacker_lower_confidence_penalty_than_operative_attacker():
+    """Advocacy-source attackers must reduce confidence less than operative-source attackers (SO-5).
+
+    The state transition (→ DISPUTED) is the same — presence of any active attack triggers
+    DISPUTED regardless of source trust.  But the magnitude of the confidence hit reflects
+    source trust: advocacy attacker (weight 0.3) leaves higher confidence than an operative
+    attacker (weight 1.0) hitting the same assertion.
+    """
+    # Advocacy-source single attacker
+    state_adv, conf_adv = _compute_belief_state(
+        BeliefState.OPERATIVE,
+        support_states=[],
+        attack_states=[BeliefState.ALLEGED],
+        support_source_roles=[],
+        attack_source_roles=["advocacy"],
+    )
+    # Operative-source single attacker
+    state_op, conf_op = _compute_belief_state(
+        BeliefState.OPERATIVE,
+        support_states=[],
+        attack_states=[BeliefState.OPERATIVE],
+        support_source_roles=[],
+        attack_source_roles=["operative"],
+    )
+
+    assert state_adv == BeliefState.DISPUTED, "Any active attacker must trigger DISPUTED state"
+    assert state_op == BeliefState.DISPUTED, "Any active attacker must trigger DISPUTED state"
+
+    # Advocacy attacker (weight 0.3) → confidence = max(0.1, 0.5 - 0.1*0.3) = 0.47
+    # Operative attacker (weight 1.0) → confidence = max(0.1, 0.5 - 0.1*1.0) = 0.4
+    assert conf_adv > conf_op, (
+        f"Advocacy attacker must leave higher confidence ({conf_adv}) than "
+        f"operative attacker ({conf_op}) — SO-5 trust calibration"
+    )
+    assert abs(conf_adv - 0.47) < 1e-9, f"Expected 0.47, got {conf_adv}"
+    assert abs(conf_op - 0.4) < 1e-9, f"Expected 0.4, got {conf_op}"
+
+
+def test_operative_source_operative_supporter_confidence_higher_than_advocacy_source():
+    """Operative-source OPERATIVE supporter must yield higher INFERRED confidence than advocacy-source (SO-5).
+
+    Two assertions both have OPERATIVE belief state, but one comes from an operative
+    document (signed contract) while the other comes from advocacy material (complaint).
+    The operative-source supporter must produce higher confidence for the supported assertion.
+    """
+    # OPERATIVE supporter from operative document (weight 1.0)
+    state_op, conf_op = _compute_belief_state(
+        BeliefState.UNKNOWN,
+        support_states=[BeliefState.OPERATIVE],
+        attack_states=[],
+        support_source_roles=["operative"],
+        attack_source_roles=[],
+    )
+    # OPERATIVE supporter from advocacy document (weight 0.3)
+    state_adv, conf_adv = _compute_belief_state(
+        BeliefState.UNKNOWN,
+        support_states=[BeliefState.OPERATIVE],
+        attack_states=[],
+        support_source_roles=["advocacy"],
+        attack_source_roles=[],
+    )
+
+    assert state_op == BeliefState.INFERRED, "Operative supporter must produce INFERRED state"
+    assert state_adv == BeliefState.INFERRED, "OPERATIVE belief state still triggers INFERRED regardless of source role"
+
+    assert conf_op > conf_adv, (
+        f"Operative-source supporter ({conf_op}) must produce higher INFERRED confidence "
+        f"than advocacy-source ({conf_adv}) — SO-5 source trust calibration"
+    )
+    assert abs(conf_op - 0.6) < 1e-9, f"Expected 0.6, got {conf_op}"
+    assert abs(conf_adv - 0.53) < 1e-9, f"Expected 0.53, got {conf_adv}"
+
+
+def test_trust_weights_backward_compatible_when_roles_absent():
+    """When source_roles are None, _compute_belief_state must behave identically to the pre-trust version.
+
+    All callers that don't pass source_roles get weight 1.0 (same as before SO-5 trust weighting).
+    This ensures no regressions for code paths that haven't been updated to pass roles yet.
+    """
+    # With roles=None (backward compat)
+    state_none, conf_none = _compute_belief_state(
+        BeliefState.OPERATIVE,
+        support_states=[],
+        attack_states=[BeliefState.ALLEGED],
+        support_source_roles=None,
+        attack_source_roles=None,
+    )
+    # With explicit weight=1.0 (operative role)
+    state_one, conf_one = _compute_belief_state(
+        BeliefState.OPERATIVE,
+        support_states=[],
+        attack_states=[BeliefState.ALLEGED],
+        support_source_roles=[],
+        attack_source_roles=["operative"],
+    )
+
+    assert state_none == state_one == BeliefState.DISPUTED
+    assert conf_none == conf_one, (
+        f"None roles (weight=1.0 default) must match explicit operative roles; "
+        f"got none={conf_none}, one={conf_one}"
+    )
+
+
+def test_source_trust_weights_table_completeness():
+    """All commonly used source_role values must appear in _SOURCE_TRUST (SO-5 completeness)."""
+    required_roles = {"operative", "authoritative", "procedural", "informal", "unknown", "draft", "advocacy", "post_hoc"}
+    missing = required_roles - set(_SOURCE_TRUST.keys())
+    assert not missing, f"Missing source roles in _SOURCE_TRUST: {missing}"
+
+    # High-trust roles must all be >= 0.7
+    for role in ("operative", "authoritative", "procedural"):
+        assert _SOURCE_TRUST[role] >= 0.7, f"Expected {role} weight >= 0.7, got {_SOURCE_TRUST[role]}"
+
+    # Low-trust roles must all be <= 0.4
+    for role in ("advocacy", "post_hoc", "draft"):
+        assert _SOURCE_TRUST[role] <= 0.4, f"Expected {role} weight <= 0.4, got {_SOURCE_TRUST[role]}"
+
+
+def test_get_neighbor_belief_states_returns_source_roles(model):
+    """get_neighbor_belief_states must return source_roles alongside belief states (SO-5 wiring)."""
+    central_id = add(model, "The agreement was executed on June 1.")
+
+    supporter_id = add(model, "Contract signed June 1.", doc="contract.pdf",
+                       speech_act=SpeechAct.OPERATIVE)
+    model.assertions.set_belief_state(supporter_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.link(supporter_id, central_id, AssertionLinkType.SUPPORTS)
+
+    neighbors = model.assertions.get_neighbor_belief_states(central_id)
+
+    assert "support_source_roles" in neighbors, "get_neighbor_belief_states must include support_source_roles"
+    assert "attack_source_roles" in neighbors, "get_neighbor_belief_states must include attack_source_roles"
+    assert len(neighbors["support_source_roles"]) == len(neighbors["support_states"]), (
+        "support_source_roles and support_states must be parallel lists of equal length"
+    )
+    assert len(neighbors["attack_source_roles"]) == len(neighbors["attack_states"]), (
+        "attack_source_roles and attack_states must be parallel lists of equal length"
     )

@@ -303,33 +303,59 @@ class AssertionStore:
     def get_neighbor_belief_states(self, assertion_id: str) -> dict:
         """Batch-load support/attack/supersedes neighbor belief states in one query.
 
-        Returns dict with keys 'support_states', 'attack_states', 'has_superseding'.
-        Avoids N+1 pattern in belief revision (3 queries total, not 3 + N + M).
+        Returns dict with keys:
+          'support_states', 'attack_states', 'has_superseding' — as before,
+          'support_source_roles', 'attack_source_roles' — best source_role per
+            neighboring assertion (SO-5 trust-gated belief revision).
+
+        The source_role for each neighbor is the highest-trust role seen across all
+        of that assertion's occurrences (same priority ordering used in compute_and_store).
+        Defaults to 'unknown' when no occurrences exist.
         """
+        _role_subq = """(SELECT ao.source_role FROM assertion_occurrence ao
+                         WHERE ao.assertion_id = a.id
+                         ORDER BY CASE ao.source_role
+                             WHEN 'authoritative' THEN 6
+                             WHEN 'operative'     THEN 5
+                             WHEN 'procedural'    THEN 4
+                             WHEN 'post_hoc'      THEN 3
+                             WHEN 'informal'      THEN 2
+                             WHEN 'draft'         THEN 1
+                             WHEN 'unknown'       THEN 1
+                             WHEN 'advocacy'      THEN 0
+                             ELSE 1 END DESC LIMIT 1)"""
         rows = self.db.execute(
-            """SELECT al.link_type, a.belief_state
+            f"""SELECT al.link_type, a.belief_state,
+                       COALESCE({_role_subq}, 'unknown') AS source_role
                FROM assertion_link al
                JOIN assertion a ON a.id = al.src_assertion_id
                WHERE al.dst_assertion_id=?
                  AND al.link_type IN ('supports','corroborates','attacks','contradicts','supersedes')""",
             (assertion_id,),
         ).fetchall()
-        support_states = []
-        attack_states = []
+        support_states: list = []
+        attack_states: list = []
+        support_source_roles: list = []
+        attack_source_roles: list = []
         has_superseding = False
         for row in rows:
             lt = row["link_type"]
             bs = BeliefState(row["belief_state"])
+            role = row["source_role"]
             if lt in ("supports", "corroborates"):
                 support_states.append(bs)
+                support_source_roles.append(role)
             elif lt in ("attacks", "contradicts"):
                 attack_states.append(bs)
+                attack_source_roles.append(role)
             elif lt == "supersedes":
                 has_superseding = True
         return {
             "support_states": support_states,
             "attack_states": attack_states,
             "has_superseding": has_superseding,
+            "support_source_roles": support_source_roles,
+            "attack_source_roles": attack_source_roles,
         }
 
     def count(self) -> int:
