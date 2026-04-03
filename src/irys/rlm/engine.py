@@ -2476,6 +2476,9 @@ class RLMEngine:
         issue linked so that generate_clarifications_from_gaps() can generate targeted
         questions.
 
+        Also resolves previously-open proof gaps when an issue now has active support:
+        a gap that was opened in a prior run is closed once new assertions fill it.
+
         Uses a single NOT EXISTS SQL query instead of two Python-level IN-list queries to:
           (a) avoid SQLite variable-count limits on large matters (>999 issues),
           (b) scope the existing-gap check to proof-gap type only, so an unrelated
@@ -2485,7 +2488,29 @@ class RLMEngine:
         if self._matter_model is None:
             return
         from ..matter.enums import GapType
+        from datetime import datetime, timezone as _tz
         mid = self._matter_model.matter_id
+        _ts = datetime.now(_tz.utc).isoformat()
+
+        # Resolve any proof gaps for issues that NOW have active supporting assertions.
+        # This closes gaps that were opened in a prior iteration when the issue lacked support.
+        self._matter_model.db.execute(
+            """UPDATE gap SET status='resolved', updated_at=?
+               WHERE matter_id=? AND status='open'
+                 AND gap_type='missing_issue_predicate'
+                 AND EXISTS (
+                     SELECT 1 FROM gap_link gl
+                     WHERE gl.gap_id=gap.id AND gl.affected_type='issue'
+                       AND EXISTS (
+                           SELECT 1 FROM assertion_issue_link ail
+                           JOIN assertion a ON a.id=ail.assertion_id
+                           WHERE ail.issue_id=gl.affected_id
+                             AND ail.relation_type IN ('supports','establishes')
+                             AND a.belief_state NOT IN ('disputed','withdrawn','superseded','denied')
+                       )
+                 )""",
+            (_ts, mid),
+        )
 
         rows = self._matter_model.db.execute(
             """SELECT i.id, i.title, i.materiality

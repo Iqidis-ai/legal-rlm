@@ -450,6 +450,38 @@ def test_detect_proof_gaps_records_gap_for_unsupported_issue(model):
     assert len(model.gaps.open_gaps()) == 1, "duplicate proof-gap runs must be idempotent"
 
 
+def test_proof_gap_auto_resolved_when_issue_gains_support(model):
+    """When an issue gains an active supporting assertion, its open proof-gap must
+    be automatically resolved on the next _detect_proof_gaps() call (SO-7).
+    """
+    from irys.matter.enums import IssueType
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    issue_id, _ = model.issues.upsert_issue(
+        title="Tortious interference",
+        issue_type=IssueType.CLAIM,
+        materiality=0.85, salience=0.7,
+    )
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # Step 1: no support → proof gap created
+    engine._detect_proof_gaps()
+    assert len(model.gaps.open_gaps(min_materiality=0.0)) == 1
+
+    # Step 2: add supporting assertion
+    run_id = model.start_run("Resolution test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_fact("Defendant contacted plaintiff's client to undermine the contract.",
+                        "email_thread.pdf", issue_id=issue_id)
+
+    # Step 3: re-run detector — should resolve the proof gap
+    engine._detect_proof_gaps()
+    open_gaps = model.gaps.open_gaps(min_materiality=0.0)
+    assert len(open_gaps) == 0, "Proof gap must be resolved when issue gains active support"
+
+
 def test_proof_gap_recreated_after_gap_closed(model):
     """A closed proof-gap must be re-created on the next detector run if the issue
     still has no supporting assertion links (NOT EXISTS looks at status='open' only).
