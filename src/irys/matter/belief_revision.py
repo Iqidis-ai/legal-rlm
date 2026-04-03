@@ -351,6 +351,15 @@ class BeliefRevisionEngine:
             _actual_old_state = _intx_old_state
             _actual_old_conf = _intx_old_conf
 
+            # OCC (Optimistic Concurrency Control): if the row changed since our
+            # pre-tx snapshot, a concurrent writer committed between L302 and here.
+            # Abort rather than overwrite a newer committed state with a stale
+            # BFS-computed target. In the single-worker deployment this is rare;
+            # the BFS engine will naturally re-visit the node on the next run.
+            if (_intx_old_state != old_state
+                    or abs(_intx_old_conf - old_confidence) > 0.001):
+                return None  # Conflict detected; do not overwrite concurrent commit
+
             # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
             # Use in-tx values for both diff detection and old_value_json.
             _rev_rows: list[tuple[str, str, str]] = []
