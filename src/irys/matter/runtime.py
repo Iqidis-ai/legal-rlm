@@ -176,6 +176,7 @@ class MatterRuntimeAdapter:
         span_id: Optional[str] = None,
         issue_id: Optional[str] = None,
         issue_link_type: str = "supports",
+        temporal_scope_start: Optional[str] = None,
     ) -> str:
         """
         Convert an extracted fact string into a typed assertion.
@@ -215,6 +216,7 @@ class MatterRuntimeAdapter:
             source_side=infer_source_side(document_id),
             speech_act=speech_act,
             origin_kind=OriginKind.EXTRACTED,
+            temporal_scope_start=temporal_scope_start,
         )
         assertion_id, is_new = self.model.record_assertion(candidate)
         self._pending_assertion_ids.append(assertion_id)
@@ -244,8 +246,9 @@ class MatterRuntimeAdapter:
         """Record multiple facts in a single outer transaction to reduce per-fact commit overhead.
 
         Each element of `facts` is either:
-          - (proposition_text, document_id)                 — issue_link_type defaults to "supports"
-          - (proposition_text, document_id, issue_relation) — explicit relation: "supports" | "attacks" | "neutral"
+          - (proposition_text, document_id)                               — defaults
+          - (proposition_text, document_id, issue_relation)               — explicit relation
+          - (proposition_text, document_id, issue_relation, temporal_scope_start) — + ISO date
 
         Processed inside one outer ``with self.model.db.transaction()`` so that inner
         per-fact transactions become savepoints instead of full BEGIN/COMMITs,
@@ -260,11 +263,13 @@ class MatterRuntimeAdapter:
             for item in facts:
                 proposition_text, document_id = item[0], item[1]
                 issue_link_type = item[2] if len(item) > 2 else "supports"
+                temporal_scope_start = item[3] if len(item) > 3 else None
                 aid = self.record_fact(
                     proposition_text,
                     document_id=document_id,
                     issue_id=issue_id,
                     issue_link_type=issue_link_type,
+                    temporal_scope_start=temporal_scope_start,
                 )
                 assertion_ids.append(aid)
         return assertion_ids

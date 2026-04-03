@@ -185,8 +185,9 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
    - Directly relevant to the query/focus
    - Specific (include dates, amounts, names)
    - Keep each fact under 100 characters
-   - Format each fact as: {"fact": "...", "page": N, "issue_relation": "supports|attacks|neutral"}
+   - Format each fact as: {"fact": "...", "page": N, "issue_relation": "supports|attacks|neutral", "effective_date": "YYYY-MM-DD or null"}
    - issue_relation: whether the fact SUPPORTS the investigation focus, ATTACKS/undermines it, or is NEUTRAL
+   - effective_date: ISO date when this fact became effective/occurred (null if not temporally scoped)
 
 2. CRITICAL QUOTES (STRICT LIMIT: 3 maximum): Identify the most important passages:
    - Direct admissions or acknowledgments
@@ -230,7 +231,7 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
 
 Respond in COMPACT JSON (STRICT: under 4000 chars total):
 {{
-    "key_facts": [{{"fact": "...", "page": N, "issue_relation": "supports"}}],
+    "key_facts": [{{"fact": "...", "page": N, "issue_relation": "supports", "effective_date": "2023-03-15"}}],
     "quotes": [{{"text": "...", "page": N}}],
     "entities": {{"people": ["name1"], "dates": ["date1"], "amounts": ["$X"], "companies": ["co1"]}},
     "numeric_facts": [{{"kind": "amount", "subject": "invoice", "subject_id": "Invoice #1042", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due", "assertion_idx": 2}}],
@@ -1577,21 +1578,22 @@ class RLMEngine:
             # key_facts can be strings or dicts with "fact" key
             # Always initialize these so numeric_facts / gap grounding below can reference them
             # even when key_facts is empty.
-            facts_to_add: list[tuple[str, str]] = []  # (text, issue_relation)
+            facts_to_add: list[tuple[str, str, str | None]] = []  # (text, issue_relation, effective_date)
             _recorded_ids: list[str] = []
             if analysis.get("key_facts"):
                 for fact_item in analysis["key_facts"]:
                     if isinstance(fact_item, str):
-                        facts_to_add.append((fact_item, "supports"))
+                        facts_to_add.append((fact_item, "supports", None))
                     elif isinstance(fact_item, dict) and "fact" in fact_item:
                         issue_rel = fact_item.get("issue_relation") or "supports"
                         if issue_rel not in ("supports", "attacks", "neutral"):
                             issue_rel = "supports"
-                        facts_to_add.append((fact_item["fact"], issue_rel))
+                        effective_date = fact_item.get("effective_date")
+                        facts_to_add.append((fact_item["fact"], issue_rel, effective_date))
                 # Prefix each fact with its source role (SO-5 per-fact calibration)
                 from ..matter.runtime import infer_source_role as _infer_role
                 _src_label = _infer_role(doc.filename).value.upper()
-                state.add_facts([f"[{_src_label}] {f}" for f, _ in facts_to_add])
+                state.add_facts([f"[{_src_label}] {f}" for f, _, _d in facts_to_add])
                 # Also record into matter model if enabled; pass issue_id if from targeted lead.
                 # Use record_facts_batch() so N facts → 1 outer transaction (savepoints inside).
                 adapter = getattr(state, "_matter_adapter", None)
@@ -1600,7 +1602,7 @@ class RLMEngine:
                     # same-name files in different dirs aliasing in assertion_occurrence.
                     _recorded_ids.extend(
                         adapter.record_facts_batch(
-                            [(f, _rel_path, issue_rel) for f, issue_rel in facts_to_add],
+                            [(f, _rel_path, issue_rel, eff_date) for f, issue_rel, eff_date in facts_to_add],
                             issue_id=focus_issue_id,
                         )
                     )
@@ -1652,7 +1654,7 @@ class RLMEngine:
                             _nf_assertion_id = _recorded_ids[_aidx]
                         else:
                             _raw_lower = raw.lower()
-                            for (_ft, _frel), _fa in zip(facts_to_add, _recorded_ids):
+                            for (_ft, _frel, _fd), _fa in zip(facts_to_add, _recorded_ids):
                                 if _raw_lower and _raw_lower in _ft.lower():
                                     _nf_assertion_id = _fa
                                     break
