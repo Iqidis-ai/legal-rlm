@@ -2488,15 +2488,18 @@ class RLMEngine:
             (mid, mid),
         ).fetchall()
 
-        for row in rows:
-            self._matter_model.gaps.record(
-                gap_type=GapType.MISSING_ISSUE_PREDICATE,
-                description=f"No supporting evidence found for issue: '{row['title']}'",
-                expected_artifact=f"Evidence supporting: {row['title']}",
-                materiality=row["materiality"] or 0.5,
-                affected_type="issue",
-                affected_id=row["id"],
-            )
+        if rows:
+            self._matter_model.gaps.record_many([
+                {
+                    "gap_type": GapType.MISSING_ISSUE_PREDICATE,
+                    "description": f"No supporting evidence found for issue: '{row['title']}'",
+                    "expected_artifact": f"Evidence supporting: {row['title']}",
+                    "materiality": row["materiality"] or 0.5,
+                    "affected_type": "issue",
+                    "affected_id": row["id"],
+                }
+                for row in rows
+            ])
 
     def _save_checkpoint(self, state: InvestigationState, iteration: int):
         """Save investigation checkpoint."""

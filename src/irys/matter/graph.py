@@ -440,6 +440,51 @@ class GapStore:
                 )
         return gap_id
 
+    def record_many(self, specs: list[dict]) -> list[str]:
+        """Bulk-insert multiple gaps in a single transaction.
+
+        Each spec is a dict with the same keys as `record()`:
+          gap_type, description, expected_artifact, materiality,
+          blocker_score, affected_type, affected_id (all optional except
+          gap_type and description).
+
+        Returns list of gap IDs in insertion order.
+        """
+        now = _now()
+        gap_rows = []
+        link_rows = []
+        gap_ids = []
+        for spec in specs:
+            gap_id = _id()
+            gap_ids.append(gap_id)
+            gap_rows.append((
+                gap_id,
+                self.matter_id,
+                spec["gap_type"].value if hasattr(spec["gap_type"], "value") else spec["gap_type"],
+                spec["description"],
+                spec.get("expected_artifact"),
+                spec.get("materiality", 0.5),
+                spec.get("blocker_score", 0.0),
+                "open", now, now,
+            ))
+            if spec.get("affected_type") and spec.get("affected_id"):
+                link_rows.append((_id(), gap_id, spec["affected_type"], spec["affected_id"], now))
+
+        with self.db.transaction():
+            self.db.executemany(
+                """INSERT INTO gap
+                   (id, matter_id, gap_type, description, expected_artifact,
+                    materiality_score, blocker_score, status, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                gap_rows,
+            )
+            if link_rows:
+                self.db.executemany(
+                    "INSERT INTO gap_link (id, gap_id, affected_type, affected_id, created_at) VALUES (?,?,?,?,?)",
+                    link_rows,
+                )
+        return gap_ids
+
     def open_gaps(self, min_materiality: float = 0.0) -> list[dict]:
         """Return open gaps above a materiality threshold."""
         rows = self.db.execute(
