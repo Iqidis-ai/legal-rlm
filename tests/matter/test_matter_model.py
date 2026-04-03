@@ -37,6 +37,32 @@ def test_stats_initial(model):
     assert stats["open_gap_count"] == 0
 
 
+def test_stats_reflects_current_state(model):
+    """stats() must accurately reflect the current assertion and gap counts (SO-1/SO-7).
+
+    stats() is used to show the user how much intelligence has been accumulated
+    (SO-1) and how many gaps remain (SO-7).  If it returns stale or incorrect
+    counts, the user sees a misleading picture of matter model completeness.
+    """
+    # Add assertions
+    from irys.matter.runtime import MatterRuntimeAdapter
+    run_id = model.start_run("stats test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_fact("Fact A.", "doc1.pdf")
+    adapter.record_fact("Fact B.", "doc2.pdf")
+
+    # Add a gap
+    model.record_gap(GapType.MISSING_DOCUMENT, "Missing exhibit", materiality=0.7)
+
+    stats = model.stats()
+    assert stats["assertion_count"] == 2, (
+        "stats() must return the correct assertion count after recording facts"
+    )
+    assert stats["open_gap_count"] == 1, (
+        "stats() must reflect the number of open gaps in the matter model (SO-7)"
+    )
+
+
 def test_run_lifecycle(model):
     run_id = model.start_run("What are the payment obligations?")
     assert run_id
