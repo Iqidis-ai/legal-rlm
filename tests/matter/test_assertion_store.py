@@ -187,9 +187,8 @@ def test_same_assertion_same_doc_different_speech_acts_both_recorded(model):
 def test_belief_state_seeded_from_speech_act(model):
     """New assertions are seeded with belief state derived from speech act (not hardcoded UNKNOWN).
 
-    ALLEGED → BeliefState.ALLEGED; OPERATIVE → BeliefState.OPERATIVE; EXTRACTED → UNKNOWN.
-    This avoids the cold-start problem where every assertion starts UNKNOWN and
-    requires a separate flush_revisions() pass to acquire meaningful belief state.
+    ALLEGED → BeliefState.ALLEGED; OPERATIVE → BeliefState.OPERATIVE;
+    ADMITTED → BeliefState.ADMITTED; EXTRACTED → UNKNOWN.
     """
     # ALLEGED (default in make_candidate) → BeliefState.ALLEGED
     c_alleged = make_candidate("Something happened.", doc_id="doc1")
@@ -202,6 +201,14 @@ def test_belief_state_seeded_from_speech_act(model):
                            speech_act=SpeechAct.OPERATIVE, source_role=SourceRole.OPERATIVE)
     aid_op, _ = model.assertions.upsert_occurrence(c_op)
     assert model.assertions.get(aid_op).belief_state == BeliefState.OPERATIVE.value
+
+    # ADMITTED → BeliefState.ADMITTED (distinct from OPERATIVE — preserves legal semantics)
+    c_admitted = make_candidate("Defendant admitted failure to pay.", doc_id="depo.pdf",
+                                 speech_act=SpeechAct.ADMITTED, source_role=SourceRole.ADVOCACY)
+    aid_adm, _ = model.assertions.upsert_occurrence(c_admitted)
+    assert model.assertions.get(aid_adm).belief_state == BeliefState.ADMITTED.value, (
+        "ADMITTED speech_act must map to BeliefState.ADMITTED, not OPERATIVE"
+    )
 
 
 def test_set_belief_state(model):
