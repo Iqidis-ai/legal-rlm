@@ -231,6 +231,15 @@ class MatterModel:
         """
         return self.inventory.detect_version_chains(gap_store=self.gaps)
 
+    def get_operative_document_version(self, doc_id: str) -> str:
+        """
+        Return the operative (latest HEAD) version in the version chain containing doc_id.
+
+        Traverses 'version_of' links to find the document that no later version
+        supersedes. Returns doc_id if no chain exists (it is already operative).
+        """
+        return self.inventory.get_operative_version(doc_id)
+
     # ------------------------------------------------------------------
     # Gap management
     # ------------------------------------------------------------------

@@ -2057,6 +2057,45 @@ class DocumentInventoryStore:
 
         return result
 
+    def get_operative_version(self, doc_id: str) -> str:
+        """
+        Return the ID of the operative (latest) version in the chain containing doc_id.
+
+        The operative version is the HEAD: a document that is not itself the
+        source of any 'version_of' link (nothing is 'a later version of' it).
+
+        Returns doc_id unchanged if it is already the HEAD, or if no version
+        relations exist for it.
+
+        If multiple HEADs exist (branched chain), returns the first found and
+        logs ambiguity via a silent tie-break — callers should check for
+        ambiguity with get_version_family() if precision is needed.
+        """
+        # Build the full family
+        family = self.get_version_family(doc_id)
+        family_ids = {m["id"] for m in family}
+
+        # Find nodes that are NOT the source (i.e., nothing points TO them as a later version)
+        # In a well-formed chain: HEADs have no successors
+        heads = []
+        for mid in family_ids:
+            successor_row = self.db.execute(
+                """SELECT 1 FROM document_relation
+                   WHERE target_doc_id=? AND relation_type='version_of'
+                   LIMIT 1""",
+                (mid,),
+            ).fetchone()
+            if successor_row is None:
+                heads.append(mid)
+
+        if not heads:
+            return doc_id  # degenerate: no family found
+        if len(heads) == 1:
+            return heads[0]
+        # Multiple HEADs (branched chain): return the one that is not the seed
+        non_seed = [h for h in heads if h != doc_id]
+        return non_seed[0] if non_seed else heads[0]
+
     def detect_version_chains(self, gap_store: "GapStore") -> list[dict]:
         """
         Heuristically detect document version chains from filename patterns.

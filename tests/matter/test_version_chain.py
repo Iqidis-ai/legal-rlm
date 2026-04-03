@@ -217,3 +217,44 @@ def test_matter_model_detect_version_chains_wrapper(model):
     result = model.detect_document_version_chains()
     assert isinstance(result, list)
     assert len(result) >= 1
+
+
+# ---------------------------------------------------------------------------
+# get_operative_version() — identify the HEAD of a version chain
+# ---------------------------------------------------------------------------
+
+def test_get_operative_version_no_chain_returns_self(model):
+    doc_id = _add_doc(model, "standalone.pdf")
+    op = model.inventory.get_operative_version(doc_id)
+    assert op == doc_id
+
+
+def test_get_operative_version_v2_is_head(model):
+    v1 = _add_doc(model, "contract_v1.pdf")
+    v2 = _add_doc(model, "contract_v2.pdf")
+    model.inventory.link_documents(v2, v1, "version_of")
+
+    assert model.inventory.get_operative_version(v1) == v2
+    assert model.inventory.get_operative_version(v2) == v2
+
+
+def test_get_operative_version_multi_hop(model):
+    v1 = _add_doc(model, "lease_v1.pdf")
+    v2 = _add_doc(model, "lease_v2.pdf")
+    v3 = _add_doc(model, "lease_v3.pdf")
+    model.inventory.link_documents(v2, v1, "version_of")
+    model.inventory.link_documents(v3, v2, "version_of")
+
+    # All members of the chain should resolve to v3
+    assert model.inventory.get_operative_version(v1) == v3
+    assert model.inventory.get_operative_version(v2) == v3
+    assert model.inventory.get_operative_version(v3) == v3
+
+
+def test_matter_model_get_operative_document_version_wrapper(model):
+    v1 = _add_doc(model, "msa_v1.pdf")
+    v2 = _add_doc(model, "msa_v2.pdf")
+    model.inventory.link_documents(v2, v1, "version_of")
+
+    result = model.get_operative_document_version(v1)
+    assert result == v2
