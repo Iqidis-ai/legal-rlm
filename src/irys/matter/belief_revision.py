@@ -15,9 +15,12 @@ This gives us truth-maintenance: a single user correction can ripple
 through the graph and update all downstream conclusions.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
+
+_log = logging.getLogger(__name__)
 
 from .db import SQLiteMatterDB
 from .enums import BeliefState, RevisionCause, SOURCE_TRUST_WEIGHTS
@@ -183,6 +186,14 @@ class BeliefRevisionEngine:
         state does not change, but dependents still need to see the new value).
 
         Returns all RevisionResult objects for assertions whose state changed.
+
+        **Partial-result behaviour:** if the pending queue is not empty when
+        MAX_WORK is reached, propagation is cut short and the returned list
+        contains only the revisions completed so far.  A WARNING is logged so
+        operators can detect the condition; callers must not assume that an
+        empty or non-empty result list means convergence was reached.  In dense
+        or cyclic graphs that hit this limit, raise MAX_WORK on the class before
+        running the affected matter.
         """
         from collections import deque
 
@@ -226,6 +237,16 @@ class BeliefRevisionEngine:
                     if d not in in_queue:
                         in_queue.add(d)
                         pending.append(d)
+
+        if pending:
+            _log.warning(
+                "BeliefRevisionEngine.apply() reached MAX_WORK=%d; %d nodes remain "
+                "unprocessed — propagation may be incomplete in dense/cyclic graphs. "
+                "Consider raising MAX_WORK if this matter is known to have deep "
+                "dependency chains.",
+                self.MAX_WORK,
+                len(pending),
+            )
 
         return results
 

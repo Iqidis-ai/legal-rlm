@@ -549,8 +549,14 @@ class AssertionStore:
                 (self.matter_id, model_layer, prop_key),
             ).fetchone()
         else:
+            # No layer specified: return the earliest-created assertion with this
+            # proposition key across all layers.  ORDER BY + LIMIT 1 ensures
+            # deterministic output even when the same text exists in multiple layers.
+            # Callers should supply model_layer to avoid cross-layer leakage.
             row = self.db.execute(
-                "SELECT * FROM assertion WHERE matter_id=? AND proposition_key=?",
+                "SELECT * FROM assertion"
+                " WHERE matter_id=? AND proposition_key=?"
+                " ORDER BY created_at ASC LIMIT 1",
                 (self.matter_id, prop_key),
             ).fetchone()
         if row is None:

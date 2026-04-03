@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 32
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1321,6 +1321,30 @@ def _migration_v31(conn) -> None:
     )
 
 
+def _migration_v32(conn) -> None:
+    """Add seekable index for the no-layer get_by_proposition() query path.
+
+    AssertionStore.get_by_proposition(text, model_layer=None) now issues:
+        SELECT * FROM assertion
+        WHERE matter_id=? AND proposition_key=?
+        ORDER BY created_at ASC LIMIT 1
+
+    The existing ux_assertion_prop is (matter_id, model_layer, proposition_key) —
+    model_layer in the middle means the prefix (matter_id, proposition_key) is not
+    directly seekable from that index.  ix_assertion_matter_created covers
+    (matter_id, created_at DESC) but cannot efficiently filter proposition_key.
+
+    A composite (matter_id, proposition_key, created_at) index lets the planner
+    seek to (matter_id, proposition_key) and then return the first row in created_at
+    order without a full-matter scan, making the no-layer lookup O(log N) at any
+    matter size.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_assertion_prop_nolayer"
+        " ON assertion(matter_id, proposition_key, created_at)"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1356,6 +1380,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (29, _migration_v29),
     (30, _migration_v30),
     (31, _migration_v31),
+    (32, _migration_v32),
 ]
 
 

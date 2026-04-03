@@ -367,3 +367,17 @@ def test_migration_v31_adds_gap_matter_type_index():
     assert idx is not None, (
         "ix_gap_matter_type must be created by migration v31"
     )
+
+
+def test_migration_v32_adds_prop_nolayer_index():
+    """v32 adds ix_assertion_prop_nolayer on assertion(matter_id, proposition_key, created_at)."""
+    from irys.matter.db import SQLiteMatterDB
+
+    db = SQLiteMatterDB.in_memory()
+    idx = db.execute(
+        "SELECT name FROM sqlite_master"
+        " WHERE type='index' AND name='ix_assertion_prop_nolayer'"
+    ).fetchone()
+    assert idx is not None, (
+        "ix_assertion_prop_nolayer must be created by migration v32"
+    )
