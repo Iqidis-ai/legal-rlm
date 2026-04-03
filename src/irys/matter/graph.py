@@ -325,29 +325,50 @@ class AssertionStore:
             When provided, skips the per-call DB query (use from BeliefRevisionEngine.apply()
             to avoid N override queries during BFS). When None, fetches from DB as before.
         """
-        _role_subq = """(SELECT ao.source_role FROM assertion_occurrence ao
-                         WHERE ao.assertion_id = a.id
-                         ORDER BY CASE ao.source_role
-                             WHEN 'authoritative' THEN 6
-                             WHEN 'operative'     THEN 5
-                             WHEN 'procedural'    THEN 4
-                             WHEN 'post_hoc'      THEN 3
-                             WHEN 'informal'      THEN 2
-                             WHEN 'draft'         THEN 1
-                             WHEN 'unknown'       THEN 1
-                             WHEN 'advocacy'      THEN 0
-                             ELSE 1 END DESC LIMIT 1)"""
-        _doc_subq = """(SELECT ao.document_id FROM assertion_occurrence ao
-                        WHERE ao.assertion_id = a.id
-                        ORDER BY ao.created_at ASC, ao.id ASC LIMIT 1)"""
+        # CTE-based query: precomputes best source_role and primary_document_id for
+        # all neighbor assertions in a single assertion_occurrence scan, replacing
+        # 2×N correlated scalar subqueries with one set-based pass (SO-5).
         rows = self.db.execute(
-            f"""SELECT al.link_type, a.belief_state,
-                       COALESCE({_role_subq}, 'unknown') AS source_role,
-                       {_doc_subq} AS primary_document_id
-               FROM assertion_link al
-               JOIN assertion a ON a.id = al.src_assertion_id
-               WHERE al.dst_assertion_id=?
-                 AND al.link_type IN ('supports','corroborates','attacks','contradicts','supersedes')""",
+            """WITH linked AS (
+                   SELECT al.link_type, al.src_assertion_id
+                   FROM assertion_link al
+                   WHERE al.dst_assertion_id = ?
+                     AND al.link_type IN ('supports','corroborates','attacks','contradicts','supersedes')
+               ),
+               occ_ranked AS (
+                   SELECT ao.assertion_id,
+                          ao.source_role,
+                          ao.document_id,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY ao.assertion_id
+                              ORDER BY CASE ao.source_role
+                                  WHEN 'authoritative' THEN 6
+                                  WHEN 'operative'     THEN 5
+                                  WHEN 'procedural'    THEN 4
+                                  WHEN 'post_hoc'      THEN 3
+                                  WHEN 'informal'      THEN 2
+                                  WHEN 'draft'         THEN 1
+                                  WHEN 'unknown'       THEN 1
+                                  WHEN 'advocacy'      THEN 0
+                                  ELSE 1 END DESC
+                          ) AS role_rn,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY ao.assertion_id
+                              ORDER BY ao.created_at ASC, ao.id ASC
+                          ) AS doc_rn
+                   FROM assertion_occurrence ao
+                   WHERE ao.assertion_id IN (SELECT src_assertion_id FROM linked)
+               )
+               SELECT l.link_type,
+                      a.belief_state,
+                      COALESCE(MAX(CASE WHEN o.role_rn = 1 THEN o.source_role END), 'unknown')
+                          AS source_role,
+                      MAX(CASE WHEN o.doc_rn = 1 THEN o.document_id END)
+                          AS primary_document_id
+               FROM linked l
+               JOIN assertion a ON a.id = l.src_assertion_id
+               LEFT JOIN occ_ranked o ON o.assertion_id = l.src_assertion_id
+               GROUP BY l.src_assertion_id, l.link_type, a.belief_state""",
             (assertion_id,),
         ).fetchall()
 
@@ -3116,43 +3137,54 @@ class ProofStateStore:
                         )
             return self.SOURCE_TRUST.get(source_role, 0.5)
 
-        _role_subquery = """(
-            SELECT ao.source_role FROM assertion_occurrence ao
-            WHERE ao.assertion_id = a.id
-            ORDER BY CASE ao.source_role
-                WHEN 'authoritative' THEN 6
-                WHEN 'operative'     THEN 5
-                WHEN 'procedural'    THEN 4
-                WHEN 'post_hoc'      THEN 3
-                WHEN 'informal'      THEN 2
-                WHEN 'draft'         THEN 1
-                WHEN 'unknown'       THEN 1
-                WHEN 'advocacy'      THEN 0
-                ELSE 1 END DESC LIMIT 1)"""
-        _doc_subquery = """(
-            SELECT ao.document_id FROM assertion_occurrence ao
-            WHERE ao.assertion_id = a.id
-            ORDER BY ao.created_at ASC, ao.id ASC LIMIT 1)"""
-        sup_rows = self.db.execute(
-            f"""SELECT COALESCE({_role_subquery}, 'unknown') AS source_role,
-                       {_doc_subquery} AS primary_doc_id
+        # Single CTE pass: precompute best source_role and primary_document_id for
+        # every assertion linked to this issue, then split into sup/atk buckets.
+        # Replaces 2 queries × N correlated subqueries with one set-based scan (SO-5).
+        _linked_rows = self.db.execute(
+            """WITH occ_ranked AS (
+                   SELECT ao.assertion_id,
+                          ao.source_role,
+                          ao.document_id,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY ao.assertion_id
+                              ORDER BY CASE ao.source_role
+                                  WHEN 'authoritative' THEN 6
+                                  WHEN 'operative'     THEN 5
+                                  WHEN 'procedural'    THEN 4
+                                  WHEN 'post_hoc'      THEN 3
+                                  WHEN 'informal'      THEN 2
+                                  WHEN 'draft'         THEN 1
+                                  WHEN 'unknown'       THEN 1
+                                  WHEN 'advocacy'      THEN 0
+                                  ELSE 1 END DESC
+                          ) AS role_rn,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY ao.assertion_id
+                              ORDER BY ao.created_at ASC, ao.id ASC
+                          ) AS doc_rn
+                   FROM assertion_occurrence ao
+                   WHERE ao.assertion_id IN (
+                       SELECT assertion_id FROM assertion_issue_link
+                       WHERE issue_id = ?
+                       AND relation_type IN ('supports','establishes','attacks','negates')
+                   )
+               )
+               SELECT ail.relation_type,
+                      COALESCE(MAX(CASE WHEN o.role_rn = 1 THEN o.source_role END), 'unknown')
+                          AS source_role,
+                      MAX(CASE WHEN o.doc_rn = 1 THEN o.document_id END)
+                          AS primary_doc_id
                FROM assertion_issue_link ail
                JOIN assertion a ON a.id = ail.assertion_id
-               WHERE ail.issue_id=?
-                 AND ail.relation_type IN ('supports', 'establishes')
-                 AND a.belief_state NOT IN ('superseded', 'withdrawn')""",
-            (issue_id,),
+               LEFT JOIN occ_ranked o ON o.assertion_id = ail.assertion_id
+               WHERE ail.issue_id = ?
+                 AND ail.relation_type IN ('supports','establishes','attacks','negates')
+                 AND a.belief_state NOT IN ('superseded','withdrawn')
+               GROUP BY ail.assertion_id, ail.relation_type""",
+            (issue_id, issue_id),
         ).fetchall()
-        atk_rows = self.db.execute(
-            f"""SELECT COALESCE({_role_subquery}, 'unknown') AS source_role,
-                       {_doc_subquery} AS primary_doc_id
-               FROM assertion_issue_link ail
-               JOIN assertion a ON a.id = ail.assertion_id
-               WHERE ail.issue_id=?
-                 AND ail.relation_type IN ('attacks', 'negates')
-                 AND a.belief_state NOT IN ('superseded', 'withdrawn')""",
-            (issue_id,),
-        ).fetchall()
+        sup_rows = [r for r in _linked_rows if r["relation_type"] in ("supports", "establishes")]
+        atk_rows = [r for r in _linked_rows if r["relation_type"] in ("attacks", "negates")]
         supporting = len(sup_rows)
         attacking = len(atk_rows)
 
