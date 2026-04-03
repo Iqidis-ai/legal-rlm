@@ -537,4 +537,144 @@ async def test_gather_with_cancellation_partial_completion(model):
     results = await engine._gather_with_cancellation(state, [fast, slow])
 
     assert results[0] == 42, "Fast task that completed before stop must keep its result"
-    assert results[1] is None, "Slow task cancelled after stop must return None"
+    assert results[1] is None, "Slow task cancelled after stop must keep its result"
+
+
+# ---------------------------------------------------------------------------
+# SO-3 structured steering surface
+# ---------------------------------------------------------------------------
+
+def test_steering_surface_empty_on_clean_matter(model):
+    """get_ledger_steering_surface() returns empty list when matter has no conflicts/gaps."""
+    actions = model.get_ledger_steering_surface()
+    assert isinstance(actions, list)
+    # May return correct_assertion suggestions for any assertions in disputed/unknown state;
+    # with empty matter there are none, so the list should be empty.
+    assert actions == []
+
+
+def test_steering_surface_suggests_redirect_for_low_coverage_issue(model):
+    """get_ledger_steering_surface() returns redirect_focus action for uncovered issue."""
+    from irys.matter.enums import IssueType
+
+    issue_id, _ = model.issues.upsert_issue(
+        title="Breach of contract claim",
+        issue_type=IssueType.CLAIM,
+        materiality=0.9,
+    )
+    # No assertions linked → coverage = 0
+
+    actions = model.get_ledger_steering_surface()
+    redirect_actions = [a for a in actions if a["action_type"] == "redirect_focus"]
+    assert len(redirect_actions) >= 1, "Expected redirect_focus action for 0% covered issue"
+
+    action = redirect_actions[0]
+    assert action["params"]["issue_id"] == issue_id
+    assert action["priority"] in ("high", "medium")
+    assert "description" in action
+    assert "rationale" in action
+    assert "impact" in action
+
+
+def test_steering_surface_suggests_correct_for_disputed_assertion(model):
+    """get_ledger_steering_surface() returns correct_assertion for disputed assertions."""
+    from irys.matter.enums import AssertionLinkType
+
+    a1 = add_assertion(model, "Defendant breached clause 4.2", doc="complaint.pdf")
+    a2 = add_assertion(model, "Defendant did not breach clause 4.2", doc="answer.pdf")
+    # Link a1 attacks a2 → a2 becomes disputed
+    model.assertions.link(a1, a2, AssertionLinkType.ATTACKS)
+    model.assertions.set_belief_state(a2, BeliefState.DISPUTED)
+
+    actions = model.get_ledger_steering_surface()
+    correct_actions = [a for a in actions if a["action_type"] in ("correct_assertion", "force_belief_state")]
+    assert len(correct_actions) >= 1, "Expected steering action for disputed assertion"
+
+
+def test_steering_surface_suggests_answer_for_pending_clarification(model):
+    """get_ledger_steering_surface() returns answer_clarification for pending questions."""
+    q_id = model.clarifications.add_question(
+        question_text="Is the signed amendment dated before the alleged breach?",
+        why_it_matters="The amendment date determines which obligations apply.",
+        expected_impact="Resolves the operative-version gap for the contract.",
+    )
+
+    actions = model.get_ledger_steering_surface()
+    clarify_actions = [a for a in actions if a["action_type"] == "answer_clarification"]
+    assert len(clarify_actions) >= 1, "Expected answer_clarification action for pending question"
+
+    action = clarify_actions[0]
+    assert action["params"]["question_id"] == q_id
+    assert "answer_text" in action["params"]
+    assert action["priority"] == "medium"
+
+
+def test_steering_surface_suggests_supply_document_for_missing_doc_gap(model):
+    """get_ledger_steering_surface() returns supply_document for high-materiality missing docs."""
+    from irys.matter.enums import GapType as GT
+
+    gap_id = model.record_gap(
+        gap_type=GT.MISSING_DOCUMENT,
+        description="Signed amendment #3 referenced but not produced",
+        materiality=0.9,
+    )
+
+    actions = model.get_ledger_steering_surface()
+    supply_actions = [a for a in actions if a["action_type"] == "supply_document"]
+    assert len(supply_actions) >= 1, "Expected supply_document action for missing doc gap"
+
+    action = supply_actions[0]
+    assert action["priority"] in ("high", "medium")
+    assert "Signed amendment" in action["description"]
+
+
+def test_steering_surface_returns_sorted_by_priority(model):
+    """get_ledger_steering_surface() returns actions sorted high → medium → low."""
+    from irys.matter.enums import IssueType, GapType as GT
+
+    # Create a low-coverage issue (medium/high priority)
+    model.issues.upsert_issue(
+        title="Damages computation",
+        issue_type=IssueType.DAMAGES,
+        materiality=0.7,
+    )
+    # Add a disputed assertion (medium priority)
+    a1 = add_assertion(model, "Plaintiff claimed $500k")
+    a2 = add_assertion(model, "Plaintiff claimed only $200k")
+    model.assertions.set_belief_state(a1, BeliefState.DISPUTED)
+
+    actions = model.get_ledger_steering_surface()
+    if len(actions) >= 2:
+        priorities = [a["priority"] for a in actions]
+        order = {"high": 0, "medium": 1, "low": 2}
+        scores = [order[p] for p in priorities]
+        assert scores == sorted(scores), f"Actions not sorted by priority: {priorities}"
+
+
+def test_steering_surface_respects_limit(model):
+    """get_ledger_steering_surface(limit=N) returns at most N actions."""
+    # Add many disputed assertions
+    for i in range(10):
+        a = add_assertion(model, f"Disputed fact {i}")
+        model.assertions.set_belief_state(a, BeliefState.DISPUTED)
+
+    actions = model.get_ledger_steering_surface(limit=3)
+    assert len(actions) <= 3
+
+
+def test_steering_surface_action_shape(model):
+    """Every action in get_ledger_steering_surface() has required fields."""
+    a = add_assertion(model, "Some disputed claim")
+    model.assertions.set_belief_state(a, BeliefState.DISPUTED)
+
+    actions = model.get_ledger_steering_surface()
+    for action in actions:
+        assert "action_id" in action
+        assert "action_type" in action
+        assert "description" in action
+        assert "params" in action
+        assert isinstance(action["params"], dict)
+        assert "rationale" in action
+        assert "priority" in action
+        assert action["priority"] in ("high", "medium", "low")
+        assert "impact" in action

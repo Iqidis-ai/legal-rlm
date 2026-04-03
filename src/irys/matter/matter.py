@@ -1066,6 +1066,212 @@ class MatterModel:
         return waterfall
 
     # ------------------------------------------------------------------
+    # SO-3: structured steering surface
+    # ------------------------------------------------------------------
+
+    def get_ledger_steering_surface(
+        self,
+        run_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Return structured steering actions the user can take to direct reasoning.
+
+        Derives actionable recommendations from current matter model state:
+        active conflicts, low-coverage issues, high-materiality gaps, and
+        unanswered clarifications.  Each action includes the exact parameters
+        needed to invoke the corresponding API method — so a UI can render
+        these as buttons or commands without manual interpretation.
+
+        Args:
+            run_id: If provided, includes run-scoped context (e.g., events from
+                    the current investigation that warrant immediate steering).
+            limit:  Maximum number of actions to return (highest-priority first).
+
+        Returns a list of dicts, each with:
+          action_id   — unique string identifier for this suggestion
+          action_type — one of: correct_assertion, force_belief_state,
+                        redirect_focus, supply_document, answer_clarification,
+                        set_trust_override
+          description — human-readable label for the action
+          params      — dict of kwargs to pass to the corresponding MatterModel method
+          rationale   — why this action is suggested
+          priority    — 'high', 'medium', or 'low'
+          impact      — what will change if the action is taken
+        """
+        import uuid as _uuid
+
+        def _aid() -> str:
+            return _uuid.uuid4().hex[:12]
+
+        actions: list[dict] = []
+
+        # --- 1. Active conflicts → correct_assertion or force_belief_state ---
+        try:
+            conflicts = self.assertions.find_contradictions()
+            for c in conflicts[:5]:
+                attacker_id = c.get("attacker_id", "")
+                attacked_id = c.get("attacked_id", "")
+                attacker_prop = (c.get("attacker_prop") or "")[:80]
+                attacked_prop = (c.get("attacked_prop") or "")[:80]
+                actions.append({
+                    "action_id": _aid(),
+                    "action_type": "force_belief_state",
+                    "description": (
+                        f"Resolve conflict: \"{attacker_prop}\" attacks \"{attacked_prop}\""
+                    ),
+                    "params": {
+                        "assertion_id": attacked_id,
+                        "new_state": "disputed",
+                    },
+                    "rationale": (
+                        f"Assertion {attacked_id[:8]} is actively attacked by {attacker_id[:8]}."
+                        " Marking the attacked claim as 'disputed' halts downstream inference"
+                        " from an unresolved conflict."
+                    ),
+                    "priority": "high",
+                    "impact": (
+                        "Belief revision will propagate through the dependency graph,"
+                        " marking all conclusions that depend on the attacked assertion"
+                        " as uncertain until the conflict is resolved."
+                    ),
+                })
+        except Exception:
+            pass
+
+        # --- 2. Low-coverage issues → redirect_focus ---
+        try:
+            coverage_report = self.get_issue_coverage_report()
+            # Sort by ascending coverage fraction — weakest first
+            weak_issues = sorted(
+                (r for r in coverage_report if r.get("coverage_fraction", 1.0) < 0.6),
+                key=lambda r: r.get("coverage_fraction", 1.0),
+            )
+            for r in weak_issues[:3]:
+                issue_id = r.get("id", "")
+                issue_title = (r.get("title") or issue_id)[:60]
+                frac = r.get("coverage_fraction", 0.0)
+                actions.append({
+                    "action_id": _aid(),
+                    "action_type": "redirect_focus",
+                    "description": (
+                        f"Redirect investigation to under-covered issue: \"{issue_title}\""
+                        f" ({round(frac * 100)}% covered)"
+                    ),
+                    "params": {
+                        "issue_id": issue_id,
+                    },
+                    "rationale": (
+                        f"Issue \"{issue_title}\" has only {round(frac * 100)}% evidence coverage."
+                        " Redirecting forces the next investigation iteration to prioritize"
+                        " leads for this issue."
+                    ),
+                    "priority": "high" if frac < 0.3 else "medium",
+                    "impact": (
+                        "The engine's lead scoring will up-weight retrieval queries"
+                        f" tied to issue {issue_id[:8]}, increasing coverage in the next run."
+                    ),
+                })
+        except Exception:
+            pass
+
+        # --- 3. High-materiality gaps → supply_document ---
+        try:
+            high_gaps = [
+                g for g in self.gaps.open_gaps(min_materiality=0.6)
+                if g.get("gap_type") in ("MISSING_DOCUMENT", "missing_document")
+            ]
+            for g in high_gaps[:3]:
+                gap_id = g.get("id", "")
+                description = (g.get("description") or "unknown document")[:80]
+                materiality = g.get("materiality", 0.0)
+                actions.append({
+                    "action_id": _aid(),
+                    "action_type": "supply_document",
+                    "description": f"Supply missing document: \"{description}\"",
+                    "params": {
+                        "gap_id": gap_id,
+                        "description": description,
+                    },
+                    "rationale": (
+                        f"Gap (materiality {materiality:.2f}) flagged: \"{description}\"."
+                        " Conclusions depending on this document are currently uncertain."
+                    ),
+                    "priority": "high" if materiality >= 0.8 else "medium",
+                    "impact": (
+                        "Supplying the document will allow the engine to ingest it,"
+                        " resolve this gap, and update all assertions that depend on it."
+                    ),
+                })
+        except Exception:
+            pass
+
+        # --- 4. Pending clarifications → answer_clarification ---
+        try:
+            pending = self.clarifications.get_pending()
+            for q in pending[:3]:
+                q_id = q.get("id", "")
+                q_text = (q.get("question_text") or "")[:100]
+                impact = (q.get("expected_impact") or "")[:120]
+                actions.append({
+                    "action_id": _aid(),
+                    "action_type": "answer_clarification",
+                    "description": f"Answer pending clarification: \"{q_text}\"",
+                    "params": {
+                        "question_id": q_id,
+                        "answer_text": "<your answer here>",
+                    },
+                    "rationale": (
+                        "The engine generated this targeted question because an answer"
+                        " would materially improve matter coverage."
+                    ),
+                    "priority": "medium",
+                    "impact": impact or "Answering will allow the engine to close the underlying gap.",
+                })
+        except Exception:
+            pass
+
+        # --- 5. Disputed/unknown assertions → correct_assertion ---
+        try:
+            disputed_rows = self.db.execute(
+                """SELECT id, proposition_text, belief_state
+                   FROM assertion
+                   WHERE matter_id=? AND belief_state IN ('disputed','unknown')
+                   ORDER BY updated_at DESC LIMIT 5""",
+                (self.matter_id,),
+            ).fetchall()
+            for row in disputed_rows:
+                a_id = row["id"]
+                prop = (row["proposition_text"] or "")[:80]
+                state = row["belief_state"]
+                actions.append({
+                    "action_id": _aid(),
+                    "action_type": "correct_assertion",
+                    "description": f"Correct {state} assertion: \"{prop}\"",
+                    "params": {
+                        "assertion_id": a_id,
+                        "new_state": "operative",
+                        "note": "<explain your correction>",
+                    },
+                    "rationale": (
+                        f"Assertion is in '{state}' state — its truth is unresolved."
+                        " If you have information about the correct state, correcting it"
+                        " will propagate belief revision through dependent assertions."
+                    ),
+                    "priority": "medium" if state == "disputed" else "low",
+                    "impact": (
+                        "BeliefRevisionEngine will propagate the correction through all"
+                        " assertions that link to this one via supports/attacks edges."
+                    ),
+                })
+        except Exception:
+            pass
+
+        # Sort: high → medium → low, then truncate to limit
+        _priority_order = {"high": 0, "medium": 1, "low": 2}
+        actions.sort(key=lambda a: _priority_order.get(a["priority"], 99))
+        return actions[:limit]
+
+    # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
 
