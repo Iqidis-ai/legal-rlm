@@ -97,3 +97,30 @@ def test_migration_v5_fixes_index_on_existing_db():
     ).fetchone()
     assert row is not None
     assert "speech_act" in row["sql"]
+
+
+def test_migration_v15_drops_redundant_quant_index():
+    """v15 migration must drop ix_quant_matter_kind from existing DBs.
+
+    ux_quant_fact_key(matter_id, quant_kind, raw_text) already covers the
+    same (matter_id, quant_kind) prefix so ix_quant_matter_kind is write
+    overhead with no query benefit.
+    """
+    import sqlite3
+    from irys.matter.schema import apply_schema
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+
+    # After full migration suite, ix_quant_matter_kind must not exist
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='ix_quant_matter_kind'"
+    ).fetchone()
+    assert row is None, "ix_quant_matter_kind must be dropped by migration v15"
+
+    # The covering index ux_quant_fact_key must still exist
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='ux_quant_fact_key'"
+    ).fetchone()
+    assert row is not None, "ux_quant_fact_key must be present after migration"
