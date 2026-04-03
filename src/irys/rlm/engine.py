@@ -250,13 +250,20 @@ ANALYZE THESE RESULTS CAREFULLY:
    - Fill gaps in the evidence
    - Find contradictory evidence (for completeness)
 
+5. PREDICATES SATISFIED (SO-4 — only if "Issue Focus" section appears above):
+   - List the exact text of any "Element to prove" from the Issue Focus that is
+     CLEARLY and DIRECTLY established by the extracted key_facts
+   - Only include elements with direct evidence in these search results
+   - Empty array if no Issue Focus above or no elements are clearly established
+
 Respond in COMPACT JSON (keep under 3000 chars):
 {{
     "key_facts": [{{"fact": "fact text", "source_file": "filename.pdf", "issue_relation": "supports", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD"}}, ...],
     "fact_relationships": [{{"from_idx": 0, "to_idx": 1, "relation": "corroborates|contradicts|supersedes|supports"}}],
     "new_leads": [{{"desc": "...", "priority": 0.8}}],
     "hypothesis_update": "string or null",
-    "next_searches": ["term1", "term2"]
+    "next_searches": ["term1", "term2"],
+    "predicates_satisfied": ["verbatim element text from Issue Focus, or empty array"]
 }}
 """
 
@@ -1824,6 +1831,7 @@ class RLMEngine:
                 "new_leads": [],
                 "hypothesis_update": None,
                 "next_searches": [],
+                "predicates_satisfied": [],
             })
             # Cache for warm runs
             if self._matter_model is not None:
@@ -1994,6 +2002,20 @@ class RLMEngine:
                             _search_assertion_ids[_ti],
                             _rt,
                         )
+
+        # Resolve issue predicates when LLM identifies them as satisfied (SO-4).
+        # predicates_satisfied contains verbatim predicate descriptions from the Issue Focus
+        # block; resolve_predicate_by_description() matches them exactly.
+        _preds_satisfied = analysis.get("predicates_satisfied") or []
+        if isinstance(_preds_satisfied, list) and _focus_issue_id and self._matter_model:
+            for _ps in _preds_satisfied[:8]:  # cap: guard against LLM over-reporting
+                if isinstance(_ps, str) and _ps.strip():
+                    try:
+                        self._matter_model.issues.resolve_predicate_by_description(
+                            _focus_issue_id, _ps.strip()
+                        )
+                    except Exception:
+                        pass
 
         # Update hypothesis if changed
         if analysis.get("hypothesis_update"):
