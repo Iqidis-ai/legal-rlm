@@ -1313,18 +1313,19 @@ class RLMEngine:
             _pred = row.get("predicate_key")
             _obj_raw = row.get("object_json")
             _obj = None
-            if _obj_raw:
+            _obj_present = _obj_raw is not None
+            if _obj_present:
                 try:
                     _obj = json.loads(_obj_raw)
                 except Exception:
                     _obj = _obj_raw
-            if _subj_id or _pred or _obj:
+            if _subj_id or _pred or _obj_present:
                 _spo_parts = []
                 if _subj_id:
                     _spo_parts.append(f"SUBJ:{_subj_id}")
                 if _pred:
                     _spo_parts.append(f"PRED:{_pred}")
-                if _obj:
+                if _obj_present:
                     _spo_parts.append(f"OBJ:{str(_obj)[:60]}")
                 prop_clean = f"[{' | '.join(_spo_parts)}] {prop_clean}"
             state.add_facts([f"[{label}] {prop_clean}"])
@@ -2379,7 +2380,8 @@ class RLMEngine:
                    FROM assertion a
                    WHERE a.matter_id=?
                      AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
-                     AND (a.predicate_key IS NOT NULL OR a.subject_ref_id IS NOT NULL)
+                     AND (a.predicate_key IS NOT NULL OR a.subject_ref_id IS NOT NULL
+                          OR a.object_json IS NOT NULL)
                    ORDER BY a.created_at DESC
                    LIMIT 30""",
                 (self._matter_model.matter_id,),
