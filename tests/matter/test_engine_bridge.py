@@ -2874,3 +2874,83 @@ def test_build_issue_focus_block_no_model_returns_empty():
 
     block = engine._build_issue_focus_block("any-issue-id")
     assert block == ""
+
+
+# ---------------------------------------------------------------------------
+# SO-6: _enforce_quant_threshold_gate() — hard behavioral gate
+# ---------------------------------------------------------------------------
+
+def _seed_high_exposure(model):
+    """Helper: add invoiced > paid so compute_thresholds returns a HIGH violation."""
+    model.quant.record(
+        quant_kind="amount", raw_text="Invoice 100000 USD",
+        subject_type="invoice", amount_value=100_000.0, currency="USD",
+    )
+    model.quant.record(
+        quant_kind="amount", raw_text="Payment 20000 USD",
+        subject_type="payment", amount_value=20_000.0, currency="USD",
+    )
+
+
+def test_enforce_gate_appends_section_when_missing():
+    """Gate must append Financial Analysis when HIGH violation and section is absent."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_high_exposure(model)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    output = "## Executive Summary\nPlaintiff claims breach of contract."
+    result = engine._enforce_quant_threshold_gate(output)
+
+    assert result is not None, "Gate must return augmented output when section is missing"
+    assert "## Financial Analysis" in result, "Gate must append Financial Analysis section"
+    assert "80,000" in result or "80000" in result or "Exposure" in result, (
+        "Appended section must include exposure figures"
+    )
+
+
+def test_enforce_gate_no_action_when_section_present():
+    """Gate must return None (no action) when Financial Analysis section already exists."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_high_exposure(model)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    output = "## Executive Summary\nBrief.\n\n## Financial Analysis\n$80k exposure.\n"
+    result = engine._enforce_quant_threshold_gate(output)
+    assert result is None, "Gate must return None when Financial Analysis section is already present"
+
+
+def test_enforce_gate_no_action_when_no_high_violations():
+    """Gate must return None when no HIGH violations (invoiced <= paid)."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    # Equal amounts — no exposure
+    model.quant.record(
+        quant_kind="amount", raw_text="Invoice 50000 USD",
+        subject_type="invoice", amount_value=50_000.0, currency="USD",
+    )
+    model.quant.record(
+        quant_kind="amount", raw_text="Payment 50000 USD",
+        subject_type="payment", amount_value=50_000.0, currency="USD",
+    )
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._enforce_quant_threshold_gate("## Executive Summary\nNo financial issues.")
+    assert result is None, "Gate must return None when no HIGH violations exist"
+
+
+def test_enforce_gate_no_model_returns_none():
+    """Gate must return None gracefully when no matter model is set."""
+    from irys.rlm.engine import RLMEngine
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = None
+
+    result = engine._enforce_quant_threshold_gate("Some synthesis output")
+    assert result is None
