@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1160,6 +1160,23 @@ def _migration_v24(conn) -> None:
     )
 
 
+def _migration_v26(conn) -> None:
+    """Add leading link_type index on assertion_link for find_contradictions().
+
+    find_contradictions() filters assertion_link by link_type IN
+    ('attacks', 'contradicts') before joining assertion rows. The existing
+    indexes have link_type as a secondary column; a leading link_type index
+    allows direct range scan on the type without touching every row.
+
+    This is a low-overhead addition since assertion_link is a narrow table
+    and the index covers a small cardinality column.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_link_type"
+        " ON assertion_link(link_type, src_assertion_id, dst_assertion_id)"
+    )
+
+
 def _migration_v25(conn) -> None:
     """Add UNIQUE constraint to document_relation (idempotency fix).
 
@@ -1205,6 +1222,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (23, _migration_v23),
     (24, _migration_v24),
     (25, _migration_v25),
+    (26, _migration_v26),
 ]
 
 
