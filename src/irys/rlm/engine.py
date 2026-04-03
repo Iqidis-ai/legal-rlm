@@ -1547,7 +1547,7 @@ class RLMEngine:
                     issue_id=issue_id,
                 )
                 if facts_to_add:
-                    unique_docs = {d for _, _, d, _ in facts_to_add}
+                    unique_docs = {d for _, _, d, _, _spo in facts_to_add}
                     adapter.log_step(
                         f"Recorded {len(facts_to_add)} facts from search: {results.query[:60]}",
                         why=f"Sources: {', '.join(sorted(unique_docs)[:3])}",
@@ -1884,7 +1884,7 @@ class RLMEngine:
                             _nf_assertion_id = _recorded_ids[_aidx]
                         else:
                             _raw_lower = raw.lower()
-                            for (_ft, _frel, _fd), _fa in zip(facts_to_add, _recorded_ids):
+                            for (_ft, _frel, _fd, _spo), _fa in zip(facts_to_add, _recorded_ids):
                                 if _raw_lower and _raw_lower in _ft.lower():
                                     _nf_assertion_id = _fa
                                     break
@@ -2623,14 +2623,20 @@ class RLMEngine:
         step = state.add_step(step_type, content, details)
         if self.on_step:
             self.on_step(step)
-        # Persist to durable reasoning ledger so the trail survives process restart (SO-3).
+        # Persist signal-bearing steps to durable reasoning ledger (SO-3).
+        # THINKING steps are high-frequency and low-signal — kept in-memory only.
+        # All other step types (SEARCH, READING, FINDING, REPLAN, VERIFY, SYNTHESIS, ERROR)
+        # are written to the DB so the reasoning trail survives process restart.
         adapter = getattr(state, "_matter_adapter", None)
-        if adapter is not None:
+        if adapter is not None and step_type != StepType.THINKING:
             _summary = f"[{step_type.value.upper()}] {content}"
-            if step_type == StepType.ERROR:
-                adapter.log_warning(_summary)
-            else:
-                adapter.log_step(_summary)
+            try:
+                if step_type == StepType.ERROR:
+                    adapter.log_warning(_summary)
+                else:
+                    adapter.log_step(_summary)
+            except Exception:
+                pass  # Ledger write failure must not abort investigation
         # Also emit progress update
         self._emit_progress(state)
 

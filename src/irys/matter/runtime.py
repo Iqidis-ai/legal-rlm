@@ -322,8 +322,10 @@ class MatterRuntimeAdapter:
         with self.model.db.transaction():
             for item in facts:
                 if isinstance(item, dict):
-                    proposition_text = item["proposition_text"]
-                    document_id = item["document_id"]
+                    proposition_text = item.get("proposition_text") or ""
+                    document_id = item.get("document_id") or ""
+                    if not proposition_text:
+                        continue  # skip malformed dict items silently
                     issue_link_type = item.get("issue_link_type", "supports")
                     temporal_scope_start = item.get("temporal_scope_start")
                     subject_ref_type = item.get("subject_ref_type")
