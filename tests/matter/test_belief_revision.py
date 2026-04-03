@@ -291,6 +291,51 @@ def test_bfs_does_not_loop_on_circular_dependency(model):
     assert model.assertions.get(b_id) is not None
 
 
+def test_fixpoint_converges_on_convergent_evidence_graph(model):
+    """Fixpoint engine must fully propagate through a convergent-evidence graph.
+
+    Topology: A → C, A → B, B → C (diamond / converging structure).
+    When A changes and B is processed before C in the same pass, the old
+    visited-once BFS would not re-enqueue C after B's state changed.
+    The fixpoint engine re-enqueues C when B changes, so C always sees
+    the final state of all its upstream nodes.
+    """
+    # Build diamond: A supports both B and C; B also supports C.
+    a_id = add(model, "Root claim A.")
+    b_id = add(model, "Intermediate claim B (depends on A).")
+    c_id = add(model, "Terminal claim C (depends on both A and B).")
+
+    # A → B, A → C, B → C
+    model.assertions.link(a_id, b_id, AssertionLinkType.SUPPORTS)
+    model.assertions.link(a_id, c_id, AssertionLinkType.SUPPORTS)
+    model.assertions.link(b_id, c_id, AssertionLinkType.SUPPORTS)
+
+    # Set all to OPERATIVE initially
+    model.assertions.set_belief_state(a_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.set_belief_state(b_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.set_belief_state(c_id, BeliefState.OPERATIVE, 0.9)
+
+    # Force A to DISPUTED — should propagate to B and C
+    model.belief.force_state(
+        a_id, BeliefState.DISPUTED, 0.2, RevisionCause.USER_CORRECTION
+    )
+
+    # B must have been revised (A its supporter is now DISPUTED)
+    b_record = model.assertions.get(b_id)
+    assert b_record.belief_state != BeliefState.OPERATIVE.value, (
+        "B should have been revised when A (its sole supporter) was forced DISPUTED"
+    )
+
+    # C must have been revised — it depends on both A (DISPUTED) and B (revised)
+    # This is the convergent-evidence case: C must see B's final state, not B's
+    # state at the moment C happened to be processed.
+    c_record = model.assertions.get(c_id)
+    assert c_record.belief_state != BeliefState.OPERATIVE.value, (
+        "C should have been revised; fixpoint engine must propagate through "
+        "the full diamond even when B and C are enqueued in the same pass"
+    )
+
+
 def test_withdrawn_attacker_does_not_trigger_disputed(model):
     """A WITHDRAWN attacker must not count as an active attack (SO-2 INERT filtering).
 
