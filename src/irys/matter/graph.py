@@ -183,13 +183,16 @@ class AssertionStore:
         link_id = _id()
         now = _now()
         with self.db.transaction():
-            self.db.execute(
+            cursor = self.db.execute(
                 """INSERT OR IGNORE INTO assertion_link
                    (id, src_assertion_id, dst_assertion_id, link_type, weight, created_at)
                    VALUES (?,?,?,?,?,?)""",
                 (link_id, src_id, dst_id, link_type.value, weight, now),
             )
-        # Return actual id (may have been ignored due to UNIQUE)
+            if cursor.rowcount == 1:
+                # New row inserted — return the id we just wrote.
+                return link_id
+        # Row already existed (UNIQUE conflict) — look up the existing id.
         row = self.db.execute(
             "SELECT id FROM assertion_link WHERE src_assertion_id=? AND dst_assertion_id=? AND link_type=?",
             (src_id, dst_id, link_type.value),
