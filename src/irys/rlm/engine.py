@@ -827,11 +827,17 @@ class RLMEngine:
         _ctx_fingerprint = ""
         if self._matter_model is not None:
             try:
-                # Hash content (not just counts) so editing an issue/annotation/answer
-                # invalidates the cache even when the count stays the same.
-                _ans = sorted(q["id"] for q in self._matter_model.clarifications.get_answered())
+                # Hash content (not just counts or IDs) so editing an issue/annotation/
+                # answer invalidates the cache even when the count stays the same.
+                _ans = sorted(
+                    f"{q.get('question_text','')}:{q.get('answer_text','')}"
+                    for q in self._matter_model.clarifications.get_answered()
+                )
                 _iss = sorted(i["title"] for i in self._matter_model.issues.get_open_issues())
-                _gaps_fp = self._matter_model.gaps.count_open()
+                # Hash gap descriptions (not just count) to detect content changes.
+                _gaps_fp = sorted(
+                    g.get("description", "") for g in self._matter_model.gaps.open_gaps()
+                )
                 _anns = sorted(
                     a.get("annotation_text", "") for a in self._matter_model.annotations.list_recent()
                 )
