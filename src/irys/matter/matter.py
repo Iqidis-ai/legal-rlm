@@ -319,28 +319,30 @@ class MatterModel:
         if not open_issues:
             return []
 
-        issue_ids = [i["id"] for i in open_issues]
-        placeholders = ",".join("?" * len(issue_ids))
+        mid = self.matter_id
 
+        # Use JOIN instead of IN-list to avoid SQLite variable-count limits (SO-4 scale).
         support_rows = self.db.execute(
-            f"""SELECT issue_id, COUNT(*) AS cnt
-                FROM assertion_issue_link
-                WHERE issue_id IN ({placeholders})
-                  AND relation_type IN ('supports','establishes')
-                GROUP BY issue_id""",
-            issue_ids,
+            """SELECT ail.issue_id, COUNT(*) AS cnt
+               FROM assertion_issue_link ail
+               JOIN issue i ON i.id = ail.issue_id
+               WHERE i.matter_id=? AND i.status='open'
+                 AND ail.relation_type IN ('supports','establishes')
+               GROUP BY ail.issue_id""",
+            (mid,),
         ).fetchall()
         support_counts = {r["issue_id"]: r["cnt"] for r in support_rows}
 
         proof_gap_rows = self.db.execute(
-            f"""SELECT gl.affected_id AS issue_id, g.id AS gap_id
-                FROM gap g
-                JOIN gap_link gl ON gl.gap_id=g.id
-                WHERE g.matter_id=? AND g.status='open'
-                  AND g.gap_type='missing_issue_predicate'
-                  AND gl.affected_type='issue'
-                  AND gl.affected_id IN ({placeholders})""",
-            [self.matter_id] + issue_ids,
+            """SELECT gl.affected_id AS issue_id, g.id AS gap_id
+               FROM gap g
+               JOIN gap_link gl ON gl.gap_id=g.id
+               JOIN issue i ON i.id=gl.affected_id
+               WHERE g.matter_id=? AND g.status='open'
+                 AND g.gap_type='missing_issue_predicate'
+                 AND gl.affected_type='issue'
+                 AND i.matter_id=? AND i.status='open'""",
+            (mid, mid),
         ).fetchall()
         proof_gaps = {r["issue_id"]: r["gap_id"] for r in proof_gap_rows}
 
