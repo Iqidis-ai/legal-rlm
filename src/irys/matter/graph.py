@@ -301,7 +301,11 @@ class AssertionStore:
         ).fetchall()
         return [r[0] for r in rows]
 
-    def get_neighbor_belief_states(self, assertion_id: str) -> dict:
+    def get_neighbor_belief_states(
+        self,
+        assertion_id: str,
+        _override_cache: "list[tuple[str, str]] | None" = None,
+    ) -> dict:
         """Batch-load support/attack/supersedes neighbor belief states in one query.
 
         Returns dict with keys:
@@ -316,6 +320,10 @@ class AssertionStore:
            This ensures user trust steering (SO-3) flows through belief revision (SO-2).
 
         Falls back to 'unknown' when no occurrences exist.
+
+        _override_cache: pre-fetched list of (document_pattern, trust_level) tuples.
+            When provided, skips the per-call DB query (use from BeliefRevisionEngine.apply()
+            to avoid N override queries during BFS). When None, fetches from DB as before.
         """
         _role_subq = """(SELECT ao.source_role FROM assertion_occurrence ao
                          WHERE ao.assertion_id = a.id
@@ -343,14 +351,17 @@ class AssertionStore:
             (assertion_id,),
         ).fetchall()
 
-        # Fetch non-normal trust overrides once (empty list when no overrides set)
-        override_rows = self.db.execute(
-            """SELECT document_pattern, trust_level FROM document_trust_override
-               WHERE matter_id=? AND trust_level != 'normal'
-               ORDER BY LENGTH(document_pattern) DESC""",
-            (self.matter_id,),
-        ).fetchall()
-        overrides = [(r["document_pattern"], r["trust_level"]) for r in override_rows]
+        # Use pre-fetched override cache when available (avoids N DB queries in BFS).
+        if _override_cache is not None:
+            overrides = _override_cache
+        else:
+            override_rows = self.db.execute(
+                """SELECT document_pattern, trust_level FROM document_trust_override
+                   WHERE matter_id=? AND trust_level != 'normal'
+                   ORDER BY LENGTH(document_pattern) DESC""",
+                (self.matter_id,),
+            ).fetchall()
+            overrides = [(r["document_pattern"], r["trust_level"]) for r in override_rows]
 
         def _effective_role(source_role: str, document_id: "str | None") -> str:
             """Apply trust override if any pattern matches the document. Otherwise keep role."""

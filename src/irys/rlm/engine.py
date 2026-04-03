@@ -3448,12 +3448,18 @@ class RLMEngine:
         if self._matter_model is None:
             return "No gap data available."
         try:
-            gaps = self._matter_model.gaps.open_gaps(min_materiality=0.3)
+            all_gaps = self._matter_model.gaps.open_gaps(min_materiality=0.0)
+            gaps = [g for g in all_gaps if g.get("materiality_score", 0.0) >= 0.3]
         except Exception:
             return "Gap data unavailable."
-        if not gaps:
-            return "No significant gaps identified."
-        lines = [f"{len(gaps)} open gap(s) detected:"]
+        total = len(all_gaps)
+        if total == 0:
+            return "No gaps identified."
+        shown = min(len(gaps), 8)
+        header = f"{total} open gap(s) total"
+        if total > shown:
+            header += f"; showing top {shown} by materiality (≥0.3) — {total - shown} lower-priority gap(s) omitted"
+        lines = [header + ":"]
         for gap in gaps[:8]:  # cap to prevent prompt bloat
             gap_type = gap.get("gap_type", "unknown").replace("_", " ")
             description = gap.get("description", "")

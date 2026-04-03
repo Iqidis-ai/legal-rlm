@@ -172,6 +172,18 @@ class BeliefRevisionEngine:
         Propagates through the dependency graph up to MAX_HOPS levels.
         Returns all RevisionResult objects for changed assertions.
         """
+        # Pre-fetch trust overrides once for the entire BFS traversal.
+        # Avoids one DB query per node in get_neighbor_belief_states().
+        override_rows = self.db.execute(
+            """SELECT document_pattern, trust_level FROM document_trust_override
+               WHERE matter_id=? AND trust_level != 'normal'
+               ORDER BY LENGTH(document_pattern) DESC""",
+            (self.assertion_store.matter_id,),
+        ).fetchall()
+        override_cache: list[tuple[str, str]] = [
+            (r["document_pattern"], r["trust_level"]) for r in override_rows
+        ]
+
         results: list[RevisionResult] = []
         visited: set[str] = set()
         enqueued: set[str] = set(seed_assertion_ids)  # tracks what's in queue/next_queue
@@ -186,7 +198,7 @@ class BeliefRevisionEngine:
                     continue
                 visited.add(assertion_id)
 
-                result = self._revise_one(assertion_id, cause, run_id, note)
+                result = self._revise_one(assertion_id, cause, run_id, note, override_cache)
                 if result is not None:
                     results.append(result)
 
@@ -216,6 +228,7 @@ class BeliefRevisionEngine:
         cause: RevisionCause,
         run_id: Optional[str],
         note: Optional[str],
+        _override_cache: "list[tuple[str, str]] | None" = None,
     ) -> Optional[RevisionResult]:
         """
         Revise a single assertion's belief state based on its graph neighbors.
@@ -230,7 +243,9 @@ class BeliefRevisionEngine:
         old_confidence = record.confidence
 
         # Batch-load all neighbor belief states in one query (avoids N+1)
-        neighbors = self.assertion_store.get_neighbor_belief_states(assertion_id)
+        neighbors = self.assertion_store.get_neighbor_belief_states(
+            assertion_id, _override_cache=_override_cache
+        )
 
         new_state, new_confidence = _compute_belief_state(
             old_state,
