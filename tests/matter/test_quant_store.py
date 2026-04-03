@@ -159,6 +159,36 @@ def test_get_conflicts_no_conflict_when_values_agree(model):
     assert model.quant.get_conflicts() == []
 
 
+def test_get_conflicts_no_conflict_distinct_subject_ids(model):
+    """Two invoices with different subject_ids must NOT conflict even if amounts differ.
+
+    With subject_id-aware grouping, each distinct (subject_type, subject_id, currency)
+    tuple is its own bucket. Different invoices legitimately have different amounts.
+    """
+    model.quant.record(quant_kind="amount", raw_text="inv-1 amount", amount_value=50_000.0,
+                       currency="USD", subject_type="invoice", subject_id="Invoice #1042")
+    model.quant.record(quant_kind="amount", raw_text="inv-2 amount", amount_value=75_000.0,
+                       currency="USD", subject_type="invoice", subject_id="Invoice #2017")
+
+    assert model.quant.get_conflicts() == [], (
+        "Distinct invoices with different subject_ids should not conflict"
+    )
+
+
+def test_get_conflicts_same_subject_id_different_amounts(model):
+    """Same invoice recorded twice with different amounts IS a conflict (data error)."""
+    model.quant.record(quant_kind="amount", raw_text="inv copy A", amount_value=50_000.0,
+                       currency="USD", subject_type="invoice", subject_id="Invoice #1042")
+    model.quant.record(quant_kind="amount", raw_text="inv copy B", amount_value=55_000.0,
+                       currency="USD", subject_type="invoice", subject_id="Invoice #1042")
+
+    conflicts = model.quant.get_conflicts()
+    assert len(conflicts) == 1
+    assert conflicts[0]["subject_id"] == "Invoice #1042"
+    assert 50_000.0 in conflicts[0]["values"]
+    assert 55_000.0 in conflicts[0]["values"]
+
+
 def test_adapter_record_quant_passes_subject_type(model):
     """record_quant() subject_type must be stored and queryable."""
     run_id = model.start_run("Reconciliation test")
