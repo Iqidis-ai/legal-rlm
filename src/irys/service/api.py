@@ -961,6 +961,14 @@ async def upload_investigate_sync(
         logger.info(f"Sync investigation {job_id} completed in {duration:.1f}s (mode={config.storage_mode})")
 
         citations, entities = _serialize_result(result)
+        _sync_open_gaps: list[dict] = []
+        if sync_matter_id:
+            try:
+                _sm = _active_matter_models.get(sync_matter_id)
+                if _sm is not None:
+                    _sync_open_gaps = _sm.gaps.open_gaps(min_materiality=0.3)
+            except Exception:
+                pass
         response = SyncInvestigateResponse(
             query=query,
             analysis=result.output,
@@ -970,6 +978,7 @@ async def upload_investigate_sync(
             duration_seconds=round(duration, 2),
             matter_id=sync_matter_id,
             pending_clarifications=getattr(result.state, "pending_clarifications", []),
+            open_gaps=_sync_open_gaps,
         )
 
         # Add S3 prefix to response if files kept (s3 mode only)
@@ -1236,6 +1245,14 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         logger.info(f"URL sync investigation {job_id} completed in {duration:.1f}s")
 
         citations, entities = _serialize_result(result)
+        _urls_open_gaps: list[dict] = []
+        if urls_matter_id:
+            try:
+                _um = _active_matter_models.get(urls_matter_id)
+                if _um is not None:
+                    _urls_open_gaps = _um.gaps.open_gaps(min_materiality=0.3)
+            except Exception:
+                pass
         return SyncInvestigateResponse(
             query=request.query,
             analysis=result.output,
@@ -1245,6 +1262,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             duration_seconds=round(duration, 2),
             matter_id=urls_matter_id,
             pending_clarifications=getattr(result.state, "pending_clarifications", []),
+            open_gaps=_urls_open_gaps,
         )
 
     except HTTPException:

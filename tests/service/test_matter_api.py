@@ -496,3 +496,31 @@ def test_corpus_key_stable_with_url_with_metadata():
     key = _compute_corpus_key(",".join(sorted(_url_to_str(u) for u in urls)))
     assert len(key) == 16
     assert all(c in "0123456789abcdef" for c in key)
+
+
+def test_sync_investigate_response_includes_open_gaps_field():
+    """SyncInvestigateResponse must include open_gaps field defaulting to []."""
+    from irys.service.models import SyncInvestigateResponse
+    resp = SyncInvestigateResponse(
+        query="test",
+        analysis="analysis",
+        documents_processed=1,
+        duration_seconds=1.0,
+    )
+    assert hasattr(resp, "open_gaps")
+    assert resp.open_gaps == []
+
+
+def test_sync_investigate_response_open_gaps_roundtrips():
+    """open_gaps must survive JSON round-trip."""
+    from irys.service.models import SyncInvestigateResponse
+    gap = {"description": "Missing signed amendment", "gap_type": "missing_document", "materiality_score": 0.8}
+    resp = SyncInvestigateResponse(
+        query="test",
+        analysis="analysis",
+        documents_processed=1,
+        duration_seconds=1.0,
+        open_gaps=[gap],
+    )
+    d = resp.model_dump()
+    assert d["open_gaps"] == [gap]

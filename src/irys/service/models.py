@@ -225,6 +225,11 @@ class SyncInvestigateResponse(BaseModel):
         default_factory=list,
         description="Clarification questions from open gaps (SO-7)",
     )
+    # SO-7: open gaps surfaced directly so callers need no extra fetch.
+    open_gaps: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Open evidentiary gaps (materiality >= 0.3) detected during investigation (SO-7)",
+    )
 
 
 # === S3 URL Models ===
