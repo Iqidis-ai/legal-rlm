@@ -1760,6 +1760,32 @@ def test_format_matter_context_emits_priority_focus_line():
     )
 
 
+def test_format_matter_context_no_priority_focus_when_weakest_issue_id_is_none():
+    """_format_matter_context() must NOT emit 'PRIORITY FOCUS' when weakest_issue_id is None.
+
+    Without this test, an always-on PRIORITY FOCUS emission would pass the positive test
+    but would silently pollute every context with a spurious focus directive — causing
+    the LLM to hallucinate an issue priority that doesn't exist (SO-4 correctness).
+    """
+    from irys.rlm.engine import _format_matter_context
+    from irys.matter.runtime import QueryMatterContext
+
+    ctx = QueryMatterContext(
+        matter_id="m_test",
+        matter_name="Test Matter",
+        existing_assertion_count=0,
+        open_issues=[],
+        weakest_issue_id=None,  # no issues → no priority focus
+        open_gaps=[],
+        known_actors=[],
+        known_document_ids=[],
+    )
+    result = _format_matter_context(ctx)
+    assert "PRIORITY FOCUS" not in result, (
+        "_format_matter_context must NOT emit PRIORITY FOCUS when weakest_issue_id is None (SO-4 correctness)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # SO-7: pending_clarifications wired into InvestigationState (SO-7)
 # ---------------------------------------------------------------------------
