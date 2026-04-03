@@ -693,6 +693,11 @@ def test_infer_source_side_neutral():
 # ---------------------------------------------------------------------------
 
 def test_list_recent_for_hydration_filters_inactive(model):
+    """list_recent_for_hydration() filters inactive belief states at DB level (SO-2).
+
+    Inactive assertions must NOT be returned so the 200-slot LIMIT budget is not
+    wasted on facts that the engine would skip anyway.
+    """
     from irys.matter.enums import BeliefState
     run_id = model.start_run("hydration test")
     adapter = MatterRuntimeAdapter(model, run_id)
@@ -701,9 +706,10 @@ def test_list_recent_for_hydration_filters_inactive(model):
     model.correct_assertion(aid2, BeliefState.DISPUTED)
 
     rows = model.assertions.list_recent_for_hydration(limit=50)
-    assert any(r["id"] == aid1 for r in rows)
-    assert any(r["id"] == aid2 for r in rows)  # method returns all; filtering is in engine
-    # Verify belief_state is present in each row for the engine's filter
+    assert any(r["id"] == aid1 for r in rows), "Active assertion must be returned"
+    assert not any(r["id"] == aid2 for r in rows), \
+        "Disputed assertion must be excluded at DB level — not returned for hydration"
+    # Verify required fields are present for hydration
     assert all("belief_state" in r for r in rows)
     assert all("proposition_text" in r for r in rows)
     assert all("source_role" in r for r in rows)

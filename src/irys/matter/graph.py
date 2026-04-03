@@ -397,6 +397,11 @@ class AssertionStore:
         aggregates — ~3-5× faster for large assertion stores because we only need
         proposition_text, belief_state, and a single source_role per assertion.
 
+        Filters out inactive belief states (disputed/withdrawn/superseded/denied) at the
+        DB level so the LIMIT budget is not wasted on assertions that will be skipped
+        during hydration. This ensures the 200-slot window contains only active facts
+        even after many user corrections. (SO-2 budget efficiency)
+
         Returns: [{id, proposition_text, belief_state, source_role}]
         """
         rows = self.db.execute(
@@ -406,6 +411,7 @@ class AssertionStore:
                        ORDER BY ao.created_at ASC, ao.id ASC LIMIT 1) AS source_role
                FROM assertion a
                WHERE a.matter_id=?
+                 AND a.belief_state NOT IN ('disputed','withdrawn','superseded','denied')
                ORDER BY a.created_at DESC
                LIMIT ?""",
             (self.matter_id, limit),
