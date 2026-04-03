@@ -219,6 +219,18 @@ class MatterModel:
             belief_engine=self.belief,
         )
 
+    def detect_document_version_chains(self) -> list[dict]:
+        """
+        Heuristically detect document version chains from filename patterns.
+
+        Links 'version_of' relations in document_relation for detected chains
+        (e.g. contract_v1.pdf → contract_v2.pdf).  Records MISSING_DOCUMENT
+        gaps when a chain has no unversioned base.
+
+        Returns the list of version link dicts created.
+        """
+        return self.inventory.detect_version_chains(gap_store=self.gaps)
+
     # ------------------------------------------------------------------
     # Gap management
     # ------------------------------------------------------------------

@@ -1912,6 +1912,216 @@ class DocumentInventoryStore:
         ).fetchone()
         return row[0]
 
+    # ------------------------------------------------------------------
+    # Document relations and version-chain detection (spec §14, §26)
+    # ------------------------------------------------------------------
+
+    #: Version-indicator patterns, in ascending priority order.
+    #: Each entry is (regex_pattern, sort_key_extractor).
+    _VERSION_SUFFIXES = [
+        # v1, v2, v3, ...  or  _v1, _v2
+        (r"[_\-\s]*v(\d+)$", lambda m: int(m.group(1))),
+        # _1, _2, _3 (trailing digits only)
+        (r"[_\-\s]+(\d+)$", lambda m: int(m.group(1))),
+        # draft < redline < revised < final < executed/signed
+        (r"[_\-\s]*(draft|redline|revised|final|executed|signed)$",
+         lambda m: {"draft": 0, "redline": 1, "revised": 2, "final": 3,
+                    "executed": 4, "signed": 4}.get(m.group(1).lower(), 0)),
+        # amendment_1, amendment_2, amend_3 → base="amendment", order by number
+        # (handled by the v\d+ pattern above when applied after stripping)
+    ]
+
+    @staticmethod
+    def _normalize_stem(filename: str) -> tuple[str, int]:
+        """
+        Strip a version suffix from a filename stem and return (base_stem, sort_key).
+
+        Examples:
+          "contract_v2.pdf" → ("contract", 2)
+          "agreement_final.pdf" → ("agreement", 3)
+          "exhibit_a.pdf" → ("exhibit_a", -1)   # no version → -1
+
+        filename should be the basename without directory prefix; the extension
+        will be stripped internally.
+        """
+        import re
+        import os
+        stem = os.path.splitext(os.path.basename(filename))[0].lower().strip()
+        for pattern, extractor in DocumentInventoryStore._VERSION_SUFFIXES:
+            m = re.search(pattern, stem, re.IGNORECASE)
+            if m:
+                base = stem[: m.start()].rstrip("_- ")
+                return base, extractor(m)
+        # No version pattern found — treat as base document, sort key -1
+        return stem, -1
+
+    def link_documents(
+        self,
+        source_doc_id: str,
+        target_doc_id: str,
+        relation_type: str,
+        confidence: float = 1.0,
+    ) -> str:
+        """
+        Record a directed document relation.
+
+        Convention:
+          source_doc_id --relation_type--> target_doc_id
+
+        Common relation_type values:
+          'version_of'  — source is a later version of target
+          'amends'      — source amends target
+          'supersedes'  — source replaces target
+          'attachment_to' — source is an attachment to target
+
+        Idempotent: a duplicate (source, target, relation_type) triple is ignored.
+        Returns the relation_id (existing or new).
+        """
+        rel_id = _id()
+        now = _now()
+        with self.db.transaction():
+            self.db.execute(
+                """INSERT OR IGNORE INTO document_relation
+                   (id, source_doc_id, target_doc_id, relation_type, confidence, created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (rel_id, source_doc_id, target_doc_id, relation_type, confidence, now),
+            )
+            existing = self.db.execute(
+                """SELECT id FROM document_relation
+                   WHERE source_doc_id=? AND target_doc_id=? AND relation_type=?""",
+                (source_doc_id, target_doc_id, relation_type),
+            ).fetchone()
+        return existing["id"] if existing else rel_id
+
+    def get_version_family(self, doc_id: str) -> list[dict]:
+        """
+        Return all documents in the version chain containing doc_id.
+
+        Traverses both directions of 'version_of' relations (predecessors and
+        successors) up to 20 hops to prevent cycles.
+
+        Returns list of dicts: {id, relative_path, relation_type, direction}
+        where direction is 'predecessor' | 'successor' | 'self'.
+        """
+        visited = {doc_id}
+        result = [{"id": doc_id, "relative_path": None, "relation_type": None, "direction": "self"}]
+        queue = [(doc_id, 0)]
+        while queue:
+            current_id, depth = queue.pop(0)
+            if depth >= 20:
+                continue
+            # Successors: current --version_of--> current means current is later;
+            # here we look for docs that declare themselves version_of current (successors).
+            succ_rows = self.db.execute(
+                """SELECT dr.source_doc_id AS other_id, di.relative_path
+                   FROM document_relation dr
+                   JOIN document_inventory di ON di.id = dr.source_doc_id
+                   WHERE dr.target_doc_id=? AND dr.relation_type='version_of'""",
+                (current_id,),
+            ).fetchall()
+            for r in succ_rows:
+                if r["other_id"] not in visited:
+                    visited.add(r["other_id"])
+                    result.append({
+                        "id": r["other_id"],
+                        "relative_path": r["relative_path"],
+                        "relation_type": "version_of",
+                        "direction": "successor",
+                    })
+                    queue.append((r["other_id"], depth + 1))
+            # Predecessors: current --version_of--> predecessor
+            pred_rows = self.db.execute(
+                """SELECT dr.target_doc_id AS other_id, di.relative_path
+                   FROM document_relation dr
+                   JOIN document_inventory di ON di.id = dr.target_doc_id
+                   WHERE dr.source_doc_id=? AND dr.relation_type='version_of'""",
+                (current_id,),
+            ).fetchall()
+            for r in pred_rows:
+                if r["other_id"] not in visited:
+                    visited.add(r["other_id"])
+                    result.append({
+                        "id": r["other_id"],
+                        "relative_path": r["relative_path"],
+                        "relation_type": "version_of",
+                        "direction": "predecessor",
+                    })
+                    queue.append((r["other_id"], depth + 1))
+
+        # Fill in relative_path for the seed doc
+        seed_row = self.db.execute(
+            "SELECT relative_path FROM document_inventory WHERE id=?", (doc_id,)
+        ).fetchone()
+        if seed_row:
+            result[0]["relative_path"] = seed_row["relative_path"]
+
+        return result
+
+    def detect_version_chains(self, gap_store: "GapStore") -> list[dict]:
+        """
+        Heuristically detect document version chains from filename patterns.
+
+        Algorithm:
+        1. Fetch all document_inventory rows for this matter.
+        2. Normalize each filename stem using _normalize_stem() to extract
+           (base_stem, sort_key) pairs.
+        3. Group documents by base_stem.
+        4. For groups with 2+ documents, sort by sort_key and create
+           'version_of' links: each document points to its immediate predecessor.
+        5. Record a MISSING_DOCUMENT gap when a chain exists but the base
+           document (sort_key == -1 or lowest) is absent from the group.
+
+        Returns list of dicts describing the links created:
+          {source_doc_id, target_doc_id, source_path, target_path, sort_key}
+        """
+        from .enums import GapType
+        rows = self.db.execute(
+            "SELECT id, relative_path FROM document_inventory WHERE matter_id=?",
+            (self.matter_id,),
+        ).fetchall()
+
+        # Group by normalized base stem
+        from collections import defaultdict
+        groups: dict = defaultdict(list)
+        for r in rows:
+            base, sort_key = self._normalize_stem(r["relative_path"])
+            groups[base].append((sort_key, r["id"], r["relative_path"]))
+
+        created = []
+        for base, members in groups.items():
+            if len(members) < 2:
+                continue
+            # Sort by sort_key ascending (-1 = no version → treat as oldest)
+            members_sorted = sorted(members, key=lambda t: t[0])
+            # Link each to its predecessor
+            for i in range(1, len(members_sorted)):
+                pred_key, pred_id, pred_path = members_sorted[i - 1]
+                succ_key, succ_id, succ_path = members_sorted[i]
+                if pred_id == succ_id:
+                    continue
+                self.link_documents(succ_id, pred_id, "version_of", confidence=0.8)
+                created.append({
+                    "source_doc_id": succ_id,
+                    "target_doc_id": pred_id,
+                    "source_path": succ_path,
+                    "target_path": pred_path,
+                    "sort_key": succ_key,
+                })
+
+            # If there is no sort_key==-1 member (no unversioned base), log a gap
+            has_base = any(sk == -1 for sk, _, _ in members_sorted)
+            if not has_base:
+                gap_store.record(
+                    gap_type=GapType.MISSING_DOCUMENT,
+                    description=(
+                        f"Version chain detected for '{base}' but base (unversioned) "
+                        f"document is absent from repository"
+                    ),
+                    materiality=0.4,
+                )
+
+        return created
+
 
 class ReasoningCacheStore:
     """
