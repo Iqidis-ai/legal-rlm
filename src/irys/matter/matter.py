@@ -432,11 +432,16 @@ class MatterModel:
         # Uses predicate-aware coverage_fraction (see _coverage_fraction()).
         weakest_issue_id = None
         if open_issues:
-            # Get supporting-assertion count per open issue via JOIN — avoids IN-list
-            # variable-count limits. Exclude non-active belief states so DISPUTED/
-            # WITHDRAWN assertions don't overstate issue coverage (SO-2 correctness).
+            # Belief-state-weighted support sum (mirrors get_issue_coverage_report logic).
+            # operative/admitted/resolved = 1.0, alleged/argued/inferred/partial = 0.5,
+            # other active states = 0.3; disputed/withdrawn/superseded excluded entirely.
             support_rows = self.db.execute(
-                """SELECT ail.issue_id, COUNT(*) AS cnt
+                """SELECT ail.issue_id,
+                          SUM(CASE
+                                WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0
+                                WHEN a.belief_state IN ('alleged','argued','inferred','partial') THEN 0.5
+                                ELSE 0.3
+                              END) AS weighted_support
                    FROM assertion_issue_link ail
                    JOIN issue i ON i.id=ail.issue_id
                    JOIN assertion a ON a.id=ail.assertion_id
@@ -446,7 +451,10 @@ class MatterModel:
                    GROUP BY ail.issue_id""",
                 (self.matter_id,),
             ).fetchall()
-            support_counts = {r["issue_id"]: r["cnt"] for r in support_rows}
+            support_counts = {
+                r["issue_id"]: float(r["weighted_support"] or 0.0)
+                for r in support_rows
+            }
 
             pred_rows_ctx = self.db.execute(
                 """SELECT ip.issue_id, COUNT(*) AS pred_count
@@ -459,9 +467,9 @@ class MatterModel:
             pred_counts_ctx = {r["issue_id"]: r["pred_count"] for r in pred_rows_ctx}
 
             def _weakness(issue: dict) -> tuple:
-                cnt = support_counts.get(issue["id"], 0)
+                w_support = support_counts.get(issue["id"], 0.0)
                 pred_cnt = pred_counts_ctx.get(issue["id"], 0)
-                coverage = self._coverage_fraction(cnt, pred_cnt)
+                coverage = self._coverage_fraction(w_support, pred_cnt)
                 priority = issue["materiality"] * issue["salience"] * (1.0 - coverage)
                 # Higher priority = higher weakness; negate for min()
                 return (-priority, issue["id"])
@@ -504,35 +512,41 @@ class MatterModel:
         )
 
     @staticmethod
-    def _coverage_fraction(support_count: int, predicate_count: int) -> float:
+    def _coverage_fraction(weighted_support: float, predicate_count: int) -> float:
         """Compute evidence coverage fraction for a single issue.
 
-        When the issue has defined claim elements (predicates), coverage is the
-        fraction of those elements that have at least one supporting assertion:
-            min(support_count, predicate_count) / predicate_count
+        *weighted_support* is the trust-weighted sum of supporting assertions,
+        where weights reflect proof strength by belief_state:
+            operative / admitted / resolved → 1.0  (solid proof)
+            alleged / argued / inferred / partial  → 0.5  (contested/uncertain)
+            unknown / other active states           → 0.3
 
-        This caps coverage at 1.0 only when all required elements are addressed,
-        which is meaningfully different from an issue with many assertions but few
-        required elements.
+        When the issue has defined claim elements (predicates):
+            min(weighted_support, predicate_count) / predicate_count
+        This caps coverage at 1.0 only when solid-weight support reaches
+        the number of required elements.  Two alleged assertions (weight=1.0
+        combined) do not substitute for one operative assertion (weight=1.0)
+        when predicate_count=1 — only an operative yields full element coverage.
 
-        When no predicates exist (predicate_count == 0), falls back to the
-        monotone heuristic count / (count + 1) to avoid zero-division and
-        preserve ordering by assertion count alone.
+        When no predicates exist (predicate_count == 0), falls back to:
+            weighted_support / (weighted_support + 1.0)
+        which preserves monotone ordering by support strength alone.
         """
         if predicate_count > 0:
-            return min(support_count, predicate_count) / float(predicate_count)
-        return support_count / (support_count + 1.0)
+            return min(weighted_support, float(predicate_count)) / float(predicate_count)
+        return weighted_support / (weighted_support + 1.0)
 
     def get_issue_coverage_report(self) -> list[dict]:
         """Return per-issue evidence coverage for all open issues (SO-4).
 
         Each entry contains:
           - id, title, issue_type, materiality, salience
-          - supporting_count: number of active supporting/establishing assertion links
+          - supporting_count: belief-state-weighted sum of active supporting assertions
+            (operative=1.0, alleged/argued=0.5, other active=0.3; see _coverage_fraction)
           - predicate_count: number of open claim elements (predicates) for the issue
-          - coverage_fraction: predicate-aware fraction in [0, 1].
-            If predicates exist: min(supporting_count, predicate_count) / predicate_count.
-            If no predicates: supporting_count / (supporting_count + 1) [0, 1) fallback.
+          - coverage_fraction: proof-strength-aware fraction in [0, 1].
+            If predicates exist: min(weighted_support, predicate_count) / predicate_count.
+            If no predicates: weighted_support / (weighted_support + 1) fallback.
           - has_proof_gap: True if an open MISSING_ISSUE_PREDICATE gap is linked
           - gap_id: id of that gap, or None
 
@@ -545,10 +559,18 @@ class MatterModel:
         mid = self.matter_id
 
         # Use JOIN instead of IN-list to avoid SQLite variable-count limits (SO-4 scale).
-        # Exclude non-active belief states so DISPUTED/WITHDRAWN assertions don't
-        # inflate coverage (SO-2 correctness: revised beliefs must flow into coverage).
+        # Returns both raw count (for display) and belief-state-weighted sum (for fraction).
+        # Weights: operative/admitted/resolved = 1.0, alleged/argued/inferred/partial = 0.5,
+        # other active states = 0.3; disputed/withdrawn/superseded excluded entirely.
+        # This prevents alleged assertions from overstating coverage vs operative ones.
         support_rows = self.db.execute(
-            """SELECT ail.issue_id, COUNT(*) AS cnt
+            """SELECT ail.issue_id,
+                      COUNT(*) AS raw_count,
+                      SUM(CASE
+                            WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0
+                            WHEN a.belief_state IN ('alleged','argued','inferred','partial') THEN 0.5
+                            ELSE 0.3
+                          END) AS weighted_support
                FROM assertion_issue_link ail
                JOIN issue i ON i.id = ail.issue_id
                JOIN assertion a ON a.id = ail.assertion_id
@@ -558,7 +580,13 @@ class MatterModel:
                GROUP BY ail.issue_id""",
             (mid,),
         ).fetchall()
-        support_counts = {r["issue_id"]: r["cnt"] for r in support_rows}
+        # raw_counts for the supporting_count field (integer, user-visible)
+        raw_counts = {r["issue_id"]: int(r["raw_count"]) for r in support_rows}
+        # weighted_supports for coverage_fraction computation
+        support_counts = {
+            r["issue_id"]: float(r["weighted_support"] or 0.0)
+            for r in support_rows
+        }
 
         # Predicate counts per issue — used for predicate-aware coverage fraction.
         pred_rows = self.db.execute(
@@ -586,16 +614,17 @@ class MatterModel:
 
         report = []
         for issue in open_issues:
-            cnt = support_counts.get(issue["id"], 0)
+            w_support = support_counts.get(issue["id"], 0.0)
+            raw_cnt = raw_counts.get(issue["id"], 0)
             pred_cnt = pred_counts.get(issue["id"], 0)
-            coverage = self._coverage_fraction(cnt, pred_cnt)
+            coverage = self._coverage_fraction(w_support, pred_cnt)
             report.append({
                 "id": issue["id"],
                 "title": issue.get("title", ""),
                 "issue_type": issue.get("issue_type", ""),
                 "materiality": issue.get("materiality", 0.0),
                 "salience": issue.get("salience", 0.0),
-                "supporting_count": cnt,
+                "supporting_count": raw_cnt,
                 "predicate_count": pred_cnt,
                 "coverage_fraction": round(coverage, 4),
                 "has_proof_gap": issue["id"] in proof_gaps,

@@ -972,10 +972,13 @@ def test_get_issue_coverage_report(model):
     assert report[1]["id"] == issue_strong_id
 
     # Coverage fractions
+    # supporting_count is raw integer count; coverage_fraction uses belief-state weighting.
+    # record_fact defaults to SpeechAct.EXTRACTED → BeliefState.UNKNOWN (weight=0.3).
+    # 2 UNKNOWN assertions: weighted_support=0.6, no predicates → 0.6/(0.6+1)=0.375
     assert report[0]["supporting_count"] == 0
     assert report[0]["coverage_fraction"] == 0.0
     assert report[1]["supporting_count"] == 2
-    assert report[1]["coverage_fraction"] > 0.5
+    assert report[1]["coverage_fraction"] > 0.0, "issue with 2 supports must have non-zero coverage"
 
     # has_proof_gap: both False (no _detect_proof_gaps has been run yet)
     assert not report[0]["has_proof_gap"]
@@ -993,13 +996,13 @@ def test_get_issue_coverage_report(model):
 
 
 def test_coverage_fraction_uses_predicate_count_when_available(model):
-    """coverage_fraction uses predicate-aware formula when issue has claim elements.
+    """coverage_fraction uses predicate-aware, belief-state-weighted formula.
 
-    Without predicates: count / (count + 1) — monotone heuristic.
-    With predicates: min(count, pred_count) / pred_count — caps at 1.0 only
-    when all required elements are evidenced.
+    With predicates: min(weighted_support, pred_count) / pred_count.
+    OPERATIVE assertions have weight=1.0; alleged/unknown have lower weights.
+    Coverage caps at 1.0 only when weighted support reaches the predicate count.
     """
-    from irys.matter.enums import IssueType
+    from irys.matter.enums import IssueType, SpeechAct
     from irys.matter.runtime import MatterRuntimeAdapter
 
     # Issue with 4 required predicates
@@ -1016,27 +1019,33 @@ def test_coverage_fraction_uses_predicate_count_when_available(model):
     run_id = model.start_run("Predicate coverage test")
     adapter = MatterRuntimeAdapter(model, run_id)
 
-    # Add 2 supporting assertions — should give 2/4 = 0.5
-    adapter.record_fact("Plaintiff sent written offer dated Jan 1.", "email.pdf", issue_id=issue_id)
-    adapter.record_fact("Defendant signed acceptance on Jan 3.", "contract.pdf", issue_id=issue_id)
+    # Add 2 OPERATIVE supporting assertions (weight=1.0 each) → weighted_support=2.0
+    # coverage = min(2.0, 4) / 4 = 0.5
+    adapter.record_fact("Plaintiff sent written offer dated Jan 1.", "email.pdf",
+                        issue_id=issue_id, speech_act=SpeechAct.OPERATIVE)
+    adapter.record_fact("Defendant signed acceptance on Jan 3.", "contract.pdf",
+                        issue_id=issue_id, speech_act=SpeechAct.OPERATIVE)
 
     report = model.get_issue_coverage_report()
     row = next(r for r in report if r["id"] == issue_id)
 
     assert row["predicate_count"] == 4
     assert row["supporting_count"] == 2
-    # Predicate-aware: 2/4 = 0.5 (not the heuristic 2/3 ≈ 0.667)
+    # Predicate-aware weighted: 2.0/4 = 0.5 (2 OPERATIVE assertions, 4 predicates)
     assert row["coverage_fraction"] == 0.5
 
-    # Add 2 more supports → 4/4 = 1.0 full coverage
-    adapter.record_fact("Payment of $1,000 was consideration.", "invoice.pdf", issue_id=issue_id)
-    adapter.record_fact("Both parties understood the terms.", "deposition.pdf", issue_id=issue_id)
+    # Add 2 more OPERATIVE supports → weighted_support=4.0 → coverage=1.0
+    adapter.record_fact("Payment of $1,000 was consideration.", "invoice.pdf",
+                        issue_id=issue_id, speech_act=SpeechAct.OPERATIVE)
+    adapter.record_fact("Both parties understood the terms.", "deposition.pdf",
+                        issue_id=issue_id, speech_act=SpeechAct.OPERATIVE)
     report2 = model.get_issue_coverage_report()
     row2 = next(r for r in report2 if r["id"] == issue_id)
     assert row2["coverage_fraction"] == 1.0
 
     # Extra supports beyond predicate count don't exceed 1.0
-    adapter.record_fact("Additional corroborating note.", "memo.pdf", issue_id=issue_id)
+    adapter.record_fact("Additional corroborating note.", "memo.pdf",
+                        issue_id=issue_id, speech_act=SpeechAct.OPERATIVE)
     report3 = model.get_issue_coverage_report()
     row3 = next(r for r in report3 if r["id"] == issue_id)
     assert row3["coverage_fraction"] == 1.0
@@ -2133,16 +2142,17 @@ def test_build_issue_coverage_summary_shows_coverage():
         materiality=0.9,
     )
 
-    # Record 2 assertions and link both to the issue
+    # Record 2 OPERATIVE assertions — weight=1.0 each → weighted_support=2.0
+    # No predicates → coverage = 2.0/(2.0+1.0) ≈ 0.667 → STRONG (threshold ≥0.6)
     for i in range(2):
         c = AssertionCandidate(
-            proposition_text=f"Defendant failed to pay invoice {i}",
+            proposition_text=f"Signed contract clause {i} confirms payment obligation",
             assertion_kind=AssertionKind.FACTUAL,
-            speech_act=SpeechAct.ALLEGED,
+            speech_act=SpeechAct.OPERATIVE,
             origin_kind=OriginKind.EXTRACTED,
             model_layer=ModelLayer.RECORD,
-            source_role=SourceRole.ADVOCACY,
-            document_id="complaint.pdf",
+            source_role=SourceRole.OPERATIVE,
+            document_id="contract.pdf",
         )
         aid, _ = model.record_assertion(c)
         model.issues.link_assertion(aid, issue_id, "supports")
@@ -2153,7 +2163,7 @@ def test_build_issue_coverage_summary_shows_coverage():
     result = engine._build_issue_coverage_summary()
 
     assert "Breach of payment obligation" in result, f"Issue title missing from: {result}"
-    # 2 supporting assertions → coverage_fraction = 2/3 ≈ 0.67 → STRONG
+    # 2 OPERATIVE assertions → weighted_support=2.0, no predicates → 2/(2+1)=0.667 → STRONG
     assert "STRONG" in result, f"Expected STRONG coverage label: {result}"
     assert "2" in result, f"Expected assertion count 2 in: {result}"
 
