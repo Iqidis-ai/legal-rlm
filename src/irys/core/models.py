@@ -7,12 +7,13 @@ Tier Strategy:
 - FLASH: Flash for intelligent tasks (search decisions, routing, planning)
 - PRO: Pro for final synthesis (polished legal output)
 
-Cost optimization:
-- NANO + LITE cold-path: use Google Batch API (50% off, 24h turnaround)
-- FLASH + PRO: realtime only (user-interactive)
+Cost optimization (D-007):
 - Context caching: pass cached_content=<name> to complete() to reuse a cached prefix
   (90% discount on cache reads). Create the cached resource with create_cached_content().
-  Typical cached prefixes: system instructions, matter summary, active issue tree
+  Typical cached prefixes: system instructions, matter summary, active issue tree.
+- Google Batch API (50% off, 24h turnaround) is a planned optimization for cold-path
+  NANO/LITE document ingestion; not yet implemented in this module.
+- FLASH + PRO: realtime only (user-interactive)
 """
 
 from enum import Enum
@@ -206,6 +207,31 @@ class GeminiClient:
         self._usage: dict[ModelTier, UsageStats] = {t: UsageStats(tier=t) for t in ModelTier}
         self._rate_limiter = RateLimiter(requests_per_minute, burst_size)
 
+    @staticmethod
+    def _parse_usage_metadata(response: Any, prompt: str) -> tuple[int, int, int]:
+        """Parse token counts from a Gemini response.
+
+        Returns (input_tokens, output_tokens, cache_read_tokens) where:
+        - input_tokens: non-cached prompt tokens (billed at full input rate)
+        - output_tokens: generated tokens
+        - cache_read_tokens: prompt tokens served from cache (billed at 10% of input rate)
+
+        Gemini's prompt_token_count is the TOTAL prompt including cached tokens.
+        Non-cached input = prompt_token_count - cached_content_token_count.
+        Falls back to char/4 estimation when usage_metadata is unavailable.
+        """
+        um = getattr(response, "usage_metadata", None)
+        if um is not None:
+            total_prompt = getattr(um, "prompt_token_count", None) or 0
+            actual_output = getattr(um, "candidates_token_count", None) or 0
+            actual_cache = getattr(um, "cached_content_token_count", None) or 0
+            actual_input = max(total_prompt - actual_cache, 0)
+        else:
+            actual_input = len(prompt) // 4
+            actual_output = len(getattr(response, "text", "") or "") // 4
+            actual_cache = 0
+        return actual_input, actual_output, actual_cache
+
     def _get_config(self, tier: ModelTier) -> types.GenerateContentConfig:
         """Get generation config for a tier."""
         mc = MODEL_CONFIGS[tier]
@@ -281,21 +307,7 @@ class GeminiClient:
             logger.error(f"API call to {mc.model_id} timed out after {request_timeout}s")
             raise TimeoutError(f"API call timed out after {request_timeout}s")
 
-        # Track usage — prefer actual token counts from response.usage_metadata.
-        # Gemini's prompt_token_count is the TOTAL prompt including cached tokens.
-        # cached_content_token_count is the cached subset (billed at 10% of input rate).
-        # Non-cached input tokens = prompt_token_count - cached_content_token_count.
-        um = getattr(response, "usage_metadata", None)
-        if um is not None:
-            total_prompt = getattr(um, "prompt_token_count", None) or 0
-            actual_output = getattr(um, "candidates_token_count", None) or 0
-            actual_cache = getattr(um, "cached_content_token_count", None) or 0
-            actual_input = max(total_prompt - actual_cache, 0)
-        else:
-            # Fallback estimate when metadata is unavailable
-            actual_input = len(prompt) // 4
-            actual_output = len(response.text) // 4 if response.text else 0
-            actual_cache = 0
+        actual_input, actual_output, actual_cache = self._parse_usage_metadata(response, prompt)
         self._usage[tier].add(actual_input, actual_output, cache_read_tokens=actual_cache)
 
         logger.debug(f"Got response: {len(response.text) if response.text else 0} chars")

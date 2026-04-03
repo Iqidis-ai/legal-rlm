@@ -1,7 +1,7 @@
 """Tests for UsageStats token accounting and cost estimation."""
 from types import SimpleNamespace
 import pytest
-from irys.core.models import UsageStats, ModelTier, MODEL_CONFIGS
+from irys.core.models import UsageStats, ModelTier, MODEL_CONFIGS, GeminiClient
 
 
 class TestUsageStatsCostEstimation:
@@ -68,49 +68,61 @@ class TestUsageStatsCostEstimation:
 
 
 class TestCompleteUsageMetadataSplit:
-    """Regression tests for the prompt_token_count split in GeminiClient.complete().
+    """Regression tests for the prompt_token_count split in GeminiClient._parse_usage_metadata.
 
-    These tests reproduce the exact getattr chain and max(total - cache, 0) calculation
-    from complete() so that a regression in that block is caught immediately.
+    These tests call the actual static method on GeminiClient so that any regression
+    in that method is immediately caught.
     """
 
-    def _extract(self, um):
-        """Reproduce the usage metadata extraction from complete()."""
-        total_prompt = getattr(um, "prompt_token_count", None) or 0
-        actual_output = getattr(um, "candidates_token_count", None) or 0
-        actual_cache = getattr(um, "cached_content_token_count", None) or 0
-        actual_input = max(total_prompt - actual_cache, 0)
-        return actual_input, actual_output, actual_cache
+    def _make_response(self, prompt=500, candidates=100, cached=200):
+        um = SimpleNamespace(prompt_token_count=prompt, candidates_token_count=candidates,
+                             cached_content_token_count=cached)
+        return SimpleNamespace(usage_metadata=um, text="result")
 
     def test_cached_tokens_subtracted_from_prompt(self):
         """Non-cached input = total_prompt - cached (the prior double-count bug regression)."""
-        um = SimpleNamespace(prompt_token_count=500, candidates_token_count=100,
-                             cached_content_token_count=200)
-        actual_input, actual_output, actual_cache = self._extract(um)
+        response = self._make_response(prompt=500, candidates=100, cached=200)
+        actual_input, actual_output, actual_cache = GeminiClient._parse_usage_metadata(
+            response, "prompt text"
+        )
         assert actual_input == 300   # 500 - 200
         assert actual_cache == 200
         assert actual_output == 100
 
     def test_no_cache_all_tokens_are_input(self):
         """When cached_content_token_count is 0, all prompt tokens are non-cached."""
-        um = SimpleNamespace(prompt_token_count=400, candidates_token_count=80,
-                             cached_content_token_count=0)
-        actual_input, actual_output, actual_cache = self._extract(um)
+        response = self._make_response(prompt=400, candidates=80, cached=0)
+        actual_input, actual_output, actual_cache = GeminiClient._parse_usage_metadata(
+            response, "prompt text"
+        )
         assert actual_input == 400
         assert actual_cache == 0
 
     def test_missing_metadata_fields_default_to_zero(self):
         """getattr fallback handles missing attributes without AttributeError."""
-        um = SimpleNamespace()  # no fields at all
-        actual_input, actual_output, actual_cache = self._extract(um)
+        response = SimpleNamespace(usage_metadata=SimpleNamespace(), text="result")
+        actual_input, actual_output, actual_cache = GeminiClient._parse_usage_metadata(
+            response, "prompt text"
+        )
         assert actual_input == 0
         assert actual_output == 0
         assert actual_cache == 0
 
     def test_full_cache_hit_input_is_zero(self):
         """If all prompt tokens came from cache, non-cached input is 0 (not negative)."""
-        um = SimpleNamespace(prompt_token_count=300, candidates_token_count=50,
-                             cached_content_token_count=300)
-        actual_input, actual_output, actual_cache = self._extract(um)
+        response = self._make_response(prompt=300, candidates=50, cached=300)
+        actual_input, actual_output, actual_cache = GeminiClient._parse_usage_metadata(
+            response, "prompt text"
+        )
         assert actual_input == 0  # max(300-300, 0) = 0, not negative
         assert actual_cache == 300
+
+    def test_no_usage_metadata_falls_back_to_char_estimate(self):
+        """When usage_metadata is absent, token count is estimated from char length."""
+        response = SimpleNamespace(text="hello world")  # no usage_metadata attr
+        actual_input, actual_output, actual_cache = GeminiClient._parse_usage_metadata(
+            response, "x" * 400  # 400 chars → 100 tokens estimate
+        )
+        assert actual_input == 100   # 400 // 4
+        assert actual_output == 2    # len("hello world") // 4 = 2
+        assert actual_cache == 0
