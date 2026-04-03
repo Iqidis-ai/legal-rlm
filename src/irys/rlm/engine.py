@@ -1471,12 +1471,14 @@ class RLMEngine:
             else:
                 _fallback_doc_id = "unknown"
 
+            # Bare-string default: "supports" only when the lead was issue-targeted
+            # (investigator deliberately sought evidence for this issue); "neutral"
+            # otherwise to avoid inflating coverage with unrelated facts. (SO-4)
+            _bare_rel = "supports" if (lead is not None and lead.focus_issue_id) else "neutral"
             facts_to_add: list[tuple[str, str, str, str]] = []  # (text, src_label, doc_id, issue_relation)
             for fact_item in analysis["key_facts"]:
                 if isinstance(fact_item, str):
-                    # Bare string — LLM gave no issue_relation; don't presume "supports"
-                    # to avoid inflating coverage metrics (SO-4 accuracy).
-                    facts_to_add.append((fact_item, _fallback_src_label, _fallback_doc_id, "neutral"))
+                    facts_to_add.append((fact_item, _fallback_src_label, _fallback_doc_id, _bare_rel))
                 elif isinstance(fact_item, dict) and "fact" in fact_item:
                     fact_text = fact_item["fact"]
                     src_file = fact_item.get("source_file") or ""
@@ -1736,14 +1738,16 @@ class RLMEngine:
             # key_facts can be strings or dicts with "fact" key
             # Always initialize these so numeric_facts / gap grounding below can reference them
             # even when key_facts is empty.
+            # Bare-string default: "supports" when this read was issue-targeted
+            # (deliberately investigating evidence for this issue); "neutral" otherwise
+            # to avoid inflating coverage with unrelated facts. (SO-4)
+            _bare_rel_dr = "supports" if focus_issue_id else "neutral"
             facts_to_add: list[tuple[str, str, str | None]] = []  # (text, issue_relation, effective_date)
             _recorded_ids: list[str] = []
             if analysis.get("key_facts"):
                 for fact_item in analysis["key_facts"]:
                     if isinstance(fact_item, str):
-                        # Bare string — no issue_relation from LLM; use neutral to avoid
-                        # inflating issue coverage metrics (SO-4 accuracy).
-                        facts_to_add.append((fact_item, "neutral", None))
+                        facts_to_add.append((fact_item, _bare_rel_dr, None))
                     elif isinstance(fact_item, dict) and "fact" in fact_item:
                         issue_rel = fact_item.get("issue_relation") or "neutral"
                         if issue_rel not in ("supports", "attacks", "neutral"):
