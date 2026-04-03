@@ -429,6 +429,43 @@ def test_detect_proof_gaps_records_gap_for_unsupported_issue(model):
     assert len(model.gaps.open_gaps()) == 1, "duplicate proof-gap runs must be idempotent"
 
 
+def test_proof_gap_recreated_after_gap_closed(model):
+    """A closed proof-gap must be re-created on the next detector run if the issue
+    still has no supporting assertion links (NOT EXISTS looks at status='open' only).
+    """
+    from irys.matter.enums import IssueType
+
+    issue_id, _ = model.issues.upsert_issue(
+        title="Unlawful termination",
+        issue_type=IssueType.CLAIM,
+        materiality=0.9,
+        salience=0.5,
+    )
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # First run: proof gap created
+    engine._detect_proof_gaps()
+    gaps_after_first = model.gaps.open_gaps(min_materiality=0.0)
+    assert len(gaps_after_first) == 1
+    gap_id = gaps_after_first[0]["id"]
+
+    # Simulate external close (e.g. user dismisses the gap)
+    model.gaps.db.execute(
+        "UPDATE gap SET status='closed' WHERE id=?", (gap_id,)
+    )
+    assert len(model.gaps.open_gaps(min_materiality=0.0)) == 0
+
+    # Second run: issue still has no support — proof gap must be re-created
+    engine._detect_proof_gaps()
+    gaps_after_second = model.gaps.open_gaps(min_materiality=0.0)
+    assert len(gaps_after_second) == 1, (
+        "Proof gap must be re-created when issue still has no support after gap was closed"
+    )
+    assert "Unlawful termination" in gaps_after_second[0]["description"]
+
+
 def test_unrelated_gap_does_not_suppress_proof_gap(model):
     """An issue-linked gap with a different description must not suppress a proof-gap record.
 
