@@ -821,11 +821,9 @@ class RLMEngine:
         )
 
         # Orientation cache key: sha256 of normalized query + total file count +
-        # annotation/trust-override count (so user context changes invalidate the cache).
+        # content fingerprints of answered clarifications, open issues, gaps, annotations,
+        # and trust overrides — so any content change invalidates the cache, not just counts.
         import hashlib as _hashlib
-        # Orientation cache key: includes user-context state so that answered
-        # clarifications, new gaps, open-issue changes, trust overrides, and
-        # document annotations all invalidate the cache.
         _ctx_fingerprint = ""
         if self._matter_model is not None:
             try:
@@ -2503,6 +2501,7 @@ class RLMEngine:
                 affected_type="issue",
                 affected_id=issue_id,
             )
+
     def _save_checkpoint(self, state: InvestigationState, iteration: int):
         """Save investigation checkpoint."""
         if not self.config.checkpoint_dir:
