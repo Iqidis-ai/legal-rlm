@@ -773,7 +773,20 @@ def _migration_v13(conn) -> None:
     Enables INSERT OR IGNORE idempotency in QuantStore.record() and
     QuantStore.record_many(), eliminating the SELECT-then-INSERT pattern
     and enabling bulk inserts with executemany().
+
+    First removes any pre-existing duplicate rows (keeping the earliest by
+    rowid per key group) so that CREATE UNIQUE INDEX does not fail on
+    databases that accumulated duplicates via the old SELECT-then-INSERT
+    race pattern.
     """
+    conn.execute(
+        """DELETE FROM quant_fact
+           WHERE rowid NOT IN (
+               SELECT MIN(rowid)
+               FROM quant_fact
+               GROUP BY matter_id, quant_kind, raw_text
+           )"""
+    )
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_quant_fact_key"
         " ON quant_fact(matter_id, quant_kind, raw_text)"
