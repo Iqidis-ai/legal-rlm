@@ -153,7 +153,7 @@ class Irys:
             repo_key = str(Path(repository).resolve())
             if repo_key not in self._matter_models:
                 from .matter import MatterModel
-                self._matter_models[repo_key] = MatterModel.open(repository)
+                self._matter_models[repo_key] = MatterModel.open(repo_key)
             self._engine._matter_model = self._matter_models[repo_key]
 
         # Apply template if specified

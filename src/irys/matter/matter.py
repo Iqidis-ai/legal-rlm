@@ -298,16 +298,50 @@ class MatterModel:
             description = gap.get("description", "")
             if not description:
                 continue
+
+            # Look up what this gap is linked to (issue or assertion) so the impact
+            # statement is specific rather than generic (SO-7).
+            gap_id = gap.get("id")
+            link_rows = self.gaps.db.execute(
+                "SELECT affected_type, affected_id FROM gap_link WHERE gap_id=? LIMIT 1",
+                (gap_id,),
+            ).fetchall()
+            link = link_rows[0] if link_rows else None
+            materiality = gap.get("materiality_score", 0.5)
+            materiality_label = "high" if materiality >= 0.7 else ("medium" if materiality >= 0.4 else "low")
+
             # Format question based on gap type
             gap_type = gap.get("gap_type", "")
             if "document" in gap_type or "missing" in gap_type.lower():
                 question = f"We could not find the following in the repository: {description}. Do you have access to this document or information?"
                 why = "This document was referenced in the matter but is not present in the repository."
-                impact = "If available, this document could materially change our analysis and conclusions."
+                if link and link["affected_type"] == "issue":
+                    impact = (
+                        f"This document directly affects a tracked issue "
+                        f"(materiality: {materiality_label}). "
+                        f"Providing it will update the evidence coverage for that claim element."
+                    )
+                elif link and link["affected_type"] == "assertion":
+                    impact = (
+                        f"This document was cited by an existing extracted fact "
+                        f"(materiality: {materiality_label}). "
+                        f"Providing it may corroborate, contradict, or supersede that assertion."
+                    )
+                else:
+                    impact = (
+                        f"This document has {materiality_label} materiality to the current matter. "
+                        f"If available, it could alter relevant factual findings or conclusions."
+                    )
             else:
                 question = f"We identified a gap: {description}. Can you provide any additional context or documentation?"
                 why = "This information is needed to complete the analysis."
-                impact = "Providing this information will allow us to better assess the matter."
+                if link:
+                    impact = (
+                        f"Filling this gap (materiality: {materiality_label}) will update "
+                        f"the {link['affected_type']} it is linked to in the matter model."
+                    )
+                else:
+                    impact = f"Providing this information ({materiality_label} materiality) will improve matter coverage."
 
             q_id = self.clarifications.add_question(
                 question_text=question,

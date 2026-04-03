@@ -698,7 +698,9 @@ class RLMEngine:
         from ..matter.runtime import MatterRuntimeAdapter, NullMatterAdapter
 
         repo = MatterRepository(repository_path)
-        state = InvestigationState.create(query, str(repository_path))
+        # Always store the resolved absolute path so state.repository_path is stable
+        # regardless of CWD changes (e.g., FastAPI background tasks).
+        state = InvestigationState.create(query, str(repo.base_path))
 
         # Adapt configuration based on repository size
         stats = repo.get_stats()
@@ -2463,7 +2465,7 @@ If not compound, return the original query as a single sub_query with priority 1
 
     def _create_failed_state(self, query: str, error: str, repository_path: str | Path) -> InvestigationState:
         """Create a failed investigation state."""
-        state = InvestigationState.create(query, str(repository_path))
+        state = InvestigationState.create(query, str(Path(repository_path).resolve()))
         state.fail(error)
         return state
 
