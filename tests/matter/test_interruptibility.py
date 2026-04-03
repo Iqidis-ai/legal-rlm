@@ -88,6 +88,40 @@ def test_stop_flag_cached_in_memory(model):
         assert adapter.is_stop_requested()
 
 
+def test_stop_negative_result_cached_within_ttl(model):
+    """Negative is_stop_requested() result is cached within TTL — no DB round-trip.
+
+    On a normal run (stop never requested), every call within the TTL window must
+    return False without querying the DB. This is critical when the check runs at
+    every lead/doc boundary (~100+ times per run). Verified by patching _stop_last_check
+    to a recent timestamp so the TTL has NOT expired.
+    """
+    import time
+    run_id = model.start_run("TTL cache test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Simulate a recent negative check: set _stop_last_check to now
+    adapter._stop_last_check = time.monotonic()
+
+    # The TTL window has not expired — must return False without hitting DB.
+    # Patch ledger.is_stop_requested to detect any DB access attempt.
+    call_count = [0]
+    original = model.ledger.is_stop_requested
+    def patched(run_id):
+        call_count[0] += 1
+        return original(run_id)
+    model.ledger.is_stop_requested = patched
+
+    for _ in range(50):
+        result = adapter.is_stop_requested()
+        assert result is False
+
+    model.ledger.is_stop_requested = original
+    assert call_count[0] == 0, (
+        f"DB queried {call_count[0]} times within TTL window — negative result not cached"
+    )
+
+
 def test_null_adapter_stop_is_always_false():
     adapter = NullMatterAdapter()
     adapter.request_stop()  # must not raise
