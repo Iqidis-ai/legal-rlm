@@ -2482,8 +2482,10 @@ class RLMEngine:
                WHERE i.matter_id=? AND i.status='open' AND i.materiality >= 0.4
                  AND NOT EXISTS (
                      SELECT 1 FROM assertion_issue_link ail
+                     JOIN assertion a ON a.id=ail.assertion_id
                      WHERE ail.issue_id=i.id
                        AND ail.relation_type IN ('supports','establishes')
+                       AND a.belief_state NOT IN ('disputed','withdrawn','superseded','denied')
                  )
                  AND NOT EXISTS (
                      SELECT 1 FROM gap g

@@ -584,3 +584,48 @@ def test_get_issue_coverage_report(model):
     strong_row = next(r for r in report2 if r["id"] == issue_strong_id)
     assert weak_row["has_proof_gap"], "unsupported issue must have proof gap flagged"
     assert not strong_row["has_proof_gap"], "supported issue must not have a proof gap"
+
+
+def test_disputed_assertion_does_not_count_as_coverage(model):
+    """DISPUTED/WITHDRAWN/SUPERSEDED assertions must not inflate issue coverage (SO-2 correctness).
+
+    Belief revision propagates state changes. If a supporting assertion is later
+    disputed, the issue must no longer count it as active support — and proof-gap
+    detection must recognise the issue as uncovered.
+    """
+    from irys.matter.enums import IssueType, BeliefState
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    issue_id, _ = model.issues.upsert_issue(
+        title="Breach of contract",
+        issue_type=IssueType.CLAIM,
+        materiality=0.9, salience=0.8,
+    )
+
+    run_id = model.start_run("Dispute test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    assertion_id = adapter.record_fact("Defendant failed to deliver goods.", "complaint.pdf",
+                                       issue_id=issue_id)
+
+    # Before dispute: issue has one supporting assertion
+    report = model.get_issue_coverage_report()
+    row = next(r for r in report if r["id"] == issue_id)
+    assert row["supporting_count"] == 1
+
+    # Dispute the assertion
+    model.correct_assertion(assertion_id, BeliefState.DISPUTED)
+
+    # After dispute: supporting_count must drop to 0 (SO-2 belief state flows into coverage)
+    report2 = model.get_issue_coverage_report()
+    row2 = next(r for r in report2 if r["id"] == issue_id)
+    assert row2["supporting_count"] == 0, (
+        "DISPUTED assertion must not count as active support"
+    )
+
+    # Proof gap detector must now flag the issue as uncovered
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    engine._detect_proof_gaps()
+    gaps = model.gaps.open_gaps(min_materiality=0.0)
+    assert len(gaps) == 1
+    assert "Breach of contract" in gaps[0]["description"]

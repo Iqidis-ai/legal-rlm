@@ -261,13 +261,16 @@ class MatterModel:
         weakest_issue_id = None
         if open_issues:
             # Get supporting-assertion count per open issue via JOIN — avoids IN-list
-            # variable-count limits on large matters.
+            # variable-count limits. Exclude non-active belief states so DISPUTED/
+            # WITHDRAWN assertions don't overstate issue coverage (SO-2 correctness).
             support_rows = self.db.execute(
                 """SELECT ail.issue_id, COUNT(*) AS cnt
                    FROM assertion_issue_link ail
                    JOIN issue i ON i.id=ail.issue_id
+                   JOIN assertion a ON a.id=ail.assertion_id
                    WHERE i.matter_id=? AND i.status='open'
                      AND ail.relation_type IN ('supports','establishes')
+                     AND a.belief_state NOT IN ('disputed','withdrawn','superseded','denied')
                    GROUP BY ail.issue_id""",
                 (self.matter_id,),
             ).fetchall()
@@ -322,12 +325,16 @@ class MatterModel:
         mid = self.matter_id
 
         # Use JOIN instead of IN-list to avoid SQLite variable-count limits (SO-4 scale).
+        # Exclude non-active belief states so DISPUTED/WITHDRAWN assertions don't
+        # inflate coverage (SO-2 correctness: revised beliefs must flow into coverage).
         support_rows = self.db.execute(
             """SELECT ail.issue_id, COUNT(*) AS cnt
                FROM assertion_issue_link ail
                JOIN issue i ON i.id = ail.issue_id
+               JOIN assertion a ON a.id = ail.assertion_id
                WHERE i.matter_id=? AND i.status='open'
                  AND ail.relation_type IN ('supports','establishes')
+                 AND a.belief_state NOT IN ('disputed','withdrawn','superseded','denied')
                GROUP BY ail.issue_id""",
             (mid,),
         ).fetchall()

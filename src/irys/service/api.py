@@ -1488,8 +1488,11 @@ async def get_matter_issues(matter_id: str, min_materiality: float = 0.0):
     result = []
     for issue in issues:
         assertions = model.issues.get_assertions_for_issue(issue["id"])
+        _inactive = {"disputed", "withdrawn", "superseded", "denied"}
         issue["supporting_assertions"] = sum(
-            1 for a in assertions if a.get("relation_type") in ("supports", "establishes")
+            1 for a in assertions
+            if a.get("relation_type") in ("supports", "establishes")
+            and a.get("belief_state") not in _inactive
         )
         issue["attacking_assertions"] = sum(
             1 for a in assertions if a.get("relation_type") in ("attacks", "negates")
