@@ -345,6 +345,97 @@ def test_correct_assertion_404_unknown_assertion(client, register_model):
 
 
 # ---------------------------------------------------------------------------
+# POST/GET /matter/{matter_id}/trust-overrides
+# ---------------------------------------------------------------------------
+
+def test_set_trust_override_persists(client, register_model):
+    resp = client.post(
+        f"/matter/{MATTER_ID}/trust-overrides",
+        json={"document_pattern": "complaint.pdf", "trust_level": "low", "note": "advocacy doc"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "set"
+    assert "override_id" in data
+
+
+def test_set_trust_override_invalid_level(client, register_model):
+    resp = client.post(
+        f"/matter/{MATTER_ID}/trust-overrides",
+        json={"document_pattern": "doc.pdf", "trust_level": "INVALID"},
+    )
+    assert resp.status_code == 400
+
+
+def test_list_trust_overrides(client, register_model):
+    client.post(
+        f"/matter/{MATTER_ID}/trust-overrides",
+        json={"document_pattern": "contract.pdf", "trust_level": "high"},
+    )
+    resp = client.get(f"/matter/{MATTER_ID}/trust-overrides")
+    assert resp.status_code == 200
+    overrides = resp.json()["overrides"]
+    assert any(o["document_pattern"] == "contract.pdf" for o in overrides)
+
+
+def test_trust_override_404_unknown_matter(client):
+    resp = client.post(
+        "/matter/no-such-matter/trust-overrides",
+        json={"document_pattern": "doc.pdf", "trust_level": "low"},
+    )
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST/GET /matter/{matter_id}/annotations
+# ---------------------------------------------------------------------------
+
+def test_add_annotation_persists(client, register_model):
+    resp = client.post(
+        f"/matter/{MATTER_ID}/annotations",
+        json={
+            "document_pattern": "deposition.pdf",
+            "annotation_text": "Witness contradicts prior statement on page 12.",
+            "annotation_type": "strategic_note",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "added"
+    assert "annotation_id" in data
+
+
+def test_list_annotations_all(client, register_model):
+    client.post(
+        f"/matter/{MATTER_ID}/annotations",
+        json={"document_pattern": "motion.pdf", "annotation_text": "Key exhibit.", "annotation_type": "note"},
+    )
+    resp = client.get(f"/matter/{MATTER_ID}/annotations")
+    assert resp.status_code == 200
+    annotations = resp.json()["annotations"]
+    assert len(annotations) >= 1
+
+
+def test_list_annotations_filtered_by_document(client, register_model):
+    client.post(
+        f"/matter/{MATTER_ID}/annotations",
+        json={"document_pattern": "specific_doc.pdf", "annotation_text": "Important.", "annotation_type": "note"},
+    )
+    resp = client.get(f"/matter/{MATTER_ID}/annotations?document=specific_doc.pdf")
+    assert resp.status_code == 200
+    annotations = resp.json()["annotations"]
+    assert all("specific_doc" in a["document_pattern"] for a in annotations)
+
+
+def test_annotation_404_unknown_matter(client):
+    resp = client.post(
+        "/matter/no-such-matter/annotations",
+        json={"document_pattern": "doc.pdf", "annotation_text": "note", "annotation_type": "note"},
+    )
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # _compute_corpus_key() stability
 # ---------------------------------------------------------------------------
 
