@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -167,8 +167,9 @@ CREATE TABLE IF NOT EXISTS document_inventory (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_path
     ON document_inventory(matter_id, relative_path);
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_hash
-    ON document_inventory(matter_id, sha256);
+-- ux_inventory_hash deliberately omitted: same-content different-path files must have
+-- separate rows so that is_ingested(path) is consistent with upsert(path).  Content
+-- identity is checked per-path via the sha256 column, not across paths.
 
 CREATE INDEX IF NOT EXISTS ix_inventory_salience
     ON document_inventory(salience_score DESC, last_read_at);
@@ -596,6 +597,21 @@ def _migration_v5(conn) -> None:
     )
 
 
+def _migration_v6(conn) -> None:
+    """Drop ux_inventory_hash to allow same-content different-path files to coexist.
+
+    ux_inventory_hash on (matter_id, sha256) caused two problems:
+    1. INSERT OR IGNORE silently collapsed same-content alternate paths onto the
+       same inventory row, making is_ingested(alt_path) always return False.
+    2. sha256 UPDATE on content change failed when the new hash already existed on
+       another row, requiring an error-swallowing fallback.
+
+    Removing this index gives each (matter_id, relative_path) pair an independent row.
+    Content-change detection still works via the sha256 column comparison in upsert().
+    """
+    conn.execute("DROP INDEX IF EXISTS ux_inventory_hash")
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -605,6 +621,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (3, _migration_v3),
     (4, _migration_v4),
     (5, _migration_v5),
+    (6, _migration_v6),
 ]
 
 

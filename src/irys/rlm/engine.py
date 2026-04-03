@@ -1146,7 +1146,17 @@ class RLMEngine:
             # Also record into matter model if enabled
             adapter = getattr(state, "_matter_adapter", None)
             if adapter is not None:
-                doc_id = results.top(1)[0].filename  # primary source doc; overridden in deep read
+                # Use repo-relative path (stable, not basename) so assertion_occurrence
+                # document_id is consistent with the inventory key used in _deep_read_document.
+                _top_hit = results.top(1)
+                if _top_hit:
+                    _hit_fp = Path(_top_hit[0].file_path)
+                    try:
+                        doc_id = str(_hit_fp.relative_to(repo.base_path))
+                    except ValueError:
+                        doc_id = _top_hit[0].filename  # fallback for external paths
+                else:
+                    doc_id = "unknown"
                 issue_id = lead.focus_issue_id if lead is not None else None
                 for fact_text in facts_to_add:
                     adapter.record_fact(fact_text, document_id=doc_id, issue_id=issue_id)
@@ -1254,9 +1264,24 @@ class RLMEngine:
                 _rel_path = file_path
 
             if _mm is not None:
+                import hashlib as _hl
                 try:
+                    # Compute sha256 BEFORE the hot-path check so that content changes
+                    # at the same path are always detected via upsert's mismatch logic.
+                    # Reading raw bytes is cheap (no PDF parsing); we avoid that with repo.read().
+                    _abs_fp = (Path(repo.base_path) / file_path) if not _fp.is_absolute() else _fp
+                    _raw = _abs_fp.read_bytes()
+                    _sha = _hl.sha256(_raw).hexdigest()
+                    _inv_id, _ = _mm.inventory.upsert(
+                        relative_path=_rel_path,
+                        sha256=_sha,
+                        size_bytes=len(_raw),
+                        file_type=_fp.suffix.lstrip(".") or None,
+                    )
+                    _inventory_doc_id = _inv_id
+
                     if _mm.inventory.is_ingested(_rel_path):
-                        # HOT PATH: already fully ingested in a prior run
+                        # HOT PATH: sha256 verified current; already fully ingested in a prior run
                         state.documents_read += 1
                         self._emit_step(
                             state, StepType.READING,
@@ -1268,25 +1293,6 @@ class RLMEngine:
 
             # COLD PATH: full document parsing + LLM analysis
             doc = repo.read(file_path)
-
-            # Register in inventory (compute sha256 from raw bytes for content identity).
-            # Resolve absolute path via repo.base_path so this works when CWD != repo root
-            # (e.g., in FastAPI background tasks where file_path is a relative path).
-            if _mm is not None:
-                import hashlib as _hl
-                try:
-                    _abs_fp = (Path(repo.base_path) / file_path) if not _fp.is_absolute() else _fp
-                    _raw = _abs_fp.read_bytes()
-                    _sha = _hl.sha256(_raw).hexdigest()
-                    _inv_id, _ = _mm.inventory.upsert(
-                        relative_path=_rel_path,
-                        sha256=_sha,
-                        size_bytes=len(_raw),
-                        file_type=_fp.suffix.lstrip(".") or None,
-                    )
-                    _inventory_doc_id = _inv_id
-                except Exception:
-                    pass  # inventory failure must not block analysis
 
             state.documents_read += 1
 

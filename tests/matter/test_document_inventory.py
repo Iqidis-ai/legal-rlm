@@ -219,13 +219,12 @@ def test_relative_to_base_path_produces_stable_key(model):
 #         conflicts with ux_inventory_hash from another row
 # ---------------------------------------------------------------------------
 
-def test_sha256_change_resets_status_when_new_hash_conflicts(model):
-    """ingest_status must be reset to 'pending' even if the new sha256 already
-    exists on another row (ux_inventory_hash conflict).
+def test_sha256_change_resets_status_when_another_path_has_same_hash(model):
+    """ingest_status must be reset to 'pending' when a path's content changes,
+    even when another path in the same matter already has the new sha256.
 
-    Before the fix, the UPDATE that combined sha256+status changes would raise on
-    the unique hash index, the exception was swallowed, and the stale 'complete'
-    row survived — SO-1 hot path incorrectly skipped a changed document.
+    ux_inventory_hash was removed in v6 so same-content different-path files
+    each have independent rows.  Content change detection is per-path only.
     """
     # Another file already has the hash we're about to 'update' to
     model.inventory.upsert("exhibits/archive.pdf", "b" * 64)
@@ -241,5 +240,34 @@ def test_sha256_change_resets_status_when_new_hash_conflicts(model):
     assert doc_id2 == doc_id
     assert is_new2 is False
     assert model.inventory.is_ingested("contracts/msa.pdf") is False, (
-        "status must be reset to 'pending' even when sha256 update hits a hash conflict"
+        "status must be reset to 'pending' when sha256 changes at same path"
+    )
+    # exhibits/archive.pdf is unaffected — separate row for same content at different path
+    assert model.inventory.is_ingested("exhibits/archive.pdf") is False
+
+
+# ---------------------------------------------------------------------------
+# MEDIUM: duplicate-content alternate paths tracked independently (v6: no ux_inventory_hash)
+# ---------------------------------------------------------------------------
+
+def test_same_content_different_paths_have_independent_rows(model):
+    """Same sha256 at two different paths must produce two independent rows.
+
+    Before v6, ux_inventory_hash caused INSERT OR IGNORE to collapse the second
+    path onto the first row, making is_ingested(second_path) always return False.
+    After v6, each (matter_id, relative_path) pair has its own row.
+    """
+    sha = "d" * 64
+    id1, new1 = model.inventory.upsert("contracts/msa.pdf", sha)
+    id2, new2 = model.inventory.upsert("backup/msa.pdf", sha)
+
+    assert id1 != id2, "same sha256 at different paths must produce separate rows"
+    assert new1 is True
+    assert new2 is True
+
+    # Ingesting one must not affect the other
+    model.inventory.mark_ingested(id1)
+    assert model.inventory.is_ingested("contracts/msa.pdf") is True
+    assert model.inventory.is_ingested("backup/msa.pdf") is False, (
+        "alternate path with same content must track independently after v6"
     )

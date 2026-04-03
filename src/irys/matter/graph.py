@@ -833,10 +833,13 @@ class DocumentInventoryStore:
     ) -> tuple[str, bool]:
         """Insert or locate a document_inventory row.
 
-        Returns (doc_id, is_new).  is_new=True means this document has not been
-        seen before in this matter; is_new=False means it already exists.
-        sha256 collision on a different path is treated as the same physical file
-        (handled by the UNIQUE index on (matter_id, sha256)).
+        Returns (doc_id, is_new).  is_new=True means this path has not been seen
+        before in this matter; is_new=False means it already exists.
+
+        Each (matter_id, relative_path) pair has exactly one row — same-content
+        files at different paths are tracked independently.  Content-change detection
+        is per-path via sha256 comparison; the old ux_inventory_hash cross-path dedup
+        was removed in v6 because it caused is_ingested(path) to be inconsistent.
         """
         now = _now()
         doc_id = _id()
@@ -852,35 +855,19 @@ class DocumentInventoryStore:
                 (doc_id, self.matter_id, relative_path, sha256,
                  size_bytes, file_type, now, "pending", "pending"),
             )
-            # Fetch actual row (may differ from doc_id if INSERT was ignored on conflict)
+            # Fetch the row for this path (INSERT may have been a no-op if path already exists)
             row = self.db.execute(
                 "SELECT id, ingest_status, sha256 FROM document_inventory WHERE matter_id=? AND relative_path=?",
                 (self.matter_id, relative_path),
             ).fetchone()
-            if row is None:
-                # Fallback: sha256 collision (same content, different path name)
-                row = self.db.execute(
-                    "SELECT id, ingest_status, sha256 FROM document_inventory WHERE matter_id=? AND sha256=?",
-                    (self.matter_id, sha256),
-                ).fetchone()
-            elif row["sha256"] != sha256:
-                # Content changed at same path — reset to pending to force cold re-ingest.
-                # The full UPDATE (sha256 + status) may fail if the NEW sha256 already exists
-                # on another row (ux_inventory_hash conflict). In that case fall back to a
-                # status-only reset — the status change is the critical part for SO-1 correctness.
-                try:
-                    self.db.execute(
-                        "UPDATE document_inventory SET sha256=?, size_bytes=?, ingest_status='pending', last_read_at=? WHERE id=?",
-                        (sha256, size_bytes, now, row["id"]),
-                    )
-                except Exception:
-                    # New sha256 conflicts with another row; reset status only
-                    self.db.execute(
-                        "UPDATE document_inventory SET ingest_status='pending', last_read_at=? WHERE id=?",
-                        (now, row["id"]),
-                    )
+            if row is not None and row["sha256"] != sha256:
+                # Content changed at same path — reset to pending to force cold re-ingest
+                self.db.execute(
+                    "UPDATE document_inventory SET sha256=?, size_bytes=?, ingest_status='pending', last_read_at=? WHERE id=?",
+                    (sha256, size_bytes, now, row["id"]),
+                )
         actual_id = row["id"] if row else doc_id
-        is_new = actual_id == doc_id  # True only if INSERT succeeded (no prior conflict)
+        is_new = actual_id == doc_id  # True only if INSERT succeeded (no prior row for this path)
         return actual_id, is_new
 
     def mark_ingested(self, doc_id: str) -> None:
