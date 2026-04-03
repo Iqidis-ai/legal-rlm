@@ -2422,14 +2422,24 @@ class RLMEngine:
                 (issue_id,),
             ).fetchone()
             if row and row[0] == 0:
-                self._matter_model.gaps.record(
-                    gap_type=GapType.MISSING_DOCUMENT,
-                    description=f"No supporting evidence found for issue: '{issue['title']}'",
-                    expected_artifact=f"Evidence supporting: {issue['title']}",
-                    materiality=issue.get("materiality", 0.5),
-                    affected_type="issue",
-                    affected_id=issue_id,
-                )
+                # Dedup: skip if an open proof gap already exists for this issue
+                existing = self._matter_model.db.execute(
+                    """SELECT g.id FROM gap g
+                       JOIN gap_link gl ON gl.gap_id = g.id
+                       WHERE g.matter_id=? AND g.status='open'
+                         AND gl.affected_type='issue' AND gl.affected_id=?
+                       LIMIT 1""",
+                    (self._matter_model.matter_id, issue_id),
+                ).fetchone()
+                if existing is None:
+                    self._matter_model.gaps.record(
+                        gap_type=GapType.MISSING_DOCUMENT,
+                        description=f"No supporting evidence found for issue: '{issue['title']}'",
+                        expected_artifact=f"Evidence supporting: {issue['title']}",
+                        materiality=issue.get("materiality", 0.5),
+                        affected_type="issue",
+                        affected_id=issue_id,
+                    )
 
     def _save_checkpoint(self, state: InvestigationState, iteration: int):
         """Save investigation checkpoint."""
