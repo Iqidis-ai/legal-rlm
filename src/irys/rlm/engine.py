@@ -854,19 +854,24 @@ class RLMEngine:
                 focus_issue_id=_focus_id,
             )
 
-        # If no searches were found, fall back: weakest issue title → query tokens
-        if not plan.get("initial_searches"):
+        # If no valid searches were produced (either planner returned none or all were
+        # filtered as blank/non-string), fall back: weakest issue title → query tokens.
+        # Use _initial_searches (post-filter) so sanitized-empty plans hit this branch.
+        if not _initial_searches:
             if matter_ctx and matter_ctx.weakest_issue_id and matter_ctx.open_issues:
                 weakest_issues = [i for i in matter_ctx.open_issues
                                   if i.get("id") == matter_ctx.weakest_issue_id]
                 fallback_term = weakest_issues[0]["title"] if weakest_issues else state.query
+                _fallback_issue_id = matter_ctx.weakest_issue_id
             else:
                 fallback_term = state.query
+                _fallback_issue_id = _issue_pool[0] if _issue_pool else None
             state.add_lead(
                 description=f"Search for key terms in query",
                 source="fallback",
                 priority=0.8,
                 search_term=fallback_term,
+                focus_issue_id=_fallback_issue_id,
             )
 
         self._emit_step(

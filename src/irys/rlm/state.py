@@ -775,6 +775,9 @@ class InvestigationState:
                 # Update priority if new lead has higher priority
                 if priority > existing.priority:
                     existing.priority = priority
+                # Upgrade focus_issue_id from None → non-None so dedup never discards linkage
+                if existing.focus_issue_id is None and focus_issue_id is not None:
+                    existing.focus_issue_id = focus_issue_id
                 return None  # Duplicate
 
         lead = Lead.create(description, source, priority,
