@@ -646,34 +646,39 @@ class AssertionStore:
             attacker_belief = conflict["attacker_belief"]
             attacked_belief = conflict["attacked_belief"]
 
-            # Mark attacked assertion as DISPUTED when attacker is high-trust.
-            if (
-                attacker_belief in _HIGH_TRUST
-                and attacked_belief in _DISPUTABLE
-            ):
-                belief_engine.force_state(
-                    assertion_id=attacked_id,
-                    new_state=BeliefState.DISPUTED,
-                    new_confidence=0.3,
-                    cause=RevisionCause.CONFLICT_DETECTION,
-                    note=(
-                        f"Marked disputed by {conflict['link_type']} link from "
-                        f"assertion {conflict['attacker_id']}"
-                    ),
-                )
+            try:
+                # Mark attacked assertion as DISPUTED when attacker is high-trust.
+                if (
+                    attacker_belief in _HIGH_TRUST
+                    and attacked_belief in _DISPUTABLE
+                ):
+                    belief_engine.force_state(
+                        assertion_id=attacked_id,
+                        new_state=BeliefState.DISPUTED,
+                        new_confidence=0.3,
+                        cause=RevisionCause.CONFLICT_DETECTION,
+                        note=(
+                            f"Marked disputed by {conflict['link_type']} link from "
+                            f"assertion {conflict['attacker_id']}"
+                        ),
+                    )
 
-            # Record gap for any open conflict that isn't already resolved.
-            if attacked_belief not in ("superseded", "withdrawn", "resolved"):
-                gap_store.record(
-                    gap_type=GapType.UNRESOLVED_CONTRADICTION,
-                    description=(
-                        f"Contradiction: '{conflict['attacker_prop'][:80]}' "
-                        f"{conflict['link_type']} '{conflict['attacked_prop'][:80]}'"
-                    ),
-                    materiality=0.7,
-                    affected_type="assertion",
-                    affected_id=attacked_id,
-                )
+                # Record gap for any open conflict that isn't already resolved.
+                if attacked_belief not in ("superseded", "withdrawn", "resolved"):
+                    gap_store.record(
+                        gap_type=GapType.UNRESOLVED_CONTRADICTION,
+                        description=(
+                            f"Contradiction: '{conflict['attacker_prop'][:80]}' "
+                            f"{conflict['link_type']} '{conflict['attacked_prop'][:80]}'"
+                        ),
+                        materiality=0.7,
+                        affected_type="assertion",
+                        affected_id=attacked_id,
+                    )
+            except Exception:
+                # One bad pair must not abort the rest of the mining pass.
+                # Mining is re-runnable; partial progress is better than none.
+                pass
 
         return conflicts
 
