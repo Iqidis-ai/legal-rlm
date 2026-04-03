@@ -98,6 +98,12 @@ existence and terms", "defendant's obligation", "failure to perform", "resulting
 Predicates drive targeted document search — make them concrete and searchable.
 """
 
+# Bump this version string whenever ORIENTATION_PROMPT structure changes.
+# Including it in the cache key ensures old cached plans (which may lack
+# new fields like "predicates") are automatically invalidated after a
+# prompt update (SO-1 stale-cache prevention).
+_ORIENTATION_CACHE_VERSION = "2"
+
 
 def _format_matter_context(ctx) -> str:
     """Format a QueryMatterContext into a prompt-injectable string.
@@ -905,9 +911,11 @@ class RLMEngine:
                 _ctx_fingerprint = repr([_ans, _iss, _gaps_fp, _anns, _trs])
             except Exception:
                 pass  # non-critical; fallback to query+file-count key
+        # Include _ORIENTATION_CACHE_VERSION so prompt structure changes
+        # (e.g. adding "predicates" field) automatically invalidate cached plans.
         _orient_key = _hashlib.sha256(
             f"{state.query.lower().strip()}\n{stats.total_files}"
-            f"\n{_ctx_fingerprint}".encode()
+            f"\n{_ctx_fingerprint}\nv{_ORIENTATION_CACHE_VERSION}".encode()
         ).hexdigest()
 
         _plan_defaults = {
