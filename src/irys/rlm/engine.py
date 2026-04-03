@@ -849,24 +849,27 @@ class RLMEngine:
         # Orientation cache key: includes user-context state so that answered
         # clarifications, new gaps, open-issue changes, trust overrides, and
         # document annotations all invalidate the cache.
-        _clarification_count = 0
-        _open_issue_count = 0
-        _open_gap_count = 0
-        _annotation_count = 0
-        _trust_count = 0
+        _ctx_fingerprint = ""
         if self._matter_model is not None:
             try:
-                _clarification_count = len(self._matter_model.clarifications.get_answered())
-                _open_issue_count = self._matter_model.issues.count_open()
-                _open_gap_count = self._matter_model.gaps.count_open()
-                _annotation_count = len(self._matter_model.annotations.list_recent())
-                _trust_count = len(self._matter_model.trust_overrides.list_all())
+                # Hash content (not just counts) so editing an issue/annotation/answer
+                # invalidates the cache even when the count stays the same.
+                _ans = sorted(q["id"] for q in self._matter_model.clarifications.get_answered())
+                _iss = sorted(i["title"] for i in self._matter_model.issues.get_open_issues())
+                _gaps_fp = self._matter_model.gaps.count_open()
+                _anns = sorted(
+                    a.get("annotation_text", "") for a in self._matter_model.annotations.list_recent()
+                )
+                _trs = sorted(
+                    f"{o.get('document_pattern', '')}:{o.get('trust_level', '')}"
+                    for o in self._matter_model.trust_overrides.list_all()
+                )
+                _ctx_fingerprint = repr([_ans, _iss, _gaps_fp, _anns, _trs])
             except Exception:
-                pass  # non-critical; fallback to file-count key
+                pass  # non-critical; fallback to query+file-count key
         _orient_key = _hashlib.sha256(
             f"{state.query.lower().strip()}\n{stats.total_files}"
-            f"\n{_clarification_count}\n{_open_issue_count}\n{_open_gap_count}"
-            f"\n{_annotation_count}\n{_trust_count}".encode()
+            f"\n{_ctx_fingerprint}".encode()
         ).hexdigest()
 
         _plan_defaults = {
