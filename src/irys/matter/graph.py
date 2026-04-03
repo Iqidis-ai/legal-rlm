@@ -1388,19 +1388,10 @@ class QuantStore:
             (self.matter_id, currency, currency),
         ).fetchone()
         disputed = round(float(disputed_row["total"]) if disputed_row else 0.0, 2)
-
-        # If no belief-state disputed amounts, fall back to conflict-detected totals
-        # as a heuristic (conflicting values for same entity → treat as disputed)
-        if disputed == 0.0:
-            conflicts = self.get_conflicts()
-            disputed_heuristic = 0.0
-            for c in conflicts:
-                vals = c.get("values") or []
-                if vals:
-                    # Use the spread (max − min) as the disputed portion
-                    disputed_heuristic += round(max(vals) - min(vals), 2)
-            if disputed_heuristic > 0.0:
-                disputed = disputed_heuristic
+        # Note: disputed reflects only facts whose linked assertion.belief_state = 'disputed'.
+        # Numeric conflicts (same subject_id, different amounts) are surfaced separately via
+        # get_conflicts() — they indicate potential disputes that have not yet been resolved
+        # through belief revision. Do not conflate conflicts with confirmed disputed amounts.
 
         # Source spans: top 20 quant_facts with a span_id for SO-6 grounding
         span_rows = self.db.execute(
