@@ -260,3 +260,58 @@ def test_gap_record_many_intra_batch_dedup(model):
     assert len(ids) == 2, "Return list length must match input specs length"
     assert ids[0] == ids[1], "Intra-batch duplicates must return the same gap_id"
     assert len(model.gaps.open_gaps(min_materiality=0.0)) == 1, "Only one gap should be created"
+
+
+# ---------------------------------------------------------------------------
+# SO-1: Durable persistence across sessions (SQLite file backend)
+# ---------------------------------------------------------------------------
+
+def test_matter_model_persists_assertions_across_reopens(tmp_path):
+    """Opening a model, recording assertions, closing and reopening must preserve data (SO-1).
+
+    This is the core SO-1 invariant: the system must never rediscover stable
+    structure from scratch.  Assertions written in session 1 must survive
+    into session 2 when the model is reopened from disk.
+    """
+    # --- Session 1: write ---
+    model1 = MatterModel.open(tmp_path, matter_name="Acme v Tech")
+    cand = AssertionCandidate(
+        proposition_text="Defendant failed to deliver by the deadline.",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="complaint.pdf",
+        speech_act=SpeechAct.ALLEGED,
+        source_role=SourceRole.ADVOCACY,
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    aid, _ = model1.assertions.upsert_occurrence(cand)
+    del model1  # Explicitly close / GC the model
+
+    # --- Session 2: read ---
+    model2 = MatterModel.open(tmp_path)
+    record = model2.assertions.get(aid)
+    assert record is not None, (
+        "Assertion must be readable after reopening the model from disk (SO-1)"
+    )
+    assert record.proposition_text == "Defendant failed to deliver by the deadline."
+    # Confirm it's the same matter (same matter_id stored on disk)
+    stats = model2.stats()
+    assert stats["assertion_count"] == 1
+
+
+def test_matter_model_hot_path_survives_reopen(tmp_path):
+    """A document marked as ingested must still appear ingested on next open (SO-1 hot-path)."""
+    model1 = MatterModel.open(tmp_path)
+    doc_id, _ = model1.inventory.upsert(
+        relative_path="contract.pdf",
+        sha256="abc123",
+        size_bytes=1024,
+        file_type="pdf",
+    )
+    model1.inventory.mark_ingested(doc_id)
+    del model1
+
+    model2 = MatterModel.open(tmp_path)
+    assert model2.inventory.is_ingested("contract.pdf"), (
+        "is_ingested() must return True for a doc marked ingested in a prior session (SO-1)"
+    )
