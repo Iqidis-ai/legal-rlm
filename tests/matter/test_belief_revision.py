@@ -564,6 +564,92 @@ def test_get_neighbor_belief_states_returns_source_roles(model):
     )
 
 
+def test_document_trust_override_low_reduces_supporter_weight(model):
+    """A 'low' document trust override must reduce supporter confidence (SO-3 → SO-2 integration).
+
+    When a user marks a document as low-trust, assertions from that document must
+    behave as 'advocacy'-weighted in belief revision — even if their stored source_role
+    is 'operative'.  This tests that trust overrides flow through get_neighbor_belief_states()
+    into _compute_belief_state() confidence output.
+    """
+    central_id = add(model, "The payment was made in full on time.")
+
+    # Supporter from a document the user will later flag as low-trust
+    supporter_id = add(model, "Payment receipt says paid in full.", doc="disputed_receipt.pdf",
+                       speech_act=SpeechAct.OPERATIVE)
+    model.assertions.set_belief_state(supporter_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.link(supporter_id, central_id, AssertionLinkType.SUPPORTS)
+
+    # Without trust override: supporter has source_role='unknown' → weight 0.5
+    # Confidence for INFERRED = min(0.9, 0.5 + 0.1 * 0.5) = 0.55
+    model.belief.apply([central_id], cause=RevisionCause.NEW_EVIDENCE)
+    record_before = model.assertions.get(central_id)
+    state_before = record_before.belief_state
+    conf_before = record_before.confidence
+
+    # User marks the receipt document as low-trust (SO-3 steering)
+    model.trust_overrides.set("disputed_receipt.pdf", "low", note="Disputed by opposing party")
+
+    # Reset central assertion state so revision runs fresh
+    model.assertions.set_belief_state(central_id, BeliefState.UNKNOWN, 0.5)
+
+    # After trust override: supporter behaves as 'advocacy' weight 0.3
+    # Confidence for INFERRED = min(0.9, 0.5 + 0.1 * 0.3) = 0.53
+    model.belief.apply([central_id], cause=RevisionCause.NEW_EVIDENCE)
+    record_after = model.assertions.get(central_id)
+
+    # State should still be INFERRED (OPERATIVE support still promotes — trust only affects confidence)
+    assert record_after.belief_state == BeliefState.INFERRED.value, (
+        f"State must be INFERRED even with low-trust override; got {record_after.belief_state}"
+    )
+    # Confidence must be lower after the low-trust override
+    assert record_after.confidence < conf_before, (
+        f"Low-trust override must reduce confidence: before={conf_before}, after={record_after.confidence}"
+    )
+
+
+def test_document_trust_override_high_increases_attacker_weight(model):
+    """A 'high' document trust override must increase attacker confidence impact (SO-3 → SO-2).
+
+    When a user marks a document as high-trust, assertions from that document must
+    behave as 'operative'-weighted in belief revision — even if their stored source_role
+    was inferred as a lower-trust role.
+    """
+    central_id = add(model, "The contract clause was waived.")
+
+    # Attacker from a document the user will flag as high-trust
+    attacker_id = add(model, "Waiver was never executed per signed amendment.",
+                      doc="court_order.pdf", speech_act=SpeechAct.ALLEGED)
+    model.assertions.set_belief_state(attacker_id, BeliefState.ALLEGED, 0.7)
+    model.assertions.link(attacker_id, central_id, AssertionLinkType.ATTACKS)
+    model.assertions.set_belief_state(central_id, BeliefState.OPERATIVE, 0.85)
+
+    # Without trust override: attacker source_role='unknown' weight=0.5
+    # Confidence = max(0.1, 0.5 - 0.1 * 0.5) = 0.45
+    model.belief.apply([central_id], cause=RevisionCause.NEW_EVIDENCE)
+    record_before = model.assertions.get(central_id)
+    conf_before = record_before.confidence
+
+    # User marks the court order as high-trust (weight 1.0)
+    model.trust_overrides.set("court_order.pdf", "high", note="Signed court order")
+
+    # Reset
+    model.assertions.set_belief_state(central_id, BeliefState.OPERATIVE, 0.85)
+
+    # After trust override: attacker behaves as 'operative' weight=1.0
+    # Confidence = max(0.1, 0.5 - 0.1 * 1.0) = 0.4
+    model.belief.apply([central_id], cause=RevisionCause.NEW_EVIDENCE)
+    record_after = model.assertions.get(central_id)
+
+    assert record_after.belief_state == BeliefState.DISPUTED.value, (
+        f"High-trust attacker must still produce DISPUTED; got {record_after.belief_state}"
+    )
+    assert record_after.confidence < conf_before, (
+        f"High-trust override must increase attacker weight → lower confidence: "
+        f"before={conf_before}, after={record_after.confidence}"
+    )
+
+
 def test_mixed_attacker_weights_accumulate_correctly():
     """Effective attack weight must accumulate across multiple attackers with different trust levels.
 

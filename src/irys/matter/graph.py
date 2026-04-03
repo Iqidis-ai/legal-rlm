@@ -305,12 +305,16 @@ class AssertionStore:
 
         Returns dict with keys:
           'support_states', 'attack_states', 'has_superseding' — as before,
-          'support_source_roles', 'attack_source_roles' — best source_role per
+          'support_source_roles', 'attack_source_roles' — effective source_role per
             neighboring assertion (SO-5 trust-gated belief revision).
 
-        The source_role for each neighbor is the highest-trust role seen across all
-        of that assertion's occurrences (same priority ordering used in compute_and_store).
-        Defaults to 'unknown' when no occurrences exist.
+        Effective source_role is derived in two steps:
+        1. Best stored source_role from assertion_occurrence (highest-trust across occurrences).
+        2. If a user-set document_trust_override matches the assertion's primary document,
+           the override replaces the stored role: 'low' → 'advocacy', 'high' → 'operative'.
+           This ensures user trust steering (SO-3) flows through belief revision (SO-2).
+
+        Falls back to 'unknown' when no occurrences exist.
         """
         _role_subq = """(SELECT ao.source_role FROM assertion_occurrence ao
                          WHERE ao.assertion_id = a.id
@@ -324,15 +328,42 @@ class AssertionStore:
                              WHEN 'unknown'       THEN 1
                              WHEN 'advocacy'      THEN 0
                              ELSE 1 END DESC LIMIT 1)"""
+        _doc_subq = """(SELECT ao.document_id FROM assertion_occurrence ao
+                        WHERE ao.assertion_id = a.id
+                        ORDER BY ao.created_at ASC LIMIT 1)"""
         rows = self.db.execute(
             f"""SELECT al.link_type, a.belief_state,
-                       COALESCE({_role_subq}, 'unknown') AS source_role
+                       COALESCE({_role_subq}, 'unknown') AS source_role,
+                       {_doc_subq} AS primary_document_id
                FROM assertion_link al
                JOIN assertion a ON a.id = al.src_assertion_id
                WHERE al.dst_assertion_id=?
                  AND al.link_type IN ('supports','corroborates','attacks','contradicts','supersedes')""",
             (assertion_id,),
         ).fetchall()
+
+        # Fetch non-normal trust overrides once (empty list when no overrides set)
+        override_rows = self.db.execute(
+            """SELECT document_pattern, trust_level FROM document_trust_override
+               WHERE matter_id=? AND trust_level != 'normal'
+               ORDER BY LENGTH(document_pattern) DESC""",
+            (self.matter_id,),
+        ).fetchall()
+        overrides = [(r["document_pattern"], r["trust_level"]) for r in override_rows]
+
+        def _effective_role(source_role: str, document_id: "str | None") -> str:
+            """Apply trust override if any pattern matches the document. Otherwise keep role."""
+            if not overrides or not document_id:
+                return source_role
+            from pathlib import Path
+            doc_norm = document_id.replace("\\\\", "/").replace("\\", "/")
+            basename = Path(doc_norm).name
+            for pattern, level in overrides:
+                pat_norm = pattern.replace("\\\\", "/").replace("\\", "/")
+                if pat_norm == doc_norm or pat_norm == basename:
+                    return "advocacy" if level == "low" else "operative"
+            return source_role
+
         support_states: list = []
         attack_states: list = []
         support_source_roles: list = []
@@ -341,7 +372,7 @@ class AssertionStore:
         for row in rows:
             lt = row["link_type"]
             bs = BeliefState(row["belief_state"])
-            role = row["source_role"]
+            role = _effective_role(row["source_role"], row["primary_document_id"])
             if lt in ("supports", "corroborates"):
                 support_states.append(bs)
                 support_source_roles.append(role)
