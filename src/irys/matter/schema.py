@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS assertion (
 ) STRICT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_assertion_prop
-    ON assertion(matter_id, proposition_key);
+    ON assertion(matter_id, model_layer, proposition_key);
 
 CREATE INDEX IF NOT EXISTS ix_assertion_subject
     ON assertion(subject_ref_type, subject_ref_id, predicate_key);
