@@ -1153,6 +1153,37 @@ class RLMEngine:
                         focus_issue_id=_pred_target_id,
                     )
 
+        # Generate SPO predicate graph leads (SO-2 → SO-4): convert top assertion
+        # predicate_keys to human-readable search terms. This directly uses the
+        # assertion graph to drive retrieval — closing the loop between stored
+        # structured knowledge and targeted search (read path, not write-only).
+        # Only fire on runs after the first (matter has assertions from prior runs).
+        if (
+            matter_ctx is not None
+            and matter_ctx.existing_assertion_count > 0
+            and getattr(matter_ctx, "key_predicates", None)
+        ):
+            # Convert snake_case predicate keys to natural-language search terms.
+            # Limit to 2 SPO leads to avoid overwhelming the lead queue.
+            _spo_leads_added = 0
+            for _pred_key in matter_ctx.key_predicates[:4]:
+                if _spo_leads_added >= 2:
+                    break
+                # Convert snake_case → space-separated phrase (e.g. "agreed_to_pay" → "agreed to pay")
+                _pred_phrase = _pred_key.replace("_", " ").strip()
+                if not _pred_phrase or len(_pred_phrase) < 3:
+                    continue
+                # Avoid duplicating issue-predicate leads that already have this phrase
+                _spo_focus = weakest_id or (_orient_issue_ids[0] if _orient_issue_ids else None)
+                state.add_lead(
+                    description=f"SPO graph expansion: search for '{_pred_phrase}' relationships",
+                    source="spo_graph",
+                    priority=0.55,
+                    search_term=_pred_phrase,
+                    focus_issue_id=_spo_focus,
+                )
+                _spo_leads_added += 1
+
         self._emit_step(
             state,
             StepType.THINKING,
