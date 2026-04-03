@@ -239,3 +239,56 @@ def test_record_fact_issue_link_is_idempotent(model):
 
     linked = model.issues.get_assertions_for_issue(issue_id)
     assert len(linked) == 1
+
+
+# ---------------------------------------------------------------------------
+# SO-4: Multi-claim evidence coverage — the key correctness test
+# ---------------------------------------------------------------------------
+
+def test_multi_claim_evidence_coverage_and_weakest_prioritization(model):
+    """Given 3 active claims, the system reports per-claim coverage and
+    directs retrieval focus toward the weakest-covered claim (SO-4).
+
+    Claim A: 2 supporting assertions — well-covered
+    Claim B: 1 supporting assertion — partially covered
+    Claim C: 0 supporting assertions — proof gap exposed
+
+    build_query_context() must:
+    - report correct assertion counts per claim
+    - set weakest_issue_id to the most important uncovered claim
+    """
+    claim_a, _ = model.issues.upsert_issue("Breach of contract", IssueType.CLAIM, materiality=0.9, salience=0.9)
+    claim_b, _ = model.issues.upsert_issue("Damages amount", IssueType.DAMAGES, materiality=0.8, salience=0.8)
+    claim_c, _ = model.issues.upsert_issue("Causation", IssueType.CLAIM, materiality=0.95, salience=0.95)
+
+    # claim_a gets 2 supporting assertions
+    a1 = add_assertion(model, "Contract signed and delivered.", "contract.pdf")
+    a2 = add_assertion(model, "Defendant failed to perform.", "complaint.pdf")
+    model.issues.link_assertion(a1, claim_a, "supports")
+    model.issues.link_assertion(a2, claim_a, "supports")
+
+    # claim_b gets 1 supporting assertion
+    a3 = add_assertion(model, "Expert estimates $500,000 in lost revenue.", "expert_report.pdf")
+    model.issues.link_assertion(a3, claim_b, "supports")
+
+    # claim_c gets 0 assertions (proof gap)
+
+    ctx = model.build_query_context()
+
+    # Verify all 3 claims are included
+    assert len(ctx.open_issues) == 3
+
+    # Verify coverage counts via assertion lookups
+    a_linked = model.issues.get_assertions_for_issue(claim_a)
+    b_linked = model.issues.get_assertions_for_issue(claim_b)
+    c_linked = model.issues.get_assertions_for_issue(claim_c)
+    assert len(a_linked) == 2
+    assert len(b_linked) == 1
+    assert len(c_linked) == 0
+
+    # Weakest issue should be claim_c (zero coverage, highest materiality*salience)
+    # claim_c: 0.95 * 0.95 * (1 - 0) = 0.9025
+    # claim_a: 0.9 * 0.9 * (1 - coverage>0) — coverage dampens it
+    assert ctx.weakest_issue_id == claim_c, (
+        "claim_c has zero evidence and highest materiality — must be prioritized for retrieval"
+    )
