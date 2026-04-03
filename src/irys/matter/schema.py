@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 29
+SCHEMA_VERSION = 30
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1160,6 +1160,24 @@ def _migration_v24(conn) -> None:
     )
 
 
+def _migration_v30(conn) -> None:
+    """Add completed_at index on run_session for get_so_metrics() reuse_rate query.
+
+    get_so_metrics() queries:
+        SELECT reuse_rate FROM run_session
+        WHERE matter_id=? AND status='completed' AND reuse_rate IS NOT NULL
+        ORDER BY completed_at DESC LIMIT 5
+
+    The existing ix_run_matter index covers (matter_id, status, started_at) but
+    does not include completed_at, so the ORDER BY requires an in-memory sort.
+    This covering index eliminates the sort by making completed_at a key column.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_run_completed"
+        " ON run_session(matter_id, status, completed_at DESC)"
+    )
+
+
 def _migration_v29(conn) -> None:
     """Add reuse-rate tracking columns to run_session (SO-1 measurability).
 
@@ -1302,6 +1320,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (27, _migration_v27),
     (28, _migration_v28),
     (29, _migration_v29),
+    (30, _migration_v30),
 ]
 
 

@@ -799,3 +799,41 @@ def test_get_run_exposes_reuse_rate_fields(model):
     assert record.assertions_at_start == 1
     assert record.reuse_rate is not None
     assert record.reuse_rate == 0.5  # 1 / 2
+
+
+def test_complete_run_uses_in_memory_snapshot(model):
+    """complete_run() uses in-memory snapshot from start_run() without extra DB read."""
+    _add_assertion(model, "Fact A")
+    _add_assertion(model, "Fact B")
+
+    run_id = model.start_run("snapshot test")
+    assert run_id in model._run_snapshots, "_run_snapshots must be populated by start_run()"
+    assert model._run_snapshots[run_id] == 2
+
+    _add_assertion(model, "New fact during run")
+    model.complete_run(run_id)
+
+    # Snapshot must be cleared after completion
+    assert run_id not in model._run_snapshots, "_run_snapshots must be cleared by complete_run()"
+
+    record = model.ledger.get_run(run_id)
+    assert record is not None
+    assert record.reuse_rate == round(2 / 3, 4)
+
+
+def test_complete_run_db_fallback_when_snapshot_absent(model):
+    """complete_run() falls back to DB when in-memory snapshot is missing."""
+    _add_assertion(model, "Pre-existing fact")
+    run_id = model.start_run("fallback test")
+
+    # Simulate snapshot being lost (e.g., process restart scenario)
+    model._run_snapshots.pop(run_id, None)
+    _add_assertion(model, "New fact")
+
+    # Should fall back to DB-stored assertions_at_start without crashing
+    model.complete_run(run_id)
+
+    record = model.ledger.get_run(run_id)
+    assert record is not None
+    # reuse_rate computed from DB fallback: 1 / 2 = 0.5
+    assert record.reuse_rate == 0.5

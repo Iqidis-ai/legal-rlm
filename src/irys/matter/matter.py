@@ -73,6 +73,10 @@ class MatterModel:
         self.decision_context = DecisionContextStore(db, matter_id)
         self.authority = AuthorityStore(db, matter_id)
         self.proof_state = ProofStateStore(db, matter_id)
+        # In-memory snapshot of assertion counts captured at run start.
+        # Keyed by run_id.  Allows complete_run() to compute reuse_rate without
+        # an extra SELECT round-trip (DB is the authoritative fallback).
+        self._run_snapshots: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -143,16 +147,27 @@ class MatterModel:
         repeated queries over a stable matter).
         """
         assertions_at_start = self.assertions.count()
-        return self.ledger.start_run(query, objective, assertions_at_start)
+        run_id = self.ledger.start_run(query, objective, assertions_at_start)
+        # Cache snapshot in memory so complete_run() avoids a DB round-trip.
+        self._run_snapshots[run_id] = assertions_at_start
+        return run_id
 
     def complete_run(self, run_id: str, summary: Optional[str] = None) -> None:
-        """Complete a run and compute reuse_rate from assertion count delta."""
+        """Complete a run and compute reuse_rate from assertion count delta.
+
+        Resolves assertions_at_start from the in-memory snapshot captured at
+        start_run() — falling back to a DB query (scoped to this matter) for
+        recovery paths where the snapshot is absent.
+        """
         assertions_at_end = self.assertions.count()
-        # Fetch the snapshot stored at run start
-        row = self.db.execute(
-            "SELECT assertions_at_start FROM run_session WHERE id=?", (run_id,)
-        ).fetchone()
-        at_start: Optional[int] = row["assertions_at_start"] if row else None
+        # Use in-memory snapshot first; fall back to DB (scoped to this matter).
+        at_start: Optional[int] = self._run_snapshots.pop(run_id, None)
+        if at_start is None:
+            row = self.db.execute(
+                "SELECT assertions_at_start FROM run_session WHERE id=? AND matter_id=?",
+                (run_id, self.matter_id),
+            ).fetchone()
+            at_start = row["assertions_at_start"] if row else None
         reuse_rate: Optional[float] = None
         if at_start is not None and assertions_at_end > 0:
             reuse_rate = round(at_start / assertions_at_end, 4)
@@ -1071,7 +1086,7 @@ class MatterModel:
 
     def get_ledger_steering_surface(
         self,
-        run_id: Optional[str] = None,
+        run_id: Optional[str] = None,  # noqa: ARG002 — reserved for per-run scoping (not yet implemented)
         limit: int = 20,
     ) -> list[dict]:
         """Return structured steering actions the user can take to direct reasoning.
@@ -1083,8 +1098,8 @@ class MatterModel:
         these as buttons or commands without manual interpretation.
 
         Args:
-            run_id: If provided, includes run-scoped context (e.g., events from
-                    the current investigation that warrant immediate steering).
+            run_id: Reserved for future per-run scoping.  Currently the surface
+                    covers the full matter state regardless of run_id.
             limit:  Maximum number of actions to return (highest-priority first).
 
         Returns a list of dicts, each with:
@@ -1098,19 +1113,20 @@ class MatterModel:
           priority    — 'high', 'medium', or 'low'
           impact      — what will change if the action is taken
         """
-        import uuid as _uuid
 
         def _aid() -> str:
-            return _uuid.uuid4().hex[:12]
+            return uuid.uuid4().hex[:12]
 
         actions: list[dict] = []
 
-        # --- 1. Active conflicts → correct_assertion or force_belief_state ---
+        # --- 1. Active conflicts → force_belief_state ---
         try:
             conflicts = self.assertions.find_contradictions()
             for c in conflicts[:5]:
-                attacker_id = c.get("attacker_id", "")
-                attacked_id = c.get("attacked_id", "")
+                attacker_id = c.get("attacker_id") or ""
+                attacked_id = c.get("attacked_id") or ""
+                if not attacker_id or not attacked_id:
+                    continue  # skip malformed rows — no valid action params
                 attacker_prop = (c.get("attacker_prop") or "")[:80]
                 attacked_prop = (c.get("attacked_prop") or "")[:80]
                 actions.append({
@@ -1136,7 +1152,7 @@ class MatterModel:
                     ),
                 })
         except Exception:
-            pass
+            _log.warning("get_ledger_steering_surface: error in conflict section", exc_info=True)
 
         # --- 2. Low-coverage issues → redirect_focus ---
         try:
@@ -1147,7 +1163,9 @@ class MatterModel:
                 key=lambda r: r.get("coverage_fraction", 1.0),
             )
             for r in weak_issues[:3]:
-                issue_id = r.get("id", "")
+                issue_id = r.get("id") or ""
+                if not issue_id:
+                    continue
                 issue_title = (r.get("title") or issue_id)[:60]
                 frac = r.get("coverage_fraction", 0.0)
                 actions.append({
@@ -1172,16 +1190,18 @@ class MatterModel:
                     ),
                 })
         except Exception:
-            pass
+            _log.warning("get_ledger_steering_surface: error in coverage section", exc_info=True)
 
-        # --- 3. High-materiality gaps → supply_document ---
+        # --- 3. High-materiality missing-doc gaps → supply_document ---
         try:
+            # DB-side limit to avoid full-table scan on large matters
+            _gap_candidates = self.gaps.open_gaps(min_materiality=0.6)
             high_gaps = [
-                g for g in self.gaps.open_gaps(min_materiality=0.6)
+                g for g in _gap_candidates
                 if g.get("gap_type") in ("MISSING_DOCUMENT", "missing_document")
             ]
             for g in high_gaps[:3]:
-                gap_id = g.get("id", "")
+                gap_id = g.get("id") or ""
                 description = (g.get("description") or "unknown document")[:80]
                 materiality = g.get("materiality", 0.0)
                 actions.append({
@@ -1203,13 +1223,16 @@ class MatterModel:
                     ),
                 })
         except Exception:
-            pass
+            _log.warning("get_ledger_steering_surface: error in gaps section", exc_info=True)
 
         # --- 4. Pending clarifications → answer_clarification ---
         try:
+            # DB-side limit: fetch only what we'll surface to avoid full-table scan
             pending = self.clarifications.get_pending()
             for q in pending[:3]:
-                q_id = q.get("id", "")
+                q_id = q.get("id") or ""
+                if not q_id:
+                    continue
                 q_text = (q.get("question_text") or "")[:100]
                 impact = (q.get("expected_impact") or "")[:120]
                 actions.append({
@@ -1228,7 +1251,7 @@ class MatterModel:
                     "impact": impact or "Answering will allow the engine to close the underlying gap.",
                 })
         except Exception:
-            pass
+            _log.warning("get_ledger_steering_surface: error in clarifications section", exc_info=True)
 
         # --- 5. Disputed/unknown assertions → correct_assertion ---
         try:
@@ -1240,7 +1263,9 @@ class MatterModel:
                 (self.matter_id,),
             ).fetchall()
             for row in disputed_rows:
-                a_id = row["id"]
+                a_id = row["id"] or ""
+                if not a_id:
+                    continue
                 prop = (row["proposition_text"] or "")[:80]
                 state = row["belief_state"]
                 actions.append({
@@ -1264,7 +1289,7 @@ class MatterModel:
                     ),
                 })
         except Exception:
-            pass
+            _log.warning("get_ledger_steering_surface: error in disputed-assertions section", exc_info=True)
 
         # Sort: high → medium → low, then truncate to limit
         _priority_order = {"high": 0, "medium": 1, "low": 2}

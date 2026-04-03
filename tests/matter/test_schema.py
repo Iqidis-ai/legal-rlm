@@ -328,3 +328,14 @@ def test_migration_v29_adds_reuse_rate_columns():
     assert "reuse_rate" in col_names, (
         "reuse_rate column must exist in run_session after v29"
     )
+
+
+def test_migration_v30_adds_completed_at_index():
+    """v30 adds ix_run_completed index on run_session(matter_id, status, completed_at)."""
+    from irys.matter.db import SQLiteMatterDB
+
+    db = SQLiteMatterDB.in_memory()
+    idx = db.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='ix_run_completed'"
+    ).fetchone()
+    assert idx is not None, "ix_run_completed must be created by migration v30"
