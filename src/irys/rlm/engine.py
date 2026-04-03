@@ -1212,7 +1212,8 @@ class RLMEngine:
             )
 
         state.hypothesis = plan.get("hypothesis")
-        state.findings["issues"] = plan.get("issues") or []
+        _plan_issues = plan.get("issues")
+        state.findings["issues"] = _plan_issues if isinstance(_plan_issues, list) else []
         state.findings["initial_plan"] = plan
 
         # Record issues in matter model if enabled; collect new IDs so initial leads can
@@ -1236,7 +1237,10 @@ class RLMEngine:
                 "diligence_red_flag": IssueType.DILIGENCE_RED_FLAG,
                 "compliance_failure": IssueType.COMPLIANCE_FAILURE,
             }
-            for _raw_issue_idx, issue_item in enumerate(plan.get("issues") or []):
+            _plan_issues_raw = plan.get("issues")
+            for _raw_issue_idx, issue_item in enumerate(
+                _plan_issues_raw if isinstance(_plan_issues_raw, list) else []
+            ):
                 # Accept both legacy string format and new {title, type} dict format
                 if isinstance(issue_item, str):
                     issue_title = issue_item.strip()
@@ -1288,7 +1292,8 @@ class RLMEngine:
         # Parse initial_searches: support new dict form {"term": "...", "issue_idx": N}
         # and legacy string form for backward compatibility.
         # Use `or []` to handle null from LLM (MEDIUM guard).
-        _raw_searches = (plan.get("initial_searches") or [])[:5]
+        _ps = plan.get("initial_searches")
+        _raw_searches = (_ps if isinstance(_ps, list) else [])[:5]
         _initial_searches: list[tuple[str, int | None]] = []
         for _s in _raw_searches:
             if isinstance(_s, str) and _s.strip():
@@ -1410,8 +1415,10 @@ class RLMEngine:
         # Log orientation summary to reasoning ledger (SO-3 user visibility)
         adapter = getattr(state, "_matter_adapter", None)
         if adapter is not None:
-            issues_found = plan.get("issues") or []
-            searches_planned = plan.get("initial_searches") or []
+            _pif = plan.get("issues")
+            issues_found = _pif if isinstance(_pif, list) else []
+            _psf = plan.get("initial_searches")
+            searches_planned = _psf if isinstance(_psf, list) else []
             adapter.log_step(
                 f"Orientation complete: {len(issues_found)} issues, {len(searches_planned)} search leads",
                 why=f"Hypothesis: {(state.hypothesis or '')[:200]}",
