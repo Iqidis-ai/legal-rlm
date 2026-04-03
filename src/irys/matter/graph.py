@@ -486,13 +486,44 @@ class GapStore:
         return gap_ids
 
     def open_gaps(self, min_materiality: float = 0.0) -> list[dict]:
-        """Return open gaps above a materiality threshold."""
+        """Return open gaps above a materiality threshold.
+
+        Each gap dict includes a 'dependencies' key: list of
+        {affected_type, affected_id} dicts from gap_link so callers
+        can see what the gap is linked to without a second query (SO-7).
+        """
         rows = self.db.execute(
             """SELECT * FROM gap WHERE matter_id=? AND status='open'
                AND materiality_score >= ? ORDER BY materiality_score DESC""",
             (self.matter_id, min_materiality),
         ).fetchall()
-        return [dict(r) for r in rows]
+        if not rows:
+            return []
+
+        # Fetch gap_links for all matching open gaps in one query via subquery
+        # (avoids variable-count IN-list limit on large matters).
+        link_rows = self.db.execute(
+            """SELECT gl.gap_id, gl.affected_type, gl.affected_id
+               FROM gap_link gl
+               WHERE gl.gap_id IN (
+                   SELECT id FROM gap
+                   WHERE matter_id=? AND status='open' AND materiality_score >= ?
+               )""",
+            (self.matter_id, min_materiality),
+        ).fetchall()
+        links_by_gap: dict = {}
+        for lr in link_rows:
+            links_by_gap.setdefault(lr["gap_id"], []).append({
+                "affected_type": lr["affected_type"],
+                "affected_id": lr["affected_id"],
+            })
+
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["dependencies"] = links_by_gap.get(r["id"], [])
+            result.append(d)
+        return result
 
     def count_open(self) -> int:
         row = self.db.execute(
