@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-03
+Last updated: 2026-04-03 (post-adversarial-audit #018 + schema v28)
 Branch: SebihSpecial
 
 ---
@@ -18,12 +18,12 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | Outcome | Status | Notes |
 |---------|--------|-------|
 | SO-1: Durable Matter Model | **PASS** | DocumentInventoryStore; operative version enforced; SHA256-keyed re-ingest |
-| SO-2: Typed Assertion Graph + Truth Maintenance | **PASS** | Trust-weighted belief revision; split try/except in mining loop; detect_heuristic_contradictions() |
-| SO-3: User-Steerable Reasoning | **PASS** | force_state(), correct_assertion(), document trust overrides, annotation store |
-| SO-4: Issue-Driven Architecture | **PASS** | _enrich_search_term_with_issue_context() + _build_issue_focus_block() in analysis prompt |
-| SO-5: Source-Aware Intelligence | **PASS** | _enforce_advocacy_gate() hard post-synthesis gate; trust-weighted confidence in belief revision |
-| SO-6: Quantitative Intelligence | **PASS** | _enforce_quant_threshold_gate() content-based; QuantStore.compute_thresholds() |
-| SO-7: Missingness Modeled | **PASS** | GapStore; gap recording isolated from force_state failures |
+| SO-2: Typed Assertion Graph + Truth Maintenance | **PARTIAL** | Adversarial #018 PARTIAL — incremental backlog; core trust-weighted belief revision PASS |
+| SO-3: User-Steerable Reasoning | **PARTIAL** | Adversarial #018 PARTIAL — incremental backlog; steering mechanisms PASS |
+| SO-4: Issue-Driven Architecture | **PARTIAL** | Adversarial #018 PARTIAL — incremental backlog; issue model backbone PASS |
+| SO-5: Source-Aware Intelligence | **PASS** | Per-title hedge check (±300 char window); Factual Background scan; expanded hedge markers; 3 new structural violation tests |
+| SO-6: Quantitative Intelligence | **PARTIAL** | Adversarial #018 PARTIAL — incremental backlog; quant gate PASS |
+| SO-7: Missingness Modeled | **PASS** | Total gap count surfaced in synthesis; gap recording isolated |
 
 ---
 
@@ -95,7 +95,12 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ## Active Work
 
-### JUST COMPLETED — Tier 1 Performance Loop (5 MEDIUMs closed)
+### IN PROGRESS — Tier 1 reviews on schema v28 + SO-5 changes
+Tier 1 Correctness and Performance reviews running in background for:
+- Schema v28: covering index on assertion_link(dst_assertion_id, link_type, src_assertion_id)
+- SO-5 fixes: per-title hedge check (±300 char), Factual Background scan, expanded hedge markers
+
+### JUST COMPLETED — SO-5 Tier 1 correctness fixes (3 HIGHs/MEDIUMs closed)
 
 1. **BFS override cache** — `BeliefRevisionEngine.apply()` pre-fetches trust overrides once; passes
    `_override_cache` through `_revise_one()` → `get_neighbor_belief_states()`. Eliminates 1 DB
@@ -136,10 +141,10 @@ None active.
 
 ## Key Metrics (Current)
 
-- Tests passing: 679 / 679
-- Schema version: v26
-- All 7 Sacred Outcomes: PASS (SO-7 adversarial PARTIAL resolved)
-- Tier 1 correctness: **CLEAN** (R2, R3, R4)
-- Tier 1 performance: **CLEAN** (R5 — all 6 MEDIUMs closed)
-- Adversarial audit #017: DONE — 6 PASS, SO-7 PARTIAL resolved
-- Next adversarial audit (#018): due after ~5-6 more Codex review sessions
+- Tests passing: 686 / 686
+- Schema version: v28
+- SO-1, SO-5, SO-7: PASS; SO-2, SO-3, SO-4, SO-6: PARTIAL (adversarial #018)
+- Tier 1 correctness: IN PROGRESS (re-running on SO-5 changes — codex_t1_correctness_r1.md)
+- Tier 1 performance: IN PROGRESS (re-running on schema v28 + SO-5 — codex_t1_performance_r1.md)
+- Adversarial audit #018: DONE — SO-5 FAIL fixed; SO-2/3/4/6/7 PARTIAL (incremental)
+- Next adversarial audit (#019): due after ~4 more Codex review sessions
