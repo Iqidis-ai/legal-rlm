@@ -2191,3 +2191,69 @@ def test_build_quant_summary_shows_dates_and_rates():
     assert "interest" in result.lower() or "rate" in result.lower(), (
         f"Rate description must appear in quant summary: {result}"
     )
+
+
+# ---------------------------------------------------------------------------
+# SO-2 × SO-3: flush_revisions() writes ASSERTION_REVISED ledger event
+# ---------------------------------------------------------------------------
+
+def test_flush_revisions_writes_assertion_revised_event_on_state_change():
+    """flush_revisions() must write ASSERTION_REVISED ledger events when belief state changes (SO-2 × SO-3).
+
+    When fact A (pending) gains an OPERATIVE supporter B, flush_revisions()
+    triggers belief revision: A's state transitions from UNKNOWN → OPERATIVE.
+    That state change must produce an ASSERTION_REVISED event in the reasoning
+    ledger so the user-visible reasoning trail reflects the inference.
+
+    This is the SO-2 × SO-3 integration point: truth maintenance (SO-2)
+    produces user-visible ledger evidence (SO-3).
+    """
+    from irys.matter import (
+        AssertionCandidate, SpeechAct, SourceRole, ModelLayer, AssertionKind,
+        AssertionLinkType, BeliefState, LedgerEventType,
+    )
+    from irys.matter.enums import OriginKind
+
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("flush revisions ledger test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Record fact A via adapter — puts A_id in _pending_assertion_ids
+    a_id = adapter.record_fact(
+        "The contract was executed on January 15.",
+        document_id="contract.pdf",
+    )
+
+    # Record fact B directly (not via adapter) as an OPERATIVE supporter of A
+    b_cand = AssertionCandidate(
+        proposition_text="Executed copy of the contract bears both signatures.",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="contract.pdf",
+        speech_act=SpeechAct.OPERATIVE,
+        source_role=SourceRole.OPERATIVE,
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    b_id, _ = model.assertions.upsert_occurrence(b_cand)
+    model.assertions.set_belief_state(b_id, BeliefState.OPERATIVE, 0.9)
+
+    # Link B → A as SUPPORTS so A gains an OPERATIVE supporter
+    model.assertions.link(b_id, a_id, AssertionLinkType.SUPPORTS)
+
+    # flush_revisions() should revise A (UNKNOWN → OPERATIVE) and write ledger event
+    count = adapter.flush_revisions()
+    assert count > 0, "flush_revisions() must report revised assertions when belief state changes"
+
+    # ASSERTION_REVISED event must appear in the reasoning ledger (SO-3)
+    events = model.ledger.get_events(run_id)
+    revised_events = [
+        e for e in events
+        if e["event_type"] == LedgerEventType.ASSERTION_REVISED.value
+    ]
+    assert len(revised_events) >= 1, (
+        "flush_revisions() must write ASSERTION_REVISED ledger event when belief state changes (SO-2×SO-3)"
+    )
+    # The event must reference the revised assertion
+    assert any(e.get("changed_object_id") == a_id for e in revised_events), (
+        "ASSERTION_REVISED event must reference the assertion whose belief state changed"
+    )
