@@ -1126,6 +1126,19 @@ class QuantStore:
         self.db = db
         self.matter_id = matter_id
 
+    @staticmethod
+    def _quant_key(quant_kind: str, subject_id: Optional[str], raw_text: str) -> str:
+        """Content-addressed dedup key for a quant fact (SO-6).
+
+        Incorporates subject_id so two different invoices with identical raw_text
+        (e.g. "Invoice Amount: $50,000") are treated as distinct facts when their
+        subject identifiers differ.
+
+        sha256(quant_kind + ':' + (subject_id or '') + ':' + raw_text[:200])[:32]
+        """
+        payload = f"{quant_kind}:{subject_id or ''}:{raw_text[:200]}"
+        return hashlib.sha256(payload.encode()).hexdigest()[:32]
+
     def record(
         self,
         quant_kind: str,
@@ -1143,28 +1156,31 @@ class QuantStore:
     ) -> str:
         """Persist a structured numeric fact. Returns quant_fact_id.
 
-        Idempotent on (matter_id, quant_kind, raw_text[:500]) via INSERT OR IGNORE
-        backed by ux_quant_fact_key unique index (added in migration v13).
+        Idempotent on (matter_id, quant_dedup_key) via INSERT OR IGNORE backed by
+        ux_quant_fact_key unique index (rebuilt in migration v19 to include subject_id
+        in the dedup key, preventing collision between different invoices with the
+        same raw_text).
         """
         qf_id = _id()
         now = _now()
         raw_key = raw_text[:500]
+        dedup_key = self._quant_key(quant_kind, subject_id, raw_text)
         with self.db.transaction():
             cur = self.db.execute(
                 """INSERT OR IGNORE INTO quant_fact
                    (id, matter_id, quant_kind, amount_value, date_value, date_end_value,
                     rate_value, currency, unit, raw_text, subject_type, subject_id,
-                    span_id, assertion_id, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    span_id, assertion_id, quant_dedup_key, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (qf_id, self.matter_id, quant_kind, amount_value, date_value, date_end_value,
                  rate_value, currency, unit, raw_key, subject_type, subject_id,
-                 span_id, assertion_id, now),
+                 span_id, assertion_id, dedup_key, now),
             )
             if cur.rowcount == 0:
                 # Already exists — return the existing ID
                 row = self.db.execute(
-                    "SELECT id FROM quant_fact WHERE matter_id=? AND quant_kind=? AND raw_text=?",
-                    (self.matter_id, quant_kind, raw_key),
+                    "SELECT id FROM quant_fact WHERE matter_id=? AND quant_dedup_key=?",
+                    (self.matter_id, dedup_key),
                 ).fetchone()
                 return row["id"]
         return qf_id
@@ -1174,7 +1190,7 @@ class QuantStore:
 
         Each spec is a dict with the same keys as record() (quant_kind and
         raw_text required; all others optional). Uses executemany + INSERT OR
-        IGNORE so duplicate raw_text entries are silently skipped.
+        IGNORE so duplicate entries (same quant_dedup_key) are silently skipped.
 
         Returns list of IDs (newly inserted or existing) in insertion order.
         """
@@ -1186,20 +1202,25 @@ class QuantStore:
         for spec in specs:
             qf_id = _id()
             ids.append(qf_id)
+            raw_text = spec["raw_text"]
+            subject_id = spec.get("subject_id")
+            quant_kind = spec["quant_kind"]
+            dedup_key = self._quant_key(quant_kind, subject_id, raw_text)
             rows.append((
                 qf_id, self.matter_id,
-                spec["quant_kind"],
+                quant_kind,
                 spec.get("amount_value"),
                 spec.get("date_value"),
                 spec.get("date_end_value"),
                 spec.get("rate_value"),
                 spec.get("currency"),
                 spec.get("unit"),
-                spec["raw_text"][:500],
+                raw_text[:500],
                 spec.get("subject_type"),
-                spec.get("subject_id"),
+                subject_id,
                 spec.get("span_id"),
                 spec.get("assertion_id"),
+                dedup_key,
                 now,
             ))
 
@@ -1208,8 +1229,8 @@ class QuantStore:
                 """INSERT OR IGNORE INTO quant_fact
                    (id, matter_id, quant_kind, amount_value, date_value, date_end_value,
                     rate_value, currency, unit, raw_text, subject_type, subject_id,
-                    span_id, assertion_id, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    span_id, assertion_id, quant_dedup_key, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 rows,
             )
         # Return candidate IDs; IDs for duplicate rows (IGNORED) are the candidate

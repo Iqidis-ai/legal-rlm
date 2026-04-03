@@ -325,7 +325,11 @@ class MatterRuntimeAdapter:
                     proposition_text = item.get("proposition_text") or ""
                     document_id = item.get("document_id") or ""
                     if not proposition_text:
-                        continue  # skip malformed dict items silently
+                        # Keep alignment with caller's positional indexing (e.g.
+                        # fact_relationships from_idx/to_idx) by appending a sentinel
+                        # empty string rather than shrinking the list.
+                        assertion_ids.append("")
+                        continue
                     issue_link_type = item.get("issue_link_type", "supports")
                     temporal_scope_start = item.get("temporal_scope_start")
                     subject_ref_type = item.get("subject_ref_type")

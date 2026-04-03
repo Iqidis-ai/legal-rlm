@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -449,8 +449,12 @@ CREATE TABLE IF NOT EXISTS quant_fact (
     subject_id      TEXT,
     span_id         TEXT,
     assertion_id    TEXT REFERENCES assertion(id),
+    quant_dedup_key TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL
 ) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_quant_fact_key
+    ON quant_fact(matter_id, quant_dedup_key);
 
 CREATE INDEX IF NOT EXISTS ix_quant_kind
     ON quant_fact(quant_kind, date_value);
@@ -929,6 +933,53 @@ def _migration_v18(conn) -> None:
         raise
 
 
+def _migration_v19(conn) -> None:
+    """Add quant_dedup_key column and rebuild ux_quant_fact_key to include subject_id.
+
+    The old unique index on (matter_id, quant_kind, raw_text) would collide for
+    distinct numeric facts sharing the same raw text (e.g. "Invoice Amount: $50,000"
+    appearing in two different invoices). This caused SO-6 coverage gaps where the
+    second occurrence was silently dropped.
+
+    The new dedup key is:
+        sha256(quant_kind + ':' + (subject_id or '') + ':' + raw_text[:200])[:32]
+
+    This incorporates subject_id so facts with different identifiers ("Invoice #1042"
+    vs "Invoice #2001") are treated as distinct even if their raw text matches.
+    """
+    import hashlib
+    conn.execute("SAVEPOINT _v19")
+    try:
+        try:
+            conn.execute("ALTER TABLE quant_fact ADD COLUMN quant_dedup_key TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass  # column already exists
+
+        # Back-fill existing rows
+        rows = conn.execute(
+            "SELECT id, quant_kind, subject_id, raw_text FROM quant_fact WHERE quant_dedup_key = ''"
+        ).fetchall()
+        if rows:
+            updates = []
+            for row in rows:
+                payload = f"{row[1]}:{row[2] or ''}:{(row[3] or '')[:200]}"
+                key = hashlib.sha256(payload.encode()).hexdigest()[:32]
+                updates.append((key, row[0]))
+            conn.executemany("UPDATE quant_fact SET quant_dedup_key=? WHERE id=?", updates)
+
+        # Drop old raw_text-based unique index and replace with dedup_key index
+        conn.execute("DROP INDEX IF EXISTS ux_quant_fact_key")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_quant_fact_key"
+            " ON quant_fact(matter_id, quant_dedup_key)"
+        )
+        conn.execute("RELEASE _v19")
+    except Exception:
+        conn.execute("ROLLBACK TO _v19")
+        conn.execute("RELEASE _v19")
+        raise
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -951,6 +1002,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (16, _migration_v16),
     (17, _migration_v17),
     (18, _migration_v18),
+    (19, _migration_v19),
 ]
 
 

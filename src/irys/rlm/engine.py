@@ -1566,6 +1566,8 @@ class RLMEngine:
                             and 0 <= _fi < len(_search_assertion_ids)
                             and 0 <= _ti < len(_search_assertion_ids)
                             and _fi != _ti
+                            and _search_assertion_ids[_fi]
+                            and _search_assertion_ids[_ti]
                             and _search_assertion_ids[_fi] != _search_assertion_ids[_ti]
                             and _rt in _VALID_ASSERTION_LINK_TYPES):
                         adapter.record_assertion_link(
@@ -1845,6 +1847,8 @@ class RLMEngine:
                                 and 0 <= _fi < len(_recorded_ids)
                                 and 0 <= _ti < len(_recorded_ids)
                                 and _fi != _ti
+                                and _recorded_ids[_fi]
+                                and _recorded_ids[_ti]
                                 # Same proposition text deduplicates to same assertion_id
                                 and _recorded_ids[_fi] != _recorded_ids[_ti]
                                 and _rt in _VALID_ASSERTION_LINK_TYPES):
