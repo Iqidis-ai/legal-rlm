@@ -303,6 +303,42 @@ def test_matter_model_persists_assertions_across_reopens(tmp_path):
 # SO-7: open_gaps() includes dependencies (gap → issue/assertion link)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# SO-1: build_query_context() populates known_document_ids
+# ---------------------------------------------------------------------------
+
+def test_build_query_context_populates_known_document_ids(model):
+    """build_query_context() must populate known_document_ids from assertion occurrences (SO-1).
+
+    This prevents redundant re-reading of documents already in the matter model.
+    The engine injects known_document_ids into the orientation prompt so the LLM
+    can exclude already-indexed documents from new searches — the core SO-1
+    'no redundant recompute' guarantee at the document level.
+    """
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    run_id = model.start_run("doc ids test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    adapter.record_fact("Contract requires payment by Jan 15.", document_id="contract.pdf")
+    adapter.record_fact("Breach occurred on Jan 16.", document_id="complaint.pdf")
+    adapter.record_fact("Defendant denies breach.", document_id="answer.pdf")
+
+    ctx = model.build_query_context()
+
+    assert "contract.pdf" in ctx.known_document_ids, (
+        "Documents that contributed assertions must appear in known_document_ids (SO-1)"
+    )
+    assert "complaint.pdf" in ctx.known_document_ids
+    assert "answer.pdf" in ctx.known_document_ids
+
+
+def test_build_query_context_known_document_ids_empty_with_no_assertions(model):
+    """known_document_ids must be empty when no assertions have been recorded."""
+    ctx = model.build_query_context()
+    assert ctx.known_document_ids == []
+
+
 def test_open_gaps_includes_dependencies(model):
     """open_gaps() must include a 'dependencies' key with linked entity info (SO-7).
 
