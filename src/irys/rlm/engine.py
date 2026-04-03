@@ -1851,10 +1851,12 @@ class RLMEngine:
             else:
                 _fallback_doc_id = "unknown"
 
-            # Bare-string default: "supports" only when the lead was issue-targeted
-            # (investigator deliberately sought evidence for this issue); "neutral"
-            # otherwise to avoid inflating coverage with unrelated facts. (SO-4)
-            _bare_rel = "supports" if (lead is not None and lead.focus_issue_id) else "neutral"
+            # Bare-string default: "neutral" — if the LLM returned a bare string without
+            # issue_relation classification, we cannot infer the relation. Defaulting to
+            # "supports" when issue-targeted inflates coverage with unclassified facts.
+            # The dict-fact path already uses "neutral" when issue_relation is absent; this
+            # is consistent with that. (SO-4 audit #021 finding)
+            _bare_rel = "neutral"
             # facts_to_add: (text, src_label, doc_id, issue_relation, spo_dict|None)
             # spo_dict carries subject_ref_type/id, predicate_key, object_json for SO-2
             facts_to_add: list[tuple] = []
@@ -2236,10 +2238,10 @@ class RLMEngine:
             # key_facts can be strings or dicts with "fact" key
             # Always initialize these so numeric_facts / gap grounding below can reference them
             # even when key_facts is empty.
-            # Bare-string default: "supports" when this read was issue-targeted
-            # (deliberately investigating evidence for this issue); "neutral" otherwise
-            # to avoid inflating coverage with unrelated facts. (SO-4)
-            _bare_rel_dr = "supports" if focus_issue_id else "neutral"
+            # Bare-string default: "neutral" — consistent with the dict-fact fallback.
+            # Bare strings lack issue_relation classification; crediting them as "supports"
+            # inflates coverage with unclassified facts. (SO-4 audit #021 finding)
+            _bare_rel_dr = "neutral"
             # facts_to_add: (text, issue_relation, effective_date, spo_dict|None)
             # spo_dict carries subject_ref_type/id, predicate_key, object_json for SO-2
             facts_to_add: list[tuple] = []
@@ -3537,14 +3539,16 @@ class RLMEngine:
             if item.get("id")
         }
 
-        # Overlay with ProofStateStore sufficiency when available — richer signal.
+        # Overlay proof_state metadata (advocacy_only, contested status) to enrich has_proof_gap.
+        # We do NOT replace coverage_fraction with proof_state.sufficiency because
+        # ProofStateStore uses raw assertion counts (not belief-state weights), which would
+        # bypass the weighted coverage_fraction computed above (SO-4 audit #021 finding).
         try:
             ps_rows = self._matter_model.proof_state.get_all()
             for ps in ps_rows:
                 iid = ps.get("issue_id")
                 if iid not in base:
                     continue
-                sufficiency = float(ps.get("sufficiency", base[iid][0]))
                 # Contested, insufficient, and advocacy-only issues all need more evidence.
                 proof_status = ps.get("proof_status", "")
                 has_gap = (
@@ -3552,9 +3556,10 @@ class RLMEngine:
                     or proof_status in ("insufficient", "contested")
                     or bool(ps.get("advocacy_only"))
                 )
-                base[iid] = (sufficiency, has_gap, base[iid][2])
+                # Preserve the weighted coverage_fraction (base[iid][0]); only update has_gap.
+                base[iid] = (base[iid][0], has_gap, base[iid][2])
         except Exception:
-            pass  # fall back to assertion-count ratio if proof state unavailable
+            pass  # fall back to base coverage if proof state unavailable
 
         return base
 

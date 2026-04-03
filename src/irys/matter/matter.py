@@ -222,7 +222,13 @@ class MatterModel:
         note: Optional[str] = None,
         confidence: Optional[float] = None,
     ) -> RevisionResult:
-        """Apply a user correction to an assertion and propagate."""
+        """Apply a user correction to an assertion and propagate.
+
+        After belief revision propagates through the assertion graph, this
+        triggers a targeted proof_state recompute for all issues linked to
+        the corrected assertion — so issue-level prioritization in the loop
+        reflects the correction, not a stale pre-correction state (SO-2).
+        """
         if confidence is None:
             confidence_map = {
                 BeliefState.OPERATIVE: 0.95,
@@ -232,7 +238,7 @@ class MatterModel:
                 BeliefState.DISPUTED: 0.3,
             }
             confidence = confidence_map.get(new_state, 0.5)
-        return self.belief.force_state(
+        result = self.belief.force_state(
             assertion_id=assertion_id,
             new_state=new_state,
             new_confidence=confidence,
@@ -240,6 +246,30 @@ class MatterModel:
             run_id=run_id,
             note=note,
         )
+
+        # Targeted proof_state recompute: find issues linked to this assertion
+        # and any that were revised as dependents (result.propagated_to).
+        # This ensures downstream issue/proof consumers see the corrected state.
+        try:
+            affected = [assertion_id] + (result.propagated_to or [])
+            if affected:
+                issue_rows = self.db.execute(
+                    "SELECT DISTINCT issue_id FROM assertion_issue_link"
+                    " WHERE assertion_id IN ({})".format(
+                        ",".join("?" * len(affected))
+                    ),
+                    affected,
+                ).fetchall()
+                if issue_rows:
+                    for row in issue_rows:
+                        self.proof_state.compute_and_store(row["issue_id"])
+        except Exception as exc:
+            _log.warning(
+                "proof_state recompute after correct_assertion failed for %r: %s",
+                assertion_id, exc,
+            )
+
+        return result
 
     def set_trust_override(
         self,
