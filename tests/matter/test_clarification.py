@@ -6,11 +6,12 @@ Verifies:
 3. get_pending() / get_answered() filter by status
 4. MatterModel.generate_clarifications_from_gaps() creates questions from high-materiality gaps
 5. Answered clarifications are included in QueryMatterContext
+6. Gap-to-issue link produces targeted impact statement (SO-7 "identifies which conclusions depend on it")
 """
 
 import pytest
 from irys.matter import MatterModel, ClarificationStore
-from irys.matter.enums import GapType
+from irys.matter.enums import GapType, IssueType
 
 
 @pytest.fixture
@@ -138,3 +139,57 @@ def test_query_context_excludes_pending_clarifications(model):
 
     ctx = model.build_query_context()
     assert len(ctx.answered_clarifications) == 0
+
+
+# ---------------------------------------------------------------------------
+# SO-7: Gap-to-issue link produces targeted impact statement
+# ---------------------------------------------------------------------------
+
+def test_gap_linked_to_issue_produces_targeted_impact_statement(model):
+    """When a gap is linked to an issue, the generated clarification must include
+    a 'tracked issue' impact statement — proving the system identified which
+    conclusions depend on the missing document (SO-7 'identifies which conclusions').
+    """
+    run_id = model.start_run("SO-7 test")
+    issue_id, _ = model.issues.upsert_issue("Payment obligation breach", IssueType.CLAIM, materiality=0.9)
+
+    # Record a gap linked to the issue
+    model.gaps.record(
+        gap_type=GapType.MISSING_DOCUMENT,
+        description="Signed Amendment No. 2 referenced in §4.2 but absent from repository",
+        expected_artifact="Amendment No. 2",
+        materiality=0.9,
+        affected_type="issue",
+        affected_id=issue_id,
+    )
+
+    question_ids = model.generate_clarifications_from_gaps(run_id=run_id, min_materiality=0.5)
+    assert len(question_ids) == 1
+
+    pending = model.clarifications.get_pending()
+    assert len(pending) == 1
+    q = pending[0]
+
+    # The expected_impact must mention the tracked issue — this proves the link is used
+    assert q.get("expected_impact"), "expected_impact must be non-empty"
+    impact = q["expected_impact"].lower()
+    assert "issue" in impact, (
+        f"expected_impact must reference the linked issue. Got: {q['expected_impact']!r}"
+    )
+
+
+def test_gap_without_link_produces_generic_impact_statement(model):
+    """A gap with no linked issue/assertion should still get a generic (but present) impact."""
+    run_id = model.start_run("Generic gap test")
+    model.gaps.record(
+        gap_type=GapType.MISSING_DOCUMENT,
+        description="Email attachment referenced but not provided",
+        materiality=0.6,
+    )
+    question_ids = model.generate_clarifications_from_gaps(run_id=run_id, min_materiality=0.5)
+    assert len(question_ids) == 1
+
+    q = model.clarifications.get_pending()[0]
+    assert q.get("expected_impact"), "expected_impact must always be non-empty"
+    # Generic impact should mention materiality level
+    assert "materiality" in q["expected_impact"].lower() or "medium" in q["expected_impact"].lower()
