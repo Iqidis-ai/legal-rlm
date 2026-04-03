@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -72,6 +72,13 @@ CREATE INDEX IF NOT EXISTS ix_occurrence_document
 
 CREATE INDEX IF NOT EXISTS ix_assertion_matter_created
     ON assertion(matter_id, created_at DESC);
+
+-- Supports build_query_context() predicate-frequency query:
+-- SELECT predicate_key, COUNT(*) WHERE matter_id=? AND predicate_key IS NOT NULL GROUP BY predicate_key
+-- Without this index the query degrades to a full assertion table scan as assertion count grows.
+CREATE INDEX IF NOT EXISTS ix_assertion_matter_predicate
+    ON assertion(matter_id, predicate_key)
+    WHERE predicate_key IS NOT NULL;
 
 -- Prevents duplicate occurrences from concurrent runs ingesting the same document
 -- with the same speech-act classification. Including speech_act allows the same
@@ -985,6 +992,25 @@ def _migration_v19(conn) -> None:
         raise
 
 
+def _migration_v20(conn) -> None:
+    """Add (matter_id, predicate_key) partial index for build_query_context() predicate query.
+
+    build_query_context() executes:
+        SELECT predicate_key, COUNT(*) WHERE matter_id=? AND predicate_key IS NOT NULL
+        GROUP BY predicate_key ORDER BY cnt DESC LIMIT 20
+
+    Without a (matter_id, predicate_key) index this degrades to a full assertion table
+    scan as assertion count grows (identified as MEDIUM by Tier 1 Performance review).
+    The partial index (WHERE predicate_key IS NOT NULL) excludes non-SPO assertions
+    and is ~50–80% smaller than a full index at typical matter sizes.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_assertion_matter_predicate"
+        " ON assertion(matter_id, predicate_key)"
+        " WHERE predicate_key IS NOT NULL"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1008,6 +1034,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (17, _migration_v17),
     (18, _migration_v18),
     (19, _migration_v19),
+    (20, _migration_v20),
 ]
 
 
