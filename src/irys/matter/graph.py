@@ -1034,21 +1034,25 @@ class QuantStore:
         return row[0]
 
     def get_conflicts(self) -> list[dict]:
-        """Return groups of amount facts with the same subject_type+currency but different values.
+        """Return amount fact groups that have conflicting values for the same entity.
 
-        A conflict means the same subject category (e.g. 'invoice') has multiple
-        distinct monetary amounts recorded — possible discrepancy or data error.
-        Returns one dict per conflict group with keys: subject_type, currency, values, raw_texts.
+        Groups by (subject_type, COALESCE(subject_id, ''), currency) so that:
+        - Two entries for Invoice #1042 with different amounts → conflict
+        - Invoice #1042 ($50k) vs Invoice #2017 ($75k) → NOT a conflict (different subject_id)
+        - Items without subject_id still group by subject_type (original coarse behavior)
+
+        Returns one dict per conflict group with keys:
+          subject_type, subject_id (or None), currency, values, raw_texts.
         """
         rows = self.db.execute(
-            """SELECT subject_type, currency,
+            """SELECT subject_type, subject_id, currency,
                       COUNT(DISTINCT ROUND(amount_value, 2)) AS distinct_values,
                       GROUP_CONCAT(ROUND(amount_value, 2)) AS value_list,
                       GROUP_CONCAT(raw_text, ' || ') AS texts
                FROM quant_fact
                WHERE matter_id=? AND quant_kind='amount'
                  AND subject_type IS NOT NULL AND amount_value IS NOT NULL
-               GROUP BY subject_type, currency
+               GROUP BY subject_type, COALESCE(subject_id, ''), currency
                HAVING distinct_values > 1
                ORDER BY distinct_values DESC""",
             (self.matter_id,),
