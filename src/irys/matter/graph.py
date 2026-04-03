@@ -806,6 +806,140 @@ class ActorStore:
         ).fetchone()
         return row[0]
 
+    def resolve_by_name(self, name: str) -> Optional[str]:
+        """Resolve an actor_id from a name string.
+
+        Resolution order:
+        1. Exact alias match (get_by_alias)
+        2. Substring containment: canonical name contains the normalized name,
+           or normalized name contains the canonical name (prefix overlap ≥ 5 chars)
+
+        Returns actor_id or None if no match found.
+        """
+        normalized = self._normalize(name)
+
+        # Step 1: exact alias match.
+        actor_id = self.get_by_alias(name)
+        if actor_id:
+            return actor_id
+
+        # Step 2: substring containment.
+        if len(normalized) < 5:
+            return None  # too short for fuzzy matching — risk of false positives
+
+        rows = self.db.execute(
+            "SELECT id, normalized_name FROM actor WHERE matter_id=?",
+            (self.matter_id,),
+        ).fetchall()
+        for row in rows:
+            cname = row["normalized_name"] or ""
+            if normalized in cname or cname in normalized:
+                return row["id"]
+
+        return None
+
+    def find_possible_duplicates(
+        self, min_prefix_len: int = 6
+    ) -> list[dict]:
+        """Return pairs of actors whose normalized names share a common prefix.
+
+        Each entry: {actor_a: {...}, actor_b: {...}, shared_prefix: str}
+        Only pairs where both actors have different ids are returned.
+        Ordered by shared_prefix length descending (most similar first).
+        """
+        rows = self.db.execute(
+            "SELECT id, canonical_name, normalized_name, actor_type FROM actor WHERE matter_id=? ORDER BY normalized_name",
+            (self.matter_id,),
+        ).fetchall()
+
+        actors = [dict(r) for r in rows]
+        pairs = []
+        seen_pairs: set = set()
+
+        for i, a in enumerate(actors):
+            for b in actors[i + 1:]:
+                n_a = a.get("normalized_name") or ""
+                n_b = b.get("normalized_name") or ""
+                # Find common prefix length.
+                prefix_len = 0
+                for ca, cb in zip(n_a, n_b):
+                    if ca == cb:
+                        prefix_len += 1
+                    else:
+                        break
+                if prefix_len >= min_prefix_len:
+                    pair_key = (min(a["id"], b["id"]), max(a["id"], b["id"]))
+                    if pair_key not in seen_pairs:
+                        seen_pairs.add(pair_key)
+                        pairs.append({
+                            "actor_a": a,
+                            "actor_b": b,
+                            "shared_prefix": n_a[:prefix_len],
+                        })
+
+        pairs.sort(key=lambda x: len(x["shared_prefix"]), reverse=True)
+        return pairs
+
+    def merge_actors(self, keep_id: str, merge_id: str) -> None:
+        """Merge merge_id into keep_id, then delete merge_id.
+
+        Moves:
+        - actor_alias rows (INSERT OR IGNORE to avoid duplicate conflicts)
+        - assertion_occurrence.speaker_actor_id references
+
+        The keep_id actor is not modified (canonical name stays as-is).
+        The merge_id actor row is deleted after migration.
+
+        Raises ValueError if either id is not found or if keep_id == merge_id.
+        """
+        if keep_id == merge_id:
+            raise ValueError("Cannot merge an actor with itself")
+
+        # Verify both actors exist in this matter.
+        for aid in (keep_id, merge_id):
+            row = self.db.execute(
+                "SELECT id FROM actor WHERE id=? AND matter_id=?",
+                (aid, self.matter_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Actor {aid} not found in matter {self.matter_id}")
+
+        now = _now()
+        with self.db.transaction():
+            # Move aliases.
+            merge_aliases = self.db.execute(
+                "SELECT alias_text, alias_type FROM actor_alias WHERE actor_id=?",
+                (merge_id,),
+            ).fetchall()
+            for alias_row in merge_aliases:
+                self.db.execute(
+                    """INSERT OR IGNORE INTO actor_alias
+                       (id, actor_id, alias_text, alias_type, created_at)
+                       VALUES (?,?,?,?,?)""",
+                    (_id(), keep_id, alias_row["alias_text"], alias_row["alias_type"], now),
+                )
+
+            # Redirect assertion occurrences.
+            self.db.execute(
+                "UPDATE assertion_occurrence SET speaker_actor_id=? WHERE speaker_actor_id=?",
+                (keep_id, merge_id),
+            )
+
+            # Remove old alias rows for merge_id (already copied to keep_id above).
+            self.db.execute("DELETE FROM actor_alias WHERE actor_id=?", (merge_id,))
+
+            # Remove affiliation rows referencing merge_id.
+            self.db.execute(
+                "DELETE FROM actor_affiliation WHERE actor_id=? OR org_actor_id=?",
+                (merge_id, merge_id),
+            )
+
+            # Delete the merged actor.
+            self.db.execute(
+                "DELETE FROM actor WHERE id=?",
+                (merge_id,),
+            )
+
 
 class IssueStore:
     """
