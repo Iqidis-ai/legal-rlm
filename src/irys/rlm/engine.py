@@ -174,6 +174,13 @@ Respond in COMPACT JSON (keep under 3000 chars):
 }}
 """
 
+# Pre-computed template hash for search-analysis cache versioning.
+# Including this in the cache key ensures that changing ANALYZE_FINDINGS_PROMPT
+# automatically invalidates all cached analysis from the old template version.
+import hashlib as _hashlib
+_ANALYZE_PROMPT_VER = _hashlib.sha256(ANALYZE_FINDINGS_PROMPT.encode()).hexdigest()[:12]
+del _hashlib  # avoid polluting module namespace
+
 DEEP_READ_PROMPT = """You are an expert legal analyst performing detailed document review.
 
 Document: {filename}
@@ -1324,9 +1331,8 @@ class RLMEngine:
         # automatically invalidate cached analysis from old template versions.
         import hashlib as _hl
         _top_names = ",".join(sorted(h.filename for h in results.top(5)))
-        _prompt_ver = _hl.sha256(ANALYZE_FINDINGS_PROMPT.encode()).hexdigest()[:12]
         _analysis_key = _hl.sha256(
-            f"{_prompt_ver}\n{results.query}\n{state.query}\n{state.hypothesis or ''}\n{_top_names}\n{results_text}".encode()
+            f"{_ANALYZE_PROMPT_VER}\n{results.query}\n{state.query}\n{state.hypothesis or ''}\n{_top_names}\n{results_text}".encode()
         ).hexdigest()
         _cached_analysis = None
         if self._matter_model is not None:
@@ -2069,7 +2075,9 @@ class RLMEngine:
                 (self._matter_model.matter_id,),
             ).fetchall()
             if side_rows:
-                lines.append("\nLitigation-side origin of extracted facts:")
+                # Note: a fact corroborated by documents from multiple sides is counted
+                # once per side, so side totals may sum to more than total assertions.
+                lines.append("\nLitigation-side origin of extracted facts (may overlap):")
                 for sr in side_rows:
                     lines.append(f"  • {sr['cnt']} assertions from {sr['side']} documents")
         except Exception:
