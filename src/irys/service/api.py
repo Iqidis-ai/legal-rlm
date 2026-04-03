@@ -1605,6 +1605,56 @@ async def get_matter_so_metrics(matter_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/decision-context",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_decision_context(matter_id: str):
+    """Return the decision-context overlay for a matter (Priority 1).
+
+    Returns null when no context has been set.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return model.decision_context.get()
+
+
+@app.put(
+    "/matter/{matter_id}/decision-context",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def set_decision_context(matter_id: str, payload: dict):
+    """Set or update the decision-context overlay for a matter.
+
+    Accepted fields: decision_maker_type, decision_maker_name, objective,
+    strategic_notes, scope_narrow.  Unknown/invalid type and objective values
+    are coerced to 'unknown'.  Influences synthesis framing only — does not
+    alter the canonical record model.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    ctx_id = model.decision_context.set(
+        decision_maker_type=payload.get("decision_maker_type"),
+        decision_maker_name=payload.get("decision_maker_name"),
+        objective=payload.get("objective"),
+        strategic_notes=payload.get("strategic_notes"),
+        scope_narrow=bool(payload.get("scope_narrow", False)),
+    )
+    return {"id": ctx_id, "matter_id": matter_id, "status": "ok"}
+
+
+@app.delete(
+    "/matter/{matter_id}/decision-context",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def clear_decision_context(matter_id: str):
+    """Remove the decision-context overlay for a matter."""
+    model = _get_matter_model_or_404(matter_id)
+    model.decision_context.clear()
+    return {"matter_id": matter_id, "status": "cleared"}
+
+
+@app.get(
     "/matter/{matter_id}/gaps",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

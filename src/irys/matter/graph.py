@@ -1890,3 +1890,108 @@ class DocumentAnnotationStore:
             (self.matter_id, annotation_id),
         )
         return True
+
+
+class DecisionContextStore:
+    """Persists the decision-context overlay for a matter.
+
+    One row per matter.  Stores context that influences synthesis framing
+    (prioritization, output ranking, recommendation framing) WITHOUT
+    rewriting the canonical record model or assertion graph.
+
+    Valid decision_maker_type values:
+        judge, partner, client, mediator, arbitrator, regulator, unknown
+
+    Valid objective values:
+        motion_practice, settlement, diligence, audit, advisory, trial_prep,
+        regulatory_response, transactional, unknown
+    """
+
+    VALID_MAKER_TYPES = frozenset({
+        "judge", "partner", "client", "mediator", "arbitrator",
+        "regulator", "unknown",
+    })
+    VALID_OBJECTIVES = frozenset({
+        "motion_practice", "settlement", "diligence", "audit", "advisory",
+        "trial_prep", "regulatory_response", "transactional", "unknown",
+    })
+
+    def __init__(self, db: "SQLiteMatterDB", matter_id: str) -> None:
+        self.db = db
+        self.matter_id = matter_id
+
+    def set(
+        self,
+        decision_maker_type: Optional[str] = None,
+        decision_maker_name: Optional[str] = None,
+        objective: Optional[str] = None,
+        strategic_notes: Optional[str] = None,
+        scope_narrow: bool = False,
+    ) -> str:
+        """Upsert the decision context for this matter.  Returns the row id.
+
+        Unknown/invalid decision_maker_type or objective values are coerced
+        to 'unknown' to keep the constraint surface small and avoid silent
+        data corruption.
+        """
+        if decision_maker_type and decision_maker_type not in self.VALID_MAKER_TYPES:
+            decision_maker_type = "unknown"
+        if objective and objective not in self.VALID_OBJECTIVES:
+            objective = "unknown"
+
+        now = _now()
+        existing = self.db.execute(
+            "SELECT id FROM decision_context WHERE matter_id=?",
+            (self.matter_id,),
+        ).fetchone()
+
+        if existing:
+            ctx_id = existing["id"]
+            self.db.execute(
+                """UPDATE decision_context
+                   SET decision_maker_type=?, decision_maker_name=?,
+                       objective=?, strategic_notes=?,
+                       scope_narrow=?, updated_at=?
+                   WHERE id=?""",
+                (decision_maker_type, decision_maker_name, objective,
+                 strategic_notes, int(scope_narrow), now, ctx_id),
+            )
+            return ctx_id
+        else:
+            ctx_id = _id()
+            self.db.execute(
+                """INSERT INTO decision_context
+                   (id, matter_id, decision_maker_type, decision_maker_name,
+                    objective, strategic_notes, scope_narrow, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (ctx_id, self.matter_id, decision_maker_type, decision_maker_name,
+                 objective, strategic_notes, int(scope_narrow), now, now),
+            )
+            return ctx_id
+
+    def get(self) -> Optional[dict]:
+        """Return the decision context dict, or None if not yet set."""
+        row = self.db.execute(
+            "SELECT * FROM decision_context WHERE matter_id=?",
+            (self.matter_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "matter_id": row["matter_id"],
+            "decision_maker_type": row["decision_maker_type"],
+            "decision_maker_name": row["decision_maker_name"],
+            "objective": row["objective"],
+            "strategic_notes": row["strategic_notes"],
+            "scope_narrow": bool(row["scope_narrow"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def clear(self) -> None:
+        """Remove the decision context for this matter."""
+        self.db.execute(
+            "DELETE FROM decision_context WHERE matter_id=?",
+            (self.matter_id,),
+        )

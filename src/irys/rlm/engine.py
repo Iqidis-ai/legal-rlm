@@ -357,6 +357,7 @@ Working Hypothesis: {hypothesis}
 Source Calibration (CRITICAL — read before analyzing facts):
 {source_calibration}
 
+{decision_context_block}
 Quantitative Summary (SO-6 — extracted monetary amounts):
 {quant_summary}
 
@@ -2532,6 +2533,10 @@ class RLMEngine:
         # well-supported vs. proof-gap-exposed so the synthesis reflects issue strengths.
         issue_coverage = self._build_issue_coverage_summary()
 
+        # Build decision-context framing block — influences output emphasis without
+        # altering the record model (Priority 1: decision-context overlays).
+        decision_context_block = self._build_decision_context_block()
+
         prompt = SYNTHESIS_PROMPT.format(
             query=state.query,
             docs_analyzed=state.documents_read,
@@ -2540,6 +2545,7 @@ class RLMEngine:
             max_depth=state.max_depth_reached,
             hypothesis=state.hypothesis or "No specific hypothesis formed",
             source_calibration=source_calibration,
+            decision_context_block=decision_context_block,
             quant_summary=quant_summary,
             issue_coverage=issue_coverage,
             gap_summary=gap_summary,
@@ -2889,6 +2895,45 @@ class RLMEngine:
             if deps:
                 dep_strs = [f"{d['affected_type']}:{d['affected_id'][:8]}" for d in deps]
                 lines.append(f"         Affects: {', '.join(dep_strs)}")
+        return "\n".join(lines)
+
+    def _build_decision_context_block(self) -> str:
+        """Build a decision-context framing block for the synthesis prompt.
+
+        If a decision context has been set on the matter model, this block
+        tells the LLM who the decision-maker is and what objective the analysis
+        should serve.  This influences recommendation framing, prioritization,
+        and output emphasis WITHOUT rewriting the record model or assertions.
+
+        Returns empty string when no context is set (no-op for legacy runs).
+        """
+        if self._matter_model is None:
+            return ""
+        try:
+            ctx = self._matter_model.decision_context.get()
+        except Exception:
+            return ""
+        if ctx is None:
+            return ""
+
+        lines = ["DECISION CONTEXT (influences framing and prioritization — does not change the record):"]
+        if ctx.get("decision_maker_type") and ctx["decision_maker_type"] != "unknown":
+            line = f"  Decision-maker type: {ctx['decision_maker_type']}"
+            if ctx.get("decision_maker_name"):
+                line += f" ({ctx['decision_maker_name']})"
+            lines.append(line)
+        if ctx.get("objective") and ctx["objective"] != "unknown":
+            lines.append(f"  Analysis objective: {ctx['objective'].replace('_', ' ')}")
+        if ctx.get("scope_narrow"):
+            lines.append("  Scope: NARROW — user requested focused, not exhaustive, output")
+        if ctx.get("strategic_notes"):
+            # Truncate to prevent prompt bloat
+            notes = ctx["strategic_notes"][:400]
+            lines.append(f"  Strategic context: {notes}")
+        lines.append(
+            "  Framing instruction: weight your analysis and recommendations toward the above "
+            "objective and decision-maker. Do not alter factual findings or assertion grounding."
+        )
         return "\n".join(lines)
 
     async def _retry_spo_extraction(self, fact_texts: list[str]) -> dict[int, dict]:
