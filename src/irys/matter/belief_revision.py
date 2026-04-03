@@ -326,30 +326,32 @@ class BeliefRevisionEngine:
 
         # Persist the state change
         now = _now()
-        with self.db.transaction():
-            # Re-read within the transaction so audit rows reflect the DB-committed
-            # state at write time, not a potentially stale pre-transaction snapshot.
-            # (Fixes Tier 1 HIGH: concurrent writer between pre-tx read and INSERT
-            # would produce wrong old_value_json in assertion_revision.)
+        with self.db.write_transaction():
+            # Re-read with BEGIN IMMEDIATE so the write lock is held from the start,
+            # preventing WAL deferred-read-to-write upgrade failures under concurrent
+            # writers (Tier 1 MEDIUM). The in-tx values are authoritative for both
+            # diff-detection and old_value_json in assertion_revision (Tier 1 HIGH).
             _intx_row = self.db.execute(
                 "SELECT belief_state, confidence FROM assertion WHERE id=?",
                 (assertion_id,),
             ).fetchone()
-            _audit_old_state = old_state.value if _intx_row is None else _intx_row["belief_state"]
-            _audit_old_conf = old_confidence if _intx_row is None else float(_intx_row["confidence"])
+            if _intx_row is None:
+                return None
+            _intx_old_state = BeliefState(_intx_row["belief_state"])
+            _intx_old_conf = float(_intx_row["confidence"])
 
             # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
             _rev_rows: list[tuple[str, str, str]] = []
-            if new_state != old_state:
+            if new_state != _intx_old_state:
                 _rev_rows.append((
                     "belief_state",
-                    _json_mod.dumps(_audit_old_state),
+                    _json_mod.dumps(_intx_old_state.value),
                     _json_mod.dumps(new_state.value),
                 ))
-            if abs(new_confidence - old_confidence) >= 0.001:
+            if abs(new_confidence - _intx_old_conf) >= 0.001:
                 _rev_rows.append((
                     "confidence",
-                    _json_mod.dumps(_audit_old_conf),
+                    _json_mod.dumps(_intx_old_conf),
                     _json_mod.dumps(new_confidence),
                 ))
             if _rev_rows:
@@ -367,8 +369,8 @@ class BeliefRevisionEngine:
                 (
                     _id(), assertion_id, run_id,
                     cause.value,
-                    _audit_old_state, new_state.value,
-                    _audit_old_conf, new_confidence,
+                    _intx_old_state.value, new_state.value,
+                    _intx_old_conf, new_confidence,
                     note, now,
                 ),
             )
@@ -403,31 +405,33 @@ class BeliefRevisionEngine:
         old_confidence = record.confidence
         now = _now()
 
-        with self.db.transaction():
-            # Re-read within the transaction so audit rows reflect the DB-committed
-            # state at write time, not a potentially stale pre-transaction snapshot.
-            # (Fixes Tier 1 HIGH: concurrent writer between pre-tx read and INSERT
-            # would produce wrong old_value_json in assertion_revision.)
+        with self.db.write_transaction():
+            # Re-read with BEGIN IMMEDIATE so the write lock is held from the start,
+            # preventing WAL deferred-read-to-write upgrade failures under concurrent
+            # writers (Tier 1 MEDIUM). The in-tx values are authoritative for both
+            # diff-detection and old_value_json in assertion_revision (Tier 1 HIGH).
             _fs_intx_row = self.db.execute(
                 "SELECT belief_state, confidence FROM assertion WHERE id=?",
                 (assertion_id,),
             ).fetchone()
-            _fs_audit_old_state = old_state.value if _fs_intx_row is None else _fs_intx_row["belief_state"]
-            _fs_audit_old_conf = old_confidence if _fs_intx_row is None else float(_fs_intx_row["confidence"])
+            if _fs_intx_row is None:
+                raise ValueError(f"Assertion {assertion_id} disappeared before write")
+            _fs_intx_old_state = BeliefState(_fs_intx_row["belief_state"])
+            _fs_intx_old_conf = float(_fs_intx_row["confidence"])
 
             # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
             # actor_kind="user" for direct force_state corrections.
             _fs_rev_rows: list[tuple[str, str, str]] = []
-            if new_state != old_state:
+            if new_state != _fs_intx_old_state:
                 _fs_rev_rows.append((
                     "belief_state",
-                    _json_mod.dumps(_fs_audit_old_state),
+                    _json_mod.dumps(_fs_intx_old_state.value),
                     _json_mod.dumps(new_state.value),
                 ))
-            if abs(new_confidence - old_confidence) >= 0.001:
+            if abs(new_confidence - _fs_intx_old_conf) >= 0.001:
                 _fs_rev_rows.append((
                     "confidence",
-                    _json_mod.dumps(_fs_audit_old_conf),
+                    _json_mod.dumps(_fs_intx_old_conf),
                     _json_mod.dumps(new_confidence),
                 ))
             if _fs_rev_rows:
@@ -445,8 +449,8 @@ class BeliefRevisionEngine:
                 (
                     _id(), assertion_id, run_id,
                     cause.value,
-                    _fs_audit_old_state, new_state.value,
-                    _fs_audit_old_conf, new_confidence,
+                    _fs_intx_old_state.value, new_state.value,
+                    _fs_intx_old_conf, new_confidence,
                     note, now,
                 ),
             )

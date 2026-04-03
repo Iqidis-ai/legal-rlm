@@ -75,6 +75,9 @@ class SQLiteMatterDB:
     def begin(self):
         self.conn.execute("BEGIN")
 
+    def begin_immediate(self):
+        self.conn.execute("BEGIN IMMEDIATE")
+
     def commit(self):
         self.conn.execute("COMMIT")
 
@@ -84,6 +87,11 @@ class SQLiteMatterDB:
     def transaction(self):
         """Context manager for explicit transactions."""
         return _Transaction(self)
+
+    def write_transaction(self):
+        """Context manager for write transactions; uses BEGIN IMMEDIATE to prevent
+        WAL deferred-read-to-write upgrade failures under concurrent writes."""
+        return _Transaction(self, immediate=True)
 
     def close(self):
         if self._is_memory:
@@ -114,8 +122,9 @@ class SQLiteMatterDB:
 class _Transaction:
     """Context manager for explicit transactions with savepoint support for nesting."""
 
-    def __init__(self, db: SQLiteMatterDB):
+    def __init__(self, db: SQLiteMatterDB, immediate: bool = False):
         self._db = db
+        self._immediate = immediate
         self._savepoint: Optional[str] = None
 
     def __enter__(self):
@@ -124,6 +133,8 @@ class _Transaction:
             import uuid
             self._savepoint = f"sp_{uuid.uuid4().hex[:8]}"
             self._db.conn.execute(f"SAVEPOINT {self._savepoint}")
+        elif self._immediate:
+            self._db.begin_immediate()
         else:
             self._db.begin()
         return self._db
