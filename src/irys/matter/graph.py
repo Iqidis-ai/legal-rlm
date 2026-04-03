@@ -740,19 +740,54 @@ class IssueStore:
         burden_side: Optional[str] = None,
     ) -> str:
         """
-        Add a testable predicate to an issue.
+        Add a testable predicate to an issue. Idempotent: if a predicate with the
+        same (issue_id, description) already exists, the existing row is returned.
         Returns predicate_id.
         """
         pred_id = _id()
         now = _now()
         with self.db.transaction():
             self.db.execute(
-                """INSERT INTO issue_predicate
+                """INSERT OR IGNORE INTO issue_predicate
                    (id, issue_id, description, burden_side, status, created_at)
                    VALUES (?,?,?,?,?,?)""",
                 (pred_id, issue_id, description, burden_side, "open", now),
             )
-        return pred_id
+        row = self.db.execute(
+            "SELECT id FROM issue_predicate WHERE issue_id=? AND description=?",
+            (issue_id, description),
+        ).fetchone()
+        return row["id"] if row else pred_id
+
+    def add_predicates_batch(
+        self,
+        issue_id: str,
+        descriptions: list[str],
+        burden_side: Optional[str] = None,
+    ) -> list[str]:
+        """
+        Add multiple predicates for an issue in a single transaction. Idempotent.
+        Returns list of predicate IDs (existing or newly created).
+        """
+        now = _now()
+        pairs = [(issue_id, d.strip()[:300]) for d in descriptions
+                 if isinstance(d, str) and d.strip()]
+        if not pairs:
+            return []
+        with self.db.transaction():
+            for d in [p[1] for p in pairs]:
+                self.db.execute(
+                    """INSERT OR IGNORE INTO issue_predicate
+                       (id, issue_id, description, burden_side, status, created_at)
+                       VALUES (?,?,?,?,?,?)""",
+                    (_id(), issue_id, d, burden_side, "open", now),
+                )
+        rows = self.db.execute(
+            f"SELECT id FROM issue_predicate WHERE issue_id=? AND description IN "
+            f"({','.join('?' * len(pairs))})",
+            [issue_id] + [p[1] for p in pairs],
+        ).fetchall()
+        return [r["id"] for r in rows]
 
     def link_assertion(
         self,
@@ -802,12 +837,24 @@ class IssueStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_predicates(self, issue_id: str) -> list[dict]:
-        """Return all predicates for an issue."""
-        rows = self.db.execute(
-            "SELECT * FROM issue_predicate WHERE issue_id=? AND status='open' ORDER BY created_at",
-            (issue_id,),
-        ).fetchall()
+    def get_predicates(self, issue_id: str, limit: Optional[int] = None) -> list[dict]:
+        """Return open predicates for an issue, ordered by creation.
+
+        limit: when provided, returns at most that many rows (DB-level bound).
+        """
+        if limit is not None:
+            rows = self.db.execute(
+                "SELECT id, issue_id, description, burden_side, status, created_at"
+                " FROM issue_predicate WHERE issue_id=? AND status='open'"
+                " ORDER BY created_at LIMIT ?",
+                (issue_id, limit),
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                "SELECT * FROM issue_predicate WHERE issue_id=? AND status='open'"
+                " ORDER BY created_at",
+                (issue_id,),
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def get_issue(self, issue_id: str) -> Optional[dict]:

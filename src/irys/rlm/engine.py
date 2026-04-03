@@ -979,7 +979,7 @@ class RLMEngine:
                     continue
                 if not issue_title:
                     continue
-                issue_id, _is_new_issue = self._matter_model.issues.upsert_issue(
+                issue_id, _ = self._matter_model.issues.upsert_issue(
                     title=issue_title,
                     issue_type=issue_type,
                     salience=0.7,
@@ -990,16 +990,16 @@ class RLMEngine:
                     why="From orientation analysis",
                 )
                 # Persist predicates for this issue (SO-4: issue predicate tree).
-                # Only write predicates when the issue is newly created — add_predicate()
-                # has no unique constraint, so warm-run cache hits (same issue_id returned
-                # by upsert) must not re-insert predicates that already exist.
-                if _is_new_issue and isinstance(issue_item, dict):
-                    for _pred in issue_item.get("predicates", [])[:4]:
-                        if isinstance(_pred, str) and _pred.strip():
-                            self._matter_model.issues.add_predicate(
-                                issue_id=issue_id,
-                                description=_pred.strip()[:300],
-                            )
+                # add_predicates_batch() is idempotent (INSERT OR IGNORE + unique index),
+                # so safe on both new issues and warm-run cache hits that return existing IDs.
+                # Guard against non-list LLM output (null, string, dict).
+                if isinstance(issue_item, dict):
+                    _preds_raw = issue_item.get("predicates")
+                    if isinstance(_preds_raw, list):
+                        self._matter_model.issues.add_predicates_batch(
+                            issue_id=issue_id,
+                            descriptions=_preds_raw[:4],
+                        )
 
         # Create initial leads from plan — preserve raw search terms to bypass
         # _extract_search_term() token collapse (SO-4 issue-focused search).
@@ -1059,8 +1059,8 @@ class RLMEngine:
         # Limit to 3 predicates per orientation to stay within lead budget.
         if self._matter_model is not None and _new_issue_ids:
             _pred_target_id = weakest_id or _new_issue_ids[0]
-            _issue_predicates = self._matter_model.issues.get_predicates(_pred_target_id)
-            for _pred_row in _issue_predicates[:3]:
+            _issue_predicates = self._matter_model.issues.get_predicates(_pred_target_id, limit=3)
+            for _pred_row in _issue_predicates:
                 _pred_text = _pred_row.get("description", "").strip()
                 if _pred_text:
                     state.add_lead(

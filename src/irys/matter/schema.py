@@ -331,6 +331,9 @@ CREATE TABLE IF NOT EXISTS issue_predicate (
 CREATE INDEX IF NOT EXISTS ix_predicate_issue
     ON issue_predicate(issue_id, status);
 
+CREATE UNIQUE INDEX IF NOT EXISTS ix_predicate_unique
+    ON issue_predicate(issue_id, description);
+
 CREATE TABLE IF NOT EXISTS assertion_issue_link (
     id              TEXT PRIMARY KEY,
     assertion_id    TEXT NOT NULL REFERENCES assertion(id),

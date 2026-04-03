@@ -346,3 +346,37 @@ def test_predicates_are_issue_scoped(model):
 
     assert len(model.issues.get_predicates(id_a)) == 1
     assert len(model.issues.get_predicates(id_b)) == 0
+
+
+def test_add_predicate_idempotent(model):
+    """add_predicate() with same (issue_id, description) must not create duplicate rows."""
+    issue_id, _ = model.issues.upsert_issue("Claim A", IssueType.CLAIM)
+    id1 = model.issues.add_predicate(issue_id, "Element one")
+    id2 = model.issues.add_predicate(issue_id, "Element one")  # duplicate
+
+    assert id1 == id2, "Second call must return the existing predicate ID"
+    assert len(model.issues.get_predicates(issue_id)) == 1
+
+
+def test_add_predicates_batch_idempotent(model):
+    """add_predicates_batch() called twice must not duplicate rows."""
+    issue_id, _ = model.issues.upsert_issue("Claim batch", IssueType.CLAIM)
+    descs = ["Element A", "Element B", "Element C"]
+    ids_first = model.issues.add_predicates_batch(issue_id, descs)
+    ids_second = model.issues.add_predicates_batch(issue_id, descs)
+
+    assert set(ids_first) == set(ids_second), "Second batch must return same IDs"
+    assert len(model.issues.get_predicates(issue_id)) == 3
+
+
+def test_get_predicates_limit(model):
+    """get_predicates(limit=N) returns at most N rows (DB-level bound)."""
+    issue_id, _ = model.issues.upsert_issue("Claim limit", IssueType.CLAIM)
+    for i in range(5):
+        model.issues.add_predicate(issue_id, f"Element {i}")
+
+    bounded = model.issues.get_predicates(issue_id, limit=3)
+    assert len(bounded) == 3
+
+    all_preds = model.issues.get_predicates(issue_id)
+    assert len(all_preds) == 5
