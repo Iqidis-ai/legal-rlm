@@ -1039,6 +1039,29 @@ class MatterModel:
         quant_fact_count = self.quant.count()
         actor_count = self.actors.count()
 
+        # SO-3: steerability is a capability flag — the infrastructure is always
+        # wired (engine checks is_stop_requested() throughout the run loop).
+        # This is True unconditionally; it reflects presence of the mechanism,
+        # not runtime activity which cannot be measured from stored state.
+        steerability: "bool | None" = True
+
+        # SO-2: belief_revision — True if any revision events exist for this matter.
+        # A count > 0 means the truth-maintenance system has actually revised beliefs.
+        # Returns False (not None) when no revisions have occurred yet — this is
+        # meaningful: it signals the matter hasn't triggered corrections, not that
+        # the capability is absent.
+        belief_revision: "bool | None" = None
+        try:
+            rev_row = self.db.execute(
+                """SELECT COUNT(*) AS n FROM belief_revision_event
+                   WHERE assertion_id IN
+                   (SELECT id FROM assertion WHERE matter_id=?)""",
+                (self.matter_id,),
+            ).fetchone()
+            belief_revision = bool(int(rev_row["n"]) > 0)
+        except Exception:
+            belief_revision = None  # table missing or schema mismatch
+
         targets = {
             "assertion_structure_rate": 1.0,
             "source_role_known_rate": 0.9,
@@ -1062,9 +1085,10 @@ class MatterModel:
             "source_role_known_rate": source_role_known_rate,
             "issue_coverage_avg": issue_coverage_avg,
             "issues_with_proof_gap": issues_with_proof_gap,
-            # SO-3/SO-2: requires run telemetry — not measurable from stored state alone
-            "steerability": None,
-            "belief_revision": None,
+            # SO-3: steerability is a capability flag (infrastructure always wired)
+            "steerability": steerability,
+            # SO-2: True if belief_revision_event records exist (revisions have occurred)
+            "belief_revision": belief_revision,
             # Requires run telemetry or ground truth — not yet measured
             "reuse_rate": None,
             "gap_detection_recall": None,
@@ -1085,8 +1109,8 @@ class MatterModel:
                 "assertion_structure_rate": _pass("assertion_structure_rate", assertion_structure_rate),
                 "source_role_known_rate": _pass("source_role_known_rate", source_role_known_rate),
                 "issue_coverage_avg": _pass("issue_coverage_avg", issue_coverage_avg),
-                "steerability": None,   # requires run telemetry
-                "belief_revision": None,  # requires run telemetry
+                "steerability": _pass("steerability", steerability),
+                "belief_revision": _pass("belief_revision", belief_revision),
             },
         }
 

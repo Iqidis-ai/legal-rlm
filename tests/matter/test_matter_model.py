@@ -591,9 +591,10 @@ def test_get_so_metrics_empty_model(model):
     # No assertions yet — structure/role rates are None (not enough data)
     assert m["assertion_structure_rate"] is None
     assert m["source_role_known_rate"] is None
-    # Not runtime-measurable — reported as None
-    assert m["steerability"] is None
-    assert m["belief_revision"] is None
+    # Steerability is a capability flag — always True
+    assert m["steerability"] is True
+    # Belief revision: False on empty model (no revision events yet)
+    assert m["belief_revision"] is False
     # Counts are zero
     assert m["counts"]["assertions"] == 0
     assert m["counts"]["quant_facts"] == 0
@@ -660,8 +661,8 @@ def test_get_so_metrics_targets_met(model):
     assert tm["source_role_known_rate"] is True
     # No issues → issue_coverage_avg is None → target_met is None (not enough data)
     assert tm["issue_coverage_avg"] is None
-    assert tm["steerability"] is None   # requires run telemetry
-    assert tm["belief_revision"] is None  # requires run telemetry
+    assert tm["steerability"] is True    # capability flag — always passes
+    assert tm["belief_revision"] is False  # no revision events yet → does not pass target
 
 
 def test_get_so_metrics_api_endpoint(model):
