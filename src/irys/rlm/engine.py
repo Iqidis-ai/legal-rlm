@@ -1225,7 +1225,7 @@ class RLMEngine:
         if not recent:
             return
 
-        _inactive_states = {"disputed", "withdrawn", "superseded", "denied"}
+        _inactive_states = {"disputed", "withdrawn", "superseded"}
         loaded = 0
         _strip_role_prefix = __import__("re").compile(r'^\[[A-Z_]+\]\s*').sub
         for row in recent:
