@@ -95,12 +95,9 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ## Active Work
 
-### IN PROGRESS — Tier 1 reviews on schema v28 + SO-5 changes
-Tier 1 Correctness and Performance reviews running in background for:
-- Schema v28: covering index on assertion_link(dst_assertion_id, link_type, src_assertion_id)
-- SO-5 fixes: per-title hedge check (±300 char), Factual Background scan, expanded hedge markers
+### JUST COMPLETED — SO-5 Tier 1 loop (8 correctness rounds + 3 performance rounds)
 
-### JUST COMPLETED — SO-5 Tier 1 correctness fixes (3 HIGHs/MEDIUMs closed)
+Tier 1 loop for SO-5 advocacy gate is now CLEAN after extensive hardening:
 
 1. **BFS override cache** — `BeliefRevisionEngine.apply()` pre-fetches trust overrides once; passes
    `_override_cache` through `_revise_one()` → `get_neighbor_belief_states()`. Eliminates 1 DB
@@ -141,10 +138,10 @@ None active.
 
 ## Key Metrics (Current)
 
-- Tests passing: 686 / 686
+- Tests passing: 690 / 690
 - Schema version: v28
 - SO-1, SO-5, SO-7: PASS; SO-2, SO-3, SO-4, SO-6: PARTIAL (adversarial #018)
-- Tier 1 correctness: IN PROGRESS (re-running on SO-5 changes — codex_t1_correctness_r1.md)
-- Tier 1 performance: IN PROGRESS (re-running on schema v28 + SO-5 — codex_t1_performance_r1.md)
+- Tier 1 correctness: **CLEAN** (r8 — 8 rounds on SO-5 advocacy gate)
+- Tier 1 performance: **CLEAN** (r3 — patterns hoisted to module-level constants)
 - Adversarial audit #018: DONE — SO-5 FAIL fixed; SO-2/3/4/6/7 PARTIAL (incremental)
-- Next adversarial audit (#019): due after ~4 more Codex review sessions
+- Next adversarial audit (#019): due NOW (8+ Codex sessions since #018)
