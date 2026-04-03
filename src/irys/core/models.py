@@ -85,8 +85,15 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
 
 @dataclass
 class UsageStats:
-    """Token usage and cost tracking per tier."""
+    """Token usage and cost tracking per tier.
+
+    input_tokens: non-cached prompt tokens (billed at full input rate).
+    cache_read_tokens: prompt tokens served from a Gemini cached-content resource
+        (billed at 10% of input rate).
+    output_tokens: generated tokens.
+    """
     input_tokens: int = 0
+    cache_read_tokens: int = 0  # From response.usage_metadata.cached_content_token_count
     output_tokens: int = 0
     requests: int = 0
     # Tier is set at construction time so cost_per_1m_* can be looked up
@@ -94,22 +101,30 @@ class UsageStats:
 
     @property
     def estimated_cost(self) -> float:
-        """Estimate cost using per-tier pricing from MODEL_CONFIGS."""
+        """Estimate cost using per-tier pricing.
+
+        Cache reads are billed at 10% of the input rate (Google Gemini caching pricing).
+        Non-cached input tokens are billed at full input rate.
+        Note: cache creation and storage costs are not tracked here.
+        """
         if self.tier is not None and self.tier in MODEL_CONFIGS:
             mc = MODEL_CONFIGS[self.tier]
             return (
                 self.input_tokens * mc.cost_per_1m_input / 1_000_000
+                + self.cache_read_tokens * mc.cost_per_1m_input * 0.10 / 1_000_000
                 + self.output_tokens * mc.cost_per_1m_output / 1_000_000
             )
         # Fallback: Flash pricing
         return (
             self.input_tokens * 0.30 / 1_000_000
+            + self.cache_read_tokens * 0.30 * 0.10 / 1_000_000
             + self.output_tokens * 2.50 / 1_000_000
         )
 
-    def add(self, input_tokens: int, output_tokens: int):
+    def add(self, input_tokens: int, output_tokens: int, cache_read_tokens: int = 0):
         """Add tokens from a request."""
         self.input_tokens += input_tokens
+        self.cache_read_tokens += cache_read_tokens
         self.output_tokens += output_tokens
         self.requests += 1
 
@@ -265,12 +280,20 @@ class GeminiClient:
             logger.error(f"API call to {mc.model_id} timed out after {request_timeout}s")
             raise TimeoutError(f"API call timed out after {request_timeout}s")
 
-        # Track usage
-        self._usage[tier].requests += 1
-        # Estimate tokens (actual count would require response metadata)
-        estimated_input = len(prompt) // 4
-        estimated_output = len(response.text) // 4 if response.text else 0
-        self._usage[tier].add(estimated_input, estimated_output)
+        # Track usage — prefer actual token counts from usage_metadata when available.
+        # cached_content_token_count is the portion of prompt tokens served from cache
+        # (billed at 10% of input rate); prompt_token_count excludes cached tokens.
+        um = getattr(response, "usage_metadata", None)
+        if um is not None:
+            actual_input = getattr(um, "prompt_token_count", None) or 0
+            actual_output = getattr(um, "candidates_token_count", None) or 0
+            actual_cache = getattr(um, "cached_content_token_count", None) or 0
+        else:
+            # Fallback estimate when metadata is unavailable
+            actual_input = len(prompt) // 4
+            actual_output = len(response.text) // 4 if response.text else 0
+            actual_cache = 0
+        self._usage[tier].add(actual_input, actual_output, cache_read_tokens=actual_cache)
 
         logger.debug(f"Got response: {len(response.text) if response.text else 0} chars")
         return response.text
