@@ -1845,6 +1845,41 @@ def test_format_matter_context_emits_answered_clarifications():
     )
 
 
+def test_format_matter_context_emits_document_annotations():
+    """_format_matter_context() must include document annotations so the LLM applies user notes (SO-3).
+
+    When a user annotates a document (e.g. 'treat damages as advocacy positions'), that
+    annotation must appear in the orientation prompt so the LLM calibrates trust accordingly.
+    Without this, user strategic notes are stored but silently ignored — a direct SO-3 failure.
+    """
+    from irys.rlm.engine import _format_matter_context
+    from irys.matter.runtime import QueryMatterContext
+
+    ctx = QueryMatterContext(
+        matter_id="m_test",
+        matter_name="Test Matter",
+        existing_assertion_count=0,
+        open_issues=[],
+        open_gaps=[],
+        known_actors=[],
+        known_document_ids=[],
+        document_annotations=[
+            {
+                "document_pattern": "expert_report.pdf",
+                "annotation_text": "Prepared for litigation; treat damages figures as advocacy positions.",
+                "annotation_type": "reliability",
+            }
+        ],
+    )
+    result = _format_matter_context(ctx)
+    assert "expert_report.pdf" in result, (
+        "Document annotation pattern must appear in formatted context (SO-3)"
+    )
+    assert "advocacy" in result.lower() or "litigation" in result.lower(), (
+        "Annotation text must appear in formatted context (SO-3)"
+    )
+
+
 def test_format_matter_context_emits_key_predicates():
     """_format_matter_context() must surface key_predicates from SPO graph (SO-2)."""
     from irys.rlm.engine import _format_matter_context
