@@ -703,6 +703,10 @@ class InvestigationState:
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 
+    # Durable reasoning trail (SO-3) — populated at the end of investigate() from the
+    # DB ledger. Callers see the full structured trace without a separate API call.
+    reasoning_trail: list[dict] = field(default_factory=list)
+
     @classmethod
     def create(cls, query: str, repository_path: str) -> "InvestigationState":
         return cls(

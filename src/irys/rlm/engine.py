@@ -855,6 +855,12 @@ class RLMEngine:
                     top_n=3,
                     min_materiality=0.5,
                 )
+                # Attach durable reasoning trail to state (SO-3) so callers see the
+                # full structured trace without a separate ledger query.
+                try:
+                    state.reasoning_trail = self._matter_model.ledger.get_events(run_id)
+                except Exception:
+                    pass  # non-fatal: in-memory thinking_steps still available
 
         except Exception as e:
             state.fail(str(e))
