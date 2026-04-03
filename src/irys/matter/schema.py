@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -834,6 +834,21 @@ def _migration_v15(conn) -> None:
     conn.execute("DROP INDEX IF EXISTS ix_quant_matter_kind")
 
 
+def _migration_v17(conn) -> None:
+    """Add covering index for get_by_kind(matter_id, quant_kind) with date ordering.
+
+    get_by_kind() filters by (matter_id, quant_kind) and orders by (date_value, created_at).
+    The existing ix_quant_kind(quant_kind, date_value) lacks matter_id as a leading column,
+    so SQLite must sort the filtered set rather than using index order.
+    ix_quant_matter_kind_date(matter_id, quant_kind, date_value, created_at) allows the DB
+    to satisfy both the filter and the ORDER BY from a single index scan.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_quant_matter_kind_date"
+        " ON quant_fact(matter_id, quant_kind, date_value, created_at)"
+    )
+
+
 def _migration_v16(conn) -> None:
     """Add UNIQUE constraint on issue_predicate(issue_id, description).
 
@@ -887,6 +902,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (14, _migration_v14),
     (15, _migration_v15),
     (16, _migration_v16),
+    (17, _migration_v17),
 ]
 
 

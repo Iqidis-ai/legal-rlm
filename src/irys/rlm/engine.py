@@ -2203,7 +2203,7 @@ class RLMEngine:
                 # Guard against non-numeric rate_value from corrupted/legacy rows.
                 try:
                     _rate_str = f"{float(_rv):.4g}%" if _rv is not None else ""
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     _rate_str = ""
                 lines.append(f"  • {_rate_str} — {_ctx}" if _rate_str else f"  • {_ctx}")
 
