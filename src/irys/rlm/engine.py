@@ -337,6 +337,14 @@ Key Entities Identified:
 {entities}
 
 Evidence Gathered:
+(Each fact is labeled [ROLE] indicating its source type. Treatment rules — MANDATORY:
+  [ADVOCACY]: allegation or argument by a party — present as "plaintiff alleges," "defendant contends," NEVER as established fact
+  [OPERATIVE]: signed contract, court order, executed document — treat as established
+  [AUTHORITATIVE]: statute, regulation, binding case law — treat as controlling
+  [PROCEDURAL]: court filing, notice, docket entry — treat as procedurally established
+  [INFORMAL]: email, note, draft communication — corroborative only, not standalone proof
+  [DRAFT]: unexecuted document — proposed, not operative
+  [UNKNOWN]: unverified source — flag explicitly)
 {findings}
 
 Documentary Citations:
@@ -349,6 +357,7 @@ Provide a 2-3 sentence direct answer to the query. Lead with the conclusion.
 
 ## Factual Background
 Chronological narrative of relevant events established by the evidence.
+Cite OPERATIVE and AUTHORITATIVE sources for established facts. Label advocacy-sourced claims as allegations.
 Cite sources: [Document Name, p. X]
 
 ## Analysis
@@ -356,17 +365,17 @@ Cite sources: [Document Name, p. X]
 ### Key Findings
 - Finding 1 with citation [Source]
 - Finding 2 with citation [Source]
-(Prioritize VERIFIED citations)
+(Prioritize VERIFIED citations. Distinguish established facts [OPERATIVE/AUTHORITATIVE] from allegations [ADVOCACY])
 
 ### Supporting Evidence
-Detail the strongest evidence supporting conclusions.
+Detail the strongest evidence supporting conclusions. Note source role for each piece of evidence.
 
 ### Contradictions or Concerns
-Note any conflicting evidence or unresolved issues.
+Note any conflicting evidence or unresolved issues. Flag where only [ADVOCACY] sources support a proposition.
 
 ### Evidence Strength Assessment
 Rate overall evidence as: Strong / Moderate / Weak
-Explain basis for rating.
+Explain basis for rating. Note proportion of advocacy vs. operative sources.
 
 ## Entities & Relationships
 Key parties and their roles established by evidence.
