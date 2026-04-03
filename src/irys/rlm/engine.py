@@ -1853,7 +1853,7 @@ class RLMEngine:
 
         # Compile all findings
         facts = state.findings.get("accumulated_facts", [])
-        findings_text = "\n".join(f"• {fact}" for fact in facts[:30])
+        findings_text = "\n".join(f"• {fact}" for fact in facts[:75])
 
         # Get citations with verification status
         citations_text = state.get_citations_formatted()
