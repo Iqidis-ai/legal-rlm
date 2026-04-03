@@ -3100,3 +3100,73 @@ def test_advocacy_gate_cleared_by_high_trust_override():
         "Advocacy gate must not fire when document trust override elevates assertion "
         "above ADVOCACY_TRUST_THRESHOLD (SO-3 → SO-5 integration)"
     )
+
+
+def test_advocacy_gate_structural_violation_triggers_reinjection():
+    """Structural violation: advocacy title in Key Findings without hedging → reinject even if marker present."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)  # issue titled "Breach of contract"
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # Output already has the advisory marker BUT violates structure:
+    # "Breach of contract" appears in ### Key Findings without any hedge.
+    output = (
+        "## Executive Summary\nAnalysis complete.\n"
+        "### Key Findings\n- Breach of contract is established.\n"
+        "## Source Calibration Advisory\nAlready present.\n"
+    )
+    result = engine._enforce_advocacy_gate(output)
+    assert result is not None, (
+        "Gate must reinject when structural violation detected, "
+        "even if Source Calibration Advisory marker is already present"
+    )
+    assert "STRUCTURAL VIOLATION" in result
+
+
+def test_advocacy_gate_no_violation_with_hedging_in_key_findings():
+    """No structural violation when advocacy title appears in Key Findings with per-title hedging."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)  # issue titled "Breach of contract"
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # Marker present AND title in Key Findings is properly hedged.
+    output = (
+        "## Executive Summary\nAnalysis complete.\n"
+        "### Key Findings\n- Plaintiff alleges breach of contract per complaint.\n"
+        "## Source Calibration Advisory\nAlready flagged.\n"
+    )
+    result = engine._enforce_advocacy_gate(output)
+    assert result is None, (
+        "Gate must return None when advisory marker is present and "
+        "advocacy title in Key Findings is properly hedged"
+    )
+
+
+def test_advocacy_gate_structural_violation_factual_background():
+    """Structural violation in ## Factual Background also triggers reinjection."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)  # issue titled "Breach of contract"
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # Marker present, Key Findings clean, but Factual Background has unhedged title.
+    output = (
+        "## Executive Summary\nAnalysis complete.\n"
+        "## Factual Background\nThe breach of contract occurred in January.\n"
+        "### Key Findings\n- See factual background above.\n"
+        "## Source Calibration Advisory\nAlready present.\n"
+    )
+    result = engine._enforce_advocacy_gate(output)
+    assert result is not None, (
+        "Gate must reinject when advocacy title appears in ## Factual Background "
+        "without hedging, even if marker already present"
+    )
+    assert "STRUCTURAL VIOLATION" in result

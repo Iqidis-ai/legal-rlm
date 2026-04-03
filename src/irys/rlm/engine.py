@@ -2795,28 +2795,59 @@ class RLMEngine:
         # ## Key Findings or ## Factual Background without hedging markers.
         # This is the hard gate: even if the advisory marker is already present, a
         # structural violation forces re-injection of the advisory block.
-        _HEDGE_MARKERS = ("alleges", "contends", "claims", "asserts", "according to",
-                          "plaintiff's", "defendant's", "per complaint", "per motion")
-        _KEY_FINDINGS_HDR = "### Key Findings"
+        #
+        # Hedge check is PER-TITLE and LOCAL (±300 char window around each match)
+        # so a hedging phrase for one bullet cannot mask an unhedged adjacent bullet.
+        _HEDGE_MARKERS = (
+            "alleges", "alleged", "alleged that", "is alleged",
+            "contends", "contended", "claims", "claimed",
+            "asserts", "asserted", "according to",
+            "plaintiff's", "defendant's", "per complaint", "per motion",
+            "argued", "argued that", "per defense", "per plaintiff",
+            "purportedly", "supposedly", "reportedly",
+        )
         _STRUCTURAL_VIOLATION = False
 
-        if _KEY_FINDINGS_HDR in synthesis_output:
-            # Extract the Key Findings section (up to the next ##/### header)
-            kf_start = synthesis_output.index(_KEY_FINDINGS_HDR)
-            kf_end = len(synthesis_output)
-            for next_hdr in ("###", "##"):
-                idx = synthesis_output.find(next_hdr, kf_start + len(_KEY_FINDINGS_HDR))
-                if idx != -1:
-                    kf_end = min(kf_end, idx)
-                    break
-            kf_section = synthesis_output[kf_start:kf_end].lower()
-            for title in advocacy_titles:
+        import re as _re
+
+        def _extract_section(text: str, hdr: str) -> str:
+            """Return text from hdr to the next header of equal or higher level."""
+            if hdr not in text:
+                return ""
+            start = text.index(hdr)
+            level = len(hdr) - len(hdr.lstrip("#"))
+            # Use compiled regex so we can pass a start pos (re.search 3rd arg = flags).
+            m = _re.compile(r'\n#{1,' + str(level) + r'} ').search(text, start + len(hdr))
+            return text[start:(m.start() if m else len(text))]
+
+        def _section_has_unhedged_title(
+            section: str, titles: "list[str]", markers: "tuple[str, ...]"
+        ) -> bool:
+            """True if any title has a match in section without a nearby hedge marker."""
+            lower = section.lower()
+            for title in titles:
                 t_lower = title.lower()
-                if t_lower in kf_section:
-                    # Check if surrounded by hedging language
-                    if not any(h in kf_section for h in _HEDGE_MARKERS):
-                        _STRUCTURAL_VIOLATION = True
+                pos = 0
+                while True:
+                    idx = lower.find(t_lower, pos)
+                    if idx == -1:
                         break
+                    w0 = max(0, idx - 300)
+                    w1 = min(len(lower), idx + len(t_lower) + 300)
+                    if not any(h in lower[w0:w1] for h in markers):
+                        return True
+                    pos = idx + 1
+            return False
+
+        for _chk_hdr in (
+            "### Key Findings",
+            "## Factual Background",
+            "### Factual Background",
+        ):
+            _sec = _extract_section(synthesis_output, _chk_hdr)
+            if _sec and _section_has_unhedged_title(_sec, advocacy_titles, _HEDGE_MARKERS):
+                _STRUCTURAL_VIOLATION = True
+                break
 
         # If marker already present AND no structural violation, gate is satisfied.
         if _MARKER in synthesis_output and not _STRUCTURAL_VIOLATION:
@@ -2826,7 +2857,8 @@ class RLMEngine:
         if _STRUCTURAL_VIOLATION:
             violation_note = (
                 "\n⚠ STRUCTURAL VIOLATION DETECTED: advocacy-only claims found in "
-                "## Key Findings without hedging. These are allegations only.\n"
+                "## Key Findings or ## Factual Background without hedging. "
+                "These are allegations only.\n"
             )
 
         lines = [
