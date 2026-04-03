@@ -11,6 +11,7 @@ When enabled:
 """
 
 import re
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -176,6 +177,12 @@ class MatterRuntimeAdapter:
         # In-memory stop flag: once set True it stays True, avoiding repeated DB reads.
         # Checked on every lead/doc boundary — must be O(1) not O(DB).
         self._stop_flag: bool = False
+        # Timestamp of the last DB stop-check when the result was False.
+        # Avoids a SQLite round-trip on every engine boundary during normal (no-stop) runs.
+        # Cross-process stops are detected within _STOP_CACHE_TTL seconds.
+        self._stop_last_check: float = 0.0
+        _STOP_CACHE_TTL: float = 1.0  # re-poll DB at most once per second per adapter
+        self._stop_cache_ttl: float = _STOP_CACHE_TTL
 
     # ------------------------------------------------------------------
     # Called from engine._orient()
@@ -472,16 +479,20 @@ class MatterRuntimeAdapter:
         )
 
     def is_stop_requested(self) -> bool:
-        # Fast path: in-memory flag avoids a DB round-trip on every lead/doc boundary.
-        # The flag is set in request_stop() before the DB write, so it is never stale
-        # within the same adapter instance (one adapter = one run = one process).
+        # Fast path 1: in-memory flag — O(1), never stale for same-process stops.
         if self._stop_flag:
             return True
-        # Slow path: first call after a cross-process stop (e.g. API call on another
-        # thread). Only reached when the flag hasn't been set locally yet.
+        # Fast path 2: TTL cache for negative result — avoids a DB round-trip on every
+        # engine boundary during normal (no-stop) runs. Cross-process stops (API call on
+        # another thread/process) are detected within _stop_cache_ttl seconds.
+        now = time.monotonic()
+        if now - self._stop_last_check < self._stop_cache_ttl:
+            return False
+        # Slow path: TTL expired — re-poll DB to detect cross-process stops.
+        self._stop_last_check = now
         result = self.model.ledger.is_stop_requested(self.run_id)
         if result:
-            self._stop_flag = True  # cache for all future calls
+            self._stop_flag = True  # promote to permanent in-memory flag
         return result
 
     def record_actor(
