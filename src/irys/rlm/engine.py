@@ -1221,6 +1221,7 @@ class RLMEngine:
         # Collect all issue IDs produced by this orientation pass (new AND existing).
         # Used to build the predicate-lead pool and fallback lead targets.
         _orient_issue_ids: list[str] = []
+        _raw_idx_to_issue_id: dict[int, str] = {}  # raw issues[] index → issue_id
         if adapter is not None and self._matter_model is not None:
             from ..matter.enums import IssueType
             _issue_type_map = {
@@ -1235,7 +1236,7 @@ class RLMEngine:
                 "diligence_red_flag": IssueType.DILIGENCE_RED_FLAG,
                 "compliance_failure": IssueType.COMPLIANCE_FAILURE,
             }
-            for issue_item in plan.get("issues", []):
+            for _raw_issue_idx, issue_item in enumerate(plan.get("issues") or []):
                 # Accept both legacy string format and new {title, type} dict format
                 if isinstance(issue_item, str):
                     issue_title = issue_item.strip()
@@ -1261,6 +1262,7 @@ class RLMEngine:
                     salience=0.7,
                 )
                 _orient_issue_ids.append(issue_id)
+                _raw_idx_to_issue_id[_raw_issue_idx] = issue_id
                 adapter.log_step(
                     f"Issue identified ({issue_type.value}): {issue_title[:100]}",
                     why="From orientation analysis",
@@ -1285,7 +1287,8 @@ class RLMEngine:
         _issue_pool = _orient_issue_ids  # fallback pool: distribute leads across orientation issues
         # Parse initial_searches: support new dict form {"term": "...", "issue_idx": N}
         # and legacy string form for backward compatibility.
-        _raw_searches = plan.get("initial_searches", [])[:5]
+        # Use `or []` to handle null from LLM (MEDIUM guard).
+        _raw_searches = (plan.get("initial_searches") or [])[:5]
         _initial_searches: list[tuple[str, int | None]] = []
         for _s in _raw_searches:
             if isinstance(_s, str) and _s.strip():
@@ -1294,14 +1297,18 @@ class RLMEngine:
                 _term = _s.get("term", "")
                 if isinstance(_term, str) and _term.strip():
                     _iidx = _s.get("issue_idx")
-                    _initial_searches.append((_term.strip(), _iidx if isinstance(_iidx, int) else None))
+                    # Exclude booleans (bool is a subclass of int in Python).
+                    _valid_idx = isinstance(_iidx, int) and not isinstance(_iidx, bool)
+                    _initial_searches.append((_term.strip(), _iidx if _valid_idx else None))
         for _idx, (_search_term, _lm_issue_idx) in enumerate(_initial_searches):
             # Assign focus_issue_id using priority order:
-            # 1. LLM-specified issue_idx (semantic attribution from orientation)
+            # 1. LLM-specified issue_idx → raw issues[] position → issue_id via
+            #    _raw_idx_to_issue_id (not filtered _orient_issue_ids, so skipped
+            #    issues don't shift indices for later entries — MEDIUM fix).
             # 2. Weakest issue from prior run (steer toward proof gap)
             # 3. Round-robin across new issues (fallback for first run)
-            if _lm_issue_idx is not None and 0 <= _lm_issue_idx < len(_issue_pool):
-                _focus_id = _issue_pool[_lm_issue_idx]
+            if _lm_issue_idx is not None:
+                _focus_id = _raw_idx_to_issue_id.get(_lm_issue_idx)
             elif weakest_id:
                 _focus_id = weakest_id
             elif _issue_pool:
