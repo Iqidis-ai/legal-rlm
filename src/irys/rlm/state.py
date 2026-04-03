@@ -910,6 +910,14 @@ class InvestigationState:
             boost = 0.0
             desc_lower = lead.description.lower()
 
+            # Boost issue-targeted and predicate-driven leads (SO-4 coverage accuracy).
+            # These leads were generated specifically to fill gaps in the issue predicate
+            # tree, so they should be investigated before generic exploration leads.
+            if lead.focus_issue_id is not None:
+                boost += 0.2
+            if lead.source == "predicate":
+                boost += 0.1
+
             # Boost if mentions top entity
             for entity_name in top_entities:
                 if entity_name in desc_lower:

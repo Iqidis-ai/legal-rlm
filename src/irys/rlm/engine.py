@@ -1474,13 +1474,15 @@ class RLMEngine:
             facts_to_add: list[tuple[str, str, str, str]] = []  # (text, src_label, doc_id, issue_relation)
             for fact_item in analysis["key_facts"]:
                 if isinstance(fact_item, str):
-                    facts_to_add.append((fact_item, _fallback_src_label, _fallback_doc_id, "supports"))
+                    # Bare string — LLM gave no issue_relation; don't presume "supports"
+                    # to avoid inflating coverage metrics (SO-4 accuracy).
+                    facts_to_add.append((fact_item, _fallback_src_label, _fallback_doc_id, "neutral"))
                 elif isinstance(fact_item, dict) and "fact" in fact_item:
                     fact_text = fact_item["fact"]
                     src_file = fact_item.get("source_file") or ""
-                    issue_rel = fact_item.get("issue_relation") or "supports"
+                    issue_rel = fact_item.get("issue_relation") or "neutral"
                     if issue_rel not in ("supports", "attacks", "neutral"):
-                        issue_rel = "supports"
+                        issue_rel = "neutral"
                     # Try to resolve source_file to a known hit
                     hit = _hit_by_name.get(src_file) or _hit_by_name.get(src_file.lower())
                     if hit is not None:
@@ -1739,11 +1741,13 @@ class RLMEngine:
             if analysis.get("key_facts"):
                 for fact_item in analysis["key_facts"]:
                     if isinstance(fact_item, str):
-                        facts_to_add.append((fact_item, "supports", None))
+                        # Bare string — no issue_relation from LLM; use neutral to avoid
+                        # inflating issue coverage metrics (SO-4 accuracy).
+                        facts_to_add.append((fact_item, "neutral", None))
                     elif isinstance(fact_item, dict) and "fact" in fact_item:
-                        issue_rel = fact_item.get("issue_relation") or "supports"
+                        issue_rel = fact_item.get("issue_relation") or "neutral"
                         if issue_rel not in ("supports", "attacks", "neutral"):
-                            issue_rel = "supports"
+                            issue_rel = "neutral"
                         effective_date = fact_item.get("effective_date")
                         facts_to_add.append((fact_item["fact"], issue_rel, effective_date))
                 # Prefix each fact with its source role (SO-5 per-fact calibration)

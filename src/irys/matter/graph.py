@@ -408,7 +408,16 @@ class AssertionStore:
             """SELECT a.id, a.proposition_text, a.belief_state,
                       (SELECT ao.source_role FROM assertion_occurrence ao
                        WHERE ao.assertion_id = a.id
-                       ORDER BY ao.created_at ASC, ao.id ASC LIMIT 1) AS source_role
+                       ORDER BY CASE ao.source_role
+                         WHEN 'authoritative' THEN 6
+                         WHEN 'operative'     THEN 5
+                         WHEN 'procedural'    THEN 4
+                         WHEN 'post_hoc'      THEN 3
+                         WHEN 'informal'      THEN 2
+                         WHEN 'draft'         THEN 1
+                         WHEN 'unknown'       THEN 1
+                         WHEN 'advocacy'      THEN 0
+                         ELSE 1 END DESC, ao.created_at ASC LIMIT 1) AS source_role
                FROM assertion a
                WHERE a.matter_id=?
                  AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
