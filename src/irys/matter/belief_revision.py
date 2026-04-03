@@ -23,7 +23,7 @@ from typing import Optional
 _log = logging.getLogger(__name__)
 
 from .db import SQLiteMatterDB
-from .enums import BeliefState, RevisionCause, SOURCE_TRUST_WEIGHTS
+from .enums import BeliefState, LedgerEventType, RevisionCause, SOURCE_TRUST_WEIGHTS
 from .models import RevisionResult
 from .graph import AssertionStore
 
@@ -247,6 +247,35 @@ class BeliefRevisionEngine:
                 self.MAX_WORK,
                 len(pending),
             )
+            # Surface truncation as a structured SYSTEM_WARNING in the reasoning ledger
+            # so users can see incomplete propagation (SO-2 run-level failure signal).
+            if run_id:
+                try:
+                    matter_id = self.assertion_store.matter_id
+                    seq_row = self.db.execute(
+                        "SELECT COALESCE(MAX(seq_no), -1) + 1 FROM ledger_event WHERE run_id=?",
+                        (run_id,),
+                    ).fetchone()
+                    seq_no = seq_row[0] if seq_row else 0
+                    self.db.execute(
+                        """INSERT INTO ledger_event
+                           (id, run_id, seq_no, event_type, summary, created_at)
+                           VALUES (?,?,?,?,?,?)""",
+                        (
+                            uuid.uuid4().hex,
+                            run_id,
+                            seq_no,
+                            LedgerEventType.SYSTEM_WARNING.value,
+                            (
+                                f"Belief revision truncated at MAX_WORK={self.MAX_WORK}; "
+                                f"{len(pending)} nodes unprocessed — downstream belief states "
+                                "may be stale. Revision was partial."
+                            ),
+                            datetime.now(timezone.utc).isoformat(),
+                        ),
+                    )
+                except Exception as exc:
+                    _log.warning("Failed to record truncation ledger event: %s", exc, exc_info=True)
 
         return results
 

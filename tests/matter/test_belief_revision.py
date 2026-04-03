@@ -193,6 +193,41 @@ def test_bfs_stops_at_max_work(model):
         BeliefRevisionEngine.MAX_WORK = original_max
 
 
+def test_max_work_truncation_records_ledger_warning(model):
+    """MAX_WORK truncation must write a SYSTEM_WARNING ledger event (SO-2 run-level signal)."""
+    from irys.matter.belief_revision import BeliefRevisionEngine
+    from irys.matter.enums import LedgerEventType
+
+    original_max = BeliefRevisionEngine.MAX_WORK
+    BeliefRevisionEngine.MAX_WORK = 2
+
+    try:
+        run_id = model.start_run("Truncation test")
+        ids = [add(model, f"Chain proposition {i}.") for i in range(5)]
+        for i in range(4):
+            model.assertions.link(ids[i], ids[i + 1], AssertionLinkType.SUPPORTS)
+            model.assertions.set_belief_state(ids[i], BeliefState.OPERATIVE, 0.9)
+        model.assertions.set_belief_state(ids[4], BeliefState.OPERATIVE, 0.9)
+
+        model.belief.force_state(
+            ids[0], BeliefState.DISPUTED, 0.2, RevisionCause.USER_CORRECTION,
+            run_id=run_id,
+        )
+
+        # The ledger must contain a SYSTEM_WARNING event about truncation
+        events = model.ledger.get_events(run_id)
+        warning_events = [
+            e for e in events
+            if e["event_type"] == LedgerEventType.SYSTEM_WARNING.value
+            and "truncated" in (e.get("summary") or "").lower()
+        ]
+        assert len(warning_events) >= 1, (
+            "A SYSTEM_WARNING ledger event must be recorded when MAX_WORK is reached"
+        )
+    finally:
+        BeliefRevisionEngine.MAX_WORK = original_max
+
+
 def test_both_support_and_attack_results_in_disputed(model):
     """An assertion with both active supports and active attacks must become DISPUTED.
 
