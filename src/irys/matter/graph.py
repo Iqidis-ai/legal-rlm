@@ -3200,6 +3200,21 @@ class ProofStateStore:
         ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
+    def get_advocacy_only(self) -> list[dict]:
+        """Return proof states where advocacy_only=1, using ix_proof_state_advocacy.
+
+        Used by the synthesis gate to find issues whose support comes exclusively
+        from advocacy/post_hoc sources. The dedicated index makes this efficient
+        at scale rather than full-scan + Python filter.
+        """
+        rows = self.db.execute(
+            """SELECT * FROM proof_state
+               WHERE matter_id=? AND advocacy_only=1
+               ORDER BY sufficiency ASC""",
+            (self.matter_id,),
+        ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
     def get_gaps(self, threshold: float = PARTIAL_THRESHOLD) -> list[dict]:
         """Return proof states with sufficiency below threshold — the weakest issues.
 

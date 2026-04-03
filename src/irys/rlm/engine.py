@@ -2915,8 +2915,13 @@ class RLMEngine:
         if self._matter_model is None:
             return ""
         try:
-            ps_rows = self._matter_model.proof_state.get_all()
+            # Use targeted query — hits ix_proof_state_advocacy(matter_id, advocacy_only)
+            # instead of fetching all proof states and filtering in Python.
+            ps_rows = self._matter_model.proof_state.get_advocacy_only()
         except Exception:
+            return ""
+
+        if not ps_rows:
             return ""
 
         # Restrict to open issues only (Tier 1 correctness fix: stale closed-issue
@@ -2934,8 +2939,7 @@ class RLMEngine:
 
         advocacy_issues = [
             ps for ps in ps_rows
-            if ps.get("advocacy_only")
-            and (open_issue_ids is None or ps.get("issue_id") in open_issue_ids)
+            if open_issue_ids is None or ps.get("issue_id") in open_issue_ids
         ]
         if not advocacy_issues:
             return ""
