@@ -65,13 +65,19 @@ PRIORITIZE:
 
 Respond in JSON format:
 {{
-    "issues": ["issue1", "issue2", ...],
+    "issues": [
+        {{"title": "issue description", "type": "claim|defense|element|question|fact|authority|damage"}}
+    ],
     "relevant_folders": ["folder1", "folder2", ...],
     "initial_searches": ["term1", "term2", ...],
     "search_rationale": "Why these search terms will find relevant evidence",
     "document_priority": ["most important doc type", "second most important", ...],
     "hypothesis": "Your initial hypothesis based on query analysis"
 }}
+
+Issue types: claim=a party's primary legal claim, defense=an affirmative defense,
+damages=a damages component or exposure, contract_question=a disputed contract interpretation,
+procedural=a procedural barrier or threshold issue, evidentiary=an evidentiary bottleneck.
 """
 
 
@@ -916,18 +922,38 @@ class RLMEngine:
         _new_issue_ids: list[str] = []
         if adapter is not None and self._matter_model is not None:
             from ..matter.enums import IssueType
-            for issue_title in plan.get("issues", []):
-                if isinstance(issue_title, str) and issue_title.strip():
-                    issue_id, _ = self._matter_model.issues.upsert_issue(
-                        title=issue_title.strip(),
-                        issue_type=IssueType.CLAIM,
-                        salience=0.7,
+            _issue_type_map = {
+                "claim": IssueType.CLAIM,
+                "defense": IssueType.DEFENSE,
+                "damages": IssueType.DAMAGES,
+                "contract_question": IssueType.CONTRACT_QUESTION,
+                "procedural": IssueType.PROCEDURAL_BARRIER,
+                "evidentiary": IssueType.EVIDENTIARY_BOTTLENECK,
+            }
+            for issue_item in plan.get("issues", []):
+                # Accept both legacy string format and new {title, type} dict format
+                if isinstance(issue_item, str):
+                    issue_title = issue_item.strip()
+                    issue_type = IssueType.CLAIM
+                elif isinstance(issue_item, dict) and "title" in issue_item:
+                    issue_title = issue_item["title"].strip()
+                    issue_type = _issue_type_map.get(
+                        (issue_item.get("type") or "claim").lower(), IssueType.CLAIM
                     )
-                    _new_issue_ids.append(issue_id)
-                    adapter.log_step(
-                        f"Issue identified: {issue_title[:100]}",
-                        why="From orientation analysis",
-                    )
+                else:
+                    continue
+                if not issue_title:
+                    continue
+                issue_id, _ = self._matter_model.issues.upsert_issue(
+                    title=issue_title,
+                    issue_type=issue_type,
+                    salience=0.7,
+                )
+                _new_issue_ids.append(issue_id)
+                adapter.log_step(
+                    f"Issue identified ({issue_type.value}): {issue_title[:100]}",
+                    why="From orientation analysis",
+                )
 
         # Create initial leads from plan — preserve raw search terms to bypass
         # _extract_search_term() token collapse (SO-4 issue-focused search).
