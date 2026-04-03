@@ -171,3 +171,48 @@ def test_adapter_auto_infers_source_role():
     occ = model.assertions.get_occurrences(fact_id)
     assert len(occ) == 1
     assert occ[0]["source_role"] == SourceRole.OPERATIVE.value
+
+
+def test_so5_speech_act_elevation_complaint_vs_contract():
+    """SO-5 core test: complaint → ALLEGED; contract → OPERATIVE.
+
+    The same proposition ("Defendant owes $500,000") asserted in a complaint
+    and in a signed contract must be stored with different speech acts.
+    Advocacy documents auto-elevate to ALLEGED; operative documents auto-elevate
+    to OPERATIVE. This distinction must survive in the assertion occurrence rows.
+    """
+    from irys.matter.runtime import MatterRuntimeAdapter
+    from irys.matter.enums import SpeechAct
+
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("SO-5 test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Same proposition text, different document sources
+    proposition = "Defendant owes $500,000 in unpaid invoices"
+
+    aid_complaint = adapter.record_fact(
+        proposition,
+        document_id="plaintiff_complaint.pdf",  # ADVOCACY → ALLEGED
+    )
+    aid_contract = adapter.record_fact(
+        proposition,
+        document_id="Master_Service_Agreement.pdf",  # OPERATIVE → OPERATIVE
+    )
+
+    # These are the SAME canonical assertion (same proposition_text hash)
+    assert aid_complaint == aid_contract, (
+        "Same proposition should map to one canonical assertion regardless of source"
+    )
+
+    # But the OCCURRENCES must differ in speech_act
+    occs = model.assertions.get_occurrences(aid_complaint)
+    assert len(occs) == 2, f"Expected 2 occurrences, got {len(occs)}"
+
+    speech_acts = {occ["speech_act"] for occ in occs}
+    assert SpeechAct.ALLEGED.value in speech_acts, (
+        f"Complaint occurrence should be ALLEGED; got speech_acts={speech_acts}"
+    )
+    assert SpeechAct.OPERATIVE.value in speech_acts, (
+        f"Contract occurrence should be OPERATIVE; got speech_acts={speech_acts}"
+    )
