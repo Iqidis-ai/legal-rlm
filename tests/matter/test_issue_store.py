@@ -292,3 +292,57 @@ def test_multi_claim_evidence_coverage_and_weakest_prioritization(model):
     assert ctx.weakest_issue_id == claim_c, (
         "claim_c has zero evidence and highest materiality — must be prioritized for retrieval"
     )
+
+
+# ---------------------------------------------------------------------------
+# Issue predicates (SO-4)
+# ---------------------------------------------------------------------------
+
+def test_add_predicate_persists(model):
+    """add_predicate() stores a testable element that get_predicates() returns."""
+    issue_id, _ = model.issues.upsert_issue(
+        title="Breach of contract",
+        issue_type=IssueType.CLAIM,
+    )
+    pred_id = model.issues.add_predicate(
+        issue_id=issue_id,
+        description="Contract existence and terms",
+    )
+    assert pred_id
+
+    preds = model.issues.get_predicates(issue_id)
+    assert len(preds) == 1
+    assert preds[0]["description"] == "Contract existence and terms"
+    assert preds[0]["status"] == "open"
+    assert preds[0]["issue_id"] == issue_id
+
+
+def test_multiple_predicates_returned_in_order(model):
+    """Multiple predicates for an issue are returned ordered by creation."""
+    issue_id, _ = model.issues.upsert_issue(
+        title="Breach of service agreement",
+        issue_type=IssueType.CLAIM,
+    )
+    descs = [
+        "Agreement existence and terms",
+        "Defendant's obligation under agreement",
+        "Defendant's failure to perform",
+        "Resulting damages",
+    ]
+    for d in descs:
+        model.issues.add_predicate(issue_id=issue_id, description=d)
+
+    preds = model.issues.get_predicates(issue_id)
+    assert len(preds) == 4
+    assert [p["description"] for p in preds] == descs
+
+
+def test_predicates_are_issue_scoped(model):
+    """Predicates are scoped to their issue — other issues return empty."""
+    id_a, _ = model.issues.upsert_issue("Issue A", IssueType.CLAIM)
+    id_b, _ = model.issues.upsert_issue("Issue B", IssueType.DEFENSE)
+
+    model.issues.add_predicate(id_a, "Only for A")
+
+    assert len(model.issues.get_predicates(id_a)) == 1
+    assert len(model.issues.get_predicates(id_b)) == 0

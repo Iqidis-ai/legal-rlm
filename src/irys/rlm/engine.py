@@ -73,7 +73,11 @@ PRIORITIZE:
 Respond in JSON format:
 {{
     "issues": [
-        {{"title": "issue description", "type": "claim|defense|damages|contract_question|procedural|evidentiary|condition_precedent|waiver|diligence_red_flag|compliance_failure"}}
+        {{
+            "title": "issue description",
+            "type": "claim|defense|damages|contract_question|procedural|evidentiary|condition_precedent|waiver|diligence_red_flag|compliance_failure",
+            "predicates": ["testable element 1", "testable element 2"]
+        }}
     ],
     "relevant_folders": ["folder1", "folder2", ...],
     "initial_searches": ["term1", "term2", ...],
@@ -87,6 +91,11 @@ damages=a damages component or exposure, contract_question=a disputed contract i
 procedural=a procedural barrier or threshold issue, evidentiary=an evidentiary bottleneck,
 condition_precedent=a condition that must be satisfied, waiver=a waiver/estoppel defense,
 diligence_red_flag=a due-diligence risk item, compliance_failure=a regulatory violation.
+
+For each issue, include 2-4 "predicates": the specific testable elements that must be
+established to prove or defeat that issue (e.g., for breach of contract: ["contract
+existence and terms", "defendant's obligation", "failure to perform", "resulting damages"]).
+Predicates drive targeted document search — make them concrete and searchable.
 """
 
 
@@ -980,6 +989,16 @@ class RLMEngine:
                     f"Issue identified ({issue_type.value}): {issue_title[:100]}",
                     why="From orientation analysis",
                 )
+                # Persist predicates for this issue (SO-4: issue predicate tree).
+                # add_predicate is idempotent at the table level — duplicates from
+                # warm-run cache hits are tolerated (same issue_id, same description).
+                if isinstance(issue_item, dict):
+                    for _pred in issue_item.get("predicates", [])[:4]:
+                        if isinstance(_pred, str) and _pred.strip():
+                            self._matter_model.issues.add_predicate(
+                                issue_id=issue_id,
+                                description=_pred.strip()[:300],
+                            )
 
         # Create initial leads from plan — preserve raw search terms to bypass
         # _extract_search_term() token collapse (SO-4 issue-focused search).
@@ -1032,6 +1051,24 @@ class RLMEngine:
                 search_term=fallback_term,
                 focus_issue_id=_fallback_issue_id,
             )
+
+        # Add predicate-driven leads for the weakest issue (SO-4).
+        # Predicates are more specific than issue titles — each one is a concrete
+        # searchable element (e.g. "failure to perform" vs "Breach of contract").
+        # Limit to 3 predicates per orientation to stay within lead budget.
+        if self._matter_model is not None and _new_issue_ids:
+            _pred_target_id = weakest_id or _new_issue_ids[0]
+            _issue_predicates = self._matter_model.issues.get_predicates(_pred_target_id)
+            for _pred_row in _issue_predicates[:3]:
+                _pred_text = _pred_row.get("description", "").strip()
+                if _pred_text:
+                    state.add_lead(
+                        description=f"Evidence for: {_pred_text}",
+                        source="predicate",
+                        priority=0.75,
+                        search_term=_pred_text,
+                        focus_issue_id=_pred_target_id,
+                    )
 
         self._emit_step(
             state,
