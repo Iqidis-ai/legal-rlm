@@ -198,6 +198,7 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
    - value: numeric value if parseable (null otherwise)
    - currency: "USD" etc. for amounts (null if not monetary)
    - context: brief label of what this number represents (max 60 chars)
+   - assertion_idx: 0-based index into key_facts of the fact this number comes from (null if none)
 
 5. DOCUMENT RELATIONSHIPS:
    - References to other documents (attachments, exhibits)
@@ -221,7 +222,7 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
     "key_facts": [{{"fact": "...", "page": N}}],
     "quotes": [{{"text": "...", "page": N}}],
     "entities": {{"people": ["name1"], "dates": ["date1"], "amounts": ["$X"], "companies": ["co1"]}},
-    "numeric_facts": [{{"kind": "amount", "subject": "invoice", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due"}}],
+    "numeric_facts": [{{"kind": "amount", "subject": "invoice", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due", "assertion_idx": 2}}],
     "fact_relationships": [{{"from_idx": 0, "to_idx": 2, "relation": "supports"}}],
     "connections": ["doc reference 1"],
     "concerns": ["issue 1"]
@@ -1555,13 +1556,19 @@ class RLMEngine:
                         amount = float(value) if kind == "amount" and value is not None else None
                         rate = float(value) if kind == "rate" and value is not None else None
                         date_val = raw if kind == "date" else None
-                        # Ground to the first key_fact assertion that mentions this raw value
+                        # Ground to source assertion: prefer explicit assertion_idx from LLM
+                        # (direct index into key_facts), fall back to string matching.
                         _nf_assertion_id: Optional[str] = None
-                        _raw_lower = raw.lower()
-                        for _ft, _fa in zip(facts_to_add, _recorded_ids):
-                            if _raw_lower and _raw_lower in _ft.lower():
-                                _nf_assertion_id = _fa
-                                break
+                        _aidx = nf.get("assertion_idx")
+                        if (isinstance(_aidx, int)
+                                and 0 <= _aidx < len(_recorded_ids)):
+                            _nf_assertion_id = _recorded_ids[_aidx]
+                        else:
+                            _raw_lower = raw.lower()
+                            for _ft, _fa in zip(facts_to_add, _recorded_ids):
+                                if _raw_lower and _raw_lower in _ft.lower():
+                                    _nf_assertion_id = _fa
+                                    break
                         _adp.record_quant(
                             quant_kind=kind,
                             raw_text=f"{raw} — {nf.get('context', '')}",
