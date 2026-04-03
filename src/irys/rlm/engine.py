@@ -2719,7 +2719,7 @@ class RLMEngine:
                            JOIN assertion a ON a.id=ail.assertion_id
                            WHERE ail.issue_id=gl.affected_id
                              AND ail.relation_type IN ('supports','establishes')
-                             AND a.belief_state NOT IN ('disputed','withdrawn','superseded','denied')
+                             AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
                        )
                  )""",
             (_ts, mid),

@@ -270,7 +270,7 @@ class MatterModel:
                    JOIN assertion a ON a.id=ail.assertion_id
                    WHERE i.matter_id=? AND i.status='open'
                      AND ail.relation_type IN ('supports','establishes')
-                     AND a.belief_state NOT IN ('disputed','withdrawn','superseded','denied')
+                     AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
                    GROUP BY ail.issue_id""",
                 (self.matter_id,),
             ).fetchall()
@@ -334,7 +334,7 @@ class MatterModel:
                JOIN assertion a ON a.id = ail.assertion_id
                WHERE i.matter_id=? AND i.status='open'
                  AND ail.relation_type IN ('supports','establishes')
-                 AND a.belief_state NOT IN ('disputed','withdrawn','superseded','denied')
+                 AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
                GROUP BY ail.issue_id""",
             (mid,),
         ).fetchall()
