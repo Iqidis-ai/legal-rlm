@@ -167,8 +167,8 @@ class ReasoningLedgerStore:
         now = _now()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE run_session SET status=?, completed_at=? WHERE id=?",
-                (RunStatus.FAILED.value, now, run_id),
+                "UPDATE run_session SET status=?, completed_at=? WHERE id=? AND matter_id=?",
+                (RunStatus.FAILED.value, now, run_id, self.matter_id),
             )
             self._append_event(
                 run_id=run_id,
@@ -181,8 +181,8 @@ class ReasoningLedgerStore:
         now = _now()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE run_session SET status=?, completed_at=? WHERE id=?",
-                (RunStatus.INTERRUPTED.value, now, run_id),
+                "UPDATE run_session SET status=?, completed_at=? WHERE id=? AND matter_id=?",
+                (RunStatus.INTERRUPTED.value, now, run_id, self.matter_id),
             )
             self._append_event(
                 run_id=run_id,
