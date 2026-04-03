@@ -65,6 +65,29 @@ def test_stop_logged_as_ledger_event(model):
     assert len(user_interrupt_events) >= 1
 
 
+def test_stop_flag_cached_in_memory(model):
+    """After request_stop(), is_stop_requested() uses the in-memory flag, not DB.
+
+    Tests that the cached fast path is set by request_stop() and remains True
+    on repeated calls — critical for performance when called on every lead/doc boundary.
+    """
+    run_id = model.start_run("Cache test run")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    assert adapter._stop_flag is False
+    assert not adapter.is_stop_requested()
+
+    adapter.request_stop()
+
+    # In-memory flag must be set immediately
+    assert adapter._stop_flag is True
+    # Public method must also return True (via fast path)
+    assert adapter.is_stop_requested()
+    # Calling many times must not raise (regression: would OOM if it hit DB each time)
+    for _ in range(1000):
+        assert adapter.is_stop_requested()
+
+
 def test_null_adapter_stop_is_always_false():
     adapter = NullMatterAdapter()
     adapter.request_stop()  # must not raise
