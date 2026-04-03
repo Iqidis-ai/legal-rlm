@@ -1165,11 +1165,18 @@ class RLMEngine:
         if not recent:
             return
 
+        _inactive_states = {"disputed", "withdrawn", "superseded", "denied"}
         loaded = 0
         _strip_role_prefix = __import__("re").compile(r'^\[[A-Z_]+\]\s*').sub
         for row in recent:
             prop = row.get("proposition_text", "")
             if not prop:
+                continue
+            # Skip assertions that have been revised to an inactive belief state (SO-2).
+            # If a user corrected an assertion after a prior run, it must not re-enter
+            # accumulated_facts and appear in the synthesis prompt as if still valid.
+            belief_state = row.get("belief_state") or "active"
+            if belief_state in _inactive_states:
                 continue
             source_role = row.get("primary_source_role") or row.get("source_role") or "unknown"
             label = source_role.upper()
