@@ -2974,11 +2974,12 @@ class RLMEngine:
                 if iid not in base:
                     continue
                 sufficiency = float(ps.get("sufficiency", base[iid][0]))
-                # Contested and insufficient issues both need more evidence.
+                # Contested, insufficient, and advocacy-only issues all need more evidence.
                 proof_status = ps.get("proof_status", "")
                 has_gap = (
                     base[iid][1]
                     or proof_status in ("insufficient", "contested")
+                    or bool(ps.get("advocacy_only"))
                 )
                 base[iid] = (sufficiency, has_gap, base[iid][2])
         except Exception:
@@ -3029,6 +3030,8 @@ class RLMEngine:
                     gap_flag = f" ⚠ CONTESTED ({atk} attacking)"
                 elif proof_status == "insufficient" or item.get("has_proof_gap"):
                     gap_flag = " ⚠ PROOF GAP"
+                if ps.get("advocacy_only"):
+                    gap_flag += " ⚠ ADVOCACY-ONLY (no operative/authoritative support)"
                 strength = (
                     "STRONG" if sufficiency >= 0.75
                     else "PARTIAL" if sufficiency >= 0.25

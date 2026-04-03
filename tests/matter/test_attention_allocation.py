@@ -188,3 +188,48 @@ def test_issue_coverage_summary_without_proof_state(model):
 
     assert "Unprofiled Claim" in summary or "unprofiled" in summary.lower()
     assert "%" in summary
+
+
+def test_issue_coverage_summary_shows_advocacy_only_annotation(model):
+    """Issues backed only by advocacy sources get ⚠ ADVOCACY-ONLY annotation (SO-5)."""
+    iid, _ = model.issues.upsert_issue("Advocacy Claim", IssueType.CLAIM)
+    # Add only advocacy assertions
+    for i in range(2):
+        cand = AssertionCandidate(
+            proposition_text=f"Advocacy fact {i}",
+            speech_act=SpeechAct.ALLEGED,
+            source_role=SourceRole.ADVOCACY,
+            assertion_kind=AssertionKind.FACTUAL,
+            document_id="complaint.pdf",
+        )
+        aid, _ = model.assertions.upsert_occurrence(cand)
+        model.issues.link_assertion(aid, iid, relation_type="supports")
+    model.proof_state.compute_and_store(iid)
+
+    engine = _make_engine(model)
+    summary = engine._build_issue_coverage_summary()
+
+    assert "ADVOCACY-ONLY" in summary
+
+
+def test_coverage_map_flags_advocacy_only_as_has_gap(model):
+    """advocacy_only=True issues get has_gap=True in _get_issue_coverage_map() (SO-5)."""
+    iid, _ = model.issues.upsert_issue("Advocacy Issue", IssueType.CLAIM)
+    cand = AssertionCandidate(
+        proposition_text="Advocacy only fact",
+        speech_act=SpeechAct.ALLEGED,
+        source_role=SourceRole.ADVOCACY,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="brief.pdf",
+    )
+    aid, _ = model.assertions.upsert_occurrence(cand)
+    model.issues.link_assertion(aid, iid, relation_type="supports")
+    model.proof_state.compute_and_store(iid)
+
+    engine = _make_engine(model)
+    coverage_map = engine._get_issue_coverage_map()
+
+    # Issue should be flagged as having a gap because evidence is advocacy-only
+    assert iid in coverage_map
+    _coverage, has_gap, _cnt = coverage_map[iid]
+    assert has_gap is True
