@@ -267,7 +267,7 @@ class MatterModel:
                 f"""SELECT issue_id, COUNT(*) AS cnt
                     FROM assertion_issue_link
                     WHERE issue_id IN ({placeholders})
-                      AND relation_type='supports'
+                      AND relation_type IN ('supports','establishes')
                     GROUP BY issue_id""",
                 issue_ids,
             ).fetchall()
