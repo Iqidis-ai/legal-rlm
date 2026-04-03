@@ -21,6 +21,13 @@ from .state import InvestigationState, StepType, ThinkingStep, Citation, Lead, c
 
 logger = logging.getLogger(__name__)
 
+# Pre-validated assertion link types. Checked against LLM-supplied relation strings
+# before calling adapter.record_assertion_link() to prevent repeated log_warning() DB
+# writes when the LLM returns an unsupported relation throughout a run.
+_VALID_ASSERTION_LINK_TYPES: frozenset[str] = frozenset(
+    {"supports", "attacks", "depends_on", "supersedes", "contradicts", "corroborates"}
+)
+
 
 @dataclass
 class RLMConfig:
@@ -1474,7 +1481,8 @@ class RLMEngine:
                             and 0 <= _fi < len(_search_assertion_ids)
                             and 0 <= _ti < len(_search_assertion_ids)
                             and _fi != _ti
-                            and _search_assertion_ids[_fi] != _search_assertion_ids[_ti]):
+                            and _search_assertion_ids[_fi] != _search_assertion_ids[_ti]
+                            and _rt in _VALID_ASSERTION_LINK_TYPES):
                         adapter.record_assertion_link(
                             _search_assertion_ids[_fi],
                             _search_assertion_ids[_ti],
@@ -1721,7 +1729,8 @@ class RLMEngine:
                                 and 0 <= _ti < len(_recorded_ids)
                                 and _fi != _ti
                                 # Same proposition text deduplicates to same assertion_id
-                                and _recorded_ids[_fi] != _recorded_ids[_ti]):
+                                and _recorded_ids[_fi] != _recorded_ids[_ti]
+                                and _rt in _VALID_ASSERTION_LINK_TYPES):
                             adapter.record_assertion_link(
                                 _recorded_ids[_fi], _recorded_ids[_ti], _rt
                             )
