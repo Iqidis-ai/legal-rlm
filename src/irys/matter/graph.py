@@ -83,48 +83,53 @@ class AssertionStore:
         """
         prop_key = candidate.proposition_key()
         now = _now()
+        _init_state, _init_conf = _initial_belief_state(candidate.speech_act)
+        _candidate_id = _id()
 
         with self.db.transaction():
-            # Check for existing canonical assertion — must match matter, layer, AND prop key
-            # so the same text proposition can coexist in separate reasoning layers (SO-2/arch §2)
-            row = self.db.execute(
-                "SELECT id, belief_state, confidence FROM assertion WHERE matter_id=? AND model_layer=? AND proposition_key=?",
-                (self.matter_id, candidate.model_layer.value, prop_key),
-            ).fetchone()
+            # INSERT OR IGNORE avoids a SELECT-then-INSERT race: two concurrent callers
+            # both attempting INSERT on the same proposition_key would previously cause
+            # the second to hit an IntegrityError. INSERT OR IGNORE lets both proceed
+            # safely — one inserts, the other is silently ignored.
+            # unique key: (matter_id, model_layer, proposition_key) — see ux_assertion_prop.
+            _assert_cur = self.db.execute(
+                """INSERT OR IGNORE INTO assertion
+                   (id, matter_id, proposition_key, proposition_text,
+                    model_layer, assertion_kind,
+                    subject_ref_type, subject_ref_id, predicate_key, object_json,
+                    temporal_scope_start, temporal_scope_end,
+                    belief_state, confidence, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    _candidate_id, self.matter_id, prop_key,
+                    candidate.proposition_text,
+                    candidate.model_layer.value,
+                    candidate.assertion_kind.value,
+                    candidate.subject_ref_type,
+                    candidate.subject_ref_id,
+                    candidate.predicate_key,
+                    candidate.object_json,
+                    candidate.temporal_scope_start,
+                    candidate.temporal_scope_end,
+                    _init_state.value,
+                    _init_conf,
+                    now, now,
+                ),
+            )
+            is_new = _assert_cur.rowcount > 0
 
-            if row is None:
-                # New canonical assertion — seed belief state from speech act so
-                # the graph has meaningful initial values before flush_revisions()
-                assertion_id = _id()
-                _init_state, _init_conf = _initial_belief_state(candidate.speech_act)
-                self.db.execute(
-                    """INSERT INTO assertion
-                       (id, matter_id, proposition_key, proposition_text,
-                        model_layer, assertion_kind,
-                        subject_ref_type, subject_ref_id, predicate_key, object_json,
-                        temporal_scope_start, temporal_scope_end,
-                        belief_state, confidence, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        assertion_id, self.matter_id, prop_key,
-                        candidate.proposition_text,
-                        candidate.model_layer.value,
-                        candidate.assertion_kind.value,
-                        candidate.subject_ref_type,
-                        candidate.subject_ref_id,
-                        candidate.predicate_key,
-                        candidate.object_json,
-                        candidate.temporal_scope_start,
-                        candidate.temporal_scope_end,
-                        _init_state.value,
-                        _init_conf,
-                        now, now,
-                    ),
-                )
-                is_new = True
+            if is_new:
+                assertion_id = _candidate_id
+                row = None  # No existing row — upgrade logic does not apply
             else:
+                # The INSERT was ignored: re-SELECT to get the actual stored ID and state.
+                # Must match matter, layer, AND prop key (same filters as the unique index).
+                row = self.db.execute(
+                    "SELECT id, belief_state, confidence FROM assertion"
+                    " WHERE matter_id=? AND model_layer=? AND proposition_key=?",
+                    (self.matter_id, candidate.model_layer.value, prop_key),
+                ).fetchone()
                 assertion_id = row["id"]
-                is_new = False
 
             # Always attempt to insert an occurrence (even for known assertions from new docs).
             # Capture the cursor so we can detect whether the row was actually inserted

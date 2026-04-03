@@ -2455,51 +2455,46 @@ class RLMEngine:
         a 'proof gap' — the system recognised the claim but found no evidence for it.
         These are surfaced as GapType.MISSING_DOCUMENT with the issue linked so that
         generate_clarifications_from_gaps() can generate targeted questions.
+
+        Uses a single NOT EXISTS SQL query instead of two Python-level IN-list queries to:
+          (a) avoid SQLite variable-count limits on large matters (>999 issues),
+          (b) scope the existing-gap check to proof-gap descriptions only, so an
+              unrelated issue-linked gap (e.g. "missing exhibit A") does not suppress
+              the zero-support proof gap.
         """
         if self._matter_model is None:
             return
         from ..matter.enums import GapType
-        open_issues = self._matter_model.issues.get_open_issues(min_materiality=0.4)
-        if not open_issues:
-            return
+        mid = self._matter_model.matter_id
 
-        # Batch query 1: preload support counts for ALL open issues in one round-trip
-        issue_ids = [i["id"] for i in open_issues]
-        placeholders = ",".join("?" * len(issue_ids))
-        support_rows = self._matter_model.db.execute(
-            f"""SELECT issue_id, COUNT(*) AS cnt FROM assertion_issue_link
-                WHERE issue_id IN ({placeholders})
-                  AND relation_type IN ('supports','establishes')
-                GROUP BY issue_id""",
-            issue_ids,
+        rows = self._matter_model.db.execute(
+            """SELECT i.id, i.title, i.materiality_score
+               FROM issue i
+               WHERE i.matter_id=? AND i.status='open' AND i.materiality_score >= 0.4
+                 AND NOT EXISTS (
+                     SELECT 1 FROM assertion_issue_link ail
+                     WHERE ail.issue_id=i.id
+                       AND ail.relation_type IN ('supports','establishes')
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM gap g
+                     JOIN gap_link gl ON gl.gap_id=g.id
+                     WHERE g.matter_id=? AND g.status='open'
+                       AND g.gap_type='missing_document'
+                       AND g.description LIKE 'No supporting evidence found for issue:%'
+                       AND gl.affected_type='issue' AND gl.affected_id=i.id
+                 )""",
+            (mid, mid),
         ).fetchall()
-        supported_issue_ids = {r["issue_id"] for r in support_rows if r["cnt"] > 0}
 
-        # Batch query 2: preload all open proof-gap issue links in one round-trip
-        existing_gap_rows = self._matter_model.db.execute(
-            f"""SELECT gl.affected_id AS issue_id FROM gap g
-                JOIN gap_link gl ON gl.gap_id = g.id
-                WHERE g.matter_id=?
-                  AND g.status='open'
-                  AND gl.affected_type='issue'
-                  AND gl.affected_id IN ({placeholders})""",
-            [self._matter_model.matter_id] + issue_ids,
-        ).fetchall()
-        already_gapped_issue_ids = {r["issue_id"] for r in existing_gap_rows}
-
-        for issue in open_issues:
-            issue_id = issue["id"]
-            if issue_id in supported_issue_ids:
-                continue  # has supporting evidence — not a proof gap
-            if issue_id in already_gapped_issue_ids:
-                continue  # gap already recorded for this issue
+        for row in rows:
             self._matter_model.gaps.record(
                 gap_type=GapType.MISSING_DOCUMENT,
-                description=f"No supporting evidence found for issue: '{issue['title']}'",
-                expected_artifact=f"Evidence supporting: {issue['title']}",
-                materiality=issue.get("materiality", 0.5),
+                description=f"No supporting evidence found for issue: '{row['title']}'",
+                expected_artifact=f"Evidence supporting: {row['title']}",
+                materiality=row["materiality_score"] or 0.5,
                 affected_type="issue",
-                affected_id=issue_id,
+                affected_id=row["id"],
             )
 
     def _save_checkpoint(self, state: InvestigationState, iteration: int):

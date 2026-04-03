@@ -299,6 +299,36 @@ def test_duplicate_ingest_does_not_overwrite_terminal_belief_state(model):
     )
 
 
+def test_withdrawn_assertion_not_revived_by_new_occurrence(model):
+    """A WITHDRAWN assertion must not be upgraded by a new high-confidence occurrence.
+
+    A user may explicitly withdraw an assertion (e.g., a retracted claim).
+    A subsequent ingestion of the same proposition from a different document
+    must not silently re-activate it via the belief_state upgrade path.
+    """
+    text = "The defendant retracted this claim."
+    c = make_candidate(text, doc_id="initial.pdf",
+                       speech_act=SpeechAct.ALLEGED, source_role=SourceRole.ADVOCACY)
+    aid, is_new = model.assertions.upsert_occurrence(c)
+    assert is_new is True
+
+    # Manually withdraw the assertion (simulating a user correction)
+    model.assertions.set_belief_state(aid, BeliefState.WITHDRAWN, 0.0)
+    assert model.assertions.get(aid).belief_state == BeliefState.WITHDRAWN.value
+
+    # New occurrence from a different document with OPERATIVE confidence (rowcount=1)
+    c_new_doc = make_candidate(text, doc_id="contract.pdf",
+                                speech_act=SpeechAct.OPERATIVE, source_role=SourceRole.OPERATIVE)
+    aid2, is_new2 = model.assertions.upsert_occurrence(c_new_doc)
+    assert aid2 == aid
+    assert is_new2 is False
+
+    # WITHDRAWN must not be upgraded to OPERATIVE
+    assert model.assertions.get(aid).belief_state == BeliefState.WITHDRAWN.value, (
+        "Terminal state WITHDRAWN must not be revived by a new high-confidence occurrence"
+    )
+
+
 # ---------------------------------------------------------------------------
 # SO-2: Truth maintenance via corroborates/supersedes traversal
 # ---------------------------------------------------------------------------
