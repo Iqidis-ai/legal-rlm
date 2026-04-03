@@ -627,6 +627,30 @@ Respond in JSON format:
 """
 
 
+def _link_existing_assertions_to_issue(matter_model, doc_rel_path: str, issue_id: str, adapter) -> None:
+    """Link already-recorded assertions from a document to a focus issue.
+
+    Called when a document is short-circuited (hot path or within-run dedup) but
+    a new focus_issue_id needs to be applied. Without this, the same document read
+    for issue A never gets its assertions linked to issue B when it resurfaces in the
+    same or a subsequent run, creating false proof gaps and undercounting coverage (SO-4).
+    """
+    try:
+        rows = matter_model.db.execute(
+            """SELECT DISTINCT ao.assertion_id FROM assertion_occurrence ao
+               JOIN assertion a ON a.id = ao.assertion_id
+               WHERE a.matter_id=? AND ao.document_id=?""",
+            (matter_model.matter_id, doc_rel_path),
+        ).fetchall()
+        for row in rows:
+            try:
+                matter_model.issues.link_assertion(row["assertion_id"], issue_id, "supports")
+            except Exception:
+                pass  # duplicate links are silently ignored by the UNIQUE index
+    except Exception:
+        pass  # never block the read path
+
+
 class RLMEngine:
     """
     Recursive Language Model investigation engine.
@@ -1458,7 +1482,15 @@ class RLMEngine:
             # Within-run dedup: multiple parallel leads can surface the same top file.
             # Once a coroutine reaches the cold path for a file, mark it in-flight so
             # other coroutines skip it (asyncio is single-threaded; check+add is atomic).
+            # If already in-progress AND there's a focus_issue_id, still link existing
+            # assertions to the new issue so issue coverage isn't undercounted (SO-4).
             if _rel_path in state._reading_in_progress:
+                if focus_issue_id is not None and self._matter_model is not None:
+                    _adapter = getattr(state, "_matter_adapter", None)
+                    if _adapter is not None:
+                        _link_existing_assertions_to_issue(
+                            self._matter_model, _rel_path, focus_issue_id, _adapter
+                        )
                 return
             state._reading_in_progress.add(_rel_path)
 
@@ -1480,7 +1512,16 @@ class RLMEngine:
                     _inventory_doc_id = _inv_id
 
                     if _mm.inventory.is_ingested(_rel_path):
-                        # HOT PATH: sha256 verified current; already fully ingested in a prior run
+                        # HOT PATH: sha256 verified current; already fully ingested in a prior run.
+                        # Still link existing assertions to the current focus issue so that
+                        # issue coverage is not undercounted when the same document is relevant
+                        # to multiple issues across different investigation iterations (SO-4).
+                        if focus_issue_id is not None:
+                            _adapter = getattr(state, "_matter_adapter", None)
+                            if _adapter is not None:
+                                _link_existing_assertions_to_issue(
+                                    _mm, _rel_path, focus_issue_id, _adapter
+                                )
                         state.documents_read += 1
                         self._emit_step(
                             state, StepType.READING,
