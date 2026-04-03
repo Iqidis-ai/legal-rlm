@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1132,6 +1132,34 @@ def _migration_v23(conn) -> None:
             conn.execute(stmt)
 
 
+def _migration_v24(conn) -> None:
+    """Add trust columns to proof_state (SO-5 enforcement upgrade).
+
+    Moves trust metadata from JSON notes blob to dedicated indexed columns so
+    trust enforcement is a first-class structural property, not advisory text:
+    - trust_weighted_support: source-trust-weighted sum of supporting evidence
+    - trust_weighted_attack:  source-trust-weighted sum of attacking evidence
+    - advocacy_only:          1 when all supporting assertions are low-trust sources
+
+    Existing rows get DEFAULT 0 / 0.0; they will be refreshed by the next
+    compute_and_store() call.  The notes column is retained for forward
+    compatibility but trust values are now read from the typed columns.
+    """
+    conn.execute(
+        "ALTER TABLE proof_state ADD COLUMN trust_weighted_support REAL NOT NULL DEFAULT 0.0"
+    )
+    conn.execute(
+        "ALTER TABLE proof_state ADD COLUMN trust_weighted_attack REAL NOT NULL DEFAULT 0.0"
+    )
+    conn.execute(
+        "ALTER TABLE proof_state ADD COLUMN advocacy_only INTEGER NOT NULL DEFAULT 0"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_proof_state_advocacy"
+        " ON proof_state(matter_id, advocacy_only)"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1159,6 +1187,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (21, _migration_v21),
     (22, _migration_v22),
     (23, _migration_v23),
+    (24, _migration_v24),
 ]
 
 

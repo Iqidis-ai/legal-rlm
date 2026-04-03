@@ -2825,12 +2825,7 @@ class ProofStateStore:
             (self.matter_id, issue_id),
         ).fetchone()
 
-        import json as _json
-        trust_notes = _json.dumps({
-            "trust_weighted_support": trust_weighted_support,
-            "trust_weighted_attack": trust_weighted_attack,
-            "advocacy_only": advocacy_only,
-        })
+        _advocacy_only_int = 1 if advocacy_only else 0
 
         if existing:
             ps_id = existing["id"]
@@ -2838,11 +2833,15 @@ class ProofStateStore:
                 """UPDATE proof_state
                    SET sufficiency=?, supporting_count=?, attacking_count=?,
                        total_predicate_count=?, satisfied_predicate_count=?,
-                       proof_status=?, notes=?, computed_at=?
+                       proof_status=?,
+                       trust_weighted_support=?, trust_weighted_attack=?,
+                       advocacy_only=?, computed_at=?
                    WHERE id=?""",
                 (sufficiency, supporting, attacking,
                  total_predicates, satisfied_predicates,
-                 proof_status, trust_notes, now, ps_id),
+                 proof_status,
+                 trust_weighted_support, trust_weighted_attack,
+                 _advocacy_only_int, now, ps_id),
             )
         else:
             ps_id = _id()
@@ -2850,11 +2849,14 @@ class ProofStateStore:
                 """INSERT INTO proof_state
                    (id, matter_id, issue_id, sufficiency, supporting_count,
                     attacking_count, total_predicate_count, satisfied_predicate_count,
-                    proof_status, notes, computed_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    proof_status, trust_weighted_support, trust_weighted_attack,
+                    advocacy_only, computed_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (ps_id, self.matter_id, issue_id, sufficiency,
                  supporting, attacking, total_predicates, satisfied_predicates,
-                 proof_status, trust_notes, now),
+                 proof_status,
+                 trust_weighted_support, trust_weighted_attack,
+                 _advocacy_only_int, now),
             )
 
         return {
@@ -2869,7 +2871,7 @@ class ProofStateStore:
             "proof_status": proof_status,
             "trust_weighted_support": trust_weighted_support,
             "trust_weighted_attack": trust_weighted_attack,
-            "advocacy_only": advocacy_only,
+            "advocacy_only": advocacy_only,  # bool in returned dict
             "computed_at": now,
         }
 
@@ -2878,24 +2880,14 @@ class ProofStateStore:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _unpack_notes(d: dict) -> dict:
-        """Parse trust metadata from the notes JSON field and merge into dict."""
-        import json as _json
-        notes = d.pop("notes", None)
-        if notes:
-            try:
-                trust = _json.loads(notes)
-                d["trust_weighted_support"] = trust.get("trust_weighted_support", 0.0)
-                d["trust_weighted_attack"] = trust.get("trust_weighted_attack", 0.0)
-                d["advocacy_only"] = trust.get("advocacy_only", False)
-            except (ValueError, TypeError):
-                d["trust_weighted_support"] = 0.0
-                d["trust_weighted_attack"] = 0.0
-                d["advocacy_only"] = False
-        else:
-            d["trust_weighted_support"] = 0.0
-            d["trust_weighted_attack"] = 0.0
-            d["advocacy_only"] = False
+    def _row_to_dict(row) -> dict:
+        """Convert a proof_state DB row to a dict, normalising advocacy_only to bool."""
+        d = dict(row)
+        # advocacy_only is stored as INTEGER (0/1) in SQLite; expose as Python bool.
+        d["advocacy_only"] = bool(d.get("advocacy_only", 0))
+        # trust fields always present from schema v24 columns; ensure floats.
+        d.setdefault("trust_weighted_support", 0.0)
+        d.setdefault("trust_weighted_attack", 0.0)
         return d
 
     def get(self, issue_id: str) -> Optional[dict]:
@@ -2904,7 +2896,7 @@ class ProofStateStore:
             "SELECT * FROM proof_state WHERE matter_id=? AND issue_id=?",
             (self.matter_id, issue_id),
         ).fetchone()
-        return self._unpack_notes(dict(row)) if row else None
+        return self._row_to_dict(row) if row else None
 
     def get_all(self, min_sufficiency: float = 0.0) -> list[dict]:
         """Return proof states for all issues, filtered by min sufficiency.
@@ -2917,7 +2909,7 @@ class ProofStateStore:
                ORDER BY sufficiency ASC, proof_status""",
             (self.matter_id, min_sufficiency),
         ).fetchall()
-        return [self._unpack_notes(dict(r)) for r in rows]
+        return [self._row_to_dict(r) for r in rows]
 
     def get_by_status(self, proof_status: str) -> list[dict]:
         """Return all proof states with a given proof_status."""
@@ -2927,7 +2919,7 @@ class ProofStateStore:
                ORDER BY sufficiency ASC""",
             (self.matter_id, proof_status),
         ).fetchall()
-        return [self._unpack_notes(dict(r)) for r in rows]
+        return [self._row_to_dict(r) for r in rows]
 
     def get_gaps(self, threshold: float = PARTIAL_THRESHOLD) -> list[dict]:
         """Return proof states with sufficiency below threshold — the weakest issues.
@@ -2940,7 +2932,7 @@ class ProofStateStore:
                ORDER BY sufficiency ASC""",
             (self.matter_id, threshold),
         ).fetchall()
-        return [self._unpack_notes(dict(r)) for r in rows]
+        return [self._row_to_dict(r) for r in rows]
 
     def get_summary(self) -> dict:
         """Return aggregate proof coverage statistics for the matter."""
