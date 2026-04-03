@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 30
+SCHEMA_VERSION = 31
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1287,6 +1287,40 @@ def _migration_v25(conn) -> None:
     )
 
 
+def _migration_v31(conn) -> None:
+    """Add hot-path indexes from Tier 2 scaling review Q5 (10k docs / 100k assertions).
+
+    Two indexes targeting scan-heavy queries identified in the Tier 2 milestone review:
+
+    1. ix_assertion_belief_state — get_ledger_steering_surface() disputed/unknown query:
+           SELECT id, proposition_text, belief_state
+           FROM assertion
+           WHERE matter_id=? AND belief_state IN ('disputed','unknown')
+           ORDER BY updated_at DESC LIMIT 5
+       Without this index the query scans all assertions for the matter, filters post-scan
+       by belief_state (low selectivity on large matters), then sorts on updated_at.
+       The (matter_id, belief_state, updated_at DESC) composite lets the planner use
+       a range scan on matter_id + equality on belief_state with pre-sorted updated_at.
+
+    2. ix_gap_matter_type — extends the existing ix_gap_matter_status coverage:
+           SELECT * FROM gap WHERE matter_id=? AND status='open'
+           AND materiality_score >= ? ORDER BY materiality_score DESC
+       ix_gap_matter_status covers (matter_id, status, materiality_score DESC) for the
+       open_gaps() query.  This new index adds gap_type as a key column so future
+       queries that filter by both status and gap_type (e.g. steering surface
+       supply_document classification) get full composite selectivity rather than
+       filtering gap_type post-scan.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_assertion_belief_state"
+        " ON assertion(matter_id, belief_state, updated_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_gap_matter_type"
+        " ON gap(matter_id, status, gap_type, materiality_score DESC)"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1321,6 +1355,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (28, _migration_v28),
     (29, _migration_v29),
     (30, _migration_v30),
+    (31, _migration_v31),
 ]
 
 

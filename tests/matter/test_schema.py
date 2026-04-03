@@ -339,3 +339,31 @@ def test_migration_v30_adds_completed_at_index():
         "SELECT name FROM sqlite_master WHERE type='index' AND name='ix_run_completed'"
     ).fetchone()
     assert idx is not None, "ix_run_completed must be created by migration v30"
+
+
+def test_migration_v31_adds_assertion_belief_state_index():
+    """v31 adds ix_assertion_belief_state on assertion(matter_id, belief_state, updated_at)."""
+    from irys.matter.db import SQLiteMatterDB
+
+    db = SQLiteMatterDB.in_memory()
+    idx = db.execute(
+        "SELECT name FROM sqlite_master"
+        " WHERE type='index' AND name='ix_assertion_belief_state'"
+    ).fetchone()
+    assert idx is not None, (
+        "ix_assertion_belief_state must be created by migration v31"
+    )
+
+
+def test_migration_v31_adds_gap_matter_type_index():
+    """v31 adds ix_gap_matter_type on gap(matter_id, status, gap_type, materiality_score)."""
+    from irys.matter.db import SQLiteMatterDB
+
+    db = SQLiteMatterDB.in_memory()
+    idx = db.execute(
+        "SELECT name FROM sqlite_master"
+        " WHERE type='index' AND name='ix_gap_matter_type'"
+    ).fetchone()
+    assert idx is not None, (
+        "ix_gap_matter_type must be created by migration v31"
+    )
