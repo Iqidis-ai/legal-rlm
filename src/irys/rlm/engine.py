@@ -306,6 +306,9 @@ Quantitative Summary (SO-6 — extracted monetary amounts):
 Known Gaps & Missing Evidence (SO-7 — MUST surface in Gaps & Limitations section):
 {gap_summary}
 
+Structured Relationships (SO-2 — typed assertion graph, subject→predicate→object):
+{structured_relationships}
+
 Key Entities Identified:
 {entities}
 
@@ -2145,6 +2148,11 @@ class RLMEngine:
         # LLM surfaces them in the Gaps & Limitations section, not silently ignores them.
         gap_summary = self._build_gap_summary()
 
+        # Build typed assertion relationship block (SO-2) — typed assertions with
+        # subject/predicate/object from the assertion graph, so the LLM reasons about
+        # explicit structured relationships, not just prose text.
+        structured_relationships = self._build_structured_relationships()
+
         prompt = SYNTHESIS_PROMPT.format(
             query=state.query,
             docs_analyzed=state.documents_read,
@@ -2155,6 +2163,7 @@ class RLMEngine:
             source_calibration=source_calibration,
             quant_summary=quant_summary,
             gap_summary=gap_summary,
+            structured_relationships=structured_relationships or "No typed relationships extracted.",
             entities=entities_text or "No entities identified",
             findings=findings_text or "No specific findings accumulated",
             citations=citations_text or "No citations collected",
@@ -2342,6 +2351,58 @@ class RLMEngine:
             if deps:
                 dep_strs = [f"{d['affected_type']}:{d['affected_id'][:8]}" for d in deps]
                 lines.append(f"         Affects: {', '.join(dep_strs)}")
+        return "\n".join(lines)
+
+    def _build_structured_relationships(self) -> str:
+        """Build a structured assertion block for the synthesis prompt (SO-2).
+
+        Pulls typed assertions that have populated subject_ref_id, predicate_key,
+        and/or object_json from the matter model so the LLM can reason about
+        explicit structured relationships rather than only prose text.
+
+        Returns empty string if no typed assertions exist (no prompt bloat when
+        SPO extraction was unavailable).
+        """
+        if self._matter_model is None:
+            return ""
+        try:
+            rows = self._matter_model.assertions.db.execute(
+                """SELECT a.proposition_text, a.predicate_key, a.subject_ref_id,
+                          a.object_json, a.belief_state,
+                          (SELECT ao.source_role FROM assertion_occurrence ao
+                           WHERE ao.assertion_id = a.id
+                           ORDER BY CASE ao.source_role
+                             WHEN 'authoritative' THEN 6 WHEN 'operative' THEN 5
+                             WHEN 'procedural' THEN 4 WHEN 'post_hoc' THEN 3
+                             WHEN 'informal' THEN 2 ELSE 1 END DESC
+                           LIMIT 1) AS source_role
+                   FROM assertion a
+                   WHERE a.matter_id=?
+                     AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+                     AND (a.predicate_key IS NOT NULL OR a.subject_ref_id IS NOT NULL)
+                   ORDER BY a.created_at DESC
+                   LIMIT 30""",
+                (self._matter_model.matter_id,),
+            ).fetchall()
+        except Exception:
+            return ""
+
+        if not rows:
+            return ""
+
+        lines = [f"Typed assertion graph ({len(rows)} structured relationships identified):"]
+        for row in rows:
+            pred = row["predicate_key"] or "?"
+            subj = row["subject_ref_id"] or "?"
+            try:
+                obj = json.loads(row["object_json"]) if row["object_json"] else "?"
+            except Exception:
+                obj = row["object_json"] or "?"
+            role = (row["source_role"] or "unknown").upper()
+            belief = row["belief_state"] or "active"
+            lines.append(
+                f"  [{role}/{belief}] {subj} —[{pred}]→ {str(obj)[:80]}"
+            )
         return "\n".join(lines)
 
     # ==========================================================================
