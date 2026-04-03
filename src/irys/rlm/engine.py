@@ -164,9 +164,12 @@ Search Results for "{search_term}":
 ANALYZE THESE RESULTS CAREFULLY:
 
 1. KEY FACTS: Extract ONLY the 10 most important specific facts (STRICT LIMIT: 10 maximum):
-   - Format each fact as: {"fact": "...", "source_file": "filename_if_determinable", "issue_relation": "supports|attacks|neutral"}
+   - Format each fact as: {"fact": "...", "source_file": "filename_if_determinable", "issue_relation": "supports|attacks|neutral", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD by March 2023"}
    - source_file: the filename from the search results where the fact appears
    - issue_relation: whether this fact SUPPORTS the current hypothesis, ATTACKS/undermines it, or is NEUTRAL
+   - subject: the entity performing the action (person, company, or concept) — null if unclear
+   - predicate: verb/action in snake_case (e.g. "agreed_to_pay", "was_employed_by", "terminated") — null if unclear
+   - object: what the predicate applies to (amount, party, date, condition) — null if unclear
    - Directly relevant to the query
    - Supported by the document text
    - Include dates, amounts, party names where found
@@ -190,7 +193,7 @@ ANALYZE THESE RESULTS CAREFULLY:
 
 Respond in COMPACT JSON (keep under 3000 chars):
 {{
-    "key_facts": [{{"fact": "fact text", "source_file": "filename.pdf", "issue_relation": "supports"}}, ...],
+    "key_facts": [{{"fact": "fact text", "source_file": "filename.pdf", "issue_relation": "supports", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD"}}, ...],
     "fact_relationships": [{{"from_idx": 0, "to_idx": 1, "relation": "corroborates|contradicts|supersedes|supports"}}],
     "new_leads": [{{"desc": "...", "priority": 0.8}}],
     "hypothesis_update": "string or null",
@@ -222,9 +225,12 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
    - Directly relevant to the query/focus
    - Specific (include dates, amounts, names)
    - Keep each fact under 100 characters
-   - Format each fact as: {"fact": "...", "page": N, "issue_relation": "supports|attacks|neutral", "effective_date": "YYYY-MM-DD or null"}
+   - Format each fact as: {"fact": "...", "page": N, "issue_relation": "supports|attacks|neutral", "effective_date": "YYYY-MM-DD or null", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD by March 2023"}
    - issue_relation: whether the fact SUPPORTS the investigation focus, ATTACKS/undermines it, or is NEUTRAL
    - effective_date: ISO date when this fact became effective/occurred (null if not temporally scoped)
+   - subject: entity performing the action (person, company, or concept) — null if unclear
+   - predicate: verb/action in snake_case (e.g. "agreed_to_pay", "was_employed_by", "terminated") — null if unclear
+   - object: what the predicate applies to (amount, party, date, condition) — null if unclear
 
 2. CRITICAL QUOTES (STRICT LIMIT: 3 maximum): Identify the most important passages:
    - Direct admissions or acknowledgments
@@ -269,7 +275,7 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
 
 Respond in COMPACT JSON (STRICT: under 4000 chars total):
 {{
-    "key_facts": [{{"fact": "...", "page": N, "issue_relation": "supports", "effective_date": "2023-03-15"}}],
+    "key_facts": [{{"fact": "...", "page": N, "issue_relation": "supports", "effective_date": "2023-03-15", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD"}}],
     "quotes": [{{"text": "...", "page": N}}],
     "entities": {{"people": ["name1"], "dates": ["date1"], "amounts": ["$X"], "companies": ["co1"]}},
     "numeric_facts": [{{"kind": "amount", "subject": "invoice", "subject_id": "Invoice #1042", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due", "page": 3, "assertion_idx": 2}}],
@@ -1475,10 +1481,12 @@ class RLMEngine:
             # (investigator deliberately sought evidence for this issue); "neutral"
             # otherwise to avoid inflating coverage with unrelated facts. (SO-4)
             _bare_rel = "supports" if (lead is not None and lead.focus_issue_id) else "neutral"
-            facts_to_add: list[tuple[str, str, str, str]] = []  # (text, src_label, doc_id, issue_relation)
+            # facts_to_add: (text, src_label, doc_id, issue_relation, spo_dict|None)
+            # spo_dict carries subject_ref_type/id, predicate_key, object_json for SO-2
+            facts_to_add: list[tuple] = []
             for fact_item in analysis["key_facts"]:
                 if isinstance(fact_item, str):
-                    facts_to_add.append((fact_item, _fallback_src_label, _fallback_doc_id, _bare_rel))
+                    facts_to_add.append((fact_item, _fallback_src_label, _fallback_doc_id, _bare_rel, None))
                 elif isinstance(fact_item, dict) and "fact" in fact_item:
                     fact_text = fact_item["fact"]
                     src_file = fact_item.get("source_file") or ""
@@ -1497,10 +1505,22 @@ class RLMEngine:
                     else:
                         src_label = _fallback_src_label
                         doc_id = _fallback_doc_id
-                    facts_to_add.append((fact_text, src_label, doc_id, issue_rel))
+                    # Extract SPO triple when LLM provides it (SO-2 typed assertions)
+                    _subj = fact_item.get("subject")
+                    _pred = fact_item.get("predicate")
+                    _obj = fact_item.get("object")
+                    spo = None
+                    if _subj or _pred or _obj:
+                        spo = {
+                            "subject_ref_type": "free_text" if _subj else None,
+                            "subject_ref_id": str(_subj) if _subj else None,
+                            "predicate_key": str(_pred).lower().replace(" ", "_") if _pred else None,
+                            "object_json": json.dumps(str(_obj)) if _obj else None,
+                        }
+                    facts_to_add.append((fact_text, src_label, doc_id, issue_rel, spo))
 
             # Add to state with per-fact source-role prefix (SO-5)
-            state.add_facts([f"[{lbl}] {txt}" for txt, lbl, _, _rel in facts_to_add])
+            state.add_facts([f"[{lbl}] {txt}" for txt, lbl, _, _rel, _spo in facts_to_add])
 
             # Record into matter model with correct per-fact doc_id; collect assertion IDs
             # for graph-edge creation below (SO-2 assertion links in search analysis path).
@@ -1510,8 +1530,20 @@ class RLMEngine:
                 issue_id = lead.focus_issue_id if lead is not None else None
                 # Batch all facts into one outer transaction — inner per-fact transactions
                 # become savepoints, collapsing N disk syncs into 1 (perf SO-1).
+                # Use dict form for facts with SPO triples (SO-2), tuple form otherwise.
+                _batch = []
+                for fact_text, _lbl, doc_id, issue_rel, spo in facts_to_add:
+                    if spo:
+                        _batch.append({
+                            "proposition_text": fact_text,
+                            "document_id": doc_id,
+                            "issue_link_type": issue_rel,
+                            **spo,
+                        })
+                    else:
+                        _batch.append((fact_text, doc_id, issue_rel))
                 _search_assertion_ids = adapter.record_facts_batch(
-                    [(fact_text, doc_id, issue_rel) for fact_text, _lbl, doc_id, issue_rel in facts_to_add],
+                    _batch,
                     issue_id=issue_id,
                 )
                 if facts_to_add:
@@ -1743,32 +1775,59 @@ class RLMEngine:
             # (deliberately investigating evidence for this issue); "neutral" otherwise
             # to avoid inflating coverage with unrelated facts. (SO-4)
             _bare_rel_dr = "supports" if focus_issue_id else "neutral"
-            facts_to_add: list[tuple[str, str, str | None]] = []  # (text, issue_relation, effective_date)
+            # facts_to_add: (text, issue_relation, effective_date, spo_dict|None)
+            # spo_dict carries subject_ref_type/id, predicate_key, object_json for SO-2
+            facts_to_add: list[tuple] = []
             _recorded_ids: list[str] = []
             if analysis.get("key_facts"):
                 for fact_item in analysis["key_facts"]:
                     if isinstance(fact_item, str):
-                        facts_to_add.append((fact_item, _bare_rel_dr, None))
+                        facts_to_add.append((fact_item, _bare_rel_dr, None, None))
                     elif isinstance(fact_item, dict) and "fact" in fact_item:
                         _raw_rel_dr = fact_item.get("issue_relation")
                         issue_rel = _raw_rel_dr.lower().strip() if isinstance(_raw_rel_dr, str) else "neutral"
                         if issue_rel not in ("supports", "attacks", "neutral"):
                             issue_rel = "neutral"
                         effective_date = fact_item.get("effective_date")
-                        facts_to_add.append((fact_item["fact"], issue_rel, effective_date))
+                        # Extract SPO triple when LLM provides it (SO-2 typed assertions)
+                        _subj = fact_item.get("subject")
+                        _pred = fact_item.get("predicate")
+                        _obj = fact_item.get("object")
+                        spo = None
+                        if _subj or _pred or _obj:
+                            spo = {
+                                "subject_ref_type": "free_text" if _subj else None,
+                                "subject_ref_id": str(_subj) if _subj else None,
+                                "predicate_key": str(_pred).lower().replace(" ", "_") if _pred else None,
+                                "object_json": json.dumps(str(_obj)) if _obj else None,
+                            }
+                        facts_to_add.append((fact_item["fact"], issue_rel, effective_date, spo))
                 # Prefix each fact with its source role (SO-5 per-fact calibration)
                 from ..matter.runtime import infer_source_role as _infer_role
                 _src_label = _infer_role(doc.filename).value.upper()
-                state.add_facts([f"[{_src_label}] {f}" for f, _, _d in facts_to_add])
+                state.add_facts([f"[{_src_label}] {f}" for f, _, _d, _spo in facts_to_add])
                 # Also record into matter model if enabled; pass issue_id if from targeted lead.
                 # Use record_facts_batch() so N facts → 1 outer transaction (savepoints inside).
                 adapter = getattr(state, "_matter_adapter", None)
                 if adapter is not None:
                     # _rel_path: repo-relative stable path (not basename) to prevent
                     # same-name files in different dirs aliasing in assertion_occurrence.
+                    # Use dict form for facts with SPO triples (SO-2), tuple form otherwise.
+                    _dr_batch = []
+                    for f, issue_rel, eff_date, spo in facts_to_add:
+                        if spo:
+                            _dr_batch.append({
+                                "proposition_text": f,
+                                "document_id": _rel_path,
+                                "issue_link_type": issue_rel,
+                                "temporal_scope_start": eff_date,
+                                **spo,
+                            })
+                        else:
+                            _dr_batch.append((f, _rel_path, issue_rel, eff_date))
                     _recorded_ids.extend(
                         adapter.record_facts_batch(
-                            [(f, _rel_path, issue_rel, eff_date) for f, issue_rel, eff_date in facts_to_add],
+                            _dr_batch,
                             issue_id=focus_issue_id,
                         )
                     )
@@ -2560,10 +2619,18 @@ class RLMEngine:
         content: str,
         details: Optional[dict] = None,
     ):
-        """Emit a thinking step and call callback."""
+        """Emit a thinking step, call callback, and write to durable DB ledger (SO-3)."""
         step = state.add_step(step_type, content, details)
         if self.on_step:
             self.on_step(step)
+        # Persist to durable reasoning ledger so the trail survives process restart (SO-3).
+        adapter = getattr(state, "_matter_adapter", None)
+        if adapter is not None:
+            _summary = f"[{step_type.value.upper()}] {content}"
+            if step_type == StepType.ERROR:
+                adapter.log_warning(_summary)
+            else:
+                adapter.log_step(_summary)
         # Also emit progress update
         self._emit_progress(state)
 

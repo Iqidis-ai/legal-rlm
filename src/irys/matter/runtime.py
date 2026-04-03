@@ -210,6 +210,11 @@ class MatterRuntimeAdapter:
         issue_id: Optional[str] = None,
         issue_link_type: str = "supports",
         temporal_scope_start: Optional[str] = None,
+        subject_ref_type: Optional[str] = None,
+        subject_ref_id: Optional[str] = None,
+        predicate_key: Optional[str] = None,
+        object_json: Optional[str] = None,
+        temporal_scope_end: Optional[str] = None,
     ) -> str:
         """
         Convert an extracted fact string into a typed assertion.
@@ -217,6 +222,8 @@ class MatterRuntimeAdapter:
         Also auto-infers speech_act from source_role when speech_act is EXTRACTED
         (advocacy → alleged, operative → operative, authoritative → operative).
         If issue_id is provided, links the assertion to that issue with issue_link_type.
+        Optional subject_ref_type/subject_ref_id/predicate_key/object_json populate
+        the typed SPO fields when the LLM extracts structured triples (SO-2).
         Returns assertion_id.
         """
         if source_role == SourceRole.UNKNOWN:
@@ -250,6 +257,11 @@ class MatterRuntimeAdapter:
             speech_act=speech_act,
             origin_kind=OriginKind.EXTRACTED,
             temporal_scope_start=temporal_scope_start,
+            subject_ref_type=subject_ref_type,
+            subject_ref_id=subject_ref_id,
+            predicate_key=predicate_key,
+            object_json=object_json,
+            temporal_scope_end=temporal_scope_end,
         )
         assertion_id, is_new = self.model.record_assertion(candidate)
         self._pending_assertion_ids.append(assertion_id)
@@ -273,15 +285,30 @@ class MatterRuntimeAdapter:
 
     def record_facts_batch(
         self,
-        facts: list[tuple],
+        facts: list,
         issue_id: Optional[str] = None,
     ) -> list[str]:
         """Record multiple facts in a single outer transaction to reduce per-fact commit overhead.
 
-        Each element of `facts` is either:
+        Each element of `facts` is either a tuple or a dict:
+
+        Tuple forms:
           - (proposition_text, document_id)                               — defaults
           - (proposition_text, document_id, issue_relation)               — explicit relation
           - (proposition_text, document_id, issue_relation, temporal_scope_start) — + ISO date
+
+        Dict form (supports typed SPO fields for SO-2):
+          {
+            "proposition_text": str,
+            "document_id": str,
+            "issue_link_type": str,           # default "supports"
+            "temporal_scope_start": str|None,
+            "subject_ref_type": str|None,     # SO-2 typed triple
+            "subject_ref_id": str|None,
+            "predicate_key": str|None,
+            "object_json": str|None,
+            "temporal_scope_end": str|None,
+          }
 
         Processed inside one outer ``with self.model.db.transaction()`` so that inner
         per-fact transactions become savepoints instead of full BEGIN/COMMITs,
@@ -294,15 +321,32 @@ class MatterRuntimeAdapter:
         assertion_ids = []
         with self.model.db.transaction():
             for item in facts:
-                proposition_text, document_id = item[0], item[1]
-                issue_link_type = item[2] if len(item) > 2 else "supports"
-                temporal_scope_start = item[3] if len(item) > 3 else None
+                if isinstance(item, dict):
+                    proposition_text = item["proposition_text"]
+                    document_id = item["document_id"]
+                    issue_link_type = item.get("issue_link_type", "supports")
+                    temporal_scope_start = item.get("temporal_scope_start")
+                    subject_ref_type = item.get("subject_ref_type")
+                    subject_ref_id = item.get("subject_ref_id")
+                    predicate_key = item.get("predicate_key")
+                    object_json = item.get("object_json")
+                    temporal_scope_end = item.get("temporal_scope_end")
+                else:
+                    proposition_text, document_id = item[0], item[1]
+                    issue_link_type = item[2] if len(item) > 2 else "supports"
+                    temporal_scope_start = item[3] if len(item) > 3 else None
+                    subject_ref_type = subject_ref_id = predicate_key = object_json = temporal_scope_end = None
                 aid = self.record_fact(
                     proposition_text,
                     document_id=document_id,
                     issue_id=issue_id,
                     issue_link_type=issue_link_type,
                     temporal_scope_start=temporal_scope_start,
+                    subject_ref_type=subject_ref_type,
+                    subject_ref_id=subject_ref_id,
+                    predicate_key=predicate_key,
+                    object_json=object_json,
+                    temporal_scope_end=temporal_scope_end,
                 )
                 assertion_ids.append(aid)
         return assertion_ids
