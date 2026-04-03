@@ -319,11 +319,20 @@ class MatterRuntimeAdapter:
         try:
             lt = AssertionLinkType(link_type)
         except ValueError:
-            return  # unknown link type — skip silently
+            self.log_warning(
+                f"record_assertion_link: unknown link_type '{link_type}' — edge dropped "
+                f"({src_assertion_id[:8]}→{dst_assertion_id[:8]})"
+            )
+            return
         try:
             self.model.assertions.link(src_assertion_id, dst_assertion_id, lt)
-        except Exception:
-            pass  # link building must not block fact recording
+        except Exception as exc:
+            # Link write must not block already-recorded facts, but the failure is
+            # observable via the ledger so the dependency graph gap is diagnosed.
+            self.log_warning(
+                f"record_assertion_link: write failed ({src_assertion_id[:8]}→"
+                f"{dst_assertion_id[:8]}, {link_type}): {str(exc)[:120]}"
+            )
 
     def flush_revisions(self) -> int:
         """
@@ -369,6 +378,14 @@ class MatterRuntimeAdapter:
         self.model.ledger.append_event(
             run_id=self.run_id,
             event_type=LedgerEventType.CONFLICT_DETECTED,
+            summary=summary[:500],
+        )
+
+    def log_warning(self, summary: str) -> None:
+        """Append a system warning to the reasoning ledger (non-fatal errors, dropped data)."""
+        self.model.ledger.append_event(
+            run_id=self.run_id,
+            event_type=LedgerEventType.SYSTEM_WARNING,
             summary=summary[:500],
         )
 
@@ -588,6 +605,9 @@ class NullMatterAdapter:
         return 0
 
     def log_step(self, summary: str, why: Optional[str] = None) -> None:
+        pass
+
+    def log_warning(self, summary: str) -> None:
         pass
 
     def log_conflict(self, summary: str) -> None:

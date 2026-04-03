@@ -152,3 +152,4 @@ class LedgerEventType(str, Enum):
     SYNTHESIS_STARTED = "synthesis_started"
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"
+    SYSTEM_WARNING = "system_warning"

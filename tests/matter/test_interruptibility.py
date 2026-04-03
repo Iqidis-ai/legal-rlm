@@ -98,6 +98,26 @@ def test_null_adapter_stop_is_always_false():
 # Ledger event ordering
 # ---------------------------------------------------------------------------
 
+def test_record_assertion_link_unknown_type_logs_warning(model):
+    """Unknown link types must log a SYSTEM_WARNING ledger event, not silently disappear.
+
+    Silent drops hide dependency graph gaps (SO-2 reliability).
+    """
+    from irys.matter.enums import LedgerEventType
+    run_id = model.start_run("link warning test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid1 = adapter.record_fact("Fact A.", "docA.pdf")
+    aid2 = adapter.record_fact("Fact B.", "docB.pdf")
+
+    # Provide an invalid link type — should log a warning, not raise
+    adapter.record_assertion_link(aid1, aid2, "definitely_not_a_real_link_type")
+
+    events = model.ledger.get_events(run_id)
+    warnings = [e for e in events if e["event_type"] == LedgerEventType.SYSTEM_WARNING.value]
+    assert len(warnings) >= 1, "Unknown link type must produce a SYSTEM_WARNING ledger entry"
+    assert "link_type" in warnings[0]["summary"] or "definitely_not_a_real_link_type" in warnings[0]["summary"]
+
+
 def test_ledger_events_monotonic_sequence(model):
     run_id = model.start_run("Sequence test")
     adapter = MatterRuntimeAdapter(model, run_id)
