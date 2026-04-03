@@ -317,3 +317,40 @@ def test_withdrawn_attacker_does_not_trigger_disputed(model):
     assert central_record.belief_state == BeliefState.OPERATIVE.value, (
         "Assertion with only WITHDRAWN attackers must remain OPERATIVE (INERT filtering)"
     )
+
+
+def test_revision_event_stores_note_and_run_id():
+    """belief_revision_event must store the note and run_id for traceability (SO-3).
+
+    When a user corrects an assertion, they provide a note explaining WHY.
+    That note must survive to the belief_revision_event table so it can be
+    surfaced in the reasoning trail.  The run_id must also be stored so
+    the correction can be traced back to the specific investigation session.
+    """
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Note persistence test")
+
+    a_id = add(model, "Delivery occurred on time.")
+    model.assertions.set_belief_state(a_id, BeliefState.ALLEGED, 0.5)
+
+    model.belief.force_state(
+        assertion_id=a_id,
+        new_state=BeliefState.DISPUTED,
+        new_confidence=0.2,
+        cause=RevisionCause.USER_CORRECTION,
+        run_id=run_id,
+        note="Client confirmed delivery was actually 3 days late per shipping receipt.",
+    )
+
+    events = model.db.execute(
+        "SELECT note, run_id FROM belief_revision_event WHERE assertion_id=?",
+        (a_id,),
+    ).fetchall()
+    assert len(events) >= 1
+    last = events[-1]
+    assert last["note"] is not None and "3 days late" in last["note"], (
+        "User correction note must be stored in belief_revision_event for traceability (SO-3)"
+    )
+    assert last["run_id"] == run_id, (
+        "run_id must be stored in belief_revision_event so corrections are traceable to their run (SO-3)"
+    )
