@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -77,8 +77,10 @@ CREATE INDEX IF NOT EXISTS ix_assertion_matter_created
 -- with the same speech-act classification. Including speech_act allows the same
 -- assertion to legitimately appear multiple times in one document when attributed
 -- differently (e.g., alleged in the complaint, admitted in the answer).
+-- Widened in v12 to include span identity so same (assertion, doc, speech_act)
+-- can have multiple occurrences when they come from different source spans.
 CREATE UNIQUE INDEX IF NOT EXISTS ix_occurrence_unique_doc
-    ON assertion_occurrence(assertion_id, document_id, speech_act);
+    ON assertion_occurrence(assertion_id, document_id, speech_act, COALESCE(span_id, ''));
 
 CREATE TABLE IF NOT EXISTS assertion_link (
     id              TEXT PRIMARY KEY,
@@ -749,6 +751,22 @@ def _migration_v11(conn) -> None:
     )
 
 
+def _migration_v12(conn) -> None:
+    """Widen ix_occurrence_unique_doc to include span_id.
+
+    The v5 key (assertion_id, document_id, speech_act) silently drops a second
+    occurrence of the same assertion from the same document + speech_act when it
+    comes from a different source span. Including span identity preserves provenance.
+    COALESCE(span_id, '') treats NULL spans as a single bucket (backward-compatible
+    with existing rows that have no span).
+    """
+    conn.execute("DROP INDEX IF EXISTS ix_occurrence_unique_doc")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_occurrence_unique_doc"
+        " ON assertion_occurrence(assertion_id, document_id, speech_act, COALESCE(span_id, ''))"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -764,6 +782,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (9, _migration_v9),
     (10, _migration_v10),
     (11, _migration_v11),
+    (12, _migration_v12),
 ]
 
 
