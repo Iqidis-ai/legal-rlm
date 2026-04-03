@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-03 (post-adversarial-audit #020 + SO-4 weighted coverage fix)
+Last updated: 2026-04-03 (post-adversarial-audit #021 + Tier 1 correctness CLEAN)
 Branch: SebihSpecial
 
 ---
@@ -20,8 +20,8 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | SO-1: Durable Matter Model | **PARTIAL** | Audit #019: reuse opportunistic, no >70% gate. Schema v29 adds measurable reuse_rate to run_session; target in get_so_metrics() |
 | SO-2: Typed Assertion Graph + Truth Maintenance | **PARTIAL** | Audit #021: correct_assertion() now triggers proof_state recompute (stale issue steering fixed). MAX_WORK truncation surfaces in ledger. Remaining: correction doesn't re-trigger loop reprioritization in real-time |
 | SO-3: User-Steerable Reasoning | **PASS** | Audit #021 PASS — stop/redirect/correction/clarification/annotations/trust all wired |
-| SO-4: Issue-Driven Architecture | **PARTIAL** | Audit #021: proof_state.sufficiency overlay removed (was bypassing weighted coverage). Bare-string facts no longer auto-credited as supports. Remaining: issue_predicate.resolved writer absent in production |
-| SO-5: Source-Aware Intelligence | **PARTIAL** | Audit #021: multi-source ambiguity collapsed in output (complaint allegation vs contract clause — strongest role wins, ambiguity lost) |
+| SO-4: Issue-Driven Architecture | **PARTIAL** | Audit #021: proof_state.sufficiency overlay removed (was bypassing weighted coverage). Bare-string facts no longer auto-credited as supports. Predicate resolver matter-scoped + atomic. Remaining: issue_predicate.resolved writer absent in production |
+| SO-5: Source-Aware Intelligence | **PARTIAL** | Multi-source ambiguity now surfaced: list_recent_for_hydration() returns source_roles_csv; engine shows MULTI-SOURCE[OPERATIVE,ADVOCACY] labels. Remaining: no scoring differentiation per role mix |
 | SO-6: Quantitative Intelligence | **PARTIAL** | Audit #021: quant is a sidecar subsystem, not core retrieval/proof backbone. Real gates + reconciliation, but not mandatory in all proof paths |
 | SO-7: Missingness Modeled | **PASS** | Audit #021 PASS — gaps recorded, proof gaps detected, high-materiality gaps generate clarifications |
 
@@ -93,13 +93,29 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | #020 | SO-3/7 PASS; SO-1/2/5/6 PARTIAL; SO-4 FAIL → FIXED | coverage_fraction was count heuristic; fixed to belief-state-weighted |
 | #021 | SO-3/7 PASS; SO-1/2/4/5/6 PARTIAL | proof_state override removed; correct_assertion now refreshes proof_state; bare-string inflation fixed |
 
-**Tier 1 reviews:** Correctness CLEAN (SO-4, SO-2 fixes; #021 fixes in progress). Performance CLEAN (schema v33 covering index).
+**Tier 1 reviews:** Correctness CLEAN (predicate resolver matter-scoped + atomic; correct_assertion batched; SO-4/SO-5 fixes committed). Performance in progress.
 
 ---
 
 ## Active Work
 
-### JUST COMPLETED — Adversarial audit #021 fixes
+### JUST COMPLETED — Tier 1 Correctness CLEAN
+
+**Predicate resolver correctness (Tier 1 HIGH/MEDIUM from predicate review):**
+- `resolve_predicate()` matter-scoped: WHERE clause now JOINs through issue.matter_id — prevents cross-matter predicate resolution.
+- `resolve_predicate_by_description()` rewritten: single atomic UPDATE with correlated subquery (eliminates TOCTOU), None/empty guard, full-text description match (removes 300-char truncation mismatch).
+- `correct_assertion()` batching: chunked iteration over affected assertion IDs (900/batch) so ALL affected issues are discovered, not just the first 900.
+- `_score()` docstring updated to document zero-resolved-predicates fallback.
+- 3 new tests: cross-matter guard, None/empty guard, full-text description resolution.
+
+**SO-5 multi-source ambiguity fix:**
+- `list_recent_for_hydration()` returns `source_roles_csv` via GROUP_CONCAT(DISTINCT).
+- Engine display shows `MULTI-SOURCE[OPERATIVE,ADVOCACY]` when same proposition spans docs of different source roles.
+
+HEAD: b7ade5f
+Tests: 721 / 721
+
+### PREVIOUSLY COMPLETED — Adversarial audit #021 fixes
 
 **SO-4 PARTIAL (audit #021) — fixes:**
 - `_get_issue_coverage_map()` no longer replaces belief-state-weighted `coverage_fraction` with count-based `proof_state.sufficiency`. Only metadata overlays (advocacy_only, contested, proof_status) taken from proof_state.
@@ -128,12 +144,12 @@ None active.
 
 ## Key Metrics (Current)
 
-- Tests passing: 717 / 717
+- Tests passing: 721 / 721
 - Schema version: v33
 - SO-3, SO-7: PASS; SO-1, SO-2, SO-4, SO-5, SO-6: PARTIAL
-- Tier 1 correctness: **CLEAN** (SO-4 fix; SO-2 ledger routing; #021 fixes — review in progress)
-- Tier 1 performance: **CLEAN** (schema v33 covering index on assertion_issue_link)
-- Adversarial audit #021: DONE — proof_state override removed; correct_assertion refreshes proof_state; bare-string inflation fixed
+- Tier 1 correctness: **CLEAN** (predicate resolver matter-scoped + atomic; correct_assertion batched; SO-5 multi-source surfaced)
+- Tier 1 performance: in progress (reviewing predicate resolver subqueries, correct_assertion chunking, list_recent_for_hydration GROUP_CONCAT)
+- Adversarial audit #021: DONE + FIXED
 
 ## Architectural Backlog (Tier 2 HIGH remaining)
 
@@ -141,7 +157,7 @@ None active.
 - **Q6 LOW**: get_ledger_steering_surface() steering snapshot caching — not blocking
 - **Q7 MEDIUM**: _run_snapshots dict not persistent for multi-worker/clustered — not blocking for single-worker
 - **SO-4 PARTIAL**: issue_predicate.status='resolved' writer absent in production (only in tests) — predicates always 0% satisfied; predicate-aware coverage formula never reaches full benefit
-- **SO-5 PARTIAL**: Multi-source ambiguity collapsed (complaint vs contract same proposition → strongest role wins, ambiguity lost in output)
+- **SO-5 PARTIAL**: Multi-source display labels added. Remaining: no scoring differentiation per role mix; display only, no downstream effect on coverage
 - **SO-2 PARTIAL**: Corrections propagate to proof_state now, but don't trigger real-time loop re-prioritization in the same iteration
 - **SO-1 PARTIAL**: reuse_rate metric is assertion-count ratio, not measured reuse behavior
 - **SO-6 PARTIAL**: Quant is sidecar subsystem, not core retrieval/proof backbone
