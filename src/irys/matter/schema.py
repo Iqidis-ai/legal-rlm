@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1160,6 +1160,28 @@ def _migration_v24(conn) -> None:
     )
 
 
+def _migration_v28(conn) -> None:
+    """Add covering index on assertion_link for get_neighbor_belief_states() CTE.
+
+    The `linked` subquery in get_neighbor_belief_states() runs:
+        SELECT link_type, src_assertion_id
+        FROM assertion_link
+        WHERE dst_assertion_id = ? AND link_type IN (...)
+
+    Without this index the query performs a full scan filtered by dst_assertion_id
+    via the existing ix_link_src/ix_link_dst indexes, then re-reads the heap for
+    link_type.  A covering index on (dst_assertion_id, link_type, src_assertion_id)
+    eliminates the heap fetch entirely — all needed columns are in the index leaf.
+
+    This is the highest-ROI index from the Tier 2 scaling review: the `linked`
+    subquery is the hot inner loop of every BFS step in BeliefRevisionEngine.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_link_dst_covering"
+        " ON assertion_link(dst_assertion_id, link_type, src_assertion_id)"
+    )
+
+
 def _migration_v27(conn) -> None:
     """Add doc_basename column to assertion_occurrence for indexed basename lookup.
 
@@ -1255,6 +1277,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (25, _migration_v25),
     (26, _migration_v26),
     (27, _migration_v27),
+    (28, _migration_v28),
 ]
 
 
