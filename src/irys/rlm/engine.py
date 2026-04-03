@@ -1212,7 +1212,7 @@ class RLMEngine:
             )
 
         state.hypothesis = plan.get("hypothesis")
-        state.findings["issues"] = plan.get("issues", [])
+        state.findings["issues"] = plan.get("issues") or []
         state.findings["initial_plan"] = plan
 
         # Record issues in matter model if enabled; collect new IDs so initial leads can
@@ -1410,8 +1410,8 @@ class RLMEngine:
         # Log orientation summary to reasoning ledger (SO-3 user visibility)
         adapter = getattr(state, "_matter_adapter", None)
         if adapter is not None:
-            issues_found = plan.get("issues", [])
-            searches_planned = plan.get("initial_searches", [])
+            issues_found = plan.get("issues") or []
+            searches_planned = plan.get("initial_searches") or []
             adapter.log_step(
                 f"Orientation complete: {len(issues_found)} issues, {len(searches_planned)} search leads",
                 why=f"Hypothesis: {(state.hypothesis or '')[:200]}",
