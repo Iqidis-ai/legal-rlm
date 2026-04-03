@@ -2853,10 +2853,12 @@ class RLMEngine:
             Titles shorter than 4 chars are skipped to avoid false matches.
             """
             lower = section.lower()
-            # Compiled pattern for list-item starters: unordered (- * •) and
+            # Compiled pattern for list-item starters: unordered (- * + •) and
             # ordered (1. / 1) / a. / a)) so ordered bullets start new semantic units.
-            # One \s at end (after the marker) to require trailing whitespace.
-            _LIST_PAT = _re.compile(r'^(?:[-*•]|\d+[.)]|[a-zA-Z][.)])\s')
+            # Includes '+' bullets and task-list markers (- [ ] / - [x] already
+            # matched by the '-' branch since ls starts with '- ').
+            # One \s after the marker token to require trailing whitespace.
+            _LIST_PAT = _re.compile(r'^(?:[-*+•]|\d+[.)]|[a-zA-Z][.)])\s')
             # Build semantic units: group lines until a blank line or a new list item.
             units: "list[str]" = []
             buf: "list[str]" = []
@@ -2900,11 +2902,11 @@ class RLMEngine:
         # If the advisory section header is already present AND no structural violation,
         # gate is satisfied. Accept both ## and ### heading levels and ignore case so
         # minor LLM heading variations don't cause unnecessary reinjection.
-        # Anchor marker check to line-start so an incidental embedded occurrence
-        # in prose, lists, or quoted text cannot suppress gate action.
-        # Accept optional trailing colon (e.g. "## Source Calibration Advisory:").
+        # Anchor marker check to line-start and end-of-line so only an exact
+        # heading match ("## Source Calibration Advisory" / "### ...") satisfies
+        # the gate — a heading with extra words (e.g. "(Internal Note)") does not.
         _marker_present = bool(_re.search(
-            r'(?:^|\n)#{2,3} ' + _re.escape(_MARKER) + r':?',
+            r'(?:^|\n)#{2,3} ' + _re.escape(_MARKER) + r':?[ \t]*(?:\n|$)',
             synthesis_output,
             _re.IGNORECASE,
         ))
