@@ -66,7 +66,7 @@ PRIORITIZE:
 Respond in JSON format:
 {{
     "issues": [
-        {{"title": "issue description", "type": "claim|defense|damages|contract_question|procedural|evidentiary"}}
+        {{"title": "issue description", "type": "claim|defense|damages|contract_question|procedural|evidentiary|condition_precedent|waiver|diligence_red_flag|compliance_failure"}}
     ],
     "relevant_folders": ["folder1", "folder2", ...],
     "initial_searches": ["term1", "term2", ...],
