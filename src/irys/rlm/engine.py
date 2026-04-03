@@ -2852,7 +2852,8 @@ class RLMEngine:
             lower = section.lower()
             # Compiled pattern for list-item starters: unordered (- * •) and
             # ordered (1. / 1) / a. / a)) so ordered bullets start new semantic units.
-            _LIST_PAT = _re.compile(r'^(?:[-*•]|\d+[.)][^\S\n]|[a-z][.)][^\S\n])\s')
+            # One \s at end (after the marker) to require trailing whitespace.
+            _LIST_PAT = _re.compile(r'^(?:[-*•]|\d+[.)]|[a-zA-Z][.)])\s')
             # Build semantic units: group lines until a blank line or a new list item.
             units: "list[str]" = []
             buf: "list[str]" = []
