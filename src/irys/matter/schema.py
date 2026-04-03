@@ -863,6 +863,7 @@ def _migration_v16(conn) -> None:
         conn.execute("RELEASE _v16")
     except Exception:
         conn.execute("ROLLBACK TO _v16")
+        conn.execute("RELEASE _v16")  # always release to close the savepoint
         raise
 
 
