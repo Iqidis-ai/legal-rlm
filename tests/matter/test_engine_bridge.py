@@ -154,9 +154,9 @@ def test_adapter_log_step_writes_ledger_event():
     adapter.log_step("Searching for payment terms", "following lead from orientation")
 
     events = model.ledger.get_events(run_id)
-    branch_events = [e for e in events if e["event_type"] == LedgerEventType.BRANCH_SELECTED.value]
-    assert len(branch_events) >= 1
-    assert "payment" in branch_events[0]["summary"].lower()
+    step_events = [e for e in events if e["event_type"] == LedgerEventType.PROGRESS_NOTE.value]
+    assert len(step_events) >= 1
+    assert "payment" in step_events[0]["summary"].lower()
 
 
 # ---------------------------------------------------------------------------

@@ -373,10 +373,10 @@ class MatterRuntimeAdapter:
     # ------------------------------------------------------------------
 
     def log_step(self, summary: str, why: Optional[str] = None) -> None:
-        """Append a generic step to the reasoning ledger."""
+        """Append a generic progress note to the reasoning ledger."""
         self.model.ledger.append_event(
             run_id=self.run_id,
-            event_type=LedgerEventType.BRANCH_SELECTED,
+            event_type=LedgerEventType.PROGRESS_NOTE,
             summary=summary[:500],
             why=why,
         )

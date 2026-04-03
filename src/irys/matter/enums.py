@@ -153,3 +153,4 @@ class LedgerEventType(str, Enum):
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"
     SYSTEM_WARNING = "system_warning"
+    PROGRESS_NOTE = "progress_note"
