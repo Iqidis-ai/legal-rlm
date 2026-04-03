@@ -446,6 +446,114 @@ class AssertionStore:
             return None
         return AssertionRecord(**dict(row))
 
+    # ------------------------------------------------------------------
+    # Contradiction mining (background maintenance — spec §26)
+    # ------------------------------------------------------------------
+
+    _ACTIVE_STATES = ("alleged", "argued", "admitted", "operative", "inferred", "partial")
+    _INACTIVE_STATES = ("superseded", "withdrawn", "resolved")
+
+    def find_contradictions(self) -> list[dict]:
+        """
+        Return all pairs of assertions in this matter that are in active conflict.
+
+        Detection strategy: explicit assertion_link rows where link_type IN
+        ('attacks', 'contradicts') and BOTH the src and dst assertions have
+        an active belief_state (not superseded/withdrawn/resolved).
+
+        Link direction convention:
+          src_assertion_id --ATTACKS/CONTRADICTS--> dst_assertion_id
+          src is the attacker; dst is the assertion being challenged.
+
+        Returns list of dicts:
+          {
+            'attacker_id':     str,
+            'attacked_id':     str,
+            'link_type':       'attacks' | 'contradicts',
+            'attacker_belief': str,
+            'attacked_belief': str,
+            'attacker_prop':   str,
+            'attacked_prop':   str,
+          }
+        """
+        rows = self.db.execute(
+            """SELECT al.src_assertion_id AS attacker_id,
+                      al.dst_assertion_id AS attacked_id,
+                      al.link_type,
+                      a_src.belief_state AS attacker_belief,
+                      a_dst.belief_state AS attacked_belief,
+                      a_src.proposition_text AS attacker_prop,
+                      a_dst.proposition_text AS attacked_prop
+               FROM assertion_link al
+               JOIN assertion a_src ON a_src.id = al.src_assertion_id
+               JOIN assertion a_dst ON a_dst.id = al.dst_assertion_id
+               WHERE al.link_type IN ('attacks', 'contradicts')
+                 AND a_src.matter_id = ?
+                 AND a_dst.matter_id = ?
+                 AND a_src.belief_state NOT IN ('superseded','withdrawn','resolved')
+                 AND a_dst.belief_state NOT IN ('superseded','withdrawn','resolved')""",
+            (self.matter_id, self.matter_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mine_and_mark_contradictions(
+        self,
+        gap_store: "GapStore",
+        belief_engine: "BeliefRevisionEngine",
+    ) -> list[dict]:
+        """
+        Run contradiction mining and enforce belief states.
+
+        For each conflict pair found by find_contradictions():
+        - If the attacker has OPERATIVE or ADMITTED belief_state AND the attacked
+          assertion is still OPERATIVE or ALLEGED: mark the attacked assertion as
+          DISPUTED via the belief revision engine (cause=CONFLICT_DETECTION).
+        - Always record an UNRESOLVED_CONTRADICTION gap for open conflicts.
+        - Skip pairs where the attacked assertion is already DISPUTED.
+
+        Returns the list of contradiction dicts (same shape as find_contradictions).
+        """
+        from .enums import RevisionCause, BeliefState, GapType
+        conflicts = self.find_contradictions()
+        _HIGH_TRUST = {"operative", "admitted"}
+        _DISPUTABLE = {"operative", "alleged", "argued", "inferred"}
+
+        for conflict in conflicts:
+            attacked_id = conflict["attacked_id"]
+            attacker_belief = conflict["attacker_belief"]
+            attacked_belief = conflict["attacked_belief"]
+
+            # Mark attacked assertion as DISPUTED when attacker is high-trust.
+            if (
+                attacker_belief in _HIGH_TRUST
+                and attacked_belief in _DISPUTABLE
+            ):
+                belief_engine.force_state(
+                    assertion_id=attacked_id,
+                    new_state=BeliefState.DISPUTED,
+                    new_confidence=0.3,
+                    cause=RevisionCause.CONFLICT_DETECTION,
+                    note=(
+                        f"Marked disputed by {conflict['link_type']} link from "
+                        f"assertion {conflict['attacker_id']}"
+                    ),
+                )
+
+            # Record gap for any open conflict that isn't already resolved.
+            if attacked_belief not in ("superseded", "withdrawn", "resolved"):
+                gap_store.record(
+                    gap_type=GapType.UNRESOLVED_CONTRADICTION,
+                    description=(
+                        f"Contradiction: '{conflict['attacker_prop'][:80]}' "
+                        f"{conflict['link_type']} '{conflict['attacked_prop'][:80]}'"
+                    ),
+                    materiality=0.7,
+                    affected_type="assertion",
+                    affected_id=attacked_id,
+                )
+
+        return conflicts
+
 
 class GapStore:
     """Tracks structured missingness — documents, predicates, authorities, etc."""

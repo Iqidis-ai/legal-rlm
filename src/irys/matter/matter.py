@@ -204,6 +204,21 @@ class MatterModel:
             note=note,
         )
 
+    def mine_contradictions(self) -> list[dict]:
+        """
+        Run the contradiction mining pass over all assertions in this matter.
+
+        Finds explicit attacks/contradicts links between active assertions,
+        marks attacked assertions as DISPUTED when the attacker is high-trust,
+        and records UNRESOLVED_CONTRADICTION gaps for each open conflict.
+
+        Returns the list of contradiction dicts found.
+        """
+        return self.assertions.mine_and_mark_contradictions(
+            gap_store=self.gaps,
+            belief_engine=self.belief,
+        )
+
     # ------------------------------------------------------------------
     # Gap management
     # ------------------------------------------------------------------
