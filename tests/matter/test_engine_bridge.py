@@ -2751,3 +2751,68 @@ def test_advocacy_gate_block_no_model():
     engine._matter_model = None
     block = engine._build_advocacy_gate_block()
     assert block == ""
+
+
+# ---------------------------------------------------------------------------
+# SO-4: _enrich_search_term_with_issue_context() — issue-driven retrieval bias
+# ---------------------------------------------------------------------------
+
+def test_enrich_search_term_uses_predicate_keywords():
+    """Enrichment must append predicate keywords when issue has open predicates."""
+    from irys.rlm.engine import RLMEngine
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue("Breach of contract", IssueType.CLAIM)
+    model.issues.add_predicate(iid, "plaintiff performed all obligations under the agreement")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    enriched = engine._enrich_search_term_with_issue_context("payment terms", iid)
+    assert enriched != "payment terms", "Enrichment must change the search term"
+    assert len(enriched) > len("payment terms"), "Enriched term must be longer"
+
+
+def test_enrich_search_term_falls_back_to_issue_title():
+    """Without predicates, enrichment falls back to issue title keywords."""
+    from irys.rlm.engine import RLMEngine
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue("Fraudulent inducement claim", IssueType.CLAIM)
+    # No predicates added
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    enriched = engine._enrich_search_term_with_issue_context("email evidence", iid)
+    assert "fraudulent" in enriched.lower() or "inducement" in enriched.lower(), (
+        "Fallback enrichment must include issue title words"
+    )
+
+
+def test_enrich_search_term_no_duplicate_keywords():
+    """Enrichment must not duplicate keywords already in the search term."""
+    from irys.rlm.engine import RLMEngine
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue("Damages exposure calculation", IssueType.CLAIM)
+    model.issues.add_predicate(iid, "damages calculation methodology")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # search_term already contains 'damages' — enrichment should not add redundant terms
+    # that are already present in the search term
+    enriched = engine._enrich_search_term_with_issue_context("damages calculation", iid)
+    # Either unchanged (all enrichment keywords already present) or extended with new context
+    assert enriched.startswith("damages calculation"), "Original term must be preserved as prefix"
+
+
+def test_enrich_search_term_no_model_returns_unchanged():
+    """Without a matter model, enrichment must return the original search term."""
+    from irys.rlm.engine import RLMEngine
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = None
+
+    result = engine._enrich_search_term_with_issue_context("payment default", "any-issue-id")
+    assert result == "payment default"

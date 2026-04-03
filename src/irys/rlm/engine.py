@@ -1646,6 +1646,15 @@ class RLMEngine:
                 # Raw terms avoid token collapse from _extract_search_term for issue-focused leads.
                 search_term = lead.search_term or self._extract_search_term(lead.description)
 
+                # SO-4: Issue-driven search enrichment.
+                # When a lead targets a specific issue, append the issue's first open
+                # predicate keywords to bias retrieval toward documents relevant to
+                # that issue's proof elements — not just query-token surface matches.
+                if lead.focus_issue_id and self._matter_model is not None:
+                    search_term = self._enrich_search_term_with_issue_context(
+                        search_term, lead.focus_issue_id
+                    )
+
                 # Perform search (scale workers based on doc count)
                 max_workers = min(4, max(1, self._doc_count))
                 results = repo.search(search_term, context_lines=3, max_workers=max_workers)
@@ -2736,6 +2745,38 @@ class RLMEngine:
                 )
             except Exception:
                 pass
+
+    def _enrich_search_term_with_issue_context(
+        self, search_term: str, focus_issue_id: str
+    ) -> str:
+        """Enrich a search term with the issue's first open predicate keywords (SO-4).
+
+        Biases retrieval toward documents relevant to the issue's proof elements,
+        not just surface query-token matches. Predicate description is preferred
+        over issue title for maximum specificity. Returns the original search_term
+        unchanged on any error (enrichment is advisory, never blocks search).
+        """
+        if self._matter_model is None:
+            return search_term
+        try:
+            predicates = self._matter_model.issues.get_predicates(focus_issue_id, limit=1)
+            if predicates:
+                ctx = predicates[0].get("description", "")
+            else:
+                issue_row = self._matter_model.issues.get_issue(focus_issue_id)
+                ctx = (issue_row or {}).get("title", "")
+            kws = [
+                w.strip(".,;:()")
+                for w in ctx.split()
+                if len(w.strip(".,;:()")) > 3
+            ][:3]
+            if kws:
+                enrichment = " ".join(kws)
+                if enrichment.lower() not in search_term.lower():
+                    return f"{search_term} {enrichment}"
+        except Exception:
+            pass  # enrichment is advisory; never block search
+        return search_term
 
     def _build_advocacy_gate_block(self) -> str:
         """Build a mandatory hedging gate for issues supported only by advocacy sources (SO-5).
