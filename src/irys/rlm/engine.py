@@ -1829,6 +1829,7 @@ class RLMEngine:
                         # targeted retrieval (SO-4). Only cold-path LLM analysis produces
                         # semantically filtered assertion-issue links.
                         state.documents_read += 1
+                        state.documents_from_cache += 1  # SO-1: count hot-path hits
                         self._emit_step(
                             state, StepType.READING,
                             f"Hot path (already ingested): {_fp.name}",

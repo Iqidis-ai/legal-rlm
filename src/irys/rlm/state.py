@@ -690,6 +690,7 @@ class InvestigationState:
 
     # Metrics
     documents_read: int = 0
+    documents_from_cache: int = 0  # SO-1: hot-path hits (already-ingested docs skipped)
     searches_performed: int = 0
     recursion_depth: int = 0
     max_depth_reached: int = 0
@@ -1529,6 +1530,10 @@ class InvestigationState:
             "confidence": confidence,
             "metrics": {
                 "documents_read": self.documents_read,
+                "documents_from_cache": self.documents_from_cache,  # SO-1: hot-path reuse
+                "reuse_rate": round(
+                    self.documents_from_cache / self.documents_read, 3
+                ) if self.documents_read > 0 else 0.0,
                 "searches_performed": self.searches_performed,
                 "citations": len(self.citations),
                 "verified_citations": verification_stats["verified"],
@@ -1722,6 +1727,7 @@ class InvestigationState:
             "query_classification": self.query_classification,
             "facts_per_iteration": self.facts_per_iteration,
             "documents_read": self.documents_read,
+            "documents_from_cache": self.documents_from_cache,
             "searches_performed": self.searches_performed,
             "recursion_depth": self.recursion_depth,
             "max_depth_reached": self.max_depth_reached,
@@ -1834,6 +1840,7 @@ class InvestigationState:
         state.query_classification = data.get("query_classification")
         state.facts_per_iteration = data.get("facts_per_iteration", [])
         state.documents_read = data.get("documents_read", 0)
+        state.documents_from_cache = data.get("documents_from_cache", 0)
         state.searches_performed = data.get("searches_performed", 0)
         state.recursion_depth = data.get("recursion_depth", 0)
         state.max_depth_reached = data.get("max_depth_reached", 0)
