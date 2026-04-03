@@ -33,12 +33,14 @@ def test_null_adapter_all_methods():
 
 
 # ---------------------------------------------------------------------------
-# enable_matter_model=False: config default preserves existing behavior
+# enable_matter_model: default True ensures matter model is active in normal runs
 # ---------------------------------------------------------------------------
 
-def test_config_default_disable():
+def test_config_default_enable():
+    # Default is True so every run builds the durable matter model (SO-1).
+    # Callers that explicitly opt out must pass enable_matter_model=False.
     config = RLMConfig()
-    assert config.enable_matter_model is False
+    assert config.enable_matter_model is True
 
 
 def test_engine_without_matter_model_uses_null_adapter():

@@ -680,6 +680,16 @@ class ClarificationStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_answered_since(self, since_iso: str) -> list[dict]:
+        """Return questions answered after since_iso — for mid-run active steering (SO-3)."""
+        rows = self.db.execute(
+            """SELECT * FROM clarification_question
+               WHERE matter_id=? AND status='answered' AND answered_at > ?
+               ORDER BY answered_at ASC""",
+            (self.matter_id, since_iso),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def count_pending(self) -> int:
         row = self.db.execute(
             "SELECT COUNT(*) FROM clarification_question "

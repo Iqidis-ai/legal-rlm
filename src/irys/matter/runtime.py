@@ -115,6 +115,11 @@ class MatterRuntimeAdapter:
         self.model = matter_model
         self.run_id = run_id
         self._pending_assertion_ids: list[str] = []
+        # Record run start time for mid-run clarification injection (SO-3)
+        from datetime import datetime, timezone
+        self._run_started_at: str = datetime.now(timezone.utc).isoformat()
+        # Track which clarification IDs have already been injected this run
+        self._injected_clarification_ids: set[str] = set()
 
     # ------------------------------------------------------------------
     # Called from engine._orient()
@@ -316,6 +321,22 @@ class MatterRuntimeAdapter:
     def clear_redirect(self) -> None:
         self.model.ledger.clear_redirect(self.run_id)
 
+    def get_new_answered_clarifications(self) -> list[dict]:
+        """Return clarification answers that arrived after this run started and
+        have not yet been injected into active leads (SO-3 mid-run steering).
+
+        De-duplicated by question ID so repeated loop iterations don't re-inject
+        the same answer as multiple leads.
+        """
+        all_new = self.model.clarifications.get_answered_since(self._run_started_at)
+        fresh = [
+            c for c in all_new
+            if c.get("id") not in self._injected_clarification_ids
+        ]
+        for c in fresh:
+            self._injected_clarification_ids.add(c["id"])
+        return fresh
+
     def request_stop(self) -> None:
         """Signal the engine to stop after the current iteration."""
         self.model.ledger.request_stop(self.run_id)
@@ -436,3 +457,6 @@ class NullMatterAdapter:
         link_type: str,
     ) -> None:
         pass
+
+    def get_new_answered_clarifications(self) -> list[dict]:
+        return []

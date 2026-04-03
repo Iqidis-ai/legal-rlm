@@ -37,7 +37,7 @@ class RLMConfig:
     min_depth: int = 2  # Minimum depth even for simple queries
     depth_citation_threshold: int = 15  # Stop early if enough citations
     max_iterations: int = 20  # Maximum investigation loop iterations
-    enable_matter_model: bool = False  # When True, persist facts to SQLite matter model
+    enable_matter_model: bool = True  # When True, persist facts to SQLite matter model
 
 
 # System prompts for different stages
@@ -1013,6 +1013,31 @@ class RLMEngine:
                 adapter.flush_revisions()
 
             iteration += 1
+
+            # Inject clarification answers that arrived during this run (SO-3 active steering).
+            # Each new answer becomes a high-priority search lead so the current run
+            # immediately pursues the user-supplied context without restarting.
+            if adapter is not None:
+                new_answers = adapter.get_new_answered_clarifications()
+                for answer in new_answers:
+                    answer_text = (answer.get("answer_text") or "").strip()
+                    question_text = (answer.get("question_text") or "").strip()
+                    if answer_text:
+                        state.add_lead(
+                            description=f"User context: {answer_text[:80]}",
+                            source="clarification_answer",
+                            priority=0.9,
+                            search_term=answer_text[:80],
+                            focus_issue_id=None,
+                        )
+                        adapter.log_step(
+                            f"Injected clarification answer as active lead",
+                            why=f"Q: {question_text[:60]} → A: {answer_text[:80]}",
+                        )
+                        self._emit_step(
+                            state, StepType.REPLAN,
+                            f"Steering from user context: {answer_text[:60]}",
+                        )
 
             # Check for user redirect request — inject high-priority lead for target issue (SO-3)
             if adapter is not None and adapter.is_redirect_requested():
