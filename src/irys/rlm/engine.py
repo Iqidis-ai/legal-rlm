@@ -810,8 +810,10 @@ class RLMEngine:
         state.findings["issues"] = plan.get("issues", [])
         state.findings["initial_plan"] = plan
 
-        # Record issues in matter model if enabled
+        # Record issues in matter model if enabled; collect new IDs so initial leads can
+        # be linked to freshly-created issues even on the first run (SO-4 backbone fix).
         adapter = getattr(state, "_matter_adapter", None)
+        _new_issue_ids: list[str] = []
         if adapter is not None and self._matter_model is not None:
             from ..matter.enums import IssueType
             for issue_title in plan.get("issues", []):
@@ -821,25 +823,36 @@ class RLMEngine:
                         issue_type=IssueType.CLAIM,
                         salience=0.7,
                     )
+                    _new_issue_ids.append(issue_id)
                     adapter.log_step(
                         f"Issue identified: {issue_title[:100]}",
                         why="From orientation analysis",
                     )
 
         # Create initial leads from plan — preserve raw search terms to bypass
-        # _extract_search_term() token collapse (SO-4 issue-focused search)
+        # _extract_search_term() token collapse (SO-4 issue-focused search).
+        # Use weakest prior-run issue if it exists; otherwise rotate through freshly
+        # created issues so run-1 facts are linked to issues from the start.
         weakest_id = matter_ctx.weakest_issue_id if matter_ctx else None
-        for search_term in plan.get("initial_searches", [])[:5]:
-            if isinstance(search_term, str) and search_term.strip():
-                # First lead targeting weakest issue gets priority boost
-                priority = 0.9 if (weakest_id and search_term == plan.get("initial_searches", [None])[0]) else 0.8
-                state.add_lead(
-                    description=f"Search for: {search_term}",
-                    source="initial_plan",
-                    priority=priority,
-                    search_term=search_term.strip(),
-                    focus_issue_id=weakest_id,
-                )
+        _issue_pool = _new_issue_ids  # fallback pool: distribute leads across new issues
+        _initial_searches = [s for s in plan.get("initial_searches", [])[:5]
+                             if isinstance(s, str) and s.strip()]
+        for _idx, search_term in enumerate(_initial_searches):
+            # Assign focus_issue_id: prefer weakest from prior run, else rotate new issues
+            if weakest_id:
+                _focus_id = weakest_id
+            elif _issue_pool:
+                _focus_id = _issue_pool[_idx % len(_issue_pool)]
+            else:
+                _focus_id = None
+            priority = 0.9 if (_focus_id and _idx == 0) else 0.8
+            state.add_lead(
+                description=f"Search for: {search_term}",
+                source="initial_plan",
+                priority=priority,
+                search_term=search_term.strip(),
+                focus_issue_id=_focus_id,
+            )
 
         # If no searches were found, fall back: weakest issue title → query tokens
         if not plan.get("initial_searches"):
