@@ -715,6 +715,41 @@ def test_list_recent_for_hydration_filters_inactive(model):
     assert all("source_role" in r for r in rows)
 
 
+def test_list_recent_for_hydration_limit_not_consumed_by_inactive(model):
+    """LIMIT budget must not be consumed by inactive assertions (SO-2 budget efficiency).
+
+    If inactive assertions are filtered AFTER applying LIMIT (wrong), an old active
+    assertion will not appear when the window is filled by newer inactive rows.
+    The DB-level WHERE filter must exclude inactive assertions before LIMIT is applied.
+    """
+    from irys.matter.enums import BeliefState
+    run_id = model.start_run("limit budget test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # Record the one active assertion FIRST (oldest by created_at)
+    old_active_id = adapter.record_fact("Old active fact that must survive.", "anchor.pdf")
+
+    # Then record LIMIT+1 inactive assertions (newer, so they appear first in ORDER BY created_at DESC)
+    limit = 10
+    inactive_ids = []
+    for i in range(limit + 1):
+        aid = adapter.record_fact(f"Inactive fact {i}.", f"doc{i}.pdf")
+        model.correct_assertion(aid, BeliefState.SUPERSEDED)
+        inactive_ids.append(aid)
+
+    rows = model.assertions.list_recent_for_hydration(limit=limit)
+    row_ids = {r["id"] for r in rows}
+
+    # The old active assertion must appear despite being "oldest" — inactive ones must
+    # not consume the LIMIT budget.
+    assert old_active_id in row_ids, (
+        "Active assertion crowded out by inactive rows — DB-level filtering is broken"
+    )
+    # None of the inactive assertions should be present
+    for iid in inactive_ids:
+        assert iid not in row_ids, f"Inactive assertion {iid} leaked into hydration results"
+
+
 # ---------------------------------------------------------------------------
 # record_facts_batch — neutral relation does not create issue link
 # ---------------------------------------------------------------------------
