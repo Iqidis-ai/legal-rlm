@@ -2251,6 +2251,11 @@ class RLMEngine:
             materiality = gap.get("materiality_score", 0.0)
             label = "HIGH" if materiality >= 0.7 else "MED" if materiality >= 0.4 else "LOW"
             lines.append(f"  [{label}] {gap_type}: {description}")
+            # Surface dependency links so LLM knows what conclusions depend on this gap (SO-7)
+            deps = gap.get("dependencies", [])[:3]  # cap at 3 to avoid prompt bloat
+            if deps:
+                dep_strs = [f"{d['affected_type']}:{d['affected_id'][:8]}" for d in deps]
+                lines.append(f"         Affects: {', '.join(dep_strs)}")
         return "\n".join(lines)
 
     # ==========================================================================

@@ -248,3 +248,15 @@ def test_gap_record_many_idempotent(model):
     ids_second = model.gaps.record_many(specs)
     assert ids_first == ids_second
     assert len(model.gaps.open_gaps(min_materiality=0.0)) == 2
+
+
+def test_gap_record_many_intra_batch_dedup(model):
+    """record_many() with duplicate specs in one call returns the same id for each duplicate."""
+    specs = [
+        {"gap_type": GapType.MISSING_DOCUMENT, "description": "Same gap"},
+        {"gap_type": GapType.MISSING_DOCUMENT, "description": "Same gap"},  # duplicate
+    ]
+    ids = model.gaps.record_many(specs)
+    assert len(ids) == 2, "Return list length must match input specs length"
+    assert ids[0] == ids[1], "Intra-batch duplicates must return the same gap_id"
+    assert len(model.gaps.open_gaps(min_materiality=0.0)) == 1, "Only one gap should be created"

@@ -534,32 +534,40 @@ class GapStore:
         if not specs:
             return []
         now = _now()
-        # Normalize specs and compute dedup keys up front
-        normalized = []
+        # Compute (gt, desc_key) for every spec in original order (for return mapping).
+        # Deduplicate keys for DB operations — keep first-occurrence spec data per key.
+        # SQLite bind-parameter limit: 1 + 2*N params per chunk; cap chunk at 200.
+        _BATCH_CHUNK = 200
+        spec_keys: list[tuple] = []       # parallel to specs, for final return mapping
+        deduped: dict[tuple, dict] = {}   # key → spec data (first occurrence wins)
         for spec in specs:
             gt_val = spec["gap_type"].value if hasattr(spec["gap_type"], "value") else spec["gap_type"]
             desc_key = self._gap_key(gt_val, spec["description"])
-            normalized.append({
-                "id": _id(),
-                "gt": gt_val,
-                "description": spec["description"],
-                "desc_key": desc_key,
-                "expected_artifact": spec.get("expected_artifact"),
-                "materiality": spec.get("materiality", 0.5),
-                "blocker_score": spec.get("blocker_score", 0.0),
-                "affected_type": spec.get("affected_type"),
-                "affected_id": spec.get("affected_id"),
-            })
+            key = (gt_val, desc_key)
+            spec_keys.append(key)
+            if key not in deduped:
+                deduped[key] = {
+                    "id": _id(),
+                    "gt": gt_val,
+                    "description": spec["description"],
+                    "desc_key": desc_key,
+                    "expected_artifact": spec.get("expected_artifact"),
+                    "materiality": spec.get("materiality", 0.5),
+                    "blocker_score": spec.get("blocker_score", 0.0),
+                    "affected_type": spec.get("affected_type"),
+                    "affected_id": spec.get("affected_id"),
+                }
+
+        unique_items = list(deduped.values())
+        all_keys = [(n["gt"], n["desc_key"]) for n in unique_items]
 
         with self.db.transaction():
-            # Batch lookup: one query for all keys via IN clause
-            all_keys = [(n["gt"], n["desc_key"]) for n in normalized]
-            # Build a VALUES lookup without hitting SQLite param limit
-            # (batch is typically small — gap detection emits ~5-20 per run)
+            # Batch lookup in chunks to stay within SQLite param limits
             existing_map: dict[tuple, dict] = {}
-            if all_keys:
-                placeholders = ",".join("(?,?)" for _ in all_keys)
-                flat_params = [v for pair in all_keys for v in pair]
+            for chunk_start in range(0, len(all_keys), _BATCH_CHUNK):
+                chunk = all_keys[chunk_start:chunk_start + _BATCH_CHUNK]
+                placeholders = ",".join("(?,?)" for _ in chunk)
+                flat_params = [v for pair in chunk for v in pair]
                 rows = self.db.execute(
                     f"""SELECT id, gap_type, description_key, status
                         FROM gap
@@ -568,16 +576,17 @@ class GapStore:
                     [self.matter_id] + flat_params,
                 ).fetchall()
                 for r in rows:
-                    key = (r["gap_type"], r["description_key"])
-                    if key not in existing_map:  # keep most recent per key
-                        existing_map[key] = dict(r)
+                    k = (r["gap_type"], r["description_key"])
+                    if k not in existing_map:  # keep most recent per key
+                        existing_map[k] = dict(r)
 
-            gap_ids = []
+            # Resolve each unique item to its final gap_id
+            key_to_id: dict[tuple, str] = {}
             insert_rows = []
             reopen_ids = []
             link_checks = []
 
-            for n in normalized:
+            for n in unique_items:
                 key = (n["gt"], n["desc_key"])
                 ex = existing_map.get(key)
                 if ex:
@@ -591,7 +600,7 @@ class GapStore:
                         n["expected_artifact"], n["materiality"], n["blocker_score"],
                         "open", now, now,
                     ))
-                gap_ids.append(gap_id)
+                key_to_id[key] = gap_id
                 if n["affected_type"] and n["affected_id"]:
                     link_checks.append((gap_id, n["affected_type"], n["affected_id"]))
 
@@ -619,7 +628,8 @@ class GapStore:
                         "INSERT INTO gap_link (id, gap_id, affected_type, affected_id, created_at) VALUES (?,?,?,?,?)",
                         (_id(), gap_id, at, ai, now),
                     )
-        return gap_ids
+        # Return in original spec order; intra-batch duplicates share the same id
+        return [key_to_id[k] for k in spec_keys]
 
     def open_gaps(self, min_materiality: float = 0.0) -> list[dict]:
         """Return open gaps above a materiality threshold.
