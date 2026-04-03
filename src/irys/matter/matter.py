@@ -1017,9 +1017,9 @@ class MatterModel:
             "source_role_known_rate": source_role_known_rate,
             "issue_coverage_avg": issue_coverage_avg,
             "issues_with_proof_gap": issues_with_proof_gap,
-            # SO-3/SO-2: architecture guarantees (not runtime-measurable per query)
-            "steerability": True,
-            "belief_revision": True,
+            # SO-3/SO-2: requires run telemetry — not measurable from stored state alone
+            "steerability": None,
+            "belief_revision": None,
             # Requires run telemetry or ground truth — not yet measured
             "reuse_rate": None,
             "gap_detection_recall": None,
@@ -1040,8 +1040,8 @@ class MatterModel:
                 "assertion_structure_rate": _pass("assertion_structure_rate", assertion_structure_rate),
                 "source_role_known_rate": _pass("source_role_known_rate", source_role_known_rate),
                 "issue_coverage_avg": _pass("issue_coverage_avg", issue_coverage_avg),
-                "steerability": True,
-                "belief_revision": True,
+                "steerability": None,   # requires run telemetry
+                "belief_revision": None,  # requires run telemetry
             },
         }
 
