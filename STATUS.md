@@ -139,6 +139,7 @@ None active.
 - Tests passing: 679 / 679
 - Schema version: v26
 - All 7 Sacred Outcomes: PASS (SO-7 adversarial PARTIAL resolved)
-- Tier 1 correctness: CLEAN (R2)
-- Tier 1 performance: R4 in progress (expect CLEAN on correlated subquery fixes)
-- Adversarial audit #017: DONE — 6 PASS, 1 PARTIAL resolved
+- Tier 1 correctness: **CLEAN** (R2, R3, R4)
+- Tier 1 performance: **CLEAN** (R5 — all 6 MEDIUMs closed)
+- Adversarial audit #017: DONE — 6 PASS, SO-7 PARTIAL resolved
+- Next adversarial audit (#018): due after ~5-6 more Codex review sessions
