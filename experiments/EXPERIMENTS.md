@@ -50,6 +50,35 @@ Only Codex-validated conclusions are recorded as findings.
 
 ---
 
+## EXP-012 — Adversarial Audit #3: All SOs Rated PARTIAL (2026-04-02)
+
+**Status:** COMPLETE — fixes applied for 3 HIGH findings; remaining SOs are structural backlog
+**Git commits:** 411420b (perf) → 1d54a71 (adversarial fixes)
+**Purpose:** Mandatory adversarial audit per swarm-build governance (every 5-6 Codex sessions). Hostile audit of whether sacred outcomes actually work in running code, not just in data structures.
+
+**Verdict: No sacred outcome passes. All 7 are PARTIAL.**
+
+**HIGH findings (fixed):**
+1. **Relative repository paths break deep reads** — `MatterRepository.base_path` was not resolved to absolute. `relative_to()` and `read_bytes()` silently failed when CWD ≠ repo root. Fixed: `Path(base_path).resolve()` in `__init__`.
+2. **SO-2 dependency graph decorative in normal runs** — `assertions.link()` never called by production code. The engine extracted facts but never built edges between them. Fixed: added `fact_relationships` to deep-read prompt; LLM now returns edges between extracted facts; engine wires them via `adapter.record_assertion_link()`.
+3. **`contradicts` edge doesn't propagate** — `get_dependents()` excluded `contradicts` from the propagation edge set even though `get_attackers()` included it. Belief revision never fired on contradiction. Fixed: added `contradicts` to `get_dependents()` query.
+
+**Remaining structural gaps (PARTIAL verdicts):**
+- **SO-1 PARTIAL**: Hot path works for absolute-path repeated runs but orientation/search/synthesis still rerun; relative-path repos now fixed.
+- **SO-2 PARTIAL**: Links now built during deep read but search-result facts don't build links, and orientation phase doesn't build links.
+- **SO-3 PARTIAL**: Stop is cooperative polling (completes current LLM call), not true mid-call interruption. Redirect is next-iteration only.
+- **SO-4 PARTIAL**: Issues stored but issue coverage not the retrieval backbone on first run; first-run leads don't yet get focus_issue_id from freshly created issues.
+- **SO-5 PARTIAL**: Source trust calibration is filename heuristics + prompt labels, not operational trust scoring.
+- **SO-6 PARTIAL**: Numbers stored but span_id=null and assertion_id=null; no real damages modeling.
+- **SO-7 PARTIAL**: Missingness modeled but impact statements are generic; affected conclusions often unlinked to gaps.
+
+**What we learned:**
+- "The unit tests validate the side stores, not whether the live engine truly uses them the way the sacred outcomes claim." (Codex) — tests passing ≠ SOs satisfied.
+- SO-2's belief revision exists and is sound, but the graph it needs to traverse was never populated in production code. A system can have excellent revision propagation logic that never fires because the dependency graph is always empty.
+- The adversarial audit's live repros (actual Python execution) are far more revealing than code reading alone. 853KB of exploration found things static analysis would miss.
+
+---
+
 ## EXP-011 — Tier 1 Correctness 011 Fixes: Path Stability + Hash Collision + Occurrence Index (2026-04-02)
 
 **Status:** COMPLETE — 179 tests passing; Codex re-run (012) in progress
