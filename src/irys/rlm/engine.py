@@ -2796,8 +2796,8 @@ class RLMEngine:
         # This is the hard gate: even if the advisory marker is already present, a
         # structural violation forces re-injection of the advisory block.
         #
-        # Hedge check is PER-TITLE and LOCAL (±300 char window around each match)
-        # so a hedging phrase for one bullet cannot mask an unhedged adjacent bullet.
+        # Hedge check is PER-LINE: each Markdown bullet is checked independently so a
+        # hedge phrase in an adjacent bullet cannot suppress a real violation on this line.
         _HEDGE_MARKERS = (
             "alleges", "alleged", "alleged that", "is alleged",
             "contends", "contended", "claims", "claimed",
@@ -2809,34 +2809,37 @@ class RLMEngine:
         _STRUCTURAL_VIOLATION = False
 
         import re as _re
+        # Precompile per-level heading boundary patterns (at most 3 levels needed).
+        _HDR_RE: dict = {
+            lvl: _re.compile(r'\n#{1,' + str(lvl) + r'} ') for lvl in (2, 3)
+        }
 
         def _extract_section(text: str, hdr: str) -> str:
             """Return text from hdr to the next header of equal or higher level."""
             if hdr not in text:
                 return ""
             start = text.index(hdr)
-            level = len(hdr) - len(hdr.lstrip("#"))
-            # Use compiled regex so we can pass a start pos (re.search 3rd arg = flags).
-            m = _re.compile(r'\n#{1,' + str(level) + r'} ').search(text, start + len(hdr))
+            level = min(3, len(hdr) - len(hdr.lstrip("#")))
+            m = _HDR_RE[level].search(text, start + len(hdr))
             return text[start:(m.start() if m else len(text))]
 
         def _section_has_unhedged_title(
             section: str, titles: "list[str]", markers: "tuple[str, ...]"
         ) -> bool:
-            """True if any title has a match in section without a nearby hedge marker."""
+            """True if any title appears on a line that lacks a hedge marker.
+
+            Checks per-line so a hedge in one bullet cannot mask a violation on another.
+            Titles shorter than 4 chars are skipped to avoid substring false-matches.
+            """
             lower = section.lower()
+            lines = lower.split('\n')
             for title in titles:
                 t_lower = title.lower()
-                pos = 0
-                while True:
-                    idx = lower.find(t_lower, pos)
-                    if idx == -1:
-                        break
-                    w0 = max(0, idx - 300)
-                    w1 = min(len(lower), idx + len(t_lower) + 300)
-                    if not any(h in lower[w0:w1] for h in markers):
+                if len(t_lower) < 4:
+                    continue  # too short to reliably match without false positives
+                for line in lines:
+                    if t_lower in line and not any(h in line for h in markers):
                         return True
-                    pos = idx + 1
             return False
 
         for _chk_hdr in (
@@ -2849,8 +2852,10 @@ class RLMEngine:
                 _STRUCTURAL_VIOLATION = True
                 break
 
-        # If marker already present AND no structural violation, gate is satisfied.
-        if _MARKER in synthesis_output and not _STRUCTURAL_VIOLATION:
+        # If the advisory section header is already present AND no structural violation,
+        # gate is satisfied.  Check for the section header form ("## Marker") rather than
+        # a bare substring so an incidental mention in prose cannot suppress gate action.
+        if f"## {_MARKER}" in synthesis_output and not _STRUCTURAL_VIOLATION:
             return None
 
         violation_note = ""

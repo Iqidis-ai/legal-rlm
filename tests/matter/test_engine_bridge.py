@@ -3170,3 +3170,56 @@ def test_advocacy_gate_structural_violation_factual_background():
         "without hedging, even if marker already present"
     )
     assert "STRUCTURAL VIOLATION" in result
+
+
+def test_advocacy_gate_marker_in_prose_does_not_suppress_gate():
+    """Incidental mention of marker phrase in prose must not suppress gate action."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)  # issue titled "Breach of contract"
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # "Source Calibration Advisory" appears in prose, NOT as a ## section header.
+    output = (
+        "## Executive Summary\nSee Source Calibration Advisory guidance.\n"
+        "### Key Findings\n- Breach of contract is established.\n"
+    )
+    result = engine._enforce_advocacy_gate(output)
+    assert result is not None, (
+        "Prose mention of marker phrase must not suppress gate — "
+        "only '## Source Calibration Advisory' header counts"
+    )
+
+
+def test_advocacy_gate_short_title_skipped_no_false_violation():
+    """Short titles (<4 chars) must not trigger false structural violations."""
+    from irys.rlm.engine import RLMEngine
+    from irys.matter.enums import IssueType, SpeechAct, SourceRole
+    from irys.matter.models import AssertionCandidate, AssertionKind
+
+    model = MatterModel.open_in_memory()
+    issue_id, _ = model.issues.upsert_issue(title="Tax", issue_type=IssueType.CLAIM)
+    cand = AssertionCandidate(
+        proposition_text="Tax was underpaid",
+        speech_act=SpeechAct.ALLEGED,
+        source_role=SourceRole.ADVOCACY,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="complaint.pdf",
+    )
+    a_id, _ = model.assertions.upsert_occurrence(cand)
+    model.issues.link_assertion(a_id, issue_id, "supports")
+    model.proof_state.compute_and_store(issue_id)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    # "tax" appears widely — short title should be skipped, no false violation
+    output = (
+        "## Executive Summary\nThis matter concerns taxation policy.\n"
+        "### Key Findings\n- Tax filing was late. The taxable amount was $10,000.\n"
+    )
+    result = engine._enforce_advocacy_gate(output)
+    assert result is not None  # advisory injected because advocacy issue exists
+    assert "STRUCTURAL VIOLATION" not in result  # short title was skipped
