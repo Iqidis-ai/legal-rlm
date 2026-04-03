@@ -193,3 +193,33 @@ def test_gap_without_link_produces_generic_impact_statement(model):
     assert q.get("expected_impact"), "expected_impact must always be non-empty"
     # Generic impact should mention materiality level
     assert "materiality" in q["expected_impact"].lower() or "medium" in q["expected_impact"].lower()
+
+
+def test_proof_gap_clarification_asks_for_evidence_not_document(model):
+    """A MISSING_ISSUE_PREDICATE gap must generate an evidence-request question (not document-request).
+
+    Proof gaps arise when an issue has zero supporting assertions.
+    The clarification should ask for evidence/testimony, not specifically a document.
+    This verifies that the gap_type routing in generate_clarifications_from_gaps()
+    produces the right question form (SO-7).
+    """
+    run_id = model.start_run("Proof gap test")
+    model.gaps.record(
+        gap_type=GapType.MISSING_ISSUE_PREDICATE,
+        description="Causation: no evidence linking the breach to the claimed damages",
+        materiality=0.8,
+    )
+
+    question_ids = model.generate_clarifications_from_gaps(run_id=run_id, min_materiality=0.5)
+    assert len(question_ids) == 1
+
+    q = model.clarifications.get_pending()[0]
+    text = q["question_text"].lower()
+    # Proof gap question should ask for evidence broadly, not specifically a document
+    assert "evidence" in text or "testimony" in text or "documents" in text, (
+        f"Proof gap question must ask for evidence broadly; got: {q['question_text']!r}"
+    )
+    # Must not ask "we could not find the following in the repository" (that's for missing docs)
+    assert "we could not find" not in text, (
+        "Proof gap question must not use the missing-document template"
+    )
