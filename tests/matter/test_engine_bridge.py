@@ -196,6 +196,35 @@ def test_build_source_calibration_no_model():
     assert "skepticism" in calibration.lower() or "unavailable" in calibration.lower()
 
 
+def test_build_source_calibration_includes_trust_overrides():
+    """_build_source_calibration() must surface user trust overrides (SO-5)."""
+    model = MatterModel.open_in_memory()
+
+    # Record at least one assertion so calibration doesn't bail out early
+    run_id = model.start_run("trust override test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_fact("Defendant admits non-payment.", document_id="answer.pdf")
+
+    # Set a low-trust and a high-trust override
+    model.trust_overrides.set("plaintiff_damages_report.pdf", "low", "Expert hired by plaintiff")
+    model.trust_overrides.set("signed_contract.pdf", "high", "Fully executed operative document")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    calibration = engine._build_source_calibration(None)
+
+    assert "plaintiff_damages_report.pdf" in calibration, (
+        "low-trust override document must appear in calibration"
+    )
+    assert "LOW TRUST" in calibration.upper() or "low" in calibration.lower()
+    assert "signed_contract.pdf" in calibration, (
+        "high-trust override document must appear in calibration"
+    )
+    assert "HIGH TRUST" in calibration.upper() or "high" in calibration.lower()
+    assert "Expert hired by plaintiff" in calibration, "override note must appear"
+
+
 # ---------------------------------------------------------------------------
 # SO-5: Actor store wiring
 # ---------------------------------------------------------------------------

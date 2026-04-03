@@ -2355,6 +2355,34 @@ class RLMEngine:
         except Exception:
             pass
 
+        # Incorporate user-set trust overrides so the LLM respects explicit calibration (SO-5).
+        try:
+            overrides = self._matter_model.trust_overrides.list_all()
+            if overrides:
+                lines.append("\nUser-set trust overrides (MANDATORY — respect these exactly):")
+                for o in overrides:
+                    pattern = o.get("document_pattern", "")
+                    level = o.get("trust_level", "normal")
+                    note = o.get("note", "")
+                    if level == "low":
+                        override_label = (
+                            "LOW TRUST — present all facts from this document as ALLEGED "
+                            "regardless of source role"
+                        )
+                    elif level == "high":
+                        override_label = (
+                            "HIGH TRUST — treat facts from this document as OPERATIVE/AUTHORITATIVE "
+                            "even if source role would suggest lower trust"
+                        )
+                    else:
+                        continue  # 'normal' resets to auto; no special instruction needed
+                    line = f"  • [{level.upper()}] '{pattern}': {override_label}"
+                    if note:
+                        line += f" — Reason: {note}"
+                    lines.append(line)
+        except Exception:
+            pass
+
         lines.append(
             "\nWARNING: Facts from ADVOCACY sources represent one party's position, not "
             "established truth. Do not amplify advocacy material as if it were operative fact."
