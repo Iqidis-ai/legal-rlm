@@ -199,6 +199,31 @@ def test_adapter_log_step_writes_ledger_event():
     assert "payment" in step_events[0]["summary"].lower()
 
 
+def test_adapter_log_warning_writes_system_warning_event():
+    """log_warning() must write a SYSTEM_WARNING ledger event (SO-3).
+
+    The reasoning ledger is structured and user-facing.  Warnings from the
+    engine (low-confidence extractions, unexpected data shapes, non-fatal errors)
+    must be surfaced as SYSTEM_WARNING events so the user can see where the
+    engine flagged uncertainty — they must not silently disappear into logs.
+    """
+    from irys.matter import LedgerEventType
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Warning event test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    adapter.log_warning("Low-confidence extraction: 'payment amount' field ambiguous")
+
+    events = model.ledger.get_events(run_id)
+    warn_events = [e for e in events if e["event_type"] == LedgerEventType.SYSTEM_WARNING.value]
+    assert len(warn_events) >= 1, (
+        "log_warning() must write a SYSTEM_WARNING event to the reasoning ledger (SO-3)"
+    )
+    assert "Low-confidence" in warn_events[0]["summary"] or "ambiguous" in warn_events[0]["summary"], (
+        "SYSTEM_WARNING event summary must include the warning message"
+    )
+
+
 def test_adapter_log_objective_writes_objective_set_event():
     """log_objective() must write an OBJECTIVE_SET ledger event (SO-3).
 
