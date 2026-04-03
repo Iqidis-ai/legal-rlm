@@ -93,6 +93,7 @@ class RevisionResult:
     new_confidence: float
     cause: RevisionCause
     propagated_to: list[str] = field(default_factory=list)
+    propagation_truncated: bool = False  # True when BFS hit MAX_WORK before full convergence
 
 
 # ---------------------------------------------------------------------------

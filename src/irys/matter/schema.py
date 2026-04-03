@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 33
+SCHEMA_VERSION = 34
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -119,6 +119,29 @@ CREATE TABLE IF NOT EXISTS belief_revision_event (
 
 CREATE INDEX IF NOT EXISTS ix_revision_assertion
     ON belief_revision_event(assertion_id, created_at);
+
+-- Immutable field-level audit log for assertion mutations (Q4 HIGH, SO-2).
+-- One row per changed field per correction batch.
+-- batch_id groups all field changes from one correction call.
+-- actor_kind: 'user' (direct correction) or 'system' (BFS propagation, occurrence upgrade).
+-- cause: 'user_correction' | 'belief_revision' | 'occurrence_upgrade'
+CREATE TABLE IF NOT EXISTS assertion_revision (
+    id              TEXT PRIMARY KEY,
+    batch_id        TEXT NOT NULL,
+    assertion_id    TEXT NOT NULL REFERENCES assertion(id),
+    changed_field   TEXT NOT NULL,
+    old_value_json  TEXT,
+    new_value_json  TEXT,
+    actor_kind      TEXT NOT NULL,
+    actor_ref       TEXT,
+    cause           TEXT NOT NULL,
+    run_id          TEXT,
+    note            TEXT,
+    created_at      TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_assertion_revision_assertion
+    ON assertion_revision(assertion_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS run_session (
     id              TEXT PRIMARY KEY,
@@ -1345,6 +1368,36 @@ def _migration_v32(conn) -> None:
     )
 
 
+def _migration_v34(conn) -> None:
+    """Add assertion_revision table for immutable field-level audit log (Q4 HIGH, SO-2).
+
+    Tracks every mutation to assertion.belief_state, confidence, and proposition_text
+    with old/new JSON values, actor kind, cause, and batch grouping. Additive only —
+    no existing table is modified. Existing DBs receive the new table and index; no
+    backfill is possible for pre-v34 mutations since the old values were not recorded.
+    """
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS assertion_revision (
+            id              TEXT PRIMARY KEY,
+            batch_id        TEXT NOT NULL,
+            assertion_id    TEXT NOT NULL REFERENCES assertion(id),
+            changed_field   TEXT NOT NULL,
+            old_value_json  TEXT,
+            new_value_json  TEXT,
+            actor_kind      TEXT NOT NULL,
+            actor_ref       TEXT,
+            cause           TEXT NOT NULL,
+            run_id          TEXT,
+            note            TEXT,
+            created_at      TEXT NOT NULL
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_assertion_revision_assertion"
+        " ON assertion_revision(assertion_id, created_at DESC)"
+    )
+
+
 def _migration_v33(conn) -> None:
     """Add covering index on assertion_issue_link for the SO-4 weighted coverage queries.
 
@@ -1403,6 +1456,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (31, _migration_v31),
     (32, _migration_v32),
     (33, _migration_v33),
+    (34, _migration_v34),
 ]
 
 

@@ -1,0 +1,11 @@
+CLEAN
+
+No HIGH or MEDIUM correctness issues found in [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1969), [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L2371), and [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L3816).
+
+- The new condition is correct. It broadens retry from “all facts missing SPO” to “any facts missing SPO” for batches of 3+, but each site still makes at most one `_retry_spo_extraction()` call per batch and does not loop back into the same branch, so there is no infinite-loop path ([engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1971), [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L2373), [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L3827)).
+
+- The merge is correct for whole-SPO preservation. `_retry_spo.get(i) if spo is None else spo` preserves any primary non-`None` SPO dict and only backfills previously missing positions, which fixes the old overwrite bug ([engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1980), [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L2382)). It is not a field-by-field merge, but that is unchanged behavior.
+
+- Index alignment is safe. `_retry_texts` is built from `facts_to_add` in order, `_retry_spo_extraction()` returns a bounded `index -> spo` map against that exact 0-based list, and the merge enumerates the same unchanged order ([engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1977), [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L2379), [engine.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L3851)). Downstream ordering assumptions are also explicit in [runtime.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L356).
+
+- No HIGH/MEDIUM correctness flags from this change. Residual note only: I did not find a targeted regression test for the partial-SPO case (some facts already structured, some missing), so coverage could be improved, but the code path itself looks correct.

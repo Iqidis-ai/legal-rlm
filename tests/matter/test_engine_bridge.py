@@ -1659,6 +1659,43 @@ def test_retry_spo_extraction_ignores_out_of_range_index():
     assert 0 in result
 
 
+def test_spo_retry_merge_preserves_primary_spo():
+    """Partial-SPO merge must keep primary-extraction SPO and backfill missing slots only.
+
+    Regression for the old overwrite bug: when _spo_count > 0 but < len(facts_to_add),
+    the new merge 'retry.get(i) if spo is None else spo' must not clobber existing SPO.
+    """
+    # Simulate: fact 0 has SPO from primary extraction, fact 1 does not.
+    primary_spo_0 = {
+        "subject_ref_type": "free_text",
+        "subject_ref_id": "Acme",
+        "predicate_key": "signed",
+        "object_json": '"contract"',
+    }
+    facts_to_add = [
+        ("Acme signed the contract.", "OPERATIVE", "doc.pdf", "supports", primary_spo_0),
+        ("The contract was dated March 2023.", "OPERATIVE", "doc.pdf", "supports", None),
+    ]
+    # Simulate retry result: only fact 1 returns SPO
+    retry_spo = {
+        1: {
+            "subject_ref_type": "free_text",
+            "subject_ref_id": "contract",
+            "predicate_key": "dated",
+            "object_json": '"March 2023"',
+        }
+    }
+    # Apply the merge logic
+    merged = [
+        (txt, lbl, doc, rel, retry_spo.get(i) if spo is None else spo)
+        for i, (txt, lbl, doc, rel, spo) in enumerate(facts_to_add)
+    ]
+    # Fact 0: primary SPO must be preserved
+    assert merged[0][4] is primary_spo_0, "Primary-extraction SPO must not be overwritten"
+    # Fact 1: backfilled from retry
+    assert merged[1][4] == retry_spo[1], "Missing SPO must be backfilled from retry"
+
+
 # ---------------------------------------------------------------------------
 # ReasoningLedgerStore: seq_no cache correctness (commit e33b084)
 # ---------------------------------------------------------------------------

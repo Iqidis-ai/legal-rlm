@@ -15,6 +15,7 @@ This gives us truth-maintenance: a single user correction can ripple
 through the graph and update all downstream conclusions.
 """
 
+import json as _json_mod
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -179,6 +180,80 @@ class BeliefRevisionEngine:
         self.assertion_store = assertion_store
         self._ledger = ledger
 
+    def _apply_with_truncation(
+        self,
+        seed_assertion_ids: list[str],
+        cause: RevisionCause,
+        run_id: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> tuple[list[RevisionResult], bool]:
+        """Internal BFS driver. Returns (results, truncated).
+
+        Same as apply() but also returns whether propagation was cut short
+        by MAX_WORK, so force_state() can set propagation_truncated on the
+        returned RevisionResult without changing the public apply() signature.
+        """
+        from collections import deque
+
+        override_rows = self.db.execute(
+            """SELECT document_pattern, trust_level FROM document_trust_override
+               WHERE matter_id=? AND trust_level != 'normal'
+               ORDER BY LENGTH(document_pattern) DESC""",
+            (self.assertion_store.matter_id,),
+        ).fetchall()
+        override_cache: list[tuple[str, str]] = [
+            (r["document_pattern"], r["trust_level"]) for r in override_rows
+        ]
+
+        results: list[RevisionResult] = []
+        seeds_remaining: set[str] = set(seed_assertion_ids)
+        pending: deque[str] = deque(seed_assertion_ids)
+        in_queue: set[str] = set(seed_assertion_ids)
+        total_work: int = 0
+
+        while pending and total_work < self.MAX_WORK:
+            assertion_id = pending.popleft()
+            in_queue.discard(assertion_id)
+            is_seed = assertion_id in seeds_remaining
+            seeds_remaining.discard(assertion_id)
+            total_work += 1
+
+            result = self._revise_one(assertion_id, cause, run_id, note, override_cache)
+            if result is not None:
+                results.append(result)
+
+            if result is not None or is_seed:
+                for d in self.assertion_store.get_dependents(assertion_id):
+                    if d not in in_queue:
+                        in_queue.add(d)
+                        pending.append(d)
+
+        truncated = bool(pending)
+        if truncated:
+            _log.warning(
+                "BeliefRevisionEngine.apply() reached MAX_WORK=%d; %d nodes remain "
+                "unprocessed — propagation may be incomplete in dense/cyclic graphs. "
+                "Consider raising MAX_WORK if this matter is known to have deep "
+                "dependency chains.",
+                self.MAX_WORK,
+                len(pending),
+            )
+            if run_id and self._ledger is not None:
+                try:
+                    self._ledger.append_event(
+                        run_id=run_id,
+                        event_type=LedgerEventType.SYSTEM_WARNING,
+                        summary=(
+                            f"Belief revision truncated at MAX_WORK={self.MAX_WORK}; "
+                            f"{len(pending)} nodes unprocessed — downstream belief states "
+                            "may be stale. Revision was partial."
+                        ),
+                    )
+                except Exception as exc:
+                    _log.warning("Failed to record truncation ledger event: %s", exc, exc_info=True)
+
+        return results, truncated
+
     def apply(
         self,
         seed_assertion_ids: list[str],
@@ -203,76 +278,12 @@ class BeliefRevisionEngine:
         empty or non-empty result list means convergence was reached.  In dense
         or cyclic graphs that hit this limit, raise MAX_WORK on the class before
         running the affected matter.
+
+        See also _apply_with_truncation() for a version that returns a
+        (results, truncated) tuple — used internally by force_state() to
+        surface propagation completeness in RevisionResult.propagation_truncated.
         """
-        from collections import deque
-
-        # Pre-fetch trust overrides once for the entire traversal.
-        override_rows = self.db.execute(
-            """SELECT document_pattern, trust_level FROM document_trust_override
-               WHERE matter_id=? AND trust_level != 'normal'
-               ORDER BY LENGTH(document_pattern) DESC""",
-            (self.assertion_store.matter_id,),
-        ).fetchall()
-        override_cache: list[tuple[str, str]] = [
-            (r["document_pattern"], r["trust_level"]) for r in override_rows
-        ]
-
-        results: list[RevisionResult] = []
-        seeds_remaining: set[str] = set(seed_assertion_ids)
-        pending: deque[str] = deque(seed_assertion_ids)
-        # in_queue: prevents the same node from being added to pending twice
-        # concurrently.  Discarded when a node is dequeued so later state
-        # changes can re-enqueue it.
-        in_queue: set[str] = set(seed_assertion_ids)
-        total_work: int = 0
-
-        while pending and total_work < self.MAX_WORK:
-            assertion_id = pending.popleft()
-            in_queue.discard(assertion_id)
-            is_seed = assertion_id in seeds_remaining
-            seeds_remaining.discard(assertion_id)
-            total_work += 1
-
-            result = self._revise_one(assertion_id, cause, run_id, note, override_cache)
-            if result is not None:
-                results.append(result)
-
-            # Propagate to dependents when:
-            # - state changed: downstream nodes must recompute with the new upstream value
-            # - seed first-pass: propagate once even without change (the seed's state was
-            #   force-written externally; its dependents must still see it)
-            if result is not None or is_seed:
-                for d in self.assertion_store.get_dependents(assertion_id):
-                    if d not in in_queue:
-                        in_queue.add(d)
-                        pending.append(d)
-
-        if pending:
-            _log.warning(
-                "BeliefRevisionEngine.apply() reached MAX_WORK=%d; %d nodes remain "
-                "unprocessed — propagation may be incomplete in dense/cyclic graphs. "
-                "Consider raising MAX_WORK if this matter is known to have deep "
-                "dependency chains.",
-                self.MAX_WORK,
-                len(pending),
-            )
-            # Surface truncation as a structured SYSTEM_WARNING in the reasoning ledger
-            # so users can see incomplete propagation (SO-2 run-level failure signal).
-            # Route through the canonical ledger path to preserve _seq_cache consistency.
-            if run_id and self._ledger is not None:
-                try:
-                    self._ledger.append_event(
-                        run_id=run_id,
-                        event_type=LedgerEventType.SYSTEM_WARNING,
-                        summary=(
-                            f"Belief revision truncated at MAX_WORK={self.MAX_WORK}; "
-                            f"{len(pending)} nodes unprocessed — downstream belief states "
-                            "may be stale. Revision was partial."
-                        ),
-                    )
-                except Exception as exc:
-                    _log.warning("Failed to record truncation ledger event: %s", exc, exc_info=True)
-
+        results, _ = self._apply_with_truncation(seed_assertion_ids, cause, run_id, note)
         return results
 
     def _revise_one(
@@ -316,6 +327,25 @@ class BeliefRevisionEngine:
         # Persist the state change
         now = _now()
         with self.db.transaction():
+            # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
+            _rev_rows: list[tuple[str, str, str]] = []
+            if new_state != old_state:
+                _rev_rows.append((
+                    "belief_state",
+                    _json_mod.dumps(old_state.value),
+                    _json_mod.dumps(new_state.value),
+                ))
+            if abs(new_confidence - old_confidence) >= 0.001:
+                _rev_rows.append((
+                    "confidence",
+                    _json_mod.dumps(old_confidence),
+                    _json_mod.dumps(new_confidence),
+                ))
+            if _rev_rows:
+                self.assertion_store.write_revision_rows(
+                    assertion_id, _rev_rows, _id(),
+                    cause.value, "system", run_id, note,
+                )
             self.assertion_store.set_belief_state(assertion_id, new_state, new_confidence)
             self.db.execute(
                 """INSERT INTO belief_revision_event
@@ -363,6 +393,26 @@ class BeliefRevisionEngine:
         now = _now()
 
         with self.db.transaction():
+            # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
+            # actor_kind="user" for direct force_state corrections.
+            _fs_rev_rows: list[tuple[str, str, str]] = []
+            if new_state != old_state:
+                _fs_rev_rows.append((
+                    "belief_state",
+                    _json_mod.dumps(old_state.value),
+                    _json_mod.dumps(new_state.value),
+                ))
+            if abs(new_confidence - old_confidence) >= 0.001:
+                _fs_rev_rows.append((
+                    "confidence",
+                    _json_mod.dumps(old_confidence),
+                    _json_mod.dumps(new_confidence),
+                ))
+            if _fs_rev_rows:
+                self.assertion_store.write_revision_rows(
+                    assertion_id, _fs_rev_rows, _id(),
+                    cause.value, "user", run_id, note,
+                )
             self.assertion_store.set_belief_state(assertion_id, new_state, new_confidence)
             self.db.execute(
                 """INSERT INTO belief_revision_event
@@ -388,10 +438,11 @@ class BeliefRevisionEngine:
             cause=cause,
         )
 
-        # Propagate to dependents
+        # Propagate to dependents; capture truncation so callers can surface it (SO-2).
         dependents = self.assertion_store.get_dependents(assertion_id)
         if dependents:
-            downstream = self.apply(dependents, cause, run_id, note)
+            downstream, truncated = self._apply_with_truncation(dependents, cause, run_id, note)
             result.propagated_to = [r.assertion_id for r in downstream]
+            result.propagation_truncated = truncated
 
         return result

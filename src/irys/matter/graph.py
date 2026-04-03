@@ -7,6 +7,7 @@ and revisable belief states.
 """
 
 import hashlib
+import json as _json_mod
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -169,6 +170,23 @@ class AssertionStore:
                 _current_conf = row["confidence"] if row["confidence"] is not None else 0.5
                 _TERMINAL = (BeliefState.SUPERSEDED.value, BeliefState.WITHDRAWN.value)
                 if _new_conf > _current_conf and row["belief_state"] not in _TERMINAL:
+                    # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
+                    _up_rev_rows: list[tuple[str, str, str]] = []
+                    if row["belief_state"] != _new_state.value:
+                        _up_rev_rows.append((
+                            "belief_state",
+                            _json_mod.dumps(row["belief_state"]),
+                            _json_mod.dumps(_new_state.value),
+                        ))
+                    _up_rev_rows.append((
+                        "confidence",
+                        _json_mod.dumps(_current_conf),
+                        _json_mod.dumps(_new_conf),
+                    ))
+                    self.write_revision_rows(
+                        assertion_id, _up_rev_rows, _id(),
+                        "occurrence_upgrade", "system",
+                    )
                     self.db.execute(
                         "UPDATE assertion SET belief_state=?, confidence=?, updated_at=? WHERE id=?",
                         (_new_state.value, _new_conf, now, assertion_id),
@@ -220,6 +238,41 @@ class AssertionStore:
             self.db.execute(
                 "UPDATE assertion SET belief_state=?, updated_at=? WHERE id=?",
                 (belief_state.value, now, assertion_id),
+            )
+
+    def write_revision_rows(
+        self,
+        assertion_id: str,
+        rows: "list[tuple[str, str, str]]",
+        batch_id: str,
+        cause: str,
+        actor_kind: str,
+        run_id: Optional[str] = None,
+        note: Optional[str] = None,
+        actor_ref: Optional[str] = None,
+    ) -> None:
+        """Write immutable field-diff rows to assertion_revision (Q4 HIGH, SO-2).
+
+        Each entry in rows is (changed_field, old_value_json, new_value_json) where
+        values are pre-serialized JSON strings so null, numbers, and nested objects
+        round-trip cleanly without ambiguity.
+
+        All rows share the same batch_id so they can be grouped by correction call.
+        Must be called inside an active transaction when multiple mutations are batched.
+        """
+        now = _now()
+        for changed_field, old_val_json, new_val_json in rows:
+            self.db.execute(
+                """INSERT INTO assertion_revision
+                   (id, batch_id, assertion_id, changed_field,
+                    old_value_json, new_value_json,
+                    actor_kind, actor_ref, cause, run_id, note, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    _id(), batch_id, assertion_id, changed_field,
+                    old_val_json, new_val_json,
+                    actor_kind, actor_ref, cause, run_id, note, now,
+                ),
             )
 
     def get(self, assertion_id: str) -> Optional[AssertionRecord]:

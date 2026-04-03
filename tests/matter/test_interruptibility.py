@@ -437,6 +437,98 @@ def test_correct_assertion_writes_revision_event(model):
     assert events[-1]["new_belief_state"] == BeliefState.DISPUTED.value
     assert "deposition" in (events[-1]["note"] or "")
 
+
+def test_correct_assertion_writes_assertion_revision_rows(model):
+    """correct_assertion() writes immutable field-diff rows to assertion_revision (Q4 HIGH)."""
+    import json
+    a_id = add_assertion(model, "Invoice was delivered.")
+    model.assertions.set_belief_state(a_id, BeliefState.ALLEGED, 0.4)
+
+    result = model.correct_assertion(a_id, BeliefState.OPERATIVE, note="Confirmed by affidavit")
+
+    rows = model.db.execute(
+        "SELECT * FROM assertion_revision WHERE assertion_id=? ORDER BY created_at",
+        (a_id,),
+    ).fetchall()
+    assert len(rows) >= 1, "assertion_revision must have at least one row after correction"
+    fields_changed = {r["changed_field"] for r in rows}
+    assert "belief_state" in fields_changed, "belief_state change must be recorded"
+    bs_row = next(r for r in rows if r["changed_field"] == "belief_state")
+    assert json.loads(bs_row["old_value_json"]) == BeliefState.ALLEGED.value
+    assert json.loads(bs_row["new_value_json"]) == BeliefState.OPERATIVE.value
+    assert bs_row["actor_kind"] == "user"
+    assert bs_row["cause"] == RevisionCause.USER_CORRECTION.value
+    assert not result.propagation_truncated
+
+
+def test_bfs_propagation_writes_system_revision_rows(model):
+    """BFS-driven belief revision writes assertion_revision rows with actor_kind='system'."""
+    from irys.matter.enums import AssertionLinkType
+    # support edge: b depends on a
+    a_id = add_assertion(model, "Contract was signed by both parties.")
+    b_id = add_assertion(model, "Contract is binding.")
+    model.assertions.link(a_id, b_id, AssertionLinkType.SUPPORTS)
+    model.assertions.set_belief_state(a_id, BeliefState.OPERATIVE, 0.9)
+
+    # Force a to disputed — should propagate to b
+    model.correct_assertion(a_id, BeliefState.DISPUTED)
+
+    sys_rows = model.db.execute(
+        "SELECT * FROM assertion_revision WHERE assertion_id=? AND actor_kind='system'",
+        (b_id,),
+    ).fetchall()
+    # b should have at least one system revision row from BFS propagation
+    assert len(sys_rows) >= 1, "BFS propagation must write system revision rows"
+
+
+def test_upsert_occurrence_upgrade_writes_revision_rows(model):
+    """upsert_occurrence() upgrade path writes assertion_revision rows (Q4 HIGH)."""
+    import json
+    from irys.matter.enums import SpeechAct, SourceRole, OriginKind
+    from irys.matter.models import AssertionCandidate
+
+    # First ingest at low confidence
+    low_candidate = AssertionCandidate(
+        proposition_text="Defendant breached the agreement.",
+        model_layer=model.assertions.db.execute(
+            "SELECT model_layer FROM assertion LIMIT 0"
+        ),
+    )
+    # Use record_assertion which calls upsert_occurrence
+    from irys.matter.enums import ModelLayer, AssertionKind
+    c1 = AssertionCandidate(
+        proposition_text="Defendant breached the agreement.",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="complaint.pdf",
+        source_role=SourceRole.ADVOCACY,
+        source_side="plaintiff",
+        speech_act=SpeechAct.ALLEGED,
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    a_id, _ = model.record_assertion(c1)
+
+    # Second ingest at higher confidence (operative source)
+    c2 = AssertionCandidate(
+        proposition_text="Defendant breached the agreement.",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="signed_agreement.pdf",
+        source_role=SourceRole.OPERATIVE,
+        source_side="neutral",
+        speech_act=SpeechAct.OPERATIVE,
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    model.record_assertion(c2)
+
+    rev_rows = model.db.execute(
+        "SELECT * FROM assertion_revision WHERE assertion_id=? AND cause='occurrence_upgrade'",
+        (a_id,),
+    ).fetchall()
+    assert len(rev_rows) >= 1, "occurrence_upgrade must write assertion_revision rows"
+    fields = {r["changed_field"] for r in rev_rows}
+    assert "confidence" in fields
+
 # ---------------------------------------------------------------------------
 # _gather_with_cancellation — true in-flight cancellation (SO-3)
 # ---------------------------------------------------------------------------

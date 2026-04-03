@@ -1963,23 +1963,23 @@ class RLMEngine:
                         }
                     facts_to_add.append((fact_text, src_label, doc_id, issue_rel, spo))
 
-            # SO-2 validation + retry: if primary extraction produced zero SPO triples,
-            # make one targeted FLASH retry to recover structured triples from the
-            # already-extracted fact texts (no re-reading of source documents).
+            # SO-2 validation + retry: if primary extraction left any facts without SPO
+            # triples, make one targeted FLASH retry to recover structured triples from
+            # the already-extracted fact texts (no re-reading of source documents).
             if facts_to_add:
                 _spo_count = sum(1 for _, _, _, _, _s in facts_to_add if _s is not None)
-                if _spo_count == 0 and len(facts_to_add) >= 3:
+                if _spo_count < len(facts_to_add) and len(facts_to_add) >= 3:
                     self._emit_step(
                         state, StepType.REPLAN,
-                        f"SPO extraction yielded 0 structured triples from {len(facts_to_add)} facts "
-                        f"(search: '{search_term[:60]}'). Retrying SPO extraction.",
+                        f"SPO extraction yielded {_spo_count}/{len(facts_to_add)} structured triples "
+                        f"(search: '{search_term[:60]}'). Retrying for missing.",
                     )
                     _retry_texts = [txt for txt, _, _, _, _ in facts_to_add]
                     _retry_spo = await self._retry_spo_extraction(_retry_texts)
                     if _retry_spo:
                         facts_to_add = [
-                            (txt, lbl, doc, rel, _retry_spo.get(i))
-                            for i, (txt, lbl, doc, rel, _) in enumerate(facts_to_add)
+                            (txt, lbl, doc, rel, _retry_spo.get(i) if spo is None else spo)
+                            for i, (txt, lbl, doc, rel, spo) in enumerate(facts_to_add)
                         ]
 
             # Add to state with per-fact source-role prefix (SO-5)
@@ -2367,21 +2367,21 @@ class RLMEngine:
                                 "object_json": json.dumps(str(_obj)) if _obj else None,
                             }
                         facts_to_add.append((fact_item["fact"], issue_rel, effective_date, spo))
-                # SO-2 validation: warn if LLM returned facts but omitted all SPO triples.
+                # SO-2 validation: if any facts lack SPO triples, retry to recover them.
                 if facts_to_add:
                     _dr_spo_count = sum(1 for _, _, _, _s in facts_to_add if _s is not None)
-                    if _dr_spo_count == 0 and len(facts_to_add) >= 3:
+                    if _dr_spo_count < len(facts_to_add) and len(facts_to_add) >= 3:
                         self._emit_step(
                             state, StepType.REPLAN,
-                            f"SPO extraction yielded 0 structured triples from {len(facts_to_add)} facts "
-                            f"(deep-read: '{doc.filename[:60]}'). Retrying SPO extraction.",
+                            f"SPO extraction yielded {_dr_spo_count}/{len(facts_to_add)} structured triples "
+                            f"(deep-read: '{doc.filename[:60]}'). Retrying for missing.",
                         )
                         _dr_retry_texts = [f for f, _, _, _ in facts_to_add]
                         _dr_retry_spo = await self._retry_spo_extraction(_dr_retry_texts)
                         if _dr_retry_spo:
                             facts_to_add = [
-                                (f, rel, eff, _dr_retry_spo.get(i))
-                                for i, (f, rel, eff, _) in enumerate(facts_to_add)
+                                (f, rel, eff, _dr_retry_spo.get(i) if spo is None else spo)
+                                for i, (f, rel, eff, spo) in enumerate(facts_to_add)
                             ]
                 # SO-5: resolve source role using content-based classification first,
                 # then fall back to filename heuristic.  The LLM classifies by document
