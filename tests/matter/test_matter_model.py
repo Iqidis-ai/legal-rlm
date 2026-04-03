@@ -229,6 +229,27 @@ def test_build_query_context_with_data(model):
     assert len(ctx.open_gaps) == 1
 
 
+def test_build_query_context_excludes_low_materiality_gaps(model):
+    """build_query_context() must not surface low-materiality gaps in the orientation context (SO-7).
+
+    Low-materiality gaps (< 0.3) are stored for completeness but must not
+    clutter the orientation prompt.  Only actionable gaps (materiality >= 0.3)
+    should appear in ctx.open_gaps so the LLM focuses on material missingness
+    and not minor peripheral absences.
+    """
+    # High-materiality gap — should appear in context
+    model.record_gap(GapType.MISSING_DOCUMENT, "Signed amendment not found", materiality=0.9)
+    # Low-materiality gap — must NOT appear in context
+    model.record_gap(GapType.MISSING_DOCUMENT, "Minor CC email not found", materiality=0.1)
+
+    ctx = model.build_query_context()
+    assert len(ctx.open_gaps) == 1, (
+        "build_query_context() must exclude gaps below the materiality threshold "
+        "(SO-7: only actionable missingness surfaces in orientation)"
+    )
+    assert ctx.open_gaps[0]["description"] == "Signed amendment not found"
+
+
 # ---------------------------------------------------------------------------
 # Gap store deduplication (SO-7: idempotent gap recording)
 # ---------------------------------------------------------------------------
