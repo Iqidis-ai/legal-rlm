@@ -479,6 +479,9 @@ class NullMatterAdapter:
     def record_fact(self, proposition_text: str, document_id: str, **kwargs) -> str:
         return ""
 
+    def record_facts_batch(self, facts: list, **kwargs) -> list:
+        return [""] * len(facts)
+
     def flush_revisions(self) -> int:
         return 0
 
