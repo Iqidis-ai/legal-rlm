@@ -228,8 +228,10 @@ class MatterRuntimeAdapter:
                 changed_object_id=assertion_id,
             )
 
-        # Link to issue if a focus issue was specified for this lead (SO-4)
-        if issue_id is not None:
+        # Link to issue if a focus issue was specified for this lead (SO-4).
+        # 'neutral' facts are recorded but intentionally not linked — they provide
+        # context without claiming to support or attack the issue predicate.
+        if issue_id is not None and issue_link_type != "neutral":
             self.model.issues.link_assertion(assertion_id, issue_id, issue_link_type)
 
         return assertion_id
