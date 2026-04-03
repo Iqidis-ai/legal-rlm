@@ -799,7 +799,7 @@ class RLMEngine:
                 # Detect numeric conflicts → gaps (SO-6 + SO-7)
                 self._matter_model.detect_quant_conflicts()
                 # Detect issues with zero supporting assertions → proof gaps (SO-7)
-                self._detect_proof_gaps(run_id)
+                self._detect_proof_gaps()
                 # Generate clarification questions from open gaps (SO-7)
                 self._matter_model.generate_clarifications_from_gaps(
                     run_id=run_id,
@@ -2482,7 +2482,7 @@ class RLMEngine:
             logger.warning(f"JSON parse failed: {e}, response preview: {text[:200] if text else 'empty'}")
             return defaults
 
-    def _detect_proof_gaps(self, run_id: str) -> None:
+    def _detect_proof_gaps(self) -> None:
         """Record proof gaps for high-priority issues with no supporting assertions (SO-7).
 
         An issue that exists in the model but has zero supporting-assertion links is
