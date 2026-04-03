@@ -225,6 +225,34 @@ def test_build_source_calibration_includes_trust_overrides():
     assert "Expert hired by plaintiff" in calibration, "override note must appear"
 
 
+def test_build_source_calibration_includes_user_annotations():
+    """_build_source_calibration() must surface user document annotations (SO-3 + SO-5)."""
+    model = MatterModel.open_in_memory()
+
+    run_id = model.start_run("annotation calibration test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_fact("Party A claims breach.", document_id="complaint.pdf")
+
+    # Add a strategic annotation
+    model.annotations.add(
+        "expert_damages_report.pdf",
+        "Prepared post-litigation — treat damages estimates as advocacy positions, not operative values.",
+        annotation_type="reliability",
+    )
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    calibration = engine._build_source_calibration(None)
+
+    assert "expert_damages_report.pdf" in calibration, (
+        "Annotated document must appear in calibration block (SO-3 annotation surfacing)"
+    )
+    assert "advocacy" in calibration.lower() or "annotation" in calibration.lower(), (
+        "Annotation text must appear in calibration"
+    )
+
+
 # ---------------------------------------------------------------------------
 # SO-7: _build_gap_summary() surfaces open gaps
 # ---------------------------------------------------------------------------
