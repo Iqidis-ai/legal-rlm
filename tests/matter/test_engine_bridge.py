@@ -2738,7 +2738,7 @@ def test_advocacy_gate_block_present_when_advocacy_only():
     block = engine._build_advocacy_gate_block()
     assert block, "Gate block must be non-empty when advocacy-only issues exist"
     assert "ADVOCACY-ONLY GATE" in block, "Gate block must contain the gate header"
-    assert "MANDATORY" in block, "Gate block must include MANDATORY instruction"
+    assert "DO NOT OVERRIDE" in block, "Gate block must include DO NOT OVERRIDE instruction"
     assert "alleges" in block.lower() or "contends" in block.lower(), (
         "Gate block must include example hedging language"
     )
