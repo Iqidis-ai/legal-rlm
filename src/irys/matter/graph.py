@@ -525,15 +525,34 @@ class AssertionStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_by_proposition(self, proposition_text: str) -> Optional[AssertionRecord]:
-        """Look up an assertion by normalized proposition text."""
+    def get_by_proposition(
+        self,
+        proposition_text: str,
+        model_layer: Optional[str] = None,
+    ) -> Optional["AssertionRecord"]:
+        """Look up an assertion by normalized proposition text.
+
+        If *model_layer* is supplied the lookup is restricted to that layer,
+        which is the correct behaviour when the caller knows which reasoning
+        layer the assertion lives in (record / reality / proof / legal /
+        decision_context).  Without an explicit layer the query can return an
+        assertion from any layer — callers should supply the layer whenever
+        possible to avoid cross-layer leakage.
+        """
         import hashlib
         normalized = " ".join(proposition_text.lower().split())
         prop_key = hashlib.sha256(normalized.encode()).hexdigest()[:32]
-        row = self.db.execute(
-            "SELECT * FROM assertion WHERE matter_id=? AND proposition_key=?",
-            (self.matter_id, prop_key),
-        ).fetchone()
+        if model_layer is not None:
+            row = self.db.execute(
+                "SELECT * FROM assertion"
+                " WHERE matter_id=? AND model_layer=? AND proposition_key=?",
+                (self.matter_id, model_layer, prop_key),
+            ).fetchone()
+        else:
+            row = self.db.execute(
+                "SELECT * FROM assertion WHERE matter_id=? AND proposition_key=?",
+                (self.matter_id, prop_key),
+            ).fetchone()
         if row is None:
             return None
         return AssertionRecord(**dict(row))

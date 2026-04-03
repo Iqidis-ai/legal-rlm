@@ -150,10 +150,18 @@ class BeliefRevisionEngine:
     Propagates belief state changes through the assertion dependency graph.
 
     All revision events are persisted to belief_revision_event.
-    The propagation is BFS-limited to max_hops to prevent runaway cascades.
+    The propagation uses fixpoint convergence: nodes whose state changes
+    re-enqueue their dependents, allowing downstream nodes to be recomputed
+    even when they were already processed in an earlier pass.  This correctly
+    handles converging-evidence graphs where a downstream node depends on
+    multiple upstream nodes revised in the same traversal.
+
+    Terminates when no further state changes occur, or when MAX_WORK total
+    node-visits have been performed (configurable guardrail against unbounded
+    propagation in cyclic graphs).
     """
 
-    MAX_HOPS = 10
+    MAX_WORK = 500
 
     def __init__(self, db: SQLiteMatterDB, assertion_store: AssertionStore):
         self.db = db
@@ -166,14 +174,19 @@ class BeliefRevisionEngine:
         run_id: Optional[str] = None,
         note: Optional[str] = None,
     ) -> list[RevisionResult]:
-        """
-        Apply belief revision starting from seed assertions.
+        """Apply belief revision starting from seed assertions.
 
-        Propagates through the dependency graph up to MAX_HOPS levels.
-        Returns all RevisionResult objects for changed assertions.
+        Uses fixpoint propagation: after each state change, all dependents are
+        re-enqueued so they can recompute with the updated upstream state.
+        Seeds receive one unconditional propagation pass (to handle the case
+        where the seed state was force-written externally and its own recomputed
+        state does not change, but dependents still need to see the new value).
+
+        Returns all RevisionResult objects for assertions whose state changed.
         """
-        # Pre-fetch trust overrides once for the entire BFS traversal.
-        # Avoids one DB query per node in get_neighbor_belief_states().
+        from collections import deque
+
+        # Pre-fetch trust overrides once for the entire traversal.
         override_rows = self.db.execute(
             """SELECT document_pattern, trust_level FROM document_trust_override
                WHERE matter_id=? AND trust_level != 'normal'
@@ -185,40 +198,34 @@ class BeliefRevisionEngine:
         ]
 
         results: list[RevisionResult] = []
-        visited: set[str] = set()
-        enqueued: set[str] = set(seed_assertion_ids)  # tracks what's in queue/next_queue
-        seeds = set(seed_assertion_ids)
-        queue = list(seed_assertion_ids)
-        hop = 0
+        seeds_remaining: set[str] = set(seed_assertion_ids)
+        pending: deque[str] = deque(seed_assertion_ids)
+        # in_queue: prevents the same node from being added to pending twice
+        # concurrently.  Discarded when a node is dequeued so later state
+        # changes can re-enqueue it.
+        in_queue: set[str] = set(seed_assertion_ids)
+        total_work: int = 0
 
-        while queue and hop < self.MAX_HOPS:
-            next_queue = []
-            for assertion_id in queue:
-                if assertion_id in visited:
-                    continue
-                visited.add(assertion_id)
+        while pending and total_work < self.MAX_WORK:
+            assertion_id = pending.popleft()
+            in_queue.discard(assertion_id)
+            is_seed = assertion_id in seeds_remaining
+            seeds_remaining.discard(assertion_id)
+            total_work += 1
 
-                result = self._revise_one(assertion_id, cause, run_id, note, override_cache)
-                if result is not None:
-                    results.append(result)
+            result = self._revise_one(assertion_id, cause, run_id, note, override_cache)
+            if result is not None:
+                results.append(result)
 
-                # Always propagate from seed assertions, even when they didn't change.
-                # A newly-recorded superseding assertion has OPERATIVE belief state
-                # (no change from itself), but its dependents (superseded nodes) must
-                # still be visited so they can be marked SUPERSEDED.
-                # Non-seed propagation only happens on state change to avoid runaway BFS.
-                if result is not None or assertion_id in seeds:
-                    for d in self.assertion_store.get_dependents(assertion_id):
-                        # Deduplicate at enqueue time to avoid O(E) queue size on dense graphs.
-                        if d not in visited and d not in enqueued:
-                            enqueued.add(d)
-                            next_queue.append(d)
-
-            # Seeds only get special always-propagate treatment on hop 0.
-            # After hop 0, only changed assertions propagate further.
-            seeds = set()
-            queue = next_queue
-            hop += 1
+            # Propagate to dependents when:
+            # - state changed: downstream nodes must recompute with the new upstream value
+            # - seed first-pass: propagate once even without change (the seed's state was
+            #   force-written externally; its dependents must still see it)
+            if result is not None or is_seed:
+                for d in self.assertion_store.get_dependents(assertion_id):
+                    if d not in in_queue:
+                        in_queue.add(d)
+                        pending.append(d)
 
         return results
 

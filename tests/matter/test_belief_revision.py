@@ -163,33 +163,34 @@ def test_user_correction_via_matter_model(model):
     assert record.belief_state == BeliefState.OPERATIVE.value
 
 
-def test_bfs_stops_at_max_hops(model):
-    """Revision must not run forever on long chains."""
+def test_bfs_stops_at_max_work(model):
+    """Revision must not run forever — MAX_WORK caps total node-visits."""
     from irys.matter.belief_revision import BeliefRevisionEngine
 
-    original_max = BeliefRevisionEngine.MAX_HOPS
-    BeliefRevisionEngine.MAX_HOPS = 2  # artificially low
+    original_max = BeliefRevisionEngine.MAX_WORK
+    BeliefRevisionEngine.MAX_WORK = 2  # artificially low: only 2 node-visits allowed
 
     try:
-        # Build chain of length 5
+        # Build chain of length 5: ids[0] → ids[1] → ids[2] → ids[3] → ids[4] → ids[5]
         ids = [add(model, f"Proposition {i}.") for i in range(6)]
         for i in range(5):
             model.assertions.link(ids[i], ids[i + 1], AssertionLinkType.SUPPORTS)
             model.assertions.set_belief_state(ids[i], BeliefState.OPERATIVE, 0.9)
         model.assertions.set_belief_state(ids[5], BeliefState.OPERATIVE, 0.9)
 
-        # Force ids[0] to DISPUTED
+        # Force ids[0] to DISPUTED — propagation starts from ids[1] (the dependent)
         model.belief.force_state(
             ids[0], BeliefState.DISPUTED, 0.2, RevisionCause.USER_CORRECTION
         )
 
-        # ids[3], ids[4], ids[5] should NOT have been revised (beyond MAX_HOPS=2)
+        # With MAX_WORK=2: ids[1] (work=1) and ids[2] (work=2) may be processed.
+        # ids[3], ids[4], ids[5] must NOT have been revised (work budget exhausted).
         for far_id in ids[3:]:
             record = model.assertions.get(far_id)
             assert record.belief_state == BeliefState.OPERATIVE.value, \
-                f"Should not have revised beyond MAX_HOPS, but {far_id} was revised"
+                f"Should not have revised beyond MAX_WORK=2, but {far_id} was revised"
     finally:
-        BeliefRevisionEngine.MAX_HOPS = original_max
+        BeliefRevisionEngine.MAX_WORK = original_max
 
 
 def test_both_support_and_attack_results_in_disputed(model):
@@ -262,11 +263,12 @@ def test_all_supporters_disputed_collapses_to_unknown(model):
 
 
 def test_bfs_does_not_loop_on_circular_dependency(model):
-    """BFS revision must not loop infinitely when assertions form a mutual-support cycle.
+    """Revision must not loop infinitely when assertions form a mutual-support cycle.
 
-    The BFS uses a 'visited' set to avoid re-processing the same assertion_id.
-    If A supports B and B supports A (circular), the apply() call must terminate.
-    This is an invariant of the BFS implementation — not just a MAX_HOPS check.
+    The fixpoint engine uses MAX_WORK to cap total node-visits.  If A supports B
+    and B supports A (circular), the apply() call must terminate because each
+    re-enqueue only happens on state change, and belief states converge to a fixed
+    point (no further changes) well within the MAX_WORK budget.
     """
     a_id = add(model, "Fact A — mutually supports B.")
     b_id = add(model, "Fact B — mutually supports A.")

@@ -100,6 +100,52 @@ def test_get_by_proposition(model):
     assert result.proposition_text == text
 
 
+def test_get_by_proposition_layer_filter_isolates_layers(model):
+    """Same proposition in two layers must be retrievable independently by layer."""
+    from irys.matter import AssertionCandidate, ModelLayer, AssertionKind
+    from irys.matter.enums import OriginKind
+
+    text = "The contract was executed on March 1 2024."
+
+    # Same proposition text inserted in two distinct layers.
+    record_c = AssertionCandidate(
+        proposition_text=text,
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="contract.pdf",
+        speech_act=SpeechAct.OPERATIVE,
+        source_role=SourceRole.OPERATIVE,
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    proof_c = AssertionCandidate(
+        proposition_text=text,
+        model_layer=ModelLayer.PROOF,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="brief.pdf",
+        speech_act=SpeechAct.ALLEGED,
+        source_role=SourceRole.ADVOCACY,
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    record_id, _ = model.assertions.upsert_occurrence(record_c)
+    proof_id, _ = model.assertions.upsert_occurrence(proof_c)
+
+    # They must be different assertions (different layers).
+    assert record_id != proof_id
+
+    # Layer-filtered lookup returns the correct one.
+    r_record = model.assertions.get_by_proposition(text, model_layer="record")
+    r_proof = model.assertions.get_by_proposition(text, model_layer="proof")
+
+    assert r_record is not None
+    assert r_proof is not None
+    assert r_record.id == record_id
+    assert r_proof.id == proof_id
+
+    # Wrong layer returns None.
+    r_wrong = model.assertions.get_by_proposition(text, model_layer="legal")
+    assert r_wrong is None
+
+
 def test_assertion_link_creates_graph(model):
     c1 = make_candidate("Payment was due on January 15.", doc_id="contract.pdf")
     c2 = make_candidate("No payment was received by January 15.", doc_id="email.pdf",
