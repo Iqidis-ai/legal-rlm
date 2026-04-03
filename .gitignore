@@ -126,3 +126,12 @@ docker-compose.override.yml
 # Virtual environment
 .venv/
 
+
+# Codex review artifacts (consumed, not version-controlled)
+codex_tier1_*.txt
+codex_tier2_*.txt
+codex_adversarial_audit_*.txt
+codex_design_gate_*.txt
+codex_design_*.txt
+codex_ping.txt
+.audit_tmp/
