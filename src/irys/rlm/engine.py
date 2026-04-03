@@ -153,6 +153,7 @@ ANALYZE THESE RESULTS CAREFULLY:
 Respond in COMPACT JSON (keep under 3000 chars):
 {{
     "key_facts": [{{"fact": "fact text", "source_file": "filename.pdf"}}, ...],
+    "fact_relationships": [{{"from_idx": 0, "to_idx": 1, "relation": "corroborates|contradicts|supersedes|supports"}}],
     "new_leads": [{{"desc": "...", "priority": 0.8}}],
     "hypothesis_update": "string or null",
     "next_searches": ["term1", "term2"]
@@ -1274,18 +1275,41 @@ class RLMEngine:
             # Add to state with per-fact source-role prefix (SO-5)
             state.add_facts([f"[{lbl}] {txt}" for txt, lbl, _ in facts_to_add])
 
-            # Record into matter model with correct per-fact doc_id
+            # Record into matter model with correct per-fact doc_id; collect assertion IDs
+            # for graph-edge creation below (SO-2 assertion links in search analysis path).
             adapter = getattr(state, "_matter_adapter", None)
+            _search_assertion_ids: list[str] = []
             if adapter is not None:
                 issue_id = lead.focus_issue_id if lead is not None else None
                 for fact_text, _lbl, doc_id in facts_to_add:
-                    adapter.record_fact(fact_text, document_id=doc_id, issue_id=issue_id)
+                    _aid = adapter.record_fact(fact_text, document_id=doc_id, issue_id=issue_id)
+                    _search_assertion_ids.append(_aid)
                 if facts_to_add:
                     unique_docs = {d for _, _, d in facts_to_add}
                     adapter.log_step(
                         f"Recorded {len(facts_to_add)} facts from search: {results.query[:60]}",
                         why=f"Sources: {', '.join(sorted(unique_docs)[:3])}",
                     )
+                # Build assertion dependency graph from LLM-identified relationships (SO-2).
+                # Mirrors the deep-read path so warm runs (which skip deep reads) still produce
+                # assertion edges from the search analysis pass.
+                _rels = analysis.get("fact_relationships") or []
+                for _rel in _rels[:5]:
+                    if not isinstance(_rel, dict):
+                        continue
+                    _fi = _rel.get("from_idx")
+                    _ti = _rel.get("to_idx")
+                    _rt = _rel.get("relation", "")
+                    if (isinstance(_fi, int) and isinstance(_ti, int)
+                            and 0 <= _fi < len(_search_assertion_ids)
+                            and 0 <= _ti < len(_search_assertion_ids)
+                            and _fi != _ti
+                            and _search_assertion_ids[_fi] != _search_assertion_ids[_ti]):
+                        adapter.record_assertion_link(
+                            _search_assertion_ids[_fi],
+                            _search_assertion_ids[_ti],
+                            _rt,
+                        )
 
         # Update hypothesis if changed
         if analysis.get("hypothesis_update"):
