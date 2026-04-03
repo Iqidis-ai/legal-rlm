@@ -483,8 +483,13 @@ class MatterModel:
         """
         Detect numeric conflicts: same subject_type+currency with divergent amounts.
 
-        For each conflict group found, records an UNRESOLVED_CONTRADICTION gap with
-        materiality 0.8 (high — amount conflicts are almost always significant).
+        For each conflict group found:
+        1. Records an UNRESOLVED_CONTRADICTION gap (materiality 0.8).
+        2. Wires bidirectional 'contradicts' assertion_links between the assertions
+           that carry the conflicting quant facts (SO-6 → SO-2 propagation).
+        3. Runs BeliefRevisionEngine on those assertions so they are marked DISPUTED
+           in the assertion graph (truth maintenance).
+
         Returns list of new gap_ids created. Idempotent: skips conflicts whose gap
         description is already in the open gap store.
         """
@@ -498,20 +503,52 @@ class MatterModel:
         }
 
         gap_ids = []
+        all_conflict_assertion_ids: list[str] = []
+
         for conflict in conflicts:
             subject = conflict.get("subject_type") or "unknown"
             currency = conflict.get("currency") or ""
             values = conflict.get("values", [])
             value_str = ", ".join(f"{v:,.2f}" for v in values[:5])
             desc = f"Conflicting {subject} amounts ({currency}): {value_str}"
-            if desc.lower() in existing_descriptions:
-                continue
-            gap_id = self.record_gap(
-                description=desc,
-                gap_type=GapType.UNRESOLVED_CONTRADICTION,
-                materiality=0.8,
+
+            # Record gap (idempotent)
+            if desc.lower() not in existing_descriptions:
+                gap_id = self.record_gap(
+                    description=desc,
+                    gap_type=GapType.UNRESOLVED_CONTRADICTION,
+                    materiality=0.8,
+                )
+                gap_ids.append(gap_id)
+
+            # Collect assertion_ids for quant facts in this conflict group (SO-6→SO-2)
+            subject_id = conflict.get("subject_id")
+            rows = self.db.execute(
+                """SELECT DISTINCT assertion_id
+                   FROM quant_fact
+                   WHERE matter_id=? AND quant_kind='amount'
+                     AND subject_type=?
+                     AND COALESCE(subject_id, '')=?
+                     AND (currency=? OR (currency IS NULL AND ?=''))
+                     AND assertion_id IS NOT NULL""",
+                (self.matter_id, subject, subject_id or "", currency, currency),
+            ).fetchall()
+            aids = [r["assertion_id"] for r in rows]
+            if len(aids) >= 2:
+                # Wire bidirectional contradicts links (idempotent via UNIQUE index)
+                for i, a1 in enumerate(aids):
+                    for a2 in aids[i + 1:]:
+                        self.assertions.link(a1, a2, AssertionLinkType.CONTRADICTS)
+                        self.assertions.link(a2, a1, AssertionLinkType.CONTRADICTS)
+                all_conflict_assertion_ids.extend(aids)
+
+        # Run belief revision on all conflicting assertions so they become DISPUTED
+        if all_conflict_assertion_ids:
+            self.belief.apply(
+                seed_assertion_ids=list(dict.fromkeys(all_conflict_assertion_ids)),
+                cause=RevisionCause.CONFLICT_DETECTION,
+                note="Automatic: conflicting amount values detected for same subject",
             )
-            gap_ids.append(gap_id)
 
         return gap_ids
 

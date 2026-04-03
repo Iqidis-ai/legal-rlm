@@ -247,6 +247,54 @@ def test_detect_quant_conflicts_no_conflicts_returns_empty(model):
     assert model.detect_quant_conflicts() == []
 
 
+def test_detect_quant_conflicts_propagates_disputed_to_assertions(model):
+    """SO-6→SO-2: detect_quant_conflicts() must wire contradicts links and mark
+    the linked assertions as DISPUTED via BeliefRevisionEngine (truth maintenance).
+    """
+    from irys.matter.models import AssertionCandidate
+    from irys.matter.enums import AssertionKind, SpeechAct, OriginKind
+
+    # Record two assertions — one per conflicting quant fact
+    cand_a = AssertionCandidate(
+        proposition_text="Invoice #X totals $50,000",
+        assertion_kind=AssertionKind.QUANTITATIVE,
+        speech_act=SpeechAct.ALLEGED,
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    cand_b = AssertionCandidate(
+        proposition_text="Invoice #X totals $55,000",
+        assertion_kind=AssertionKind.QUANTITATIVE,
+        speech_act=SpeechAct.ALLEGED,
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    aid_a, _ = model.record_assertion(cand_a)
+    aid_b, _ = model.record_assertion(cand_b)
+
+    # Link both quant facts to their respective assertions
+    model.quant.record(
+        quant_kind="amount", raw_text="$50k invoice X",
+        amount_value=50_000.0, currency="USD",
+        subject_type="invoice", subject_id="Invoice #X",
+        assertion_id=aid_a,
+    )
+    model.quant.record(
+        quant_kind="amount", raw_text="$55k invoice X",
+        amount_value=55_000.0, currency="USD",
+        subject_type="invoice", subject_id="Invoice #X",
+        assertion_id=aid_b,
+    )
+
+    model.detect_quant_conflicts()
+
+    # Both assertions must now be DISPUTED (belief revision propagated)
+    rec_a = model.assertions.get(aid_a)
+    rec_b = model.assertions.get(aid_b)
+    assert rec_a is not None
+    assert rec_b is not None
+    assert rec_a.belief_state == "disputed", f"Expected disputed, got {rec_a.belief_state}"
+    assert rec_b.belief_state == "disputed", f"Expected disputed, got {rec_b.belief_state}"
+
+
 # ---------------------------------------------------------------------------
 # SO-6: date and rate quant kinds are readable (not write-only)
 # ---------------------------------------------------------------------------
