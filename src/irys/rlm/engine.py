@@ -2383,6 +2383,20 @@ class RLMEngine:
         except Exception:
             pass
 
+        # Incorporate user strategic annotations for named documents (SO-3 annotation).
+        # These guide the LLM on how to interpret facts from specific documents.
+        try:
+            annotations = self._matter_model.annotations.list_recent(limit=8)
+            if annotations:
+                lines.append("\nUser strategic annotations for specific documents:")
+                for ann in annotations:
+                    doc = (ann.get("document_pattern") or "")
+                    txt = (ann.get("annotation_text") or "")[:200]
+                    ann_type = (ann.get("annotation_type") or "strategic").upper()
+                    lines.append(f"  • [{ann_type}] '{doc}': {txt}")
+        except Exception:
+            pass
+
         lines.append(
             "\nWARNING: Facts from ADVOCACY sources represent one party's position, not "
             "established truth. Do not amplify advocacy material as if it were operative fact."
