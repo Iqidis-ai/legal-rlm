@@ -2896,11 +2896,12 @@ def test_build_issue_focus_block_with_predicates():
     engine = RLMEngine.__new__(RLMEngine)
     engine._matter_model = model
 
-    block = engine._build_issue_focus_block(iid)
+    block, pred_descs = engine._build_issue_focus_block(iid)
     assert block, "Issue focus block must be non-empty when issue and predicates exist"
     assert "Breach of payment obligation" in block, "Must include issue title"
     assert "plaintiff delivered goods" in block, "Must include predicate description"
     assert "SO-4" in block, "Must reference SO-4 for traceability"
+    assert pred_descs == ["plaintiff delivered goods conforming to the contract"]
 
 
 def test_build_issue_focus_block_no_predicates_still_shows_title():
@@ -2913,9 +2914,10 @@ def test_build_issue_focus_block_no_predicates_still_shows_title():
     engine = RLMEngine.__new__(RLMEngine)
     engine._matter_model = model
 
-    block = engine._build_issue_focus_block(iid)
+    block, pred_descs = engine._build_issue_focus_block(iid)
     assert block, "Issue focus block must be non-empty when issue exists (even without predicates)"
     assert "Fraudulent misrepresentation" in block
+    assert pred_descs == []
 
 
 def test_build_issue_focus_block_no_issue_id_returns_empty():
@@ -2925,8 +2927,9 @@ def test_build_issue_focus_block_no_issue_id_returns_empty():
     engine = RLMEngine.__new__(RLMEngine)
     engine._matter_model = model
 
-    block = engine._build_issue_focus_block(None)
+    block, pred_descs = engine._build_issue_focus_block(None)
     assert block == ""
+    assert pred_descs == []
 
 
 def test_build_issue_focus_block_no_model_returns_empty():
@@ -2935,8 +2938,9 @@ def test_build_issue_focus_block_no_model_returns_empty():
     engine = RLMEngine.__new__(RLMEngine)
     engine._matter_model = None
 
-    block = engine._build_issue_focus_block("any-issue-id")
+    block, pred_descs = engine._build_issue_focus_block("any-issue-id")
     assert block == ""
+    assert pred_descs == []
 
 
 # ---------------------------------------------------------------------------

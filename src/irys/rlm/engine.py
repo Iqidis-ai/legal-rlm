@@ -1798,21 +1798,11 @@ class RLMEngine:
         import hashlib as _hl
         _focus_issue_id = lead.focus_issue_id if lead is not None else None
         _top_names = ",".join(sorted(h.filename for h in results.top(5)))
-        # Compute the exact predicate descriptions shown in the Issue Focus block.
-        # These are used for: (a) resolution allowlist — only LLM-visible predicates
-        # may be resolved; (b) cache key dependency — when predicates change (e.g.
-        # one resolves and the top-2 open set shifts), old cached analysis is invalid.
-        _pred_allowlist: list[str] = []
-        if _focus_issue_id and self._matter_model is not None:
-            try:
-                _open_preds = self._matter_model.issues.get_predicates(_focus_issue_id, limit=2)
-                _pred_allowlist = [
-                    p.get("description", "")
-                    for p in _open_preds
-                    if p.get("status") == "open" and p.get("description")
-                ]
-            except Exception:
-                pass
+        # Build issue focus block + predicate allowlist in one call to avoid
+        # a duplicate get_predicates() read on cache misses (perf fix).
+        # _pred_allowlist: exact descriptions shown in Issue Focus — allowlist for resolution.
+        # _pred_key_frag: included in cache key so changing open predicates invalidates cache.
+        _issue_focus, _pred_allowlist = self._build_issue_focus_block(_focus_issue_id)
         _pred_key_frag = ",".join(_pred_allowlist)
         _analysis_key = _hl.sha256(
             f"{_ANALYZE_PROMPT_VER}\n{results.query}\n{state.query}\n{state.hypothesis or ''}"
@@ -1833,7 +1823,6 @@ class RLMEngine:
             _adp_pre = getattr(state, "_matter_adapter", None)
             if _adp_pre is not None and _adp_pre.is_stop_requested():
                 return
-            _issue_focus = self._build_issue_focus_block(_focus_issue_id)
             prompt = ANALYZE_FINDINGS_PROMPT.format(
                 query=state.query,
                 hypothesis=state.hypothesis or "No hypothesis yet",
@@ -3198,7 +3187,9 @@ class RLMEngine:
             except Exception:
                 pass
 
-    def _build_issue_focus_block(self, focus_issue_id: Optional[str]) -> str:
+    def _build_issue_focus_block(
+        self, focus_issue_id: Optional[str]
+    ) -> tuple[str, list[str]]:
         """Build an issue-focus context block for the analysis prompt (SO-4).
 
         When a lead targets a specific issue, inject the issue title and first
@@ -3206,29 +3197,37 @@ class RLMEngine:
         that address the issue's specific proof elements — not just query-token
         surface matches.
 
-        Returns empty string when no issue context is available (no prompt noise).
+        Returns (block_str, pred_descriptions) so callers can use the predicate
+        list as an allowlist for resolve_predicate_by_description() without a
+        second get_predicates() call (eliminates duplicate DB read on cache misses).
+
+        Returns ("", []) when no issue context is available.
         """
         if not focus_issue_id or self._matter_model is None:
-            return ""
+            return "", []
         try:
             issue = self._matter_model.issues.get_issue(focus_issue_id)
             if not issue:
-                return ""
+                return "", []
             title = issue.get("title", "")
             predicates = self._matter_model.issues.get_predicates(focus_issue_id, limit=2)
+            pred_descs = [
+                p.get("description", "")
+                for p in predicates
+                if p.get("status") == "open" and p.get("description")
+            ]
             lines = [f"Issue Focus (SO-4 — prioritize facts addressing these elements):"]
             lines.append(f"  Issue: \"{title}\"")
-            if predicates:
-                for p in predicates:
-                    lines.append(f"  Element to prove: \"{p.get('description', '')}\"")
+            for desc in pred_descs:
+                lines.append(f"  Element to prove: \"{desc}\"")
             lines.append("  → Extract facts that support OR disprove these specific elements.")
             block = "\n".join(lines) + "\n"
             # Escape braces so the block is safe to pass through str.format() in the
             # ANALYZE_FINDINGS_PROMPT template — issue titles/predicates could contain
             # literal { } characters that would otherwise be misinterpreted as slots.
-            return block.replace("{", "{{").replace("}", "}}")
+            return block.replace("{", "{{").replace("}", "}}"), pred_descs
         except Exception:
-            return ""
+            return "", []
 
     def _enrich_search_term_with_issue_context(
         self, search_term: str, focus_issue_id: str
