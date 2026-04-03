@@ -1718,6 +1718,19 @@ class RLMEngine:
                         focus_issue_id=_follow_on_issue_id,
                     )
 
+        # Convert next_searches (bare search terms from analysis) into leads.
+        # These are lower priority than structured new_leads but still valuable
+        # as targeted follow-up searches that maintain issue focus.
+        for _ns in analysis.get("next_searches", [])[:2]:
+            if isinstance(_ns, str) and _ns.strip():
+                state.add_lead(
+                    description=f"Follow-up search: {_ns.strip()[:100]}",
+                    source=f"Analysis of '{results.query}'",
+                    priority=0.45,
+                    search_term=_ns.strip(),
+                    focus_issue_id=_follow_on_issue_id,
+                )
+
         # Deep read top documents in parallel
         top_files = list(results.by_file().keys())[:self.config.parallel_reads]
         if top_files:
