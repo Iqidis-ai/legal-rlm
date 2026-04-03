@@ -1777,6 +1777,35 @@ def test_investigation_state_pending_clarifications_defaults_empty():
     assert restored.pending_clarifications == []
 
 
+def test_format_matter_context_emits_known_document_ids():
+    """_format_matter_context() must list known_document_ids so the LLM avoids re-reading (SO-1).
+
+    The 'Documents already analyzed' line prevents the LLM from requesting
+    documents that are already fully ingested into the assertion graph.
+    Without this line, the model wastes tokens re-reading ingested content
+    instead of focusing on new or gap-filling sources — violating SO-1.
+    """
+    from irys.rlm.engine import _format_matter_context
+    from irys.matter.runtime import QueryMatterContext
+
+    ctx = QueryMatterContext(
+        matter_id="m_test",
+        matter_name="Test Matter",
+        existing_assertion_count=5,
+        open_issues=[],
+        open_gaps=[],
+        known_actors=[],
+        known_document_ids=["contract.pdf", "complaint.pdf", "exhibit_a.pdf"],
+    )
+    result = _format_matter_context(ctx)
+    assert "contract.pdf" in result, (
+        "_format_matter_context must include known_document_ids so LLM skips re-reading (SO-1)"
+    )
+    assert "complaint.pdf" in result or "3" in result, (
+        "Known documents or count must appear in formatted context"
+    )
+
+
 def test_format_matter_context_emits_key_predicates():
     """_format_matter_context() must surface key_predicates from SPO graph (SO-2)."""
     from irys.rlm.engine import _format_matter_context
