@@ -339,6 +339,24 @@ def test_build_query_context_known_document_ids_empty_with_no_assertions(model):
     assert ctx.known_document_ids == []
 
 
+def test_build_query_context_populates_known_actors(model):
+    """build_query_context() must populate known_actors from the actor store (SO-5).
+
+    The engine injects known_actors into prompts so the LLM can reference
+    established party identities by canonical name rather than guessing from
+    raw document text.
+    """
+    model.actors.upsert_actor("Acme Corporation", actor_type="company")
+    model.actors.upsert_actor("John Smith", actor_type="person")
+
+    ctx = model.build_query_context()
+
+    assert "Acme Corporation" in ctx.known_actors, (
+        "Recorded actors must appear in known_actors in query context (SO-5)"
+    )
+    assert "John Smith" in ctx.known_actors
+
+
 def test_open_gaps_includes_dependencies(model):
     """open_gaps() must include a 'dependencies' key with linked entity info (SO-7).
 
@@ -403,4 +421,21 @@ def test_matter_model_hot_path_survives_reopen(tmp_path):
     model2 = MatterModel.open(tmp_path)
     assert model2.inventory.is_ingested("contract.pdf"), (
         "is_ingested() must return True for a doc marked ingested in a prior session (SO-1)"
+    )
+
+
+def test_build_query_context_populates_existing_actor_count(model):
+    """build_query_context() must include the actor count in the context (SO-5).
+
+    The engine uses existing_actor_count to surface 'N known parties' in orientation
+    so the LLM knows how populated the actor register is before extracting more actors.
+    """
+    assert model.build_query_context().existing_actor_count == 0
+
+    model.actors.upsert_actor("Plaintiff Corp", actor_type="company")
+    model.actors.upsert_actor("Defendant LLC", actor_type="company")
+
+    ctx = model.build_query_context()
+    assert ctx.existing_actor_count == 2, (
+        "existing_actor_count must reflect the number of actors in the store (SO-5)"
     )
