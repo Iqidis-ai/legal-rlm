@@ -1943,6 +1943,73 @@ def test_log_conflict_writes_conflict_detected_event():
 # SO-6: _build_quant_summary() surfaces date and rate facts
 # ---------------------------------------------------------------------------
 
+def test_request_redirect_writes_branch_selected_event():
+    """request_redirect() must write a BRANCH_SELECTED ledger event (SO-3).
+
+    The reasoning ledger is user-facing.  A redirect request must appear in the
+    ledger so the user can see that their steering action was registered and which
+    issue branch is now the focus — not just update a hidden flag.
+    """
+    from irys.matter import LedgerEventType
+
+    from irys.matter.enums import IssueType
+
+    model = MatterModel.open_in_memory()
+    issue_id, _ = model.issues.upsert_issue("Breach of contract", IssueType.CLAIM)
+    run_id = model.start_run("redirect test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    adapter.request_redirect(issue_id)
+
+    # Flag must be set
+    assert adapter.is_redirect_requested()
+    assert adapter.get_redirect_issue_id() == issue_id
+
+    # Ledger event must also be written
+    events = model.ledger.get_events(run_id)
+    redirect_events = [
+        e for e in events if e["event_type"] == LedgerEventType.BRANCH_SELECTED.value
+    ]
+    assert len(redirect_events) == 1, (
+        "request_redirect must write a BRANCH_SELECTED ledger event"
+    )
+    assert issue_id in redirect_events[0].get("summary", ""), (
+        "BRANCH_SELECTED event summary must reference the target issue_id"
+    )
+
+
+def test_build_source_calibration_shows_litigation_side_breakdown():
+    """_build_source_calibration() must show plaintiff vs. defendant document breakdown (SO-5).
+
+    Knowing which side produced each block of facts is critical for source calibration:
+    an operative contract signed by both parties is neutral, but a damages calculation
+    produced entirely by plaintiff counsel is advocacy.  The side breakdown surfaces this.
+    """
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("side breakdown test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+
+    # plaintiff_complaint.pdf → inferred source_side="plaintiff"
+    adapter.record_fact("Defendant failed to deliver on time.", document_id="plaintiff_complaint.pdf")
+    adapter.record_fact("Plaintiff suffered $200,000 in losses.", document_id="plaintiff_brief.pdf")
+
+    # defendant_answer.pdf → inferred source_side="defendant"
+    adapter.record_fact("Delivery was completed as scheduled.", document_id="defendant_answer.pdf")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    calibration = engine._build_source_calibration(None)
+
+    # Side breakdown section must appear
+    assert "plaintiff" in calibration.lower(), (
+        "Calibration must show plaintiff-side document count (SO-5 litigation-side breakdown)"
+    )
+    assert "defendant" in calibration.lower(), (
+        "Calibration must show defendant-side document count"
+    )
+
+
 def test_log_gap_writes_gap_identified_event():
     """MatterRuntimeAdapter.log_gap() must write a GAP_IDENTIFIED ledger event (SO-3 + SO-7).
 
