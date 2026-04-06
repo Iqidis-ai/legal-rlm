@@ -689,7 +689,7 @@ class MatterModel:
         self.enqueue_evidence_pending(_trust_unvisited, cause=RevisionCause.TRUST_OVERRIDE, run_id=run_id)
 
         # Targeted proof state recompute: only recompute issues linked to affected assertions.
-        # Falls back to compute_all() when affected_ids is empty (pattern matched nothing).
+        # No-op when affected_ids is empty (pattern matched nothing — proof state unchanged).
         # Chunks affected_ids to stay within SQLite's ~999 bind-variable limit.
         try:
             if affected_ids:

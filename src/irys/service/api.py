@@ -100,11 +100,19 @@ async def _cleanup_loop(config: ServiceConfig):
                 if job.completed_at and
                 (now - job.completed_at).seconds > config.cleanup_after_seconds
             ]
+            _expired_set = set(expired)
             for job_id in expired:
                 job = _jobs[job_id]
                 if job.matter_id and job.matter_id in _active_matter_models:
-                    del _active_matter_models[job.matter_id]
-                    _matter_model_last_used.pop(job.matter_id, None)
+                    # Only evict the model if no other non-expired job references this matter.
+                    _other_live = any(
+                        jid not in _expired_set and j.matter_id == job.matter_id
+                        for jid, j in _jobs.items()
+                        if jid != job_id
+                    )
+                    if not _other_live:
+                        del _active_matter_models[job.matter_id]
+                        _matter_model_last_used.pop(job.matter_id, None)
                 del _jobs[job_id]
                 logger.debug(f"Cleaned up job {job_id}")
             # Evict matter models not backed by any active job (rehydrated models).
@@ -232,6 +240,7 @@ def _wire_matter_model(irys_instance, temp_dir: str, corpus_key: str, config) ->
     irys_instance._engine._matter_model = matter_model
 
     _active_matter_models[matter_id] = matter_model
+    _matter_model_last_used[matter_id] = datetime.now()
     return matter_id
 
 
