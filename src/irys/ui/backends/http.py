@@ -100,13 +100,9 @@ class HttpBackend(UIBackend):
         return await self._get(f"/matter/{matter_id}/issues")
 
     async def list_assertions(
-        self, matter_id: str, limit: int = 50, offset: int = 0,
-        issue_id: Optional[str] = None
+        self, matter_id: str, limit: int = 50, offset: int = 0
     ) -> list[dict]:
-        params = {"limit": limit, "offset": offset}
-        if issue_id:
-            params["issue_id"] = issue_id
-        result = await self._get(f"/matter/{matter_id}/assertions", params)
+        result = await self._get(f"/matter/{matter_id}/assertions", {"limit": limit, "offset": offset})
         # Service returns paginated envelope: {total, limit, offset, assertions}
         if isinstance(result, dict):
             return result.get("assertions", [])
@@ -152,12 +148,6 @@ class HttpBackend(UIBackend):
 
     async def get_quant_summary(self, matter_id: str) -> dict:
         """Fetch quant data from two separate service endpoints and combine."""
-        try:
-            recon = await self._get(f"/matter/{matter_id}/reconciliation")
-        except Exception:
-            recon = {}
-        try:
-            damages = await self._get(f"/matter/{matter_id}/damages-waterfall")
-        except Exception:
-            damages = []
+        recon = await self._get(f"/matter/{matter_id}/reconciliation")
+        damages = await self._get(f"/matter/{matter_id}/damages-waterfall")
         return {"payment_reconciliation": recon, "damages_waterfall": damages}

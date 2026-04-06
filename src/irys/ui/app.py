@@ -197,20 +197,22 @@ def _fmt_quant(payment_recon: dict, damages: list) -> str:
     """Format quant reconciliation and damages waterfall (SO-6)."""
     parts = []
 
-    # Payment reconciliation
-    if payment_recon and payment_recon.get("total_invoiced") is not None:
-        inv = payment_recon.get("total_invoiced", 0)
-        paid = payment_recon.get("total_paid", 0)
-        exp = payment_recon.get("net_exposure", 0)
+    # Payment reconciliation — keys match reconcile_payment_chain() output:
+    # invoiced, paid, disputed, exposure, currency
+    if payment_recon and payment_recon.get("invoiced") is not None:
+        inv = payment_recon.get("invoiced", 0)
+        paid = payment_recon.get("paid", 0)
+        disputed = payment_recon.get("disputed", 0)
+        exp = payment_recon.get("exposure", 0)
         currency = payment_recon.get("currency", "USD")
         parts.append("### Payment Reconciliation")
         parts.append(f"| Metric | Amount ({currency}) |")
         parts.append("|--------|--------|")
         parts.append(f"| Total Invoiced | {inv:,.2f}" if isinstance(inv, (int, float)) else f"| Total Invoiced | {inv}")
         parts.append(f"| Total Paid | {paid:,.2f}" if isinstance(paid, (int, float)) else f"| Total Paid | {paid}")
+        if disputed:
+            parts.append(f"| Disputed | {disputed:,.2f}" if isinstance(disputed, (int, float)) else f"| Disputed | {disputed}")
         parts.append(f"| **Net Exposure** | **{exp:,.2f}**" if isinstance(exp, (int, float)) else f"| Net Exposure | {exp}")
-        if payment_recon.get("conflict_count", 0):
-            parts.append(f"\n⚠️ {payment_recon['conflict_count']} conflicting amounts detected.")
 
     # Damages waterfall
     if damages:

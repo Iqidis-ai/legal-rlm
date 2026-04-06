@@ -196,8 +196,7 @@ class InProcessBackend(UIBackend):
         return model.get_issue_coverage_report()
 
     async def list_assertions(
-        self, matter_id: str, limit: int = 50, offset: int = 0,
-        issue_id: Optional[str] = None
+        self, matter_id: str, limit: int = 50, offset: int = 0
     ) -> list[dict]:
         model = self._get_matter_model(matter_id)
         return model.assertions.list_recent(limit=limit, offset=offset)
