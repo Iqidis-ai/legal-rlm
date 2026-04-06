@@ -2158,7 +2158,7 @@ async def get_matter_overview(matter_id: str):
     # Pending clarifications — limit 5
     clarifications = []
     try:
-        clarifications = model.clarifications.get_pending()[:5]
+        clarifications = model.clarifications.get_pending(limit=5)
     except Exception:
         pass
 

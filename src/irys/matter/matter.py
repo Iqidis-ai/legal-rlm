@@ -721,9 +721,9 @@ class MatterModel:
         Called at the end of an investigation run. Returns list of new question_ids.
         Only generates questions for gaps that don't already have a pending question.
         """
-        gaps = self.gaps.open_gaps(min_materiality=min_materiality)
-        # Sort by materiality descending and take top N
-        gaps = sorted(gaps, key=lambda g: g.get("materiality_score", 0), reverse=True)[:top_n]
+        # open_gaps() already returns sorted by materiality_score DESC; pass limit to
+        # push LIMIT into SQL and restrict gap_link join to returned IDs only.
+        gaps = self.gaps.open_gaps(min_materiality=min_materiality, limit=top_n)
 
         question_ids = []
         for gap in gaps:

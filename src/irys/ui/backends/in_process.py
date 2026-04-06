@@ -110,7 +110,7 @@ class InProcessBackend(UIBackend):
             pass
         clarifications: list = []
         try:
-            clarifications = model.clarifications.get_pending()[:5]
+            clarifications = model.clarifications.get_pending(limit=5)
         except Exception:
             pass
         return {
@@ -211,7 +211,7 @@ class InProcessBackend(UIBackend):
     async def list_gaps(self, matter_id: str, limit: int = 50) -> list[dict]:
         model = self._get_matter_model(matter_id)
         try:
-            return model.gaps.open_gaps()[:limit]
+            return model.gaps.open_gaps(limit=limit)
         except Exception:
             return []
 

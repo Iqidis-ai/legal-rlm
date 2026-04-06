@@ -1727,12 +1727,13 @@ class ClarificationStore:
             (answer_text, now, question_id),
         )
 
-    def get_pending(self) -> list[dict]:
+    def get_pending(self, limit: "int | None" = None) -> list[dict]:
         """Return unanswered clarification questions, newest first."""
+        limit_sql = f" LIMIT {int(limit)}" if limit is not None else ""
         rows = self.db.execute(
-            """SELECT * FROM clarification_question
+            f"""SELECT * FROM clarification_question
                WHERE matter_id=? AND status='pending'
-               ORDER BY created_at DESC""",
+               ORDER BY created_at DESC{limit_sql}""",
             (self.matter_id,),
         ).fetchall()
         return [dict(r) for r in rows]
