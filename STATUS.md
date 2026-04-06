@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-03 (SO-2/Q4 HIGH: assertion_revision schema v34 + SPO retry partial coverage)
+Last updated: 2026-04-05 (Tier 1 CLEAN r4: Q4/SO-2 stale pre-state fully closed; OCC + write_transaction())
 Branch: SebihSpecial
 
 ---
@@ -96,31 +96,31 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | #021 | SO-3/7 PASS; SO-1/2/4/5/6 PARTIAL | proof_state override removed; correct_assertion now refreshes proof_state; bare-string inflation fixed |
 | #022 | **SO-1/3/5/6/7 PASS; SO-2/4 PARTIAL** | 5 PASSes. Predicate resolution wired in production. SO-4 remaining: _focus_issue_id attribution heuristic |
 
-**Tier 1 reviews:** CLEAN — predicate resolver matter-scoped + atomic, correct_assertion batched, SO-4 predicate production wiring with allowlist + gating, _orient() field normalization + _parse_json_safe non-dict guard, all Tier 1 HIGH/MEDIUM resolved.
+**Tier 1 reviews:** CLEAN — predicate resolver matter-scoped + atomic, correct_assertion batched, SO-4 predicate production wiring with allowlist + gating, _orient() field normalization + _parse_json_safe non-dict guard, Q4/SO-2 stale pre-state (4 rounds: write_transaction()/BEGIN IMMEDIATE, in-tx diff checks, pre-tx early-exit removed, OCC conflict abort), all Tier 1 HIGH/MEDIUM resolved.
 
 ---
 
 ## Active Work
 
-### JUST COMPLETED — SO-2/Q4 HIGH: assertion_revision table + partial SPO retry
+### JUST COMPLETED — Tier 1 CLEAN r4: Q4/SO-2 stale pre-state (2026-04-05)
+
+**Stale pre-state fix — 4 rounds to CLEAN:**
+- **Round 1 (b8714e7):** Re-read `belief_state`/`confidence` inside transaction for `old_value_json` in `assertion_revision` — wrong audit values under concurrent write.
+- **Round 2 (dc0f61b):** `write_transaction()` / `BEGIN IMMEDIATE` added to `SQLiteMatterDB` — prevents WAL SQLITE_BUSY_SNAPSHOT under concurrent writers. Both `_revise_one()` and `force_state()` use it. In-tx diff checks use `_intx_old_state`/`_intx_old_conf` (not stale pre-tx values) for both change detection AND `old_value_json`.
+- **Round 3 (83841e5):** Removed pre-tx early-exit from `_revise_one()` — the stale no-change check was bypassing the write_transaction entirely. No-change now detected INSIDE the transaction via `if not _rev_rows: return None`. `RevisionResult.old_belief_state`/`old_confidence` updated to use in-tx values so callers (api.py, runtime.py) see the committed transition.
+- **Round 4 (79aa097 + 9b6387a):** OCC check added in `_revise_one()`: if in-tx state diverged from pre-tx snapshot (concurrent writer committed), abort rather than overwrite with stale BFS target. Float tolerance aligned (`>= 0.001` across OCC + diff detection).
 
 **assertion_revision table (schema v34, 2026-04-03):**
-- New append-only `assertion_revision` table: field-level audit log for every mutation to assertion.belief_state, confidence (and future proposition_text changes)
-- `write_revision_rows()` in AssertionStore: inserts (changed_field, old_value_json, new_value_json, actor_kind, cause, batch_id) before each mutation
-- `force_state()` writes `actor_kind=user` revision rows before belief_state/confidence mutation
-- `_revise_one()` writes `actor_kind=system` rows for BFS-driven propagation
-- `upsert_occurrence()` upgrade path writes `cause=occurrence_upgrade` rows
-- `RevisionResult.propagation_truncated: bool` — True when BFS hit MAX_WORK; callers can now detect incomplete propagation
-- `BeliefRevisionEngine._apply_with_truncation()`: internal BFS driver returning (results, truncated); public `apply()` delegates to it
-- Schema v34, additive migration; no backfill possible for pre-v34 mutations
-- 4 new tests: assertion_revision on correction, BFS propagation, occurrence_upgrade, partial-SPO merge
+- New append-only `assertion_revision` table: field-level audit log for every mutation to assertion.belief_state, confidence
+- `write_revision_rows()` in AssertionStore; `force_state()` writes `actor_kind=user`; `_revise_one()` writes `actor_kind=system`; `upsert_occurrence()` writes `cause=occurrence_upgrade`
+- `RevisionResult.propagation_truncated: bool`; `_apply_with_truncation()` private BFS driver
+- Schema v34, additive migration; 4 new tests
 
 **SPO retry partial coverage (2026-04-03):**
-- Retry condition: `_spo_count < len(facts_to_add)` (was `== 0`) — fires when ANY facts lack SPO, not only when ALL are missing
-- Merge fix: `retry.get(i) if spo is None else spo` — preserves primary-extraction SPO, backfills missing slots
-- Test added for partial-SPO merge preservation
+- Retry condition: `_spo_count < len(facts_to_add)` (was `== 0`)
+- Merge fix: `retry.get(i) if spo is None else spo` — preserves primary-extraction SPO
 
-HEAD: 9c62ef7 — Tests: 725/725
+HEAD: 9b6387a — Tests: 725/725
 
 ### PREVIOUSLY COMPLETED — Tier 1 CLEAN: _orient() field normalization + _parse_json_safe
 
@@ -202,10 +202,10 @@ None active.
 - Tests passing: 725 / 725
 - Schema version: v34
 - SO-1/3/5/6/7: **PASS**; SO-2/4: **PARTIAL** (SO-2 improving)
-- Tier 1: running on Q4/SO-2 changes
+- Tier 1 Q4/SO-2 stale pre-state: **CLEAN** (4 rounds, r4 confirmed 2026-04-05)
 - Adversarial audit #022: DONE — 5 PASSes, SO-2/4 PARTIAL
-- Q4 HIGH: CLOSED — assertion_revision table (schema v34)
-- Next: Tier 1 CLEAN confirm; SO-4 attribution gap; SO-2 remaining coverage
+- Q4 HIGH: CLOSED — assertion_revision table (schema v34) + stale pre-state OCC fix
+- Next: Adversarial audit #023 (OVERDUE — 9+ Codex sessions since #022); SO-4 attribution design gate
 
 ## Architectural Backlog (Tier 2 HIGH remaining)
 
