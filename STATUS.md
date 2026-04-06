@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 UI CLEAN declared r10; all MEDIUMs fixed; schema v37; 725 tests pass)
+Last updated: 2026-04-06 (Tier 1 r13 correctness PASS; adversarial #026 PASS; #027 in progress; 725 tests pass)
 Branch: SebihSpecial
 
 ---
@@ -105,6 +105,12 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 - r9 perf: Removed unused recent_runs list fetch + source_role_summary GROUP BY from overview
 - r10: Quant panel key mismatch (total_invoiced→invoiced etc); removed false issue_id contract from list_assertions; removed exception masking in HttpBackend.get_quant_summary()
 
+**Tier 1 post-#025 cycle: r11/r12/r13 (2026-04-06):**
+- r11 correctness: FAIL (2 HIGH found: shared stop_event, issues_md missing from correction refresh)
+- r11 perf: PASS
+- r12 correctness: PASS (heapq.nsmallest verified; fixes from r11 FAIL applied: per-call stop event, 4-tuple refresh, stale run_id clear — commits 5dacd8f + 916323e)
+- r13 correctness: PASS (all 3 fixes verified clean including stop_investigation() run_id capture order bug caught+fixed in 916323e)
+
 **Tier 2 r2 Scaling + Architecture reviews: FAIL (HIGHs fixed, 2026-04-06):**
 - Scaling HIGH: `find_possible_duplicates()` O(N²) → sorted-prefix O(N·k) + limit=100 (commit 9101136)
 - Scaling MEDIUM: `list_recent()` O(N) before LIMIT → CTE bounds ID set first (commit 9101136)
@@ -125,9 +131,12 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 **Adversarial #026 PASS (2026-04-06, commit 5d13c82):** All #025 fixes verified solid.
 - CONFIRMED: stop_event lifecycle clean; correction→refresh DB chain correct; load_gaps tuple safe; SO-3/SO-2 end-to-end
-- 2 pre-existing LOWs: _get_matter_model() linear scan; sorted() vs heapq.nsmallest in overview
+- 2 pre-existing LOWs fixed (commit 5c78836): heapq.nsmallest for weakest issues; LOW noted: current_run_id timing window
+
+**Adversarial #027: IN PROGRESS (2026-04-06)** — challenging SO-2 belief revision propagation depth, SO-3 redirect actionability, SO-1 matter model durability, threading cancel semantics.
 
 **Tier 1 r11 PASS (725 tests, 2026-04-06).**
+**Tier 1 r13 performance: IN PROGRESS (2026-04-06).**
 
 **Tier 2 r2 HIGH fix (2026-04-06, commit 64ef34f):**
 - `flush_revisions()` now batches seeds in groups of `MAX_WORK // 2` (250). Previously,
@@ -146,7 +155,23 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ## Active Work
 
-### JUST COMPLETED — adversarial #024 product surface fixes + Tier 1 r6 (2026-04-06)
+### IN PROGRESS — Tier 1 r13 perf + Adversarial #027 (2026-04-06)
+
+- Tier 1 r13 performance: running (Codex background session)
+- Adversarial audit #027: running (challenges SO-2 propagation depth, SO-3 redirect, SO-1 durability, threading cancel)
+- Once both PASS: this Tier 1 cycle is CLEAN
+
+### JUST COMPLETED — Tier 1 r11–r13 post-#025 cycle (2026-04-06)
+
+- Per-call `threading.Event` in `stream_investigation()` (HIGH #1 fix from #025)
+- `_correct_and_refresh()` 4-tuple: assertions + issues + overview all refresh (HIGH #3 fix)
+- `stop_investigation()` run_id capture-before-clear + DB fallback for early-stop race (commit 916323e)
+- r12 heapq.nsmallest in `get_overview()` (O(N) vs O(N log N))
+- r13 correctness PASS confirmed (commit fa02adc)
+
+HEAD: fa02adc — Tests: 725/725
+
+### PREVIOUSLY COMPLETED — adversarial #024 product surface fixes + Tier 1 r6 (2026-04-06)
 
 **Adversarial #024 fixes (commit cebc76e):**
 - Assertion IDs + issue IDs added to Assertions/Issues tables (SO-2/4)
