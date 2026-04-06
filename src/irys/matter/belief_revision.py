@@ -95,16 +95,13 @@ def _compute_belief_state(
         if _active_superseder:
             return BeliefState.SUPERSEDED, 0.1
         if current_state == BeliefState.SUPERSEDED and not _any_superseding_link:
-            # No link present: SUPERSEDED was manually set (e.g. via correct_assertion).
-            # Regular graph support cannot un-supersede — only an explicit user correction.
+            # No superseding links at all: SUPERSEDED was manually set (e.g. via
+            # correct_assertion without a superseding link). Only an explicit user
+            # correction can un-supersede it — graph support cannot.
             return BeliefState.SUPERSEDED, 0.1
-        if current_state == BeliefState.SUPERSEDED and _any_superseding_link:
-            # Superseder existed but is now inert (withdrawn/superseded): reset current_state
-            # to UNKNOWN so the support/attack logic computes a fresh recovered state.
-            # Without this, the final fallthrough would return SUPERSEDED unchanged even
-            # though the only reason for SUPERSEDED is gone.
-            current_state = BeliefState.UNKNOWN
-            current_confidence = 0.3
+        # has_inert_link case: _revise_one() already overrode current_state to the
+        # speech-act-derived recovery baseline before calling _compute_belief_state().
+        # Fall through to normal support/attack logic with the new baseline state.
     else:
         # Legacy bool interface: preserve original terminal semantics.
         if current_state == BeliefState.SUPERSEDED:
@@ -445,12 +442,87 @@ class BeliefRevisionEngine:
             assertion_id, _override_cache=_override_cache
         )
 
+        # Supersession recovery pre-processing (HIGH #1 fix — second pass):
+        # When an assertion is currently SUPERSEDED and all its superseding links are
+        # now inert (WITHDRAWN or SUPERSEDED themselves), the superseder has been
+        # invalidated and the original assertion may recover.
+        #
+        # Two guard checks before allowing recovery:
+        # (1) User-lock: if the most recent field change to 'belief_state' in
+        #     assertion_revision was made by a user (actor_kind='user') setting it
+        #     to SUPERSEDED, the user explicitly chose that state. Respect it; do not
+        #     recover automatically.
+        # (2) Baseline state: reset old_state to the speech-act-derived initial state
+        #     (e.g., OPERATIVE, ADMITTED, ALLEGED) so that _compute_belief_state sees
+        #     the "natural" pre-supersession baseline rather than SUPERSEDED, and can
+        #     correctly compute the recovered state from support/attack evidence.
+        # Supersession recovery pre-processing (HIGH #1 fix — second pass):
+        # When an assertion is currently SUPERSEDED and all its superseding links are
+        # now inert (WITHDRAWN or SUPERSEDED themselves), the superseder has been
+        # invalidated and the original assertion may recover.
+        #
+        # Use _compute_state/_compute_conf as the INPUT to _compute_belief_state so the
+        # computation sees the speech-act recovery baseline — NOT the current SUPERSEDED.
+        # Keep old_state/old_confidence as the ACTUAL DB state for the fast-path and OCC
+        # comparison (we need to detect DB_state=SUPERSEDED → new_state=UNKNOWN as a real
+        # change, not a no-op, even when new_state == recovery_baseline).
+        _compute_state = old_state
+        _compute_conf = old_confidence
+        _superseding = neighbors.get("superseding_states") or []
+        _INERT_S = (BeliefState.WITHDRAWN, BeliefState.SUPERSEDED)
+        _recovery_case = (
+            old_state == BeliefState.SUPERSEDED
+            and bool(_superseding)
+            and not any(s not in _INERT_S for s in _superseding)
+        )
+        if _recovery_case:
+            # Guard 1: user-lock check
+            # If the most recent user-authored revision set belief_state to SUPERSEDED,
+            # respect user intent and skip automatic recovery.
+            _user_lock_row = self.db.execute(
+                """SELECT actor_kind FROM assertion_revision
+                   WHERE assertion_id=? AND changed_field='belief_state'
+                     AND new_value_json=?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (assertion_id, '"superseded"'),
+            ).fetchone()
+            if _user_lock_row and _user_lock_row["actor_kind"] == "user":
+                return None, False
+
+            # Guard 2: derive speech-act baseline state for the computation.
+            # Use the first-occurrence speech_act to reflect the assertion's "natural"
+            # state before any supersession was applied. This ensures that an OPERATIVE
+            # clause recovers to OPERATIVE (not UNKNOWN) when the superseding amendment
+            # is voided. Inlined from _initial_belief_state() in graph.py.
+            _occ_row = self.db.execute(
+                """SELECT speech_act FROM assertion_occurrence
+                   WHERE assertion_id=? ORDER BY created_at ASC LIMIT 1""",
+                (assertion_id,),
+            ).fetchone()
+            _sa = _occ_row["speech_act"] if _occ_row else None
+            if _sa == "operative":
+                _compute_state, _compute_conf = BeliefState.OPERATIVE, 0.8
+            elif _sa in ("admitted", "stipulated"):
+                _compute_state, _compute_conf = BeliefState.ADMITTED, 0.8
+            elif _sa in ("performed", "paid"):
+                _compute_state, _compute_conf = BeliefState.PERFORMED, 0.8
+            elif _sa == "inferred":
+                _compute_state, _compute_conf = BeliefState.INFERRED, 0.6
+            elif _sa == "alleged":
+                _compute_state, _compute_conf = BeliefState.ALLEGED, 0.3
+            elif _sa == "argued":
+                _compute_state, _compute_conf = BeliefState.ARGUED, 0.3
+            elif _sa in ("waived", "terminated", "amended"):
+                _compute_state, _compute_conf = BeliefState.OPERATIVE, 0.7
+            else:
+                _compute_state, _compute_conf = BeliefState.UNKNOWN, 0.3
+
         new_state, new_confidence = _compute_belief_state(
-            old_state,
+            _compute_state,
             neighbors["support_states"],
             neighbors["attack_states"],
             has_superseding=neighbors["has_superseding"],
-            current_confidence=old_confidence,
+            current_confidence=_compute_conf,
             support_source_roles=neighbors["support_source_roles"],
             attack_source_roles=neighbors["attack_source_roles"],
             superseding_states=neighbors.get("superseding_states"),
@@ -626,6 +698,17 @@ class BeliefRevisionEngine:
                     "confidence",
                     _json_mod.dumps(_fs_intx_old_conf),
                     _json_mod.dumps(new_confidence),
+                ))
+            if not _fs_rev_rows and cause == RevisionCause.USER_CORRECTION:
+                # User explicitly chose this state even though it matches the current DB value.
+                # Write a no-op revision row (old_value == new_value) so the supersession
+                # recovery path can detect user intent and preserve it when a superseding
+                # link later becomes inert. Without this, only the prior BFS-written row
+                # would be found, and its actor_kind='system' would permit unwanted recovery.
+                _fs_rev_rows.append((
+                    "belief_state",
+                    _json_mod.dumps(new_state.value),
+                    _json_mod.dumps(new_state.value),
                 ))
             if _fs_rev_rows:
                 self.assertion_store.write_revision_rows(

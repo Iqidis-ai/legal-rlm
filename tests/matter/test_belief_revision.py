@@ -148,13 +148,14 @@ def test_superseded_is_terminal(model):
 
 
 def test_superseded_recovers_when_superseder_withdrawn(model):
-    """If the superseding assertion is withdrawn, the original can recover (HIGH #1 fix).
+    """If the superseding assertion is withdrawn, the original recovers to its speech-act baseline.
 
-    A --supersedes--> B (A is OPERATIVE, so B is SUPERSEDED).
-    When A is withdrawn, BFS re-evaluates B and has_superseding becomes False
-    (A is now inert). B should no longer be forced to SUPERSEDED.
+    B is an EXTRACTED assertion (speech_act=EXTRACTED → initial=UNKNOWN).
+    A supersedes B (A is OPERATIVE → B becomes SUPERSEDED).
+    When A is withdrawn, BFS re-evaluates B: superseder is inert,
+    so B recovers to its UNKNOWN baseline (no support edges present).
     """
-    b_id = add(model, "Original contract term.")
+    b_id = add(model, "Original contract term.")  # SpeechAct.EXTRACTED → UNKNOWN baseline
     a_id = add(model, "Amendment superseding original term.")
     model.assertions.set_belief_state(a_id, BeliefState.OPERATIVE, 0.9)
     model.assertions.link(a_id, b_id, AssertionLinkType.SUPERSEDES)
@@ -168,10 +169,58 @@ def test_superseded_recovers_when_superseder_withdrawn(model):
     # Now withdraw A (amendment was retracted)
     model.correct_assertion(a_id, BeliefState.WITHDRAWN, note="Amendment retracted by party")
 
-    # B should no longer be forced SUPERSEDED
+    # B should recover to its speech-act baseline (UNKNOWN for EXTRACTED), not stay SUPERSEDED
     b_record = model.assertions.get(b_id)
-    assert b_record.belief_state != BeliefState.SUPERSEDED.value, \
-        "B should recover when its superseder is withdrawn"
+    assert b_record.belief_state == BeliefState.UNKNOWN.value, \
+        "B should recover to UNKNOWN (speech-act baseline for EXTRACTED) when superseder withdrawn"
+
+
+def test_superseded_operative_recovers_to_operative(model):
+    """An OPERATIVE assertion superseded by an amendment recovers to OPERATIVE when amendment voided.
+
+    This is the core legal scenario: a contract clause (OPERATIVE speech_act) that was
+    superseded by an amendment. If the amendment is later voided (WITHDRAWN),
+    the original clause should recover to OPERATIVE, not UNKNOWN.
+    """
+    b_id = add(model, "Payment due on the 1st of each month.", speech_act=SpeechAct.OPERATIVE)
+    a_id = add(model, "Amendment: payment due on the 15th.")
+    model.assertions.set_belief_state(a_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.link(a_id, b_id, AssertionLinkType.SUPERSEDES)
+
+    model.belief.apply([a_id], cause=RevisionCause.NEW_EVIDENCE)
+    assert model.assertions.get(b_id).belief_state == BeliefState.SUPERSEDED.value
+
+    # Amendment voided
+    model.correct_assertion(a_id, BeliefState.WITHDRAWN, note="Amendment voided by court")
+
+    b_record = model.assertions.get(b_id)
+    assert b_record.belief_state == BeliefState.OPERATIVE.value, \
+        "Original OPERATIVE clause should recover to OPERATIVE when superseding amendment is voided"
+
+
+def test_user_forced_superseded_not_recovered_by_graph(model):
+    """User-corrected SUPERSEDED (with an inert superseding link) must not be auto-recovered.
+
+    If the user explicitly corrects an assertion to SUPERSEDED, that user intent
+    must survive even if the superseding link later becomes inert.
+    """
+    b_id = add(model, "Disputed obligation clause.")
+    a_id = add(model, "Amendment to obligation clause.")
+    model.assertions.set_belief_state(a_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.link(a_id, b_id, AssertionLinkType.SUPERSEDES)
+
+    model.belief.apply([a_id], cause=RevisionCause.NEW_EVIDENCE)
+    assert model.assertions.get(b_id).belief_state == BeliefState.SUPERSEDED.value
+
+    # User explicitly corrects B to SUPERSEDED (locks it as user-intent)
+    model.correct_assertion(b_id, BeliefState.SUPERSEDED, note="Confirmed superseded by counsel")
+
+    # Now withdraw A (amendment retracted) — but B should stay SUPERSEDED per user intent
+    model.correct_assertion(a_id, BeliefState.WITHDRAWN, note="Amendment retracted")
+
+    b_record = model.assertions.get(b_id)
+    assert b_record.belief_state == BeliefState.SUPERSEDED.value, \
+        "User-locked SUPERSEDED must not be auto-recovered when superseder becomes inert"
 
 
 def test_admitted_support_promotes_dependent(model):
