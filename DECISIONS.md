@@ -136,6 +136,35 @@ lower total cost without handling raw matter text.
 
 ---
 
+## D-007: Scaling Architecture — Deferred Items from Tier 2 Review (r50)
+
+**Date:** 2026-04-06
+**Status:** Active / Deferred
+
+**Context:** Tier 2 Scaling review (codex_tier2_r50_scaling.md) identified three architectural
+scaling risks beyond the current single-matter dev scope:
+
+1. **O(corpus) rehydration** — `_try_rehydrate_matter_model` linearly scans all corpus
+   directories on every cold miss. Fix: persist a `matter_registry` table mapping `matter_id`
+   to `db_path` so rehydration is O(1).
+
+2. **Multiple live MatterModel instances** — `_wire_matter_model` always opens a fresh model
+   and overwrites the registry. Post-eviction rehydration can create a second instance,
+   splitting coordination state (flush lock, pending queues, run snapshots). Fix: enforce
+   one live in-process owner per matter_id with ref-counting or an acquire-or-wait pattern.
+
+3. **Background flush thread count unbound** — with 100+ active matters and frequent
+   truncation, per-model non-daemon flush threads accumulate with no service-wide cap.
+   Fix: use a shared bounded thread pool for all flush work.
+
+**Decision:** Defer items 1–3 until multi-matter production use is needed. Current use is
+single-matter / small concurrent job count where these risks are not material. Log here for
+visibility and to prevent re-discovery.
+
+**Source:** codex_tier2_r50_scaling.md, Tier 2 review 2026-04-06.
+
+---
+
 ## D-006: Swarm Build as Governance Framework
 
 **Date:** 2026-04-02
