@@ -17,6 +17,41 @@ from ...matter.enums import BeliefState
 from ...rlm.state import InvestigationState, StepType, ThinkingStep
 from .base import UIBackend
 
+import logging as _logging
+_log = _logging.getLogger(__name__)
+
+
+def _in_process_background_flush(matter_id: str, model) -> None:
+    """Background flush for the in-process UI path.
+
+    Mirrors api._background_flush(): acquires _flush_lock before creating the
+    run session so no spurious 'running' row blocks active-run selectors while
+    waiting (adv#030 HIGH fix, in-process path).
+    """
+    try:
+        from ...matter.runtime import MatterRuntimeAdapter
+        with model._flush_lock:
+            flush_run_id = model.start_run("Background flush", objective="background_flush")
+            try:
+                adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
+                adapter._flush_revisions_locked()
+            except Exception as exc:
+                try:
+                    model.fail_run(flush_run_id, str(exc))
+                except Exception as fe:
+                    _log.warning("in_process background_flush fail_run failed for %s run %s: %s", matter_id, flush_run_id, fe)
+                raise
+            else:
+                try:
+                    model.complete_run(flush_run_id)
+                except Exception as ce:
+                    try:
+                        model.fail_run(flush_run_id, str(ce))
+                    except Exception as fe:
+                        _log.warning("in_process background_flush terminal close failed for %s run %s: %s", matter_id, flush_run_id, fe)
+    except Exception as exc:
+        _log.warning("in_process background_flush failed for matter %s: %s", matter_id, exc)
+
 
 class InProcessBackend(UIBackend):
     """In-process backend for local dev without a running service."""
@@ -235,7 +270,14 @@ class InProcessBackend(UIBackend):
             result = model.correct_assertion(assertion_id, belief_state, run_id=run_id, note=reason)
             resp = {"status": "corrected", "assertion_id": assertion_id}
             if getattr(result, "propagation_truncated", False):
-                resp["warning"] = "Belief revision truncated — proof state will refresh on next run"
+                resp["warning"] = "Belief revision truncated — background flush scheduled"
+                # Mirror the REST endpoint: schedule a background flush so SO-2
+                # convergence is guaranteed without waiting for the next run.
+                threading.Thread(
+                    target=_in_process_background_flush,
+                    args=(matter_id, model),
+                    daemon=True,
+                ).start()
             return resp
         except Exception as exc:
             return {"status": "error", "detail": str(exc)}
