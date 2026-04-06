@@ -98,7 +98,7 @@ async def _cleanup_loop(config: ServiceConfig):
             expired = [
                 job_id for job_id, job in _jobs.items()
                 if job.completed_at and
-                (now - job.completed_at).seconds > config.cleanup_after_seconds
+                (now - job.completed_at).total_seconds() > config.cleanup_after_seconds
             ]
             _expired_set = set(expired)
             for job_id in expired:
@@ -2068,6 +2068,10 @@ async def correct_assertion(
 
 def _do_one_background_flush(matter_id: str, model) -> None:
     """Execute a single flush pass. Called from within the flush loop with _bg_flush_running held."""
+    # Refresh last-used so the cleanup loop does not evict the model mid-flush.
+    # Background flushes hold the model with no jobs entry; without this refresh
+    # the orphan eviction could remove the model if a pass takes > cleanup_after_seconds.
+    _matter_model_last_used[matter_id] = datetime.now()
     from irys.matter.runtime import MatterRuntimeAdapter
     with model._flush_lock:
         flush_run_id = model.start_run("Background flush", objective="background_flush")
