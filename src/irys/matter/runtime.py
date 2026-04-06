@@ -447,11 +447,22 @@ class MatterRuntimeAdapter:
         a large flush (>2000 seeds) would silently skip high-index seeds because
         the BFS frontier budget is exhausted before reaching them.
         """
-        # Also drain nodes left unvisited by truncated correct_assertion() calls
-        # (adversarial #028 HIGH fix) — merge into the pending list before batching.
+        # Drain nodes left unvisited by truncated correct_assertion() calls (adv#028 HIGH fix).
+        # Processed separately from new-evidence pending so USER_CORRECTION provenance is
+        # preserved in revision rows — mixing them would replay corrections as NEW_EVIDENCE
+        # and corrupt the audit trail (r25 MEDIUM fix).
         _correction_pending = self.model.drain_correction_pending()
         if _correction_pending:
-            self._pending_assertion_ids.extend(_correction_pending)
+            _seed_batch = max(1, self.model.belief.MAX_WORK // 2)
+            for i in range(0, len(_correction_pending), _seed_batch):
+                _batch = _correction_pending[i : i + _seed_batch]
+                self.model.apply_revision(
+                    seed_assertion_ids=_batch,
+                    cause=RevisionCause.USER_CORRECTION,
+                    run_id=self.run_id,
+                    note="deferred correction retry",
+                )
+
         if not self._pending_assertion_ids:
             return 0
         # Batch size = MAX_WORK // 2 so each call has room for both seeds and

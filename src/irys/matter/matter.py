@@ -10,6 +10,7 @@ Usage:
 
 import logging
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -79,9 +80,11 @@ class MatterModel:
         self._run_snapshots: dict[str, int] = {}
         # Assertion IDs left unvisited after correct_assertion() inline retry rounds.
         # Populated when propagation_truncated=True after 3 rounds; drained by
-        # flush_correction_pending() so the next flush_revisions() can finish the work
-        # without losing these nodes permanently (adversarial #028 HIGH fix).
+        # drain_correction_pending() so the next flush_revisions() can finish the work.
+        # Protected by a lock: MatterModel instances are shared across REST requests
+        # for the same matter, so update() and list()+clear() must be atomic (r25 fix).
         self._correction_pending_ids: set[str] = set()
+        self._correction_pending_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -239,9 +242,11 @@ class MatterModel:
         Called by RuntimeModel.flush_revisions() so correction-truncated nodes are
         included in the next BFS sweep, preventing durable stale belief states after
         the inline 3-round cap is exhausted (adversarial #028 HIGH fix).
+        Thread-safe: lock protects list()+clear() atomicity (r25 MEDIUM fix).
         """
-        result = list(self._correction_pending_ids)
-        self._correction_pending_ids.clear()
+        with self._correction_pending_lock:
+            result = list(self._correction_pending_ids)
+            self._correction_pending_ids.clear()
         return result
 
     def correct_assertion(
@@ -313,8 +318,10 @@ class MatterModel:
             result.truncation_pending = _pending  # surface remaining work to caller
             # Durably queue unvisited nodes so the next flush_revisions() call can
             # finish propagation — prevents permanent stale states after cap exhaustion
-            # (adversarial #028 HIGH fix).
-            self._correction_pending_ids.update(_pending)
+            # (adversarial #028 HIGH fix). Lock protects concurrent corrections on the
+            # same shared MatterModel instance (r25 MEDIUM fix).
+            with self._correction_pending_lock:
+                self._correction_pending_ids.update(_pending)
 
         # Targeted proof_state recompute: find issues linked to this assertion
         # and any that were revised as dependents (result.propagated_to).
