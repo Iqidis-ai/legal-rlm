@@ -214,9 +214,9 @@ class AssertionStore:
                 and row["predicate_key"] is None
                 and candidate.predicate_key is not None
             ):
-                # Write revision rows for each SPO field that is actually changing.
-                # Use actual old values from the canonical row (not hardcoded null) because
-                # temporal_scope_* and others can be set without predicate_key.
+                # Write revision rows ONLY for true NULL→non-NULL upgrades.
+                # Existing non-null values are preserved by COALESCE in the UPDATE below,
+                # so we never record a revision for a field we are not actually changing.
                 _spo_fields_with_old = [
                     ("predicate_key", row["predicate_key"], candidate.predicate_key),
                     ("subject_ref_type", row["subject_ref_type"], candidate.subject_ref_type),
@@ -226,9 +226,9 @@ class AssertionStore:
                     ("temporal_scope_end", row["temporal_scope_end"], candidate.temporal_scope_end),
                 ]
                 _spo_rev_rows = [
-                    (field, _json_mod.dumps(old_val), _json_mod.dumps(new_val))
+                    (field, _json_mod.dumps(None), _json_mod.dumps(new_val))
                     for field, old_val, new_val in _spo_fields_with_old
-                    if old_val != new_val
+                    if old_val is None and new_val is not None
                 ]
                 if _spo_rev_rows:
                     self.write_revision_rows(
@@ -236,10 +236,16 @@ class AssertionStore:
                         "occurrence_upgrade", "system",
                         run_id=run_id,
                     )
+                # COALESCE preserves existing non-null canonical values — only fills in NULLs.
+                # This enforces the "NULL → non-NULL only" contract documented above.
                 self.db.execute(
                     """UPDATE assertion
-                       SET subject_ref_type=?, subject_ref_id=?, predicate_key=?,
-                           object_json=?, temporal_scope_start=?, temporal_scope_end=?,
+                       SET subject_ref_type=COALESCE(subject_ref_type, ?),
+                           subject_ref_id=COALESCE(subject_ref_id, ?),
+                           predicate_key=COALESCE(predicate_key, ?),
+                           object_json=COALESCE(object_json, ?),
+                           temporal_scope_start=COALESCE(temporal_scope_start, ?),
+                           temporal_scope_end=COALESCE(temporal_scope_end, ?),
                            updated_at=?
                        WHERE id=?""",
                     (
