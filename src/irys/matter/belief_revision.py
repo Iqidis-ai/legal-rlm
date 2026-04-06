@@ -237,19 +237,6 @@ class BeliefRevisionEngine:
         self.db = db
         self.assertion_store = assertion_store
         self._ledger = ledger
-        # Nodes that could not be visited when a BFS pass hit MAX_WORK.
-        # Populated by _apply_with_truncation(); drained by drain_truncation_pending().
-        self._truncation_pending: set[str] = set()
-
-    def drain_truncation_pending(self) -> list[str]:
-        """Return and clear nodes left unvisited by the last truncated BFS pass.
-
-        Callers (e.g. correct_assertion) can loop over this to retry propagation
-        until convergence or a safety cap is reached, preventing durable stale states.
-        """
-        result = list(self._truncation_pending)
-        self._truncation_pending.clear()
-        return result
 
     def _apply_with_truncation(
         self,
@@ -257,12 +244,13 @@ class BeliefRevisionEngine:
         cause: RevisionCause,
         run_id: Optional[str] = None,
         note: Optional[str] = None,
-    ) -> tuple[list[RevisionResult], bool]:
-        """Internal BFS driver. Returns (results, truncated).
+    ) -> tuple[list[RevisionResult], bool, list[str]]:
+        """Internal BFS driver. Returns (results, truncated, unvisited).
 
         Same as apply() but also returns whether propagation was cut short
-        by MAX_WORK, so force_state() can set propagation_truncated on the
-        returned RevisionResult without changing the public apply() signature.
+        by MAX_WORK and the list of unvisited node IDs.  force_state() stores
+        unvisited in RevisionResult.truncation_pending; correct_assertion()
+        retries those nodes locally without touching any engine-level state.
         """
         from collections import deque
 
@@ -382,10 +370,10 @@ class BeliefRevisionEngine:
                 except Exception as exc:
                     _log.warning("Failed to record OCC ledger event: %s", exc, exc_info=True)
 
+        # Collect unvisited nodes to return to callers for local retry (r18 HIGH fix).
+        # Never stored on the engine — avoids shared-state bleed across requests.
+        unvisited: list[str] = list(pending)
         truncated = bool(pending) or occ_exhausted_count > 0
-        if pending:
-            # Record unvisited nodes so callers can retry (r17 HIGH fix).
-            self._truncation_pending.update(pending)
         if truncated:
             _reasons = []
             if pending:
@@ -410,7 +398,7 @@ class BeliefRevisionEngine:
                 except Exception as exc:
                     _log.warning("Failed to record truncation ledger event: %s", exc, exc_info=True)
 
-        return results, truncated
+        return results, truncated, unvisited
 
     def apply(
         self,
@@ -418,6 +406,7 @@ class BeliefRevisionEngine:
         cause: RevisionCause,
         run_id: Optional[str] = None,
         note: Optional[str] = None,
+        _collect_unvisited: "list[str] | None" = None,
     ) -> list[RevisionResult]:
         """Apply belief revision starting from seed assertions.
 
@@ -437,16 +426,17 @@ class BeliefRevisionEngine:
         or cyclic graphs that hit this limit, raise MAX_WORK on the class before
         running the affected matter.
 
-        See also _apply_with_truncation() for a version that returns a
-        (results, truncated) tuple — used internally by force_state() to
-        surface propagation completeness in RevisionResult.propagation_truncated.
+        _collect_unvisited: if provided, unvisited nodes from a truncated BFS
+        are appended to this list so callers can retry locally without using
+        any engine-level shared state (r18 HIGH fix).
         """
-        results, truncated = self._apply_with_truncation(seed_assertion_ids, cause, run_id, note)
+        results, truncated, unvisited = self._apply_with_truncation(seed_assertion_ids, cause, run_id, note)
         if truncated:
-            # Propagate the truncation flag to every result so callers can detect it
-            # without inspecting the engine directly (r17 MEDIUM fix).
+            # Propagate the truncation flag to every result so callers can detect it.
             for r in results:
                 r.propagation_truncated = True
+            if _collect_unvisited is not None:
+                _collect_unvisited.extend(unvisited)
         return results
 
     def _revise_one(
@@ -791,8 +781,9 @@ class BeliefRevisionEngine:
         # Propagate to dependents; capture truncation so callers can surface it (SO-2).
         dependents = self.assertion_store.get_dependents(assertion_id)
         if dependents:
-            downstream, truncated = self._apply_with_truncation(dependents, cause, run_id, note)
+            downstream, truncated, unvisited = self._apply_with_truncation(dependents, cause, run_id, note)
             result.propagated_to = [r.assertion_id for r in downstream]
             result.propagation_truncated = truncated
+            result.truncation_pending = unvisited  # local to this result; no engine state
 
         return result

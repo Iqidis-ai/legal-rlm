@@ -261,30 +261,40 @@ class MatterModel:
             note=note,
         )
 
-        # Drain and retry nodes left unvisited by BFS budget truncation (r17 HIGH fix).
-        # Each round applies belief revision to the truncated frontier, and that round
-        # may itself truncate, so we loop until drained or the safety cap (10 rounds)
-        # is reached.  This prevents wide withdrawal corrections from leaving durable
-        # stale belief states indefinitely.
-        _retry_rounds = 0
-        while _retry_rounds < 10:
-            _truncated_nodes = self.belief.drain_truncation_pending()
-            if not _truncated_nodes:
+        # Retry nodes left unvisited by BFS budget truncation (r17/r18 HIGH fix).
+        # Unvisited nodes come from result.truncation_pending — stored locally on the
+        # RevisionResult, never on the engine, so concurrent corrections cannot
+        # contaminate each other's retry frontiers.
+        #
+        # Cap: 3 inline rounds to bound synchronous HTTP latency (~6k visits max).
+        # Any remaining nodes after the cap stay in result.truncation_pending so the
+        # caller (e.g. REST endpoint) can surface propagation_truncated to the client,
+        # and the next flush_revisions() or compute_all() will finish the work.
+        _pending: list[str] = list(result.truncation_pending)
+        result.truncation_pending = []  # consumed from here; new ones collected below
+        for _round in range(3):
+            if not _pending:
                 break
-            _retry_rounds += 1
+            _next_pending: list[str] = []
             _retry_results = self.belief.apply(
-                _truncated_nodes,
+                _pending,
                 cause=RevisionCause.USER_CORRECTION,
                 run_id=run_id,
                 note="truncation retry",
+                _collect_unvisited=_next_pending,
             )
-            # Accumulate additional propagated assertions so issue recompute covers them.
             result.propagated_to = list(
                 dict.fromkeys(
                     (result.propagated_to or [])
                     + [r.assertion_id for r in _retry_results]
                 )
             )
+            _pending = _next_pending
+
+        # Update top-level truncation flag: False only if we fully converged.
+        result.propagation_truncated = bool(_pending)
+        if _pending:
+            result.truncation_pending = _pending  # surface remaining work to caller
 
         # Targeted proof_state recompute: find issues linked to this assertion
         # and any that were revised as dependents (result.propagated_to).

@@ -1500,12 +1500,16 @@ def _migration_v39(conn) -> None:
     created_at DESC makes the index covering: the seek+sort returns actor_kind
     directly without a table lookup.
     """
-    conn.execute("DROP INDEX IF EXISTS ix_assertion_revision_lock")
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS ix_assertion_revision_lock"
-        " ON assertion_revision(assertion_id, new_value_json, created_at DESC, actor_kind)"
-        " WHERE changed_field = 'belief_state'"
-    )
+    # Wrap DROP+CREATE in an explicit transaction so there is no window where the
+    # old index is gone but the new one does not yet exist.  SQLite DDL is
+    # transactional, so both statements commit atomically or neither does.
+    with conn:
+        conn.execute("DROP INDEX IF EXISTS ix_assertion_revision_lock")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_assertion_revision_lock"
+            " ON assertion_revision(assertion_id, new_value_json, created_at DESC, actor_kind)"
+            " WHERE changed_field = 'belief_state'"
+        )
 
 
 # Ordered migrations: (target_version, callable).
