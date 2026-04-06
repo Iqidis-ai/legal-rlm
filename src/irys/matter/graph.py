@@ -206,7 +206,7 @@ class AssertionStore:
             # should upgrade the durable record rather than lose the structured payload.
             # Only upgrades NULL → non-NULL: never overwrites previously-set SPO fields
             # so user-corrected or higher-confidence prior extractions are preserved.
-            # (HIGH #3 SPO-payload-loss fix)
+            # (HIGH #3 SPO-payload-loss fix; adv#031 SO-2 audit fix: write revision rows)
             if (
                 not is_new
                 and _occ_cur.rowcount > 0
@@ -214,6 +214,27 @@ class AssertionStore:
                 and row["predicate_key"] is None
                 and candidate.predicate_key is not None
             ):
+                # Write revision rows for each SPO field being upgraded (SO-2 audit trail).
+                # Old value is always null (upgrade condition), new values from candidate.
+                _spo_fields = [
+                    ("predicate_key", candidate.predicate_key),
+                    ("subject_ref_type", candidate.subject_ref_type),
+                    ("subject_ref_id", candidate.subject_ref_id),
+                    ("object_json", candidate.object_json),
+                    ("temporal_scope_start", candidate.temporal_scope_start),
+                    ("temporal_scope_end", candidate.temporal_scope_end),
+                ]
+                _spo_rev_rows = [
+                    (field, _json_mod.dumps(None), _json_mod.dumps(new_val))
+                    for field, new_val in _spo_fields
+                    if new_val is not None
+                ]
+                if _spo_rev_rows:
+                    self.write_revision_rows(
+                        assertion_id, _spo_rev_rows, _id(),
+                        "occurrence_upgrade", "system",
+                        run_id=run_id,
+                    )
                 self.db.execute(
                     """UPDATE assertion
                        SET subject_ref_type=?, subject_ref_id=?, predicate_key=?,

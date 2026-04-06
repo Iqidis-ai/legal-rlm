@@ -1373,7 +1373,10 @@ async def stop_investigation(matter_id: str, _: StopRunRequest):
     if not _stop_rows:
         raise HTTPException(status_code=409, detail="No running investigation to stop")
     run_id = _stop_rows[0]["id"]
-    model.ledger.request_stop(run_id)
+    applied = model.ledger.request_stop(run_id)
+    if not applied:
+        # Run completed between the SELECT and the UPDATE — return 409
+        raise HTTPException(status_code=409, detail=f"Run '{run_id}' completed before stop could be applied")
     # Log the steering event so the reasoning trail reflects the user action (SO-3)
     from irys.matter.enums import LedgerEventType
     model.ledger.append_event(
@@ -1407,7 +1410,9 @@ async def redirect_investigation(matter_id: str, run_id: str, request: RedirectR
     issue = model.issues.get_issue(request.issue_id)
     if issue is None:
         raise HTTPException(status_code=404, detail=f"Issue '{request.issue_id}' not found")
-    model.ledger.request_redirect(run_id, request.issue_id)
+    applied = model.ledger.request_redirect(run_id, request.issue_id)
+    if not applied:
+        raise HTTPException(status_code=409, detail=f"Run '{run_id}' completed before redirect could be applied")
     # Log the steering event so the reasoning trail reflects the user action (SO-3)
     from irys.matter.enums import LedgerEventType
     model.ledger.append_event(
@@ -2481,24 +2486,19 @@ async def stream_run_events(matter_id: str, run_id: str, after_seq: int = -1, re
     The stream closes when the run reaches a terminal state (completed/failed/interrupted).
     """
     model = _get_matter_model_or_404(matter_id)
+    # Validate before opening the stream so HTTP 404 is sent as a real error response,
+    # not buried inside a 200 SSE body (adv#031 MEDIUM).
+    _run_check = model.db.execute(
+        "SELECT id FROM run_session WHERE id=? AND matter_id=?",
+        (run_id, model.matter_id),
+    ).fetchone()
+    if _run_check is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in this matter")
 
     async def _event_generator():
         last_seq = after_seq
         poll_interval = 0.5  # seconds between DB polls
         terminal_statuses = {"completed", "failed", "interrupted"}
-
-        # Validate run_id exists AND belongs to this matter before entering the poll loop.
-        try:
-            run_check = model.db.execute(
-                "SELECT id FROM run_session WHERE id=? AND matter_id=?",
-                (run_id, model.matter_id),
-            ).fetchone()
-        except Exception as exc:
-            yield f"data: {_json.dumps({'error': str(exc)})}\n\n"
-            return
-        if run_check is None:
-            yield f"data: {_json.dumps({'error': f'run_id {run_id!r} not found in this matter'})}\n\n"
-            return
 
         while True:
             # Check if client disconnected
@@ -2568,7 +2568,9 @@ async def stop_run(matter_id: str, run_id: str):
         raise HTTPException(status_code=409, detail=f"Run '{run_id}' is not running (status={run.status})")
     if run.objective in ("manual_flush", "background_flush"):
         raise HTTPException(status_code=409, detail=f"Run '{run_id}' is a utility flush run and cannot be stopped via this endpoint")
-    model.ledger.request_stop(run_id)
+    applied = model.ledger.request_stop(run_id)
+    if not applied:
+        raise HTTPException(status_code=409, detail=f"Run '{run_id}' completed before stop could be applied")
     from irys.matter.enums import LedgerEventType
     model.ledger.append_event(
         run_id=run_id,
