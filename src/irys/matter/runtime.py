@@ -381,6 +381,9 @@ class MatterRuntimeAdapter:
                     issue_link_type = item[2] if len(item) > 2 else "supports"
                     temporal_scope_start = item[3] if len(item) > 3 else None
                     subject_ref_type = subject_ref_id = predicate_key = object_json = temporal_scope_end = None
+                    if not (proposition_text or "").strip():
+                        assertion_ids.append("")
+                        continue
                 aid = self.record_fact(
                     proposition_text,
                     document_id=document_id,

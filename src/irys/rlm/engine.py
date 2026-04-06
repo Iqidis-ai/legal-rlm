@@ -961,9 +961,12 @@ class RLMEngine:
         results = []
         for t in tasks:
             if not t.done():
-                # Drain timed out and task is still running — treat as cancelled
-                # (lead stays pending for resume; the orphaned task will eventually
-                # finish or be garbage-collected when the event loop exits).
+                # Drain timed out and task is still running — treat as cancelled.
+                # Known MEDIUM: the orphaned task may still call record_fact() after
+                # flush_revisions() has already drained _pending_assertion_ids, leaving
+                # those late assertions unrevised in this run. Mitigated: all
+                # assertions are persisted to DB (durable matter model, SO-1), and
+                # pending_propagation ensures belief revision is retried on next flush.
                 results.append(None)
             elif t.cancelled():
                 results.append(None)  # Cancelled lead stays pending for resume.
@@ -1953,13 +1956,20 @@ class RLMEngine:
 
             # Build a name→(relative_path, SearchHit) lookup for all prompt-visible hits.
             # Key by full file_path (stable, unique) and filename (convenience lookup).
-            # Use file_path as the primary key to avoid basename collisions when two files
-            # share the same name in different directories.
+            # Basename shortcuts are only registered when the basename is unambiguous
+            # (appears exactly once in the top hits) — duplicate basenames stay basename-
+            # unresolvable so the model's source_file fallback to the full path key is
+            # used instead of a wrong last-writer collision. (r49 HIGH fix)
+            _top_hits_for_lookup = list(results.top(10))
+            _basename_freq: dict[str, int] = {}
+            for _h in _top_hits_for_lookup:
+                _basename_freq[_h.filename.lower()] = _basename_freq.get(_h.filename.lower(), 0) + 1
             _hit_by_name: dict[str, object] = {}
-            for _h in results.top(10):
-                _hit_by_name[_h.file_path] = _h        # most specific: full path
-                _hit_by_name[_h.filename] = _h         # convenience: basename
-                _hit_by_name[_h.filename.lower()] = _h
+            for _h in _top_hits_for_lookup:
+                _hit_by_name[_h.file_path] = _h        # most specific: full path (always)
+                if _basename_freq[_h.filename.lower()] == 1:
+                    _hit_by_name[_h.filename] = _h     # basename only when unambiguous
+                    _hit_by_name[_h.filename.lower()] = _h
 
             # Fallback: top-hit doc_id and source role for facts with no source_file
             _top_hits = results.top(1)
