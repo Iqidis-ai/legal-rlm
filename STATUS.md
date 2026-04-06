@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 r13 correctness PASS; adversarial #026 PASS; #027 in progress; 725 tests pass)
+Last updated: 2026-04-06 (Tier 1 r16 correctness FAIL→FIXED; r15 perf PASS; 733 tests pass — Tier 1 CLEAN on #027 fix series)
 Branch: SebihSpecial
 
 ---
@@ -160,12 +160,19 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ## Active Work
 
-### IN PROGRESS — Tier 1 r14 post-#027 correctness review (2026-04-06)
+### JUST COMPLETED — Tier 1 r14–r16 post-#027 cycle NOW CLEAN (2026-04-06)
 
-- Adversarial #027: FIXED (commit bb854d9)
-- Tier 1 r14 correctness: running to verify #027 fixes are clean
+All 4 HIGHs from adversarial #027 verified clean through r14→r16:
 
-HEAD: 2e59b09 — Tests: 728/728
+- **r14 correctness FAIL→FIXED**: supersession recovery reset to UNKNOWN; user-forced SUPERSEDED wrongly recovered. Fixed: `_compute_state`/`_compute_conf` separation; speech-act baseline; no-op user-lock row. (commit 5c0bab8, 730 tests)
+- **r14 perf PASS**: 2 LOWs (recovery N+1 on niche SUPERSEDED path; partial assertion_revision index coverage)
+- **r15 correctness FAIL→FIXED**: user-lock not written when confidence also changes (`if not _fs_rev_rows` → `elif`); multi-occurrence recovery used earliest (ALLEGED) not most authoritative (OPERATIVE). (commit 41a756a, 732 tests)
+- **r15 perf PASS**: CASE-based micro-sort on assertion_occurrence; one extra assertion_revision INSERT for same-state USER_CORRECTION — both LOW.
+- **r16 correctness FAIL→FIXED**: user-lock race (read outside BEGIN IMMEDIATE; moved inside write_transaction); fallback confidence 0.3→0.5. 2 new tests: race simulation + confidence-change coverage. (commit dc9b592 + 6e1ae0e, 733 tests)
+
+**Tier 1 on #027 fix series: CLEAN.**
+
+HEAD: 6e1ae0e — Tests: 733/733
 
 ### JUST COMPLETED — Tier 1 r11–r13 post-#025 cycle (2026-04-06)
 
@@ -336,12 +343,12 @@ None active.
 
 ## Key Metrics (Current)
 
-- Tests passing: 725 / 725
+- Tests passing: 733 / 733
 - Schema version: v34
 - SO-1/3/5/6/7: **PASS**; SO-2/4: **PARTIAL** (improving post-#023)
 - Tier 1 Q4/SO-2 stale pre-state: **CLEAN** (4 rounds, r4 confirmed 2026-04-05)
-- Adversarial audit #023: DONE — same PASSes (SO-1/3/5/6/7); 3 HIGH findings; all 3 fixed (see below)
-- Next: Tier 1 CLEAN on audit #023 fixes; SO-4 attribution remaining (coverage contamination)
+- Adversarial audit #027: DONE — FIXED; Tier 1 r14–r16 CLEAN on all #027 fixes (2026-04-06)
+- Next: Tier 2 checkpoint review (r3 Scaling + Architecture) or adversarial #028 (due ~r17–r21)
 
 ## Architectural Backlog (Tier 2 HIGH remaining)
 
