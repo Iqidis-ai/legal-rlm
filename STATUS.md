@@ -133,10 +133,15 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 - CONFIRMED: stop_event lifecycle clean; correction→refresh DB chain correct; load_gaps tuple safe; SO-3/SO-2 end-to-end
 - 2 pre-existing LOWs fixed (commit 5c78836): heapq.nsmallest for weakest issues; LOW noted: current_run_id timing window
 
-**Adversarial #027: IN PROGRESS (2026-04-06)** — challenging SO-2 belief revision propagation depth, SO-3 redirect actionability, SO-1 matter model durability, threading cancel semantics.
+**Adversarial #027 FAIL → FIXED (2026-04-06, commit bb854d9, 728 tests):**
+- HIGH #1 (SO-2): supersession recovery — withdrawn superseders no longer permanently kill original; `superseding_states` list replaces bool; `current_state` reset to UNKNOWN when superseder inactivated
+- HIGH #2 (SO-2): ADMITTED/RESOLVED/PERFORMED promote dependents to INFERRED, not just OPERATIVE
+- HIGH #3 (SO-1): SPO payload upgraded on richer re-occurrence of same proposition (NULL→non-NULL)
+- HIGH #4 (SO-3): redirect timing transparency — UI now surfaces `⚠️ takes effect at next iteration boundary`
+- MEDIUM deferred: matter model reopen requires re-run — InProcessBackend architectural constraint, not blocking in production (HttpBackend unaffected)
 
 **Tier 1 r11 PASS (725 tests, 2026-04-06).**
-**Tier 1 r13 performance: IN PROGRESS (2026-04-06).**
+**Tier 1 r13 performance: PASS (2026-04-06).** 3 LOWs only (sync SQLite in stream_run_events async path; run-bounded UI buffers; error swallow in poll loop).
 
 **Tier 2 r2 HIGH fix (2026-04-06, commit 64ef34f):**
 - `flush_revisions()` now batches seeds in groups of `MAX_WORK // 2` (250). Previously,
@@ -155,11 +160,12 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ## Active Work
 
-### IN PROGRESS — Tier 1 r13 perf + Adversarial #027 (2026-04-06)
+### IN PROGRESS — Tier 1 r14 post-#027 correctness review (2026-04-06)
 
-- Tier 1 r13 performance: running (Codex background session)
-- Adversarial audit #027: running (challenges SO-2 propagation depth, SO-3 redirect, SO-1 durability, threading cancel)
-- Once both PASS: this Tier 1 cycle is CLEAN
+- Adversarial #027: FIXED (commit bb854d9)
+- Tier 1 r14 correctness: running to verify #027 fixes are clean
+
+HEAD: 2e59b09 — Tests: 728/728
 
 ### JUST COMPLETED — Tier 1 r11–r13 post-#025 cycle (2026-04-06)
 
