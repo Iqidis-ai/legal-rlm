@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (UI Tier 1 r1 all HIGH/MEDIUM fixed; 6-panel Gradio UI + UIBackend + service endpoints complete; 725 tests pass)
+Last updated: 2026-04-06 (adversarial #024 product surface fixes + Tier 1 r6 all HIGH/MEDIUM fixed; schema v37; 725 tests pass)
 Branch: SebihSpecial
 
 ---
@@ -96,8 +96,9 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | #021 | SO-3/7 PASS; SO-1/2/4/5/6 PARTIAL | proof_state override removed; correct_assertion now refreshes proof_state; bare-string inflation fixed |
 | #022 | **SO-1/3/5/6/7 PASS; SO-2/4 PARTIAL** | 5 PASSes. Predicate resolution wired in production. SO-4 remaining: _focus_issue_id attribution heuristic |
 | #023 | **SO-1/3/5/6/7 PASS; SO-2/4 PARTIAL** | 5 PASSes. 3 HIGHs fixed: OCC silent loss, flat fact ingress (SPO threshold >= 1), SO-4 attribution (biased pool). Post-audit Tier 1 r5/r6: schema v35 no-op, OCC retry-self (not dependents), pre-tx fast-path, bare-idx counter, seedness preserved across OCC retries |
+| #024 | **NEEDS MAJOR REWORK (backend ≠ UI)** | All 6 SOs FAIL/PARTIAL in UI: assertion IDs hidden (SO-2), steering not wired (SO-3), issue IDs hidden (SO-4), source role mis-rendered (SO-5), Quant panel missing (SO-6). **FIXED:** assertion IDs + issue IDs in tables; get_steering_surface() + get_quant_summary() wired to new Tab 6 Quant; BeliefState validation; redirect validation. Post-audit Tier 1 r6: redirect no-validation, backend type guard, answered_at index (v37), repo stats dedup |
 
-**Tier 1 reviews:** CLEAN (r9 confirmed) — full Tier 1+2 cycle clean. Last fixes: semantic gate abstains → None (not round-robin); structural fallback uses _biased_pool; synthesis + SPO retry tracked in llm_calls_required. See commit history for full fix trail.
+**Tier 1 reviews:** r7 running. Last fixes: redirect validation in InProcessBackend (mirrors service-side), type guard in _run_thread, ix_clarification_matter_answered (schema v37), engine._orient() reuses pre-computed stats.
 
 **Tier 2 implementations (2026-04-06, from Tier 2 Scaling+Architecture review):**
 1. SO-4 semantic attribution gate: `_build_issue_profiles()` + `_best_semantic_issue()` Jaccard gate;
@@ -111,18 +112,21 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ## Active Work
 
-### JUST COMPLETED — UI Tier 1 r1 all HIGH/MEDIUM fixed (2026-04-06, commit 5f6779a)
+### JUST COMPLETED — adversarial #024 product surface fixes + Tier 1 r6 (2026-04-06)
 
-6-panel Gradio UI implemented, UIBackend abstraction layer, service SSE + overview + stop endpoints.
-All Tier 1 r1 UI findings fixed:
+**Adversarial #024 fixes (commit cebc76e):**
+- Assertion IDs + issue IDs added to Assertions/Issues tables (SO-2/4)
+- `get_steering_surface()` + `get_quant_summary()` added to UIBackend base, InProcessBackend, HttpBackend
+- `load_gaps()` wired to steering surface; new `load_quant()` + Tab 6 Quant panel (SO-3/6)
+- `_fmt_steering()` + `_fmt_quant()` formatters; `primary_source_role`/`primary_speech_act` fallback (SO-5)
 
-- **HIGH 1 (stop button):** `state._run_id = run_id` set in engine.py at run start; `_make_on_step()` callback reads from `ledger.recent_runs(1)` on first step; `stop_investigation()` uses captured run_id
-- **HIGH 2 (AppState global):** Per-call local state (`call_thinking`, `call_citations`, `call_queue`) passed to `_run_thread`; `update_queue` aliased at call start — per-invocation safe
-- **MEDIUM 3 (wrong method names):** `open_gaps()` for GapStore; `get_open_issues()` for IssueStore — fixed in both service/api.py and in_process.py
-- **MEDIUM 4 (SSE infinite hang):** Validate `run_id` in `run_session` before entering poll loop in both `service/api.py` and `in_process.py` — missing run_id emits error event and returns immediately
-- **Gradio 6 compat:** Removed inline Textbox; `asyncio.run()` → `ThreadPoolExecutor _run_async()`; `theme/css` moved to `launch()`
+**Tier 1 r6 fixes (commit 17fef25):**
+- HIGH: `_run_thread` type guard — fails cleanly if backend lacks `_get_irys()`
+- MEDIUM: `InProcessBackend.redirect_run()` now validates run existence + status + issue existence
+- MEDIUM perf: schema v37 `ix_clarification_matter_answered` index eliminates full-table sort
+- MEDIUM perf: `engine._orient()` accepts `_stats` to reuse pre-computed stats from `investigate()`
 
-Tier 1 r2 review running (background). HEAD: 5f6779a — Tests: 725/725
+Tier 1 r7 review running (background). HEAD: 17fef25 — Tests: 725/725
 
 ### PREVIOUSLY COMPLETED — Tier 1+2 MEDIUM fixes (2026-04-06, commit 1cddd8e)
 
