@@ -58,6 +58,9 @@ _matter_model_last_used: dict[str, datetime] = {}
 # Per-matter asyncio locks for cold-rehydration deduplication.  Only one coroutine
 # scans corpus directories per matter_id; concurrent misses wait and then re-check cache.
 _rehydration_locks: dict[str, "asyncio.Lock"] = {}
+# Matter IDs currently executing a synchronous (non-job) investigation run.
+# The cleanup loop's orphan-eviction pass skips these to prevent mid-run eviction.
+_sync_running_matter_ids: set[str] = set()
 
 # Version
 VERSION = "1.0.0"
@@ -128,7 +131,10 @@ async def _cleanup_loop(config: ServiceConfig):
                 logger.debug(f"Cleaned up job {job_id}")
             # Evict matter models not backed by any active job (rehydrated models).
             # These are not associated with a job so the per-job eviction above misses them.
-            _live_matter_ids = {j.matter_id for j in _jobs.values() if j.matter_id}
+            # Skip models that are currently pinned by an in-flight sync run; evicting them
+            # mid-investigation would cause open_gaps to return empty after the run.
+            _live_matter_ids = ({j.matter_id for j in _jobs.values() if j.matter_id}
+                                | _sync_running_matter_ids)
             for _mid in list(_active_matter_models.keys()):
                 if _mid not in _live_matter_ids:
                     if _matter_model_last_used.get(_mid, datetime.min) < _idle_cutoff:
@@ -313,6 +319,11 @@ async def _get_matter_model_or_404(matter_id: str):
                 _matter_model_last_used[matter_id] = datetime.now()
                 logger.info(f"Rehydrated matter model {matter_id} from persistent storage")
                 return model
+        # Rehydration failed (404).  Remove the stale lock so long-lived processes don't
+        # accumulate one lock per distinct miss (including 404 probes from callers).
+        # Any waiter already holds a reference to the old Lock object; the pop only removes
+        # the dict entry and is safe because asyncio is single-threaded.
+        _rehydration_locks.pop(matter_id, None)
     raise HTTPException(
         status_code=404,
         detail=f"Matter model '{matter_id}' not found or no longer active",
@@ -1010,10 +1021,18 @@ async def upload_investigate_sync(
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
         sync_matter_id = _wire_matter_model(irys, str(temp_dir), sync_corpus_key, config)
 
-        result = await irys.investigate(
-            query=query,
-            repository=str(temp_dir),
-        )
+        # Pin the model in _sync_running_matter_ids so the orphan-eviction pass in
+        # _cleanup_loop cannot evict it mid-run (sync runs have no associated _jobs entry).
+        if sync_matter_id:
+            _sync_running_matter_ids.add(sync_matter_id)
+        try:
+            result = await irys.investigate(
+                query=query,
+                repository=str(temp_dir),
+            )
+        finally:
+            if sync_matter_id:
+                _sync_running_matter_ids.discard(sync_matter_id)
 
         # Cleanup temp files
         if config.storage_mode == "local":
@@ -1314,10 +1333,17 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         urls_corpus_key = _compute_corpus_key(",".join(sorted(_url_to_str(u) for u in request.s3_urls)))
         urls_matter_id = _wire_matter_model(irys, str(temp_dir), urls_corpus_key, config)
 
-        result = await irys.investigate(
-            query=request.query,
-            repository=str(temp_dir),
-        )
+        # Pin the model so the orphan-eviction pass cannot evict it mid-run.
+        if urls_matter_id:
+            _sync_running_matter_ids.add(urls_matter_id)
+        try:
+            result = await irys.investigate(
+                query=request.query,
+                repository=str(temp_dir),
+            )
+        finally:
+            if urls_matter_id:
+                _sync_running_matter_ids.discard(urls_matter_id)
 
         # Cleanup
         await s3_repo.cleanup(job_id)
