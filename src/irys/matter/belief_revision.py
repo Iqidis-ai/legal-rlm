@@ -539,21 +539,28 @@ class BeliefRevisionEngine:
             and bool(_superseding)
             and not any(s not in _INERT_S for s in _superseding)
         )
-        # DISPUTED recovery (r23 HIGH fix): when a node is DISPUTED and all its
-        # attackers are now inert (WITHDRAWN/SUPERSEDED/UNKNOWN) or absent, substitute
-        # the speech-act baseline so _compute_belief_state() can compute the recovered
-        # state instead of preserving DISPUTED forever.
+        # DISPUTED recovery (r23 HIGH fix, r24 HIGH guard): when a node is DISPUTED,
+        # has at least one attack link, AND all attackers are now inert
+        # (WITHDRAWN/SUPERSEDED/UNKNOWN), substitute the speech-act baseline so
+        # _compute_belief_state() can compute the recovered state.
+        #
+        # Provenance guard: require bool(attack_states) — at least one real attack link
+        # must exist and be inert.  This mirrors the supersession guard bool(_superseding)
+        # and prevents auto-recovery of manually-set DISPUTED nodes that have no attack
+        # links (those were set by user intent, not conflict detection).  A node set
+        # DISPUTED manually with no attack links is NOT recovered automatically; the user
+        # must explicitly correct it via correct_assertion() (r24 HIGH fix).
         # _INERT_A matches the _INERT tuple inside _compute_belief_state().
         _INERT_A = (BeliefState.WITHDRAWN, BeliefState.SUPERSEDED, BeliefState.UNKNOWN)
         _dispute_recovery_case = (
             old_state == BeliefState.DISPUTED
-            and not any(s not in _INERT_A for s in (neighbors["attack_states"] or []))
+            and bool(neighbors["attack_states"])  # provenance guard: real attack links exist
+            and not any(s not in _INERT_A for s in neighbors["attack_states"])
         )
         if _recovery_case or _dispute_recovery_case:
-            # Guard 1 (user-lock) applies to supersession recovery only (deferred inside
-            # BEGIN IMMEDIATE below); DISPUTED is typically set by the engine, not users.
-            # TODO: add user-lock guard for DISPUTED if explicit user corrections to
-            # DISPUTED state become common.
+            # Guard 1 (user-lock) deferred inside BEGIN IMMEDIATE for supersession only.
+            # DISPUTED recovery requires real attack links (provenance guard above), so
+            # manual DISPUTED corrections (no links) never reach this path.
 
             # Shared baseline: use the most authoritative speech-act across ALL occurrences
             # so a proposition first seen as ALLEGED and later observed as OPERATIVE
@@ -795,8 +802,8 @@ class BeliefRevisionEngine:
             if _fs_rev_rows:
                 # actor_kind reflects who initiated the change (r23 MEDIUM fix):
                 # USER_CORRECTION → "user" so the user-lock and recovery paths work;
-                # system causes (CONFLICT_DETECTION, etc.) → "engine" for correct provenance.
-                _actor_kind = "user" if cause == RevisionCause.USER_CORRECTION else "engine"
+                # system causes (CONFLICT_DETECTION, etc.) → "system" matching schema vocab.
+                _actor_kind = "user" if cause == RevisionCause.USER_CORRECTION else "system"
                 self.assertion_store.write_revision_rows(
                     assertion_id, _fs_rev_rows, _id(),
                     cause.value, _actor_kind, run_id, note,
