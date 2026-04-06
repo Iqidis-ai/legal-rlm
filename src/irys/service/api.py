@@ -61,6 +61,9 @@ _rehydration_locks: dict[str, "asyncio.Lock"] = {}
 # Matter IDs currently executing a synchronous (non-job) investigation run.
 # The cleanup loop's orphan-eviction pass skips these to prevent mid-run eviction.
 _sync_running_matter_ids: set[str] = set()
+# Counter for concurrently active synchronous upload handlers (no job backing).
+# Capped at max_concurrent_jobs to prevent multiple large request bodies in RAM.
+_active_sync_requests: int = 0
 
 # Version
 VERSION = "1.0.0"
@@ -312,17 +315,20 @@ async def _get_matter_model_or_404(matter_id: str):
             existing = _active_matter_models.get(matter_id)
             if existing is not None:
                 _matter_model_last_used[matter_id] = datetime.now()
+                # Pop inside the lock while asyncio is single-threaded; safe because any
+                # waiter already holds a reference to the Lock object via the dict lookup
+                # above, so removing the dict entry only affects future miss requests.
+                _rehydration_locks.pop(matter_id, None)
                 return existing
             model = await asyncio.to_thread(_try_rehydrate_matter_model, matter_id, config)
             if model is not None:
                 _active_matter_models[matter_id] = model
                 _matter_model_last_used[matter_id] = datetime.now()
                 logger.info(f"Rehydrated matter model {matter_id} from persistent storage")
+                _rehydration_locks.pop(matter_id, None)
                 return model
         # Rehydration failed (404).  Remove the stale lock so long-lived processes don't
         # accumulate one lock per distinct miss (including 404 probes from callers).
-        # Any waiter already holds a reference to the old Lock object; the pop only removes
-        # the dict entry and is safe because asyncio is single-threaded.
         _rehydration_locks.pop(matter_id, None)
     raise HTTPException(
         status_code=404,
@@ -835,6 +841,7 @@ async def upload_search(
     Storage mode controlled by IRYS_STORAGE_MODE env var.
     Synchronous - returns results immediately.
     """
+    global _active_sync_requests
     config = get_config()
     # Check file count (same cap as other upload endpoints)
     if len(files) > config.max_documents_per_job:
@@ -842,6 +849,12 @@ async def upload_search(
             status_code=400,
             detail=f"Too many files ({len(files)}). Max: {config.max_documents_per_job}",
         )
+    if _active_sync_requests >= config.max_concurrent_jobs:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many concurrent sync requests. Max: {config.max_concurrent_jobs}",
+        )
+    _active_sync_requests += 1
     job_id = f"uploadsearch_{uuid.uuid4().hex[:8]}"
     s3_prefix = None
     s3_repo = None
@@ -928,6 +941,8 @@ async def upload_search(
             except Exception:
                 pass
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _active_sync_requests -= 1
 
 
 @app.post(
@@ -951,6 +966,7 @@ async def upload_investigate_sync(
 
     Note: This endpoint blocks until investigation completes (may take 30-120 seconds).
     """
+    global _active_sync_requests
     config = get_config()
     job_id = f"sync_{uuid.uuid4().hex[:8]}"
     start_time = time.time()
@@ -958,6 +974,14 @@ async def upload_investigate_sync(
     s3_repo = None
     temp_dir = None
 
+    # Concurrency cap: each sync request may buffer up to
+    # max_documents_per_job × max_document_size_mb of body data in RAM simultaneously.
+    if _active_sync_requests >= config.max_concurrent_jobs:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many concurrent sync requests. Max: {config.max_concurrent_jobs}",
+        )
+    _active_sync_requests += 1
     try:
         # Check file count
         if len(files) > config.max_documents_per_job:
@@ -1098,6 +1122,8 @@ async def upload_investigate_sync(
             except Exception:
                 pass
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _active_sync_requests -= 1
 
 
 # === S3 URL ENDPOINTS ===
@@ -1303,12 +1329,19 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
     Returns complete results in a single request (blocks until done).
     Note: This endpoint blocks until investigation completes (may take 30-120 seconds).
     """
+    global _active_sync_requests
     config = get_config()
     job_id = f"urlsync_{uuid.uuid4().hex[:8]}"
     start_time = time.time()
     s3_repo = None
     temp_dir = None
 
+    if _active_sync_requests >= config.max_concurrent_jobs:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many concurrent sync requests. Max: {config.max_concurrent_jobs}",
+        )
+    _active_sync_requests += 1
     try:
         # Check URL count
         if len(request.s3_urls) > config.max_documents_per_job:
@@ -1384,6 +1417,8 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         if s3_repo:
             await s3_repo.cleanup(job_id)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _active_sync_requests -= 1
 
 
 # === MATTER MODEL ENDPOINTS ===
