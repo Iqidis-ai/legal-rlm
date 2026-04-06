@@ -653,6 +653,7 @@ class MatterModel:
         # Uses indexed doc_basename column (schema v27) for exact basename lookup —
         # replaces leading-wildcard LIKE ('%/basename') which was not sargable.
         affected_ids: list[str] = []
+        _trust_unvisited: list[str] = []
         try:
             pat_norm = document_pattern.replace("\\\\", "/").replace("\\", "/")
             basename = Path(pat_norm).name
@@ -672,7 +673,6 @@ class MatterModel:
                 if pat_norm == doc or pat_norm == doc_basename:
                     affected_ids.append(row["assertion_id"])
             if affected_ids:
-                _trust_unvisited: list[str] = []
                 self.apply_revision(
                     affected_ids,
                     cause=RevisionCause.TRUST_OVERRIDE,
@@ -680,9 +680,10 @@ class MatterModel:
                     note=f"Document trust override set to '{trust_level}' for {document_pattern!r}",
                     _collect_unvisited=_trust_unvisited,
                 )
-                self.enqueue_evidence_pending(_trust_unvisited, cause=RevisionCause.TRUST_OVERRIDE, run_id=run_id)
         except (sqlite3.Error, ValueError, RuntimeError) as exc:
             _log.warning("Trust override belief revision failed for %r: %s", document_pattern, exc)
+        # Enqueue outside the except block so DB failures propagate rather than being swallowed.
+        self.enqueue_evidence_pending(_trust_unvisited, cause=RevisionCause.TRUST_OVERRIDE, run_id=run_id)
 
         # Targeted proof state recompute: only recompute issues linked to affected assertions.
         # Falls back to compute_all() when affected_ids is empty (pattern matched nothing).
