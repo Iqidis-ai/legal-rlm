@@ -491,7 +491,17 @@ class BeliefRevisionEngine:
             # operative(0.8) > admitted/stipulated(0.8) > performed/paid(0.8) > inferred(0.6)
             # > alleged/argued(0.3) > everything else (0.5/unknown).
             # Inlined from _initial_belief_state() in graph.py to avoid circular import.
-            # (r15 MEDIUM fix)
+            # (r15 MEDIUM fix; priority rationale documented in r16 MEDIUM #2)
+            #
+            # Priority ordering is by LEGAL INFORMATIVENESS, not starting confidence:
+            # operative > admitted/stipulated > performed/paid > waived/terminated/amended
+            # > inferred > alleged/argued > ELSE (unclassified: extracted, denied, etc.)
+            #
+            # Note: alleged/argued (priority 3) intentionally ranks above the unclassified
+            # default (priority 0). An explicit allegation is more semantically informative
+            # than an unclassified EXTRACTED occurrence, even though its starting confidence
+            # (0.3) is lower than the default UNKNOWN (0.5). This is NOT a bug — the
+            # distinction is informativeness vs. reliability. (r16 MEDIUM #2 clarification)
             _occ_row = self.db.execute(
                 """SELECT speech_act FROM assertion_occurrence
                    WHERE assertion_id=?
