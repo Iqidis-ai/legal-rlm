@@ -115,7 +115,15 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 - Arch MEDIUM (deferred): UIBackend.start_investigation() contract incoherent; backend abstraction lacks live-run/streaming contract
 - Tier 2 r2 flush_revisions HIGH (commit 64ef34f): seed batching prevents loss at >2000 seeds
 
-**Next:** adversarial audit #025 (running; due after 8+ Tier 1 rounds + significant product surface changes).
+**Adversarial #025 FAIL → ALL 4 HIGHs FIXED (2026-04-06, commit e033914):**
+- HIGH #1 (SO-3 stop): `threading.Event _stop_event` closes early-stop race; set in `stop_investigation()`, checked in `run_investigation_thread()` before `irys.investigate()` starts
+- HIGH #2 (SO-3 steering actionable): `load_gaps()` returns `(text, top_redirect_issue_id)` tuple; `refresh_gaps_btn` auto-populates redirect form from top steering recommendation
+- HIGH #3 (SO-2 correction refresh): `_correct_and_refresh()` wrapper refreshes `assertions_md` + `overview_md` after successful correction — belief state changes visible immediately
+- HIGH #4 (SO-5 multi-source): `_fmt_assertions()` now uses `source_roles` list → `MULTI-SOURCE[...]` when assertion spans multiple source types
+- MEDIUM #6 (errors surfaced): steering surface errors now shown as `⚠️` instead of silent empty string
+- Tier 1 r11 PASS (725 tests, no regressions)
+
+**Adversarial #026:** running now.
 
 **Tier 2 r2 HIGH fix (2026-04-06, commit 64ef34f):**
 - `flush_revisions()` now batches seeds in groups of `MAX_WORK // 2` (250). Previously,
