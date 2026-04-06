@@ -328,7 +328,8 @@ class MatterModel:
         (r29 MEDIUM provenance fix). First-write wins: if the same assertion is already
         queued from an earlier correction, its original run_id is preserved.
         Persists each new entry to pending_propagation so queued work survives restarts
-        (adv#029 SO-1 HIGH fix).
+        (adv#029 SO-1 HIGH fix). DB write happens before in-memory update so a DB failure
+        propagates to the caller rather than leaving inconsistent best-effort state.
         """
         if not ids:
             return
@@ -337,25 +338,19 @@ class MatterModel:
             _new: list[str] = []
             for aid in ids:
                 if aid not in self._correction_pending:
-                    self._correction_pending[aid] = run_id
                     _new.append(aid)
             if _new:
-                try:
-                    with self.db.transaction():
-                        for aid in _new:
-                            self.db.execute(
-                                "INSERT OR REPLACE INTO pending_propagation"
-                                " (id, matter_id, assertion_id, cause, orig_run_id, queue, enqueued_at)"
-                                " VALUES (?,?,?,?,?,?,?)",
-                                (_id(), self.matter_id, aid, "USER_CORRECTION", run_id, "correction", now),
-                            )
-                except Exception as _dbe:
-                    # DB write failure is non-fatal: in-memory queue still works,
-                    # but these items will NOT survive a process restart.
-                    _log.warning(
-                        "pending_propagation batch write failed (%d correction ids): %s",
-                        len(_new), _dbe,
-                    )
+                with self.db.transaction():
+                    for aid in _new:
+                        self.db.execute(
+                            "INSERT OR REPLACE INTO pending_propagation"
+                            " (id, matter_id, assertion_id, cause, orig_run_id, queue, enqueued_at)"
+                            " VALUES (?,?,?,?,?,?,?)",
+                            (_id(), self.matter_id, aid, "USER_CORRECTION", run_id, "correction", now),
+                        )
+                # DB committed — now safe to update in-memory dict
+                for aid in _new:
+                    self._correction_pending[aid] = run_id
 
     def drain_correction_pending(self) -> "tuple[dict[str, str | None], list[str]]":
         """Return and clear the durable correction retry queue (thread-safe).
@@ -402,7 +397,8 @@ class MatterModel:
         run_id: originating run for audit attribution in the deferred replay batch event.
         Defaults to NEW_EVIDENCE/None. First-write wins on all fields per assertion_id.
         Persists each new entry to pending_propagation so queued work survives restarts
-        (adv#029 SO-1 HIGH fix).
+        (adv#029 SO-1 HIGH fix). DB write happens before in-memory update so a DB failure
+        propagates to the caller rather than leaving inconsistent best-effort state.
         """
         if not ids:
             return
@@ -412,25 +408,19 @@ class MatterModel:
             _new: list[str] = []
             for aid in ids:
                 if aid not in self._evidence_pending:
-                    self._evidence_pending[aid] = (_cause, run_id)
                     _new.append(aid)
             if _new:
-                try:
-                    with self.db.transaction():
-                        for aid in _new:
-                            self.db.execute(
-                                "INSERT OR REPLACE INTO pending_propagation"
-                                " (id, matter_id, assertion_id, cause, orig_run_id, queue, enqueued_at)"
-                                " VALUES (?,?,?,?,?,?,?)",
-                                (_id(), self.matter_id, aid, _cause.value, run_id, "evidence", now),
-                            )
-                except Exception as _dbe:
-                    # DB write failure is non-fatal: in-memory queue still works,
-                    # but these items will NOT survive a process restart.
-                    _log.warning(
-                        "pending_propagation batch write failed (%d evidence ids): %s",
-                        len(_new), _dbe,
-                    )
+                with self.db.transaction():
+                    for aid in _new:
+                        self.db.execute(
+                            "INSERT OR REPLACE INTO pending_propagation"
+                            " (id, matter_id, assertion_id, cause, orig_run_id, queue, enqueued_at)"
+                            " VALUES (?,?,?,?,?,?,?)",
+                            (_id(), self.matter_id, aid, _cause.value, run_id, "evidence", now),
+                        )
+                # DB committed — now safe to update in-memory dict
+                for aid in _new:
+                    self._evidence_pending[aid] = (_cause, run_id)
 
     def drain_evidence_pending(self) -> "tuple[dict[str, tuple[RevisionCause, str | None]], list[str]]":
         """Return and clear truncated evidence assertion IDs → (cause, run_id) (thread-safe).
