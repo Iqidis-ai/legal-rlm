@@ -134,7 +134,7 @@ class HttpBackend(UIBackend):
     ) -> dict:
         return await self._post(
             f"/matter/{matter_id}/assertions/{assertion_id}/correct",
-            {"new_belief_state": new_state, "reason": reason},
+            {"new_belief_state": new_state, "note": reason},
         )
 
     async def redirect_run(

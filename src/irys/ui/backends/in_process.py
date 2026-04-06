@@ -235,7 +235,7 @@ class InProcessBackend(UIBackend):
     ) -> dict:
         model = self._get_matter_model(matter_id)
         try:
-            model.correct_assertion(assertion_id, new_state, reason=reason)
+            model.correct_assertion(assertion_id, new_state, note=reason)
             return {"status": "corrected", "assertion_id": assertion_id}
         except Exception as exc:
             return {"status": "error", "detail": str(exc)}

@@ -278,17 +278,21 @@ class AppState:
 
         start_time = time.time()
 
+        # The streaming loop reads exclusively from per-call local variables
+        # (call_thinking, call_citations, call_queue) so that a second concurrent
+        # call cannot overwrite this generator's data sources.  self.* fields are
+        # written for the stop button (single-user dev tool, see class docstring).
         while self.is_running:
             try:
-                update_type, data = self.update_queue.get(timeout=0.5)
+                update_type, data = call_queue.get(timeout=0.5)
                 elapsed = time.time() - start_time
 
                 if update_type == "thinking":
-                    status = f"⏳  {elapsed:.0f}s | {len(self.thinking_log)} steps | {len(self.citations_log)} citations"
+                    status = f"⏳  {elapsed:.0f}s | {len(call_thinking)} steps | {len(call_citations)} citations"
                     yield (
                         "*Investigating...*",
-                        "\n".join(self.thinking_log[-80:]),
-                        "\n".join(self.citations_log) or "—",
+                        "\n".join(call_thinking[-80:]),
+                        "\n".join(call_citations) or "—",
                         status,
                         self.current_matter_id or "—",
                     )
@@ -309,8 +313,8 @@ class AppState:
                     )
                     yield (
                         self.final_output,
-                        "\n".join(self.thinking_log[-80:]),
-                        "\n".join(self.citations_log) or "—",
+                        "\n".join(call_thinking[-80:]),
+                        "\n".join(call_citations) or "—",
                         status,
                         self.current_matter_id or "—",
                     )
@@ -320,7 +324,7 @@ class AppState:
                     self.is_running = False
                     yield (
                         "",
-                        "\n".join(self.thinking_log[-80:]),
+                        "\n".join(call_thinking[-80:]),
                         "",
                         f"❌ {data}",
                         "—",
@@ -330,11 +334,11 @@ class AppState:
             except queue.Empty:
                 if self.is_running:
                     elapsed = time.time() - start_time
-                    status = f"⏳  {elapsed:.0f}s | {len(self.thinking_log)} steps"
+                    status = f"⏳  {elapsed:.0f}s | {len(call_thinking)} steps"
                     yield (
                         "*Investigating...*",
-                        "\n".join(self.thinking_log[-80:]),
-                        "\n".join(self.citations_log) or "—",
+                        "\n".join(call_thinking[-80:]),
+                        "\n".join(call_citations) or "—",
                         status,
                         self.current_matter_id or "—",
                     )
@@ -401,10 +405,14 @@ class AppState:
     ) -> str:
         if not matter_id or not assertion_id:
             return "Provide matter ID and assertion ID."
+        if not new_state:
+            return "Select a belief state."
         try:
             result = _run_async(
                 self.backend().correct_assertion(matter_id, assertion_id, new_state, reason)
             )
+            if isinstance(result, dict) and result.get("status") == "error":
+                return f"❌ {result.get('detail', result)}"
             return f"✅ Corrected: {result}"
         except Exception as exc:
             return f"❌ Error: {exc}"
@@ -564,7 +572,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     correction_assertion_id = gr.Textbox(label="Assertion ID", scale=2)
                     correction_new_state = gr.Dropdown(
                         label="New Belief State",
-                        choices=["accepted", "rejected", "disputed", "superseded", "withdrawn"],
+                        choices=[
+                            "alleged", "argued", "admitted", "operative", "performed",
+                            "disputed", "superseded", "withdrawn", "inferred", "resolved",
+                        ],
                         scale=1,
                     )
                 correction_reason = gr.Textbox(label="Reason", lines=2)
