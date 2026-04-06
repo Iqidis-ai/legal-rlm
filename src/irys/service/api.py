@@ -12,7 +12,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
-import aiofiles
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, File, UploadFile, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -584,30 +583,6 @@ async def quick_search(request: SearchRequest):
 # === FILE UPLOAD ENDPOINTS ===
 
 
-async def _save_uploaded_files(
-    files: list[UploadFile],
-    temp_dir: Path,
-    max_size_bytes: int = 0,
-) -> int:
-    """Save uploaded files to temp directory. Returns count saved."""
-    saved = 0
-    for file in files:
-        if not file.filename:
-            continue
-        # Sanitize filename
-        filename = Path(file.filename).name
-        dest_path = temp_dir / filename
-        async with aiofiles.open(dest_path, "wb") as f:
-            content = await file.read()
-            if max_size_bytes and len(content) > max_size_bytes:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"File {filename!r} exceeds maximum size",
-                )
-            await f.write(content)
-        saved += 1
-    return saved
-
 
 @app.post(
     "/upload/investigate",
@@ -1059,6 +1034,9 @@ async def upload_investigate_sync(
         _sync_open_gaps: list[dict] = []
         if sync_matter_id:
             try:
+                # Refresh last_used so a long sync run doesn't cause the model to be
+                # evicted between investigation end and this post-run lookup.
+                _matter_model_last_used[sync_matter_id] = datetime.now()
                 _sm = _active_matter_models.get(sync_matter_id)
                 if _sm is not None:
                     _sync_open_gaps = _sm.gaps.open_gaps(min_materiality=0.3)

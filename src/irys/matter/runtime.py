@@ -127,7 +127,6 @@ def infer_source_side(document_id: str) -> Optional[str]:
        correctly returns "defendant" from the basename in step 1).
     3. If both patterns match at any level, return None (ambiguous).
     """
-    import os as _os
     parts = document_id.replace("\\", "/").split("/")
     basename = parts[-1].lower()
     parent = parts[-2].lower() if len(parts) >= 2 else ""

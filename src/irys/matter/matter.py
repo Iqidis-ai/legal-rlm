@@ -668,7 +668,7 @@ class MatterModel:
                      AND ao.document_id IS NOT NULL
                      AND (ao.document_id = ?
                           OR ao.doc_basename = ?)""",
-                (self.matter_id, document_pattern, basename),
+                (self.matter_id, pat_norm, basename),
             ).fetchall()
             for row in occurrence_rows:
                 doc = (row["document_id"] or "").replace("\\\\", "/").replace("\\", "/")
@@ -755,7 +755,7 @@ class MatterModel:
                      AND ao.document_id IS NOT NULL
                      AND (ao.document_id = ?
                           OR ao.doc_basename = ?)""",
-                (self.matter_id, document_pattern, basename),
+                (self.matter_id, pat_norm, basename),
             ).fetchall()
             for row in occurrence_rows:
                 doc = (row["document_id"] or "").replace("\\\\", "/").replace("\\", "/")
