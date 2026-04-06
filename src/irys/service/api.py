@@ -1924,20 +1924,14 @@ def _do_one_background_flush(matter_id: str, model) -> None:
                     logger.warning("background_flush terminal close failed for %s run %s: %s", matter_id, flush_run_id, fe)
 
 
-def _background_flush(matter_id: str, model) -> None:
-    """Fire-and-forget flush of pending BFS propagation work.
+def _background_flush_loop(matter_id: str, model) -> None:
+    """Flush loop body — called with _bg_flush_running already held.
 
-    Called as a FastAPI BackgroundTask after a truncated correct_assertion() so
-    deferred propagation converges without waiting for the next investigation run
-    (adv#030 HIGH fix — SO-2 convergence guarantee).
-
-    Loop pattern: clears the event BEFORE each flush pass so corrections that arrive
-    during a flush set it again, triggering another pass. This prevents dropped
-    wakeups without spawning multiple flush threads (adv#030 perf fix r2).
+    Loops while _bg_flush_event is set, clearing it BEFORE each pass so
+    corrections enqueued during a pass are caught. On exit, releases
+    _bg_flush_running and spawns a new loop thread if work arrived in
+    the release window.
     """
-    model._bg_flush_event.set()
-    if not model._bg_flush_running.acquire(blocking=False):
-        return  # loop already active; it will see the event and run another pass
     try:
         while model._bg_flush_event.is_set():
             model._bg_flush_event.clear()
@@ -1945,7 +1939,7 @@ def _background_flush(matter_id: str, model) -> None:
                 _do_one_background_flush(matter_id, model)
             except Exception as exc:
                 logger.warning("background_flush failed for matter %s: %s", matter_id, exc)
-                break  # don't loop on persistent errors
+                break
     finally:
         model._bg_flush_running.release()
         # Final race: work enqueued between last event check and release
@@ -1953,8 +1947,26 @@ def _background_flush(matter_id: str, model) -> None:
             if model._bg_flush_running.acquire(blocking=False):
                 import threading as _threading
                 _threading.Thread(
-                    target=_background_flush, args=(matter_id, model), daemon=False
+                    target=_background_flush_loop, args=(matter_id, model), daemon=False
                 ).start()
+
+
+def _background_flush(matter_id: str, model) -> None:
+    """Fire-and-forget flush of pending BFS propagation work.
+
+    Called as a FastAPI BackgroundTask after a truncated correct_assertion() so
+    deferred propagation converges without waiting for the next investigation run
+    (adv#030 HIGH fix — SO-2 convergence guarantee).
+
+    Sets _bg_flush_event then, if no loop is running, runs _background_flush_loop
+    inline (already in a BackgroundTasks thread). Multiple concurrent BackgroundTasks
+    callers all set the event and return; only the first one that acquires
+    _bg_flush_running does actual work.
+    """
+    model._bg_flush_event.set()
+    if not model._bg_flush_running.acquire(blocking=False):
+        return  # loop already active; it will see the event and run another pass
+    _background_flush_loop(matter_id, model)
 
 
 # ---------------------------------------------------------------------------
