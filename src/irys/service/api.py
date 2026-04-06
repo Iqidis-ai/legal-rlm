@@ -1769,7 +1769,8 @@ async def get_matter_gaps(matter_id: str, min_materiality: float = 0.0, limit: O
     responses={404: {"model": ErrorResponse}, 400: {"model": ErrorResponse}},
 )
 async def correct_assertion(
-    matter_id: str, assertion_id: str, request: CorrectAssertionRequest
+    matter_id: str, assertion_id: str, request: CorrectAssertionRequest,
+    background_tasks: BackgroundTasks,
 ):
     """Apply a user correction to an assertion's belief state (SO-2).
 
@@ -1853,6 +1854,13 @@ async def correct_assertion(
     except Exception:
         pass  # steering injection is best-effort; never block the response
 
+    # SO-2 convergence: if BFS was truncated after 3 inline rounds, deferred work
+    # is in the durable pending queue but will only run on the next investigation flush.
+    # Trigger a background flush so convergence is not conditional on a later run
+    # (adv#030 HIGH fix).
+    if result.propagation_truncated:
+        background_tasks.add_task(_background_flush, matter_id, model)
+
     return {
         "assertion_id": assertion_id,
         "old_belief_state": result.old_belief_state.value,
@@ -1861,6 +1869,25 @@ async def correct_assertion(
         "cause": result.cause.value,
         "propagation_truncated": result.propagation_truncated,
     }
+
+
+def _background_flush(matter_id: str, model) -> None:
+    """Fire-and-forget flush of pending BFS propagation work.
+
+    Called as a FastAPI BackgroundTask after a truncated correct_assertion() so
+    deferred propagation converges without waiting for the next investigation run
+    (adv#030 HIGH fix — SO-2 convergence guarantee).
+    """
+    try:
+        from irys.matter.runtime import MatterRuntimeAdapter
+        flush_run_id = model.start_run("Background flush", objective="background_flush")
+        try:
+            adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
+            adapter.flush_revisions()
+        finally:
+            model.complete_run(flush_run_id)
+    except Exception as exc:
+        logger.warning("background_flush failed for matter %s: %s", matter_id, exc)
 
 
 # ---------------------------------------------------------------------------

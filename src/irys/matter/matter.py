@@ -1923,10 +1923,15 @@ class MatterModel:
         # Exclude runs where assertions_at_start=0 (first-ever ingestion run on an empty matter).
         # Those runs cannot reuse any prior state by definition — including them would
         # artificially depress the average and hide genuine reuse patterns on subsequent runs.
+        # Exclude utility runs (manual/background flush) that do not represent
+        # investigation reuse — they complete instantly with reuse_rate ≈ 1.0 since
+        # no new assertions are added, which would artificially inflate the average
+        # (adv#030 MEDIUM fix).
         _reuse_rows = self.db.execute(
             """SELECT reuse_rate FROM run_session
                WHERE matter_id=? AND status='completed' AND reuse_rate IS NOT NULL
                  AND assertions_at_start > 0
+                 AND (objective IS NULL OR (objective != 'manual_flush' AND objective != 'background_flush'))
                ORDER BY completed_at DESC LIMIT 5""",
             (self.matter_id,),
         ).fetchall()
