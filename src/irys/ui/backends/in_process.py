@@ -290,7 +290,7 @@ class InProcessBackend(UIBackend):
         set_current_run_id=None,
         set_current_matter_id=None,
         set_final_output=None,
-        stop_event: Optional["threading.Event"] = None,
+        stop_event: Optional[threading.Event] = None,
     ) -> None:
         """Run investigation in the calling thread (which must be a daemon Thread).
 
