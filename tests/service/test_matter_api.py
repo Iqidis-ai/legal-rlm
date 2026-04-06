@@ -524,3 +524,122 @@ def test_sync_investigate_response_open_gaps_roundtrips():
     )
     d = resp.model_dump()
     assert d["open_gaps"] == [gap]
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/assertions/{assertion_id}/history
+# ---------------------------------------------------------------------------
+
+def test_assertion_history_empty_when_no_revisions(client, register_model):
+    model = register_model
+    a_id = _add_assertion(model)
+
+    resp = client.get(f"/matter/{MATTER_ID}/assertions/{a_id}/history")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["assertion_id"] == a_id
+    assert data["count"] == 0
+    assert data["truncated"] is False
+    assert data["next_offset"] is None
+    assert data["history"] == []
+    assert "history_note" in data
+
+
+def test_assertion_history_returns_revision_after_correction(client, register_model):
+    model = register_model
+    a_id = _add_assertion(model, "Payment was late.")
+    model.assertions.set_belief_state(a_id, BeliefState.ALLEGED, 0.5)
+
+    # Perform a correction to generate revision rows
+    client.post(
+        f"/matter/{MATTER_ID}/assertions/{a_id}/correct",
+        json={"new_belief_state": "disputed", "confidence": 0.8, "note": "Corrected"},
+    )
+
+    resp = client.get(f"/matter/{MATTER_ID}/assertions/{a_id}/history")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] >= 1
+    row = data["history"][0]
+    assert row["changed_field"] in ("belief_state", "confidence")
+    assert row["actor_kind"] is not None
+    assert "created_at" in row
+    assert "batch_id" in row
+
+
+def test_assertion_history_404_unknown_assertion(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/assertions/nonexistent_assertion_id/history")
+    assert resp.status_code == 404
+
+
+def test_assertion_history_404_wrong_matter(client, register_model):
+    model = register_model
+    a_id = _add_assertion(model)
+
+    # Request under a nonexistent matter — should 404 at the matter level
+    resp = client.get(f"/matter/wrong_matter_id/assertions/{a_id}/history")
+    assert resp.status_code == 404
+
+
+def test_assertion_history_limit_and_offset(client, register_model):
+    model = register_model
+    a_id = _add_assertion(model, "Amount in dispute.")
+    model.assertions.set_belief_state(a_id, BeliefState.ALLEGED, 0.5)
+
+    # Generate multiple revisions via multiple corrections
+    for i in range(3):
+        client.post(
+            f"/matter/{MATTER_ID}/assertions/{a_id}/correct",
+            json={"new_belief_state": "disputed", "confidence": 0.6 + i * 0.1, "note": f"Correction {i}"},
+        )
+
+    # First page
+    resp = client.get(f"/matter/{MATTER_ID}/assertions/{a_id}/history?limit=2&offset=0")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 2
+    assert data["truncated"] is True
+    assert data["next_offset"] == 2
+
+    # Second page
+    resp2 = client.get(f"/matter/{MATTER_ID}/assertions/{a_id}/history?limit=2&offset=2")
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["count"] >= 1  # at least one more row
+
+
+# ---------------------------------------------------------------------------
+# Matter isolation: run-scoped endpoints must reject foreign matter's run_id
+# ---------------------------------------------------------------------------
+
+def test_get_run_events_404_cross_matter(client, register_model):
+    model = register_model
+    run_id = model.start_run("isolation test")
+    model.complete_run(run_id)
+
+    # Register a second matter but try to read run from the first matter via the second
+    model2 = MatterModel.open_in_memory()
+    _active_matter_models["other_matter"] = model2
+    try:
+        resp = client.get(f"/matter/other_matter/runs/{run_id}/events")
+        assert resp.status_code == 404
+    finally:
+        del _active_matter_models["other_matter"]
+
+
+def test_stop_run_404_cross_matter(client, register_model):
+    model = register_model
+    run_id = model.start_run("isolation stop test")
+
+    model2 = MatterModel.open_in_memory()
+    _active_matter_models["other_matter_stop"] = model2
+    try:
+        resp = client.post(f"/matter/other_matter_stop/runs/{run_id}/stop")
+        assert resp.status_code == 404
+    finally:
+        del _active_matter_models["other_matter_stop"]
+        # clean up the running run
+        try:
+            model.fail_run(run_id)
+        except Exception:
+            pass
