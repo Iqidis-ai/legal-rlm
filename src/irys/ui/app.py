@@ -449,11 +449,11 @@ class AppState:
         """
         self.is_running = False
         self._stop_event.set()   # signal early-stop before run_session exists
-        self.current_run_id = None  # no active run after stop
         if self._irys_ref is not None:
             try:
                 engine = self._irys_ref._engine
                 if engine and engine._matter_model:
+                    # Capture run_id BEFORE clearing current_run_id.
                     run_id = self.current_run_id
                     if run_id is None:
                         # Race: stop pressed before first step — find running run from DB
@@ -467,6 +467,7 @@ class AppState:
                         engine._matter_model.ledger.request_stop(run_id)
             except Exception:
                 pass
+        self.current_run_id = None  # no active run after stop (cleared after request_stop)
         return gr.update()
 
     def load_overview(self, matter_id: str) -> str:
