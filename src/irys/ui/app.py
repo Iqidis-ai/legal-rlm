@@ -162,6 +162,14 @@ def _fmt_gaps(gaps: list, clarifications: list) -> str:
 
 
 class AppState:
+    """Global app state — designed for single-user dev use.
+
+    NOTE: thinking_log, citations_log, update_queue, and is_running are
+    instance-level (not session-scoped). For a multi-user deployment,
+    these should be moved into gr.State session objects. For a local dev
+    tool with one user, this is acceptable.
+    """
+
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         self._backend: Optional[InProcessBackend] = None
@@ -172,23 +180,49 @@ class AppState:
         self.final_output = ""
         self.current_matter_id: Optional[str] = None
         self.current_run_id: Optional[str] = None
+        self._irys_ref = None  # weak ref to active Irys instance for stop
 
     def backend(self) -> InProcessBackend:
         if self._backend is None:
             self._backend = InProcessBackend(api_key=self.api_key)
         return self._backend
 
-    def _on_thinking_step(self, step):
-        icon = STEP_ICONS.get(step.step_type.name if hasattr(step.step_type, "name") else str(step.step_type), "•")
-        line = f"{icon} {step.display}"
-        self.thinking_log.append(line)
-        self.update_queue.put(("thinking", line))
+    def _make_on_step(self, update_q: queue.Queue, thinking: list):
+        """Return a thinking-step callback that also captures run_id early."""
+        def _callback(step):
+            icon = STEP_ICONS.get(
+                step.step_type.name if hasattr(step.step_type, "name") else str(step.step_type),
+                "•",
+            )
+            line = f"{icon} {step.display}"
+            thinking.append(line)
+            update_q.put(("thinking", line))
+            # Capture run_id + matter_id on the first step if not yet known
+            if self.current_run_id is None and self._irys_ref is not None:
+                try:
+                    engine = self._irys_ref._engine
+                    if engine and engine._matter_model:
+                        runs = engine._matter_model.ledger.recent_runs(1)
+                        if runs and runs[0].get("status") == "running":
+                            self.current_run_id = runs[0]["id"]
+                            self.current_matter_id = engine._matter_model.matter_id
+                except Exception:
+                    pass
+        return _callback
 
-    def _run_thread(self, query: str, repo_path: str):
+    def _run_thread(
+        self,
+        query: str,
+        repo_path: str,
+        update_q: queue.Queue,
+        thinking: list,
+        citations: list,
+    ):
         """Run investigation in a background thread."""
         async def _inner():
             irys = self.backend()._get_irys()
-            irys.on_step(self._on_thinking_step)
+            self._irys_ref = irys
+            irys.on_step(self._make_on_step(update_q, thinking))
             try:
                 result = await irys.investigate(query, repo_path)
                 state = result.state
@@ -196,14 +230,14 @@ class AppState:
                 mm = engine._matter_model if engine else None
                 self.current_matter_id = mm.matter_id if mm else None
                 self.current_run_id = getattr(state, "_run_id", None)
-                self.citations_log = [
+                citations.extend(
                     f"[{i+1}] {c.document}" + (f", p.{c.page}" if c.page else "")
                     for i, c in enumerate(state.citations)
-                ]
+                )
                 self.final_output = result.output
-                self.update_queue.put(("complete", state))
+                update_q.put(("complete", state))
             except Exception as exc:
-                self.update_queue.put(("error", str(exc)))
+                update_q.put(("error", str(exc)))
 
         asyncio.run(_inner())
 
@@ -211,10 +245,15 @@ class AppState:
         self, query: str, repo_path: str
     ) -> Generator[tuple, None, None]:
         """Generator yielding (output, trace, citations, status, matter_id) tuples."""
-        self.thinking_log = []
-        self.citations_log = []
+        # Per-call local state (mitigates global AppState race for concurrent calls)
+        call_thinking: list[str] = []
+        call_citations: list[str] = []
+        call_queue: queue.Queue = queue.Queue()
+        self.thinking_log = call_thinking
+        self.citations_log = call_citations
+        self.update_queue = call_queue
         self.final_output = ""
-        self.update_queue = queue.Queue()
+        self.current_run_id = None
 
         if not repo_path or not __import__("pathlib").Path(repo_path).exists():
             yield ("", "", "", "❌ Invalid repository path", "")
@@ -227,7 +266,11 @@ class AppState:
             return
 
         self.is_running = True
-        thread = threading.Thread(target=self._run_thread, args=(query, repo_path), daemon=True)
+        thread = threading.Thread(
+            target=self._run_thread,
+            args=(query, repo_path, call_queue, call_thinking, call_citations),
+            daemon=True,
+        )
         thread.start()
 
         start_time = time.time()
@@ -296,14 +339,19 @@ class AppState:
         thread.join(timeout=2)
 
     def stop_investigation(self):
-        """Stop the running investigation."""
+        """Stop the running investigation.
+
+        Sets is_running=False to break the UI generator, and calls
+        ledger.request_stop() on the run_id so the engine honors it on
+        the next iteration check.
+        """
         self.is_running = False
-        backend = self.backend()
-        irys = backend._get_irys()
-        engine = irys._engine if irys else None
-        if engine and engine._matter_model and self.current_run_id:
+        run_id = self.current_run_id
+        if run_id and self._irys_ref:
             try:
-                engine._matter_model.ledger.request_stop(self.current_run_id)
+                engine = self._irys_ref._engine
+                if engine and engine._matter_model:
+                    engine._matter_model.ledger.request_stop(run_id)
             except Exception:
                 pass
         return gr.update()

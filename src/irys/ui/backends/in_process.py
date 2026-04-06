@@ -137,6 +137,19 @@ class InProcessBackend(UIBackend):
         last_seq = after_seq
         terminal_statuses = {"completed", "failed", "interrupted"}
 
+        # Validate run_id exists before entering the poll loop to prevent
+        # infinite polling on bad/stale run IDs (MEDIUM 4 fix).
+        try:
+            run_check = model.db.execute(
+                "SELECT id FROM run_session WHERE id=?", (run_id,)
+            ).fetchone()
+        except Exception as exc:
+            yield {"error": str(exc)}
+            return
+        if run_check is None:
+            yield {"error": f"run_id {run_id!r} not found"}
+            return
+
         while True:
             try:
                 rows = model.db.execute(

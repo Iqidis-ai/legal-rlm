@@ -2202,6 +2202,19 @@ async def stream_run_events(matter_id: str, run_id: str, after_seq: int = -1, re
         poll_interval = 0.5  # seconds between DB polls
         terminal_statuses = {"completed", "failed", "interrupted"}
 
+        # Validate run_id exists before entering the poll loop to prevent
+        # infinite polling on bad/stale run IDs (MEDIUM 4 fix).
+        try:
+            run_check = model.db.execute(
+                "SELECT id FROM run_session WHERE id=?", (run_id,)
+            ).fetchone()
+        except Exception as exc:
+            yield f"data: {_json.dumps({'error': str(exc)})}\n\n"
+            return
+        if run_check is None:
+            yield f"data: {_json.dumps({'error': f'run_id {run_id!r} not found'})}\n\n"
+            return
+
         while True:
             # Check if client disconnected
             if request is not None and await request.is_disconnected():

@@ -1028,6 +1028,9 @@ class RLMEngine:
             run_id = None
             matter_adapter = NullMatterAdapter()
 
+        # Store run_id on state so callers (e.g. UI stop button) can access it
+        # during the investigation without waiting for it to complete.
+        state._run_id = run_id
         state._matter_adapter = matter_adapter
 
         # Classify the query
