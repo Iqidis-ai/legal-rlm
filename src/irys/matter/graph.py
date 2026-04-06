@@ -210,9 +210,12 @@ class AssertionStore:
                 "predicate_key", "subject_ref_type", "subject_ref_id",
                 "object_json", "temporal_scope_start", "temporal_scope_end",
             )
+            # Note: _occ_cur.rowcount check is intentionally omitted here.
+            # COALESCE in the UPDATE prevents overwriting existing values, so it is
+            # safe to attempt SPO backfill even on duplicate occurrences (rowcount=0)
+            # from a richer re-parse of the same document/span.
             if (
                 not is_new
-                and _occ_cur.rowcount > 0
                 and row is not None
                 and candidate.predicate_key is not None
                 and any(row[f] is None for f in _spo_field_names)
