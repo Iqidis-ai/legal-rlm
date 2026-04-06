@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (adversarial #024 product surface fixes + Tier 1 r6 all HIGH/MEDIUM fixed; schema v37; 725 tests pass)
+Last updated: 2026-04-06 (Tier 1 UI CLEAN declared r9; all r7/r8 HIGH/MEDIUM fixed; schema v37; 725 tests pass)
 Branch: SebihSpecial
 
 ---
@@ -98,7 +98,12 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | #023 | **SO-1/3/5/6/7 PASS; SO-2/4 PARTIAL** | 5 PASSes. 3 HIGHs fixed: OCC silent loss, flat fact ingress (SPO threshold >= 1), SO-4 attribution (biased pool). Post-audit Tier 1 r5/r6: schema v35 no-op, OCC retry-self (not dependents), pre-tx fast-path, bare-idx counter, seedness preserved across OCC retries |
 | #024 | **NEEDS MAJOR REWORK (backend ≠ UI)** | All 6 SOs FAIL/PARTIAL in UI: assertion IDs hidden (SO-2), steering not wired (SO-3), issue IDs hidden (SO-4), source role mis-rendered (SO-5), Quant panel missing (SO-6). **FIXED:** assertion IDs + issue IDs in tables; get_steering_surface() + get_quant_summary() wired to new Tab 6 Quant; BeliefState validation; redirect validation. Post-audit Tier 1 r6: redirect no-validation, backend type guard, answered_at index (v37), repo stats dedup |
 
-**Tier 1 reviews:** r7 running. Last fixes: redirect validation in InProcessBackend (mirrors service-side), type guard in _run_thread, ix_clarification_matter_answered (schema v37), engine._orient() reuses pre-computed stats.
+**Tier 1 UI reviews: CLEAN (r9 PASS, 2026-04-06).** All HIGH/MEDIUM fixed across r7/r8/r9:
+- r7: UIBackend abstract methods + panel exception propagation
+- r8: Full IDs in tables; HttpBackend correct routes; do_redirect() error check; run_investigation_thread() encapsulation; /steering-surface endpoint added to service
+- r9: All 6 fix points verified clean; no new HIGH/MEDIUM
+
+**Next:** Tier 2 Scaling + Architecture reviews; adversarial audit #025 (due — 8+ Tier 1 UI rounds since #024).
 
 **Tier 2 implementations (2026-04-06, from Tier 2 Scaling+Architecture review):**
 1. SO-4 semantic attribution gate: `_build_issue_profiles()` + `_best_semantic_issue()` Jaccard gate;

@@ -100,7 +100,6 @@ class InProcessBackend(UIBackend):
             so = model.get_so_metrics(_coverage_report=coverage_report)
         except Exception:
             pass
-        recent = model.ledger.recent_runs(limit=5)
         weakest: list = sorted(
             coverage_report, key=lambda r: float(r.get("coverage_fraction", 0.0))
         )[:5] if coverage_report else []
@@ -118,11 +117,9 @@ class InProcessBackend(UIBackend):
             "matter_id": matter_id,
             "stats": stats,
             "so_metrics": so,
-            "recent_runs": recent,
             "weakest_issues": weakest,
             "top_gaps": top_gaps,
             "pending_clarifications": clarifications,
-            "source_role_summary": {},
         }
 
     # ------------------------------------------------------------------ #

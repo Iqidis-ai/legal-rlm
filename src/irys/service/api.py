@@ -2151,12 +2151,6 @@ async def get_matter_overview(matter_id: str):
     except Exception:
         pass
 
-    recent = []
-    try:
-        recent = model.ledger.recent_runs(limit=5)
-    except Exception:
-        pass
-
     # Weakest issues — lowest coverage_fraction first, limit 5
     weakest_issues = []
     if coverage_report:
@@ -2178,28 +2172,13 @@ async def get_matter_overview(matter_id: str):
     except Exception:
         pass
 
-    # Source role distribution summary (SO-5)
-    source_summary: dict = {}
-    try:
-        rows = model.db.execute(
-            """SELECT source_role, COUNT(*) AS n FROM assertion_occurrence
-               WHERE assertion_id IN (SELECT id FROM assertion WHERE matter_id=?)
-               GROUP BY source_role ORDER BY n DESC""",
-            (model.matter_id,),
-        ).fetchall()
-        source_summary = {r["source_role"] or "unknown": int(r["n"]) for r in rows}
-    except Exception:
-        pass
-
     return {
         "matter_id": matter_id,
         "stats": stats,
         "so_metrics": so,
-        "recent_runs": recent,
         "weakest_issues": weakest_issues,
         "top_gaps": top_gaps,
         "pending_clarifications": clarifications,
-        "source_role_summary": source_summary,
     }
 
 
