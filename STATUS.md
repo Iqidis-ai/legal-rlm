@@ -123,7 +123,11 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 - MEDIUM #6 (errors surfaced): steering surface errors now shown as `⚠️` instead of silent empty string
 - Tier 1 r11 PASS (725 tests, no regressions)
 
-**Adversarial #026:** running now.
+**Adversarial #026 PASS (2026-04-06, commit 5d13c82):** All #025 fixes verified solid.
+- CONFIRMED: stop_event lifecycle clean; correction→refresh DB chain correct; load_gaps tuple safe; SO-3/SO-2 end-to-end
+- 2 pre-existing LOWs: _get_matter_model() linear scan; sorted() vs heapq.nsmallest in overview
+
+**Tier 1 r11 PASS (725 tests, 2026-04-06).**
 
 **Tier 2 r2 HIGH fix (2026-04-06, commit 64ef34f):**
 - `flush_revisions()` now batches seeds in groups of `MAX_WORK // 2` (250). Previously,

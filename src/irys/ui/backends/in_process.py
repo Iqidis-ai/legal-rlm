@@ -6,6 +6,7 @@ Not suitable for production — only one Gradio worker, no deployment isolation.
 """
 
 import asyncio
+import heapq
 import os
 import queue
 import threading
@@ -100,9 +101,10 @@ class InProcessBackend(UIBackend):
             so = model.get_so_metrics(_coverage_report=coverage_report)
         except Exception:
             pass
-        weakest: list = sorted(
-            coverage_report, key=lambda r: float(r.get("coverage_fraction", 0.0))
-        )[:5] if coverage_report else []
+        weakest: list = (
+            heapq.nsmallest(5, coverage_report, key=lambda r: float(r.get("coverage_fraction", 0.0)))
+            if coverage_report else []
+        )
         top_gaps: list = []
         try:
             top_gaps = model.gaps.open_gaps(limit=5)

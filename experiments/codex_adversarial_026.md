@@ -28,6 +28,14 @@
   cache in between. The refreshed `assertions_md` reflects the corrected state
   immediately. [in_process.py](src/irys/ui/backends/in_process.py#L216)
 
+- **LOW** `current_run_id` availability for redirect: the `_make_on_step` callback
+  captures run_id on the first thinking step (queries `ledger.recent_runs(1)` for a
+  running session). If the user clicks "← Use Active Run" before the first step fires
+  (< ~1 second after start), they get an empty run_id and the redirect form is blank.
+  The window is narrow and self-correcting (retry button click). Not HIGH since the
+  run_session row IS in the DB at that point — the DB fallback pattern from stop_event
+  could be applied here too, but the risk is acceptably low for a dev tool. [app.py](src/irys/ui/app.py#L729)
+
 - **LOW** `_get_matter_model()` does a linear scan of `irys._matter_models.values()`.
   Models accumulate once per unique matter (repo path). For InProcessBackend (dev tool,
   single user, few matters), this is acceptable. Becomes O(N) at N matters.
