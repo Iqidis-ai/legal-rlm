@@ -142,8 +142,11 @@ class HttpBackend(UIBackend):
     # SO-3 / SO-6 supplemental surfaces                                   #
     # ------------------------------------------------------------------ #
 
-    async def get_steering_surface(self, matter_id: str) -> list[dict]:
-        result = await self._get(f"/matter/{matter_id}/steering-surface")
+    async def get_steering_surface(
+        self, matter_id: str, run_id: Optional[str] = None
+    ) -> list[dict]:
+        params = {"run_id": run_id} if run_id else {}
+        result = await self._get(f"/matter/{matter_id}/steering-surface", params)
         return result if isinstance(result, list) else []
 
     async def get_quant_summary(self, matter_id: str) -> dict:

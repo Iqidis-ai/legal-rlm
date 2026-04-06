@@ -106,8 +106,14 @@ class UIBackend(ABC):
     # ------------------------------------------------------------------ #
 
     @abstractmethod
-    async def get_steering_surface(self, matter_id: str) -> list[dict]:
-        """Return structured steering actions from get_ledger_steering_surface()."""
+    async def get_steering_surface(
+        self, matter_id: str, run_id: Optional[str] = None
+    ) -> list[dict]:
+        """Return structured steering actions from get_ledger_steering_surface().
+
+        run_id is embedded in redirect_focus action params so callers can invoke
+        the redirect directly without a separate lookup.
+        """
         ...
 
     @abstractmethod

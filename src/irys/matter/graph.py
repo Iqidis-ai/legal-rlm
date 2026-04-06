@@ -539,8 +539,19 @@ class AssertionStore:
         """
         # primary_* fields come from the earliest occurrence (chronological, not lexicographic).
         # We use a correlated subquery per field to avoid MIN() on non-sortable text columns.
+        # Use a CTE to select the bounded ID set first, then aggregate occurrences
+        # only for those rows.  Without the CTE, GROUP BY would aggregate ALL
+        # assertion+occurrence rows for this matter before the LIMIT is applied.
         rows = self.db.execute(
-            """SELECT a.id, a.proposition_text, a.model_layer, a.assertion_kind,
+            """WITH recent_ids AS (
+                   SELECT id, proposition_text, model_layer, assertion_kind,
+                          belief_state, confidence, created_at
+                   FROM assertion
+                   WHERE matter_id=?
+                   ORDER BY created_at DESC
+                   LIMIT ? OFFSET ?
+               )
+               SELECT a.id, a.proposition_text, a.model_layer, a.assertion_kind,
                       a.belief_state, a.confidence, a.created_at,
                       COUNT(ao.id) AS occurrence_count,
                       GROUP_CONCAT(DISTINCT ao.source_role) AS source_roles_csv,
@@ -555,12 +566,10 @@ class AssertionStore:
                       (SELECT ao2.speech_act FROM assertion_occurrence ao2
                        WHERE ao2.assertion_id = a.id
                        ORDER BY ao2.created_at ASC, ao2.id ASC LIMIT 1) AS primary_speech_act
-               FROM assertion a
+               FROM recent_ids a
                LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
-               WHERE a.matter_id=?
                GROUP BY a.id
-               ORDER BY a.created_at DESC
-               LIMIT ? OFFSET ?""",
+               ORDER BY a.created_at DESC""",
             (self.matter_id, limit, offset),
         ).fetchall()
         result = []
@@ -682,9 +691,9 @@ class AssertionStore:
     _ACTIVE_STATES = ("alleged", "argued", "admitted", "operative", "inferred", "partial")
     _INACTIVE_STATES = ("superseded", "withdrawn", "resolved")
 
-    def find_contradictions(self) -> list[dict]:
+    def find_contradictions(self, limit: Optional[int] = None) -> list[dict]:
         """
-        Return all pairs of assertions in this matter that are in active conflict.
+        Return pairs of assertions in this matter that are in active conflict.
 
         Detection strategy: explicit assertion_link rows where link_type IN
         ('attacks', 'contradicts') and BOTH the src and dst assertions have
@@ -693,6 +702,11 @@ class AssertionStore:
         Link direction convention:
           src_assertion_id --ATTACKS/CONTRADICTS--> dst_assertion_id
           src is the attacker; dst is the assertion being challenged.
+
+        Args:
+            limit: Optional DB-side limit.  Callers that only need the top N
+                   (e.g. steering surface) should pass limit to avoid loading
+                   the full conflict set on large matters.
 
         Returns list of dicts:
           {
@@ -705,8 +719,9 @@ class AssertionStore:
             'attacked_prop':   str,
           }
         """
+        limit_clause = f" LIMIT {int(limit)}" if limit is not None else ""
         rows = self.db.execute(
-            """SELECT al.src_assertion_id AS attacker_id,
+            f"""SELECT al.src_assertion_id AS attacker_id,
                       al.dst_assertion_id AS attacked_id,
                       al.link_type,
                       a_src.belief_state AS attacker_belief,
@@ -720,7 +735,8 @@ class AssertionStore:
                  AND a_src.matter_id = ?
                  AND a_dst.matter_id = ?
                  AND a_src.belief_state NOT IN ('superseded','withdrawn','resolved')
-                 AND a_dst.belief_state NOT IN ('superseded','withdrawn','resolved')""",
+                 AND a_dst.belief_state NOT IN ('superseded','withdrawn','resolved')
+               {limit_clause}""",
             (self.matter_id, self.matter_id),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -1312,13 +1328,18 @@ class ActorStore:
         return None
 
     def find_possible_duplicates(
-        self, min_prefix_len: int = 6
+        self, min_prefix_len: int = 6, limit: int = 100
     ) -> list[dict]:
         """Return pairs of actors whose normalized names share a common prefix.
 
         Each entry: {actor_a: {...}, actor_b: {...}, shared_prefix: str}
         Only pairs where both actors have different ids are returned.
         Ordered by shared_prefix length descending (most similar first).
+
+        Complexity: O(N log N) for the sort (done by SQLite) plus O(N + P·k)
+        for the scan, where P is the number of matching pairs and k is the
+        average cluster size.  Exploits the sorted order so pairs with matching
+        min_prefix are always adjacent — no full cross-product needed.
         """
         rows = self.db.execute(
             "SELECT id, canonical_name, normalized_name, actor_type FROM actor WHERE matter_id=? ORDER BY normalized_name",
@@ -1326,14 +1347,22 @@ class ActorStore:
         ).fetchall()
 
         actors = [dict(r) for r in rows]
-        pairs = []
+        pairs: list[dict] = []
         seen_pairs: set = set()
 
         for i, a in enumerate(actors):
+            n_a = a.get("normalized_name") or ""
+            if len(n_a) < min_prefix_len:
+                continue
+            a_prefix = n_a[:min_prefix_len]
+            # Actors are sorted by normalized_name so all potential matches are
+            # adjacent.  Stop scanning forward as soon as the shared min-prefix
+            # is no longer satisfied.
             for b in actors[i + 1:]:
-                n_a = a.get("normalized_name") or ""
                 n_b = b.get("normalized_name") or ""
-                # Find common prefix length.
+                if len(n_b) < min_prefix_len or n_b[:min_prefix_len] != a_prefix:
+                    break  # sorted order guarantees no further matches
+                # Compute full common prefix length.
                 prefix_len = 0
                 for ca, cb in zip(n_a, n_b):
                     if ca == cb:
@@ -1351,7 +1380,7 @@ class ActorStore:
                         })
 
         pairs.sort(key=lambda x: len(x["shared_prefix"]), reverse=True)
-        return pairs
+        return pairs[:limit]
 
     def merge_actors(self, keep_id: str, merge_id: str) -> None:
         """Merge merge_id into keep_id, then delete merge_id.

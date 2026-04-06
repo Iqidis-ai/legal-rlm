@@ -488,7 +488,8 @@ class AppState:
         except Exception as exc:
             gap_section = f"⚠️ Error loading gaps: {exc}"
         try:
-            actions = _run_async(self.backend().get_steering_surface(matter_id))
+            run_id = getattr(self, "current_run_id", None)
+            actions = _run_async(self.backend().get_steering_surface(matter_id, run_id=run_id))
             steering_section = _fmt_steering(actions)
         except Exception:
             steering_section = ""

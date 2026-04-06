@@ -2049,14 +2049,18 @@ async def get_damages_waterfall(matter_id: str, currency: str = "USD"):
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
 )
-async def get_steering_surface(matter_id: str):
+async def get_steering_surface(matter_id: str, run_id: Optional[str] = None):
     """Return structured steering actions from the reasoning ledger (SO-3).
 
     Surfaces actionable recommendations: gaps to clarify, issues to redirect to,
     assertions to review.  Used by the UI Gaps & Steering panel.
+
+    Args:
+        run_id: When provided, redirect_focus action params will include this run_id
+                so callers can invoke the redirect directly.
     """
     model = _get_matter_model_or_404(matter_id)
-    return model.get_ledger_steering_surface()
+    return model.get_ledger_steering_surface(run_id=run_id)
 
 
 # ---------------------------------------------------------------------------

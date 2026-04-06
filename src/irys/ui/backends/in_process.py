@@ -261,9 +261,11 @@ class InProcessBackend(UIBackend):
     # SO-3 / SO-6 supplemental surfaces                                   #
     # ------------------------------------------------------------------ #
 
-    async def get_steering_surface(self, matter_id: str) -> list[dict]:
+    async def get_steering_surface(
+        self, matter_id: str, run_id: Optional[str] = None
+    ) -> list[dict]:
         model = self._get_matter_model(matter_id)
-        return model.get_ledger_steering_surface()
+        return model.get_ledger_steering_surface(run_id=run_id)
 
     async def get_quant_summary(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)

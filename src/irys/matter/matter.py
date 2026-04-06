@@ -1302,8 +1302,8 @@ class MatterModel:
 
         # --- 1. Active conflicts → force_belief_state ---
         try:
-            conflicts = self.assertions.find_contradictions()
-            for c in conflicts[:5]:
+            conflicts = self.assertions.find_contradictions(limit=5)
+            for c in conflicts:
                 attacker_id = c.get("attacker_id") or ""
                 attacked_id = c.get("attacked_id") or ""
                 if not attacker_id or not attacked_id:
@@ -1357,6 +1357,8 @@ class MatterModel:
                         f" ({round(frac * 100)}% covered)"
                     ),
                     "params": {
+                        "matter_id": self.matter_id,
+                        "run_id": run_id,
                         "issue_id": issue_id,
                     },
                     "rationale": (
