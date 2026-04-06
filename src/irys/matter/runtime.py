@@ -451,15 +451,31 @@ class MatterRuntimeAdapter:
         # Processed separately from new-evidence pending so USER_CORRECTION provenance is
         # preserved in revision rows — mixing them would replay corrections as NEW_EVIDENCE
         # and corrupt the audit trail (r25 MEDIUM fix).
-        # ASSERTION_REVISED ledger events use the originating correction run_id rather than
-        # this adapter's run_id, preserving audit attribution across deferred retries
-        # (r29 MEDIUM provenance fix). Second-level truncation re-enqueues for the next
-        # flush_revisions() call (r28 MEDIUM fix). Count tracks unique assertion IDs to
-        # handle fixpoint re-visits (r28 MEDIUM fix).
+        # Audit attribution: assertion_revision rows (written by BFS) always use self.run_id.
+        # Rather than remapping per-assertion in ASSERTION_REVISED events (which creates a
+        # DB/ledger inconsistency), we emit one USER_CORRECTION ledger event naming the
+        # originating runs before processing, so the full deferred correction batch is
+        # traceable (r30 MEDIUM provenance fix). Second-level truncation re-enqueues for
+        # the next flush_revisions() call (r28 MEDIUM fix). Count tracks unique assertion
+        # IDs to handle fixpoint re-visits (r28 MEDIUM fix).
         _seed_batch = max(1, self.model.belief.MAX_WORK // 2)
         _revised_ids: set[str] = set()
         _correction_map = self.model.drain_correction_pending()  # dict[assertion_id, orig_run_id]
         _correction_ids = list(_correction_map)
+        if _correction_ids:
+            # Emit one attribution event so auditors can trace this flush back to the
+            # corrections that produced the deferred seeds, without fragmenting run_id
+            # across individual ASSERTION_REVISED rows.
+            _orig_runs = sorted({r for r in _correction_map.values() if r})
+            self.model.ledger.append_event(
+                run_id=self.run_id,
+                event_type=LedgerEventType.USER_CORRECTION,
+                summary=(
+                    f"Deferred correction replay: {len(_correction_ids)} assertion(s) "
+                    f"from {len(_orig_runs)} originating run(s)"
+                    + (f": {', '.join(_orig_runs[:5])}" if _orig_runs else "")
+                ),
+            )
         for i in range(0, len(_correction_ids), _seed_batch):
             _batch = _correction_ids[i : i + _seed_batch]
             _unvisited: list[str] = []
@@ -473,15 +489,12 @@ class MatterRuntimeAdapter:
             if _unvisited:
                 # Re-enqueue work dropped by a second truncation so the next
                 # flush_revisions() call can continue where this one left off.
-                # No originating run_id for second-level truncation — use None.
                 self.model.enqueue_correction_pending(_unvisited, run_id=None)
             for result in _cr_results:
                 if result.old_belief_state != result.new_belief_state:
                     _revised_ids.add(result.assertion_id)
-                    # Use originating run_id for audit attribution (r29 MEDIUM fix).
-                    _orig_run_id = _correction_map.get(result.assertion_id) or self.run_id
                     self.model.ledger.append_event(
-                        run_id=_orig_run_id,
+                        run_id=self.run_id,
                         event_type=LedgerEventType.ASSERTION_REVISED,
                         summary=(
                             f"Belief revised: {result.old_belief_state.value} → "

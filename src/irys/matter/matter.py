@@ -458,11 +458,14 @@ class MatterModel:
                 if pat_norm == doc or pat_norm == doc_basename:
                     affected_ids.append(row["assertion_id"])
             if affected_ids:
-                self.belief.apply(
+                _trust_unvisited: list[str] = []
+                self.apply_revision(
                     affected_ids,
                     cause=RevisionCause.TRUST_OVERRIDE,
                     note=f"Document trust override set to '{trust_level}' for {document_pattern!r}",
+                    _collect_unvisited=_trust_unvisited,
                 )
+                self.enqueue_evidence_pending(_trust_unvisited)
         except (sqlite3.Error, ValueError, RuntimeError) as exc:
             _log.warning("Trust override belief revision failed for %r: %s", document_pattern, exc)
 
@@ -997,11 +1000,14 @@ class MatterModel:
 
         # Run belief revision on all conflicting assertions so they become DISPUTED
         if all_conflict_assertion_ids:
-            self.belief.apply(
+            _conflict_unvisited: list[str] = []
+            self.apply_revision(
                 seed_assertion_ids=list(dict.fromkeys(all_conflict_assertion_ids)),
                 cause=RevisionCause.CONFLICT_DETECTION,
                 note="Automatic: conflicting amount values detected for same subject",
+                _collect_unvisited=_conflict_unvisited,
             )
+            self.enqueue_evidence_pending(_conflict_unvisited)
 
         return gap_ids
 
