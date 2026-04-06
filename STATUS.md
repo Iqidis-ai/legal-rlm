@@ -95,27 +95,42 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | #020 | SO-3/7 PASS; SO-1/2/5/6 PARTIAL; SO-4 FAIL → FIXED | coverage_fraction was count heuristic; fixed to belief-state-weighted |
 | #021 | SO-3/7 PASS; SO-1/2/4/5/6 PARTIAL | proof_state override removed; correct_assertion now refreshes proof_state; bare-string inflation fixed |
 | #022 | **SO-1/3/5/6/7 PASS; SO-2/4 PARTIAL** | 5 PASSes. Predicate resolution wired in production. SO-4 remaining: _focus_issue_id attribution heuristic |
+| #023 | **SO-1/3/5/6/7 PASS; SO-2/4 PARTIAL** | 5 PASSes. 3 HIGHs fixed: OCC silent loss, flat fact ingress (SPO threshold >= 1), SO-4 attribution (biased pool). Post-audit Tier 1 r5/r6: schema v35 no-op, OCC retry-self (not dependents), pre-tx fast-path, bare-idx counter, seedness preserved across OCC retries |
 
-**Tier 1 reviews:** CLEAN — predicate resolver matter-scoped + atomic, correct_assertion batched, SO-4 predicate production wiring with allowlist + gating, _orient() field normalization + _parse_json_safe non-dict guard, Q4/SO-2 stale pre-state (4 rounds: write_transaction()/BEGIN IMMEDIATE, in-tx diff checks, pre-tx early-exit removed, OCC conflict abort), all Tier 1 HIGH/MEDIUM resolved.
+**Tier 1 reviews:** CLEAN (r6) — all HIGH/MEDIUM issues resolved. See commit history for full fix trail.
 
 ---
 
 ## Active Work
 
-### JUST COMPLETED — Adversarial Audit #023 HIGH fixes (2026-04-05)
+### JUST COMPLETED — Tier 1 CLEAN r6: post-audit #023 Tier 1 MEDIUM/LOW (2026-04-06)
+
+**r5 fixes (commit f2dfaea):**
+1. **schema.py**: SCHEMA_VERSION restored to 35 with no-op _migration_v35 — monotonic lineage preserved; any DB at v35 stays valid.
+2. **belief_revision.py**: pre-tx fast-path added — skips BEGIN IMMEDIATE when pre-tx snapshot shows no state change needed (safe: no-op has no side effects to OCC-protect).
+3. **belief_revision.py**: OCC abort now re-enqueues X itself (not dependents), with _OCC_MAX_RETRIES=3 cap — prevents BFS fan-out explosion under concurrent contention. occ_exhausted_count tracked.
+4. **belief_revision.py**: seed deduplication before building pending deque.
+5. **engine.py**: _bare_idx counter (not _idx) for unannotated initial_searches — annotated entries no longer shift round-robin rotation. weakest_id always included in _biased_pool even when not in _orient_issue_ids.
+
+**r6 fix (commit 5517351):**
+6. **belief_revision.py**: seeds_remaining.discard() moved after non-aborted pass — seedness preserved across OCC retries so seed fan-out still fires on successful retry. occ_exhausted_count contributes to truncated=True with specific warning.
+
+**r6 LOW fix (commit 856e2f7):**
+7. **belief_revision.py**: truncation warning message enumerates specific causes (MAX_WORK and/or OCC exhaustion).
+
+HEAD: 856e2f7 — Tests: 725/725
+
+### PREVIOUSLY COMPLETED — Adversarial Audit #023 HIGH fixes (2026-04-05)
 
 **Audit #023 results:** SO-1/3/5/6/7 PASS; SO-2/4 PARTIAL. THREE HIGH findings, all fixed:
 
-1. **SO-2 HIGH: OCC silent propagation loss** — `_revise_one()` returned `None` on OCC conflict; BFS pruned downstream subtree silently. Service allows 3 concurrent jobs — not actually rare. Fix: change signature to `(result, occ_aborted: bool)`; BFS re-enqueues dependents when `occ_aborted=True`; adds WARNING log + SYSTEM_WARNING ledger event on any OCC conflict. (commit 6586399)
+1. **SO-2 HIGH: OCC silent propagation loss** — `_revise_one()` returned `None` on OCC conflict; BFS pruned downstream subtree silently. Fix: signature → `(result, occ_aborted: bool)`; BFS re-enqueues dependents when `occ_aborted=True`. (commit 6586399)
 
-2. **SO-2 HIGH: Flat fact ingress** — SPO retry threshold `>= 3` left single/two-fact batches stored as null-SPO tuples. Fix: lower threshold to `>= 1` in both search and deep-read paths. (commit 26125f9)
+2. **SO-2 HIGH: Flat fact ingress** — SPO retry threshold `>= 3` left single/two-fact batches without SPO. Fix: lower to `>= 1` in both search and deep-read paths. (commit 26125f9)
 
-3. **SO-4 HIGH: Attribution contamination** (partial fix via cb26e78) — wrong `_focus_issue_id` distorts issue links, retrieval bias, and gap recording. Partial fix: coverage-biased round-robin (weakest first) replaces all-to-weakest_id. Full fix requires attribution accuracy improvement (remaining backlog).
+3. **SO-4 HIGH: Attribution contamination** — partial fix: coverage-biased round-robin replaces all-to-weakest_id. Full fix: bare_idx counter (r5) + weakest_id always in pool. (commit cb26e78, then f2dfaea)
 
-**Also completed:**
-- SO-4: coverage-biased round-robin for unannotated initial_searches (commit cb26e78)
-
-HEAD: 26125f9 — Tests: 725/725
+HEAD (before r5): 26125f9 — Tests: 725/725
 
 ### PREVIOUSLY COMPLETED — Tier 1 CLEAN r4: Q4/SO-2 stale pre-state (2026-04-05)
 
