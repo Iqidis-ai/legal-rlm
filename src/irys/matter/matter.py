@@ -232,9 +232,17 @@ class MatterModel:
         cause: RevisionCause,
         run_id: Optional[str] = None,
         note: Optional[str] = None,
+        _collect_unvisited: "list[str] | None" = None,
     ) -> list[RevisionResult]:
         """Trigger belief revision from seed assertions."""
-        return self.belief.apply(seed_assertion_ids, cause, run_id, note)
+        return self.belief.apply(seed_assertion_ids, cause, run_id, note, _collect_unvisited)
+
+    def enqueue_correction_pending(self, ids: list[str]) -> None:
+        """Add assertion IDs to the durable correction retry queue (thread-safe)."""
+        if not ids:
+            return
+        with self._correction_pending_lock:
+            self._correction_pending_ids.update(ids)
 
     def drain_correction_pending(self) -> list[str]:
         """Return and clear assertion IDs that need retry after a truncated correction.

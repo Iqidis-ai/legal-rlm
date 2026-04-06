@@ -452,19 +452,29 @@ class MatterRuntimeAdapter:
         # preserved in revision rows — mixing them would replay corrections as NEW_EVIDENCE
         # and corrupt the audit trail (r25 MEDIUM fix).
         # Results counted and ledger-logged alongside new-evidence revisions (r26 MEDIUM fix).
+        # Unvisited nodes from a second truncation are re-enqueued so they aren't silently
+        # dropped — flush_revisions() may itself be budget-constrained (r28 MEDIUM fix).
+        # Count tracks unique assertion IDs (not events) to handle fixpoint re-visits (r28 MEDIUM fix).
         _seed_batch = max(1, self.model.belief.MAX_WORK // 2)
-        total_revised = 0
+        _revised_ids: set[str] = set()
         _correction_pending = self.model.drain_correction_pending()
         for i in range(0, len(_correction_pending), _seed_batch):
             _batch = _correction_pending[i : i + _seed_batch]
+            _unvisited: list[str] = []
             _cr_results = self.model.apply_revision(
                 seed_assertion_ids=_batch,
                 cause=RevisionCause.USER_CORRECTION,
                 run_id=self.run_id,
                 note="deferred correction retry",
+                _collect_unvisited=_unvisited,
             )
+            if _unvisited:
+                # Re-enqueue work dropped by a second truncation so the next
+                # flush_revisions() call can continue where this one left off.
+                self.model.enqueue_correction_pending(_unvisited)
             for result in _cr_results:
                 if result.old_belief_state != result.new_belief_state:
+                    _revised_ids.add(result.assertion_id)
                     self.model.ledger.append_event(
                         run_id=self.run_id,
                         event_type=LedgerEventType.ASSERTION_REVISED,
@@ -475,12 +485,9 @@ class MatterRuntimeAdapter:
                         changed_object_type="assertion",
                         changed_object_id=result.assertion_id,
                     )
-            total_revised += sum(
-                1 for r in _cr_results if r.old_belief_state != r.new_belief_state
-            )
 
         if not self._pending_assertion_ids:
-            return total_revised
+            return len(_revised_ids)
         # Batch size = MAX_WORK // 2 so each call has room for both seeds and
         # fan-out propagation within the effective work budget.
         pending_list = list(self._pending_assertion_ids)
@@ -494,6 +501,7 @@ class MatterRuntimeAdapter:
             )
             for result in results:
                 if result.old_belief_state != result.new_belief_state:
+                    _revised_ids.add(result.assertion_id)
                     self.model.ledger.append_event(
                         run_id=self.run_id,
                         event_type=LedgerEventType.ASSERTION_REVISED,
@@ -504,10 +512,7 @@ class MatterRuntimeAdapter:
                         changed_object_type="assertion",
                         changed_object_id=result.assertion_id,
                     )
-            total_revised += sum(
-                1 for r in results if r.old_belief_state != r.new_belief_state
-            )
-        return total_revised
+        return len(_revised_ids)
 
     # ------------------------------------------------------------------
     # Called from engine._emit_step() / general progress
