@@ -1406,8 +1406,10 @@ class RLMEngine:
                 _pred_phrase = _pred_key.replace("_", " ").strip()
                 if not _pred_phrase or len(_pred_phrase) < 3:
                     continue
-                # Avoid duplicating issue-predicate leads that already have this phrase
-                _spo_focus = weakest_id or (_orient_issue_ids[0] if _orient_issue_ids else None)
+                # Use the same biased pool as initial_searches so SPO leads rotate across
+                # issues rather than all pinning to weakest_id (SO-4 attribution fix).
+                _spo_focus = (_biased_pool[_spo_leads_added % len(_biased_pool)]
+                              if _biased_pool else None)
                 state.add_lead(
                     description=f"SPO graph expansion: search for '{_pred_phrase}' relationships",
                     source="spo_graph",
