@@ -77,10 +77,10 @@ def _fmt_overview(data: dict) -> str:
     struct = so.get("assertion_structure_rate")
     src = so.get("source_role_known_rate")
     lines.append(
-        f"\n**SO-1 reuse:** {f'{reuse:.1%}' if reuse else '—'}  |  "
-        f"**SO-2 structure:** {f'{struct:.1%}' if struct else '—'}  |  "
-        f"**SO-4 coverage:** {f'{cov:.1%}' if cov else '—'}  |  "
-        f"**SO-5 source calibration:** {f'{src:.1%}' if src else '—'}"
+        f"\n**SO-1 reuse:** {f'{reuse:.1%}' if reuse is not None else '—'}  |  "
+        f"**SO-2 structure:** {f'{struct:.1%}' if struct is not None else '—'}  |  "
+        f"**SO-4 coverage:** {f'{cov:.1%}' if cov is not None else '—'}  |  "
+        f"**SO-5 source calibration:** {f'{src:.1%}' if src is not None else '—'}"
     )
 
     # Weakest issues
@@ -136,8 +136,10 @@ def _fmt_assertions(assertions: list) -> str:
         prop = (a.get("proposition_text") or "")[:60]
         state = a.get("belief_state") or "—"
         conf = f"{float(a.get('confidence', 0)):.2f}" if a.get("confidence") is not None else "—"
-        src = a.get("source_role") or "—"
-        speech = a.get("speech_act") or "—"
+        # list_recent() returns primary_source_role / primary_speech_act; fall
+        # back to the bare field names for older callers or alternate backends.
+        src = a.get("source_role") or a.get("primary_source_role") or "—"
+        speech = a.get("speech_act") or a.get("primary_speech_act") or "—"
         lines.append(f"| {prop} | {state} | {conf} | {src} | {speech} |")
     return "\n".join(lines)
 
@@ -303,9 +305,10 @@ class AppState:
                     state = data
                     elapsed = time.time() - start_time
                     summary = state.get_summary()
-                    avoided = summary.get("llm_calls_avoided", 0)
-                    required = summary.get("llm_calls_required", 0)
-                    true_rate = summary.get("true_reuse_rate")
+                    metrics = summary.get("metrics", {})
+                    avoided = metrics.get("llm_calls_avoided", 0)
+                    required = metrics.get("llm_calls_required", 0)
+                    true_rate = metrics.get("true_reuse_rate")
                     rate_str = f"{true_rate:.1%}" if true_rate is not None else "—"
                     status = (
                         f"✅  {elapsed:.0f}s | "
@@ -367,7 +370,7 @@ class AppState:
                         # Race: stop pressed before first step — find running run from DB
                         row = engine._matter_model.db.execute(
                             "SELECT id FROM run_session WHERE matter_id=?"
-                            " AND status='running' ORDER BY created_at DESC LIMIT 1",
+                            " AND status='running' ORDER BY started_at DESC LIMIT 1",
                             (engine._matter_model.matter_id,),
                         ).fetchone()
                         run_id = row["id"] if row else None
@@ -620,11 +623,18 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 gr.Markdown("### Redirect Investigation")
                 gr.Markdown("Redirect the current run to focus on a specific issue.")
                 with gr.Row():
-                    redirect_run_id = gr.Textbox(label="Run ID (from Active Matter)", scale=2)
+                    redirect_run_id = gr.Textbox(label="Run ID", scale=2)
+                    fill_run_id_btn = gr.Button("← Use Active Run", scale=1)
                     redirect_issue_id = gr.Textbox(label="Issue ID to redirect toward", scale=2)
                 redirect_btn = gr.Button("Redirect", variant="primary")
                 redirect_result = gr.Textbox(label="Result", interactive=False)
 
+                # Populate run_id from the active investigation (SO-3 steerability).
+                fill_run_id_btn.click(
+                    fn=lambda: state.current_run_id or "",
+                    inputs=[],
+                    outputs=[redirect_run_id],
+                )
                 redirect_btn.click(
                     fn=state.do_redirect,
                     inputs=[matter_id_box, redirect_run_id, redirect_issue_id],

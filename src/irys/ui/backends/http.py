@@ -44,23 +44,19 @@ class HttpBackend(UIBackend):
         query: str,
         matter_id: Optional[str] = None,
     ) -> dict:
-        """Start a local-path investigation via the sync upload endpoint."""
-        # For local dev: use sync investigate with repo_path.
-        # The service needs a local-path endpoint; we call the upload-based
-        # sync endpoint if the service supports it, otherwise fall back.
-        payload = {
-            "query": query,
-            "repo_path": repo_path,
-        }
-        if matter_id:
-            payload["matter_id"] = matter_id
-        r = await self._client.post(
-            "/investigate",
-            json=payload,
-            timeout=600.0,  # investigations can take minutes
+        """Start an investigation via the service.
+
+        NOTE: The HTTP backend only supports S3-backed investigations — the service
+        /investigate endpoint requires an s3_prefix, not a local repo_path.  For
+        local-path investigations (dev/testing), use InProcessBackend instead.
+        This raises RuntimeError so the UI surfaces a clear message rather than
+        sending a malformed request that fails silently.
+        """
+        raise RuntimeError(
+            "HttpBackend does not support local-path investigations. "
+            "The service /investigate endpoint requires an S3 prefix. "
+            "Use InProcessBackend (default dev mode) for local repositories."
         )
-        r.raise_for_status()
-        return r.json()
 
     async def stop_run(self, matter_id: str, run_id: str) -> dict:
         return await self._post(f"/matter/{matter_id}/runs/{run_id}/stop")

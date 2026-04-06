@@ -660,6 +660,20 @@ class MatterModel:
             for r in support_rows
         }
 
+        # Attacking assertion counts per issue (for UI display — SO-4).
+        attack_rows = self.db.execute(
+            """SELECT ail.issue_id, COUNT(*) AS atk_count
+               FROM assertion_issue_link ail
+               JOIN issue i ON i.id = ail.issue_id
+               JOIN assertion a ON a.id = ail.assertion_id
+               WHERE i.matter_id=? AND i.status='open'
+                 AND ail.relation_type IN ('attacks','negates')
+                 AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+               GROUP BY ail.issue_id""",
+            (mid,),
+        ).fetchall()
+        attack_counts = {r["issue_id"]: int(r["atk_count"]) for r in attack_rows}
+
         # Predicate counts per issue — used for predicate-aware coverage fraction.
         pred_rows = self.db.execute(
             """SELECT ip.issue_id, COUNT(*) AS pred_count
@@ -689,7 +703,20 @@ class MatterModel:
             w_support = support_counts.get(issue["id"], 0.0)
             raw_cnt = raw_counts.get(issue["id"], 0)
             pred_cnt = pred_counts.get(issue["id"], 0)
+            atk_cnt = attack_counts.get(issue["id"], 0)
             coverage = self._coverage_fraction(w_support, pred_cnt)
+            has_gap = issue["id"] in proof_gaps
+            # Derive proof_status from coverage + gap so UI panel shows meaningful state
+            if has_gap:
+                proof_status = "gap"
+            elif coverage >= 0.8:
+                proof_status = "strong"
+            elif coverage >= 0.4:
+                proof_status = "partial"
+            elif coverage > 0:
+                proof_status = "weak"
+            else:
+                proof_status = "none"
             report.append({
                 "id": issue["id"],
                 "title": issue.get("title", ""),
@@ -697,9 +724,11 @@ class MatterModel:
                 "materiality": issue.get("materiality", 0.0),
                 "salience": issue.get("salience", 0.0),
                 "supporting_count": raw_cnt,
+                "attacking_count": atk_cnt,
                 "predicate_count": pred_cnt,
                 "coverage_fraction": round(coverage, 4),
-                "has_proof_gap": issue["id"] in proof_gaps,
+                "proof_status": proof_status,
+                "has_proof_gap": has_gap,
                 "gap_id": proof_gaps.get(issue["id"]),
             })
 
