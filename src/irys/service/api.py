@@ -111,13 +111,12 @@ async def _cleanup_loop(config: ServiceConfig):
                         if jid != job_id
                     )
                     if not _other_live:
-                        _evicted = _active_matter_models.pop(job.matter_id, None)
+                        _active_matter_models.pop(job.matter_id, None)
                         _matter_model_last_used.pop(job.matter_id, None)
-                        if _evicted is not None:
-                            try:
-                                _evicted.db.close()
-                            except Exception:
-                                pass
+                        # Note: SQLiteMatterDB uses threading.local so db.close() from
+                        # this thread only closes this thread's handle. Background-flush
+                        # threads hold their own per-thread connections which are released
+                        # when their thread exits. Relying on GC/thread-exit for cleanup.
                 del _jobs[job_id]
                 logger.debug(f"Cleaned up job {job_id}")
             # Evict matter models not backed by any active job (rehydrated models).
@@ -127,13 +126,8 @@ async def _cleanup_loop(config: ServiceConfig):
             for _mid in list(_active_matter_models.keys()):
                 if _mid not in _live_matter_ids:
                     if _matter_model_last_used.get(_mid, datetime.min) < _idle_cutoff:
-                        _evicted = _active_matter_models.pop(_mid, None)
+                        _active_matter_models.pop(_mid, None)
                         _matter_model_last_used.pop(_mid, None)
-                        if _evicted is not None:
-                            try:
-                                _evicted.db.close()
-                            except Exception:
-                                pass
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
 
@@ -299,6 +293,14 @@ async def _get_matter_model_or_404(matter_id: str):
     if config.enable_matter_model and config.matter_db_dir:
         model = await asyncio.to_thread(_try_rehydrate_matter_model, matter_id, config)
         if model is not None:
+            # Re-check after the await: another concurrent coroutine may have
+            # completed rehydration while we were in the thread pool. Since asyncio
+            # is single-threaded, this check-and-assign is atomic — no further yield
+            # between here and the assignment, so no second race window.
+            existing = _active_matter_models.get(matter_id)
+            if existing is not None:
+                _matter_model_last_used[matter_id] = datetime.now()
+                return existing
             _active_matter_models[matter_id] = model
             _matter_model_last_used[matter_id] = datetime.now()
             logger.info(f"Rehydrated matter model {matter_id} from persistent storage")
