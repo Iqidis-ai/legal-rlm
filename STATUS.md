@@ -97,7 +97,7 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 | #022 | **SO-1/3/5/6/7 PASS; SO-2/4 PARTIAL** | 5 PASSes. Predicate resolution wired in production. SO-4 remaining: _focus_issue_id attribution heuristic |
 | #023 | **SO-1/3/5/6/7 PASS; SO-2/4 PARTIAL** | 5 PASSes. 3 HIGHs fixed: OCC silent loss, flat fact ingress (SPO threshold >= 1), SO-4 attribution (biased pool). Post-audit Tier 1 r5/r6: schema v35 no-op, OCC retry-self (not dependents), pre-tx fast-path, bare-idx counter, seedness preserved across OCC retries |
 
-**Tier 1 reviews:** CLEAN (r8, pending recheck) — MEDIUM r7 fixes: semantic gate abstention no longer falls back to round-robin; synthesis + SPO retry telemetry added. See commit history for full fix trail.
+**Tier 1 reviews:** CLEAN (r9 confirmed) — full Tier 1+2 cycle clean. Last fixes: semantic gate abstains → None (not round-robin); structural fallback uses _biased_pool; synthesis + SPO retry tracked in llm_calls_required. See commit history for full fix trail.
 
 **Tier 2 implementations (2026-04-06, from Tier 2 Scaling+Architecture review):**
 1. SO-4 semantic attribution gate: `_build_issue_profiles()` + `_best_semantic_issue()` Jaccard gate;
