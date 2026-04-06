@@ -1067,7 +1067,7 @@ class RLMEngine:
             if run_id is not None:
                 try:
                     # Detect numeric conflicts → gaps (SO-6 + SO-7)
-                    self._matter_model.detect_quant_conflicts()
+                    self._matter_model.detect_quant_conflicts(run_id=run_id)
                 except Exception as _qc_exc:
                     logger.warning("Quant conflict detection failed, continuing: %s", _qc_exc)
                 try:
@@ -1078,7 +1078,7 @@ class RLMEngine:
                 try:
                     # Background maintenance: mine contradictions (SO-2) — auto-discovers
                     # heuristic contradiction links and propagates belief state changes.
-                    self._matter_model.mine_contradictions()
+                    self._matter_model.mine_contradictions(run_id=run_id)
                 except Exception as _mc_exc:
                     logger.warning("Contradiction mining failed, continuing: %s", _mc_exc)
                 try:

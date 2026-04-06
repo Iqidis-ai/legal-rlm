@@ -506,22 +506,35 @@ class MatterRuntimeAdapter:
                         changed_object_id=result.assertion_id,
                     )
 
-        # Merge durable evidence-pending (nodes truncated by a prior flush, with their
-        # originating cause) with current-request NEW_EVIDENCE seeds (r29/r31 MEDIUM fix).
-        # Group by cause so each replay batch uses the correct RevisionCause — not always
-        # NEW_EVIDENCE (r31 MEDIUM cause-attribution fix).
-        _evidence_carry: dict[str, RevisionCause] = self.model.drain_evidence_pending()
+        # Merge durable evidence-pending (nodes truncated by a prior flush, keyed by
+        # originating (cause, run_id)) with current-request NEW_EVIDENCE seeds (r29–r33 fix).
+        # Group by cause so each replay batch uses the correct RevisionCause (r31 fix).
+        # Batch attribution events per cause name originating run_ids (r33 fix).
+        _evidence_carry: "dict[str, tuple[RevisionCause, str | None]]" = self.model.drain_evidence_pending()
         for aid in self._pending_assertion_ids:
             if aid not in _evidence_carry:
-                _evidence_carry[aid] = RevisionCause.NEW_EVIDENCE
+                _evidence_carry[aid] = (RevisionCause.NEW_EVIDENCE, self.run_id)
         self._pending_assertion_ids.clear()
         if not _evidence_carry:
             return len(_revised_ids)
-        # Group by cause to avoid mixing revision causes within one apply_revision() call.
-        _by_cause: dict[RevisionCause, list[str]] = {}
-        for aid, cause in _evidence_carry.items():
+        # Group by cause; collect originating run_ids per cause for batch attribution event.
+        _by_cause: "dict[RevisionCause, list[str]]" = {}
+        _orig_runs_by_cause: "dict[RevisionCause, set[str]]" = {}
+        for aid, (cause, orig_run) in _evidence_carry.items():
             _by_cause.setdefault(cause, []).append(aid)
+            if orig_run:
+                _orig_runs_by_cause.setdefault(cause, set()).add(orig_run)
         for cause, ids in _by_cause.items():
+            _orig = sorted(_orig_runs_by_cause.get(cause, set()))
+            if _orig:
+                self.model.ledger.append_event(
+                    run_id=self.run_id,
+                    event_type=LedgerEventType.ASSERTION_REVISED,
+                    summary=(
+                        f"Deferred {cause.value} replay: {len(ids)} assertion(s) "
+                        f"from originating run(s): {', '.join(_orig)}"
+                    ),
+                )
             for i in range(0, len(ids), _seed_batch):
                 batch = ids[i : i + _seed_batch]
                 _ev_unvisited: list[str] = []
@@ -532,7 +545,7 @@ class MatterRuntimeAdapter:
                     _collect_unvisited=_ev_unvisited,
                 )
                 if _ev_unvisited:
-                    self.model.enqueue_evidence_pending(_ev_unvisited, cause=cause)
+                    self.model.enqueue_evidence_pending(_ev_unvisited, cause=cause, run_id=self.run_id)
                 for result in results:
                     if result.old_belief_state != result.new_belief_state:
                         _revised_ids.add(result.assertion_id)

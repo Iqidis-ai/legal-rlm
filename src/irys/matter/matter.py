@@ -89,7 +89,7 @@ class MatterModel:
         # Assertion IDs dropped by BFS truncation during flush_revisions(), keyed by their
         # originating RevisionCause so replay uses the correct cause not always NEW_EVIDENCE
         # (r31 MEDIUM fix). First-write wins: earlier cause preserved on repeated truncation.
-        self._evidence_pending: "dict[str, RevisionCause]" = {}
+        self._evidence_pending: "dict[str, tuple[RevisionCause, str | None]]" = {}
         self._evidence_pending_lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -277,13 +277,13 @@ class MatterModel:
         self,
         ids: list[str],
         cause: "RevisionCause" = None,
+        run_id: Optional[str] = None,
     ) -> None:
-        """Add BFS-truncated assertion IDs to the durable evidence queue with their cause.
+        """Add BFS-truncated assertion IDs to the durable evidence queue with cause + run_id.
 
-        cause: the RevisionCause that produced these seeds (TRUST_OVERRIDE, CONFLICT_DETECTION,
-        NEW_EVIDENCE, etc.) so flush_revisions() can replay them under the correct cause rather
-        than always using NEW_EVIDENCE (r31 MEDIUM fix). Defaults to NEW_EVIDENCE if not given.
-        First-write wins: an earlier cause is preserved if the node is already queued.
+        cause: originating RevisionCause (TRUST_OVERRIDE, CONFLICT_DETECTION, NEW_EVIDENCE, etc.)
+        run_id: originating run for audit attribution in the deferred replay batch event.
+        Defaults to NEW_EVIDENCE/None. First-write wins on all fields per assertion_id.
         """
         if not ids:
             return
@@ -291,10 +291,10 @@ class MatterModel:
         with self._evidence_pending_lock:
             for aid in ids:
                 if aid not in self._evidence_pending:
-                    self._evidence_pending[aid] = _cause
+                    self._evidence_pending[aid] = (_cause, run_id)
 
-    def drain_evidence_pending(self) -> "dict[str, RevisionCause]":
-        """Return and clear truncated evidence assertion IDs → cause (thread-safe)."""
+    def drain_evidence_pending(self) -> "dict[str, tuple[RevisionCause, str | None]]":
+        """Return and clear truncated evidence assertion IDs → (cause, run_id) (thread-safe)."""
         with self._evidence_pending_lock:
             result = dict(self._evidence_pending)
             self._evidence_pending.clear()
@@ -477,7 +477,7 @@ class MatterModel:
                     note=f"Document trust override set to '{trust_level}' for {document_pattern!r}",
                     _collect_unvisited=_trust_unvisited,
                 )
-                self.enqueue_evidence_pending(_trust_unvisited, cause=RevisionCause.TRUST_OVERRIDE)
+                self.enqueue_evidence_pending(_trust_unvisited, cause=RevisionCause.TRUST_OVERRIDE, run_id=run_id)
         except (sqlite3.Error, ValueError, RuntimeError) as exc:
             _log.warning("Trust override belief revision failed for %r: %s", document_pattern, exc)
 
@@ -515,7 +515,7 @@ class MatterModel:
 
         return override_id
 
-    def mine_contradictions(self) -> list[dict]:
+    def mine_contradictions(self, run_id: Optional[str] = None) -> list[dict]:
         """
         Run the contradiction mining pass over all assertions in this matter.
 
@@ -528,6 +528,7 @@ class MatterModel:
         return self.assertions.mine_and_mark_contradictions(
             gap_store=self.gaps,
             belief_engine=self.belief,
+            run_id=run_id,
         )
 
     def detect_document_version_chains(self) -> list[dict]:
@@ -947,7 +948,7 @@ class MatterModel:
     # Quantitative intelligence (SO-6 + SO-7)
     # ------------------------------------------------------------------
 
-    def detect_quant_conflicts(self) -> list[str]:
+    def detect_quant_conflicts(self, run_id: Optional[str] = None) -> list[str]:
         """
         Detect numeric conflicts: same subject_type+currency with divergent amounts.
 
@@ -1016,10 +1017,11 @@ class MatterModel:
             self.apply_revision(
                 seed_assertion_ids=list(dict.fromkeys(all_conflict_assertion_ids)),
                 cause=RevisionCause.CONFLICT_DETECTION,
+                run_id=run_id,
                 note="Automatic: conflicting amount values detected for same subject",
                 _collect_unvisited=_conflict_unvisited,
             )
-            self.enqueue_evidence_pending(_conflict_unvisited, cause=RevisionCause.CONFLICT_DETECTION)
+            self.enqueue_evidence_pending(_conflict_unvisited, cause=RevisionCause.CONFLICT_DETECTION, run_id=run_id)
 
         return gap_ids
 

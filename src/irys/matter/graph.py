@@ -909,6 +909,7 @@ class AssertionStore:
         self,
         gap_store: "GapStore",
         belief_engine: "BeliefRevisionEngine",
+        run_id: "str | None" = None,
     ) -> list[dict]:
         """
         Run contradiction mining and enforce belief states.
@@ -952,6 +953,7 @@ class AssertionStore:
                         new_state=BeliefState.DISPUTED,
                         new_confidence=0.3,
                         cause=RevisionCause.CONFLICT_DETECTION,
+                        run_id=run_id,
                         note=(
                             f"Marked disputed by {conflict['link_type']} link from "
                             f"assertion {conflict['attacker_id']}"
