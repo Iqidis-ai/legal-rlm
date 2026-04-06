@@ -107,6 +107,11 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 **Next:** Tier 2 Scaling + Architecture reviews (in progress); adversarial audit #025 (due).
 
+**Tier 2 r2 HIGH fix (2026-04-06, commit 64ef34f):**
+- `flush_revisions()` now batches seeds in groups of `MAX_WORK // 2` (250). Previously,
+  large flushes (>2000 seeds) could silently skip high-index seeds because the BFS
+  frontier budget was exhausted — those seeds were then cleared and permanently lost.
+
 **Tier 2 implementations (2026-04-06, from Tier 2 Scaling+Architecture review):**
 1. SO-4 semantic attribution gate: `_build_issue_profiles()` + `_best_semantic_issue()` Jaccard gate;
    unannotated initial_searches + SPO graph leads now validated against issue content before round-robin
