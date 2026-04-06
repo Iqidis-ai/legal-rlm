@@ -59,6 +59,12 @@ class SQLiteMatterDB:
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA temp_store=MEMORY")
+            # Wait up to 5 s before raising "database is locked" under concurrent writes.
+            # Without this, BEGIN IMMEDIATE fails immediately when another writer holds
+            # the lock, relying on caller retry loops instead of SQLite's built-in backoff.
+            # 5000 ms covers typical BFS write-transaction durations at current scale.
+            # (Tier 2 r3 HIGH #2 fix)
+            conn.execute("PRAGMA busy_timeout=5000")
             self._local.conn = conn
         return self._local.conn
 

@@ -46,8 +46,23 @@ def _id() -> str:
 _SOURCE_TRUST = SOURCE_TRUST_WEIGHTS
 
 # Belief state transition rules based on support/attack balance
-# A full truth-maintenance system would use JTMS; this is a practical
-# approximation sufficient for legal intelligence at current scale.
+# A full truth-maintenance system would use JTMS; this is a heuristic
+# defeat/recovery approximation sufficient for legal intelligence at current scale.
+# Not sound for partial amendments, time-scoped supersession, or chained superseders
+# that don't all directly link to the original. (Tier 2 r3 MEDIUM #2 — known limitation)
+
+# Priority for choosing the most authoritative speech act as recovery baseline.
+# Ordered by LEGAL INFORMATIVENESS (not confidence): conclusive acts > claims > unclassified.
+# alleged/argued (3) intentionally rank above unclassified/extracted (0) because an
+# explicit speech-act classification is more informative than an LLM extraction without
+# attributed speech act.  _initial_belief_state() (graph.py) is the canonical
+# state/confidence mapping for the chosen speech act.  (Tier 2 r3 MEDIUM #1 fix)
+_SPEECH_ACT_RECOVERY_PRIORITY: dict[str, int] = {
+    "operative": 9, "admitted": 8, "stipulated": 8,
+    "performed": 7, "paid": 7,
+    "waived": 6, "terminated": 6, "amended": 6,
+    "inferred": 5, "alleged": 3, "argued": 3,
+}
 
 def _compute_belief_state(
     current_state: BeliefState,
@@ -497,19 +512,13 @@ class BeliefRevisionEngine:
             # _initial_belief_state() (graph.py) is the canonical state/confidence mapping.
             # No circular import: belief_revision.py already imports from graph.py;
             # graph.py imports nothing from belief_revision.py. (Tier 2 r3 MEDIUM fix)
-            _RECOVERY_PRIORITY = {
-                "operative": 9, "admitted": 8, "stipulated": 8,
-                "performed": 7, "paid": 7,
-                "waived": 6, "terminated": 6, "amended": 6,
-                "inferred": 5, "alleged": 3, "argued": 3,
-            }
             _occ_rows = self.db.execute(
                 "SELECT speech_act FROM assertion_occurrence WHERE assertion_id=?",
                 (assertion_id,),
             ).fetchall()
             _best_sa_str: "str | None" = max(
                 (_occ_rows or [{"speech_act": None}]),
-                key=lambda r: _RECOVERY_PRIORITY.get(r["speech_act"] or "", 0),
+                key=lambda r: _SPEECH_ACT_RECOVERY_PRIORITY.get(r["speech_act"] or "", 0),
             )["speech_act"]
             try:
                 _compute_state, _compute_conf = _initial_belief_state(SpeechAct(_best_sa_str))
