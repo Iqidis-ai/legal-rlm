@@ -1342,19 +1342,18 @@ class RLMEngine:
             # 2. Semantic gate: Jaccard similarity of search term against issue profiles.
             #    Accepts the best match only if score > threshold AND margin > gap.
             #    Abstains (None) if no issue clears both thresholds.
-            # 3. When semantic gate abstains, fall back to round-robin over
-            #    _profile_pool (IDs known to exist in DB) so a stale _biased_pool ID
-            #    (e.g. weakest_id from a prior run that no longer exists) cannot receive
-            #    attribution for facts that would then fail the issue-link insert.
+            # 3. When semantic gate abstains (None), leave focus_issue_id=None —
+            #    wrong attribution is worse than no attribution.
+            #    Round-robin fallback is only used when profiles are unavailable
+            #    (< 2 issues, or all profile builds failed), not on semantic abstention.
             if _lm_issue_idx is not None:
                 _focus_id = _raw_idx_to_issue_id.get(_lm_issue_idx)
             elif _issue_profiles:
+                # Semantic gate: accept best match or abstain (None)
                 _focus_id = self._best_semantic_issue(_search_term, _issue_profiles)
-                if _focus_id is None and _profile_pool:
-                    # Semantic gate abstained — round-robin over DB-verified IDs only
-                    _focus_id = _profile_pool[_bare_idx % len(_profile_pool)]
                 _bare_idx += 1
             elif _profile_pool:
+                # No profiles available — structural round-robin as last resort
                 _focus_id = _profile_pool[_bare_idx % len(_profile_pool)]
                 _bare_idx += 1
             else:
@@ -1434,11 +1433,12 @@ class RLMEngine:
                 if not _pred_phrase or len(_pred_phrase) < 3:
                     continue
                 # SO-4 semantic gate: try to match pred_phrase to the most relevant issue.
-                # Fall back to biased-pool round-robin if gate abstains or profiles unavailable.
+                # Abstain (None) if gate can't find a clear winner — wrong attribution
+                # is worse than no attribution. Round-robin only when no profiles at all.
                 _spo_focus: "Optional[str]" = None
                 if _issue_profiles:
                     _spo_focus = self._best_semantic_issue(_pred_phrase, _issue_profiles)
-                if _spo_focus is None and _profile_pool:
+                elif _profile_pool:
                     _spo_focus = _profile_pool[_spo_leads_added % len(_profile_pool)]
                 state.add_lead(
                     description=f"SPO graph expansion: search for '{_pred_phrase}' relationships",
@@ -2023,6 +2023,7 @@ class RLMEngine:
                         f"(search: '{search_term[:60]}'). Retrying for missing.",
                     )
                     _retry_texts = [txt for txt, _, _, _, _ in facts_to_add]
+                    state.llm_calls_required += 1
                     _retry_spo = await self._retry_spo_extraction(_retry_texts)
                     if _retry_spo:
                         facts_to_add = [
@@ -2428,6 +2429,7 @@ class RLMEngine:
                             f"(deep-read: '{doc.filename[:60]}'). Retrying for missing.",
                         )
                         _dr_retry_texts = [f for f, _, _, _ in facts_to_add]
+                        state.llm_calls_required += 1
                         _dr_retry_spo = await self._retry_spo_extraction(_dr_retry_texts)
                         if _dr_retry_spo:
                             facts_to_add = [
@@ -2871,8 +2873,10 @@ class RLMEngine:
 
         if _cached_response is not None:
             response = _cached_response
+            state.llm_calls_avoided += 1
         else:
             # Use PRO for final synthesis
+            state.llm_calls_required += 1
             response = await self.client.complete(prompt, tier=ModelTier.PRO)
             if self._matter_model is not None:
                 try:
