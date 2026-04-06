@@ -1973,9 +1973,12 @@ class RLMEngine:
             # SO-2 validation + retry: if primary extraction left any facts without SPO
             # triples, make one targeted FLASH retry to recover structured triples from
             # the already-extracted fact texts (no re-reading of source documents).
+            # Threshold >= 1: fire for any unstructured fact, including small batches.
+            # A single null-SPO fact is still a flat-fact violation; the FLASH retry is
+            # cheap relative to the value of structured storage.
             if facts_to_add:
                 _spo_count = sum(1 for _, _, _, _, _s in facts_to_add if _s is not None)
-                if _spo_count < len(facts_to_add) and len(facts_to_add) >= 3:
+                if _spo_count < len(facts_to_add) and len(facts_to_add) >= 1:
                     self._emit_step(
                         state, StepType.REPLAN,
                         f"SPO extraction yielded {_spo_count}/{len(facts_to_add)} structured triples "
@@ -2375,9 +2378,10 @@ class RLMEngine:
                             }
                         facts_to_add.append((fact_item["fact"], issue_rel, effective_date, spo))
                 # SO-2 validation: if any facts lack SPO triples, retry to recover them.
+                # Threshold >= 1: fire even for single facts; FLASH retry is cheap.
                 if facts_to_add:
                     _dr_spo_count = sum(1 for _, _, _, _s in facts_to_add if _s is not None)
-                    if _dr_spo_count < len(facts_to_add) and len(facts_to_add) >= 3:
+                    if _dr_spo_count < len(facts_to_add) and len(facts_to_add) >= 1:
                         self._emit_step(
                             state, StepType.REPLAN,
                             f"SPO extraction yielded {_dr_spo_count}/{len(facts_to_add)} structured triples "
