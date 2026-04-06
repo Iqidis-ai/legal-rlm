@@ -58,9 +58,10 @@ _matter_model_last_used: dict[str, datetime] = {}
 # Per-matter asyncio locks for cold-rehydration deduplication.  Only one coroutine
 # scans corpus directories per matter_id; concurrent misses wait and then re-check cache.
 _rehydration_locks: dict[str, "asyncio.Lock"] = {}
-# Matter IDs currently executing a synchronous (non-job) investigation run.
-# The cleanup loop's orphan-eviction pass skips these to prevent mid-run eviction.
-_sync_running_matter_ids: set[str] = set()
+# Refcount of in-flight synchronous investigation runs per matter_id.
+# Non-zero entry means the cleanup loop must not evict that model mid-run.
+# Refcount (not a plain set) so overlapping runs on the same corpus don't unpin each other.
+_sync_running_matter_ids: dict[str, int] = {}
 # Counter for concurrently active synchronous upload handlers (no job backing).
 # Capped at max_concurrent_jobs to prevent multiple large request bodies in RAM.
 _active_sync_requests: int = 0
@@ -124,7 +125,9 @@ async def _cleanup_loop(config: ServiceConfig):
                     # (a) no other non-expired job still references this matter, AND
                     # (b) the model has not been recently accessed (last_used < idle_cutoff).
                     _last = _matter_model_last_used.get(job.matter_id, datetime.min)
-                    if job.matter_id not in _live_job_matter_ids and _last < _idle_cutoff:
+                    if (job.matter_id not in _live_job_matter_ids
+                            and job.matter_id not in _sync_running_matter_ids
+                            and _last < _idle_cutoff):
                         _active_matter_models.pop(job.matter_id, None)
                         _matter_model_last_used.pop(job.matter_id, None)
                         # Note: SQLiteMatterDB uses threading.local so db.close() from
@@ -973,6 +976,7 @@ async def upload_investigate_sync(
     s3_prefix = None
     s3_repo = None
     temp_dir = None
+    sync_matter_id = None  # must be visible in finally for unpin
 
     # Concurrency cap: each sync request may buffer up to
     # max_documents_per_job × max_document_size_mb of body data in RAM simultaneously.
@@ -1045,18 +1049,19 @@ async def upload_investigate_sync(
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
         sync_matter_id = _wire_matter_model(irys, str(temp_dir), sync_corpus_key, config)
 
-        # Pin the model in _sync_running_matter_ids so the orphan-eviction pass in
-        # _cleanup_loop cannot evict it mid-run (sync runs have no associated _jobs entry).
+        # Pin the model: increment refcount so the orphan-eviction pass in _cleanup_loop
+        # cannot evict it mid-run.  Refcount (not a plain set) so overlapping runs on the
+        # same corpus don't unpin each other.  Unpin happens in the outer finally after the
+        # open_gaps snapshot is captured, not immediately after investigate() returns.
         if sync_matter_id:
-            _sync_running_matter_ids.add(sync_matter_id)
-        try:
-            result = await irys.investigate(
-                query=query,
-                repository=str(temp_dir),
+            _sync_running_matter_ids[sync_matter_id] = (
+                _sync_running_matter_ids.get(sync_matter_id, 0) + 1
             )
-        finally:
-            if sync_matter_id:
-                _sync_running_matter_ids.discard(sync_matter_id)
+
+        result = await irys.investigate(
+            query=query,
+            repository=str(temp_dir),
+        )
 
         # Cleanup temp files
         if config.storage_mode == "local":
@@ -1124,6 +1129,13 @@ async def upload_investigate_sync(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         _active_sync_requests -= 1
+        # Unpin here (outer finally) so the pin covers cleanup and open_gaps, not just investigate().
+        if sync_matter_id:
+            _cnt = _sync_running_matter_ids.get(sync_matter_id, 0)
+            if _cnt <= 1:
+                _sync_running_matter_ids.pop(sync_matter_id, None)
+            else:
+                _sync_running_matter_ids[sync_matter_id] = _cnt - 1
 
 
 # === S3 URL ENDPOINTS ===
@@ -1335,6 +1347,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
     start_time = time.time()
     s3_repo = None
     temp_dir = None
+    urls_matter_id = None  # must be visible in finally for unpin
 
     if _active_sync_requests >= config.max_concurrent_jobs:
         raise HTTPException(
@@ -1366,17 +1379,16 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         urls_corpus_key = _compute_corpus_key(",".join(sorted(_url_to_str(u) for u in request.s3_urls)))
         urls_matter_id = _wire_matter_model(irys, str(temp_dir), urls_corpus_key, config)
 
-        # Pin the model so the orphan-eviction pass cannot evict it mid-run.
+        # Pin with refcount; unpin happens in the outer finally after open_gaps is captured.
         if urls_matter_id:
-            _sync_running_matter_ids.add(urls_matter_id)
-        try:
-            result = await irys.investigate(
-                query=request.query,
-                repository=str(temp_dir),
+            _sync_running_matter_ids[urls_matter_id] = (
+                _sync_running_matter_ids.get(urls_matter_id, 0) + 1
             )
-        finally:
-            if urls_matter_id:
-                _sync_running_matter_ids.discard(urls_matter_id)
+
+        result = await irys.investigate(
+            query=request.query,
+            repository=str(temp_dir),
+        )
 
         # Cleanup
         await s3_repo.cleanup(job_id)
@@ -1419,6 +1431,12 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         _active_sync_requests -= 1
+        if urls_matter_id:
+            _cnt = _sync_running_matter_ids.get(urls_matter_id, 0)
+            if _cnt <= 1:
+                _sync_running_matter_ids.pop(urls_matter_id, None)
+            else:
+                _sync_running_matter_ids[urls_matter_id] = _cnt - 1
 
 
 # === MATTER MODEL ENDPOINTS ===
