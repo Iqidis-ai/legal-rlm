@@ -1958,17 +1958,12 @@ class RLMEngine:
             # _infer_source_role is the module-level import; alias for readability here.
             _infer_role = _infer_source_role
 
-            # Build a name→(relative_path, SearchHit) lookup for all prompt-visible hits.
-            # Key by full file_path (stable, unique) and filename (convenience lookup).
-            # Basename shortcuts are only registered when the basename is unambiguous
-            # (appears exactly once in the top hits) — duplicate basenames stay basename-
-            # unresolvable so the model's source_file fallback to the full path key is
-            # used instead of a wrong last-writer collision. (r49 HIGH fix)
+            # Build a name→SearchHit lookup for all prompt-visible hits.
+            # Keys: full file_path (always unique) + _unique_display_name suffix (cased
+            # and lowercased).  _all_paths is deduplicated so the uniqueness check in
+            # _unique_display_name is not confused by multiple hits from the same doc.
             _top_hits_for_lookup = list(results.top(10))
-            _basename_freq: dict[str, int] = {}
-            for _h in _top_hits_for_lookup:
-                _basename_freq[_h.filename.lower()] = _basename_freq.get(_h.filename.lower(), 0) + 1
-            _all_paths = [_h.file_path for _h in _top_hits_for_lookup]
+            _all_paths = list(dict.fromkeys(_h.file_path for _h in _top_hits_for_lookup))
             _hit_by_name: dict[str, object] = {}
             for _h in _top_hits_for_lookup:
                 _hit_by_name[_h.file_path] = _h        # full path (always unique)
@@ -4596,7 +4591,7 @@ class RLMEngine:
         stable, unambiguous file identifier even when basenames collide.
         """
         hits = list(results.top(max_hits))
-        all_paths = [h.file_path for h in hits]
+        all_paths = list(dict.fromkeys(h.file_path for h in hits))
         lines = []
         for hit in hits:
             display_name = self._unique_display_name(hit.file_path, all_paths)
