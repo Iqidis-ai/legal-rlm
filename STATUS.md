@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (adv#031 r6 CLEAN — SPO revision rows+COALESCE backfill; stop/redirect TOCTOU fix; SSE real 404; 740 tests passing)
+Last updated: 2026-04-06 (Tier 1 r47 CLEAN — DB-first enqueue propagation; enqueue_evidence_pending moved outside swallow-except in set_trust_override; 740 tests passing)
 Branch: SebihSpecial
 
 ---
