@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 r17 PASS — Tier 2 r3 fixes clean; schema v38; 733 tests)
+Last updated: 2026-04-06 (Tier 1 r41 CLEAN + Perf PASS — 14 rounds r27-r40; run_id attribution chain complete; schema v39)
 Branch: SebihSpecial
 
 ---
