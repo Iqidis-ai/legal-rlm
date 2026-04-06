@@ -1,0 +1,6 @@
+No performance findings in `6c67557`.
+
+1. `CLEAN` on the new two-pass basename handling in [src/irys/rlm/engine.py#L1963](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1963). It walks a materialized list of at most 10 hits, so the added cost is one tiny list copy plus a few dict updates and `lower()` calls. On that input size, it is negligible.
+2. `CLEAN` on the rest of the commit. The blank-tuple guard in [src/irys/matter/runtime.py#L384](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L384) is neutral to slightly positive because it avoids pointless `record_fact()` work for blank facts.
+
+Residual note only: this code path still calls `results.top()` twice in the same block, at [src/irys/rlm/engine.py#L1963](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1963) and [src/irys/rlm/engine.py#L1975](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1975), and `top()` does a full sort at [src/irys/core/search.py#L167](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/core/search.py#L167). That is pre-existing and still dwarfs the new extra pass; I would not flag this commit for it.

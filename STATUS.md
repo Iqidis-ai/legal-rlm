@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 r48 CLEAN — clarification matter-scoping, trust-override delete revision, issue proof-state scoping, contradiction mining logging, path normalization on delete; 740 tests passing; auth deferred/documented)
+Last updated: 2026-04-06 (Tier 1 r49 CLEAN — unique-suffix file disambiguation in search results/resolver; blank-fact guards; cancel comment accurate; 740 tests passing)
 Branch: SebihSpecial
 
 ---

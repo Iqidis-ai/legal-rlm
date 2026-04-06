@@ -1,0 +1,11 @@
+Not clean. One r49 `HIGH` remains open.
+
+- `HIGH` `parent_dir/filename` is still ambiguous when duplicate basenames also share the same immediate parent directory name. `_format_search_results()` now displays `Path(hit.file_path).parent.name/filename` for duplicate basenames at [engine.py#L4592](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4592), and the resolver registers that same `_disambig` key at [engine.py#L1977](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1977). If two hits are `.../contracts/exhibit.pdf` and `.../contracts/exhibit.pdf` under different higher-level paths, both become `contracts/exhibit.pdf`. `_hit_by_name["contracts/exhibit.pdf"] = _h` then overwrites on the second insert, so `_hit_by_name.get(src_file)` at [engine.py#L2020](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L2020) is last-writer-wins, not uniquely correct.
+
+Answers to your checks:
+
+1. Yes. If basename and immediate parent name both match, `parent_dir/filename` is still ambiguous.
+2. Conditionally yes. The lookup is consistent only when `parent/filename.pdf` is itself unique among the top hits. The formatter and resolver use the same construction, and the only call site uses the same top-10 scope at [engine.py#L1888](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1888) and [engine.py#L1967](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1967). But in the same-parent collision case, it resolves to whichever hit was inserted last, not reliably the right one.
+3. Remaining r49 HIGH/MEDIUM: this `HIGH` remains. I did not find another unresolved r49 `MEDIUM` in the current code; the prompt/update contract and the accepted-risk cancel comment are now internally consistent at [engine.py#L231](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L231) and [engine.py#L965](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L965).
+
+Static review only; I did not run tests in this read-only environment.
