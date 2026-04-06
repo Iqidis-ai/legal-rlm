@@ -302,8 +302,10 @@ class MatterModel:
                             " VALUES (?,?,?,?,?,?,?)",
                             (_id(), self.matter_id, aid, "USER_CORRECTION", run_id, "correction", now),
                         )
-                    except Exception:
-                        pass  # DB write failure does not block in-memory queue
+                    except Exception as _dbe:
+                        # DB write failure is non-fatal: in-memory queue still works,
+                        # but this item will NOT survive a process restart.
+                        _log.warning("pending_propagation write failed for %s (correction): %s", aid[:8], _dbe)
 
     def drain_correction_pending(self) -> "tuple[dict[str, str | None], list[str]]":
         """Return and clear the durable correction retry queue (thread-safe).
@@ -322,18 +324,20 @@ class MatterModel:
             result = dict(self._correction_pending)
             self._correction_pending.clear()
             db_ids: list[str] = []
-            if result:
+            _aid_list = list(result)
+            _SQL_PARAM_LIMIT = 900
+            for _bs in range(0, len(_aid_list), _SQL_PARAM_LIMIT):
+                _batch = _aid_list[_bs : _bs + _SQL_PARAM_LIMIT]
                 try:
-                    placeholders = ",".join("?" * len(result))
                     rows = self.db.execute(
-                        f"SELECT id FROM pending_propagation"
-                        f" WHERE matter_id=? AND queue='correction'"
-                        f" AND assertion_id IN ({placeholders})",
-                        [self.matter_id] + list(result),
+                        "SELECT id FROM pending_propagation"
+                        " WHERE matter_id=? AND queue='correction'"
+                        " AND assertion_id IN ({})".format(",".join("?" * len(_batch))),
+                        [self.matter_id] + _batch,
                     ).fetchall()
-                    db_ids = [r["id"] for r in rows]
-                except Exception:
-                    pass
+                    db_ids.extend(r["id"] for r in rows)
+                except Exception as _dbe:
+                    _log.warning("pending_propagation drain SELECT failed (correction): %s", _dbe)
         return result, db_ids
 
     def enqueue_evidence_pending(
@@ -365,8 +369,10 @@ class MatterModel:
                             " VALUES (?,?,?,?,?,?,?)",
                             (_id(), self.matter_id, aid, _cause.value, run_id, "evidence", now),
                         )
-                    except Exception:
-                        pass  # DB write failure does not block in-memory queue
+                    except Exception as _dbe:
+                        # DB write failure is non-fatal: in-memory queue still works,
+                        # but this item will NOT survive a process restart.
+                        _log.warning("pending_propagation write failed for %s (evidence): %s", aid[:8], _dbe)
 
     def drain_evidence_pending(self) -> "tuple[dict[str, tuple[RevisionCause, str | None]], list[str]]":
         """Return and clear truncated evidence assertion IDs → (cause, run_id) (thread-safe).
@@ -380,18 +386,20 @@ class MatterModel:
             result = dict(self._evidence_pending)
             self._evidence_pending.clear()
             db_ids: list[str] = []
-            if result:
+            _aid_list = list(result)
+            _SQL_PARAM_LIMIT = 900
+            for _bs in range(0, len(_aid_list), _SQL_PARAM_LIMIT):
+                _batch = _aid_list[_bs : _bs + _SQL_PARAM_LIMIT]
                 try:
-                    placeholders = ",".join("?" * len(result))
                     rows = self.db.execute(
-                        f"SELECT id FROM pending_propagation"
-                        f" WHERE matter_id=? AND queue='evidence'"
-                        f" AND assertion_id IN ({placeholders})",
-                        [self.matter_id] + list(result),
+                        "SELECT id FROM pending_propagation"
+                        " WHERE matter_id=? AND queue='evidence'"
+                        " AND assertion_id IN ({})".format(",".join("?" * len(_batch))),
+                        [self.matter_id] + _batch,
                     ).fetchall()
-                    db_ids = [r["id"] for r in rows]
-                except Exception:
-                    pass
+                    db_ids.extend(r["id"] for r in rows)
+                except Exception as _dbe:
+                    _log.warning("pending_propagation drain SELECT failed (evidence): %s", _dbe)
         return result, db_ids
 
     def delete_pending_propagation_db(self, db_row_ids: "list[str]") -> None:
