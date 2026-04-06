@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 r47 CLEAN — DB-first enqueue propagation; enqueue_evidence_pending moved outside swallow-except in set_trust_override; 740 tests passing)
+Last updated: 2026-04-06 (Tier 1 r48 CLEAN — clarification matter-scoping, trust-override delete revision, issue proof-state scoping, contradiction mining logging, path normalization on delete; 740 tests passing; auth deferred/documented)
 Branch: SebihSpecial
 
 ---
