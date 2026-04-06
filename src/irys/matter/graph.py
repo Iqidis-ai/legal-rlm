@@ -876,8 +876,10 @@ class AssertionStore:
 
         existing_links: set = set()
         for r in self.db.execute(
-            "SELECT src_assertion_id, dst_assertion_id FROM assertion_link "
-            "WHERE link_type IN ('attacks','contradicts')"
+            "SELECT al.src_assertion_id, al.dst_assertion_id FROM assertion_link al"
+            " JOIN assertion a ON a.id = al.src_assertion_id"
+            " WHERE al.link_type IN ('attacks','contradicts') AND a.matter_id=?",
+            (self.matter_id,),
         ).fetchall():
             existing_links.add((r["src_assertion_id"], r["dst_assertion_id"]))
             existing_links.add((r["dst_assertion_id"], r["src_assertion_id"]))
