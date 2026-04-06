@@ -1399,6 +1399,8 @@ async def redirect_investigation(matter_id: str, run_id: str, request: RedirectR
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
     if run.status != "running":
         raise HTTPException(status_code=409, detail=f"Run is not active (status: {run.status})")
+    if run.objective in ("manual_flush", "background_flush"):
+        raise HTTPException(status_code=409, detail=f"Run '{run_id}' is a utility flush run and cannot be redirected")
     issue = model.issues.get_issue(request.issue_id)
     if issue is None:
         raise HTTPException(status_code=404, detail=f"Issue '{request.issue_id}' not found")
@@ -2441,6 +2443,8 @@ async def stop_run(matter_id: str, run_id: str):
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
     if run.status not in ("running", "RUNNING"):
         raise HTTPException(status_code=409, detail=f"Run '{run_id}' is not running (status={run.status})")
+    if run.objective in ("manual_flush", "background_flush"):
+        raise HTTPException(status_code=409, detail=f"Run '{run_id}' is a utility flush run and cannot be stopped via this endpoint")
     model.ledger.request_stop(run_id)
     from irys.matter.enums import LedgerEventType
     model.ledger.append_event(

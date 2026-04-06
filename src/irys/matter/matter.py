@@ -637,6 +637,19 @@ class MatterModel:
 
         Returns the override_id.
         """
+        # Model-level run_id guard — same pattern as correct_assertion (r37 / adv#030 fix).
+        if run_id:
+            try:
+                _valid_run = self.db.execute(
+                    "SELECT 1 FROM run_session WHERE id=? AND matter_id=? AND status='running'"
+                    " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))",
+                    (run_id, self.matter_id),
+                ).fetchone()
+                if not _valid_run:
+                    run_id = None
+            except Exception:
+                run_id = None
+
         override_id = self.trust_overrides.set(document_pattern, trust_level, note)
 
         # Trigger belief revision on all assertions from the affected document.
