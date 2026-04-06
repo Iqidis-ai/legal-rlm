@@ -1,4 +1,4 @@
-FAIL → FIXED (commit below, 733 tests)
+FAIL → FIXED (commit 94998c6, 733 tests)
 MEDIUM — 1 finding. No HIGH.
 
 **MEDIUM: Inlined speech-act priority CASE is unnecessary — no circular import exists.**

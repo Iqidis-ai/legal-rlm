@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 r16 correctness FAIL→FIXED; r15 perf PASS; 733 tests pass — Tier 1 CLEAN on #027 fix series)
+Last updated: 2026-04-06 (Tier 2 r3 FAIL→FIXED; 733 tests — supersession recovery work fully validated)
 Branch: SebihSpecial
 
 ---
@@ -160,7 +160,15 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ## Active Work
 
-### JUST COMPLETED — Tier 1 r14–r16 post-#027 cycle NOW CLEAN (2026-04-06)
+### JUST COMPLETED — Tier 2 r3 Scaling + Architecture checkpoint (2026-04-06)
+
+- MEDIUM: inlined SQL CASE expression was unnecessary duplication — belief_revision.py already imports from graph.py, no circular import exists. Replaced with Python `_initial_belief_state()` call (the canonical mapping). (commit 94998c6)
+- LOWs: recovery fan-out bounded by BFS budget; BEGIN IMMEDIATE contention negligible; assertion_revision no-op rows O(log N) query cost.
+- TMS soundness: recovery policy correct for JTMS-like tracking; supersession chain recovery (C→A→B, C withdrawn → B recovers) handled correctly by fixpoint BFS.
+
+HEAD: 94998c6 — Tests: 733/733
+
+### PREVIOUSLY COMPLETED — Tier 1 r14–r16 post-#027 cycle NOW CLEAN (2026-04-06)
 
 All 4 HIGHs from adversarial #027 verified clean through r14→r16:
 
@@ -348,7 +356,7 @@ None active.
 - SO-1/3/5/6/7: **PASS**; SO-2/4: **PARTIAL** (improving post-#023)
 - Tier 1 Q4/SO-2 stale pre-state: **CLEAN** (4 rounds, r4 confirmed 2026-04-05)
 - Adversarial audit #027: DONE — FIXED; Tier 1 r14–r16 CLEAN on all #027 fixes (2026-04-06)
-- Next: Tier 2 checkpoint review (r3 Scaling + Architecture) or adversarial #028 (due ~r17–r21)
+- Next: Tier 1 r17 correctness + perf (verify Tier 2 r3 fix clean); adversarial #028 due ~r19–r21
 
 ## Architectural Backlog (Tier 2 HIGH remaining)
 
