@@ -1666,10 +1666,14 @@ async def get_matter_assertions(matter_id: str, limit: int = 50, offset: int = 0
 async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 50, offset: int = 0):
     """Return field-level revision history for an assertion (SO-2 audit trail).
 
-    Rows are ordered newest-first. ``limit`` is per-row (not per batch), capped
+    Rows are ordered newest-first by ``(created_at DESC, batch_id DESC, id DESC)``
+    for a deterministic total order. ``limit`` is per-row (not per batch), capped
     at 500. Use ``offset`` for pagination. If the result is truncated,
-    ``truncated=true`` is set in the response so the caller knows there are more
-    rows available via a higher ``offset``.
+    ``truncated=true`` is set and ``next_offset`` gives the next page start.
+
+    Note: offset-based pagination is not stable under concurrent writes. New
+    revisions arriving between page requests can shift rows. This is expected for
+    an audit endpoint and is documented in the response's ``history_note``.
 
     Pre-schema-v34 matters will have empty history by design — no backfill is
     possible. The ``history_note`` field describes this.
@@ -1694,7 +1698,7 @@ async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 
                   ar.run_id, ar.note, ar.created_at
            FROM assertion_revision ar
            WHERE ar.assertion_id=?
-           ORDER BY ar.created_at DESC, ar.batch_id DESC
+           ORDER BY ar.created_at DESC, ar.batch_id DESC, ar.id DESC
            LIMIT ? OFFSET ?""",
         (assertion_id, limit + 1, offset),
     ).fetchall()
@@ -1727,7 +1731,10 @@ async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 
     ]
     return {
         "assertion_id": assertion_id,
-        "history_note": "History records revisions since schema v34. Pre-v34 revisions are not available.",
+        "history_note": (
+            "History records revisions since schema v34. Pre-v34 revisions are not available. "
+            "Offset-based pagination is not stable under concurrent writes."
+        ),
         "count": len(history),
         "offset": offset,
         "truncated": truncated,
