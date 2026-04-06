@@ -1290,6 +1290,14 @@ class RLMEngine:
         # created issues so run-1 facts are linked to issues from the start.
         weakest_id = matter_ctx.weakest_issue_id if matter_ctx else None
         _issue_pool = _orient_issue_ids  # fallback pool: distribute leads across orientation issues
+        # SO-4: coverage-biased fallback pool — weakest issue first so the first
+        # unannotated search targets the proof gap, then round-robin for the rest.
+        # This replaces the old "all unannotated → weakest_id" which bunched every
+        # bare-string search onto one issue regardless of relevance.
+        if weakest_id and weakest_id in _issue_pool:
+            _biased_pool = [weakest_id] + [i for i in _issue_pool if i != weakest_id]
+        else:
+            _biased_pool = _issue_pool
         # Parse initial_searches: support new dict form {"term": "...", "issue_idx": N}
         # and legacy string form for backward compatibility.
         # Use `or []` to handle null from LLM (MEDIUM guard).
@@ -1311,14 +1319,13 @@ class RLMEngine:
             # 1. LLM-specified issue_idx → raw issues[] position → issue_id via
             #    _raw_idx_to_issue_id (not filtered _orient_issue_ids, so skipped
             #    issues don't shift indices for later entries — MEDIUM fix).
-            # 2. Weakest issue from prior run (steer toward proof gap)
-            # 3. Round-robin across new issues (fallback for first run)
+            # 2. Coverage-biased round-robin (weakest first) when LLM didn't annotate.
+            #    Old behavior (all unannotated → weakest_id) bunched every bare-string
+            #    search on one issue; now we spread while still biasing toward weaker.
             if _lm_issue_idx is not None:
                 _focus_id = _raw_idx_to_issue_id.get(_lm_issue_idx)
-            elif weakest_id:
-                _focus_id = weakest_id
-            elif _issue_pool:
-                _focus_id = _issue_pool[_idx % len(_issue_pool)]
+            elif _biased_pool:
+                _focus_id = _biased_pool[_idx % len(_biased_pool)]
             else:
                 _focus_id = None
             priority = 0.9 if (_focus_id and _idx == 0) else 0.8
