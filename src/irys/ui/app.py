@@ -352,14 +352,27 @@ class AppState:
         Sets is_running=False to break the UI generator, and calls
         ledger.request_stop() on the run_id so the engine honors it on
         the next iteration check.
+
+        Early-stop race: if the user presses Stop before the first thinking-step
+        callback fires (i.e. current_run_id is still None), fall back to querying
+        the DB directly for the most recent running run on this matter.
         """
         self.is_running = False
-        run_id = self.current_run_id
-        if run_id and self._irys_ref:
+        if self._irys_ref is not None:
             try:
                 engine = self._irys_ref._engine
                 if engine and engine._matter_model:
-                    engine._matter_model.ledger.request_stop(run_id)
+                    run_id = self.current_run_id
+                    if run_id is None:
+                        # Race: stop pressed before first step — find running run from DB
+                        row = engine._matter_model.db.execute(
+                            "SELECT id FROM run_session WHERE matter_id=?"
+                            " AND status='running' ORDER BY created_at DESC LIMIT 1",
+                            (engine._matter_model.matter_id,),
+                        ).fetchone()
+                        run_id = row["id"] if row else None
+                    if run_id:
+                        engine._matter_model.ledger.request_stop(run_id)
             except Exception:
                 pass
         return gr.update()

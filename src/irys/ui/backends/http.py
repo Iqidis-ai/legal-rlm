@@ -55,13 +55,10 @@ class HttpBackend(UIBackend):
         if matter_id:
             payload["matter_id"] = matter_id
         r = await self._client.post(
-            "/investigate/local",
+            "/investigate",
             json=payload,
             timeout=600.0,  # investigations can take minutes
         )
-        if r.status_code == 404:
-            # Service doesn't have a local endpoint — caller should use in-process
-            raise RuntimeError("Service does not expose /investigate/local. Use in-process backend for local repos.")
         r.raise_for_status()
         return r.json()
 
@@ -113,7 +110,11 @@ class HttpBackend(UIBackend):
         params = {"limit": limit, "offset": offset}
         if issue_id:
             params["issue_id"] = issue_id
-        return await self._get(f"/matter/{matter_id}/assertions", params)
+        result = await self._get(f"/matter/{matter_id}/assertions", params)
+        # Service returns paginated envelope: {total, limit, offset, assertions}
+        if isinstance(result, dict):
+            return result.get("assertions", [])
+        return result if isinstance(result, list) else []
 
     async def list_gaps(self, matter_id: str, limit: int = 50) -> list[dict]:
         return await self._get(f"/matter/{matter_id}/gaps", {"limit": limit})

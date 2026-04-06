@@ -12,6 +12,7 @@ import threading
 from typing import Any, AsyncIterator, Optional
 
 from ...api import Irys, IrysConfig
+from ...matter.enums import BeliefState
 from ...rlm.state import InvestigationState, StepType, ThinkingStep
 from .base import UIBackend
 
@@ -194,7 +195,10 @@ class InProcessBackend(UIBackend):
     async def list_issues(self, matter_id: str) -> list[dict]:
         model = self._get_matter_model(matter_id)
         try:
-            return model.issues.get_open_issues()
+            # Use get_issue_coverage_report() — returns the coverage/proof shape
+            # expected by the Issues panel formatter (coverage_fraction, proof_status,
+            # supporting_count, attacking_count) rather than raw issue rows.
+            return model.get_issue_coverage_report()
         except Exception:
             return []
 
@@ -235,8 +239,15 @@ class InProcessBackend(UIBackend):
     ) -> dict:
         model = self._get_matter_model(matter_id)
         try:
-            model.correct_assertion(assertion_id, new_state, note=reason)
-            return {"status": "corrected", "assertion_id": assertion_id}
+            belief_state = BeliefState(new_state)
+        except ValueError:
+            return {"status": "error", "detail": f"Invalid belief state: {new_state!r}"}
+        try:
+            result = model.correct_assertion(assertion_id, belief_state, note=reason)
+            resp = {"status": "corrected", "assertion_id": assertion_id}
+            if getattr(result, "propagation_truncated", False):
+                resp["warning"] = "Belief revision truncated — proof state will refresh on next run"
+            return resp
         except Exception as exc:
             return {"status": "error", "detail": str(exc)}
 
