@@ -394,30 +394,36 @@ class BeliefRevisionEngine:
         # but still in the abandoned set before being cleared).
         # Never stored on the engine — avoids shared-state bleed across requests.
         unvisited: list[str] = list(dict.fromkeys(list(pending) + list(_occ_abandoned)))
-        truncated = bool(pending) or occ_exhausted_count > 0
-        if truncated:
+        # Drive truncated from unvisited rather than occ_exhausted_count: a node that
+        # was abandoned but later re-enqueued by another parent and successfully processed
+        # is removed from _occ_abandoned (discard above), so unvisited correctly reflects
+        # the actual remaining work.  occ_exhausted_count is kept for diagnostic messages
+        # but is NOT the right gating signal (r21 MEDIUM fix).
+        truncated = bool(unvisited)
+        if truncated or occ_exhausted_count > 0:
             _reasons = []
             if pending:
                 _reasons.append(f"work budget={_effective_max_work} reached with {len(pending)} nodes remaining")
-            if occ_exhausted_count:
-                _reasons.append(f"{occ_exhausted_count} node(s) abandoned after OCC retry cap ({_OCC_MAX_RETRIES})")
-            _log.warning(
-                "BeliefRevisionEngine: propagation incomplete — %s. "
-                "Downstream belief states may be stale.",
-                "; ".join(_reasons),
-            )
-            if run_id and self._ledger is not None:
-                try:
-                    self._ledger.append_event(
-                        run_id=run_id,
-                        event_type=LedgerEventType.SYSTEM_WARNING,
-                        summary=(
-                            f"Belief revision truncated: {'; '.join(_reasons)}. "
-                            "Downstream belief states may be stale."
-                        ),
-                    )
-                except Exception as exc:
-                    _log.warning("Failed to record truncation ledger event: %s", exc, exc_info=True)
+            if _occ_abandoned:
+                _reasons.append(f"{len(_occ_abandoned)} node(s) still abandoned after OCC retry cap ({_OCC_MAX_RETRIES})")
+            if _reasons:
+                _log.warning(
+                    "BeliefRevisionEngine: propagation incomplete — %s. "
+                    "Downstream belief states may be stale.",
+                    "; ".join(_reasons),
+                )
+                if run_id and self._ledger is not None:
+                    try:
+                        self._ledger.append_event(
+                            run_id=run_id,
+                            event_type=LedgerEventType.SYSTEM_WARNING,
+                            summary=(
+                                f"Belief revision truncated: {'; '.join(_reasons)}. "
+                                "Downstream belief states may be stale."
+                            ),
+                        )
+                    except Exception as exc:
+                        _log.warning("Failed to record truncation ledger event: %s", exc, exc_info=True)
 
         return results, truncated, unvisited
 
@@ -446,6 +452,13 @@ class BeliefRevisionEngine:
         empty or non-empty result list means convergence was reached.  In dense
         or cyclic graphs that hit this limit, raise MAX_WORK on the class before
         running the affected matter.
+
+        **Known architectural gap (r21 MEDIUM):** truncated/OCC-abandoned unvisited
+        nodes from this method are only retried on the correct_assertion() path via
+        _collect_unvisited.  Other callers (apply_revision, flush_revisions, trust-
+        override, quant-conflict) do not collect or requeue unvisited nodes — stale
+        downstream states from those paths are resolved on the next manual correction
+        or flush_revisions() call when the affected assertion shows up as a seed.
 
         _collect_unvisited: if provided, unvisited nodes from a truncated BFS
         are appended to this list so callers can retry locally without using
