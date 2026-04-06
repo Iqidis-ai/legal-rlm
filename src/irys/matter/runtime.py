@@ -506,16 +506,25 @@ class MatterRuntimeAdapter:
                         changed_object_id=result.assertion_id,
                     )
         # Delete the originally-drained correction rows from DB now that replay is
-        # complete. Newly-enqueued second-level truncated rows (different IDs)
-        # are left intact for recovery. This is delete-after-replay for crash safety
-        # (adv#029 SO-1 correctness fix r2).
-        self.model.delete_pending_propagation_db("correction", _correction_ids)
+        # complete. Filter out any IDs that were re-enqueued during replay (same-ID
+        # re-truncation edge case): those IDs are already back in _correction_pending
+        # in-memory, but their DB row was an INSERT OR IGNORE no-op, so the existing
+        # row is the only copy — deleting it would make a crash-after-delete unrecoverable.
+        # (adv#029 SO-1 correctness fix r2/r3).
+        _re_enqueued_correction = self.model.peek_correction_pending_ids()
+        _safe_to_delete_correction = [aid for aid in _correction_ids if aid not in _re_enqueued_correction]
+        self.model.delete_pending_propagation_db("correction", _safe_to_delete_correction)
 
         # Merge durable evidence-pending (nodes truncated by a prior flush, keyed by
         # originating (cause, run_id)) with current-request NEW_EVIDENCE seeds (r29–r33 fix).
         # Group by cause so each replay batch uses the correct RevisionCause (r31 fix).
         # Batch attribution events per cause name originating run_ids (r33 fix).
-        _evidence_carry: "dict[str, tuple[RevisionCause, str | None]]" = self.model.drain_evidence_pending()
+        # _durable_evidence_ids tracks which IDs were originally from the DB queue;
+        # current-run _pending_assertion_ids are never in DB so should not be in the
+        # delete set (adv#029 SO-1 correctness fix r3).
+        _durable_evidence_map: "dict[str, tuple[RevisionCause, str | None]]" = self.model.drain_evidence_pending()
+        _durable_evidence_ids = list(_durable_evidence_map)
+        _evidence_carry: "dict[str, tuple[RevisionCause, str | None]]" = dict(_durable_evidence_map)
         for aid in self._pending_assertion_ids:
             if aid not in _evidence_carry:
                 _evidence_carry[aid] = (RevisionCause.NEW_EVIDENCE, self.run_id)
@@ -563,11 +572,14 @@ class MatterRuntimeAdapter:
                                 changed_object_type="assertion",
                                 changed_object_id=result.assertion_id,
                             )
-        # Delete the originally-drained evidence rows from DB now that replay is
-        # complete. Newly-enqueued second-level truncated rows (different IDs)
-        # are left intact for recovery. delete-after-replay for crash safety
-        # (adv#029 SO-1 correctness fix r2).
-        self.model.delete_pending_propagation_db("evidence", list(_evidence_carry))
+        # Delete only the originally-drained durable evidence rows from DB, filtered
+        # to exclude any IDs that were re-enqueued during replay (same-ID re-truncation
+        # edge case).  Current-run _pending_assertion_ids were never in DB so they are
+        # not in _durable_evidence_ids and are not candidates for deletion.
+        # (adv#029 SO-1 correctness fix r3).
+        _re_enqueued_evidence = self.model.peek_evidence_pending_ids()
+        _safe_to_delete_evidence = [aid for aid in _durable_evidence_ids if aid not in _re_enqueued_evidence]
+        self.model.delete_pending_propagation_db("evidence", _safe_to_delete_evidence)
 
         # Proof_state recompute for all assertions revised in this flush — covers issues
         # linked to any corrected or re-evaluated assertion so that issue-level consumers

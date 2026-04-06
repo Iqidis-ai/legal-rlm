@@ -305,6 +305,16 @@ class MatterModel:
                     except Exception:
                         pass  # DB write failure does not block in-memory queue
 
+    def peek_correction_pending_ids(self) -> "set[str]":
+        """Return current in-memory correction pending keys WITHOUT draining (thread-safe).
+
+        Used by flush_revisions() to filter the delete set: IDs that were re-enqueued
+        during replay (same-ID re-truncation edge case) must not be deleted from DB since
+        their newly-written row would otherwise be lost on a crash before the next flush.
+        """
+        with self._correction_pending_lock:
+            return set(self._correction_pending)
+
     def drain_correction_pending(self) -> "dict[str, str | None]":
         """Return and clear the durable correction retry queue (thread-safe).
 
@@ -352,6 +362,15 @@ class MatterModel:
                         )
                     except Exception:
                         pass  # DB write failure does not block in-memory queue
+
+    def peek_evidence_pending_ids(self) -> "set[str]":
+        """Return current in-memory evidence pending keys WITHOUT draining (thread-safe).
+
+        Used by flush_revisions() to exclude same-ID re-truncated nodes from the DB delete
+        set — parallel to peek_correction_pending_ids() (adv#029 SO-1 correctness fix r3).
+        """
+        with self._evidence_pending_lock:
+            return set(self._evidence_pending)
 
     def drain_evidence_pending(self) -> "dict[str, tuple[RevisionCause, str | None]]":
         """Return and clear truncated evidence assertion IDs → (cause, run_id) (thread-safe).
