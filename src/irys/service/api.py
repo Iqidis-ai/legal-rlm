@@ -728,7 +728,16 @@ async def _run_upload_investigation(
             job.completed_at - job.created_at
         ).total_seconds()
 
-        # Upload jobs are not investigation runs; no run_id to attribute.
+        # Use exact state._run_id set by engine (same pattern as other async handlers).
+        # Upload jobs with a wired matter model DO create a run; recent_runs(1) was removed
+        # to avoid concurrent-run race, so use state._run_id directly (r39 fix).
+        job.run_id = getattr(result.state, "_run_id", None)
+        job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
+        if job.matter_id and job.matter_id in _active_matter_models:
+            try:
+                job.open_gaps = _active_matter_models[job.matter_id].gaps.open_gaps(min_materiality=0.3)
+            except Exception:
+                pass
         logger.info(f"Upload job {job_id} completed in {job.duration_seconds:.1f}s (mode={'local' if is_local else 's3'})")
 
         # Call webhook if provided
