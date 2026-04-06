@@ -1,13 +1,18 @@
-**Findings**
-Session verified all four specified fixes are present in current code via rg searches and file reads:
+FAIL
 
-1. app.py `hasattr(backend, "_get_irys")` type guard at line 303 ✓
-2. in_process.py `redirect_run()` validation: get_run(), status=='running', get_issue() at lines 259-264 ✓
-3. base.py `get_steering_surface()` and `get_quant_summary()` abstract methods ✓
-4. in_process.py + http.py both implement `get_steering_surface()` and `get_quant_summary()` ✓
+1. HIGH: Issue IDs truncated to 12 chars in Issues table; backend requires exact ID for redirect.
+   do_redirect() showed success even on error (pre-8c05d21).
+2. MEDIUM: Assertion IDs same truncation problem.
+3. MEDIUM: get_steering_surface() + get_quant_summary() in InProcessBackend still had try/except (pre-8c05d21).
+4. MEDIUM: HttpBackend called /steering and /quant/summary — routes that don't exist in service.
+   Service has /reconciliation and /damages-waterfall separately.
 
-Session read full in_process.py including redirect_run(), correct_assertion(), all panel methods — no new HIGH or MEDIUM issues found.
+**Verified fixes from prior rounds:**
+- redirect_run() validation in in_process.py ✓
+- UIBackend abstract get_steering_surface/get_quant_summary ✓
 
-Session ended before producing formal verdict due to PowerShell shell policy. No new issues raised.
+**All four findings fixed:**
+- Commit 8c05d21: do_redirect() error check + panel method exception propagation
+- Commit 15e8c9c: full IDs in tables + HttpBackend correct routes + /steering-surface endpoint added to service
 
-**Status**: PASS — all r6/r7 fixes verified; no new HIGH or MEDIUM correctness issues found.
+Static review only; no tests run by auditor.
