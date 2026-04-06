@@ -278,6 +278,7 @@ class BeliefRevisionEngine:
         total_work: int = 0
         occ_conflict_count: int = 0
         occ_exhausted_count: int = 0
+        _occ_abandoned: list[str] = []  # nodes dropped after OCC retry cap; included in unvisited
         # Per-node OCC retry budget: when a node OCC-aborts, re-enqueue it (not
         # its dependents) for one more attempt with the latest committed state.
         # Cap retries to prevent BFS explosion under sustained concurrent contention.
@@ -319,6 +320,7 @@ class BeliefRevisionEngine:
                     # Retry cap exhausted — node abandoned; subtree and any pending
                     # seed fan-out for this node may be stale.
                     occ_exhausted_count += 1
+                    _occ_abandoned.append(assertion_id)  # surface for caller retry
                 continue
 
             # Non-aborted: consume seedness now.
@@ -370,9 +372,12 @@ class BeliefRevisionEngine:
                 except Exception as exc:
                     _log.warning("Failed to record OCC ledger event: %s", exc, exc_info=True)
 
-        # Collect unvisited nodes to return to callers for local retry (r18 HIGH fix).
+        # Collect unvisited nodes to return to callers for local retry (r18/r19 HIGH fix).
+        # Includes both budget-truncated frontier nodes AND OCC-abandoned nodes, so
+        # correct_assertion() can retry them and propagation_truncated is only cleared
+        # when ALL sources of incompleteness are drained.
         # Never stored on the engine — avoids shared-state bleed across requests.
-        unvisited: list[str] = list(pending)
+        unvisited: list[str] = list(pending) + _occ_abandoned
         truncated = bool(pending) or occ_exhausted_count > 0
         if truncated:
             _reasons = []

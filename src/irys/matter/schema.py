@@ -1501,15 +1501,21 @@ def _migration_v39(conn) -> None:
     directly without a table lookup.
     """
     # Wrap DROP+CREATE in an explicit transaction so there is no window where the
-    # old index is gone but the new one does not yet exist.  SQLite DDL is
-    # transactional, so both statements commit atomically or neither does.
-    with conn:
+    # old index is gone but the new one does not yet exist.  Use explicit BEGIN/COMMIT
+    # because the connection uses isolation_level=None (autocommit), so `with conn:`
+    # does not start a transaction in that mode.
+    conn.execute("BEGIN")
+    try:
         conn.execute("DROP INDEX IF EXISTS ix_assertion_revision_lock")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS ix_assertion_revision_lock"
             " ON assertion_revision(assertion_id, new_value_json, created_at DESC, actor_kind)"
             " WHERE changed_field = 'belief_state'"
         )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
 
 
 # Ordered migrations: (target_version, callable).

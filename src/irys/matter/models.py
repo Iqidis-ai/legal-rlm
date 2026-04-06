@@ -94,7 +94,10 @@ class RevisionResult:
     cause: RevisionCause
     propagated_to: list[str] = field(default_factory=list)
     propagation_truncated: bool = False  # True when BFS hit MAX_WORK before full convergence
-    truncation_pending: list[str] = field(default_factory=list)  # Unvisited nodes from truncated BFS
+    # Internal retry frontier — NOT serialized to API responses.
+    # correct_assertion() uses this for inline retry; after the retry loop, any
+    # remaining nodes are surfaced via propagation_truncated=True to the caller.
+    truncation_pending: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
