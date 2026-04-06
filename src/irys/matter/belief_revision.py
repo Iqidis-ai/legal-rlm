@@ -24,9 +24,9 @@ from typing import TYPE_CHECKING, Optional
 _log = logging.getLogger(__name__)
 
 from .db import SQLiteMatterDB
-from .enums import BeliefState, LedgerEventType, RevisionCause, SOURCE_TRUST_WEIGHTS
+from .enums import BeliefState, LedgerEventType, RevisionCause, SOURCE_TRUST_WEIGHTS, SpeechAct
 from .models import RevisionResult
-from .graph import AssertionStore
+from .graph import AssertionStore, _initial_belief_state
 
 if TYPE_CHECKING:  # pragma: no cover
     from .reasoning import ReasoningLedgerStore
@@ -485,60 +485,35 @@ class BeliefRevisionEngine:
 
             # Guard 2: derive speech-act baseline state for the computation.
             # Use the most authoritative speech_act across ALL occurrences so a
-            # proposition first seen as ALLEGED and later observed as OPERATIVE (triggering
-            # occurrence_upgrade on the canonical row) recovers to OPERATIVE, not ALLEGED.
-            # The priority ordering mirrors _initial_belief_state() confidence values:
-            # operative(0.8) > admitted/stipulated(0.8) > performed/paid(0.8) > inferred(0.6)
-            # > alleged/argued(0.3) > everything else (0.5/unknown).
-            # Inlined from _initial_belief_state() in graph.py to avoid circular import.
-            # (r15 MEDIUM fix; priority rationale documented in r16 MEDIUM #2)
+            # proposition first seen as ALLEGED and later observed as OPERATIVE
+            # recovers to OPERATIVE, not ALLEGED. (r15 MEDIUM fix)
             #
-            # Priority ordering is by LEGAL INFORMATIVENESS, not starting confidence:
+            # Priority is by LEGAL INFORMATIVENESS (not confidence):
             # operative > admitted/stipulated > performed/paid > waived/terminated/amended
-            # > inferred > alleged/argued > ELSE (unclassified: extracted, denied, etc.)
+            # > inferred > alleged/argued > unclassified (extracted, denied, etc.)
+            # alleged/argued intentionally rank above unclassified despite lower confidence
+            # because an explicit speech-act classification is more informative.
             #
-            # Note: alleged/argued (priority 3) intentionally ranks above the unclassified
-            # default (priority 0). An explicit allegation is more semantically informative
-            # than an unclassified EXTRACTED occurrence, even though its starting confidence
-            # (0.3) is lower than the default UNKNOWN (0.5). This is NOT a bug — the
-            # distinction is informativeness vs. reliability. (r16 MEDIUM #2 clarification)
-            _occ_row = self.db.execute(
-                """SELECT speech_act FROM assertion_occurrence
-                   WHERE assertion_id=?
-                   ORDER BY CASE speech_act
-                       WHEN 'operative'   THEN 9
-                       WHEN 'admitted'    THEN 8
-                       WHEN 'stipulated'  THEN 8
-                       WHEN 'performed'   THEN 7
-                       WHEN 'paid'        THEN 7
-                       WHEN 'waived'      THEN 6
-                       WHEN 'terminated'  THEN 6
-                       WHEN 'amended'     THEN 6
-                       WHEN 'inferred'    THEN 5
-                       WHEN 'alleged'     THEN 3
-                       WHEN 'argued'      THEN 3
-                       ELSE 0 END DESC
-                   LIMIT 1""",
+            # _initial_belief_state() (graph.py) is the canonical state/confidence mapping.
+            # No circular import: belief_revision.py already imports from graph.py;
+            # graph.py imports nothing from belief_revision.py. (Tier 2 r3 MEDIUM fix)
+            _RECOVERY_PRIORITY = {
+                "operative": 9, "admitted": 8, "stipulated": 8,
+                "performed": 7, "paid": 7,
+                "waived": 6, "terminated": 6, "amended": 6,
+                "inferred": 5, "alleged": 3, "argued": 3,
+            }
+            _occ_rows = self.db.execute(
+                "SELECT speech_act FROM assertion_occurrence WHERE assertion_id=?",
                 (assertion_id,),
-            ).fetchone()
-            _sa = _occ_row["speech_act"] if _occ_row else None
-            if _sa == "operative":
-                _compute_state, _compute_conf = BeliefState.OPERATIVE, 0.8
-            elif _sa in ("admitted", "stipulated"):
-                _compute_state, _compute_conf = BeliefState.ADMITTED, 0.8
-            elif _sa in ("performed", "paid"):
-                _compute_state, _compute_conf = BeliefState.PERFORMED, 0.8
-            elif _sa == "inferred":
-                _compute_state, _compute_conf = BeliefState.INFERRED, 0.6
-            elif _sa == "alleged":
-                _compute_state, _compute_conf = BeliefState.ALLEGED, 0.3
-            elif _sa == "argued":
-                _compute_state, _compute_conf = BeliefState.ARGUED, 0.3
-            elif _sa in ("waived", "terminated", "amended"):
-                _compute_state, _compute_conf = BeliefState.OPERATIVE, 0.7
-            else:
-                # Matches _initial_belief_state() default (UNKNOWN, 0.5) for
-                # EXTRACTED, DENIED, ORDERED, etc. (r16 LOW fix)
+            ).fetchall()
+            _best_sa_str: "str | None" = max(
+                (_occ_rows or [{"speech_act": None}]),
+                key=lambda r: _RECOVERY_PRIORITY.get(r["speech_act"] or "", 0),
+            )["speech_act"]
+            try:
+                _compute_state, _compute_conf = _initial_belief_state(SpeechAct(_best_sa_str))
+            except (ValueError, TypeError):
                 _compute_state, _compute_conf = BeliefState.UNKNOWN, 0.5
 
         new_state, new_confidence = _compute_belief_state(
