@@ -1333,6 +1333,9 @@ async def get_matter_runs(matter_id: str, limit: int = 10):
 async def get_run_events(matter_id: str, run_id: str):
     """Return the full reasoning ledger event sequence for a run."""
     model = _get_matter_model_or_404(matter_id)
+    run = model.ledger.get_run(run_id)
+    if run is None or run.matter_id != model.matter_id:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in this matter")
     return model.ledger.get_events(run_id)
 
 
@@ -1395,8 +1398,8 @@ async def redirect_investigation(matter_id: str, run_id: str, request: RedirectR
     """
     model = _get_matter_model_or_404(matter_id)
     run = model.ledger.get_run(run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+    if run is None or run.matter_id != model.matter_id:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in this matter")
     if run.status != "running":
         raise HTTPException(status_code=409, detail=f"Run is not active (status: {run.status})")
     if run.objective in ("manual_flush", "background_flush"):
@@ -1660,13 +1663,13 @@ async def get_matter_assertions(matter_id: str, limit: int = 50, offset: int = 0
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
 )
-async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 50):
+async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 50, offset: int = 0):
     """Return field-level revision history for an assertion (SO-2 audit trail).
 
     Rows are ordered newest-first. ``limit`` is per-row (not per batch), capped
-    at 500. If the result is truncated, ``truncated=true`` is set in the response
-    so the caller knows there may be more rows (including rows completing the last
-    partial batch).
+    at 500. Use ``offset`` for pagination. If the result is truncated,
+    ``truncated=true`` is set in the response so the caller knows there are more
+    rows available via a higher ``offset``.
 
     Pre-schema-v34 matters will have empty history by design — no backfill is
     possible. The ``history_note`` field describes this.
@@ -1674,6 +1677,7 @@ async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 
     import json as _json
 
     limit = max(1, min(limit, 500))
+    offset = max(0, offset)
     model = _get_matter_model_or_404(matter_id)
     # Verify assertion belongs to this matter (assertion_revision has no matter_id col)
     row = model.db.execute(
@@ -1691,8 +1695,8 @@ async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 
            FROM assertion_revision ar
            WHERE ar.assertion_id=?
            ORDER BY ar.created_at DESC, ar.batch_id DESC
-           LIMIT ?""",
-        (assertion_id, limit + 1),
+           LIMIT ? OFFSET ?""",
+        (assertion_id, limit + 1, offset),
     ).fetchall()
     truncated = len(rev_rows) > limit
     rev_rows = rev_rows[:limit]
@@ -1724,8 +1728,10 @@ async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 
     return {
         "assertion_id": assertion_id,
         "history_note": "History records revisions since schema v34. Pre-v34 revisions are not available.",
-        "total": len(history),
+        "count": len(history),
+        "offset": offset,
         "truncated": truncated,
+        "next_offset": offset + len(history) if truncated else None,
         "history": history,
     }
 
@@ -2474,17 +2480,17 @@ async def stream_run_events(matter_id: str, run_id: str, after_seq: int = -1, re
         poll_interval = 0.5  # seconds between DB polls
         terminal_statuses = {"completed", "failed", "interrupted"}
 
-        # Validate run_id exists before entering the poll loop to prevent
-        # infinite polling on bad/stale run IDs (MEDIUM 4 fix).
+        # Validate run_id exists AND belongs to this matter before entering the poll loop.
         try:
             run_check = model.db.execute(
-                "SELECT id FROM run_session WHERE id=?", (run_id,)
+                "SELECT id FROM run_session WHERE id=? AND matter_id=?",
+                (run_id, model.matter_id),
             ).fetchone()
         except Exception as exc:
             yield f"data: {_json.dumps({'error': str(exc)})}\n\n"
             return
         if run_check is None:
-            yield f"data: {_json.dumps({'error': f'run_id {run_id!r} not found'})}\n\n"
+            yield f"data: {_json.dumps({'error': f'run_id {run_id!r} not found in this matter'})}\n\n"
             return
 
         while True:
@@ -2549,8 +2555,8 @@ async def stop_run(matter_id: str, run_id: str):
     """
     model = _get_matter_model_or_404(matter_id)
     run = model.ledger.get_run(run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+    if run is None or run.matter_id != model.matter_id:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in this matter")
     if run.status not in ("running", "RUNNING"):
         raise HTTPException(status_code=409, detail=f"Run '{run_id}' is not running (status={run.status})")
     if run.objective in ("manual_flush", "background_flush"):
