@@ -341,7 +341,11 @@ class AppState:
         self.update_queue = call_queue
         self.final_output = ""
         self.current_run_id = None
-        self._stop_event.clear()  # reset stop signal for new investigation
+        # Create a fresh per-call stop event so that stopping one investigation
+        # cannot interfere with a subsequent one (shared-event reuse race).
+        # stop_investigation() always sets self._stop_event, which after this
+        # line points to THIS call's event — not a previous call's.
+        self._stop_event = threading.Event()
 
         if not repo_path or not __import__("pathlib").Path(repo_path).exists():
             yield ("", "", "", "❌ Invalid repository path", "")
@@ -384,6 +388,7 @@ class AppState:
 
                 elif update_type == "complete":
                     self.is_running = False
+                    self.current_run_id = None  # no active run after completion
                     state = data
                     elapsed = time.time() - start_time
                     summary = state.get_summary()
@@ -443,7 +448,8 @@ class AppState:
         the DB directly for the most recent running run on this matter.
         """
         self.is_running = False
-        self._stop_event.set()  # signal early-stop before run_session exists
+        self._stop_event.set()   # signal early-stop before run_session exists
+        self.current_run_id = None  # no active run after stop
         if self._irys_ref is not None:
             try:
                 engine = self._irys_ref._engine
@@ -719,16 +725,25 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 correction_result = gr.Textbox(label="Result", interactive=False)
 
                 def _correct_and_refresh(mid, aid, new_state_str, reason):
-                    """Apply correction and refresh assertions + overview panels (SO-2)."""
+                    """Apply correction and refresh assertions + issues + overview (SO-2).
+
+                    Belief revision after a correction can change proof states (which
+                    affects issue coverage), so all three panels must refresh.
+                    """
                     result_text = state.do_correct_assertion(mid, aid, new_state_str, reason)
                     if result_text.startswith("✅"):
-                        return result_text, state.load_assertions(mid), state.load_overview(mid)
-                    return result_text, gr.update(), gr.update()
+                        return (
+                            result_text,
+                            state.load_assertions(mid),
+                            state.load_issues(mid),
+                            state.load_overview(mid),
+                        )
+                    return result_text, gr.update(), gr.update(), gr.update()
 
                 correction_btn.click(
                     fn=_correct_and_refresh,
                     inputs=[matter_id_box, correction_assertion_id, correction_new_state, correction_reason],
-                    outputs=[correction_result, assertions_md, overview_md],
+                    outputs=[correction_result, assertions_md, issues_md, overview_md],
                 )
 
             # ============================================================

@@ -1,14 +1,14 @@
-PASS — heapq change verified correct; no new issues in in_process.py.
+PASS
 
-`import heapq` present at line 9. `heapq.nsmallest(5, coverage_report, key=...)` at line
-104-107 is semantically equivalent to `sorted(coverage_report, key=...)[:5]` — both return
-the 5 smallest elements by coverage_fraction. The key lambda `float(r.get("coverage_fraction", 0.0))`
-is identical to the old code. Result is a list of ≤5 dicts, same type as before. ✓
+Verified with `rg` in [in_process.py:9](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/backends/in_process.py#L9) and [in_process.py:104](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/backends/in_process.py#L104). The change is exactly:
 
-Full file scan (via rg): no new correctness issues found relative to r11 PASS baseline.
-All previously noted concerns (linear _get_matter_model scan, stop_event handling,
-_correct_and_refresh wrapper) unchanged and still correct.
+- `import heapq`
+- `heapq.nsmallest(5, coverage_report, key=lambda r: float(r.get("coverage_fraction", 0.0)))`
 
-Note: Codex CLI session (019d61ef-32ab-7e80-a376-3c73df026f52) verified the code via rg
-but aborted before writing the -o output file (PowerShell constrained language mode).
-Review written from session transcript.
+This is correctness-preserving relative to `sorted(coverage_report, key=...)[:5]`:
+- The `key=` function is identical.
+- `heapq.nsmallest(5, ...)` returns the same 5 lowest-key items in ascending order as `sorted(... )[:5]`.
+- Upstream, `coverage_fraction` is a bounded numeric value from [_coverage_fraction()`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L587) and the report is already sorted ascending in [matter.py:737](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L737).
+- The service overview path still uses the original `sorted(... )[:5]` with the same key in [api.py:2161](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L2161), which matches this backend semantically.
+
+Quick full-file scan of [in_process.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/backends/in_process.py) found no new correctness issues not previously flagged.
