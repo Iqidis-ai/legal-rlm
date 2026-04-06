@@ -218,6 +218,7 @@ class BeliefRevisionEngine:
         in_queue: set[str] = set(_deduped_seeds)
         total_work: int = 0
         occ_conflict_count: int = 0
+        occ_exhausted_count: int = 0
         # Per-node OCC retry budget: when a node OCC-aborts, re-enqueue it (not
         # its dependents) for one more attempt with the latest committed state.
         # Cap retries to prevent BFS explosion under sustained concurrent contention.
@@ -228,7 +229,8 @@ class BeliefRevisionEngine:
             assertion_id = pending.popleft()
             in_queue.discard(assertion_id)
             is_seed = assertion_id in seeds_remaining
-            seeds_remaining.discard(assertion_id)
+            # Do NOT discard from seeds_remaining here; only consume seedness
+            # after a non-aborted pass so OCC retries preserve the seed fan-out.
             total_work += 1
 
             result, occ_aborted = self._revise_one(assertion_id, cause, run_id, note, override_cache)
@@ -238,12 +240,20 @@ class BeliefRevisionEngine:
                 # Do NOT enqueue dependents here: we don't know X's new committed state
                 # yet, so pre-emptively fanning out would inflate BFS work.  Dependents
                 # will be enqueued after X is successfully processed.
+                # Do NOT discard from seeds_remaining: seedness must survive OCC retries.
                 retries = _occ_retries.get(assertion_id, 0) + 1
                 _occ_retries[assertion_id] = retries
                 if retries <= _OCC_MAX_RETRIES and assertion_id not in in_queue:
                     in_queue.add(assertion_id)
                     pending.append(assertion_id)
+                else:
+                    # Retry cap exhausted — node abandoned; subtree and any pending
+                    # seed fan-out for this node may be stale.
+                    occ_exhausted_count += 1
                 continue
+
+            # Non-aborted: consume seedness now.
+            seeds_remaining.discard(assertion_id)
 
             if result is not None:
                 results.append(result)
@@ -254,6 +264,14 @@ class BeliefRevisionEngine:
                     if d not in in_queue:
                         in_queue.add(d)
                         pending.append(d)
+
+        if occ_exhausted_count:
+            _log.warning(
+                "BeliefRevisionEngine: %d node(s) abandoned after %d OCC retries — "
+                "those subtrees may be stale; a follow-up propagation pass is needed.",
+                occ_exhausted_count,
+                _OCC_MAX_RETRIES,
+            )
 
         if occ_conflict_count:
             _log.warning(
@@ -271,13 +289,19 @@ class BeliefRevisionEngine:
                         summary=(
                             f"Belief revision: {occ_conflict_count} OCC conflict(s) — "
                             "concurrent writes detected during BFS; conflicted nodes "
-                            f"re-enqueued for retry (cap={_OCC_MAX_RETRIES})."
+                            f"re-enqueued for retry (cap={_OCC_MAX_RETRIES})"
+                            + (
+                                f"; {occ_exhausted_count} node(s) abandoned after "
+                                "retry cap exhaustion — subtrees may be stale"
+                                if occ_exhausted_count else ""
+                            )
+                            + "."
                         ),
                     )
                 except Exception as exc:
                     _log.warning("Failed to record OCC ledger event: %s", exc, exc_info=True)
 
-        truncated = bool(pending)
+        truncated = bool(pending) or occ_exhausted_count > 0
         if truncated:
             _log.warning(
                 "BeliefRevisionEngine.apply() reached MAX_WORK=%d; %d nodes remain "
