@@ -303,13 +303,15 @@ class BeliefRevisionEngine:
 
         truncated = bool(pending) or occ_exhausted_count > 0
         if truncated:
+            _reasons = []
+            if pending:
+                _reasons.append(f"MAX_WORK={self.MAX_WORK} reached with {len(pending)} nodes remaining")
+            if occ_exhausted_count:
+                _reasons.append(f"{occ_exhausted_count} node(s) abandoned after OCC retry cap ({_OCC_MAX_RETRIES})")
             _log.warning(
-                "BeliefRevisionEngine.apply() reached MAX_WORK=%d; %d nodes remain "
-                "unprocessed — propagation may be incomplete in dense/cyclic graphs. "
-                "Consider raising MAX_WORK if this matter is known to have deep "
-                "dependency chains.",
-                self.MAX_WORK,
-                len(pending),
+                "BeliefRevisionEngine: propagation incomplete — %s. "
+                "Downstream belief states may be stale.",
+                "; ".join(_reasons),
             )
             if run_id and self._ledger is not None:
                 try:
@@ -317,9 +319,8 @@ class BeliefRevisionEngine:
                         run_id=run_id,
                         event_type=LedgerEventType.SYSTEM_WARNING,
                         summary=(
-                            f"Belief revision truncated at MAX_WORK={self.MAX_WORK}; "
-                            f"{len(pending)} nodes unprocessed — downstream belief states "
-                            "may be stale. Revision was partial."
+                            f"Belief revision truncated: {'; '.join(_reasons)}. "
+                            "Downstream belief states may be stale."
                         ),
                     )
                 except Exception as exc:
