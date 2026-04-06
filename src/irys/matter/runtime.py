@@ -458,6 +458,9 @@ class MatterRuntimeAdapter:
         # traceable (r30 MEDIUM provenance fix). Second-level truncation re-enqueues for
         # the next flush_revisions() call (r28 MEDIUM fix). Count tracks unique assertion
         # IDs to handle fixpoint re-visits (r28 MEDIUM fix).
+        # Recover any rows stranded in DB by a previous failed delete (adv#029 SO-1 r6).
+        # This is a no-op on the normal path (all DB rows are in-memory from enqueue).
+        self.model.reload_pending_from_db()
         _seed_batch = max(1, self.model.belief.MAX_WORK // 2)
         _revised_ids: set[str] = set()
         _correction_map, _correction_db_ids = self.model.drain_correction_pending()
