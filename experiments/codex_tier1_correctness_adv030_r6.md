@@ -1,0 +1,12 @@
+NOT CLEAN.
+
+1. High: run-scoped stop/redirect still trust raw `run_id` across matters and objectives. [api.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1390), [api.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L2432), [reasoning.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L201), [reasoning.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L213), [reasoning.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L246). Those paths do `get_run(run_id)` and then `request_stop` / `request_redirect`, but the ledger store is keyed only by `id`; there is no `run.matter_id == model.matter_id` check and no rejection of `objective IN ('manual_flush','background_flush')`. An explicit `run_id` can still stop or redirect the wrong matter’s run, including a utility flush run.
+
+2. High: `set_trust_override()` still lacks the model-level `run_id` hardening that `correct_assertion()` now has. [api.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1457), [matter.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L620). The API filters `run_id`, but the model blindly forwards any supplied `run_id` into `apply_revision()` / `enqueue_evidence_pending()`. A direct caller, in-process caller, or stale post-validation race can still attach trust-override provenance to a utility or stale run.
+
+Direct answers:
+1. Yes. `1222c22` closes the `correct_assertion` in-process/direct-model bypass. The new guard in [matter.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L499) rejects utility objectives before propagation, so [in_process.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/backends/in_process.py#L218) can no longer misattribute to `manual_flush` / `background_flush`.
+2. No production `correct_assertion` caller I found can still successfully use a utility `run_id`. The REST path filters at [api.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1825), and the in-process path is now covered by the model guard. Direct model callers can still pass one, but it gets cleared.
+3. The full `adv#030` r2-r6 chain is still NOT CLEAN for findings 1 and 2 above.
+
+Static review only; I did not run tests in this sandbox.

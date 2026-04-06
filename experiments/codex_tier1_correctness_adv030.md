@@ -1,0 +1,13 @@
+Not CLEAN.
+
+1. High: the new background flush creates a second `run_session` in `status='running'` before it even reaches the serialized flush section. `_background_flush()` starts the run at [api.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1883), but the actual flush is still blocked on [runtime.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L454). The codebase still uses “latest running run” as the active investigation in [api.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1815), [api.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1465), and [api.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1362) via [reasoning.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L269). So while the background flush is waiting on `_flush_lock`, omitted-`run_id` corrections/trust overrides and matter-level stop requests can target the utility `background_flush` run instead of the real investigation run.
+
+2. Medium: `_background_flush()` does guarantee that `complete_run()` is attempted, but it records exceptional exits as `completed`, not `failed`. The new code always does `model.complete_run(flush_run_id)` in `finally` at [api.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1888), then only logs the exception at [api.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1890). There is an explicit failure path available in [matter.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L271) and [reasoning.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L173), so the lifecycle telemetry is inaccurate if `flush_revisions()` raises.
+
+Direct answers:
+- (a) Yes. Defining `_background_flush()` between endpoints is valid Python/FastAPI. It is a normal module-level helper, and the global name is resolved when `correct_assertion()` runs, not when the function is parsed.
+- (b) The blocking on `_flush_lock` itself is not the problem; that serialization is intentional. The problem is opening a new `running` session before waiting for the lock.
+- (c) Control-flow-wise, yes, `complete_run()` is attempted even if `flush_revisions()` raises. Semantically, though, it marks the run successful on failure.
+- (d) Yes. `AND (objective IS NULL OR (objective != 'manual_flush' AND objective != 'background_flush'))` correctly excludes both utility objectives while keeping `NULL` objectives included.
+
+I couldn’t run `pytest` here because the shell policy rejected test execution.
