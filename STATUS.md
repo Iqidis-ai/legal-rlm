@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 adv#030 r9 CLEAN + Perf CLEAN — utility run isolation: lock-before-start_run, fail_run on exception, utility-run filter across all stop/redirect/correct/trust selectors at REST + in-process + ledger layers)
+Last updated: 2026-04-06 (Tier 1 post-adv#030 CLEAN — in-process background flush; event+loop coalescing for background flush; 733 tests passing)
 Branch: SebihSpecial
 
 ---
