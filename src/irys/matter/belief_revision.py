@@ -278,7 +278,14 @@ class BeliefRevisionEngine:
         total_work: int = 0
         occ_conflict_count: int = 0
         occ_exhausted_count: int = 0
-        _occ_abandoned: list[str] = []  # nodes dropped after OCC retry cap; included in unvisited
+        # Nodes dropped after OCC retry cap — included in unvisited for caller retry.
+        # Set (not list) so successfully-retried nodes can be removed without duplicates.
+        _occ_abandoned: set[str] = set()
+        # Nodes currently enqueued due to OCC abort (pending a re-attempt).
+        # Used to force dependent fan-out even if the retry produces no-op, because a
+        # concurrent writer may have changed the committed state since dependents last
+        # computed — without this, their subtrees stay stale (r20 HIGH fix).
+        _occ_retry_nodes: set[str] = set()
         # Per-node OCC retry budget: when a node OCC-aborts, re-enqueue it (not
         # its dependents) for one more attempt with the latest committed state.
         # Cap retries to prevent BFS explosion under sustained concurrent contention.
@@ -316,21 +323,30 @@ class BeliefRevisionEngine:
                 if retries <= _OCC_MAX_RETRIES and assertion_id not in in_queue:
                     in_queue.add(assertion_id)
                     pending.append(assertion_id)
+                    _occ_retry_nodes.add(assertion_id)  # track for forced fan-out on retry
                 else:
                     # Retry cap exhausted — node abandoned; subtree and any pending
                     # seed fan-out for this node may be stale.
                     occ_exhausted_count += 1
-                    _occ_abandoned.append(assertion_id)  # surface for caller retry
+                    _occ_abandoned.add(assertion_id)  # surface for caller retry
                 continue
 
-            # Non-aborted: consume seedness now.
+            # Non-aborted: consume seedness and OCC bookkeeping.
             seeds_remaining.discard(assertion_id)
+            _occ_abandoned.discard(assertion_id)  # succeeded; remove from abandoned
+
+            # Was this a re-attempt of an OCC-aborted node?  A concurrent writer may
+            # have committed a different state to this node since its dependents last
+            # computed, so force dependent fan-out regardless of whether our recomputed
+            # result produced a state change (r20 HIGH fix).
+            is_occ_retry = assertion_id in _occ_retry_nodes
+            _occ_retry_nodes.discard(assertion_id)
 
             if result is not None:
                 results.append(result)
 
-            # Enqueue dependents when state changed or this is an unconditional seed.
-            if result is not None or is_seed:
+            # Enqueue dependents when state changed, unconditional seed, or OCC-retried.
+            if result is not None or is_seed or is_occ_retry:
                 for d in self.assertion_store.get_dependents(assertion_id):
                     if d not in in_queue:
                         in_queue.add(d)
@@ -372,12 +388,12 @@ class BeliefRevisionEngine:
                 except Exception as exc:
                     _log.warning("Failed to record OCC ledger event: %s", exc, exc_info=True)
 
-        # Collect unvisited nodes to return to callers for local retry (r18/r19 HIGH fix).
-        # Includes both budget-truncated frontier nodes AND OCC-abandoned nodes, so
-        # correct_assertion() can retry them and propagation_truncated is only cleared
-        # when ALL sources of incompleteness are drained.
+        # Collect unvisited nodes to return to callers for local retry (r18/r19/r20 fix).
+        # Union of budget-truncated frontier + OCC-abandoned nodes; deduplicated via
+        # dict.fromkeys (a node can appear in both if abandoned then re-enqueued by a parent
+        # but still in the abandoned set before being cleared).
         # Never stored on the engine — avoids shared-state bleed across requests.
-        unvisited: list[str] = list(pending) + _occ_abandoned
+        unvisited: list[str] = list(dict.fromkeys(list(pending) + list(_occ_abandoned)))
         truncated = bool(pending) or occ_exhausted_count > 0
         if truncated:
             _reasons = []

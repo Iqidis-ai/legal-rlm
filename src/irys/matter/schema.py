@@ -1500,11 +1500,10 @@ def _migration_v39(conn) -> None:
     created_at DESC makes the index covering: the seek+sort returns actor_kind
     directly without a table lookup.
     """
-    # Wrap DROP+CREATE in an explicit transaction so there is no window where the
-    # old index is gone but the new one does not yet exist.  Use explicit BEGIN/COMMIT
-    # because the connection uses isolation_level=None (autocommit), so `with conn:`
-    # does not start a transaction in that mode.
-    conn.execute("BEGIN")
+    # Wrap DROP+CREATE atomically using a SAVEPOINT so this works in both autocommit
+    # mode (isolation_level=None) and when apply_schema() is called inside an outer
+    # transaction.  SQLite cannot nest BEGIN, but SAVEPOINT/RELEASE is always safe.
+    conn.execute("SAVEPOINT ix_rebuild_v39")
     try:
         conn.execute("DROP INDEX IF EXISTS ix_assertion_revision_lock")
         conn.execute(
@@ -1512,9 +1511,10 @@ def _migration_v39(conn) -> None:
             " ON assertion_revision(assertion_id, new_value_json, created_at DESC, actor_kind)"
             " WHERE changed_field = 'belief_state'"
         )
-        conn.execute("COMMIT")
+        conn.execute("RELEASE ix_rebuild_v39")
     except Exception:
-        conn.execute("ROLLBACK")
+        conn.execute("ROLLBACK TO ix_rebuild_v39")
+        conn.execute("RELEASE ix_rebuild_v39")
         raise
 
 
