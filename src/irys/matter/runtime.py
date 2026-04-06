@@ -451,26 +451,38 @@ class MatterRuntimeAdapter:
         # Processed separately from new-evidence pending so USER_CORRECTION provenance is
         # preserved in revision rows — mixing them would replay corrections as NEW_EVIDENCE
         # and corrupt the audit trail (r25 MEDIUM fix).
+        # Results counted and ledger-logged alongside new-evidence revisions (r26 MEDIUM fix).
+        _seed_batch = max(1, self.model.belief.MAX_WORK // 2)
+        total_revised = 0
         _correction_pending = self.model.drain_correction_pending()
-        if _correction_pending:
-            _seed_batch = max(1, self.model.belief.MAX_WORK // 2)
-            for i in range(0, len(_correction_pending), _seed_batch):
-                _batch = _correction_pending[i : i + _seed_batch]
-                self.model.apply_revision(
-                    seed_assertion_ids=_batch,
-                    cause=RevisionCause.USER_CORRECTION,
-                    run_id=self.run_id,
-                    note="deferred correction retry",
-                )
+        for i in range(0, len(_correction_pending), _seed_batch):
+            _batch = _correction_pending[i : i + _seed_batch]
+            _cr_results = self.model.apply_revision(
+                seed_assertion_ids=_batch,
+                cause=RevisionCause.USER_CORRECTION,
+                run_id=self.run_id,
+                note="deferred correction retry",
+            )
+            for result in _cr_results:
+                if result.old_belief_state != result.new_belief_state:
+                    self.model.ledger.append_event(
+                        run_id=self.run_id,
+                        event_type=LedgerEventType.ASSERTION_REVISED,
+                        summary=(
+                            f"Belief revised: {result.old_belief_state.value} → "
+                            f"{result.new_belief_state.value}"
+                        ),
+                        changed_object_type="assertion",
+                        changed_object_id=result.assertion_id,
+                    )
+            total_revised += len(_cr_results)
 
         if not self._pending_assertion_ids:
-            return 0
+            return total_revised
         # Batch size = MAX_WORK // 2 so each call has room for both seeds and
         # fan-out propagation within the effective work budget.
-        _seed_batch = max(1, self.model.belief.MAX_WORK // 2)
         pending_list = list(self._pending_assertion_ids)
         self._pending_assertion_ids.clear()
-        total_revised = 0
         for i in range(0, len(pending_list), _seed_batch):
             batch = pending_list[i : i + _seed_batch]
             results = self.model.apply_revision(
