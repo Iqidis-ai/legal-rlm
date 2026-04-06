@@ -80,7 +80,7 @@ class AssertionStore:
         self.db = db
         self.matter_id = matter_id
 
-    def upsert_occurrence(self, candidate: AssertionCandidate) -> tuple[str, bool]:
+    def upsert_occurrence(self, candidate: AssertionCandidate, run_id: Optional[str] = None) -> tuple[str, bool]:
         """
         Upsert a canonical assertion and record one occurrence.
 
@@ -193,6 +193,7 @@ class AssertionStore:
                     self.write_revision_rows(
                         assertion_id, _up_rev_rows, _id(),
                         "occurrence_upgrade", "system",
+                        run_id=run_id,
                     )
                     self.db.execute(
                         "UPDATE assertion SET belief_state=?, confidence=?, updated_at=? WHERE id=?",

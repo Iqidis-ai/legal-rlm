@@ -288,14 +288,14 @@ class MatterModel:
     # ------------------------------------------------------------------
 
     def record_assertion(
-        self, candidate: AssertionCandidate
+        self, candidate: AssertionCandidate, run_id: Optional[str] = None
     ) -> tuple[str, bool]:
         """
         Upsert a canonical assertion and record an occurrence.
 
         Returns (assertion_id, is_new_assertion).
         """
-        return self.assertions.upsert_occurrence(candidate)
+        return self.assertions.upsert_occurrence(candidate, run_id=run_id)
 
     def link_assertions(
         self,

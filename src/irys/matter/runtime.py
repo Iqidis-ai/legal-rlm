@@ -297,7 +297,7 @@ class MatterRuntimeAdapter:
             object_json=object_json,
             temporal_scope_end=temporal_scope_end,
         )
-        assertion_id, is_new = self.model.record_assertion(candidate)
+        assertion_id, is_new = self.model.record_assertion(candidate, run_id=self.run_id)
         self._pending_assertion_ids.append(assertion_id)
 
         if is_new:

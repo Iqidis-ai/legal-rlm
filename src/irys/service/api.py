@@ -1656,6 +1656,64 @@ async def get_matter_assertions(matter_id: str, limit: int = 50, offset: int = 0
 
 
 @app.get(
+    "/matter/{matter_id}/assertions/{assertion_id}/history",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 50):
+    """Return field-level revision history for an assertion (SO-2 audit trail).
+
+    Rows are ordered newest-first and grouped by batch_id (one batch per correction
+    call). Each row includes changed_field, old/new values (decoded from JSON),
+    actor_kind, cause, run_id, note, and created_at.
+
+    Pre-schema-v34 matters will have empty history — this is expected and documented
+    in the response via the ``history_available_since_v34`` flag.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    # Verify assertion belongs to this matter
+    row = model.db.execute(
+        "SELECT id FROM assertion WHERE id=? AND matter_id=?",
+        (assertion_id, model.matter_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Assertion '{assertion_id}' not found in this matter")
+    import json as _json
+    rev_rows = model.db.execute(
+        """SELECT ar.id, ar.batch_id, ar.changed_field,
+                  ar.old_value_json, ar.new_value_json,
+                  ar.actor_kind, ar.actor_ref, ar.cause,
+                  ar.run_id, ar.note, ar.created_at
+           FROM assertion_revision ar
+           WHERE ar.assertion_id=?
+           ORDER BY ar.created_at DESC, ar.batch_id DESC
+           LIMIT ?""",
+        (assertion_id, limit),
+    ).fetchall()
+    history = []
+    for r in rev_rows:
+        history.append({
+            "id": r["id"],
+            "batch_id": r["batch_id"],
+            "changed_field": r["changed_field"],
+            "old_value": _json.loads(r["old_value_json"]) if r["old_value_json"] else None,
+            "new_value": _json.loads(r["new_value_json"]) if r["new_value_json"] else None,
+            "actor_kind": r["actor_kind"],
+            "actor_ref": r["actor_ref"],
+            "cause": r["cause"],
+            "run_id": r["run_id"],
+            "note": r["note"],
+            "created_at": r["created_at"],
+        })
+    return {
+        "assertion_id": assertion_id,
+        "history_available_since_v34": True,
+        "total": len(history),
+        "history": history,
+    }
+
+
+@app.get(
     "/matter/{matter_id}/issues",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
