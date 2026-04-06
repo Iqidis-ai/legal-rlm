@@ -743,7 +743,7 @@ class MatterRuntimeAdapter:
         trust_level: 'low' | 'normal' | 'high'
         Returns override_id.
         """
-        return self.model.set_trust_override(document_pattern, trust_level, note)
+        return self.model.set_trust_override(document_pattern, trust_level, note, run_id=self.run_id)
 
     def list_trust_overrides(self) -> list[dict]:
         """Return all trust overrides for this matter."""

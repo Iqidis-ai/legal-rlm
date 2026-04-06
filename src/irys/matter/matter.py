@@ -287,8 +287,7 @@ class MatterModel:
         """
         if not ids:
             return
-        from .enums import RevisionCause as _RC  # local import to avoid circular risk
-        _cause = cause if cause is not None else _RC.NEW_EVIDENCE
+        _cause = cause if cause is not None else RevisionCause.NEW_EVIDENCE
         with self._evidence_pending_lock:
             for aid in ids:
                 if aid not in self._evidence_pending:
@@ -430,6 +429,7 @@ class MatterModel:
         document_pattern: str,
         trust_level: str,
         note: Optional[str] = None,
+        run_id: Optional[str] = None,
     ) -> str:
         """Set a document trust override and trigger belief revision on affected assertions.
 
@@ -473,6 +473,7 @@ class MatterModel:
                 self.apply_revision(
                     affected_ids,
                     cause=RevisionCause.TRUST_OVERRIDE,
+                    run_id=run_id,
                     note=f"Document trust override set to '{trust_level}' for {document_pattern!r}",
                     _collect_unvisited=_trust_unvisited,
                 )
