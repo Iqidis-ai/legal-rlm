@@ -1359,10 +1359,17 @@ async def stop_investigation(matter_id: str, _: StopRunRequest):
     between iterations and performs a clean interrupt without losing work.
     """
     model = _get_matter_model_or_404(matter_id)
-    runs = model.ledger.recent_runs(1)
-    if not runs or runs[0]["status"] != "running":
+    # Filter out utility flush runs so stop targets the real investigation, not a
+    # background/manual flush that happens to be running concurrently.
+    _stop_rows = model.db.execute(
+        "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
+        " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))"
+        " ORDER BY started_at DESC LIMIT 1",
+        (model.matter_id,),
+    ).fetchall()
+    if not _stop_rows:
         raise HTTPException(status_code=409, detail="No running investigation to stop")
-    run_id = runs[0]["id"]
+    run_id = _stop_rows[0]["id"]
     model.ledger.request_stop(run_id)
     # Log the steering event so the reasoning trail reflects the user action (SO-3)
     from irys.matter.enums import LedgerEventType
@@ -1463,8 +1470,9 @@ async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
         try:
             _trust_run_row = model.db.execute(
                 "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
+                " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))"
                 " ORDER BY started_at DESC LIMIT 1",
-                (matter_id,),
+                (model.matter_id,),
             ).fetchone()
             if _trust_run_row is not None:
                 _trust_run_id = _trust_run_row["id"]
@@ -1525,26 +1533,30 @@ async def flush_pending_propagation(matter_id: str):
     """
     model = _get_matter_model_or_404(matter_id)
     from irys.matter.runtime import MatterRuntimeAdapter
-    # Start a real run so ledger.append_event(run_id=...) satisfies the NOT NULL FK
-    # constraint on ledger_event.run_id (run_id=None would violate it).
-    flush_run_id = model.start_run("Standalone flush", objective="manual_flush")
-    try:
-        adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
-        revised = adapter.flush_revisions()
-    except Exception as exc:
+    # Acquire _flush_lock BEFORE opening the run session so no spurious 'running' row
+    # exists while waiting for an active investigation to finish. Calls
+    # _flush_revisions_locked() directly since we already hold the lock.
+    with model._flush_lock:
+        # Start a real run so ledger.append_event(run_id=...) satisfies the NOT NULL FK
+        # constraint on ledger_event.run_id (run_id=None would violate it).
+        flush_run_id = model.start_run("Standalone flush", objective="manual_flush")
         try:
-            model.fail_run(flush_run_id, str(exc))
-        except Exception:
-            pass
-        raise
-    try:
-        model.complete_run(flush_run_id)
-    except Exception as ce:
+            adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
+            revised = adapter._flush_revisions_locked()
+        except Exception as exc:
+            try:
+                model.fail_run(flush_run_id, str(exc))
+            except Exception:
+                pass
+            raise
         try:
-            model.fail_run(flush_run_id, str(ce))
-        except Exception:
-            pass
-        raise
+            model.complete_run(flush_run_id)
+        except Exception as ce:
+            try:
+                model.fail_run(flush_run_id, str(ce))
+            except Exception:
+                pass
+            raise
     return {"status": "ok", "revised_count": revised}
 
 
@@ -1825,8 +1837,9 @@ async def correct_assertion(
         try:
             _active_run_row = model.db.execute(
                 "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
+                " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))"
                 " ORDER BY started_at DESC LIMIT 1",
-                (matter_id,),
+                (model.matter_id,),
             ).fetchone()
             if _active_run_row is not None:
                 _active_run_id = _active_run_row["id"]
