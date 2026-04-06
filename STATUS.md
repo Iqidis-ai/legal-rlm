@@ -105,7 +105,17 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 - r9 perf: Removed unused recent_runs list fetch + source_role_summary GROUP BY from overview
 - r10: Quant panel key mismatch (total_invoiced→invoiced etc); removed false issue_id contract from list_assertions; removed exception masking in HttpBackend.get_quant_summary()
 
-**Next:** Tier 2 Scaling + Architecture reviews (in progress); adversarial audit #025 (due).
+**Tier 2 r2 Scaling + Architecture reviews: FAIL (HIGHs fixed, 2026-04-06):**
+- Scaling HIGH: `find_possible_duplicates()` O(N²) → sorted-prefix O(N·k) + limit=100 (commit 9101136)
+- Scaling MEDIUM: `list_recent()` O(N) before LIMIT → CTE bounds ID set first (commit 9101136)
+- Scaling MEDIUM: `find_contradictions()` no limit → limit=5 pushed to SQL in steering surface (commit 9101136)
+- Arch HIGH: `redirect_focus` actions missing `matter_id`+`run_id` → now embedded; get_steering_surface() threads run_id through full stack (commit 9101136)
+- Scaling HIGH (architectural): InProcessBackend not production-scalable (unbounded cache, SQLite connections) — architectural note; use HttpBackend+service in production
+- Arch HIGH (deferred): redirect is iteration-bound, not interrupt-grade — stop is sub-second, redirect latency = full current-batch duration
+- Arch MEDIUM (deferred): UIBackend.start_investigation() contract incoherent; backend abstraction lacks live-run/streaming contract
+- Tier 2 r2 flush_revisions HIGH (commit 64ef34f): seed batching prevents loss at >2000 seeds
+
+**Next:** adversarial audit #025 (running; due after 8+ Tier 1 rounds + significant product surface changes).
 
 **Tier 2 r2 HIGH fix (2026-04-06, commit 64ef34f):**
 - `flush_revisions()` now batches seeds in groups of `MAX_WORK // 2` (250). Previously,
