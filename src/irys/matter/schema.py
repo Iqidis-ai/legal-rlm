@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 36
+SCHEMA_VERSION = 37
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -514,6 +514,9 @@ CREATE INDEX IF NOT EXISTS ix_clarification_matter_status
 
 CREATE INDEX IF NOT EXISTS ix_clarification_matter_text
     ON clarification_question(matter_id, question_text);
+
+CREATE INDEX IF NOT EXISTS ix_clarification_matter_answered
+    ON clarification_question(matter_id, answered_at DESC);
 """
 
 _DDL_REASONING_CACHE = """
@@ -1427,6 +1430,18 @@ def _migration_v35(conn) -> None:  # noqa: ARG001
     """
 
 
+def _migration_v37(conn) -> None:
+    """Add answered_at index on clarification_question for get_answered(limit=N) perf.
+
+    get_answered() orders by answered_at DESC; without this index SQLite must
+    scan and sort the full answered set before applying LIMIT.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_clarification_matter_answered"
+        " ON clarification_question(matter_id, answered_at DESC)"
+    )
+
+
 def _migration_v36(conn) -> None:
     """Add SO-1 real reuse telemetry columns to run_session.
 
@@ -1484,6 +1499,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (34, _migration_v34),
     (35, _migration_v35),
     (36, _migration_v36),
+    (37, _migration_v37),
 ]
 
 

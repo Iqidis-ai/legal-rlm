@@ -291,9 +291,19 @@ class AppState:
         thinking: list,
         citations: list,
     ):
-        """Run investigation in a background thread."""
+        """Run investigation in a background thread.
+
+        NOTE: This method calls _get_irys() which is InProcessBackend-specific.
+        Only InProcessBackend is wired in create_app() / AppState.backend().
+        If a different backend were ever injected, this method would fail at
+        the _get_irys() call with AttributeError, not silently.
+        """
         async def _inner():
-            irys = self.backend()._get_irys()
+            backend = self.backend()
+            if not hasattr(backend, "_get_irys"):
+                update_q.put(("error", "Run tab requires InProcessBackend; HttpBackend does not support local investigations"))
+                return
+            irys = backend._get_irys()
             self._irys_ref = irys
             irys.on_step(self._make_on_step(update_q, thinking))
             try:

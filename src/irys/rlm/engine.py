@@ -1042,8 +1042,8 @@ class RLMEngine:
         )
 
         try:
-            # Phase 1: Orientation
-            await self._orient(state, repo)
+            # Phase 1: Orientation — pass pre-computed stats to avoid a second glob walk
+            await self._orient(state, repo, _stats=stats)
 
             # Phase 2: Iterative investigation loop
             await self._investigate_loop(state, repo)
@@ -1129,15 +1129,19 @@ class RLMEngine:
 
         return state
 
-    async def _orient(self, state: InvestigationState, repo: MatterRepository):
-        """Phase 1: Understand repository and form initial hypothesis."""
+    async def _orient(self, state: InvestigationState, repo: MatterRepository, _stats=None):
+        """Phase 1: Understand repository and form initial hypothesis.
+
+        _stats: pre-computed RepositoryStats from investigate() to avoid a second
+        glob walk.  If None (e.g. direct callers in tests), stats are fetched here.
+        """
         _adapter = getattr(state, "_matter_adapter", None)
         if _adapter is not None and _adapter.is_stop_requested():
             return  # Stop was requested before orientation even started
         self._emit_step(state, StepType.THINKING, "Analyzing repository structure...")
 
-        # Get repository overview
-        stats = repo.get_stats()
+        # Get repository overview — reuse pre-computed stats if available
+        stats = _stats if _stats is not None else repo.get_stats()
         structure = repo.get_structure()
 
         structure_str = "\n".join(f"  {folder}: {count} files" for folder, count in structure.items())

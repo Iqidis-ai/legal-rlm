@@ -256,8 +256,21 @@ class InProcessBackend(UIBackend):
     ) -> dict:
         model = self._get_matter_model(matter_id)
         try:
+            run = model.ledger.get_run(run_id)
+            if run is None:
+                return {"status": "error", "detail": f"Run '{run_id}' not found"}
+            if run.status != "running":
+                return {"status": "error", "detail": f"Run is not active (status: {run.status})"}
+            issue = model.issues.get_issue(issue_id)
+            if issue is None:
+                return {"status": "error", "detail": f"Issue '{issue_id}' not found"}
             model.ledger.request_redirect(run_id, issue_id)
-            return {"status": "redirect_requested", "issue_id": issue_id}
+            return {
+                "status": "redirect_requested",
+                "run_id": run_id,
+                "issue_id": issue_id,
+                "issue_title": issue.get("title"),
+            }
         except Exception as exc:
             return {"status": "error", "detail": str(exc)}
 
