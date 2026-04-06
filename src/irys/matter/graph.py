@@ -200,19 +200,22 @@ class AssertionStore:
                         (_new_state.value, _new_conf, now, assertion_id),
                     )
 
-            # Upgrade SPO payload if the existing canonical row lacks structured fields
-            # but this candidate supplies them. The first extraction of a proposition may
-            # not decompose to SPO; a later, richer extraction of the same proposition
-            # should upgrade the durable record rather than lose the structured payload.
-            # Only upgrades NULL → non-NULL: never overwrites previously-set SPO fields
-            # so user-corrected or higher-confidence prior extractions are preserved.
-            # (HIGH #3 SPO-payload-loss fix; adv#031 SO-2 audit fix: write revision rows)
+            # Upgrade SPO payload for any null fields the candidate can fill in.
+            # Gated on candidate having a predicate_key (only upgrade from rich extractions),
+            # but the canonical row can have predicate_key already set — other null SPO
+            # fields (e.g. temporal_scope from a later, richer extraction) can still be
+            # backfilled. COALESCE in the UPDATE enforces NULL→non-NULL only semantics.
+            # (HIGH #3 SPO-payload-loss fix; adv#031 SO-2 audit + r3 backfill gate fix)
+            _spo_field_names = (
+                "predicate_key", "subject_ref_type", "subject_ref_id",
+                "object_json", "temporal_scope_start", "temporal_scope_end",
+            )
             if (
                 not is_new
                 and _occ_cur.rowcount > 0
                 and row is not None
-                and row["predicate_key"] is None
                 and candidate.predicate_key is not None
+                and any(row[f] is None for f in _spo_field_names)
             ):
                 # Write revision rows ONLY for true NULL→non-NULL upgrades.
                 # Existing non-null values are preserved by COALESCE in the UPDATE below,
