@@ -441,28 +441,41 @@ class MatterRuntimeAdapter:
         """
         Trigger belief revision for all assertions added since last flush.
         Returns count of revised assertions.
+
+        Seeds are processed in batches sized to stay within the BFS work budget
+        so that every seed receives at least one revision pass.  Without batching,
+        a large flush (>2000 seeds) would silently skip high-index seeds because
+        the BFS frontier budget is exhausted before reaching them.
         """
         if not self._pending_assertion_ids:
             return 0
-        results = self.model.apply_revision(
-            seed_assertion_ids=self._pending_assertion_ids,
-            cause=RevisionCause.NEW_EVIDENCE,
-            run_id=self.run_id,
-        )
-        for result in results:
-            if result.old_belief_state != result.new_belief_state:
-                self.model.ledger.append_event(
-                    run_id=self.run_id,
-                    event_type=LedgerEventType.ASSERTION_REVISED,
-                    summary=(
-                        f"Belief revised: {result.old_belief_state.value} → "
-                        f"{result.new_belief_state.value}"
-                    ),
-                    changed_object_type="assertion",
-                    changed_object_id=result.assertion_id,
-                )
+        # Batch size = MAX_WORK // 2 so each call has room for both seeds and
+        # fan-out propagation within the effective work budget.
+        _seed_batch = max(1, self.model.belief.MAX_WORK // 2)
+        pending_list = list(self._pending_assertion_ids)
         self._pending_assertion_ids.clear()
-        return len(results)
+        total_revised = 0
+        for i in range(0, len(pending_list), _seed_batch):
+            batch = pending_list[i : i + _seed_batch]
+            results = self.model.apply_revision(
+                seed_assertion_ids=batch,
+                cause=RevisionCause.NEW_EVIDENCE,
+                run_id=self.run_id,
+            )
+            for result in results:
+                if result.old_belief_state != result.new_belief_state:
+                    self.model.ledger.append_event(
+                        run_id=self.run_id,
+                        event_type=LedgerEventType.ASSERTION_REVISED,
+                        summary=(
+                            f"Belief revised: {result.old_belief_state.value} → "
+                            f"{result.new_belief_state.value}"
+                        ),
+                        changed_object_type="assertion",
+                        changed_object_id=result.assertion_id,
+                    )
+            total_revised += len(results)
+        return total_revised
 
     # ------------------------------------------------------------------
     # Called from engine._emit_step() / general progress
