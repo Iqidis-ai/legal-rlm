@@ -982,8 +982,9 @@ async def upload_investigate_sync(
                     _sync_open_gaps = _sm.gaps.open_gaps(min_materiality=0.3)
             except Exception:
                 pass
-        _trail = getattr(result.state, "reasoning_trail", None) or []
-        _sync_run_id = _trail[0].get("run_id") if _trail else None
+        # Use exact state._run_id set by engine; reasoning_trail[0] is best-effort only (r40 fix).
+        _sync_run_id = (getattr(result.state, "_run_id", None)
+                        or (((getattr(result.state, "reasoning_trail", None) or []) or [{}])[0].get("run_id")))
         response = SyncInvestigateResponse(
             query=query,
             analysis=result.output,
@@ -1273,8 +1274,9 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
                     _urls_open_gaps = _um.gaps.open_gaps(min_materiality=0.3)
             except Exception:
                 pass
-        _urls_trail = getattr(result.state, "reasoning_trail", None) or []
-        _urls_run_id = _urls_trail[0].get("run_id") if _urls_trail else None
+        # Use exact state._run_id set by engine; reasoning_trail[0] is best-effort only (r40 fix).
+        _urls_run_id = (getattr(result.state, "_run_id", None)
+                        or (((getattr(result.state, "reasoning_trail", None) or []) or [{}])[0].get("run_id")))
         return SyncInvestigateResponse(
             query=request.query,
             analysis=result.output,
