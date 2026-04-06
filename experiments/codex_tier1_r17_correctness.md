@@ -1,27 +1,14 @@
-PASS
+**HIGH**
+- Bulk supersession truncation is still a real correctness hole, not just a transient state that is guaranteed to converge on the next trigger. `_apply_with_truncation()` explicitly marks incomplete propagation, and `force_state()` preserves that on the returned `RevisionResult`, but the repair path only recomputes proof state for the seed plus `propagated_to`; it does not schedule a retry of the stale assertion subgraph. `compute_all()` recomputes issue proof state from whatever assertion states are already stored, so it does not fix stale `assertion.belief_state` rows. Result: a wide withdrawal can leave durable wrong belief states indefinitely until some later belief-revision seed happens to traverse them. [belief_revision.py#L372](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L372) [belief_revision.py#L775](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L775) [matter.py#L273](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L273) [matter.py#L304](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L304) [graph.py#L3660](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/graph.py#L3660)
 
-All three Tier 2 r3 fixes verified clean.
+**MEDIUM**
+- `propagation_truncated` is not surfaced or handled consistently. The in-process backend warns on it, but the REST `correct_assertion` endpoint drops the flag from its response, `apply()` callers never receive it at all, and at least one `force_state()` caller ignores the returned `RevisionResult`. For HTTP/automation paths, a truncating correction can therefore look like success while stale downstream beliefs remain persisted. [in_process.py#L233](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/backends/in_process.py#L233) [api.py#L1774](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1774) [belief_revision.py#L428](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L428) [runtime.py#L460](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L460) [graph.py#L947](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/graph.py#L947)
 
-**1. PRAGMA busy_timeout=5000 — PASS.**
-- Applied via `conn.execute("PRAGMA busy_timeout=5000")` on file-based connections only (in-memory test connections use a separate shared path and are unaffected). [db.py:60-67]
-- Interacts correctly with BEGIN IMMEDIATE: when another writer holds the write lock, SQLite now retries internally for up to 5 s before raising OperationalError, rather than failing immediately. This is the intended behavior.
-- Does not mask starvation: 5 s is a per-acquisition timeout, not a per-session queue depth limit. Writers still fail after 5 s if the lock is held the whole time — they don't queue silently forever.
-- WAL checkpoint: busy_timeout also applies to checkpoint lock acquisition. 5 s is sufficient for normal checkpoint waits. No adverse interaction.
+**LOW**
+- `ix_assertion_revision_lock` is well-shaped for the seek and sort, and the partial predicate plus migration are correct, but it is not actually a covering index for the current query because `_revise_one()` selects `actor_kind`, which is not in the index key. So the query still needs one table lookup after the index probe. [belief_revision.py#L593](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L593) [schema.py#L146](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/schema.py#L146) [schema.py#L1466](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/schema.py#L1466)
 
-**2. _SPEECH_ACT_RECOVERY_PRIORITY module-level constant — PASS.**
-- Defined at module level [belief_revision.py:60-65]. All 11 keys match the _initial_belief_state() speech_act mapping exactly.
-- Referenced correctly in _revise_one() via `_SPEECH_ACT_RECOVERY_PRIORITY.get(r["speech_act"] or "", 0)`. The `or ""` handles None speech_act rows; default 0 routes to `_initial_belief_state(SpeechAct(None))` → ValueError → UNKNOWN, 0.5 fallback. ✓
+`busy_timeout=5000` is operationally reasonable, but it is a latency policy, not a correctness boundary. It does materially affect `BEGIN IMMEDIATE` by making lock acquisition wait instead of fail fast, but it does not solve starvation/livelock; under saturation it just turns some `SQLITE_BUSY` failures into long-tail waits. I do not see a new correctness defect from the value itself. [db.py#L67](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/db.py#L67) [db.py#L85](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/db.py#L85)
 
-**3. Schema v38 partial covering index — PASS.**
-- `assertion_revision` table is defined in _DDL_CORE at line 128, BEFORE both the existing index (L143) and the new index (L146–148). `CREATE INDEX IF NOT EXISTS` in DDL applies to fresh DBs; migration v38 applies to existing DBs at v37 — no conflict. [schema.py:128-148]
-- The lock query: `WHERE assertion_id=? AND changed_field='belief_state' AND new_value_json=? ORDER BY created_at DESC LIMIT 1`
-  - Partial index WHERE `changed_field='belief_state'` eliminates all non-belief_state rows from the index.
-  - Index columns `(assertion_id, new_value_json, created_at DESC)` support a 2-column seek + ordering + LIMIT 1 — O(log N) regardless of lock-row history.
-  - LOW: `actor_kind` (the projected column) is not in the index → one heap fetch for the LIMIT 1 result. With LIMIT 1 this is O(1) and not a concern at current scale. A future optimization would add `actor_kind` to the index columns.
+`_SPEECH_ACT_RECOVERY_PRIORITY` looks correct for the current enum and is referenced correctly in `_revise_one()`. Every speech act that maps to a non-`UNKNOWN` baseline in `_initial_belief_state()` is represented; omitted acts already fall back to `UNKNOWN`, so I do not see a correctness gap there. [belief_revision.py#L60](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L60) [belief_revision.py#L515](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L515) [graph.py#L32](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/graph.py#L32)
 
-**4. HIGH #1 (bulk withdrawal truncation) — stale, not permanently wrong.**
-- Nodes left in the BFS queue when truncation fires are in a stale SUPERSEDED state, not an incorrect state. Their stale-ness is correctly flagged: `propagation_truncated=True` in `RevisionResult`; SYSTEM_WARNING logged with specifics (budget, OCC exhaustion). [belief_revision.py:357-380]
-- Next relevant trigger (upstream state change, user correction, `flush_revisions()`) re-enqueues them and they converge correctly.
-- Not a new regression: BFS budget ceiling is a pre-existing architectural limitation, now documented.
-
-No HIGH or MEDIUM findings. 733 tests continue to pass.
+I reviewed `.claude/CLAUDE.md`; there is no repo-root `CLAUDE.md` in this workspace.

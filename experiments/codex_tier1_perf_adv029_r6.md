@@ -1,0 +1,9 @@
+**CLEAN**
+
+No review findings in commit `7eca72b`.
+
+1. The extra `SELECT` in `reload_pending_from_db()` is acceptable in the current design. It is one indexed read per `flush_revisions()` call at [runtime.py:463](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L463) into [matter.py:127](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L127), and `pending_propagation` is keyed for `matter_id` lookup at [schema.py:674](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/schema.py#L674). In the main path, `flush_revisions()` runs once per investigation iteration, after much more expensive work than an indexed SQLite read. On the empty-queue path this is effectively a cheap miss; on the non-empty path it scales with rows you are about to replay anyway.
+
+2. The batch transaction semantics are correct. Both enqueue paths stage IDs in memory, then write the DB rows inside `db.transaction()` at [matter.py:333](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L333) and [matter.py:408](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L408). The transaction manager rolls the whole batch back on any exception at [db.py:93](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/db.py#L93) and [db.py:128](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/db.py#L128). So yes: if one insert fails, all fail; the batch remains present in memory and absent from DB. That preserves live correctness and makes the durability loss explicit in the warning path, while buying the intended WAL reduction.
+
+Residual test gap: I did not find a code issue, but this change would be stronger with one test for “delete failed, next flush reloads from DB” and one test for “mid-batch insert failure rolls back fully and still replays from memory.”

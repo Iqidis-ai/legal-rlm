@@ -1,26 +1,21 @@
-PASS
+**HIGH**
+- Bulk supersession withdrawal is still the dominant risk. With `N=500` direct superseded seeds, `_effective_max_work` becomes `min(2000, 3N)=1500`, so the first-order recovery wave alone consumes 500 visits and leaves only 1000 downstream visits before truncation. That means the direct fan-out fits, but any sizable second-order cascade can still stale out behind the budget ceiling. This is pre-existing, not introduced by `0bea302`. [belief_revision.py#L229](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L229) [belief_revision.py#L290](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L290) [belief_revision.py#L296](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L296) [belief_revision.py#L771](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L771) [graph.py#L371](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/graph.py#L371)
 
-No HIGH or MEDIUM findings. LOW findings:
+**MEDIUM**
+- `PRAGMA busy_timeout=5000` does not materially change the lock-wait profile here. [db.py#L51](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/db.py#L51) already uses stdlib `sqlite3.connect()` with no `timeout=` override, and Python’s default connection timeout is already 5.0s. So for normal non-contended BFS writes, latency is unchanged; for contended writes, this patch mostly restates the existing default rather than adding new waiting behavior. It also does not change WAL auto-checkpoint behavior: auto-checkpoints are PASSIVE, and SQLite does not invoke the busy handler for PASSIVE checkpoints. [db.py#L67](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/db.py#L67)
 
-**1. busy_timeout=5000 — zero overhead in non-contended case.**
-- The PRAGMA only fires SQLite's internal sleep/retry loop when SQLITE_BUSY is encountered. Under normal single-writer BFS (the common path), no contention occurs and no overhead is added.
-- In-memory test DB (shared connection, `isolation_level=None`, no PRAGMA busy_timeout) — test suite speed unaffected.
-- WAL auto-checkpoint (every 1000 pages by default): busy_timeout applies to checkpoint lock acquisition. Under normal conditions, checkpoint runs between transactions and finds no active readers blocking; 5 s window has no material effect on checkpoint latency. [db.py:58-67]
+**LOW**
+- Moving `_SPEECH_ACT_RECOVERY_PRIORITY` to module scope is a net win, but only as a small constant-factor improvement. It removes one dict allocation per recovery node and reduces allocator/GC churn; the recovery-baseline selection is still O(k) in the number of occurrence rows because `max()` still walks every fetched speech act. No other material performance downside. [belief_revision.py#L60](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L60) [belief_revision.py#L515](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L515)
+- `ix_assertion_revision_lock` adds very little insert overhead, but it is not actually covering for the current probe. The query selects `actor_kind`, which is not in the index key, so the read path is “index seek + one row fetch”, not index-only. Insert cost is still low: non-`belief_state` rows pay only the partial-predicate check; `belief_state` rows pay one extra secondary-index insert. On the common `{belief_state, confidence}` batch, that is 1 extra index entry across 2 inserted revision rows. [schema.py#L146](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/schema.py#L146) [schema.py#L1467](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/schema.py#L1467) [belief_revision.py#L593](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L593)
 
-**2. _SPEECH_ACT_RECOVERY_PRIORITY module-level — pure improvement.**
-- Previous inline dict was reallocated on every recovery node visit (~12 key/value pairs × sizeof(PyObject) × visits). Module-level constant is allocated once at import time.
-- For N=500 recovery nodes: ~500 dict allocations eliminated. Minor but real GC pressure reduction.
-- `.get()` is O(1) hash lookup; no change there. [belief_revision.py:60-65]
+For the `N=500` recovery-path estimate, assuming all 500 directly superseded assertions actually recover:
+- `neighbor-state` reads: about 500
+- `occurrence` reads: about 500
+- `lock` reads: about 500
+- `write transactions`: about 500 child transactions, plus 1 initiating `force_state()` transaction on the superseder
 
-**3. Partial index INSERT overhead — negligible.**
-- `ix_assertion_revision_lock` is a partial index: only rows where `changed_field='belief_state'` are indexed.
-- `write_revision_rows()` inserts rows for both `belief_state` and `confidence` changes. Confidence rows (the majority in normal BFS where state is stable and only confidence drifts) skip the partial index entirely.
-- Belief_state rows (state changes, user-lock no-ops) incur one additional B-tree insert into the partial index: O(log M) where M = count of belief_state rows for that assertion. For typical assertions with <100 belief_state revision rows, this is ~7 comparisons — negligible. [graph.py:300-312]
+That is the first-order cost only. There are also extra reads not in your requested buckets: roughly 500 canonical-assertion reads, 500 in-tx rereads, 500 oscillation checks, and 501 dependent-expansion queries. If downstream propagation continues, the remaining budget allows only about 1000 more node visits before truncation.
 
-**4. Bulk supersession withdrawal N=500 cost estimate.**
-- force_state(superseder, WITHDRAWN) then BFS over 500 superseded dependents:
-  - Per node: get_neighbor_belief_states (1 batched CTE query) + assertion_occurrence scan (1 query) + in-tx lock read + write transaction ≈ 3 queries + 1 write
-  - For N=500: ~1500 reads + 500 write transactions
-  - At ~0.5–1 ms per write transaction: ~250–500 ms write time; total wall time including reads: ~1–2 s
-  - BFS budget: min(2000, max(500, 500×3)) = min(2000, 1500) = 1500 → fits all 500 seeds + up to 1000 second-order nodes before truncation
-- This is acceptable for a rare "voiding an amendment" operation. Not a hot path. [belief_revision.py:273-279]
+I reviewed `.claude/CLAUDE.md`; there is no repo-root `CLAUDE.md` in this workspace.
+
+External docs used: [Python `sqlite3.connect()` default timeout](https://docs.python.org/3.9/library/sqlite3.html), [SQLite `PRAGMA busy_timeout`](https://www.sqlite.org/pragma.html#pragma_busy_timeout), [SQLite WAL checkpoint PASSIVE behavior](https://www.sqlite.org/c3ref/wal_checkpoint_v2.html).

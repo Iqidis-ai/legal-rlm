@@ -1,0 +1,21 @@
+**NOT CLEAN**
+
+- Medium: non-correction propagation still drops truncated/OCC-abandoned frontier. Only the deferred correction replay path passes `_collect_unvisited`; the ordinary new-evidence `flush_revisions()` path and the direct trust-override / quant-conflict paths still call `apply()` without any requeue hook, so remaining downstream work is lost if a pass truncates. Refs: [runtime.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L497), [matter.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L429), [matter.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L968), [belief_revision.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L476)
+
+- Medium: deferred correction continuation still loses original correction run metadata. The queue is only `set[str]` assertion IDs, so when another adapter later drains it, the replay is written under that adapter’s `run_id` with a generic note, not the originating correction context. Functional replay is fixed; audit attribution is not. Refs: [matter.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L86), [matter.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L245), [matter.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L332), [runtime.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L467), [runtime.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L468)
+
+- Low: r25 LOW #4 is still open. A user-set `DISPUTED` assertion with real attack links can still auto-recover once those attackers become inert, because the in-transaction user-lock only checks the `"superseded"` history row, not `"disputed"`. Refs: [belief_revision.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L555), [belief_revision.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L646), [belief_revision.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L655)
+
+Direct answers:
+
+1. `apply_revision()`’s new signature is correct, and for the deferred correction path a second truncation now is re-enqueued correctly via `_collect_unvisited` -> `enqueue_correction_pending()`. Refs: [matter.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L229), [runtime.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L461), [belief_revision.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L476)
+
+2. `enqueue_correction_pending()` and `drain_correction_pending()` are symmetric and thread-safe within the shared-process `MatterModel`; both use the same lock around `update()` vs `list()+clear()`. Refs: [matter.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L83), [matter.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L240), [matter.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L247)
+
+3. `_revised_ids` does fix the unique-assertion count for fixpoint re-visits, and the correction-only early return is correct because correction replay is processed and ledgered before the `if not self._pending_assertion_ids` guard. Refs: [runtime.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L457), [runtime.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/runtime.py#L489)
+
+4. Yes, r25 LOW #4 is still the only open low in this slice.
+
+5. I do not see a new regression in the specific r28 mechanics. The repo is still not clean because of the two medium gaps above plus the existing low.
+
+I only found the in-repo project instruction file at [`.claude/CLAUDE.md`](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/.claude/CLAUDE.md). I could not run pytest here because those commands were blocked by the current execution policy.

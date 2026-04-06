@@ -1,0 +1,6 @@
+No new perf findings.
+
+- [`belief_revision.py:396`](\/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L396) already materializes `unvisited`, so [`belief_revision.py:402`](\/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L402) switching `truncated` to `bool(unvisited)` does not add new traversal, allocation, or DB work on the hot path.
+- The warning guard at [`belief_revision.py:403`](\/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L403) and [`belief_revision.py:409`](\/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/belief_revision.py#L409) is slightly positive for perf: it suppresses spurious warning formatting and skips unnecessary ledger writes, and `append_event()` is transactional DB I/O in [`reasoning.py:75`](\/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L75) and [`reasoning.py:125`](\/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L125).
+
+Residual risk: the linear `unvisited` dedupe/allocation remains, but that cost predates this commit. Static review only; I didn’t run benchmarks.
