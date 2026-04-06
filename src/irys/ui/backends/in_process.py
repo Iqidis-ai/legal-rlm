@@ -21,45 +21,50 @@ import logging as _logging
 _log = _logging.getLogger(__name__)
 
 
-def _in_process_background_flush(matter_id: str, model) -> None:
-    """Background flush for the in-process UI path.
-
-    Mirrors api._background_flush(): acquires _flush_lock before creating the
-    run session so no spurious 'running' row blocks active-run selectors while
-    waiting (adv#030 HIGH fix, in-process path).
-
-    Uses model._bg_flush_lock to coalesce concurrent requests — at most one
-    flush thread runs or waits per model. Later corrections enqueue durable DB
-    rows that the running flush picks up via reload_pending_from_db().
-    """
-    # Coalesce: skip if another flush is already running for this model.
-    if not model._bg_flush_lock.acquire(blocking=False):
-        return
-    try:
-        from ...matter.runtime import MatterRuntimeAdapter
-        with model._flush_lock:
-            flush_run_id = model.start_run("Background flush", objective="background_flush")
+def _do_one_in_process_flush(matter_id: str, model) -> None:
+    """Execute a single flush pass. Called from within the flush loop with _bg_flush_running held."""
+    from ...matter.runtime import MatterRuntimeAdapter
+    with model._flush_lock:
+        flush_run_id = model.start_run("Background flush", objective="background_flush")
+        try:
+            adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
+            adapter._flush_revisions_locked()
+        except Exception as exc:
             try:
-                adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
-                adapter._flush_revisions_locked()
-            except Exception as exc:
+                model.fail_run(flush_run_id, str(exc))
+            except Exception as fe:
+                _log.warning("in_process bg_flush fail_run failed for %s run %s: %s", matter_id, flush_run_id, fe)
+            raise
+        else:
+            try:
+                model.complete_run(flush_run_id)
+            except Exception as ce:
                 try:
-                    model.fail_run(flush_run_id, str(exc))
+                    model.fail_run(flush_run_id, str(ce))
                 except Exception as fe:
-                    _log.warning("in_process background_flush fail_run failed for %s run %s: %s", matter_id, flush_run_id, fe)
-                raise
-            else:
-                try:
-                    model.complete_run(flush_run_id)
-                except Exception as ce:
-                    try:
-                        model.fail_run(flush_run_id, str(ce))
-                    except Exception as fe:
-                        _log.warning("in_process background_flush terminal close failed for %s run %s: %s", matter_id, flush_run_id, fe)
-    except Exception as exc:
-        _log.warning("in_process background_flush failed for matter %s: %s", matter_id, exc)
+                    _log.warning("in_process bg_flush terminal close failed for %s run %s: %s", matter_id, flush_run_id, fe)
+
+
+def _in_process_background_flush_loop(matter_id: str, model) -> None:
+    """Flush loop body — runs while _bg_flush_event is set, then releases _bg_flush_running."""
+    try:
+        while model._bg_flush_event.is_set():
+            model._bg_flush_event.clear()
+            try:
+                _do_one_in_process_flush(matter_id, model)
+            except Exception as exc:
+                _log.warning("in_process background_flush failed for matter %s: %s", matter_id, exc)
+                break
     finally:
-        model._bg_flush_lock.release()
+        model._bg_flush_running.release()
+        # Final race: work enqueued between last event check and release
+        if model._bg_flush_event.is_set():
+            if model._bg_flush_running.acquire(blocking=False):
+                threading.Thread(
+                    target=_in_process_background_flush_loop,
+                    args=(matter_id, model),
+                    daemon=False,
+                ).start()
 
 
 class InProcessBackend(UIBackend):
@@ -281,20 +286,24 @@ class InProcessBackend(UIBackend):
             return {"status": "error", "detail": str(exc)}
         resp = {"status": "corrected", "assertion_id": assertion_id}
         if getattr(result, "propagation_truncated", False):
-            # Mirror the REST endpoint: schedule a background flush so SO-2
-            # convergence is guaranteed without waiting for the next run.
-            # daemon=False: thread must finish before process exit to avoid
-            # stranding a utility run in 'running' state on shutdown.
-            try:
-                threading.Thread(
-                    target=_in_process_background_flush,
-                    args=(matter_id, model),
-                    daemon=False,
-                ).start()
+            # Signal that a flush is needed. Only spawn a thread if no loop is active.
+            # daemon=False: non-daemon so shutdown waits for the flush to finish.
+            model._bg_flush_event.set()
+            if model._bg_flush_running.acquire(blocking=False):
+                try:
+                    threading.Thread(
+                        target=_in_process_background_flush_loop,
+                        args=(matter_id, model),
+                        daemon=False,
+                    ).start()
+                    resp["warning"] = "Belief revision truncated — background flush scheduled"
+                except Exception as te:
+                    model._bg_flush_running.release()
+                    _log.warning("could not start background flush thread for %s: %s", matter_id, te)
+                    resp["warning"] = "Belief revision truncated — proof state will refresh on next run"
+            else:
+                # Loop already running; it will see _bg_flush_event and do another pass.
                 resp["warning"] = "Belief revision truncated — background flush scheduled"
-            except Exception as te:
-                _log.warning("could not start background flush thread for %s: %s", matter_id, te)
-                resp["warning"] = "Belief revision truncated — proof state will refresh on next run"
         return resp
 
     async def redirect_run(

@@ -1900,6 +1900,30 @@ async def correct_assertion(
     }
 
 
+def _do_one_background_flush(matter_id: str, model) -> None:
+    """Execute a single flush pass. Called from within the flush loop with _bg_flush_running held."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+    with model._flush_lock:
+        flush_run_id = model.start_run("Background flush", objective="background_flush")
+        try:
+            adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
+            adapter._flush_revisions_locked()
+        except Exception as exc:
+            try:
+                model.fail_run(flush_run_id, str(exc))
+            except Exception as fe:
+                logger.warning("background_flush fail_run failed for %s run %s: %s", matter_id, flush_run_id, fe)
+            raise
+        else:
+            try:
+                model.complete_run(flush_run_id)
+            except Exception as ce:
+                try:
+                    model.fail_run(flush_run_id, str(ce))
+                except Exception as fe:
+                    logger.warning("background_flush terminal close failed for %s run %s: %s", matter_id, flush_run_id, fe)
+
+
 def _background_flush(matter_id: str, model) -> None:
     """Fire-and-forget flush of pending BFS propagation work.
 
@@ -1907,40 +1931,30 @@ def _background_flush(matter_id: str, model) -> None:
     deferred propagation converges without waiting for the next investigation run
     (adv#030 HIGH fix — SO-2 convergence guarantee).
 
-    Acquires model._flush_lock BEFORE opening a run_session so that while we wait
-    for an in-progress investigation to finish, no spurious 'running' row exists that
-    stop_investigation / set_trust_override / correct_assertion could mistakenly
-    target as the active investigation (adv#030 correctness r2 HIGH fix).
+    Loop pattern: clears the event BEFORE each flush pass so corrections that arrive
+    during a flush set it again, triggering another pass. This prevents dropped
+    wakeups without spawning multiple flush threads (adv#030 perf fix r2).
     """
-    # Coalesce concurrent flush requests: only one background flush runs per model.
-    # A flush already in flight will pick up newer DB rows via reload_pending_from_db().
-    if not model._bg_flush_lock.acquire(blocking=False):
-        return
+    model._bg_flush_event.set()
+    if not model._bg_flush_running.acquire(blocking=False):
+        return  # loop already active; it will see the event and run another pass
     try:
-        from irys.matter.runtime import MatterRuntimeAdapter
-        with model._flush_lock:
-            flush_run_id = model.start_run("Background flush", objective="background_flush")
+        while model._bg_flush_event.is_set():
+            model._bg_flush_event.clear()
             try:
-                adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
-                adapter._flush_revisions_locked()
+                _do_one_background_flush(matter_id, model)
             except Exception as exc:
-                try:
-                    model.fail_run(flush_run_id, str(exc))
-                except Exception as fe:
-                    logger.warning("background_flush fail_run failed for %s run %s: %s", matter_id, flush_run_id, fe)
-                raise
-            else:
-                try:
-                    model.complete_run(flush_run_id)
-                except Exception as ce:
-                    try:
-                        model.fail_run(flush_run_id, str(ce))
-                    except Exception as fe:
-                        logger.warning("background_flush terminal close failed for %s run %s: %s", matter_id, flush_run_id, fe)
-    except Exception as exc:
-        logger.warning("background_flush failed for matter %s: %s", matter_id, exc)
+                logger.warning("background_flush failed for matter %s: %s", matter_id, exc)
+                break  # don't loop on persistent errors
     finally:
-        model._bg_flush_lock.release()
+        model._bg_flush_running.release()
+        # Final race: work enqueued between last event check and release
+        if model._bg_flush_event.is_set():
+            if model._bg_flush_running.acquire(blocking=False):
+                import threading as _threading
+                _threading.Thread(
+                    target=_background_flush, args=(matter_id, model), daemon=False
+                ).start()
 
 
 # ---------------------------------------------------------------------------
