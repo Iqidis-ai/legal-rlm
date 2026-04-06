@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 r49 CLEAN — unique-suffix file disambiguation in search results/resolver; blank-fact guards; cancel comment accurate; 740 tests passing)
+Last updated: 2026-04-06 (Tier 1 r50 CLEAN — 7 commits: api.py matter model lifecycle (eviction, async rehydration, concurrency, size limits); 740 tests passing)
 Branch: SebihSpecial
 
 ---
