@@ -228,7 +228,7 @@ ANALYZE THESE RESULTS CAREFULLY:
 
 1. KEY FACTS: Extract ONLY the 10 most important specific facts (STRICT LIMIT: 10 maximum):
    - Format each fact as: {"fact": "...", "source_file": "filename_if_determinable", "issue_relation": "supports|attacks|neutral", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD by March 2023"}
-   - source_file: the filename from the search results where the fact appears
+   - source_file: the file identifier exactly as shown in the search results (may be "filename.pdf" or "folder/filename.pdf" when multiple files share the same name)
    - issue_relation: whether this fact SUPPORTS the current hypothesis, ATTACKS/undermines it, or is NEUTRAL
    - subject: entity performing the action (person, company) — REQUIRED; provide best-effort even if uncertain (e.g. "plaintiff", "defendant", "contracting_party")
    - predicate: verb/action in snake_case — REQUIRED; describe the relationship (e.g. "agreed_to_pay", "was_employed_by", "executed_contract", "disputes_claim")
@@ -1974,6 +1974,12 @@ class RLMEngine:
                 if _basename_freq[_h.filename.lower()] == 1:
                     _hit_by_name[_h.filename] = _h     # basename only when unambiguous
                     _hit_by_name[_h.filename.lower()] = _h
+                else:
+                    # Register 'parent_dir/filename' for model to use when basenames collide
+                    # — matches what _format_search_results shows in the prompt.
+                    _disambig = f"{Path(_h.file_path).parent.name}/{_h.filename}"
+                    _hit_by_name[_disambig] = _h
+                    _hit_by_name[_disambig.lower()] = _h
 
             # Fallback: top-hit doc_id and source role for facts with no source_file
             _top_hits = results.top(1)
@@ -4571,10 +4577,23 @@ class RLMEngine:
         return words[0]
 
     def _format_search_results(self, results: SearchResults, max_hits: int = 10) -> str:
-        """Format search results for LLM consumption."""
+        """Format search results for LLM consumption.
+
+        When multiple hits share the same filename, shows 'parent_dir/filename'
+        so the model can return a unique identifier for per-fact source attribution.
+        """
+        hits = list(results.top(max_hits))
+        # Count basenames to detect collisions
+        _basename_freq: dict[str, int] = {}
+        for h in hits:
+            _basename_freq[h.filename.lower()] = _basename_freq.get(h.filename.lower(), 0) + 1
         lines = []
-        for hit in results.top(max_hits):
-            lines.append(f"File: {hit.filename} (page {hit.page_num})")
+        for hit in hits:
+            if _basename_freq[hit.filename.lower()] > 1:
+                display_name = f"{Path(hit.file_path).parent.name}/{hit.filename}"
+            else:
+                display_name = hit.filename
+            lines.append(f"File: {display_name} (page {hit.page_num})")
             lines.append(f"Match: {hit.match_text}")
             if hit.context_before:
                 lines.append(f"Context before: {' '.join(hit.context_before)}")
