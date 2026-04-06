@@ -476,18 +476,12 @@ class BeliefRevisionEngine:
             and not any(s not in _INERT_S for s in _superseding)
         )
         if _recovery_case:
-            # Guard 1: user-lock check
-            # If the most recent user-authored revision set belief_state to SUPERSEDED,
-            # respect user intent and skip automatic recovery.
-            _user_lock_row = self.db.execute(
-                """SELECT actor_kind FROM assertion_revision
-                   WHERE assertion_id=? AND changed_field='belief_state'
-                     AND new_value_json=?
-                   ORDER BY created_at DESC LIMIT 1""",
-                (assertion_id, '"superseded"'),
-            ).fetchone()
-            if _user_lock_row and _user_lock_row["actor_kind"] == "user":
-                return None, False
+            # Guard 1 (user-lock) is deferred to inside the write transaction below so
+            # that a concurrent force_state(USER_CORRECTION, same-state) that commits
+            # the lock row between this pre-tx read and the BEGIN IMMEDIATE is not missed.
+            # The OCC guard only compares assertion.belief_state/confidence; a same-state/
+            # same-confidence correction leaves no visible delta there, so the OCC would
+            # pass and the stale "no lock" decision would be committed without this fix.
 
             # Guard 2: derive speech-act baseline state for the computation.
             # Use the most authoritative speech_act across ALL occurrences so a
@@ -533,7 +527,9 @@ class BeliefRevisionEngine:
             elif _sa in ("waived", "terminated", "amended"):
                 _compute_state, _compute_conf = BeliefState.OPERATIVE, 0.7
             else:
-                _compute_state, _compute_conf = BeliefState.UNKNOWN, 0.3
+                # Matches _initial_belief_state() default (UNKNOWN, 0.5) for
+                # EXTRACTED, DENIED, ORDERED, etc. (r16 LOW fix)
+                _compute_state, _compute_conf = BeliefState.UNKNOWN, 0.5
 
         new_state, new_confidence = _compute_belief_state(
             _compute_state,
@@ -590,6 +586,24 @@ class BeliefRevisionEngine:
             if (_intx_old_state != old_state
                     or abs(_intx_old_conf - old_confidence) >= 0.001):
                 return None, True  # Conflict; caller must still enqueue dependents
+
+            # Guard 1 (user-lock) — read INSIDE BEGIN IMMEDIATE (r16 MEDIUM fix).
+            # A same-state/same-confidence force_state(USER_CORRECTION) leaves no delta
+            # in assertion.belief_state/confidence, so the OCC guard above cannot detect
+            # it. We must re-check assertion_revision here under the write lock so that
+            # any concurrent force_state that committed the lock row before our BEGIN
+            # IMMEDIATE is visible. Any force_state that starts after our BEGIN IMMEDIATE
+            # is blocked until we release the lock — no race window remains.
+            if _recovery_case:
+                _intx_lock_row = self.db.execute(
+                    """SELECT actor_kind FROM assertion_revision
+                       WHERE assertion_id=? AND changed_field='belief_state'
+                         AND new_value_json=?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (assertion_id, '"superseded"'),
+                ).fetchone()
+                if _intx_lock_row and _intx_lock_row["actor_kind"] == "user":
+                    return None, False  # empty commit — harmless
 
             # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
             # Use in-tx values for both diff detection and old_value_json.

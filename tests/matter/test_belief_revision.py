@@ -239,11 +239,14 @@ def test_user_lock_preserved_when_confidence_also_changes(model):
     model.belief.apply([a_id], cause=RevisionCause.NEW_EVIDENCE)
     assert model.assertions.get(b_id).belief_state == BeliefState.SUPERSEDED.value
 
-    # User correction: SUPERSEDED with confidence change (state unchanged, conf changes).
-    # Uses a different confidence than the current 0.1 set by BFS.
-    model.correct_assertion(b_id, BeliefState.SUPERSEDED, note="User confirmed with 0.05 conf")
-    # The matter model sets confidence via confidence_map, which may equal 0.1 for SUPERSEDED.
-    # Ensure at least the belief_state user-lock row was written.
+    # User correction: SUPERSEDED with an explicit confidence that differs from the current 0.1
+    # set by BFS. This is the exact bug scenario: old code checked `if not _fs_rev_rows` AFTER
+    # the confidence row was already appended, so the guard was False and the belief_state no-op
+    # row was skipped. New code uses `elif cause == USER_CORRECTION` which is independent of
+    # whether a confidence row was written.
+    model.correct_assertion(b_id, BeliefState.SUPERSEDED, confidence=0.05,
+                            note="User confirmed with 0.05 conf")
+    # Verify the belief_state user-lock row was written despite the confidence change.
     from irys.matter.db import SQLiteMatterDB
     lock_row = model.db.execute(
         """SELECT actor_kind FROM assertion_revision
@@ -329,6 +332,58 @@ def test_resolved_support_promotes_dependent(model):
     central = model.assertions.get(central_id)
     assert central.belief_state == BeliefState.INFERRED.value, \
         "RESOLVED support should promote dependent to INFERRED"
+
+
+def test_user_lock_not_missed_by_concurrent_same_state_correction(model):
+    """User lock must be detected even when the force_state committed before BFS BEGIN IMMEDIATE.
+
+    Race condition (r16 MEDIUM fix): a same-state/same-confidence force_state(USER_CORRECTION)
+    leaves no delta in assertion.belief_state/confidence, so the OCC guard cannot detect it.
+    The user-lock read must be inside the write transaction (BEGIN IMMEDIATE) so that any
+    concurrent force_state that committed the lock row before our write lock is visible.
+
+    We simulate the race deterministically: write the lock row directly into assertion_revision
+    (bypassing force_state), then invoke apply(). Without the fix, the lock read happened
+    before BEGIN IMMEDIATE and would find nothing (simulating the pre-commit read window).
+    With the fix, the lock read is inside BEGIN IMMEDIATE and always sees the committed row.
+    """
+    import json as _json
+    b_id = add(model, "Obligation clause.")
+    a_id = add(model, "Amendment to obligation clause.")
+    model.assertions.set_belief_state(a_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.link(a_id, b_id, AssertionLinkType.SUPERSEDES)
+
+    # BFS supersedes B
+    model.belief.apply([a_id], cause=RevisionCause.NEW_EVIDENCE)
+    assert model.assertions.get(b_id).belief_state == BeliefState.SUPERSEDED.value
+
+    # Simulate a concurrent force_state(USER_CORRECTION, same-state) by writing the lock row
+    # directly. This is what a concurrent call would have committed just before BFS's BEGIN
+    # IMMEDIATE — the scenario the old pre-tx user-lock read would have missed.
+    import uuid
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    batch_id = uuid.uuid4().hex
+    row_id = uuid.uuid4().hex
+    with model.db.transaction():
+        model.db.execute(
+            """INSERT INTO assertion_revision
+               (id, batch_id, assertion_id, changed_field,
+                old_value_json, new_value_json,
+                actor_kind, actor_ref, cause, run_id, note, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                row_id, batch_id, b_id, "belief_state",
+                _json.dumps("superseded"), _json.dumps("superseded"),
+                "user", None, "user_correction", None,
+                "simulated concurrent user lock", now,
+            ),
+        )
+
+    # Now withdraw A — BFS should detect the user-lock row and NOT recover B
+    model.correct_assertion(a_id, BeliefState.WITHDRAWN, note="Amendment voided")
+    assert model.assertions.get(b_id).belief_state == BeliefState.SUPERSEDED.value, \
+        "User lock written before BFS BEGIN IMMEDIATE must prevent auto-recovery (r16 MEDIUM fix)"
 
 
 def test_user_correction_via_matter_model(model):
