@@ -475,7 +475,9 @@ class MatterRuntimeAdapter:
                         changed_object_type="assertion",
                         changed_object_id=result.assertion_id,
                     )
-            total_revised += len(_cr_results)
+            total_revised += sum(
+                1 for r in _cr_results if r.old_belief_state != r.new_belief_state
+            )
 
         if not self._pending_assertion_ids:
             return total_revised
@@ -502,7 +504,9 @@ class MatterRuntimeAdapter:
                         changed_object_type="assertion",
                         changed_object_id=result.assertion_id,
                     )
-            total_revised += len(results)
+            total_revised += sum(
+                1 for r in results if r.old_belief_state != r.new_belief_state
+            )
         return total_revised
 
     # ------------------------------------------------------------------
