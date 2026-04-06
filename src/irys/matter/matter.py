@@ -77,6 +77,11 @@ class MatterModel:
         # Keyed by run_id.  Allows complete_run() to compute reuse_rate without
         # an extra SELECT round-trip (DB is the authoritative fallback).
         self._run_snapshots: dict[str, int] = {}
+        # Assertion IDs left unvisited after correct_assertion() inline retry rounds.
+        # Populated when propagation_truncated=True after 3 rounds; drained by
+        # flush_correction_pending() so the next flush_revisions() can finish the work
+        # without losing these nodes permanently (adversarial #028 HIGH fix).
+        self._correction_pending_ids: set[str] = set()
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -228,6 +233,17 @@ class MatterModel:
         """Trigger belief revision from seed assertions."""
         return self.belief.apply(seed_assertion_ids, cause, run_id, note)
 
+    def drain_correction_pending(self) -> list[str]:
+        """Return and clear assertion IDs that need retry after a truncated correction.
+
+        Called by RuntimeModel.flush_revisions() so correction-truncated nodes are
+        included in the next BFS sweep, preventing durable stale belief states after
+        the inline 3-round cap is exhausted (adversarial #028 HIGH fix).
+        """
+        result = list(self._correction_pending_ids)
+        self._correction_pending_ids.clear()
+        return result
+
     def correct_assertion(
         self,
         assertion_id: str,
@@ -295,6 +311,10 @@ class MatterModel:
         result.propagation_truncated = bool(_pending)
         if _pending:
             result.truncation_pending = _pending  # surface remaining work to caller
+            # Durably queue unvisited nodes so the next flush_revisions() call can
+            # finish propagation — prevents permanent stale states after cap exhaustion
+            # (adversarial #028 HIGH fix).
+            self._correction_pending_ids.update(_pending)
 
         # Targeted proof_state recompute: find issues linked to this assertion
         # and any that were revised as dependents (result.propagated_to).

@@ -447,6 +447,11 @@ class MatterRuntimeAdapter:
         a large flush (>2000 seeds) would silently skip high-index seeds because
         the BFS frontier budget is exhausted before reaching them.
         """
+        # Also drain nodes left unvisited by truncated correct_assertion() calls
+        # (adversarial #028 HIGH fix) — merge into the pending list before batching.
+        _correction_pending = self.model.drain_correction_pending()
+        if _correction_pending:
+            self._pending_assertion_ids.extend(_correction_pending)
         if not self._pending_assertion_ids:
             return 0
         # Batch size = MAX_WORK // 2 so each call has room for both seeds and
