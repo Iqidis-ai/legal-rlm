@@ -239,9 +239,10 @@ class AssertionStore:
                         "occurrence_upgrade", "system",
                         run_id=run_id,
                     )
-                # COALESCE preserves existing non-null canonical values — only fills in NULLs.
-                # This enforces the "NULL → non-NULL only" contract documented above.
-                self.db.execute(
+                    # COALESCE preserves existing non-null canonical values — only fills in NULLs.
+                    # Only run the UPDATE when there is actually something to fill in; skip if
+                    # _spo_rev_rows is empty to avoid a spurious updated_at bump.
+                    self.db.execute(
                     """UPDATE assertion
                        SET subject_ref_type=COALESCE(subject_ref_type, ?),
                            subject_ref_id=COALESCE(subject_ref_id, ?),
