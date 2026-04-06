@@ -2953,11 +2953,11 @@ class TrustOverrideStore:
 
     def delete(self, document_pattern: str) -> bool:
         """Remove a trust override. Returns True if a row was deleted."""
-        self.db.execute(
+        cur = self.db.execute(
             "DELETE FROM document_trust_override WHERE matter_id=? AND document_pattern=?",
             (self.matter_id, document_pattern),
         )
-        return True
+        return cur.rowcount > 0
 
 
 class DocumentAnnotationStore:

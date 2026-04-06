@@ -739,7 +739,9 @@ class MatterModel:
         revision on affected assertions so beliefs revert to auto-inferred trust.
         Proof state is recomputed for affected issues.
         """
-        self.trust_overrides.delete(document_pattern)
+        deleted = self.trust_overrides.delete(document_pattern)
+        if not deleted:
+            return  # nothing to propagate — no override existed
 
         affected_ids: list[str] = []
         _trust_unvisited: list[str] = []
@@ -773,6 +775,8 @@ class MatterModel:
             _log.warning("Trust override delete belief revision failed for %r: %s", document_pattern, exc)
         self.enqueue_evidence_pending(_trust_unvisited, cause=RevisionCause.TRUST_OVERRIDE, run_id=run_id)
 
+        # No compute_all() fallback on delete: if no assertions matched the pattern,
+        # nothing changed and a full recompute would be wasted work.
         try:
             if affected_ids:
                 _SQL_PARAM_LIMIT = 900
@@ -800,8 +804,6 @@ class MatterModel:
                             self.proof_state.compute_and_store(
                                 _iid, _preloaded_overrides=_preloaded
                             )
-            else:
-                self.proof_state.compute_all()
         except (sqlite3.Error, ValueError, RuntimeError) as exc:
             _log.warning("Trust override delete proof state refresh failed for %r: %s", document_pattern, exc)
 
