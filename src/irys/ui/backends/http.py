@@ -119,8 +119,8 @@ class HttpBackend(UIBackend):
     async def list_gaps(self, matter_id: str, limit: int = 50) -> list[dict]:
         return await self._get(f"/matter/{matter_id}/gaps", {"limit": limit})
 
-    async def list_clarifications(self, matter_id: str) -> list[dict]:
-        return await self._get(f"/matter/{matter_id}/clarifications")
+    async def list_clarifications(self, matter_id: str, limit: int = 20) -> list[dict]:
+        return await self._get(f"/matter/{matter_id}/clarifications", {"limit": limit})
 
     # ------------------------------------------------------------------ #
     # User steering                                                        #

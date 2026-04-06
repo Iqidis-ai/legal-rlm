@@ -79,7 +79,7 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
-    async def list_clarifications(self, matter_id: str) -> list[dict]:
+    async def list_clarifications(self, matter_id: str, limit: int = 20) -> list[dict]:
         ...
 
     # ------------------------------------------------------------------ #

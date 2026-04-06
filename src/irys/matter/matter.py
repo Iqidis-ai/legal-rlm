@@ -478,7 +478,8 @@ class MatterModel:
         matter_name = row["name"] if row else "unknown"
 
         assertion_count = self.assertions.count()
-        open_gaps = self.gaps.open_gaps(min_materiality=0.3)
+        # Limit to 10: engine context only uses count + first 3 descriptions.
+        open_gaps = self.gaps.open_gaps(min_materiality=0.3, limit=10)
         open_issues = self.issues.get_open_issues(min_materiality=0.3)
         actor_count = self.actors.count()
 
@@ -1343,8 +1344,8 @@ class MatterModel:
 
         # --- 3. High-materiality missing-doc gaps → supply_document ---
         try:
-            # DB-side limit to avoid full-table scan on large matters
-            _gap_candidates = self.gaps.open_gaps(min_materiality=0.6)
+            # Fetch only as many as we'll surface (DB-side limit avoids full scan).
+            _gap_candidates = self.gaps.open_gaps(min_materiality=0.6, limit=20)
             high_gaps = [
                 g for g in _gap_candidates
                 if g.get("gap_type") in ("MISSING_DOCUMENT", "missing_document")
@@ -1377,8 +1378,8 @@ class MatterModel:
         # --- 4. Pending clarifications → answer_clarification ---
         try:
             # DB-side limit: fetch only what we'll surface to avoid full-table scan
-            pending = self.clarifications.get_pending()
-            for q in pending[:3]:
+            pending = self.clarifications.get_pending(limit=3)
+            for q in pending:
                 q_id = q.get("id") or ""
                 if not q_id:
                     continue

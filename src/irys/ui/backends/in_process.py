@@ -219,10 +219,10 @@ class InProcessBackend(UIBackend):
         except Exception:
             return []
 
-    async def list_clarifications(self, matter_id: str) -> list[dict]:
+    async def list_clarifications(self, matter_id: str, limit: int = 20) -> list[dict]:
         model = self._get_matter_model(matter_id)
         try:
-            return model.clarifications.get_pending()
+            return model.clarifications.get_pending(limit=limit)
         except Exception:
             return []
 
