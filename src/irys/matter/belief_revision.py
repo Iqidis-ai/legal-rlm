@@ -352,11 +352,15 @@ class BeliefRevisionEngine:
                         in_queue.add(d)
                         pending.append(d)
 
-        if occ_exhausted_count:
+        # Gate abandoned-node warnings on live _occ_abandoned set, not sticky counter.
+        # occ_exhausted_count can be >0 even when all abandoned nodes later recovered
+        # in the same pass (they are removed from _occ_abandoned on success); warning
+        # on the counter would produce false "subtrees may be stale" messages (r22 fix).
+        if _occ_abandoned:
             _log.warning(
-                "BeliefRevisionEngine: %d node(s) abandoned after %d OCC retries — "
+                "BeliefRevisionEngine: %d node(s) still abandoned after %d OCC retries — "
                 "those subtrees may be stale; a follow-up propagation pass is needed.",
-                occ_exhausted_count,
+                len(_occ_abandoned),
                 _OCC_MAX_RETRIES,
             )
 
@@ -378,9 +382,9 @@ class BeliefRevisionEngine:
                             "concurrent writes detected during BFS; conflicted nodes "
                             f"re-enqueued for retry (cap={_OCC_MAX_RETRIES})"
                             + (
-                                f"; {occ_exhausted_count} node(s) abandoned after "
+                                f"; {len(_occ_abandoned)} node(s) still abandoned after "
                                 "retry cap exhaustion — subtrees may be stale"
-                                if occ_exhausted_count else ""
+                                if _occ_abandoned else ""
                             )
                             + "."
                         ),
