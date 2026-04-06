@@ -111,8 +111,13 @@ async def _cleanup_loop(config: ServiceConfig):
                         if jid != job_id
                     )
                     if not _other_live:
-                        del _active_matter_models[job.matter_id]
+                        _evicted = _active_matter_models.pop(job.matter_id, None)
                         _matter_model_last_used.pop(job.matter_id, None)
+                        if _evicted is not None:
+                            try:
+                                _evicted.db.close()
+                            except Exception:
+                                pass
                 del _jobs[job_id]
                 logger.debug(f"Cleaned up job {job_id}")
             # Evict matter models not backed by any active job (rehydrated models).
@@ -122,8 +127,13 @@ async def _cleanup_loop(config: ServiceConfig):
             for _mid in list(_active_matter_models.keys()):
                 if _mid not in _live_matter_ids:
                     if _matter_model_last_used.get(_mid, datetime.min) < _idle_cutoff:
-                        del _active_matter_models[_mid]
+                        _evicted = _active_matter_models.pop(_mid, None)
                         _matter_model_last_used.pop(_mid, None)
+                        if _evicted is not None:
+                            try:
+                                _evicted.db.close()
+                            except Exception:
+                                pass
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
 
@@ -278,15 +288,16 @@ def _try_rehydrate_matter_model(matter_id: str, config: ServiceConfig) -> Option
     return None
 
 
-def _get_matter_model_or_404(matter_id: str):
+async def _get_matter_model_or_404(matter_id: str):
     model = _active_matter_models.get(matter_id)
     if model is not None:
         _matter_model_last_used[matter_id] = datetime.now()
         return model
-    # Try rehydrating from persistent storage (service restart recovery)
+    # Try rehydrating from persistent storage (service restart recovery).
+    # Runs in a thread pool to avoid blocking the event loop on filesystem/SQLite I/O.
     config = get_config()
     if config.enable_matter_model and config.matter_db_dir:
-        model = _try_rehydrate_matter_model(matter_id, config)
+        model = await asyncio.to_thread(_try_rehydrate_matter_model, matter_id, config)
         if model is not None:
             _active_matter_models[matter_id] = model
             _matter_model_last_used[matter_id] = datetime.now()
@@ -828,6 +839,12 @@ async def upload_search(
     Synchronous - returns results immediately.
     """
     config = get_config()
+    # Check file count (same cap as other upload endpoints)
+    if len(files) > config.max_documents_per_job:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files ({len(files)}). Max: {config.max_documents_per_job}",
+        )
     job_id = f"uploadsearch_{uuid.uuid4().hex[:8]}"
     s3_prefix = None
     s3_repo = None
@@ -1364,7 +1381,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
 )
 async def get_matter_stats(matter_id: str):
     """Return counts and summary for an active matter model."""
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return MatterStatsResponse(**model.stats())
 
 
@@ -1375,7 +1392,7 @@ async def get_matter_stats(matter_id: str):
 )
 async def get_matter_runs(matter_id: str, limit: int = 10):
     """List recent investigation runs for a matter."""
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.ledger.recent_runs(limit=limit)
 
 
@@ -1386,7 +1403,7 @@ async def get_matter_runs(matter_id: str, limit: int = 10):
 )
 async def get_run_events(matter_id: str, run_id: str):
     """Return the full reasoning ledger event sequence for a run."""
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     run = model.ledger.get_run(run_id)
     if run is None or run.matter_id != model.matter_id:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in this matter")
@@ -1400,7 +1417,7 @@ async def get_run_events(matter_id: str, run_id: str):
 )
 async def get_pending_clarifications(matter_id: str, limit: int = 20):
     """Return pending clarification questions for a matter."""
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.clarifications.get_pending(limit=limit)
 
 
@@ -1415,7 +1432,7 @@ async def stop_investigation(matter_id: str, _: StopRunRequest):
     Sets stop_requested=1 in the run session; the engine reads this flag
     between iterations and performs a clean interrupt without losing work.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     # Filter out utility flush runs so stop targets the real investigation, not a
     # background/manual flush that happens to be running concurrently.
     _stop_rows = model.db.execute(
@@ -1453,7 +1470,7 @@ async def redirect_investigation(matter_id: str, run_id: str, request: RedirectR
     Sets redirect_requested=1 and records the target issue_id; the engine
     picks this up on the next iteration and pivots retrieval accordingly.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     run = model.ledger.get_run(run_id)
     if run is None or run.matter_id != model.matter_id:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in this matter")
@@ -1497,7 +1514,7 @@ async def answer_clarification(
     The answered clarification is injected into the orientation prompt of
     subsequent investigation runs for this matter.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     try:
         found = model.clarifications.answer_question(question_id, request.answer_text)
     except Exception as e:
@@ -1519,7 +1536,7 @@ async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
     heuristics), normal (reset to auto-inference), or high-trust (promote ALLEGED
     facts to OPERATIVE). Takes effect on the next investigation run.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     # Validated run_id attribution — same pattern as correct_assertion (r37 fix).
     _trust_run_id: "str | None" = (getattr(request, "run_id", None) or None)
     if _trust_run_id:
@@ -1561,7 +1578,7 @@ async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
 )
 async def list_trust_overrides(matter_id: str):
     """List all document trust overrides for a matter."""
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return {"overrides": model.trust_overrides.list_all()}
 
 
@@ -1576,7 +1593,7 @@ async def delete_trust_override(matter_id: str, document_pattern: str):
     Restores auto-inferred trust for the matching document pattern.
     Returns 404 if the matter is not found.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     model.delete_trust_override(document_pattern)
     return {"status": "deleted", "document_pattern": document_pattern}
 
@@ -1598,7 +1615,7 @@ async def flush_pending_propagation(matter_id: str):
 
     Returns the count of assertions whose belief state changed during this flush.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     from irys.matter.runtime import MatterRuntimeAdapter
     # Acquire _flush_lock BEFORE opening the run session so no spurious 'running' row
     # exists while waiting for an active investigation to finish. Calls
@@ -1638,7 +1655,7 @@ async def add_document_annotation(matter_id: str, request: DocumentAnnotationReq
     Annotations are injected into the orientation prompt so the engine uses the
     user's domain knowledge about a document when planning the investigation.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     annotation_id = model.annotations.add(
         request.document_pattern, request.annotation_text, request.annotation_type
     )
@@ -1655,7 +1672,7 @@ async def list_document_annotations(matter_id: str, document: Optional[str] = No
 
     Pass ?document=filename.pdf to filter by document, or omit for all recent annotations.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     if document:
         return {"annotations": model.annotations.get_for_document(document)}
     return {"annotations": model.annotations.list_recent()}
@@ -1672,7 +1689,7 @@ async def delete_document_annotation(matter_id: str, annotation_id: str):
     Returns 404 if the matter is not found; returns deleted=false if annotation_id
     does not exist (idempotent delete).
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     deleted = model.annotations.delete(annotation_id)
     return {"status": "deleted" if deleted else "not_found", "annotation_id": annotation_id}
 
@@ -1689,7 +1706,7 @@ async def get_reconciliation(matter_id: str, currency: str = "USD"):
     fee, damages, etc.) and sums each bucket. Compare invoice vs payment totals
     to identify claimed exposure.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     reconciliation = model.reconcile(currency=currency)
     conflicts = model.quant.get_conflicts()
     return {
@@ -1710,7 +1727,7 @@ async def get_matter_assertions(matter_id: str, limit: int = 50, offset: int = 0
     Each assertion includes belief_state, source_role, speech_act, and the
     document it came from — enabling clients to audit the evidence layer.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return {
         "total": model.assertions.count(),
         "limit": limit,
@@ -1743,7 +1760,7 @@ async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 
 
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     # Verify assertion belongs to this matter (assertion_revision has no matter_id col)
     row = model.db.execute(
         "SELECT id FROM assertion WHERE id=? AND matter_id=?",
@@ -1816,7 +1833,7 @@ async def get_matter_issues(matter_id: str, min_materiality: float = 0.0):
     including coverage_fraction, has_proof_gap, and gap_id — the canonical SO-4
     coverage view used internally by the investigation engine.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     report = model.get_issue_coverage_report()
     # Filter by materiality post-hoc (get_issue_coverage_report returns all issues)
     if min_materiality > 0.0:
@@ -1836,7 +1853,7 @@ async def get_matter_reconciliation(matter_id: str, currency: str = "USD"):
     and claimed exposure (invoiced − paid). Each figure is grounded via source_spans
     linking back to the original document spans.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.reconcile_payment_chain(currency)
 
 
@@ -1852,7 +1869,7 @@ async def get_matter_invoice_chain(matter_id: str, currency: str = "USD"):
     was paid against it, and what remains outstanding.  Payments are matched
     to invoices by subject_id equality in the quant_fact store.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.reconcile_invoice_chain(currency)
 
 
@@ -1868,7 +1885,7 @@ async def get_matter_so_metrics(matter_id: str):
     steerability, and belief_revision, with targets and pass/fail flags.
     Metrics requiring ground truth or run telemetry are returned as null.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.get_so_metrics()
 
 
@@ -1882,7 +1899,7 @@ async def get_decision_context(matter_id: str):
 
     Returns null when no context has been set.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.decision_context.get()
 
 
@@ -1899,7 +1916,7 @@ async def set_decision_context(matter_id: str, payload: dict):
     are coerced to 'unknown'.  Influences synthesis framing only — does not
     alter the canonical record model.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     ctx_id = model.decision_context.set(
         decision_maker_type=payload.get("decision_maker_type"),
         decision_maker_name=payload.get("decision_maker_name"),
@@ -1917,7 +1934,7 @@ async def set_decision_context(matter_id: str, payload: dict):
 )
 async def clear_decision_context(matter_id: str):
     """Remove the decision-context overlay for a matter."""
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     model.decision_context.clear()
     return {"matter_id": matter_id, "status": "cleared"}
 
@@ -1935,7 +1952,7 @@ async def get_matter_gaps(matter_id: str, min_materiality: float = 0.0, limit: O
     Filtered by materiality threshold (0.0 = all gaps, 0.5 = significant only).
     limit: cap the number returned (None = use schema default pagination).
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.gaps.open_gaps(min_materiality=min_materiality, limit=limit)
 
 
@@ -1956,7 +1973,7 @@ async def correct_assertion(
     """
     from irys.matter.enums import BeliefState, RevisionCause
 
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
 
     try:
         new_state = BeliefState(request.new_belief_state)
@@ -2140,7 +2157,7 @@ async def upsert_authority(matter_id: str, payload: dict):
 
     Duplicate citations are updated in place.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     citation = payload.get("citation", "").strip()
     if not citation:
         raise HTTPException(status_code=422, detail="citation is required")
@@ -2178,7 +2195,7 @@ async def list_authorities(
     Optionally filter by authority_type or weight, or provide a search query
     for substring matching on citation/name.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     if search:
         return model.authority.search(search, limit=limit)
     return model.authority.list_all(authority_type=authority_type, weight=weight, limit=limit)
@@ -2191,7 +2208,7 @@ async def list_authorities(
 )
 async def get_authority(matter_id: str, authority_id: str):
     """Return a single authority by id."""
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     auth = model.authority.get(authority_id)
     if auth is None:
         raise HTTPException(status_code=404, detail="Authority not found")
@@ -2213,7 +2230,7 @@ async def link_authority_to_issue(
 
     relevance: supporting | attacking | neutral
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     model.authority.link_to_issue(authority_id, issue_id, relevance=relevance)
     return {"authority_id": authority_id, "issue_id": issue_id, "relevance": relevance, "status": "linked"}
 
@@ -2225,7 +2242,7 @@ async def link_authority_to_issue(
 )
 async def unlink_authority_from_issue(matter_id: str, authority_id: str, issue_id: str):
     """Remove an authority-issue link."""
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     model.authority.unlink_from_issue(authority_id, issue_id)
     return {"authority_id": authority_id, "issue_id": issue_id, "status": "unlinked"}
 
@@ -2237,7 +2254,7 @@ async def unlink_authority_from_issue(matter_id: str, authority_id: str, issue_i
 )
 async def get_issue_authorities(matter_id: str, issue_id: str):
     """Return all authorities linked to an issue, with their relevance."""
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.authority.list_for_issue(issue_id)
 
 
@@ -2256,7 +2273,7 @@ async def compute_proof_state(matter_id: str):
     Should be called after adding assertions, resolving predicates, or making
     other changes that affect evidence coverage.  Returns per-issue proof states.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     states = model.proof_state.compute_all()
     return {"matter_id": matter_id, "updated_count": len(states), "states": states}
 
@@ -2268,7 +2285,7 @@ async def compute_proof_state(matter_id: str):
 )
 async def compute_issue_proof_state(matter_id: str, issue_id: str):
     """Recompute proof state for a single issue."""
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     _issue_check = model.db.execute(
         "SELECT 1 FROM issue WHERE id=? AND matter_id=?", (issue_id, model.matter_id)
     ).fetchone()
@@ -2289,7 +2306,7 @@ async def get_proof_state_summary(matter_id: str):
     Includes aggregate stats (avg sufficiency, count by status) and the full
     list of per-issue proof states ordered by sufficiency ascending.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     summary = model.proof_state.get_summary()
     all_states = model.proof_state.get_all()
     return {"matter_id": matter_id, "summary": summary, "issues": all_states}
@@ -2302,7 +2319,7 @@ async def get_proof_state_summary(matter_id: str):
 )
 async def get_issue_proof_state(matter_id: str, issue_id: str):
     """Return stored proof state for a single issue, or null if not yet computed."""
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.proof_state.get(issue_id)
 
 
@@ -2317,7 +2334,7 @@ async def get_proof_gaps(matter_id: str, threshold: float = 0.25):
     threshold: float 0..1, default 0.25.  Issues with sufficiency < threshold
     are surfaced as requiring additional evidence.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.proof_state.get_gaps(threshold=threshold)
 
 
@@ -2337,7 +2354,7 @@ async def get_matter_timeline(matter_id: str, limit: int = 200):
     Events are ordered by date ascending (undated events last).
     Each entry has: date, event, source_doc, quant_id, assertion_id, subject, kind.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.get_timeline(limit=limit)
 
 
@@ -2353,7 +2370,7 @@ async def get_evidence_matrix(matter_id: str):
     assertion counts per (issue, document) pair.  Useful for identifying which
     sources contribute evidence to which claims and which issues lack source coverage.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.get_evidence_matrix()
 
 
@@ -2370,7 +2387,7 @@ async def get_communication_map(matter_id: str):
     Useful for mapping communication patterns, principal relationships, and
     identifying which parties are most active in document production.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.get_communication_map()
 
 
@@ -2386,7 +2403,7 @@ async def get_damages_waterfall(matter_id: str, currency: str = "USD"):
     Ordered by claimed_amount descending.  Includes conflict detection when
     multiple sources cite different amounts for the same component.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.get_damages_waterfall(currency=currency)
 
 
@@ -2405,7 +2422,7 @@ async def get_steering_surface(matter_id: str, run_id: Optional[str] = None):
         run_id: When provided, redirect_focus action params will include this run_id
                 so callers can invoke the redirect directly.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.get_ledger_steering_surface(run_id=run_id)
 
 
@@ -2424,7 +2441,7 @@ async def get_actor_duplicates(matter_id: str, min_prefix_len: int = 6):
     Use this to identify actors that should be merged (e.g. "Acme Corp" and
     "Acme Corporation").  Returns actor pairs with their shared prefix.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     return model.actors.find_possible_duplicates(min_prefix_len=min_prefix_len)
 
 
@@ -2440,7 +2457,7 @@ async def merge_actors(matter_id: str, keep_id: str, merge_id: str):
     keep_id, then deletes merge_id.  The keep_id actor's canonical name is
     preserved.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     try:
         model.actors.merge_actors(keep_id=keep_id, merge_id=merge_id)
     except ValueError as e:
@@ -2458,7 +2475,7 @@ async def resolve_actor_by_name(matter_id: str, name: str):
 
     Returns {actor_id, actor} if found, or {actor_id: null} if not resolved.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     actor_id = model.actors.resolve_by_name(name)
     if actor_id is None:
         return {"actor_id": None}
@@ -2484,7 +2501,7 @@ async def get_matter_overview(matter_id: str):
     Combines stats, SO metrics, recent runs, weakest issues, open gaps,
     and pending clarifications into a single low-latency response.
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     stats = model.stats()
 
     # Fetch coverage report once — shared by both weakest_issues and get_so_metrics()
@@ -2546,7 +2563,7 @@ async def stream_run_events(matter_id: str, run_id: str, after_seq: int = -1, re
 
     The stream closes when the run reaches a terminal state (completed/failed/interrupted).
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     # Validate before opening the stream so HTTP 404 is sent as a real error response,
     # not buried inside a 200 SSE body (adv#031 MEDIUM).
     _run_check = model.db.execute(
@@ -2621,7 +2638,7 @@ async def stop_run(matter_id: str, run_id: str):
     Preferred over the matter-level /matter/{matter_id}/stop when the UI
     has a specific run_id (e.g., from the live investigation panel).
     """
-    model = _get_matter_model_or_404(matter_id)
+    model = await _get_matter_model_or_404(matter_id)
     run = model.ledger.get_run(run_id)
     if run is None or run.matter_id != model.matter_id:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in this matter")
