@@ -12,6 +12,7 @@ Architecture: in-process for local dev (InProcessBackend), HTTP for deployed ser
 """
 
 import asyncio
+import concurrent.futures
 import os
 import queue
 import threading
@@ -21,6 +22,17 @@ from typing import Generator, Optional
 import gradio as gr
 
 from .backends.in_process import InProcessBackend
+
+# Dedicated executor for running async backend calls from sync Gradio callbacks.
+# asyncio.run() can conflict with Gradio's internal event loop in some versions;
+# using a thread + new event loop is reliably safe.
+_ASYNC_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="irys_async")
+
+
+def _run_async(coro):
+    """Run a coroutine from a sync context without conflicting with existing loops."""
+    future = _ASYNC_EXECUTOR.submit(asyncio.run, coro)
+    return future.result(timeout=30)
 
 
 # ---------------------------------------------------------------------------
@@ -205,13 +217,13 @@ class AppState:
         self.update_queue = queue.Queue()
 
         if not repo_path or not __import__("pathlib").Path(repo_path).exists():
-            yield ("", "", "", "❌ Invalid repository path", "", "")
+            yield ("", "", "", "❌ Invalid repository path", "")
             return
         if not query.strip():
-            yield ("", "", "", "❌ Please enter a query", "", "")
+            yield ("", "", "", "❌ Please enter a query", "")
             return
         if not self.api_key:
-            yield ("", "", "", "❌ No GEMINI_API_KEY. Set the env var or pass --api-key", "", "")
+            yield ("", "", "", "❌ No GEMINI_API_KEY. Set the env var or pass --api-key", "")
             return
 
         self.is_running = True
@@ -233,7 +245,6 @@ class AppState:
                         "\n".join(self.citations_log) or "—",
                         status,
                         self.current_matter_id or "—",
-                        "",
                     )
 
                 elif update_type == "complete":
@@ -256,7 +267,6 @@ class AppState:
                         "\n".join(self.citations_log) or "—",
                         status,
                         self.current_matter_id or "—",
-                        self.current_matter_id or "",
                     )
                     return
 
@@ -268,7 +278,6 @@ class AppState:
                         "",
                         f"❌ {data}",
                         "—",
-                        "",
                     )
                     return
 
@@ -282,7 +291,6 @@ class AppState:
                         "\n".join(self.citations_log) or "—",
                         status,
                         self.current_matter_id or "—",
-                        "",
                     )
 
         thread.join(timeout=2)
@@ -304,7 +312,7 @@ class AppState:
         if not matter_id or matter_id == "—":
             return "No matter loaded. Run an investigation first."
         try:
-            data = asyncio.run(self.backend().get_overview(matter_id))
+            data = _run_async(self.backend().get_overview(matter_id))
             return _fmt_overview(data)
         except Exception as exc:
             return f"Error loading overview: {exc}"
@@ -313,7 +321,7 @@ class AppState:
         if not matter_id or matter_id == "—":
             return "No matter loaded."
         try:
-            issues = asyncio.run(self.backend().list_issues(matter_id))
+            issues = _run_async(self.backend().list_issues(matter_id))
             return _fmt_issues(issues)
         except Exception as exc:
             return f"Error loading issues: {exc}"
@@ -322,7 +330,7 @@ class AppState:
         if not matter_id or matter_id == "—":
             return "No matter loaded."
         try:
-            assertions = asyncio.run(self.backend().list_assertions(matter_id, limit=50))
+            assertions = _run_async(self.backend().list_assertions(matter_id, limit=50))
             return _fmt_assertions(assertions)
         except Exception as exc:
             return f"Error loading assertions: {exc}"
@@ -331,8 +339,8 @@ class AppState:
         if not matter_id or matter_id == "—":
             return "No matter loaded."
         try:
-            gaps = asyncio.run(self.backend().list_gaps(matter_id))
-            clarifications = asyncio.run(self.backend().list_clarifications(matter_id))
+            gaps = _run_async(self.backend().list_gaps(matter_id))
+            clarifications = _run_async(self.backend().list_clarifications(matter_id))
             return _fmt_gaps(gaps, clarifications)
         except Exception as exc:
             return f"Error loading gaps: {exc}"
@@ -343,7 +351,7 @@ class AppState:
         if not matter_id or not assertion_id:
             return "Provide matter ID and assertion ID."
         try:
-            result = asyncio.run(
+            result = _run_async(
                 self.backend().correct_assertion(matter_id, assertion_id, new_state, reason)
             )
             return f"✅ Corrected: {result}"
@@ -354,7 +362,7 @@ class AppState:
         if not matter_id or not run_id or not issue_id:
             return "Provide matter ID, run ID, and issue ID."
         try:
-            result = asyncio.run(
+            result = _run_async(
                 self.backend().redirect_run(matter_id, run_id, issue_id)
             )
             return f"✅ Redirected: {result}"
@@ -370,14 +378,7 @@ class AppState:
 def create_app(api_key: Optional[str] = None) -> gr.Blocks:
     state = AppState(api_key=api_key)
 
-    with gr.Blocks(
-        title="Irys RLM",
-        theme=gr.themes.Soft(),
-        css="""
-        .mono textarea { font-family: monospace; font-size: 12px; }
-        .status-bar textarea { font-size: 12px; background: #f8f8f8; }
-        """,
-    ) as demo:
+    with gr.Blocks(title="Irys RLM") as demo:
         gr.Markdown("# Irys RLM — Legal Intelligence System")
 
         # Shared matter_id state (populated after a run completes)
@@ -438,7 +439,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                             interactive=False,
                         )
 
-                run_outputs = [run_output, trace_box, citations_box, status_box, matter_id_box, gr.Textbox(visible=False)]
+                run_outputs = [run_output, trace_box, citations_box, status_box, matter_id_box]
 
                 submit_btn.click(
                     fn=state.stream_investigation,
@@ -554,14 +555,6 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     outputs=[redirect_result],
                 )
 
-    # Auto-refresh overview after run completes
-    # (The 6th invisible output triggers this on complete)
-    matter_id_box.change(
-        fn=state.load_overview,
-        inputs=[matter_id_box],
-        outputs=[overview_md],
-    )
-
     return demo
 
 
@@ -579,7 +572,12 @@ def main():
         print("⚠️  No GEMINI_API_KEY — set it or pass --api-key")
 
     demo = create_app(api_key=api_key)
-    demo.launch(server_port=args.port, share=args.share)
+    demo.launch(
+        server_port=args.port,
+        share=args.share,
+        theme=gr.themes.Soft(),
+        css=".mono textarea { font-family: monospace; font-size: 12px; }",
+    )
 
 
 if __name__ == "__main__":

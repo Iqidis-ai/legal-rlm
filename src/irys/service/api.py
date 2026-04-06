@@ -2142,15 +2142,12 @@ async def get_matter_overview(matter_id: str):
     except Exception:
         pass
 
-    # Top open gaps — limit 5
+    # Top open gaps — limit 5 (highest materiality first via open_gaps())
     top_gaps = []
     try:
-        top_gaps = model.gaps.get_open(limit=5)
+        top_gaps = model.gaps.open_gaps()[:5]
     except Exception:
-        try:
-            top_gaps = model.gaps.list_open()[:5]
-        except Exception:
-            pass
+        pass
 
     # Pending clarifications — limit 5
     clarifications = []

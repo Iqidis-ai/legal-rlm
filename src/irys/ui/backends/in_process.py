@@ -182,7 +182,7 @@ class InProcessBackend(UIBackend):
     async def list_issues(self, matter_id: str) -> list[dict]:
         model = self._get_matter_model(matter_id)
         try:
-            return model.issues.list_open()
+            return model.issues.get_open_issues()
         except Exception:
             return []
 
@@ -199,12 +199,9 @@ class InProcessBackend(UIBackend):
     async def list_gaps(self, matter_id: str, limit: int = 50) -> list[dict]:
         model = self._get_matter_model(matter_id)
         try:
-            return model.gaps.get_open(limit=limit)
+            return model.gaps.open_gaps()[:limit]
         except Exception:
-            try:
-                return model.gaps.list_open()[:limit]
-            except Exception:
-                return []
+            return []
 
     async def list_clarifications(self, matter_id: str) -> list[dict]:
         model = self._get_matter_model(matter_id)
