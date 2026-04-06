@@ -446,7 +446,16 @@ class MatterRuntimeAdapter:
         so that every seed receives at least one revision pass.  Without batching,
         a large flush (>2000 seeds) would silently skip high-index seeds because
         the BFS frontier budget is exhausted before reaching them.
+
+        Acquires model._flush_lock to serialize concurrent callers (one per MatterModel
+        instance). This prevents reload_pending_from_db() + drain from racing between
+        two simultaneous flush_revisions() calls (adv#029 SO-1 fix r7).
         """
+        with self.model._flush_lock:
+            return self._flush_revisions_locked()
+
+    def _flush_revisions_locked(self) -> int:
+        """Body of flush_revisions(); called with model._flush_lock held."""
         # Drain nodes left unvisited by truncated correct_assertion() calls (adv#028 HIGH fix).
         # Processed separately from new-evidence pending so USER_CORRECTION provenance is
         # preserved in revision rows — mixing them would replay corrections as NEW_EVIDENCE

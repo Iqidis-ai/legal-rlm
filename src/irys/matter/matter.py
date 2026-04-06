@@ -91,6 +91,10 @@ class MatterModel:
         # (r31 MEDIUM fix). First-write wins: earlier cause preserved on repeated truncation.
         self._evidence_pending: "dict[str, tuple[RevisionCause, str | None]]" = {}
         self._evidence_pending_lock = threading.Lock()
+        # Serializes flush_revisions() calls across concurrent adapters/endpoints so that
+        # reload_pending_from_db() + drain cannot race and double-replay the same row
+        # (adv#029 SO-1 fix r7).
+        self._flush_lock = threading.Lock()
         # Reconstruct pending queues from the durable pending_propagation table (adv#029 SO-1 fix).
         # This ensures partial BFS propagation survives process restarts with no replay loss.
         self._load_pending_propagation()
