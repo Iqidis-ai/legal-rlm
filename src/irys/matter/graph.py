@@ -910,6 +910,7 @@ class AssertionStore:
         gap_store: "GapStore",
         belief_engine: "BeliefRevisionEngine",
         run_id: "str | None" = None,
+        _truncated_nodes: "list[str] | None" = None,
     ) -> list[dict]:
         """
         Run contradiction mining and enforce belief states.
@@ -965,6 +966,8 @@ class AssertionStore:
                             " — downstream belief states may be stale.",
                             attacked_id,
                         )
+                        if _truncated_nodes is not None:
+                            _truncated_nodes.extend(_fs_result.truncation_pending)
             except Exception:
                 pass  # belief revision failure does not abort gap recording
 

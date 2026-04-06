@@ -92,6 +92,7 @@ class UIBackend(ABC):
         assertion_id: str,
         new_state: str,
         reason: str,
+        run_id: "str | None" = None,
     ) -> dict:
         ...
 

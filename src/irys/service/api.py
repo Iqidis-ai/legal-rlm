@@ -1442,9 +1442,21 @@ async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
     facts to OPERATIVE). Takes effect on the next investigation run.
     """
     model = _get_matter_model_or_404(matter_id)
+    # Pass active run_id so trust-override-triggered revision rows are attributed (r34 fix).
+    _trust_run_id: "str | None" = None
+    try:
+        _trust_run_row = model.db.execute(
+            "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
+            " ORDER BY started_at DESC LIMIT 1",
+            (matter_id,),
+        ).fetchone()
+        if _trust_run_row is not None:
+            _trust_run_id = _trust_run_row["id"]
+    except Exception:
+        pass
     try:
         override_id = model.set_trust_override(
-            request.document_pattern, request.trust_level, request.note
+            request.document_pattern, request.trust_level, request.note, run_id=_trust_run_id
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1733,10 +1745,25 @@ async def correct_assertion(
                    "disputed/superseded/withdrawn/inferred/resolved/unknown",
         )
 
+    # Look up active run before correction so run_id is attributed on the revision rows
+    # (r34 fix: previously the run_id was only used for the synthetic clarification below).
+    _active_run_id: "str | None" = None
+    try:
+        _active_run_row = model.db.execute(
+            "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
+            " ORDER BY started_at DESC LIMIT 1",
+            (matter_id,),
+        ).fetchone()
+        if _active_run_row is not None:
+            _active_run_id = _active_run_row["id"]
+    except Exception:
+        pass
+
     try:
         result = model.correct_assertion(
             assertion_id=assertion_id,
             new_state=new_state,
+            run_id=_active_run_id,
             confidence=request.confidence,
             note=request.note,
         )

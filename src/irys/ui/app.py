@@ -550,7 +550,10 @@ class AppState:
             return "Select a belief state."
         try:
             result = _run_async(
-                self.backend().correct_assertion(matter_id, assertion_id, new_state, reason)
+                self.backend().correct_assertion(
+                    matter_id, assertion_id, new_state, reason,
+                    run_id=getattr(self, "current_run_id", None),
+                )
             )
             if isinstance(result, dict) and result.get("status") == "error":
                 return f"❌ {result.get('detail', result)}"

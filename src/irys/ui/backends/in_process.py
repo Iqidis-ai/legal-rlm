@@ -221,6 +221,7 @@ class InProcessBackend(UIBackend):
         assertion_id: str,
         new_state: str,
         reason: str,
+        run_id: "str | None" = None,
     ) -> dict:
         model = self._get_matter_model(matter_id)
         try:
@@ -228,7 +229,7 @@ class InProcessBackend(UIBackend):
         except ValueError:
             return {"status": "error", "detail": f"Invalid belief state: {new_state!r}"}
         try:
-            result = model.correct_assertion(assertion_id, belief_state, note=reason)
+            result = model.correct_assertion(assertion_id, belief_state, run_id=run_id, note=reason)
             resp = {"status": "corrected", "assertion_id": assertion_id}
             if getattr(result, "propagation_truncated", False):
                 resp["warning"] = "Belief revision truncated — proof state will refresh on next run"

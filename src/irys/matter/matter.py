@@ -525,11 +525,20 @@ class MatterModel:
 
         Returns the list of contradiction dicts found.
         """
-        return self.assertions.mine_and_mark_contradictions(
+        _truncated: list[str] = []
+        result = self.assertions.mine_and_mark_contradictions(
             gap_store=self.gaps,
             belief_engine=self.belief,
             run_id=run_id,
+            _truncated_nodes=_truncated,
         )
+        if _truncated:
+            self.enqueue_evidence_pending(
+                list(dict.fromkeys(_truncated)),
+                cause=RevisionCause.CONFLICT_DETECTION,
+                run_id=run_id,
+            )
+        return result
 
     def detect_document_version_chains(self) -> list[dict]:
         """
