@@ -56,6 +56,9 @@ _active_matter_models: dict[str, Any] = {}
 # Last-access times for matter models not backed by an active job (rehydrated models).
 # Used by _cleanup_loop to evict idle rehydrated models so they don't accumulate.
 _matter_model_last_used: dict[str, datetime] = {}
+# Per-matter asyncio locks for cold-rehydration deduplication.  Only one coroutine
+# scans corpus directories per matter_id; concurrent misses wait and then re-check cache.
+_rehydration_locks: dict[str, "asyncio.Lock"] = {}
 
 # Version
 VERSION = "1.0.0"
@@ -102,21 +105,21 @@ async def _cleanup_loop(config: ServiceConfig):
             ]
             _expired_set = set(expired)
             _idle_cutoff = now - timedelta(seconds=config.cleanup_after_seconds)
+            # Precompute matter_ids that still have at least one live (non-expired) job.
+            # Avoids O(expired × jobs) rescans in the per-expired-job loop below.
+            _live_job_matter_ids = {
+                j.matter_id
+                for jid, j in _jobs.items()
+                if jid not in _expired_set and j.matter_id
+            }
             for job_id in expired:
                 job = _jobs[job_id]
                 if job.matter_id and job.matter_id in _active_matter_models:
                     # Only evict the model if:
                     # (a) no other non-expired job still references this matter, AND
                     # (b) the model has not been recently accessed (last_used < idle_cutoff).
-                    # Checking last_used prevents evicting a model that is actively used
-                    # by a background flush or concurrent request even though its job aged out.
-                    _other_live = any(
-                        jid not in _expired_set and j.matter_id == job.matter_id
-                        for jid, j in _jobs.items()
-                        if jid != job_id
-                    )
                     _last = _matter_model_last_used.get(job.matter_id, datetime.min)
-                    if not _other_live and _last < _idle_cutoff:
+                    if job.matter_id not in _live_job_matter_ids and _last < _idle_cutoff:
                         _active_matter_models.pop(job.matter_id, None)
                         _matter_model_last_used.pop(job.matter_id, None)
                         # Note: SQLiteMatterDB uses threading.local so db.close() from
@@ -293,22 +296,24 @@ async def _get_matter_model_or_404(matter_id: str):
         return model
     # Try rehydrating from persistent storage (service restart recovery).
     # Runs in a thread pool to avoid blocking the event loop on filesystem/SQLite I/O.
+    # Per-matter lock deduplicates concurrent cold-miss requests so only one thread
+    # scans corpus directories per matter_id; waiters re-check the cache on lock acquire.
     config = get_config()
     if config.enable_matter_model and config.matter_db_dir:
-        model = await asyncio.to_thread(_try_rehydrate_matter_model, matter_id, config)
-        if model is not None:
-            # Re-check after the await: another concurrent coroutine may have
-            # completed rehydration while we were in the thread pool. Since asyncio
-            # is single-threaded, this check-and-assign is atomic — no further yield
-            # between here and the assignment, so no second race window.
+        if matter_id not in _rehydration_locks:
+            _rehydration_locks[matter_id] = asyncio.Lock()
+        async with _rehydration_locks[matter_id]:
+            # Re-check: a concurrent coroutine may have populated the cache while we waited.
             existing = _active_matter_models.get(matter_id)
             if existing is not None:
                 _matter_model_last_used[matter_id] = datetime.now()
                 return existing
-            _active_matter_models[matter_id] = model
-            _matter_model_last_used[matter_id] = datetime.now()
-            logger.info(f"Rehydrated matter model {matter_id} from persistent storage")
-            return model
+            model = await asyncio.to_thread(_try_rehydrate_matter_model, matter_id, config)
+            if model is not None:
+                _active_matter_models[matter_id] = model
+                _matter_model_last_used[matter_id] = datetime.now()
+                logger.info(f"Rehydrated matter model {matter_id} from persistent storage")
+                return model
     raise HTTPException(
         status_code=404,
         detail=f"Matter model '{matter_id}' not found or no longer active",
