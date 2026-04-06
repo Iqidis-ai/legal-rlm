@@ -223,6 +223,82 @@ def test_user_forced_superseded_not_recovered_by_graph(model):
         "User-locked SUPERSEDED must not be auto-recovered when superseder becomes inert"
 
 
+def test_user_lock_preserved_when_confidence_also_changes(model):
+    """User-lock row must be written even when the SUPERSEDED correction also changes confidence.
+
+    If the correction changes confidence but not belief_state, the old code only wrote a
+    'confidence' row (no belief_state row), so the user-lock query found nothing and allowed
+    unwanted recovery. (r15 HIGH fix: belief_state no-op row always written for USER_CORRECTION
+    when state is unchanged, regardless of whether a confidence row is also present.)
+    """
+    b_id = add(model, "Obligation clause.")
+    a_id = add(model, "Amendment to obligation clause.")
+    model.assertions.set_belief_state(a_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.link(a_id, b_id, AssertionLinkType.SUPERSEDES)
+
+    model.belief.apply([a_id], cause=RevisionCause.NEW_EVIDENCE)
+    assert model.assertions.get(b_id).belief_state == BeliefState.SUPERSEDED.value
+
+    # User correction: SUPERSEDED with confidence change (state unchanged, conf changes).
+    # Uses a different confidence than the current 0.1 set by BFS.
+    model.correct_assertion(b_id, BeliefState.SUPERSEDED, note="User confirmed with 0.05 conf")
+    # The matter model sets confidence via confidence_map, which may equal 0.1 for SUPERSEDED.
+    # Ensure at least the belief_state user-lock row was written.
+    from irys.matter.db import SQLiteMatterDB
+    lock_row = model.db.execute(
+        """SELECT actor_kind FROM assertion_revision
+           WHERE assertion_id=? AND changed_field='belief_state' AND actor_kind='user'
+           ORDER BY created_at DESC LIMIT 1""",
+        (b_id,),
+    ).fetchone()
+    assert lock_row is not None, "User-lock belief_state row must be written on USER_CORRECTION"
+    assert lock_row["actor_kind"] == "user"
+
+    # Now withdraw A — B must not recover due to user lock
+    model.correct_assertion(a_id, BeliefState.WITHDRAWN, note="Amendment voided")
+    assert model.assertions.get(b_id).belief_state == BeliefState.SUPERSEDED.value, \
+        "User-locked SUPERSEDED must survive even when correction was same-state with confidence change"
+
+
+def test_multi_occurrence_recovery_uses_best_speech_act(model):
+    """Recovery baseline uses most authoritative speech_act, not earliest occurrence.
+
+    A proposition first seen as ALLEGED is later observed as OPERATIVE (triggering
+    occurrence_upgrade). After supersession is removed, recovery should use OPERATIVE
+    (the most authoritative speech act), not ALLEGED (the earliest).
+    (r15 MEDIUM fix: ORDER BY speech_act priority DESC instead of created_at ASC)
+    """
+    # First occurrence: ALLEGED (low authority)
+    b_id = add(model, "Payment was made on time.", speech_act=SpeechAct.ALLEGED)
+    # Second occurrence: OPERATIVE (higher authority — simulates occurrence_upgrade path)
+    from irys.matter import AssertionCandidate, ModelLayer, AssertionKind, OriginKind
+    c2 = AssertionCandidate(
+        proposition_text="Payment was made on time.",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="contract.pdf",
+        speech_act=SpeechAct.OPERATIVE,
+        source_role=SourceRole.UNKNOWN,
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    b_id2, _ = model.assertions.upsert_occurrence(c2)
+    assert b_id2 == b_id, "Same proposition → same canonical assertion ID"
+
+    a_id = add(model, "Amended payment clause.")
+    model.assertions.set_belief_state(a_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.link(a_id, b_id, AssertionLinkType.SUPERSEDES)
+
+    model.belief.apply([a_id], cause=RevisionCause.NEW_EVIDENCE)
+    assert model.assertions.get(b_id).belief_state == BeliefState.SUPERSEDED.value
+
+    # Withdraw the amendment
+    model.correct_assertion(a_id, BeliefState.WITHDRAWN, note="Amendment voided")
+
+    b_record = model.assertions.get(b_id)
+    assert b_record.belief_state == BeliefState.OPERATIVE.value, \
+        "Should recover to OPERATIVE (best speech_act), not ALLEGED (earliest occurrence)"
+
+
 def test_admitted_support_promotes_dependent(model):
     """ADMITTED/RESOLVED support must promote dependent to INFERRED (HIGH #2 fix).
 

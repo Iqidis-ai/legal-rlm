@@ -490,13 +490,31 @@ class BeliefRevisionEngine:
                 return None, False
 
             # Guard 2: derive speech-act baseline state for the computation.
-            # Use the first-occurrence speech_act to reflect the assertion's "natural"
-            # state before any supersession was applied. This ensures that an OPERATIVE
-            # clause recovers to OPERATIVE (not UNKNOWN) when the superseding amendment
-            # is voided. Inlined from _initial_belief_state() in graph.py.
+            # Use the most authoritative speech_act across ALL occurrences so a
+            # proposition first seen as ALLEGED and later observed as OPERATIVE (triggering
+            # occurrence_upgrade on the canonical row) recovers to OPERATIVE, not ALLEGED.
+            # The priority ordering mirrors _initial_belief_state() confidence values:
+            # operative(0.8) > admitted/stipulated(0.8) > performed/paid(0.8) > inferred(0.6)
+            # > alleged/argued(0.3) > everything else (0.5/unknown).
+            # Inlined from _initial_belief_state() in graph.py to avoid circular import.
+            # (r15 MEDIUM fix)
             _occ_row = self.db.execute(
                 """SELECT speech_act FROM assertion_occurrence
-                   WHERE assertion_id=? ORDER BY created_at ASC LIMIT 1""",
+                   WHERE assertion_id=?
+                   ORDER BY CASE speech_act
+                       WHEN 'operative'   THEN 9
+                       WHEN 'admitted'    THEN 8
+                       WHEN 'stipulated'  THEN 8
+                       WHEN 'performed'   THEN 7
+                       WHEN 'paid'        THEN 7
+                       WHEN 'waived'      THEN 6
+                       WHEN 'terminated'  THEN 6
+                       WHEN 'amended'     THEN 6
+                       WHEN 'inferred'    THEN 5
+                       WHEN 'alleged'     THEN 3
+                       WHEN 'argued'      THEN 3
+                       ELSE 0 END DESC
+                   LIMIT 1""",
                 (assertion_id,),
             ).fetchone()
             _sa = _occ_row["speech_act"] if _occ_row else None
@@ -693,22 +711,23 @@ class BeliefRevisionEngine:
                     _json_mod.dumps(_fs_intx_old_state.value),
                     _json_mod.dumps(new_state.value),
                 ))
+            elif cause == RevisionCause.USER_CORRECTION:
+                # State unchanged but user explicitly chose it. Always write a belief_state
+                # row (no-op: old_value == new_value) so the supersession recovery path can
+                # detect user intent regardless of whether a confidence change is also present.
+                # Previously gated on `if not _fs_rev_rows`, which missed the case where a
+                # confidence change was written but no belief_state row existed — leaving the
+                # user-lock undetected when a superseding link later became inert. (r15 HIGH fix)
+                _fs_rev_rows.append((
+                    "belief_state",
+                    _json_mod.dumps(new_state.value),
+                    _json_mod.dumps(new_state.value),
+                ))
             if abs(new_confidence - _fs_intx_old_conf) >= 0.001:
                 _fs_rev_rows.append((
                     "confidence",
                     _json_mod.dumps(_fs_intx_old_conf),
                     _json_mod.dumps(new_confidence),
-                ))
-            if not _fs_rev_rows and cause == RevisionCause.USER_CORRECTION:
-                # User explicitly chose this state even though it matches the current DB value.
-                # Write a no-op revision row (old_value == new_value) so the supersession
-                # recovery path can detect user intent and preserve it when a superseding
-                # link later becomes inert. Without this, only the prior BFS-written row
-                # would be found, and its actor_kind='system' would permit unwanted recovery.
-                _fs_rev_rows.append((
-                    "belief_state",
-                    _json_mod.dumps(new_state.value),
-                    _json_mod.dumps(new_state.value),
                 ))
             if _fs_rev_rows:
                 self.assertion_store.write_revision_rows(
