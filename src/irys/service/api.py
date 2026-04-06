@@ -2120,9 +2120,18 @@ async def get_matter_overview(matter_id: str):
     """
     model = _get_matter_model_or_404(matter_id)
     stats = model.stats()
+
+    # Fetch coverage report once — shared by both weakest_issues and get_so_metrics()
+    # to avoid duplicate get_issue_coverage_report() calls.
+    coverage_report: list = []
+    try:
+        coverage_report = model.get_issue_coverage_report()
+    except Exception:
+        pass
+
     so = {}
     try:
-        so = model.get_so_metrics()
+        so = model.get_so_metrics(_coverage_report=coverage_report)
     except Exception:
         pass
 
@@ -2134,18 +2143,15 @@ async def get_matter_overview(matter_id: str):
 
     # Weakest issues — lowest coverage_fraction first, limit 5
     weakest_issues = []
-    try:
-        coverage = model.get_issue_coverage_report()
-        if coverage:
-            sorted_issues = sorted(coverage, key=lambda r: float(r.get("coverage_fraction", 0.0)))
-            weakest_issues = sorted_issues[:5]
-    except Exception:
-        pass
+    if coverage_report:
+        weakest_issues = sorted(
+            coverage_report, key=lambda r: float(r.get("coverage_fraction", 0.0))
+        )[:5]
 
-    # Top open gaps — limit 5 (highest materiality first via open_gaps())
+    # Top open gaps — limit 5 pushed into SQL to avoid full-table scan.
     top_gaps = []
     try:
-        top_gaps = model.gaps.open_gaps()[:5]
+        top_gaps = model.gaps.open_gaps(limit=5)
     except Exception:
         pass
 

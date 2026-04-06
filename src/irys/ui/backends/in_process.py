@@ -88,27 +88,26 @@ class InProcessBackend(UIBackend):
     async def get_overview(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         stats = model.stats()
+        # Fetch coverage once — reused by both get_so_metrics() and weakest_issues.
+        coverage_report: list = []
+        try:
+            coverage_report = model.get_issue_coverage_report()
+        except Exception:
+            pass
         so: dict = {}
         try:
-            so = model.get_so_metrics()
+            so = model.get_so_metrics(_coverage_report=coverage_report)
         except Exception:
             pass
         recent = model.ledger.recent_runs(limit=5)
-        weakest: list = []
-        try:
-            coverage = model.get_issue_coverage_report()
-            if coverage:
-                weakest = sorted(coverage, key=lambda r: float(r.get("coverage_fraction", 0.0)))[:5]
-        except Exception:
-            pass
+        weakest: list = sorted(
+            coverage_report, key=lambda r: float(r.get("coverage_fraction", 0.0))
+        )[:5] if coverage_report else []
         top_gaps: list = []
         try:
-            top_gaps = model.gaps.get_open(limit=5)
+            top_gaps = model.gaps.open_gaps(limit=5)
         except Exception:
-            try:
-                top_gaps = model.gaps.list_open()[:5]
-            except Exception:
-                pass
+            pass
         clarifications: list = []
         try:
             clarifications = model.clarifications.get_pending()[:5]

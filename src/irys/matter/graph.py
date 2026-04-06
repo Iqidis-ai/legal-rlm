@@ -1112,31 +1112,34 @@ class GapStore:
         # Return in original spec order; intra-batch duplicates share the same id
         return [key_to_id[k] for k in spec_keys]
 
-    def open_gaps(self, min_materiality: float = 0.0) -> list[dict]:
+    def open_gaps(self, min_materiality: float = 0.0, limit: "int | None" = None) -> list[dict]:
         """Return open gaps above a materiality threshold.
 
         Each gap dict includes a 'dependencies' key: list of
         {affected_type, affected_id} dicts from gap_link so callers
         can see what the gap is linked to without a second query (SO-7).
+
+        limit: if set, return at most this many gaps and restrict the
+        gap_link fetch to only those rows (avoids full-table scan for
+        small-limit callers like the overview panel).
         """
+        limit_sql = f" LIMIT {int(limit)}" if limit is not None else ""
         rows = self.db.execute(
-            """SELECT * FROM gap WHERE matter_id=? AND status='open'
-               AND materiality_score >= ? ORDER BY materiality_score DESC""",
+            f"""SELECT * FROM gap WHERE matter_id=? AND status='open'
+               AND materiality_score >= ? ORDER BY materiality_score DESC{limit_sql}""",
             (self.matter_id, min_materiality),
         ).fetchall()
         if not rows:
             return []
 
-        # Fetch gap_links for all matching open gaps in one query via subquery
-        # (avoids variable-count IN-list limit on large matters).
+        # Fetch gap_links only for the returned gap IDs.
+        # When limit is small this avoids scanning all gap_link rows.
+        gap_ids = [r["id"] for r in rows]
+        placeholders = ",".join("?" * len(gap_ids))
         link_rows = self.db.execute(
-            """SELECT gl.gap_id, gl.affected_type, gl.affected_id
-               FROM gap_link gl
-               WHERE gl.gap_id IN (
-                   SELECT id FROM gap
-                   WHERE matter_id=? AND status='open' AND materiality_score >= ?
-               )""",
-            (self.matter_id, min_materiality),
+            f"""SELECT gl.gap_id, gl.affected_type, gl.affected_id
+               FROM gap_link gl WHERE gl.gap_id IN ({placeholders})""",
+            gap_ids,
         ).fetchall()
         links_by_gap: dict = {}
         for lr in link_rows:

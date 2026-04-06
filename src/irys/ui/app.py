@@ -12,7 +12,6 @@ Architecture: in-process for local dev (InProcessBackend), HTTP for deployed ser
 """
 
 import asyncio
-import concurrent.futures
 import os
 import queue
 import threading
@@ -23,15 +22,19 @@ import gradio as gr
 
 from .backends.in_process import InProcessBackend
 
-# Dedicated executor for running async backend calls from sync Gradio callbacks.
-# asyncio.run() can conflict with Gradio's internal event loop in some versions;
-# using a thread + new event loop is reliably safe.
-_ASYNC_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="irys_async")
+# Shared background event loop for all async backend calls from sync Gradio callbacks.
+# A single persistent loop avoids the per-call overhead of asyncio.run() (which creates
+# and tears down a new event loop each time).
+_ASYNC_LOOP = asyncio.new_event_loop()
+_ASYNC_THREAD = threading.Thread(
+    target=_ASYNC_LOOP.run_forever, daemon=True, name="irys_async_loop"
+)
+_ASYNC_THREAD.start()
 
 
 def _run_async(coro):
-    """Run a coroutine from a sync context without conflicting with existing loops."""
-    future = _ASYNC_EXECUTOR.submit(asyncio.run, coro)
+    """Schedule a coroutine on the shared background event loop and wait for result."""
+    future = asyncio.run_coroutine_threadsafe(coro, _ASYNC_LOOP)
     return future.result(timeout=30)
 
 

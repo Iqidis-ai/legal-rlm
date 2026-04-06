@@ -1462,7 +1462,7 @@ class MatterModel:
             "recent_runs": len(self.ledger.recent_runs(limit=5)),
         }
 
-    def get_so_metrics(self) -> dict:
+    def get_so_metrics(self, _coverage_report: "list[dict] | None" = None) -> dict:
         """Compute measurable Sacred Outcome success criteria from stored state.
 
         Returns a snapshot of how well the current matter model satisfies the
@@ -1507,11 +1507,15 @@ class MatterModel:
 
         source_role_known_rate = (ao_known / ao_total) if ao_total > 0 else None
 
-        # --- issue coverage ---
+        # --- issue coverage — reuse pre-computed report if caller already fetched it ---
         issue_coverage_avg: "float | None" = None
         issues_with_proof_gap = 0
         try:
-            coverage_report = self.get_issue_coverage_report()
+            coverage_report = (
+                _coverage_report
+                if _coverage_report is not None
+                else self.get_issue_coverage_report()
+            )
             if coverage_report:
                 fracs = [float(r.get("coverage_fraction", 0.0)) for r in coverage_report]
                 issue_coverage_avg = round(sum(fracs) / len(fracs), 4) if fracs else None
