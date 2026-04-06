@@ -460,7 +460,7 @@ class MatterRuntimeAdapter:
         # IDs to handle fixpoint re-visits (r28 MEDIUM fix).
         _seed_batch = max(1, self.model.belief.MAX_WORK // 2)
         _revised_ids: set[str] = set()
-        _correction_map = self.model.drain_correction_pending()  # dict[assertion_id, orig_run_id]
+        _correction_map, _correction_db_ids = self.model.drain_correction_pending()
         _correction_ids = list(_correction_map)
         if _correction_ids:
             # Emit one attribution event so auditors can trace this flush back to the
@@ -505,25 +505,16 @@ class MatterRuntimeAdapter:
                         changed_object_type="assertion",
                         changed_object_id=result.assertion_id,
                     )
-        # Delete the originally-drained correction rows from DB now that replay is
-        # complete. Filter out any IDs that were re-enqueued during replay (same-ID
-        # re-truncation edge case): those IDs are already back in _correction_pending
-        # in-memory, but their DB row was an INSERT OR IGNORE no-op, so the existing
-        # row is the only copy — deleting it would make a crash-after-delete unrecoverable.
-        # (adv#029 SO-1 correctness fix r2/r3).
-        _re_enqueued_correction = self.model.peek_correction_pending_ids()
-        _safe_to_delete_correction = [aid for aid in _correction_ids if aid not in _re_enqueued_correction]
-        self.model.delete_pending_propagation_db("correction", _safe_to_delete_correction)
+        # Delete the originally-drained correction rows by primary key (not assertion_id).
+        # INSERT OR REPLACE in enqueue_* ensures re-enqueued same-ID nodes get fresh
+        # primary keys, so delete by old IDs is a no-op for those rows (adv#029 r4 fix).
+        self.model.delete_pending_propagation_db(_correction_db_ids)
 
         # Merge durable evidence-pending (nodes truncated by a prior flush, keyed by
         # originating (cause, run_id)) with current-request NEW_EVIDENCE seeds (r29–r33 fix).
         # Group by cause so each replay batch uses the correct RevisionCause (r31 fix).
         # Batch attribution events per cause name originating run_ids (r33 fix).
-        # _durable_evidence_ids tracks which IDs were originally from the DB queue;
-        # current-run _pending_assertion_ids are never in DB so should not be in the
-        # delete set (adv#029 SO-1 correctness fix r3).
-        _durable_evidence_map: "dict[str, tuple[RevisionCause, str | None]]" = self.model.drain_evidence_pending()
-        _durable_evidence_ids = list(_durable_evidence_map)
+        _durable_evidence_map, _evidence_db_ids = self.model.drain_evidence_pending()
         _evidence_carry: "dict[str, tuple[RevisionCause, str | None]]" = dict(_durable_evidence_map)
         for aid in self._pending_assertion_ids:
             if aid not in _evidence_carry:
@@ -572,14 +563,9 @@ class MatterRuntimeAdapter:
                                 changed_object_type="assertion",
                                 changed_object_id=result.assertion_id,
                             )
-        # Delete only the originally-drained durable evidence rows from DB, filtered
-        # to exclude any IDs that were re-enqueued during replay (same-ID re-truncation
-        # edge case).  Current-run _pending_assertion_ids were never in DB so they are
-        # not in _durable_evidence_ids and are not candidates for deletion.
-        # (adv#029 SO-1 correctness fix r3).
-        _re_enqueued_evidence = self.model.peek_evidence_pending_ids()
-        _safe_to_delete_evidence = [aid for aid in _durable_evidence_ids if aid not in _re_enqueued_evidence]
-        self.model.delete_pending_propagation_db("evidence", _safe_to_delete_evidence)
+        # Delete the originally-drained evidence rows by primary key — same pattern as
+        # correction delete above (adv#029 SO-1 r4 fix).
+        self.model.delete_pending_propagation_db(_evidence_db_ids)
 
         # Proof_state recompute for all assertions revised in this flush — covers issues
         # linked to any corrected or re-evaluated assertion so that issue-level consumers

@@ -297,7 +297,7 @@ class MatterModel:
                     self._correction_pending[aid] = run_id
                     try:
                         self.db.execute(
-                            "INSERT OR IGNORE INTO pending_propagation"
+                            "INSERT OR REPLACE INTO pending_propagation"
                             " (id, matter_id, assertion_id, cause, orig_run_id, queue, enqueued_at)"
                             " VALUES (?,?,?,?,?,?,?)",
                             (_id(), self.matter_id, aid, "USER_CORRECTION", run_id, "correction", now),
@@ -305,31 +305,36 @@ class MatterModel:
                     except Exception:
                         pass  # DB write failure does not block in-memory queue
 
-    def peek_correction_pending_ids(self) -> "set[str]":
-        """Return current in-memory correction pending keys WITHOUT draining (thread-safe).
-
-        Used by flush_revisions() to filter the delete set: IDs that were re-enqueued
-        during replay (same-ID re-truncation edge case) must not be deleted from DB since
-        their newly-written row would otherwise be lost on a crash before the next flush.
-        """
-        with self._correction_pending_lock:
-            return set(self._correction_pending)
-
-    def drain_correction_pending(self) -> "dict[str, str | None]":
+    def drain_correction_pending(self) -> "tuple[dict[str, str | None], list[str]]":
         """Return and clear the durable correction retry queue (thread-safe).
 
-        Returns assertion_id → originating_run_id. Called by RuntimeModel.flush_revisions()
-        so correction-truncated nodes are included in the next BFS sweep (adv#028 HIGH fix).
-        Lock protects dict clear/copy atomicity across concurrent REST requests (r25 fix).
-        NOTE: DB rows are NOT deleted here. flush_revisions() calls
-        delete_pending_propagation_db() AFTER replay completes so that a crash
-        between drain and end-of-replay still recovers the drained work on the
-        next open (adv#029 SO-1 crash-safety fix).
+        Returns (assertion_id→orig_run_id map, list of DB row primary keys drained).
+        The DB primary keys are read inside the lock so no concurrent enqueue can
+        replace a row between the dict clear and the ID snapshot — any concurrent
+        enqueue that starts after lock release will INSERT OR REPLACE, creating a
+        fresh row with a new primary key that is not in the returned id list and
+        therefore will not be deleted by flush_revisions() (adv#029 SO-1 fix r4).
+
+        Callers MUST call delete_pending_propagation_db(db_row_ids) AFTER replay
+        completes so crash-between-drain-and-delete is recoverable.
         """
         with self._correction_pending_lock:
             result = dict(self._correction_pending)
             self._correction_pending.clear()
-        return result
+            db_ids: list[str] = []
+            if result:
+                try:
+                    placeholders = ",".join("?" * len(result))
+                    rows = self.db.execute(
+                        f"SELECT id FROM pending_propagation"
+                        f" WHERE matter_id=? AND queue='correction'"
+                        f" AND assertion_id IN ({placeholders})",
+                        [self.matter_id] + list(result),
+                    ).fetchall()
+                    db_ids = [r["id"] for r in rows]
+                except Exception:
+                    pass
+        return result, db_ids
 
     def enqueue_evidence_pending(
         self,
@@ -355,7 +360,7 @@ class MatterModel:
                     self._evidence_pending[aid] = (_cause, run_id)
                     try:
                         self.db.execute(
-                            "INSERT OR IGNORE INTO pending_propagation"
+                            "INSERT OR REPLACE INTO pending_propagation"
                             " (id, matter_id, assertion_id, cause, orig_run_id, queue, enqueued_at)"
                             " VALUES (?,?,?,?,?,?,?)",
                             (_id(), self.matter_id, aid, _cause.value, run_id, "evidence", now),
@@ -363,45 +368,52 @@ class MatterModel:
                     except Exception:
                         pass  # DB write failure does not block in-memory queue
 
-    def peek_evidence_pending_ids(self) -> "set[str]":
-        """Return current in-memory evidence pending keys WITHOUT draining (thread-safe).
-
-        Used by flush_revisions() to exclude same-ID re-truncated nodes from the DB delete
-        set — parallel to peek_correction_pending_ids() (adv#029 SO-1 correctness fix r3).
-        """
-        with self._evidence_pending_lock:
-            return set(self._evidence_pending)
-
-    def drain_evidence_pending(self) -> "dict[str, tuple[RevisionCause, str | None]]":
+    def drain_evidence_pending(self) -> "tuple[dict[str, tuple[RevisionCause, str | None]], list[str]]":
         """Return and clear truncated evidence assertion IDs → (cause, run_id) (thread-safe).
 
-        NOTE: DB rows are NOT deleted here. flush_revisions() calls
-        delete_pending_propagation_db() AFTER replay completes (crash-safe delete-after-replay).
+        Returns (assertion_id→(cause, orig_run_id) map, list of DB row primary keys drained).
+        DB IDs read inside the lock — same concurrency guarantee as drain_correction_pending.
+        Callers MUST call delete_pending_propagation_db(db_row_ids) AFTER replay completes
+        (adv#029 SO-1 fix r4).
         """
         with self._evidence_pending_lock:
             result = dict(self._evidence_pending)
             self._evidence_pending.clear()
-        return result
+            db_ids: list[str] = []
+            if result:
+                try:
+                    placeholders = ",".join("?" * len(result))
+                    rows = self.db.execute(
+                        f"SELECT id FROM pending_propagation"
+                        f" WHERE matter_id=? AND queue='evidence'"
+                        f" AND assertion_id IN ({placeholders})",
+                        [self.matter_id] + list(result),
+                    ).fetchall()
+                    db_ids = [r["id"] for r in rows]
+                except Exception:
+                    pass
+        return result, db_ids
 
-    def delete_pending_propagation_db(self, queue: str, assertion_ids: "list[str]") -> None:
-        """Delete specific assertion IDs from the durable pending_propagation table.
+    def delete_pending_propagation_db(self, db_row_ids: "list[str]") -> None:
+        """Delete pending_propagation rows by primary key after successful replay.
 
-        Called by flush_revisions() AFTER replay of the drained set is complete, ensuring
-        only successfully-processed rows are removed.  Newly-enqueued second-level
-        truncated rows (inserted by enqueue_*_pending during replay) are left intact and
-        recovered on the next flush or restart.  assertion_ids is the original drain
-        snapshot, not the current queue state.
+        Called by flush_revisions() AFTER replay of the drained set is complete.
+        Deletes by `id` (primary key), not by assertion_id, so concurrent re-enqueues
+        that do INSERT OR REPLACE (creating new rows with fresh primary keys) are not
+        affected — only the exact rows that were drained are removed
+        (adv#029 SO-1 fix r4 — solves the peek+delete race by using stable row identity).
         """
-        if not assertion_ids:
+        if not db_row_ids:
             return
         _SQL_PARAM_LIMIT = 900
-        for _bs in range(0, len(assertion_ids), _SQL_PARAM_LIMIT):
-            _batch = assertion_ids[_bs : _bs + _SQL_PARAM_LIMIT]
+        for _bs in range(0, len(db_row_ids), _SQL_PARAM_LIMIT):
+            _batch = db_row_ids[_bs : _bs + _SQL_PARAM_LIMIT]
             try:
                 self.db.execute(
-                    "DELETE FROM pending_propagation WHERE matter_id=? AND queue=?"
-                    " AND assertion_id IN ({})".format(",".join("?" * len(_batch))),
-                    [self.matter_id, queue] + _batch,
+                    "DELETE FROM pending_propagation WHERE id IN ({})".format(
+                        ",".join("?" * len(_batch))
+                    ),
+                    _batch,
                 )
             except Exception:
                 pass
