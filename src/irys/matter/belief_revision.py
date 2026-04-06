@@ -661,6 +661,22 @@ class BeliefRevisionEngine:
                 if _intx_lock_row and _intx_lock_row["actor_kind"] == "user":
                     return None, False  # empty commit — harmless
 
+            # Guard 1b (user-lock) for DISPUTED recovery (r29 LOW fix).
+            # A user who explicitly set DISPUTED via force_state(USER_CORRECTION) should not
+            # have their intent silently overridden when attackers become inert — the same
+            # user-lock principle as supersession recovery.  Query for the most recent
+            # belief_state write to "disputed" and check actor_kind.
+            if _dispute_recovery_case:
+                _intx_disputed_lock = self.db.execute(
+                    """SELECT actor_kind FROM assertion_revision
+                       WHERE assertion_id=? AND changed_field='belief_state'
+                         AND new_value_json=?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (assertion_id, '"disputed"'),
+                ).fetchone()
+                if _intx_disputed_lock and _intx_disputed_lock["actor_kind"] == "user":
+                    return None, False  # user set DISPUTED; don't auto-recover
+
             # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
             # Use in-tx values for both diff detection and old_value_json.
             _rev_rows: list[tuple[str, str, str]] = []

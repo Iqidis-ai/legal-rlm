@@ -79,12 +79,17 @@ class MatterModel:
         # an extra SELECT round-trip (DB is the authoritative fallback).
         self._run_snapshots: dict[str, int] = {}
         # Assertion IDs left unvisited after correct_assertion() inline retry rounds.
-        # Populated when propagation_truncated=True after 3 rounds; drained by
-        # drain_correction_pending() so the next flush_revisions() can finish the work.
-        # Protected by a lock: MatterModel instances are shared across REST requests
-        # for the same matter, so update() and list()+clear() must be atomic (r25 fix).
-        self._correction_pending_ids: set[str] = set()
+        # Maps assertion_id → originating run_id (None if unknown) for audit attribution:
+        # when flush_revisions() re-emits ASSERTION_REVISED, the ledger event carries the
+        # originating run_id rather than the draining adapter's run_id (r29 MEDIUM fix).
+        # First-write wins: if two corrections target the same node, the first run_id is
+        # preserved.  Protected by a lock for concurrent REST requests (r25 fix).
+        self._correction_pending: dict[str, "str | None"] = {}
         self._correction_pending_lock = threading.Lock()
+        # New-evidence assertion IDs dropped by BFS truncation during flush_revisions().
+        # Drained at the start of the next flush_revisions() new-evidence pass (r29 fix).
+        self._evidence_pending_ids: set[str] = set()
+        self._evidence_pending_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -237,24 +242,52 @@ class MatterModel:
         """Trigger belief revision from seed assertions."""
         return self.belief.apply(seed_assertion_ids, cause, run_id, note, _collect_unvisited)
 
-    def enqueue_correction_pending(self, ids: list[str]) -> None:
-        """Add assertion IDs to the durable correction retry queue (thread-safe)."""
+    def enqueue_correction_pending(
+        self, ids: list[str], run_id: "str | None" = None
+    ) -> None:
+        """Add assertion IDs to the durable correction retry queue (thread-safe).
+
+        run_id is the originating run that triggered the correction; stored alongside
+        the assertion_id so flush_revisions() can emit ASSERTION_REVISED ledger events
+        under the correct originating run rather than the draining adapter's run_id
+        (r29 MEDIUM provenance fix). First-write wins: if the same assertion is already
+        queued from an earlier correction, its original run_id is preserved.
+        """
         if not ids:
             return
         with self._correction_pending_lock:
-            self._correction_pending_ids.update(ids)
+            for aid in ids:
+                if aid not in self._correction_pending:
+                    self._correction_pending[aid] = run_id
 
-    def drain_correction_pending(self) -> list[str]:
-        """Return and clear assertion IDs that need retry after a truncated correction.
+    def drain_correction_pending(self) -> "dict[str, str | None]":
+        """Return and clear the durable correction retry queue (thread-safe).
 
-        Called by RuntimeModel.flush_revisions() so correction-truncated nodes are
-        included in the next BFS sweep, preventing durable stale belief states after
-        the inline 3-round cap is exhausted (adversarial #028 HIGH fix).
-        Thread-safe: lock protects list()+clear() atomicity (r25 MEDIUM fix).
+        Returns assertion_id → originating_run_id. Called by RuntimeModel.flush_revisions()
+        so correction-truncated nodes are included in the next BFS sweep (adv#028 HIGH fix).
+        Lock protects dict clear/copy atomicity across concurrent REST requests (r25 fix).
         """
         with self._correction_pending_lock:
-            result = list(self._correction_pending_ids)
-            self._correction_pending_ids.clear()
+            result = dict(self._correction_pending)
+            self._correction_pending.clear()
+        return result
+
+    def enqueue_evidence_pending(self, ids: list[str]) -> None:
+        """Add new-evidence assertion IDs dropped by BFS truncation to the durable queue.
+
+        Drained at the start of the next flush_revisions() new-evidence pass so work
+        dropped by a budget-constrained flush is not silently lost (r29 MEDIUM fix).
+        """
+        if not ids:
+            return
+        with self._evidence_pending_lock:
+            self._evidence_pending_ids.update(ids)
+
+    def drain_evidence_pending(self) -> list[str]:
+        """Return and clear truncated new-evidence assertion IDs (thread-safe)."""
+        with self._evidence_pending_lock:
+            result = list(self._evidence_pending_ids)
+            self._evidence_pending_ids.clear()
         return result
 
     def correct_assertion(
@@ -328,8 +361,7 @@ class MatterModel:
             # finish propagation — prevents permanent stale states after cap exhaustion
             # (adversarial #028 HIGH fix). Lock protects concurrent corrections on the
             # same shared MatterModel instance (r25 MEDIUM fix).
-            with self._correction_pending_lock:
-                self._correction_pending_ids.update(_pending)
+            self.enqueue_correction_pending(_pending, run_id=run_id)
 
         # Targeted proof_state recompute: find issues linked to this assertion
         # and any that were revised as dependents (result.propagated_to).
