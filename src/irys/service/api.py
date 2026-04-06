@@ -8,7 +8,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -53,6 +53,9 @@ _start_time: float = time.time()
 
 # Matter model registry: matter_id → MatterModel (active investigations only)
 _active_matter_models: dict[str, Any] = {}
+# Last-access times for matter models not backed by an active job (rehydrated models).
+# Used by _cleanup_loop to evict idle rehydrated models so they don't accumulate.
+_matter_model_last_used: dict[str, datetime] = {}
 
 # Version
 VERSION = "1.0.0"
@@ -101,8 +104,18 @@ async def _cleanup_loop(config: ServiceConfig):
                 job = _jobs[job_id]
                 if job.matter_id and job.matter_id in _active_matter_models:
                     del _active_matter_models[job.matter_id]
+                    _matter_model_last_used.pop(job.matter_id, None)
                 del _jobs[job_id]
                 logger.debug(f"Cleaned up job {job_id}")
+            # Evict matter models not backed by any active job (rehydrated models).
+            # These are not associated with a job so the per-job eviction above misses them.
+            _live_matter_ids = {j.matter_id for j in _jobs.values() if j.matter_id}
+            _idle_cutoff = now - timedelta(seconds=config.cleanup_after_seconds)
+            for _mid in list(_active_matter_models.keys()):
+                if _mid not in _live_matter_ids:
+                    if _matter_model_last_used.get(_mid, datetime.min) < _idle_cutoff:
+                        del _active_matter_models[_mid]
+                        _matter_model_last_used.pop(_mid, None)
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
 
@@ -259,6 +272,7 @@ def _try_rehydrate_matter_model(matter_id: str, config: ServiceConfig) -> Option
 def _get_matter_model_or_404(matter_id: str):
     model = _active_matter_models.get(matter_id)
     if model is not None:
+        _matter_model_last_used[matter_id] = datetime.now()
         return model
     # Try rehydrating from persistent storage (service restart recovery)
     config = get_config()
@@ -266,6 +280,7 @@ def _get_matter_model_or_404(matter_id: str):
         model = _try_rehydrate_matter_model(matter_id, config)
         if model is not None:
             _active_matter_models[matter_id] = model
+            _matter_model_last_used[matter_id] = datetime.now()
             logger.info(f"Rehydrated matter model {matter_id} from persistent storage")
             return model
     raise HTTPException(
@@ -541,6 +556,7 @@ async def quick_search(request: SearchRequest):
 async def _save_uploaded_files(
     files: list[UploadFile],
     temp_dir: Path,
+    max_size_bytes: int = 0,
 ) -> int:
     """Save uploaded files to temp directory. Returns count saved."""
     saved = 0
@@ -552,6 +568,11 @@ async def _save_uploaded_files(
         dest_path = temp_dir / filename
         async with aiofiles.open(dest_path, "wb") as f:
             content = await file.read()
+            if max_size_bytes and len(content) > max_size_bytes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File {filename!r} exceeds maximum size",
+                )
             await f.write(content)
         saved += 1
     return saved
@@ -602,11 +623,18 @@ async def upload_investigate(
 
     try:
         # Read files into memory
+        _max_bytes = config.max_document_size_mb * 1024 * 1024
         file_data = []
         for file in files:
             if not file.filename:
                 continue
             content = await file.read()
+            if len(content) > _max_bytes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File {Path(file.filename).name!r} exceeds maximum size"
+                           f" of {config.max_document_size_mb} MB",
+                )
             filename = Path(file.filename).name
             file_data.append((filename, content))
 
@@ -798,11 +826,18 @@ async def upload_search(
 
     try:
         # Read files into memory
+        _max_bytes = config.max_document_size_mb * 1024 * 1024
         file_data = []
         for file in files:
             if not file.filename:
                 continue
             content = await file.read()
+            if len(content) > _max_bytes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File {Path(file.filename).name!r} exceeds maximum size"
+                           f" of {config.max_document_size_mb} MB",
+                )
             filename = Path(file.filename).name
             file_data.append((filename, content))
 
@@ -909,11 +944,18 @@ async def upload_investigate_sync(
             )
 
         # Read files into memory
+        _max_bytes = config.max_document_size_mb * 1024 * 1024
         file_data = []
         for file in files:
             if not file.filename:
                 continue
             content = await file.read()
+            if len(content) > _max_bytes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File {Path(file.filename).name!r} exceeds maximum size"
+                           f" of {config.max_document_size_mb} MB",
+                )
             filename = Path(file.filename).name
             file_data.append((filename, content))
 

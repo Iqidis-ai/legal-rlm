@@ -720,9 +720,8 @@ class MatterModel:
                                 _iid, _preloaded_overrides=_preloaded
                             )
             else:
-                # No assertions matched — still run full recompute in case the override
-                # pattern will match future assertions (eager proof state refresh).
-                self.proof_state.compute_all()
+                # No assertions matched — nothing to recompute; proof state is unchanged.
+                pass
         except (sqlite3.Error, ValueError, RuntimeError) as exc:
             _log.warning("Trust override proof state refresh failed for %r: %s", document_pattern, exc)
 
