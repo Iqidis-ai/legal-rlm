@@ -1445,9 +1445,11 @@ async def answer_clarification(
     """
     model = _get_matter_model_or_404(matter_id)
     try:
-        model.clarifications.answer_question(question_id, request.answer_text)
+        found = model.clarifications.answer_question(question_id, request.answer_text)
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Clarification question '{question_id}' not found in this matter")
     return {"status": "answered", "question_id": question_id}
 
 
@@ -1521,7 +1523,7 @@ async def delete_trust_override(matter_id: str, document_pattern: str):
     Returns 404 if the matter is not found.
     """
     model = _get_matter_model_or_404(matter_id)
-    model.trust_overrides.delete(document_pattern)
+    model.delete_trust_override(document_pattern)
     return {"status": "deleted", "document_pattern": document_pattern}
 
 
@@ -2213,6 +2215,11 @@ async def compute_proof_state(matter_id: str):
 async def compute_issue_proof_state(matter_id: str, issue_id: str):
     """Recompute proof state for a single issue."""
     model = _get_matter_model_or_404(matter_id)
+    _issue_check = model.db.execute(
+        "SELECT 1 FROM issue WHERE id=? AND matter_id=?", (issue_id, model.matter_id)
+    ).fetchone()
+    if _issue_check is None:
+        raise HTTPException(status_code=404, detail=f"Issue '{issue_id}' not found in this matter")
     state = model.proof_state.compute_and_store(issue_id)
     return state
 

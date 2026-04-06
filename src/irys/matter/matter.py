@@ -471,8 +471,11 @@ class MatterModel:
                     ),
                     _batch,
                 )
-            except Exception:
-                pass
+            except Exception as _e:
+                _log.warning(
+                    "pending_propagation cleanup failed for %d rows (will replay on next flush): %s",
+                    len(_batch), _e,
+                )
 
     def correct_assertion(
         self,
@@ -724,6 +727,83 @@ class MatterModel:
             _log.warning("Trust override proof state refresh failed for %r: %s", document_pattern, exc)
 
         return override_id
+
+    def delete_trust_override(
+        self,
+        document_pattern: str,
+        run_id: Optional[str] = None,
+    ) -> None:
+        """Delete a document trust override and re-propagate belief revision.
+
+        Mirrors set_trust_override: deletes the row first, then re-runs belief
+        revision on affected assertions so beliefs revert to auto-inferred trust.
+        Proof state is recomputed for affected issues.
+        """
+        self.trust_overrides.delete(document_pattern)
+
+        affected_ids: list[str] = []
+        _trust_unvisited: list[str] = []
+        try:
+            pat_norm = document_pattern.replace("\\\\", "/").replace("\\", "/")
+            basename = Path(pat_norm).name
+            occurrence_rows = self.db.execute(
+                """SELECT DISTINCT ao.assertion_id, ao.document_id
+                   FROM assertion_occurrence ao
+                   JOIN assertion a ON a.id = ao.assertion_id
+                   WHERE a.matter_id = ?
+                     AND ao.document_id IS NOT NULL
+                     AND (ao.document_id = ?
+                          OR ao.doc_basename = ?)""",
+                (self.matter_id, document_pattern, basename),
+            ).fetchall()
+            for row in occurrence_rows:
+                doc = (row["document_id"] or "").replace("\\\\", "/").replace("\\", "/")
+                doc_basename = Path(doc).name
+                if pat_norm == doc or pat_norm == doc_basename:
+                    affected_ids.append(row["assertion_id"])
+            if affected_ids:
+                self.apply_revision(
+                    affected_ids,
+                    cause=RevisionCause.TRUST_OVERRIDE,
+                    run_id=run_id,
+                    note=f"Document trust override deleted for {document_pattern!r}",
+                    _collect_unvisited=_trust_unvisited,
+                )
+        except (sqlite3.Error, ValueError, RuntimeError) as exc:
+            _log.warning("Trust override delete belief revision failed for %r: %s", document_pattern, exc)
+        self.enqueue_evidence_pending(_trust_unvisited, cause=RevisionCause.TRUST_OVERRIDE, run_id=run_id)
+
+        try:
+            if affected_ids:
+                _SQL_PARAM_LIMIT = 900
+                issue_ids_to_recompute: set[str] = set()
+                for _bs in range(0, len(affected_ids), _SQL_PARAM_LIMIT):
+                    _batch = affected_ids[_bs : _bs + _SQL_PARAM_LIMIT]
+                    _rows = self.db.execute(
+                        "SELECT DISTINCT issue_id FROM assertion_issue_link"
+                        " WHERE assertion_id IN ({})".format(",".join("?" * len(_batch))),
+                        _batch,
+                    ).fetchall()
+                    issue_ids_to_recompute.update(r["issue_id"] for r in _rows)
+                if issue_ids_to_recompute:
+                    _ov_rows = self.db.execute(
+                        """SELECT document_pattern, trust_level FROM document_trust_override
+                           WHERE matter_id=? AND trust_level != 'normal'
+                           ORDER BY LENGTH(document_pattern) DESC""",
+                        (self.matter_id,),
+                    ).fetchall()
+                    _preloaded = [
+                        (r["document_pattern"], r["trust_level"]) for r in _ov_rows
+                    ]
+                    with self.db.transaction():
+                        for _iid in issue_ids_to_recompute:
+                            self.proof_state.compute_and_store(
+                                _iid, _preloaded_overrides=_preloaded
+                            )
+            else:
+                self.proof_state.compute_all()
+        except (sqlite3.Error, ValueError, RuntimeError) as exc:
+            _log.warning("Trust override delete proof state refresh failed for %r: %s", document_pattern, exc)
 
     def mine_contradictions(self, run_id: Optional[str] = None) -> list[dict]:
         """

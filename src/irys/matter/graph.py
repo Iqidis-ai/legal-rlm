@@ -1849,15 +1849,20 @@ class ClarificationStore:
             )
         return q_id
 
-    def answer_question(self, question_id: str, answer_text: str) -> None:
-        """Record the user's answer to a clarification question."""
+    def answer_question(self, question_id: str, answer_text: str) -> bool:
+        """Record the user's answer to a clarification question.
+
+        Returns True if the question was found and updated, False if it does not
+        exist in this matter (caller should return 404).
+        """
         now = _now()
-        self.db.execute(
+        cur = self.db.execute(
             """UPDATE clarification_question
                SET answer_text=?, answered_at=?, status='answered'
-               WHERE id=?""",
-            (answer_text, now, question_id),
+               WHERE id=? AND matter_id=?""",
+            (answer_text, now, question_id, self.matter_id),
         )
+        return cur.rowcount > 0
 
     def get_pending(self, limit: "int | None" = None) -> list[dict]:
         """Return unanswered clarification questions, newest first."""
