@@ -1537,7 +1537,14 @@ async def flush_pending_propagation(matter_id: str):
         except Exception:
             pass
         raise
-    model.complete_run(flush_run_id)
+    try:
+        model.complete_run(flush_run_id)
+    except Exception as ce:
+        try:
+            model.fail_run(flush_run_id, str(ce))
+        except Exception:
+            pass
+        raise
     return {"status": "ok", "revised_count": revised}
 
 
@@ -1902,7 +1909,13 @@ def _background_flush(matter_id: str, model) -> None:
                     pass
                 raise
             else:
-                model.complete_run(flush_run_id)
+                try:
+                    model.complete_run(flush_run_id)
+                except Exception as ce:
+                    try:
+                        model.fail_run(flush_run_id, str(ce))
+                    except Exception:
+                        pass
     except Exception as exc:
         logger.warning("background_flush failed for matter %s: %s", matter_id, exc)
 
