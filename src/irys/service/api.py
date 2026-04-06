@@ -1745,10 +1745,23 @@ async def correct_assertion(
                    "disputed/superseded/withdrawn/inferred/resolved/unknown",
         )
 
-    # Single active-run lookup shared by both the correction attribution and steering
-    # injection — prevents divergence if two runs overlap on the same matter (r35 fix).
-    # Client-provided request.run_id takes precedence over server-side lookup.
-    _active_run_id: "str | None" = getattr(request, "run_id", None)
+    # Single active-run lookup shared by both the correction attribution and the
+    # steering injection — prevents divergence if two runs overlap (r35 fix).
+    # Client-provided run_id is validated against run_session before use so stale
+    # or bogus IDs cannot misattribute audit rows (r36 HIGH fix).
+    # Normalize to None: empty string is treated as absent (r36 MEDIUM fix).
+    _active_run_id: "str | None" = (getattr(request, "run_id", None) or None)
+    if _active_run_id:
+        # Validate: must be a running session for this exact matter.
+        try:
+            _valid = model.db.execute(
+                "SELECT 1 FROM run_session WHERE id=? AND matter_id=? AND status='running'",
+                (_active_run_id, matter_id),
+            ).fetchone()
+            if not _valid:
+                _active_run_id = None  # stale or foreign run — fall through to lookup
+        except Exception:
+            _active_run_id = None
     if not _active_run_id:
         try:
             _active_run_row = model.db.execute(
