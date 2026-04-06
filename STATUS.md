@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1+2 MEDIUM fixes: _profile_pool semantic gate + complete_run() idempotency; 725 tests pass)
+Last updated: 2026-04-06 (UI Tier 1 r1 all HIGH/MEDIUM fixed; 6-panel Gradio UI + UIBackend + service endpoints complete; 725 tests pass)
 Branch: SebihSpecial
 
 ---
@@ -111,7 +111,20 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ## Active Work
 
-### JUST COMPLETED — Tier 1+2 MEDIUM fixes (2026-04-06, commit 1cddd8e)
+### JUST COMPLETED — UI Tier 1 r1 all HIGH/MEDIUM fixed (2026-04-06, commit 5f6779a)
+
+6-panel Gradio UI implemented, UIBackend abstraction layer, service SSE + overview + stop endpoints.
+All Tier 1 r1 UI findings fixed:
+
+- **HIGH 1 (stop button):** `state._run_id = run_id` set in engine.py at run start; `_make_on_step()` callback reads from `ledger.recent_runs(1)` on first step; `stop_investigation()` uses captured run_id
+- **HIGH 2 (AppState global):** Per-call local state (`call_thinking`, `call_citations`, `call_queue`) passed to `_run_thread`; `update_queue` aliased at call start — per-invocation safe
+- **MEDIUM 3 (wrong method names):** `open_gaps()` for GapStore; `get_open_issues()` for IssueStore — fixed in both service/api.py and in_process.py
+- **MEDIUM 4 (SSE infinite hang):** Validate `run_id` in `run_session` before entering poll loop in both `service/api.py` and `in_process.py` — missing run_id emits error event and returns immediately
+- **Gradio 6 compat:** Removed inline Textbox; `asyncio.run()` → `ThreadPoolExecutor _run_async()`; `theme/css` moved to `launch()`
+
+Tier 1 r2 review running (background). HEAD: 5f6779a — Tests: 725/725
+
+### PREVIOUSLY COMPLETED — Tier 1+2 MEDIUM fixes (2026-04-06, commit 1cddd8e)
 
 Two MEDIUM bugs found by Tier 1 review of Tier 2 implementations — both fixed:
 
