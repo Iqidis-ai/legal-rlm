@@ -102,7 +102,22 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ## Active Work
 
-### JUST COMPLETED — Tier 1 CLEAN r4: Q4/SO-2 stale pre-state (2026-04-05)
+### JUST COMPLETED — Adversarial Audit #023 HIGH fixes (2026-04-05)
+
+**Audit #023 results:** SO-1/3/5/6/7 PASS; SO-2/4 PARTIAL. THREE HIGH findings, all fixed:
+
+1. **SO-2 HIGH: OCC silent propagation loss** — `_revise_one()` returned `None` on OCC conflict; BFS pruned downstream subtree silently. Service allows 3 concurrent jobs — not actually rare. Fix: change signature to `(result, occ_aborted: bool)`; BFS re-enqueues dependents when `occ_aborted=True`; adds WARNING log + SYSTEM_WARNING ledger event on any OCC conflict. (commit 6586399)
+
+2. **SO-2 HIGH: Flat fact ingress** — SPO retry threshold `>= 3` left single/two-fact batches stored as null-SPO tuples. Fix: lower threshold to `>= 1` in both search and deep-read paths. (commit 26125f9)
+
+3. **SO-4 HIGH: Attribution contamination** (partial fix via cb26e78) — wrong `_focus_issue_id` distorts issue links, retrieval bias, and gap recording. Partial fix: coverage-biased round-robin (weakest first) replaces all-to-weakest_id. Full fix requires attribution accuracy improvement (remaining backlog).
+
+**Also completed:**
+- SO-4: coverage-biased round-robin for unannotated initial_searches (commit cb26e78)
+
+HEAD: 26125f9 — Tests: 725/725
+
+### PREVIOUSLY COMPLETED — Tier 1 CLEAN r4: Q4/SO-2 stale pre-state (2026-04-05)
 
 **Stale pre-state fix — 4 rounds to CLEAN:**
 - **Round 1 (b8714e7):** Re-read `belief_state`/`confidence` inside transaction for `old_value_json` in `assertion_revision` — wrong audit values under concurrent write.
@@ -201,11 +216,10 @@ None active.
 
 - Tests passing: 725 / 725
 - Schema version: v34
-- SO-1/3/5/6/7: **PASS**; SO-2/4: **PARTIAL** (SO-2 improving)
+- SO-1/3/5/6/7: **PASS**; SO-2/4: **PARTIAL** (improving post-#023)
 - Tier 1 Q4/SO-2 stale pre-state: **CLEAN** (4 rounds, r4 confirmed 2026-04-05)
-- Adversarial audit #022: DONE — 5 PASSes, SO-2/4 PARTIAL
-- Q4 HIGH: CLOSED — assertion_revision table (schema v34) + stale pre-state OCC fix
-- Next: Adversarial audit #023 (OVERDUE — 9+ Codex sessions since #022); SO-4 attribution design gate
+- Adversarial audit #023: DONE — same PASSes (SO-1/3/5/6/7); 3 HIGH findings; all 3 fixed (see below)
+- Next: Tier 1 CLEAN on audit #023 fixes; SO-4 attribution remaining (coverage contamination)
 
 ## Architectural Backlog (Tier 2 HIGH remaining)
 
