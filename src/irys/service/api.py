@@ -1459,8 +1459,9 @@ async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
     if _trust_run_id:
         try:
             _tv = model.db.execute(
-                "SELECT 1 FROM run_session WHERE id=? AND matter_id=? AND status='running'",
-                (_trust_run_id, matter_id),
+                "SELECT 1 FROM run_session WHERE id=? AND matter_id=? AND status='running'"
+                " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))",
+                (_trust_run_id, model.matter_id),
             ).fetchone()
             if not _tv:
                 _trust_run_id = None
@@ -1546,16 +1547,16 @@ async def flush_pending_propagation(matter_id: str):
         except Exception as exc:
             try:
                 model.fail_run(flush_run_id, str(exc))
-            except Exception:
-                pass
+            except Exception as fe:
+                logger.warning("flush-pending fail_run failed for run %s: %s", flush_run_id, fe)
             raise
         try:
             model.complete_run(flush_run_id)
         except Exception as ce:
             try:
                 model.fail_run(flush_run_id, str(ce))
-            except Exception:
-                pass
+            except Exception as fe:
+                logger.warning("flush-pending terminal close failed for run %s: %s", flush_run_id, fe)
             raise
     return {"status": "ok", "revised_count": revised}
 
@@ -1826,8 +1827,9 @@ async def correct_assertion(
         # Validate: must be a running session for this exact matter.
         try:
             _valid = model.db.execute(
-                "SELECT 1 FROM run_session WHERE id=? AND matter_id=? AND status='running'",
-                (_active_run_id, matter_id),
+                "SELECT 1 FROM run_session WHERE id=? AND matter_id=? AND status='running'"
+                " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))",
+                (_active_run_id, model.matter_id),
             ).fetchone()
             if not _valid:
                 _active_run_id = None  # stale or foreign run — fall through to lookup
@@ -1918,8 +1920,8 @@ def _background_flush(matter_id: str, model) -> None:
             except Exception as exc:
                 try:
                     model.fail_run(flush_run_id, str(exc))
-                except Exception:
-                    pass
+                except Exception as fe:
+                    logger.warning("background_flush fail_run failed for %s run %s: %s", matter_id, flush_run_id, fe)
                 raise
             else:
                 try:
@@ -1927,8 +1929,8 @@ def _background_flush(matter_id: str, model) -> None:
                 except Exception as ce:
                     try:
                         model.fail_run(flush_run_id, str(ce))
-                    except Exception:
-                        pass
+                    except Exception as fe:
+                        logger.warning("background_flush terminal close failed for %s run %s: %s", matter_id, flush_run_id, fe)
     except Exception as exc:
         logger.warning("background_flush failed for matter %s: %s", matter_id, exc)
 

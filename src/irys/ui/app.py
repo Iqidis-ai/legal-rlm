@@ -286,8 +286,16 @@ class AppState:
                 try:
                     engine = self._irys_ref._engine
                     if engine and engine._matter_model:
-                        runs = engine._matter_model.ledger.recent_runs(1)
-                        if runs and runs[0].get("status") == "running":
+                        _mm = engine._matter_model
+                        _run_row = _mm.db.execute(
+                            "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
+                            " AND (objective IS NULL OR objective NOT IN"
+                            " ('manual_flush','background_flush'))"
+                            " ORDER BY started_at DESC LIMIT 1",
+                            (_mm.matter_id,),
+                        ).fetchone()
+                        runs = [dict(_run_row)] if _run_row else []
+                        if runs:
                             self.current_run_id = runs[0]["id"]
                             self.current_matter_id = engine._matter_model.matter_id
                 except Exception:
@@ -459,7 +467,10 @@ class AppState:
                         # Race: stop pressed before first step — find running run from DB
                         row = engine._matter_model.db.execute(
                             "SELECT id FROM run_session WHERE matter_id=?"
-                            " AND status='running' ORDER BY started_at DESC LIMIT 1",
+                            " AND status='running'"
+                            " AND (objective IS NULL OR objective NOT IN"
+                            " ('manual_flush','background_flush'))"
+                            " ORDER BY started_at DESC LIMIT 1",
                             (engine._matter_model.matter_id,),
                         ).fetchone()
                         run_id = row["id"] if row else None
