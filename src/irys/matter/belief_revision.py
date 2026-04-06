@@ -539,24 +539,30 @@ class BeliefRevisionEngine:
             and bool(_superseding)
             and not any(s not in _INERT_S for s in _superseding)
         )
-        if _recovery_case:
-            # Guard 1 (user-lock) is deferred to inside the write transaction below so
-            # that a concurrent force_state(USER_CORRECTION, same-state) that commits
-            # the lock row between this pre-tx read and the BEGIN IMMEDIATE is not missed.
-            # The OCC guard only compares assertion.belief_state/confidence; a same-state/
-            # same-confidence correction leaves no visible delta there, so the OCC would
-            # pass and the stale "no lock" decision would be committed without this fix.
+        # DISPUTED recovery (r23 HIGH fix): when a node is DISPUTED and all its
+        # attackers are now inert (WITHDRAWN/SUPERSEDED/UNKNOWN) or absent, substitute
+        # the speech-act baseline so _compute_belief_state() can compute the recovered
+        # state instead of preserving DISPUTED forever.
+        # _INERT_A matches the _INERT tuple inside _compute_belief_state().
+        _INERT_A = (BeliefState.WITHDRAWN, BeliefState.SUPERSEDED, BeliefState.UNKNOWN)
+        _dispute_recovery_case = (
+            old_state == BeliefState.DISPUTED
+            and not any(s not in _INERT_A for s in (neighbors["attack_states"] or []))
+        )
+        if _recovery_case or _dispute_recovery_case:
+            # Guard 1 (user-lock) applies to supersession recovery only (deferred inside
+            # BEGIN IMMEDIATE below); DISPUTED is typically set by the engine, not users.
+            # TODO: add user-lock guard for DISPUTED if explicit user corrections to
+            # DISPUTED state become common.
 
-            # Guard 2: derive speech-act baseline state for the computation.
-            # Use the most authoritative speech_act across ALL occurrences so a
-            # proposition first seen as ALLEGED and later observed as OPERATIVE
-            # recovers to OPERATIVE, not ALLEGED. (r15 MEDIUM fix)
+            # Shared baseline: use the most authoritative speech-act across ALL occurrences
+            # so a proposition first seen as ALLEGED and later observed as OPERATIVE
+            # recovers to OPERATIVE, not ALLEGED. (r15 MEDIUM fix for supersession; same
+            # logic applies for DISPUTED recovery.)
             #
             # Priority is by LEGAL INFORMATIVENESS (not confidence):
             # operative > admitted/stipulated > performed/paid > waived/terminated/amended
             # > inferred > alleged/argued > unclassified (extracted, denied, etc.)
-            # alleged/argued intentionally rank above unclassified despite lower confidence
-            # because an explicit speech-act classification is more informative.
             #
             # _initial_belief_state() (graph.py) is the canonical state/confidence mapping.
             # No circular import: belief_revision.py already imports from graph.py;
@@ -787,9 +793,13 @@ class BeliefRevisionEngine:
                     _json_mod.dumps(new_confidence),
                 ))
             if _fs_rev_rows:
+                # actor_kind reflects who initiated the change (r23 MEDIUM fix):
+                # USER_CORRECTION → "user" so the user-lock and recovery paths work;
+                # system causes (CONFLICT_DETECTION, etc.) → "engine" for correct provenance.
+                _actor_kind = "user" if cause == RevisionCause.USER_CORRECTION else "engine"
                 self.assertion_store.write_revision_rows(
                     assertion_id, _fs_rev_rows, _id(),
-                    cause.value, "user", run_id, note,
+                    cause.value, _actor_kind, run_id, note,
                 )
             self.assertion_store.set_belief_state(assertion_id, new_state, new_confidence)
             self.db.execute(
