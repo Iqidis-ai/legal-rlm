@@ -1912,6 +1912,10 @@ def _background_flush(matter_id: str, model) -> None:
     stop_investigation / set_trust_override / correct_assertion could mistakenly
     target as the active investigation (adv#030 correctness r2 HIGH fix).
     """
+    # Coalesce concurrent flush requests: only one background flush runs per model.
+    # A flush already in flight will pick up newer DB rows via reload_pending_from_db().
+    if not model._bg_flush_lock.acquire(blocking=False):
+        return
     try:
         from irys.matter.runtime import MatterRuntimeAdapter
         with model._flush_lock:
@@ -1935,6 +1939,8 @@ def _background_flush(matter_id: str, model) -> None:
                         logger.warning("background_flush terminal close failed for %s run %s: %s", matter_id, flush_run_id, fe)
     except Exception as exc:
         logger.warning("background_flush failed for matter %s: %s", matter_id, exc)
+    finally:
+        model._bg_flush_lock.release()
 
 
 # ---------------------------------------------------------------------------

@@ -27,7 +27,14 @@ def _in_process_background_flush(matter_id: str, model) -> None:
     Mirrors api._background_flush(): acquires _flush_lock before creating the
     run session so no spurious 'running' row blocks active-run selectors while
     waiting (adv#030 HIGH fix, in-process path).
+
+    Uses model._bg_flush_lock to coalesce concurrent requests — at most one
+    flush thread runs or waits per model. Later corrections enqueue durable DB
+    rows that the running flush picks up via reload_pending_from_db().
     """
+    # Coalesce: skip if another flush is already running for this model.
+    if not model._bg_flush_lock.acquire(blocking=False):
+        return
     try:
         from ...matter.runtime import MatterRuntimeAdapter
         with model._flush_lock:
@@ -51,6 +58,8 @@ def _in_process_background_flush(matter_id: str, model) -> None:
                         _log.warning("in_process background_flush terminal close failed for %s run %s: %s", matter_id, flush_run_id, fe)
     except Exception as exc:
         _log.warning("in_process background_flush failed for matter %s: %s", matter_id, exc)
+    finally:
+        model._bg_flush_lock.release()
 
 
 class InProcessBackend(UIBackend):

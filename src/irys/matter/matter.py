@@ -95,6 +95,10 @@ class MatterModel:
         # reload_pending_from_db() + drain cannot race and double-replay the same row
         # (adv#029 SO-1 fix r7).
         self._flush_lock = threading.Lock()
+        # Binary semaphore: at most one background flush thread scheduled or running per
+        # model instance. Threads that cannot acquire skip spawning — the running flush
+        # picks up their durable DB rows via reload_pending_from_db() (adv#030 perf fix).
+        self._bg_flush_lock = threading.Lock()
         # Reconstruct pending queues from the durable pending_propagation table (adv#029 SO-1 fix).
         # This ensures partial BFS propagation survives process restarts with no replay loss.
         self._load_pending_propagation()
