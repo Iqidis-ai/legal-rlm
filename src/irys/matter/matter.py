@@ -624,7 +624,9 @@ class MatterModel:
 
         Ordered by coverage_fraction ascending (weakest coverage first).
         """
-        open_issues = self.issues.get_open_issues(min_materiality=0.0)
+        # order_by_score=False: this method re-sorts by coverage_fraction at the end,
+        # so the (salience * materiality) SQL expression sort is wasted work.
+        open_issues = self.issues.get_open_issues(min_materiality=0.0, order_by_score=False)
         if not open_issues:
             return []
 

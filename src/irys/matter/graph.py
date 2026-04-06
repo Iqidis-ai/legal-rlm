@@ -1571,12 +1571,20 @@ class IssueStore:
         ).fetchone()
         return row["id"] if row else link_id
 
-    def get_open_issues(self, min_materiality: float = 0.0) -> list[dict]:
-        """Return open issues ordered by salience × materiality descending."""
+    def get_open_issues(self, min_materiality: float = 0.0, order_by_score: bool = True) -> list[dict]:
+        """Return open issues, optionally ordered by salience × materiality descending.
+
+        order_by_score=False skips the expression sort for callers that will re-sort
+        the result themselves (e.g. get_issue_coverage_report() sorts by coverage_fraction).
+        The (salience * materiality) expression cannot use a simple column index so
+        SQLite must compute and sort the full result set; skipping it when unnecessary
+        avoids this O(n log n) work on every overview/issues panel refresh.
+        """
+        order_clause = "ORDER BY (salience * materiality) DESC, id ASC" if order_by_score else "ORDER BY id ASC"
         rows = self.db.execute(
-            """SELECT * FROM issue
+            f"""SELECT * FROM issue
                WHERE matter_id=? AND status='open' AND materiality >= ?
-               ORDER BY (salience * materiality) DESC, id ASC""",
+               {order_clause}""",
             (self.matter_id, min_materiality),
         ).fetchall()
         return [dict(r) for r in rows]

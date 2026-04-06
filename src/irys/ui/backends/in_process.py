@@ -193,38 +193,25 @@ class InProcessBackend(UIBackend):
         return model.ledger.get_events(run_id)
 
     async def list_issues(self, matter_id: str) -> list[dict]:
+        # No try/except — let exceptions propagate so AppState.load_issues()
+        # can display "Error loading issues: <detail>" instead of a silent empty table.
         model = self._get_matter_model(matter_id)
-        try:
-            # Use get_issue_coverage_report() — returns the coverage/proof shape
-            # expected by the Issues panel formatter (coverage_fraction, proof_status,
-            # supporting_count, attacking_count) rather than raw issue rows.
-            return model.get_issue_coverage_report()
-        except Exception:
-            return []
+        return model.get_issue_coverage_report()
 
     async def list_assertions(
         self, matter_id: str, limit: int = 50, offset: int = 0,
         issue_id: Optional[str] = None
     ) -> list[dict]:
         model = self._get_matter_model(matter_id)
-        try:
-            return model.assertions.list_recent(limit=limit, offset=offset)
-        except Exception:
-            return []
+        return model.assertions.list_recent(limit=limit, offset=offset)
 
     async def list_gaps(self, matter_id: str, limit: int = 50) -> list[dict]:
         model = self._get_matter_model(matter_id)
-        try:
-            return model.gaps.open_gaps(limit=limit)
-        except Exception:
-            return []
+        return model.gaps.open_gaps(limit=limit)
 
     async def list_clarifications(self, matter_id: str, limit: int = 20) -> list[dict]:
         model = self._get_matter_model(matter_id)
-        try:
-            return model.clarifications.get_pending(limit=limit)
-        except Exception:
-            return []
+        return model.clarifications.get_pending(limit=limit)
 
     # ------------------------------------------------------------------ #
     # User steering                                                        #
@@ -280,17 +267,63 @@ class InProcessBackend(UIBackend):
 
     async def get_steering_surface(self, matter_id: str) -> list[dict]:
         model = self._get_matter_model(matter_id)
-        try:
-            return model.get_ledger_steering_surface()
-        except Exception:
-            return []
+        return model.get_ledger_steering_surface()
 
     async def get_quant_summary(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
-        try:
-            return {
-                "payment_reconciliation": model.reconcile_payment_chain(),
-                "damages_waterfall": model.get_damages_waterfall(),
-            }
-        except Exception:
-            return {"payment_reconciliation": {}, "damages_waterfall": []}
+        return {
+            "payment_reconciliation": model.reconcile_payment_chain(),
+            "damages_waterfall": model.get_damages_waterfall(),
+        }
+
+    # ------------------------------------------------------------------ #
+    # Streaming investigation (InProcessBackend-specific)                 #
+    # ------------------------------------------------------------------ #
+
+    def run_investigation_thread(
+        self,
+        query: str,
+        repo_path: str,
+        update_q: "queue.Queue",
+        thinking: list,
+        citations: list,
+        on_irys_created=None,
+        on_step=None,
+        set_current_run_id=None,
+        set_current_matter_id=None,
+        set_final_output=None,
+    ) -> None:
+        """Run investigation in the calling thread (which must be a daemon Thread).
+
+        Encapsulates irys.investigate() + UI update queue logic. AppState._run_thread
+        delegates here so the Run tab goes through the backend, not around it.
+        Callbacks let AppState track run_id, matter_id, and irys ref for stop/redirect.
+        """
+        import queue as _queue
+
+        async def _inner():
+            irys = self._get_irys()
+            if on_irys_created is not None:
+                on_irys_created(irys)
+            if on_step is not None:
+                irys.on_step(on_step)
+            try:
+                result = await irys.investigate(query, repo_path)
+                state = result.state
+                engine = irys._engine
+                mm = engine._matter_model if engine else None
+                if set_current_matter_id is not None:
+                    set_current_matter_id(mm.matter_id if mm else None)
+                if set_current_run_id is not None:
+                    set_current_run_id(getattr(state, "_run_id", None))
+                citations.extend(
+                    f"[{i+1}] {c.document}" + (f", p.{c.page}" if c.page else "")
+                    for i, c in enumerate(state.citations)
+                )
+                if set_final_output is not None:
+                    set_final_output(result.output)
+                update_q.put(("complete", state))
+            except Exception as exc:
+                update_q.put(("error", str(exc)))
+
+        asyncio.run(_inner())

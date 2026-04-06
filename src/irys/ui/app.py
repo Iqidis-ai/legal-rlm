@@ -291,38 +291,30 @@ class AppState:
         thinking: list,
         citations: list,
     ):
-        """Run investigation in a background thread.
+        """Run investigation in a background thread via InProcessBackend.
 
-        NOTE: This method calls _get_irys() which is InProcessBackend-specific.
-        Only InProcessBackend is wired in create_app() / AppState.backend().
-        If a different backend were ever injected, this method would fail at
-        the _get_irys() call with AttributeError, not silently.
+        Delegates entirely to InProcessBackend.run_investigation_thread() so the
+        Run tab goes through the UIBackend rather than calling irys internals directly.
         """
-        async def _inner():
-            backend = self.backend()
-            if not hasattr(backend, "_get_irys"):
-                update_q.put(("error", "Run tab requires InProcessBackend; HttpBackend does not support local investigations"))
-                return
-            irys = backend._get_irys()
-            self._irys_ref = irys
-            irys.on_step(self._make_on_step(update_q, thinking))
-            try:
-                result = await irys.investigate(query, repo_path)
-                state = result.state
-                engine = irys._engine
-                mm = engine._matter_model if engine else None
-                self.current_matter_id = mm.matter_id if mm else None
-                self.current_run_id = getattr(state, "_run_id", None)
-                citations.extend(
-                    f"[{i+1}] {c.document}" + (f", p.{c.page}" if c.page else "")
-                    for i, c in enumerate(state.citations)
-                )
-                self.final_output = result.output
-                update_q.put(("complete", state))
-            except Exception as exc:
-                update_q.put(("error", str(exc)))
-
-        asyncio.run(_inner())
+        backend = self.backend()
+        if not isinstance(backend, InProcessBackend):
+            update_q.put(("error",
+                "Run tab requires InProcessBackend. "
+                "HttpBackend does not support local streaming investigations — "
+                "it connects to a running FastAPI service that requires S3-backed repos."))
+            return
+        backend.run_investigation_thread(
+            query,
+            repo_path,
+            update_q,
+            thinking,
+            citations,
+            on_irys_created=lambda irys: setattr(self, "_irys_ref", irys),
+            on_step=self._make_on_step(update_q, thinking),
+            set_current_run_id=lambda rid: setattr(self, "current_run_id", rid),
+            set_current_matter_id=lambda mid: setattr(self, "current_matter_id", mid),
+            set_final_output=lambda o: setattr(self, "final_output", o),
+        )
 
     def stream_investigation(
         self, query: str, repo_path: str
@@ -539,6 +531,8 @@ class AppState:
             result = _run_async(
                 self.backend().redirect_run(matter_id, run_id, issue_id)
             )
+            if isinstance(result, dict) and result.get("status") == "error":
+                return f"❌ {result.get('detail', result)}"
             return f"✅ Redirected: {result}"
         except Exception as exc:
             return f"❌ Error: {exc}"

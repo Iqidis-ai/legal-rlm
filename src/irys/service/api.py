@@ -1336,10 +1336,10 @@ async def get_run_events(matter_id: str, run_id: str):
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
 )
-async def get_pending_clarifications(matter_id: str):
+async def get_pending_clarifications(matter_id: str, limit: int = 20):
     """Return pending clarification questions for a matter."""
     model = _get_matter_model_or_404(matter_id)
-    return model.clarifications.get_pending()
+    return model.clarifications.get_pending(limit=limit)
 
 
 @app.post(
@@ -1693,15 +1693,16 @@ async def clear_decision_context(matter_id: str):
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
 )
-async def get_matter_gaps(matter_id: str, min_materiality: float = 0.0):
+async def get_matter_gaps(matter_id: str, min_materiality: float = 0.0, limit: Optional[int] = None):
     """Return open gaps for a matter (SO-7 — missingness is modeled, not ignored).
 
     Each gap represents something the system knows is missing: a document,
     a predicate, an unresolved contradiction, or a needed clarification.
     Filtered by materiality threshold (0.0 = all gaps, 0.5 = significant only).
+    limit: cap the number returned (None = use schema default pagination).
     """
     model = _get_matter_model_or_404(matter_id)
-    return model.gaps.open_gaps(min_materiality=min_materiality)
+    return model.gaps.open_gaps(min_materiality=min_materiality, limit=limit)
 
 
 @app.post(
