@@ -147,6 +147,65 @@ def test_superseded_is_terminal(model):
         "Superseded assertion must not be un-superseded by belief revision"
 
 
+def test_superseded_recovers_when_superseder_withdrawn(model):
+    """If the superseding assertion is withdrawn, the original can recover (HIGH #1 fix).
+
+    A --supersedes--> B (A is OPERATIVE, so B is SUPERSEDED).
+    When A is withdrawn, BFS re-evaluates B and has_superseding becomes False
+    (A is now inert). B should no longer be forced to SUPERSEDED.
+    """
+    b_id = add(model, "Original contract term.")
+    a_id = add(model, "Amendment superseding original term.")
+    model.assertions.set_belief_state(a_id, BeliefState.OPERATIVE, 0.9)
+    model.assertions.link(a_id, b_id, AssertionLinkType.SUPERSEDES)
+
+    # Initial revision: A is operative → B should be SUPERSEDED
+    model.belief.apply([a_id], cause=RevisionCause.NEW_EVIDENCE)
+    b_record = model.assertions.get(b_id)
+    assert b_record.belief_state == BeliefState.SUPERSEDED.value, \
+        "B should be SUPERSEDED while superseder A is active"
+
+    # Now withdraw A (amendment was retracted)
+    model.correct_assertion(a_id, BeliefState.WITHDRAWN, note="Amendment retracted by party")
+
+    # B should no longer be forced SUPERSEDED
+    b_record = model.assertions.get(b_id)
+    assert b_record.belief_state != BeliefState.SUPERSEDED.value, \
+        "B should recover when its superseder is withdrawn"
+
+
+def test_admitted_support_promotes_dependent(model):
+    """ADMITTED/RESOLVED support must promote dependent to INFERRED (HIGH #2 fix).
+
+    Previously only OPERATIVE support triggered INFERRED promotion. ADMITTED and
+    RESOLVED are legally conclusive and should promote dependents equally.
+    """
+    central_id = add(model, "The defendant breached the contract.")
+    supporter_id = add(model, "Defendant admitted non-performance in deposition.")
+    model.assertions.set_belief_state(supporter_id, BeliefState.ADMITTED, 0.85)
+    model.assertions.link(supporter_id, central_id, AssertionLinkType.SUPPORTS)
+
+    model.belief.apply([supporter_id], cause=RevisionCause.NEW_EVIDENCE)
+
+    central = model.assertions.get(central_id)
+    assert central.belief_state == BeliefState.INFERRED.value, \
+        "ADMITTED support should promote dependent to INFERRED"
+
+
+def test_resolved_support_promotes_dependent(model):
+    """RESOLVED support (court finding) must promote dependent to INFERRED (HIGH #2 fix)."""
+    central_id = add(model, "Liability is established.")
+    supporter_id = add(model, "Court found liability on summary judgment.")
+    model.assertions.set_belief_state(supporter_id, BeliefState.RESOLVED, 0.95)
+    model.assertions.link(supporter_id, central_id, AssertionLinkType.SUPPORTS)
+
+    model.belief.apply([supporter_id], cause=RevisionCause.NEW_EVIDENCE)
+
+    central = model.assertions.get(central_id)
+    assert central.belief_state == BeliefState.INFERRED.value, \
+        "RESOLVED support should promote dependent to INFERRED"
+
+
 def test_user_correction_via_matter_model(model):
     """MatterModel.correct_assertion wraps force_state correctly."""
     a_id = add(model, "Payment was received.", doc="invoice.pdf")

@@ -567,7 +567,12 @@ class AppState:
             )
             if isinstance(result, dict) and result.get("status") == "error":
                 return f"❌ {result.get('detail', result)}"
-            return f"✅ Redirected: {result}"
+            msg = f"✅ Redirect requested → issue {result.get('issue_id', issue_id) if isinstance(result, dict) else issue_id}"
+            if isinstance(result, dict) and result.get("issue_title"):
+                msg += f" ({result['issue_title']})"
+            if isinstance(result, dict) and result.get("note"):
+                msg += f"\n⚠️ {result['note']}"
+            return msg
         except Exception as exc:
             return f"❌ Error: {exc}"
 

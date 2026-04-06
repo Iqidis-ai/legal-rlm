@@ -255,6 +255,12 @@ class InProcessBackend(UIBackend):
                 "run_id": run_id,
                 "issue_id": issue_id,
                 "issue_title": issue.get("title"),
+                # SO-3: redirect is consumed at the next iteration boundary inside the engine
+                # loop. If the engine is mid-synthesis or mid-verification, the redirect will
+                # take effect at the start of the following investigation cycle, not immediately.
+                # Stop is similarly best-effort: in-flight LLM SDK calls cannot be cancelled
+                # mid-request; the engine will stop at the next loop check point.
+                "note": "Redirect takes effect at the next iteration boundary. May be delayed if the engine is currently in synthesis or verification phase.",
             }
         except Exception as exc:
             return {"status": "error", "detail": str(exc)}

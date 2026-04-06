@@ -125,10 +125,14 @@ class AssertionStore:
                 assertion_id = _candidate_id
                 row = None  # No existing row — upgrade logic does not apply
             else:
-                # The INSERT was ignored: re-SELECT to get the actual stored ID and state.
+                # The INSERT was ignored: re-SELECT to get the actual stored ID, state,
+                # and SPO payload fields so we can upgrade them if the candidate is richer.
                 # Must match matter, layer, AND prop key (same filters as the unique index).
                 row = self.db.execute(
-                    "SELECT id, belief_state, confidence FROM assertion"
+                    "SELECT id, belief_state, confidence,"
+                    " predicate_key, subject_ref_type, subject_ref_id,"
+                    " object_json, temporal_scope_start, temporal_scope_end"
+                    " FROM assertion"
                     " WHERE matter_id=? AND model_layer=? AND proposition_key=?",
                     (self.matter_id, candidate.model_layer.value, prop_key),
                 ).fetchone()
@@ -191,6 +195,38 @@ class AssertionStore:
                         "UPDATE assertion SET belief_state=?, confidence=?, updated_at=? WHERE id=?",
                         (_new_state.value, _new_conf, now, assertion_id),
                     )
+
+            # Upgrade SPO payload if the existing canonical row lacks structured fields
+            # but this candidate supplies them. The first extraction of a proposition may
+            # not decompose to SPO; a later, richer extraction of the same proposition
+            # should upgrade the durable record rather than lose the structured payload.
+            # Only upgrades NULL → non-NULL: never overwrites previously-set SPO fields
+            # so user-corrected or higher-confidence prior extractions are preserved.
+            # (HIGH #3 SPO-payload-loss fix)
+            if (
+                not is_new
+                and _occ_cur.rowcount > 0
+                and row is not None
+                and row["predicate_key"] is None
+                and candidate.predicate_key is not None
+            ):
+                self.db.execute(
+                    """UPDATE assertion
+                       SET subject_ref_type=?, subject_ref_id=?, predicate_key=?,
+                           object_json=?, temporal_scope_start=?, temporal_scope_end=?,
+                           updated_at=?
+                       WHERE id=?""",
+                    (
+                        candidate.subject_ref_type,
+                        candidate.subject_ref_id,
+                        candidate.predicate_key,
+                        candidate.object_json,
+                        candidate.temporal_scope_start,
+                        candidate.temporal_scope_end,
+                        now,
+                        assertion_id,
+                    ),
+                )
 
         return assertion_id, is_new
 
@@ -496,7 +532,7 @@ class AssertionStore:
         attack_states: list = []
         support_source_roles: list = []
         attack_source_roles: list = []
-        has_superseding = False
+        superseding_states: list = []
         for row in rows:
             lt = row["link_type"]
             bs = BeliefState(row["belief_state"])
@@ -508,11 +544,19 @@ class AssertionStore:
                 attack_states.append(bs)
                 attack_source_roles.append(role)
             elif lt == "supersedes":
-                has_superseding = True
+                # Collect belief state of every superseding assertion so
+                # _compute_belief_state can distinguish "active superseder" (→ SUPERSEDED)
+                # from "superseder was itself withdrawn/superseded" (→ allow recovery).
+                # (HIGH #1 supersession-recovery fix)
+                superseding_states.append(bs)
+        # Derive legacy bool for callers that use has_superseding directly.
+        _INERT_SUPERSEDER = (BeliefState.WITHDRAWN, BeliefState.SUPERSEDED)
+        has_superseding = any(s not in _INERT_SUPERSEDER for s in superseding_states)
         return {
             "support_states": support_states,
             "attack_states": attack_states,
             "has_superseding": has_superseding,
+            "superseding_states": superseding_states,
             "support_source_roles": support_source_roles,
             "attack_source_roles": attack_source_roles,
         }

@@ -57,6 +57,7 @@ def _compute_belief_state(
     current_confidence: float = 0.5,
     support_source_roles: "list[str] | None" = None,
     attack_source_roles: "list[str] | None" = None,
+    superseding_states: "list[BeliefState] | None" = None,
 ) -> tuple[BeliefState, float]:
     """
     Compute new belief state and confidence from support/attack/supersedes graph.
@@ -69,16 +70,47 @@ def _compute_belief_state(
 
     Returns (new_belief_state, new_confidence).
     """
-    # Superseded/Withdrawn are terminal states — graph cannot un-do them
-    if current_state == BeliefState.SUPERSEDED:
-        return BeliefState.SUPERSEDED, 0.1
-
+    # WITHDRAWN is a truly terminal user-initiated state: the speaker retracted the statement.
+    # No graph signal can recover it — only an explicit user correction can.
     if current_state == BeliefState.WITHDRAWN:
         return BeliefState.WITHDRAWN, 0.0
 
-    # SUPERSEDES link: a newer assertion explicitly replaces this one → terminal
-    if has_superseding:
-        return BeliefState.SUPERSEDED, 0.1
+    # SUPERSEDES link handling — two cases depending on whether the caller passes the new
+    # superseding_states list (rich interface) or the legacy has_superseding bool.
+    #
+    # Legacy interface (superseding_states is None):
+    #   - SUPERSEDED is terminal regardless (same behavior as before this fix).
+    #   - has_superseding=True → force SUPERSEDED.
+    #
+    # Rich interface (superseding_states provided — used by BFS via get_neighbor_belief_states):
+    #   - Active superseder (not WITHDRAWN/SUPERSEDED itself) → force SUPERSEDED.
+    #   - No superseding links at all → SUPERSEDED was manually set → keep as terminal.
+    #   - Superseding links all inert → superseder was withdrawn or itself superseded →
+    #     allow recovery by falling through to normal support/attack logic below.
+    #   (HIGH #1 supersession-recovery fix)
+    if superseding_states is not None:
+        _INERT_SUPERSEDER = (BeliefState.WITHDRAWN, BeliefState.SUPERSEDED)
+        _active_superseder = any(s not in _INERT_SUPERSEDER for s in superseding_states)
+        _any_superseding_link = bool(superseding_states)
+        if _active_superseder:
+            return BeliefState.SUPERSEDED, 0.1
+        if current_state == BeliefState.SUPERSEDED and not _any_superseding_link:
+            # No link present: SUPERSEDED was manually set (e.g. via correct_assertion).
+            # Regular graph support cannot un-supersede — only an explicit user correction.
+            return BeliefState.SUPERSEDED, 0.1
+        if current_state == BeliefState.SUPERSEDED and _any_superseding_link:
+            # Superseder existed but is now inert (withdrawn/superseded): reset current_state
+            # to UNKNOWN so the support/attack logic computes a fresh recovered state.
+            # Without this, the final fallthrough would return SUPERSEDED unchanged even
+            # though the only reason for SUPERSEDED is gone.
+            current_state = BeliefState.UNKNOWN
+            current_confidence = 0.3
+    else:
+        # Legacy bool interface: preserve original terminal semantics.
+        if current_state == BeliefState.SUPERSEDED:
+            return BeliefState.SUPERSEDED, 0.1
+        if has_superseding:
+            return BeliefState.SUPERSEDED, 0.1
 
     # Compute trust weights — 1.0 when no role info (fully backward compatible).
     # Validate list alignment: mismatched lengths would cause zip() to silently
@@ -108,12 +140,25 @@ def _compute_belief_state(
     _UNDERMINING = (BeliefState.DISPUTED, BeliefState.WITHDRAWN,
                     BeliefState.SUPERSEDED, BeliefState.UNKNOWN)
 
+    # Legally authoritative states that promote a dependent to INFERRED.
+    # OPERATIVE, ADMITTED, RESOLVED, PERFORMED are all conclusive: a downstream
+    # assertion supported by any of these should be elevated to INFERRED.
+    # Previously only OPERATIVE was included, so ADMITTED/RESOLVED support left
+    # dependents stuck at UNKNOWN/DISPUTED despite legally strong upstream evidence.
+    # (HIGH #2 promoting-states fix)
+    _PROMOTING = (
+        BeliefState.OPERATIVE,
+        BeliefState.ADMITTED,
+        BeliefState.RESOLVED,
+        BeliefState.PERFORMED,
+    )
+
     # Build trust-weighted filtered lists (state + weight pairs → weights only)
     active_attack_weights = [w for s, w in zip(attack_states, atk_weights) if s not in _INERT]
     strong_support_weights = [w for s, w in zip(support_states, sup_weights) if s not in _UNDERMINING]
-    operative_support_weights = [
+    promoting_support_weights = [
         w for s, w in zip(support_states, sup_weights)
-        if s not in _UNDERMINING and s == BeliefState.OPERATIVE
+        if s not in _UNDERMINING and s in _PROMOTING
     ]
 
     if active_attack_weights and not strong_support_weights:
@@ -136,14 +181,15 @@ def _compute_belief_state(
         # — the support base has collapsed; revert to UNKNOWN
         return BeliefState.UNKNOWN, 0.3
 
-    if operative_support_weights and not active_attack_weights:
-        # Solid operative support with no attacks → inferred
-        # Confidence boost scales with effective operative weight (SO-5: advocacy-source operative = less boost)
-        confidence = min(0.9, 0.5 + 0.1 * sum(operative_support_weights))
+    if promoting_support_weights and not active_attack_weights:
+        # Legally conclusive support (operative/admitted/resolved/performed) with no attacks → inferred
+        # Confidence boost scales with effective promoting weight (SO-5: advocacy-source = less boost)
+        confidence = min(0.9, 0.5 + 0.1 * sum(promoting_support_weights))
         return BeliefState.INFERRED, confidence
 
     if strong_support_weights and not active_attack_weights:
-        # Non-operative but solid support, no attacks → keep current with mild boost
+        # Solid but non-promoting support (e.g. ALLEGED, ARGUED, INFERRED), no attacks
+        # → keep current state with mild confidence boost
         # Never downgrade below current_confidence — seeded values should not be clobbered
         base_confidence = max(current_confidence, min(0.8, 0.5 + 0.05 * sum(strong_support_weights)))
         return current_state, base_confidence
@@ -407,6 +453,7 @@ class BeliefRevisionEngine:
             current_confidence=old_confidence,
             support_source_roles=neighbors["support_source_roles"],
             attack_source_roles=neighbors["attack_source_roles"],
+            superseding_states=neighbors.get("superseding_states"),
         )
 
         # Performance fast-path: skip BEGIN IMMEDIATE when the pre-tx snapshot
