@@ -1777,6 +1777,7 @@ async def correct_assertion(
         "new_belief_state": result.new_belief_state.value,
         "propagated_to": result.propagated_to or [],
         "cause": result.cause.value,
+        "propagation_truncated": result.propagation_truncated,
     }
 
 

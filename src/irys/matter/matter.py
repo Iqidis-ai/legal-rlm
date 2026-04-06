@@ -261,6 +261,31 @@ class MatterModel:
             note=note,
         )
 
+        # Drain and retry nodes left unvisited by BFS budget truncation (r17 HIGH fix).
+        # Each round applies belief revision to the truncated frontier, and that round
+        # may itself truncate, so we loop until drained or the safety cap (10 rounds)
+        # is reached.  This prevents wide withdrawal corrections from leaving durable
+        # stale belief states indefinitely.
+        _retry_rounds = 0
+        while _retry_rounds < 10:
+            _truncated_nodes = self.belief.drain_truncation_pending()
+            if not _truncated_nodes:
+                break
+            _retry_rounds += 1
+            _retry_results = self.belief.apply(
+                _truncated_nodes,
+                cause=RevisionCause.USER_CORRECTION,
+                run_id=run_id,
+                note="truncation retry",
+            )
+            # Accumulate additional propagated assertions so issue recompute covers them.
+            result.propagated_to = list(
+                dict.fromkeys(
+                    (result.propagated_to or [])
+                    + [r.assertion_id for r in _retry_results]
+                )
+            )
+
         # Targeted proof_state recompute: find issues linked to this assertion
         # and any that were revised as dependents (result.propagated_to).
         # This ensures downstream issue/proof consumers see the corrected state.

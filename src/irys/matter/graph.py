@@ -8,9 +8,12 @@ and revisable belief states.
 
 import hashlib
 import json as _json_mod
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
+
+_log = logging.getLogger(__name__)
 
 from .db import SQLiteMatterDB
 import pathlib
@@ -944,7 +947,7 @@ class AssertionStore:
                     attacker_belief in _HIGH_TRUST
                     and attacked_belief in _DISPUTABLE
                 ):
-                    belief_engine.force_state(
+                    _fs_result = belief_engine.force_state(
                         assertion_id=attacked_id,
                         new_state=BeliefState.DISPUTED,
                         new_confidence=0.3,
@@ -954,6 +957,12 @@ class AssertionStore:
                             f"assertion {conflict['attacker_id']}"
                         ),
                     )
+                    if _fs_result.propagation_truncated:
+                        _log.warning(
+                            "detect_conflicts: force_state truncated propagation for %s"
+                            " — downstream belief states may be stale.",
+                            attacked_id,
+                        )
             except Exception:
                 pass  # belief revision failure does not abort gap recording
 

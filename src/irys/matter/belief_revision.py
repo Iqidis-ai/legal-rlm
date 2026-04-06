@@ -237,6 +237,19 @@ class BeliefRevisionEngine:
         self.db = db
         self.assertion_store = assertion_store
         self._ledger = ledger
+        # Nodes that could not be visited when a BFS pass hit MAX_WORK.
+        # Populated by _apply_with_truncation(); drained by drain_truncation_pending().
+        self._truncation_pending: set[str] = set()
+
+    def drain_truncation_pending(self) -> list[str]:
+        """Return and clear nodes left unvisited by the last truncated BFS pass.
+
+        Callers (e.g. correct_assertion) can loop over this to retry propagation
+        until convergence or a safety cap is reached, preventing durable stale states.
+        """
+        result = list(self._truncation_pending)
+        self._truncation_pending.clear()
+        return result
 
     def _apply_with_truncation(
         self,
@@ -370,6 +383,9 @@ class BeliefRevisionEngine:
                     _log.warning("Failed to record OCC ledger event: %s", exc, exc_info=True)
 
         truncated = bool(pending) or occ_exhausted_count > 0
+        if pending:
+            # Record unvisited nodes so callers can retry (r17 HIGH fix).
+            self._truncation_pending.update(pending)
         if truncated:
             _reasons = []
             if pending:
@@ -425,7 +441,12 @@ class BeliefRevisionEngine:
         (results, truncated) tuple — used internally by force_state() to
         surface propagation completeness in RevisionResult.propagation_truncated.
         """
-        results, _ = self._apply_with_truncation(seed_assertion_ids, cause, run_id, note)
+        results, truncated = self._apply_with_truncation(seed_assertion_ids, cause, run_id, note)
+        if truncated:
+            # Propagate the truncation flag to every result so callers can detect it
+            # without inspecting the engine directly (r17 MEDIUM fix).
+            for r in results:
+                r.propagation_truncated = True
         return results
 
     def _revise_one(
