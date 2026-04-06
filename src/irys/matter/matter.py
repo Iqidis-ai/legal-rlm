@@ -486,7 +486,7 @@ class MatterModel:
         # Top actors by canonical name (limit 10 to keep context brief)
         known_actors = [
             a["canonical_name"]
-            for a in self.actors.list_actors()[:10]
+            for a in self.actors.list_actors(limit=10)
         ]
 
         # Documents already indexed in the assertion store
@@ -549,8 +549,8 @@ class MatterModel:
             weakest = min(open_issues, key=_weakness)
             weakest_issue_id = weakest["id"]
 
-        # Answered clarifications: inject user context into orientation
-        answered_clarifications = self.clarifications.get_answered()
+        # Answered clarifications: inject user context into orientation (limit to 3 most recent)
+        answered_clarifications = self.clarifications.get_answered(limit=3)
 
         # Document annotations: strategic notes from user (SO-3 annotation)
         document_annotations = self.annotations.list_recent(limit=10)

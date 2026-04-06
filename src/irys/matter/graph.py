@@ -1256,10 +1256,11 @@ class ActorStore:
         ).fetchone()
         return row["id"] if row else None
 
-    def list_actors(self) -> list[dict]:
-        """Return all actors for this matter."""
+    def list_actors(self, limit: "int | None" = None) -> list[dict]:
+        """Return actors for this matter, ordered by canonical name."""
+        limit_sql = f" LIMIT {int(limit)}" if limit is not None else ""
         rows = self.db.execute(
-            "SELECT * FROM actor WHERE matter_id=? ORDER BY canonical_name",
+            f"SELECT * FROM actor WHERE matter_id=? ORDER BY canonical_name{limit_sql}",
             (self.matter_id,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -1738,12 +1739,13 @@ class ClarificationStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_answered(self) -> list[dict]:
+    def get_answered(self, limit: "int | None" = None) -> list[dict]:
         """Return answered questions — for injection into orientation context."""
+        limit_sql = f" LIMIT {int(limit)}" if limit is not None else ""
         rows = self.db.execute(
-            """SELECT * FROM clarification_question
+            f"""SELECT * FROM clarification_question
                WHERE matter_id=? AND status='answered'
-               ORDER BY answered_at DESC""",
+               ORDER BY answered_at DESC{limit_sql}""",
             (self.matter_id,),
         ).fetchall()
         return [dict(r) for r in rows]
