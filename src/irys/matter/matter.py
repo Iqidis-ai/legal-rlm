@@ -152,12 +152,22 @@ class MatterModel:
         self._run_snapshots[run_id] = assertions_at_start
         return run_id
 
-    def complete_run(self, run_id: str, summary: Optional[str] = None) -> None:
+    def complete_run(
+        self,
+        run_id: str,
+        summary: Optional[str] = None,
+        llm_calls_avoided: Optional[int] = None,
+        llm_calls_required: Optional[int] = None,
+    ) -> None:
         """Complete a run and compute reuse_rate from assertion count delta.
 
         Resolves assertions_at_start from the in-memory snapshot captured at
         start_run() — falling back to a DB query (scoped to this matter) for
         recovery paths where the snapshot is absent.
+
+        llm_calls_avoided / llm_calls_required: SO-1 real reuse telemetry.
+        When provided, they are persisted on run_session for post-hoc analysis.
+        True reuse rate = avoided / (avoided + required).
         """
         assertions_at_end = self.assertions.count()
         # Use in-memory snapshot first; fall back to DB (scoped to this matter).
@@ -171,7 +181,11 @@ class MatterModel:
         reuse_rate: Optional[float] = None
         if at_start is not None and assertions_at_end > 0:
             reuse_rate = round(at_start / assertions_at_end, 4)
-        self.ledger.complete_run(run_id, summary, reuse_rate)
+        self.ledger.complete_run(
+            run_id, summary, reuse_rate,
+            llm_calls_avoided=llm_calls_avoided,
+            llm_calls_required=llm_calls_required,
+        )
 
     def fail_run(self, run_id: str, reason: str) -> None:
         self._run_snapshots.pop(run_id, None)  # prevent unbounded growth on non-completion paths

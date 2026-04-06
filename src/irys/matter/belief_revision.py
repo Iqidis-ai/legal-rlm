@@ -495,14 +495,38 @@ class BeliefRevisionEngine:
                 ),
             )
 
-        return RevisionResult(
+        # Post-write oscillation detection: check if this assertion has entered a
+        # cyclic belief state pattern (A→B→A) indicating contradictory/unstable evidence.
+        # Read-only check; runs outside the write transaction to avoid lock contention.
+        _result = RevisionResult(
             assertion_id=assertion_id,
             old_belief_state=_actual_old_state,
             new_belief_state=new_state,
             old_confidence=_actual_old_conf,
             new_confidence=new_confidence,
             cause=cause,
-        ), False
+        )
+        try:
+            if self.assertion_store.detect_oscillation(assertion_id):
+                _log.warning(
+                    "BeliefRevisionEngine: assertion %s shows oscillating belief state "
+                    "(A→B→A cycle detected in revision history) — contradictory or "
+                    "unstable evidence network. Affected issues may need manual review.",
+                    assertion_id,
+                )
+                if run_id and self._ledger is not None:
+                    self._ledger.append_event(
+                        run_id=run_id,
+                        event_type=LedgerEventType.SYSTEM_WARNING,
+                        summary=(
+                            f"Assertion {assertion_id[:8]}… shows oscillating belief state "
+                            "(A→B→A cycle in revision history). Evidence may be contradictory "
+                            "or temporal/supersession semantics may be missing."
+                        ),
+                    )
+        except Exception as exc:
+            _log.debug("Oscillation check failed for %s: %s", assertion_id, exc)
+        return _result, False
 
     def force_state(
         self,

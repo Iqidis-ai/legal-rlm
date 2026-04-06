@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 35
+SCHEMA_VERSION = 36
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1427,6 +1427,23 @@ def _migration_v35(conn) -> None:  # noqa: ARG001
     """
 
 
+def _migration_v36(conn) -> None:
+    """Add SO-1 real reuse telemetry columns to run_session.
+
+    llm_calls_avoided: number of LLM calls skipped because durable state was reused
+        (orientation cache hit, search-analysis cache hit, inventory hot-path skip,
+        synthesis cache hit).
+    llm_calls_required: number of LLM calls that could not be avoided (cache misses,
+        cold runs, doc reads not already ingested).
+
+    True reuse rate = llm_calls_avoided / (llm_calls_avoided + llm_calls_required).
+    This replaces the proxy metric (assertions_at_start / assertions_at_end or
+    documents_from_cache / documents_read) with a direct measurement of LLM avoidance.
+    """
+    conn.execute("ALTER TABLE run_session ADD COLUMN llm_calls_avoided INTEGER")
+    conn.execute("ALTER TABLE run_session ADD COLUMN llm_calls_required INTEGER")
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1466,6 +1483,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (33, _migration_v33),
     (34, _migration_v34),
     (35, _migration_v35),
+    (36, _migration_v36),
 ]
 
 

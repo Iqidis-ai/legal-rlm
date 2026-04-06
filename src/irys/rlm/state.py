@@ -697,6 +697,10 @@ class InvestigationState:
     api_calls: int = 0
     estimated_tokens: int = 0
     facts_per_iteration: list[int] = field(default_factory=list)  # Track facts added per iteration for diminishing returns
+    # SO-1 real reuse telemetry: count LLM calls avoided (cache hits, inventory skips)
+    # vs. required (cache misses, cold calls). True reuse rate = avoided / (avoided + required).
+    llm_calls_avoided: int = 0
+    llm_calls_required: int = 0
 
     # Status
     status: str = "initialized"
@@ -1534,6 +1538,12 @@ class InvestigationState:
                 "reuse_rate": round(
                     self.documents_from_cache / self.documents_read, 3
                 ) if self.documents_read > 0 else 0.0,
+                # SO-1 real LLM reuse telemetry (true_reuse_rate = avoided / total LLM opportunities)
+                "llm_calls_avoided": self.llm_calls_avoided,
+                "llm_calls_required": self.llm_calls_required,
+                "true_reuse_rate": round(
+                    self.llm_calls_avoided / (self.llm_calls_avoided + self.llm_calls_required), 3
+                ) if (self.llm_calls_avoided + self.llm_calls_required) > 0 else None,
                 "searches_performed": self.searches_performed,
                 "citations": len(self.citations),
                 "verified_citations": verification_stats["verified"],

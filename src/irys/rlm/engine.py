@@ -1092,7 +1092,11 @@ class RLMEngine:
 
             state.complete()
             if run_id is not None:
-                self._matter_model.complete_run(run_id)
+                self._matter_model.complete_run(
+                    run_id,
+                    llm_calls_avoided=state.llm_calls_avoided,
+                    llm_calls_required=state.llm_calls_required,
+                )
                 # Generate clarification questions from open gaps (SO-7)
                 self._matter_model.generate_clarifications_from_gaps(
                     run_id=run_id,
@@ -1202,12 +1206,14 @@ class RLMEngine:
 
         if plan is None:
             # Cache miss or cold run: call LLM
+            state.llm_calls_required += 1  # SO-1 telemetry
             response = await self.client.complete(prompt, tier=ModelTier.FLASH)
             plan = self._parse_json_safe(response, _plan_defaults)
             # Persist for future warm runs
             if self._matter_model is not None:
                 self._matter_model.cache.put("orient", _orient_key, plan)
         else:
+            state.llm_calls_avoided += 1  # SO-1 telemetry
             self._emit_step(
                 state, StepType.THINKING, "Orientation cache hit — reusing prior plan"
             )
@@ -1884,8 +1890,10 @@ class RLMEngine:
                 pass
 
         if _cached_analysis is not None:
+            state.llm_calls_avoided += 1  # SO-1 telemetry: search-analysis cache hit
             analysis = _cached_analysis
         else:
+            state.llm_calls_required += 1  # SO-1 telemetry: search-analysis cache miss
             # Re-check stop before the FLASH LLM call (SO-3 cooperative stop).
             # If the user stopped the run while we were formatting results, skip the call.
             _adp_pre = getattr(state, "_matter_adapter", None)
@@ -2309,6 +2317,7 @@ class RLMEngine:
                         # semantically filtered assertion-issue links.
                         state.documents_read += 1
                         state.documents_from_cache += 1  # SO-1: count hot-path hits
+                        state.llm_calls_avoided += 1  # SO-1 telemetry: doc read LLM call avoided
                         self._emit_step(
                             state, StepType.READING,
                             f"Hot path (already ingested): {_fp.name}",
@@ -2331,6 +2340,7 @@ class RLMEngine:
                 return None
 
             state.documents_read += 1
+            state.llm_calls_required += 1  # SO-1 telemetry: cold-path doc read
 
             # Use excerpt for analysis
             content = doc.get_excerpt(self.config.excerpt_chars)
@@ -4696,7 +4706,11 @@ class RLMEngine:
                 await self._synthesize(state)
                 state.complete()
                 if run_id is not None:
-                    self._matter_model.complete_run(run_id)
+                    self._matter_model.complete_run(
+                        run_id,
+                        llm_calls_avoided=state.llm_calls_avoided,
+                        llm_calls_required=state.llm_calls_required,
+                    )
 
         except Exception as e:
             state.fail(str(e))

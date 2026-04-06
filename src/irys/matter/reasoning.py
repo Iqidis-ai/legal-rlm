@@ -142,19 +142,26 @@ class ReasoningLedgerStore:
         run_id: str,
         summary: Optional[str] = None,
         reuse_rate: Optional[float] = None,
+        llm_calls_avoided: Optional[int] = None,
+        llm_calls_required: Optional[int] = None,
     ) -> None:
         """Mark a run session as completed.
 
         ``reuse_rate`` is the fraction of the final assertion count that
         pre-existed when the run started (assertions_at_start / assertions_at_end).
-        Pass this if the caller has computed it; otherwise the column stays NULL.
+        ``llm_calls_avoided`` / ``llm_calls_required``: SO-1 real reuse telemetry
+        (avoided + required = total LLM opportunities; true reuse = avoided/total).
         """
         now = _now()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE run_session SET status=?, completed_at=?, reuse_rate=?"
+                "UPDATE run_session"
+                " SET status=?, completed_at=?, reuse_rate=?,"
+                "     llm_calls_avoided=?, llm_calls_required=?"
                 " WHERE id=? AND matter_id=?",
-                (RunStatus.COMPLETED.value, now, reuse_rate, run_id, self.matter_id),
+                (RunStatus.COMPLETED.value, now, reuse_rate,
+                 llm_calls_avoided, llm_calls_required,
+                 run_id, self.matter_id),
             )
             self._append_event(
                 run_id=run_id,

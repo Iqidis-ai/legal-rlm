@@ -275,6 +275,46 @@ class AssertionStore:
                 ),
             )
 
+    def detect_oscillation(self, assertion_id: str, window: int = 6) -> bool:
+        """Return True if the assertion's belief_state has cycled (A→B→A) in recent history.
+
+        Reads the last `window` belief_state changes from assertion_revision, ordered by
+        creation time.  Detects an oscillation pattern where any non-adjacent pair shares
+        the same value (e.g., [operative, disputed, operative] over 3 batches).
+
+        An oscillating assertion indicates a contradictory or unstable justification
+        network: contradictory evidence, missing temporal/supersession semantics, or an
+        over-eager auto-upgrade loop.  Callers should emit a SYSTEM_WARNING and mark
+        the affected issue as contested.
+
+        Returns False if there is insufficient history or the matter model is unavailable.
+        """
+        rows = self.db.execute(
+            """SELECT new_value_json FROM assertion_revision
+               WHERE assertion_id=? AND changed_field='belief_state'
+               ORDER BY created_at DESC LIMIT ?""",
+            (assertion_id, window),
+        ).fetchall()
+        if len(rows) < 3:
+            return False
+        # Extract belief state values from JSON (values are stored as JSON-encoded strings)
+        import json as _json_osc
+        try:
+            values = [_json_osc.loads(r["new_value_json"]) for r in rows]
+        except Exception:
+            return False
+        # Oscillation: any state appears more than once with a different state between
+        seen: set[str] = set()
+        for i, val in enumerate(values):
+            if val in seen:
+                # Found a repeated value — check if anything different appeared between
+                # the first occurrence and this one.
+                first_idx = values.index(val)
+                if any(v != val for v in values[first_idx:i]):
+                    return True
+            seen.add(val)
+        return False
+
     def get(self, assertion_id: str) -> Optional[AssertionRecord]:
         """Fetch a canonical assertion by ID."""
         row = self.db.execute(
