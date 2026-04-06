@@ -1663,22 +1663,26 @@ async def get_matter_assertions(matter_id: str, limit: int = 50, offset: int = 0
 async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 50):
     """Return field-level revision history for an assertion (SO-2 audit trail).
 
-    Rows are ordered newest-first and grouped by batch_id (one batch per correction
-    call). Each row includes changed_field, old/new values (decoded from JSON),
-    actor_kind, cause, run_id, note, and created_at.
+    Rows are ordered newest-first. ``limit`` is per-row (not per batch), capped
+    at 500. If the result is truncated, ``truncated=true`` is set in the response
+    so the caller knows there may be more rows (including rows completing the last
+    partial batch).
 
-    Pre-schema-v34 matters will have empty history — this is expected and documented
-    in the response via the ``history_available_since_v34`` flag.
+    Pre-schema-v34 matters will have empty history by design — no backfill is
+    possible. The ``history_note`` field describes this.
     """
+    import json as _json
+
+    limit = max(1, min(limit, 500))
     model = _get_matter_model_or_404(matter_id)
-    # Verify assertion belongs to this matter
+    # Verify assertion belongs to this matter (assertion_revision has no matter_id col)
     row = model.db.execute(
         "SELECT id FROM assertion WHERE id=? AND matter_id=?",
         (assertion_id, model.matter_id),
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=f"Assertion '{assertion_id}' not found in this matter")
-    import json as _json
+    # Fetch one extra row to detect truncation without a separate COUNT query
     rev_rows = model.db.execute(
         """SELECT ar.id, ar.batch_id, ar.changed_field,
                   ar.old_value_json, ar.new_value_json,
@@ -1688,27 +1692,40 @@ async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 
            WHERE ar.assertion_id=?
            ORDER BY ar.created_at DESC, ar.batch_id DESC
            LIMIT ?""",
-        (assertion_id, limit),
+        (assertion_id, limit + 1),
     ).fetchall()
-    history = []
-    for r in rev_rows:
-        history.append({
+    truncated = len(rev_rows) > limit
+    rev_rows = rev_rows[:limit]
+
+    def _decode(raw: str | None):
+        if not raw:
+            return None
+        try:
+            return _json.loads(raw)
+        except (_json.JSONDecodeError, TypeError):
+            return raw  # return raw string rather than 500-ing
+
+    history = [
+        {
             "id": r["id"],
             "batch_id": r["batch_id"],
             "changed_field": r["changed_field"],
-            "old_value": _json.loads(r["old_value_json"]) if r["old_value_json"] else None,
-            "new_value": _json.loads(r["new_value_json"]) if r["new_value_json"] else None,
+            "old_value": _decode(r["old_value_json"]),
+            "new_value": _decode(r["new_value_json"]),
             "actor_kind": r["actor_kind"],
             "actor_ref": r["actor_ref"],
             "cause": r["cause"],
             "run_id": r["run_id"],
             "note": r["note"],
             "created_at": r["created_at"],
-        })
+        }
+        for r in rev_rows
+    ]
     return {
         "assertion_id": assertion_id,
-        "history_available_since_v34": True,
+        "history_note": "History records revisions since schema v34. Pre-v34 revisions are not available.",
         "total": len(history),
+        "truncated": truncated,
         "history": history,
     }
 
