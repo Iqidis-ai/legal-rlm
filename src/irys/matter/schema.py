@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 34
+SCHEMA_VERSION = 35
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1419,6 +1419,26 @@ def _migration_v33(conn) -> None:
     )
 
 
+def _migration_v35(conn) -> None:
+    """Add composite index for no-layer proposition_key lookups (Tier 1 Performance MEDIUM).
+
+    get_by_proposition() without model_layer issues:
+      WHERE matter_id=? AND proposition_key=? ORDER BY created_at ASC LIMIT 1
+
+    The existing ux_assertion_prop(matter_id, model_layer, proposition_key) cannot be used
+    for this query because model_layer is not in the predicate. SQLite must scan all
+    assertions for the given matter_id and filter by proposition_key in memory. At 100k+
+    assertions this becomes noticeable on cold queries.
+
+    ix_assertion_prop_key(matter_id, proposition_key, created_at) makes the lookup seekable:
+    the engine can position on (matter_id, prop_key) and then LIMIT 1 by created_at scan.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_assertion_prop_key"
+        " ON assertion(matter_id, proposition_key, created_at)"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1457,6 +1477,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (32, _migration_v32),
     (33, _migration_v33),
     (34, _migration_v34),
+    (35, _migration_v35),
 ]
 
 
