@@ -116,18 +116,18 @@ def _fmt_issues(issues: list) -> str:
     if not issues:
         return "No open issues."
     lines = [
-        "| ID (copy to redirect) | Issue | Coverage | Proof | Sup | Atk |",
-        "|-----------------------|-------|----------|-------|-----|-----|",
+        "| ID (paste to redirect) | Issue | Coverage | Proof | Sup | Atk |",
+        "|------------------------|-------|----------|-------|-----|-----|",
     ]
     for iss in issues:
         issue_id = iss.get("id", "?")
-        short_id = issue_id[:12]  # show enough to identify; user copies full value from table
         title = (iss.get("title") or issue_id)[:38]
         cov = _fmt_coverage(iss.get("coverage_fraction"))
         proof = iss.get("proof_status") or "—"
         sup = iss.get("supporting_count", "—")
         atk = iss.get("attacking_count", "—")
-        lines.append(f"| `{short_id}` | {title} | {cov} | {proof} | {sup} | {atk} |")
+        # Full ID shown — backend get_issue() requires exact match; truncated IDs silently fail.
+        lines.append(f"| `{issue_id}` | {title} | {cov} | {proof} | {sup} | {atk} |")
     return "\n".join(lines)
 
 
@@ -135,12 +135,12 @@ def _fmt_assertions(assertions: list) -> str:
     if not assertions:
         return "No assertions."
     lines = [
-        "| ID (copy to correct) | Proposition | State | Conf | Source | Speech |",
-        "|----------------------|-------------|-------|------|--------|--------|",
+        "| ID (paste to correct) | Proposition | State | Conf | Source | Speech |",
+        "|-----------------------|-------------|-------|------|--------|--------|",
     ]
     for a in assertions:
         assertion_id = a.get("id", "?")
-        short_id = assertion_id[:12]
+        # Full ID — backend correct_assertion() requires exact match.
         prop = (a.get("proposition_text") or "")[:55]
         state = a.get("belief_state") or "—"
         conf = f"{float(a.get('confidence', 0)):.2f}" if a.get("confidence") is not None else "—"
@@ -148,7 +148,7 @@ def _fmt_assertions(assertions: list) -> str:
         # back to the bare field names for older callers or alternate backends.
         src = a.get("source_role") or a.get("primary_source_role") or "—"
         speech = a.get("speech_act") or a.get("primary_speech_act") or "—"
-        lines.append(f"| `{short_id}` | {prop} | {state} | {conf} | {src} | {speech} |")
+        lines.append(f"| `{assertion_id}` | {prop} | {state} | {conf} | {src} | {speech} |")
     return "\n".join(lines)
 
 

@@ -147,8 +147,17 @@ class HttpBackend(UIBackend):
     # ------------------------------------------------------------------ #
 
     async def get_steering_surface(self, matter_id: str) -> list[dict]:
-        result = await self._get(f"/matter/{matter_id}/steering")
+        result = await self._get(f"/matter/{matter_id}/steering-surface")
         return result if isinstance(result, list) else []
 
     async def get_quant_summary(self, matter_id: str) -> dict:
-        return await self._get(f"/matter/{matter_id}/quant/summary")
+        """Fetch quant data from two separate service endpoints and combine."""
+        try:
+            recon = await self._get(f"/matter/{matter_id}/reconciliation")
+        except Exception:
+            recon = {}
+        try:
+            damages = await self._get(f"/matter/{matter_id}/damages-waterfall")
+        except Exception:
+            damages = []
+        return {"payment_reconciliation": recon, "damages_waterfall": damages}

@@ -2044,6 +2044,21 @@ async def get_damages_waterfall(matter_id: str, currency: str = "USD"):
     return model.get_damages_waterfall(currency=currency)
 
 
+@app.get(
+    "/matter/{matter_id}/steering-surface",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_steering_surface(matter_id: str):
+    """Return structured steering actions from the reasoning ledger (SO-3).
+
+    Surfaces actionable recommendations: gaps to clarify, issues to redirect to,
+    assertions to review.  Used by the UI Gaps & Steering panel.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    return model.get_ledger_steering_surface()
+
+
 # ---------------------------------------------------------------------------
 # Actor Resolution — alias matching and duplicate detection (SO-5)
 # ---------------------------------------------------------------------------
