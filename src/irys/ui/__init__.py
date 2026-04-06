@@ -1,4 +1,4 @@
-"""Simple UI for testing RLM capabilities."""
+"""Irys RLM UI — 6-panel legal intelligence dashboard."""
 
 from .app import create_app
 

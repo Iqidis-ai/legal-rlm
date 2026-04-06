@@ -13,9 +13,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 import aiofiles
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, File, UploadFile, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import httpx
+import json as _json
 
 from .config import ServiceConfig, get_config
 from .models import (
@@ -2098,3 +2100,183 @@ async def resolve_actor_by_name(matter_id: str, name: str):
         (a for a in model.actors.list_actors() if a["id"] == actor_id), None
     )
     return {"actor_id": actor_id, "actor": actor}
+
+
+# ---------------------------------------------------------------------------
+# UI Dashboard Endpoints — aggregated views for the front-end panels
+# ---------------------------------------------------------------------------
+
+
+@app.get(
+    "/matter/{matter_id}/overview",
+    tags=["UI"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_overview(matter_id: str):
+    """Aggregated landing-page payload for the Overview panel.
+
+    Combines stats, SO metrics, recent runs, weakest issues, open gaps,
+    and pending clarifications into a single low-latency response.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    stats = model.stats()
+    so = {}
+    try:
+        so = model.get_so_metrics()
+    except Exception:
+        pass
+
+    recent = []
+    try:
+        recent = model.ledger.recent_runs(limit=5)
+    except Exception:
+        pass
+
+    # Weakest issues — lowest coverage_fraction first, limit 5
+    weakest_issues = []
+    try:
+        coverage = model.get_issue_coverage_report()
+        if coverage:
+            sorted_issues = sorted(coverage, key=lambda r: float(r.get("coverage_fraction", 0.0)))
+            weakest_issues = sorted_issues[:5]
+    except Exception:
+        pass
+
+    # Top open gaps — limit 5
+    top_gaps = []
+    try:
+        top_gaps = model.gaps.get_open(limit=5)
+    except Exception:
+        try:
+            top_gaps = model.gaps.list_open()[:5]
+        except Exception:
+            pass
+
+    # Pending clarifications — limit 5
+    clarifications = []
+    try:
+        clarifications = model.clarifications.get_pending()[:5]
+    except Exception:
+        pass
+
+    # Source role distribution summary (SO-5)
+    source_summary: dict = {}
+    try:
+        rows = model.db.execute(
+            """SELECT source_role, COUNT(*) AS n FROM assertion_occurrence
+               WHERE assertion_id IN (SELECT id FROM assertion WHERE matter_id=?)
+               GROUP BY source_role ORDER BY n DESC""",
+            (model.matter_id,),
+        ).fetchall()
+        source_summary = {r["source_role"] or "unknown": int(r["n"]) for r in rows}
+    except Exception:
+        pass
+
+    return {
+        "matter_id": matter_id,
+        "stats": stats,
+        "so_metrics": so,
+        "recent_runs": recent,
+        "weakest_issues": weakest_issues,
+        "top_gaps": top_gaps,
+        "pending_clarifications": clarifications,
+        "source_role_summary": source_summary,
+    }
+
+
+@app.get(
+    "/matter/{matter_id}/runs/{run_id}/events/stream",
+    tags=["UI"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def stream_run_events(matter_id: str, run_id: str, after_seq: int = -1, request: Request = None):
+    """Server-Sent Events stream of ledger events for a run.
+
+    Clients connect and receive new ledger events as they are appended.
+    Use after_seq=-1 (default) to receive all events from the beginning,
+    or after_seq=N to receive only events with seq_no > N (resume/reconnect).
+
+    The stream closes when the run reaches a terminal state (completed/failed/interrupted).
+    """
+    model = _get_matter_model_or_404(matter_id)
+
+    async def _event_generator():
+        last_seq = after_seq
+        poll_interval = 0.5  # seconds between DB polls
+        terminal_statuses = {"completed", "failed", "interrupted"}
+
+        while True:
+            # Check if client disconnected
+            if request is not None and await request.is_disconnected():
+                break
+
+            # Fetch new events since last_seq
+            try:
+                rows = model.db.execute(
+                    """SELECT id, run_id, seq_no, event_type, summary, why,
+                              branch_issue_id, changed_object_type, changed_object_id,
+                              snapshot_json, created_at
+                       FROM ledger_event
+                       WHERE run_id=? AND seq_no > ?
+                       ORDER BY seq_no""",
+                    (run_id, last_seq),
+                ).fetchall()
+                for row in rows:
+                    event = dict(row)
+                    last_seq = event["seq_no"]
+                    data = _json.dumps(event, default=str)
+                    yield f"data: {data}\n\n"
+            except Exception as exc:
+                yield f"data: {_json.dumps({'error': str(exc)})}\n\n"
+                break
+
+            # Check run status — close stream when run is terminal
+            try:
+                run_row = model.db.execute(
+                    "SELECT status FROM run_session WHERE id=?", (run_id,)
+                ).fetchone()
+                if run_row and run_row["status"] in terminal_statuses:
+                    # Emit any remaining events before closing
+                    yield f"data: {_json.dumps({'event': 'run_terminal', 'status': run_row['status']})}\n\n"
+                    break
+            except Exception:
+                pass
+
+            await asyncio.sleep(poll_interval)
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post(
+    "/matter/{matter_id}/runs/{run_id}/stop",
+    tags=["UI"],
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+async def stop_run(matter_id: str, run_id: str):
+    """Stop a specific run by run_id.
+
+    Preferred over the matter-level /matter/{matter_id}/stop when the UI
+    has a specific run_id (e.g., from the live investigation panel).
+    """
+    model = _get_matter_model_or_404(matter_id)
+    run = model.ledger.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+    if run.status not in ("running", "RUNNING"):
+        raise HTTPException(status_code=409, detail=f"Run '{run_id}' is not running (status={run.status})")
+    model.ledger.request_stop(run_id)
+    from irys.matter.enums import LedgerEventType
+    model.ledger.append_event(
+        run_id=run_id,
+        event_type=LedgerEventType.USER_INTERRUPTED,
+        summary="User requested stop via run-scoped API",
+        why="User-initiated stop — investigation will halt after current iteration",
+    )
+    return {"status": "stop_requested", "run_id": run_id, "matter_id": matter_id}
