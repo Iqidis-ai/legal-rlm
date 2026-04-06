@@ -963,10 +963,14 @@ class RLMEngine:
             if not t.done():
                 # Drain timed out and task is still running — treat as cancelled.
                 # Known MEDIUM: the orphaned task may still call record_fact() after
-                # flush_revisions() has already drained _pending_assertion_ids, leaving
-                # those late assertions unrevised in this run. Mitigated: all
-                # assertions are persisted to DB (durable matter model, SO-1), and
-                # pending_propagation ensures belief revision is retried on next flush.
+                # flush_revisions() has already drained _pending_assertion_ids. Those
+                # late assertions are persisted to the DB (durable matter model, SO-1)
+                # but will NOT have belief revision run in this run or be seeded into
+                # pending_propagation (record_fact only appends to in-memory
+                # _pending_assertion_ids; enqueue_evidence_pending is only called by
+                # flush_revisions on BFS truncation, not by record_assertion directly).
+                # They will be discovered and revised on the next investigative run
+                # that reaches the same assertion graph nodes. Accepted risk.
                 results.append(None)
             elif t.cancelled():
                 results.append(None)  # Cancelled lead stays pending for resume.

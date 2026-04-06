@@ -363,7 +363,7 @@ class MatterRuntimeAdapter:
                 if isinstance(item, dict):
                     proposition_text = item.get("proposition_text") or ""
                     document_id = item.get("document_id") or ""
-                    if not proposition_text:
+                    if not proposition_text.strip():
                         # Keep alignment with caller's positional indexing (e.g.
                         # fact_relationships from_idx/to_idx) by appending a sentinel
                         # empty string rather than shrinking the list.
