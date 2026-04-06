@@ -515,50 +515,83 @@ class MatterRuntimeAdapter:
             if aid not in _evidence_carry:
                 _evidence_carry[aid] = (RevisionCause.NEW_EVIDENCE, self.run_id)
         self._pending_assertion_ids.clear()
-        if not _evidence_carry:
-            return len(_revised_ids)
-        # Group by cause; collect originating run_ids per cause for batch attribution event.
-        _by_cause: "dict[RevisionCause, list[str]]" = {}
-        _orig_runs_by_cause: "dict[RevisionCause, set[str]]" = {}
-        for aid, (cause, orig_run) in _evidence_carry.items():
-            _by_cause.setdefault(cause, []).append(aid)
-            if orig_run:
-                _orig_runs_by_cause.setdefault(cause, set()).add(orig_run)
-        for cause, ids in _by_cause.items():
-            _orig = sorted(_orig_runs_by_cause.get(cause, set()))
-            if _orig:
-                self.model.ledger.append_event(
-                    run_id=self.run_id,
-                    event_type=LedgerEventType.ASSERTION_REVISED,
-                    summary=(
-                        f"Deferred {cause.value} replay: {len(ids)} assertion(s) "
-                        f"from originating run(s): {', '.join(_orig)}"
-                    ),
-                )
-            for i in range(0, len(ids), _seed_batch):
-                batch = ids[i : i + _seed_batch]
-                _ev_unvisited: list[str] = []
-                results = self.model.apply_revision(
-                    seed_assertion_ids=batch,
-                    cause=cause,
-                    run_id=self.run_id,
-                    _collect_unvisited=_ev_unvisited,
-                )
-                if _ev_unvisited:
-                    self.model.enqueue_evidence_pending(_ev_unvisited, cause=cause, run_id=self.run_id)
-                for result in results:
-                    if result.old_belief_state != result.new_belief_state:
-                        _revised_ids.add(result.assertion_id)
-                        self.model.ledger.append_event(
-                            run_id=self.run_id,
-                            event_type=LedgerEventType.ASSERTION_REVISED,
-                            summary=(
-                                f"Belief revised: {result.old_belief_state.value} → "
-                                f"{result.new_belief_state.value}"
-                            ),
-                            changed_object_type="assertion",
-                            changed_object_id=result.assertion_id,
-                        )
+        if _evidence_carry:
+            # Group by cause; collect originating run_ids per cause for batch attribution event.
+            _by_cause: "dict[RevisionCause, list[str]]" = {}
+            _orig_runs_by_cause: "dict[RevisionCause, set[str]]" = {}
+            for aid, (cause, orig_run) in _evidence_carry.items():
+                _by_cause.setdefault(cause, []).append(aid)
+                if orig_run:
+                    _orig_runs_by_cause.setdefault(cause, set()).add(orig_run)
+            for cause, ids in _by_cause.items():
+                _orig = sorted(_orig_runs_by_cause.get(cause, set()))
+                if _orig:
+                    self.model.ledger.append_event(
+                        run_id=self.run_id,
+                        event_type=LedgerEventType.ASSERTION_REVISED,
+                        summary=(
+                            f"Deferred {cause.value} replay: {len(ids)} assertion(s) "
+                            f"from originating run(s): {', '.join(_orig)}"
+                        ),
+                    )
+                for i in range(0, len(ids), _seed_batch):
+                    batch = ids[i : i + _seed_batch]
+                    _ev_unvisited: list[str] = []
+                    results = self.model.apply_revision(
+                        seed_assertion_ids=batch,
+                        cause=cause,
+                        run_id=self.run_id,
+                        _collect_unvisited=_ev_unvisited,
+                    )
+                    if _ev_unvisited:
+                        self.model.enqueue_evidence_pending(_ev_unvisited, cause=cause, run_id=self.run_id)
+                    for result in results:
+                        if result.old_belief_state != result.new_belief_state:
+                            _revised_ids.add(result.assertion_id)
+                            self.model.ledger.append_event(
+                                run_id=self.run_id,
+                                event_type=LedgerEventType.ASSERTION_REVISED,
+                                summary=(
+                                    f"Belief revised: {result.old_belief_state.value} → "
+                                    f"{result.new_belief_state.value}"
+                                ),
+                                changed_object_type="assertion",
+                                changed_object_id=result.assertion_id,
+                            )
+
+        # Proof_state recompute for all assertions revised in this flush — covers issues
+        # linked to any corrected or re-evaluated assertion so that issue-level consumers
+        # (engine reweighting, contested/advocacy-only flags) see the current state
+        # immediately after flush rather than on the next compute_all() (adv#029 SO-4 fix).
+        if _revised_ids:
+            try:
+                _SQL_PARAM_LIMIT = 900
+                _flush_affected = list(_revised_ids)
+                _issue_ids: set[str] = set()
+                for _bs in range(0, len(_flush_affected), _SQL_PARAM_LIMIT):
+                    _batch = _flush_affected[_bs : _bs + _SQL_PARAM_LIMIT]
+                    _rows = self.model.db.execute(
+                        "SELECT DISTINCT issue_id FROM assertion_issue_link"
+                        " WHERE assertion_id IN ({})".format(",".join("?" * len(_batch))),
+                        _batch,
+                    ).fetchall()
+                    _issue_ids.update(r["issue_id"] for r in _rows)
+                if _issue_ids:
+                    _ov_rows = self.model.db.execute(
+                        """SELECT document_pattern, trust_level FROM document_trust_override
+                           WHERE matter_id=? AND trust_level != 'normal'
+                           ORDER BY LENGTH(document_pattern) DESC""",
+                        (self.model.matter_id,),
+                    ).fetchall()
+                    _overrides = [(r["document_pattern"], r["trust_level"]) for r in _ov_rows]
+                    with self.model.db.transaction():
+                        for _iid in _issue_ids:
+                            self.model.proof_state.compute_and_store(
+                                _iid, _preloaded_overrides=_overrides
+                            )
+            except Exception as exc:
+                logger.warning("proof_state recompute after flush_revisions failed: %s", exc)
+
         return len(_revised_ids)
 
     # ------------------------------------------------------------------

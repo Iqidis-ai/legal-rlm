@@ -1507,6 +1507,30 @@ async def delete_trust_override(matter_id: str, document_pattern: str):
 
 
 @app.post(
+    "/matter/{matter_id}/flush-pending",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def flush_pending_propagation(matter_id: str):
+    """Drain the durable pending propagation queues and complete deferred belief revision.
+
+    SO-2 convergence fix (adv#029 HIGH): correction and evidence pending queues are only
+    drained by flush_revisions() which is called at the end of each investigation loop
+    iteration.  If no investigation run occurs after a correction, trust-override, or
+    conflict-detection that exhausted the BFS budget, queued work stays permanently
+    pending.  This endpoint provides a standalone flush path that does not require an
+    active investigation run, closing the guarantee gap.
+
+    Returns the count of assertions whose belief state changed during this flush.
+    """
+    model = _get_matter_model_or_404(matter_id)
+    from irys.matter.runtime import MatterRuntimeAdapter
+    adapter = MatterRuntimeAdapter(model, run_id=None)
+    revised = adapter.flush_revisions()
+    return {"status": "ok", "revised_count": revised}
+
+
+@app.post(
     "/matter/{matter_id}/annotations",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

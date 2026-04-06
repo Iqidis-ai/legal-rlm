@@ -91,6 +91,38 @@ class MatterModel:
         # (r31 MEDIUM fix). First-write wins: earlier cause preserved on repeated truncation.
         self._evidence_pending: "dict[str, tuple[RevisionCause, str | None]]" = {}
         self._evidence_pending_lock = threading.Lock()
+        # Reconstruct pending queues from the durable pending_propagation table (adv#029 SO-1 fix).
+        # This ensures partial BFS propagation survives process restarts with no replay loss.
+        self._load_pending_propagation()
+
+    def _load_pending_propagation(self) -> None:
+        """Populate in-memory pending queues from the durable DB table on open.
+
+        Called at the end of __init__ so that a MatterModel rebuilt after a process
+        restart (via MatterModel.open() or rehydration) immediately reflects any
+        correction/evidence work that was queued before the restart but never drained
+        (adv#029 SO-1 HIGH fix).  Uses INSERT OR IGNORE semantics already applied at
+        write time, so in-memory first-write-wins invariant is preserved here too.
+        """
+        try:
+            rows = self.db.execute(
+                "SELECT assertion_id, cause, orig_run_id, queue"
+                " FROM pending_propagation WHERE matter_id=?",
+                (self.matter_id,),
+            ).fetchall()
+        except Exception:
+            return  # Table not yet present on pre-v40 DBs; migration runs on next open
+        for row in rows:
+            if row["queue"] == "correction":
+                if row["assertion_id"] not in self._correction_pending:
+                    self._correction_pending[row["assertion_id"]] = row["orig_run_id"]
+            elif row["queue"] == "evidence":
+                try:
+                    cause = RevisionCause(row["cause"])
+                except ValueError:
+                    cause = RevisionCause.NEW_EVIDENCE
+                if row["assertion_id"] not in self._evidence_pending:
+                    self._evidence_pending[row["assertion_id"]] = (cause, row["orig_run_id"])
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -253,13 +285,25 @@ class MatterModel:
         under the correct originating run rather than the draining adapter's run_id
         (r29 MEDIUM provenance fix). First-write wins: if the same assertion is already
         queued from an earlier correction, its original run_id is preserved.
+        Persists each new entry to pending_propagation so queued work survives restarts
+        (adv#029 SO-1 HIGH fix).
         """
         if not ids:
             return
+        now = _now()
         with self._correction_pending_lock:
             for aid in ids:
                 if aid not in self._correction_pending:
                     self._correction_pending[aid] = run_id
+                    try:
+                        self.db.execute(
+                            "INSERT OR IGNORE INTO pending_propagation"
+                            " (id, matter_id, assertion_id, cause, orig_run_id, queue, enqueued_at)"
+                            " VALUES (?,?,?,?,?,?,?)",
+                            (_id(), self.matter_id, aid, "USER_CORRECTION", run_id, "correction", now),
+                        )
+                    except Exception:
+                        pass  # DB write failure does not block in-memory queue
 
     def drain_correction_pending(self) -> "dict[str, str | None]":
         """Return and clear the durable correction retry queue (thread-safe).
@@ -267,10 +311,19 @@ class MatterModel:
         Returns assertion_id → originating_run_id. Called by RuntimeModel.flush_revisions()
         so correction-truncated nodes are included in the next BFS sweep (adv#028 HIGH fix).
         Lock protects dict clear/copy atomicity across concurrent REST requests (r25 fix).
+        Also deletes the corresponding DB rows so the work is not replayed after a restart
+        (adv#029 SO-1 HIGH fix).
         """
         with self._correction_pending_lock:
             result = dict(self._correction_pending)
             self._correction_pending.clear()
+            try:
+                self.db.execute(
+                    "DELETE FROM pending_propagation WHERE matter_id=? AND queue='correction'",
+                    (self.matter_id,),
+                )
+            except Exception:
+                pass
         return result
 
     def enqueue_evidence_pending(
@@ -284,20 +337,43 @@ class MatterModel:
         cause: originating RevisionCause (TRUST_OVERRIDE, CONFLICT_DETECTION, NEW_EVIDENCE, etc.)
         run_id: originating run for audit attribution in the deferred replay batch event.
         Defaults to NEW_EVIDENCE/None. First-write wins on all fields per assertion_id.
+        Persists each new entry to pending_propagation so queued work survives restarts
+        (adv#029 SO-1 HIGH fix).
         """
         if not ids:
             return
         _cause = cause if cause is not None else RevisionCause.NEW_EVIDENCE
+        now = _now()
         with self._evidence_pending_lock:
             for aid in ids:
                 if aid not in self._evidence_pending:
                     self._evidence_pending[aid] = (_cause, run_id)
+                    try:
+                        self.db.execute(
+                            "INSERT OR IGNORE INTO pending_propagation"
+                            " (id, matter_id, assertion_id, cause, orig_run_id, queue, enqueued_at)"
+                            " VALUES (?,?,?,?,?,?,?)",
+                            (_id(), self.matter_id, aid, _cause.value, run_id, "evidence", now),
+                        )
+                    except Exception:
+                        pass  # DB write failure does not block in-memory queue
 
     def drain_evidence_pending(self) -> "dict[str, tuple[RevisionCause, str | None]]":
-        """Return and clear truncated evidence assertion IDs → (cause, run_id) (thread-safe)."""
+        """Return and clear truncated evidence assertion IDs → (cause, run_id) (thread-safe).
+
+        Also deletes the corresponding DB rows so the work is not replayed after a restart
+        (adv#029 SO-1 HIGH fix).
+        """
         with self._evidence_pending_lock:
             result = dict(self._evidence_pending)
             self._evidence_pending.clear()
+            try:
+                self.db.execute(
+                    "DELETE FROM pending_propagation WHERE matter_id=? AND queue='evidence'",
+                    (self.matter_id,),
+                )
+            except Exception:
+                pass
         return result
 
     def correct_assertion(

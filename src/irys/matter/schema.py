@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 39
+SCHEMA_VERSION = 40
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -659,6 +659,22 @@ CREATE TABLE IF NOT EXISTS schema_version (
 ) STRICT;
 """
 
+_DDL_PENDING_PROPAGATION = """
+CREATE TABLE IF NOT EXISTS pending_propagation (
+    id           TEXT PRIMARY KEY,
+    matter_id    TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    assertion_id TEXT NOT NULL,
+    cause        TEXT NOT NULL,
+    orig_run_id  TEXT,
+    queue        TEXT NOT NULL,
+    enqueued_at  TEXT NOT NULL,
+    UNIQUE(matter_id, assertion_id, queue)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_pending_propagation_matter
+    ON pending_propagation(matter_id, queue);
+"""
+
 # Full DDL in apply order
 ALL_DDL = [
     _DDL_SCHEMA_VERSION,
@@ -672,6 +688,7 @@ ALL_DDL = [
     _DDL_ASSUMPTIONS,
     _DDL_EVIDENCE,
     _DDL_QUANT,
+    _DDL_PENDING_PROPAGATION,
 ]
 
 def _migration_v1(conn) -> None:
@@ -1518,6 +1535,32 @@ def _migration_v39(conn) -> None:
         raise
 
 
+def _migration_v40(conn) -> None:
+    """Add pending_propagation table for durable correction/evidence queue persistence.
+
+    In-memory _correction_pending and _evidence_pending dicts are lost on process
+    restart, stranding partial BFS propagation with no recovery path (adv#029 SO-1 HIGH).
+    This table persists each enqueued assertion so MatterModel.__init__ can reconstruct
+    both queues on open, enabling crash-safe deferred belief revision replay.
+    """
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS pending_propagation (
+               id           TEXT PRIMARY KEY,
+               matter_id    TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+               assertion_id TEXT NOT NULL,
+               cause        TEXT NOT NULL,
+               orig_run_id  TEXT,
+               queue        TEXT NOT NULL,
+               enqueued_at  TEXT NOT NULL,
+               UNIQUE(matter_id, assertion_id, queue)
+           ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_pending_propagation_matter"
+        " ON pending_propagation(matter_id, queue)"
+    )
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1561,6 +1604,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (37, _migration_v37),
     (38, _migration_v38),
     (39, _migration_v39),
+    (40, _migration_v40),
 ]
 
 
