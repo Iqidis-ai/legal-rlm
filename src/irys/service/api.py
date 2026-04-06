@@ -418,13 +418,17 @@ async def _run_investigation(
         job.duration_seconds = (
             job.completed_at - job.created_at).total_seconds()
 
-        # Record run_id, pending_clarifications, open_gaps from the matter model (SO-7)
+        # Record run_id, pending_clarifications, open_gaps from the matter model (SO-7).
+        # Use state._run_id set by the engine at run-start — more exact than recent_runs(1)
+        # which can return a different run when multiple runs overlap on the same matter (r37 fix).
         job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
+        job.run_id = getattr(result.state, "_run_id", None)
         if job.matter_id and job.matter_id in _active_matter_models:
             _mm = _active_matter_models[job.matter_id]
-            recent = _mm.ledger.recent_runs(1)
-            if recent:
-                job.run_id = recent[0]["id"]
+            if not job.run_id:
+                recent = _mm.ledger.recent_runs(1)
+                if recent:
+                    job.run_id = recent[0]["id"]
             try:
                 job.open_gaps = _mm.gaps.open_gaps(min_materiality=0.3)
             except Exception:
@@ -1123,11 +1127,13 @@ async def _run_urls_investigation(
         ).total_seconds()
 
         job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
+        job.run_id = getattr(result.state, "_run_id", None)  # exact run; avoid recent_runs(1) race
         if job.matter_id and job.matter_id in _active_matter_models:
             _url_mm = _active_matter_models[job.matter_id]
-            recent = _url_mm.ledger.recent_runs(1)
-            if recent:
-                job.run_id = recent[0]["id"]
+            if not job.run_id:
+                recent = _url_mm.ledger.recent_runs(1)
+                if recent:
+                    job.run_id = recent[0]["id"]
             try:
                 job.open_gaps = _url_mm.gaps.open_gaps(min_materiality=0.3)
             except Exception:
@@ -1442,18 +1448,29 @@ async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
     facts to OPERATIVE). Takes effect on the next investigation run.
     """
     model = _get_matter_model_or_404(matter_id)
-    # Pass active run_id so trust-override-triggered revision rows are attributed (r34 fix).
-    _trust_run_id: "str | None" = None
-    try:
-        _trust_run_row = model.db.execute(
-            "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
-            " ORDER BY started_at DESC LIMIT 1",
-            (matter_id,),
-        ).fetchone()
-        if _trust_run_row is not None:
-            _trust_run_id = _trust_run_row["id"]
-    except Exception:
-        pass
+    # Validated run_id attribution — same pattern as correct_assertion (r37 fix).
+    _trust_run_id: "str | None" = (getattr(request, "run_id", None) or None)
+    if _trust_run_id:
+        try:
+            _tv = model.db.execute(
+                "SELECT 1 FROM run_session WHERE id=? AND matter_id=? AND status='running'",
+                (_trust_run_id, matter_id),
+            ).fetchone()
+            if not _tv:
+                _trust_run_id = None
+        except Exception:
+            _trust_run_id = None
+    if not _trust_run_id:
+        try:
+            _trust_run_row = model.db.execute(
+                "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
+                " ORDER BY started_at DESC LIMIT 1",
+                (matter_id,),
+            ).fetchone()
+            if _trust_run_row is not None:
+                _trust_run_id = _trust_run_row["id"]
+        except Exception:
+            pass
     try:
         override_id = model.set_trust_override(
             request.document_pattern, request.trust_level, request.note, run_id=_trust_run_id

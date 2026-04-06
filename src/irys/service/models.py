@@ -137,6 +137,7 @@ class TrustOverrideRequest(BaseModel):
         description="Trust level: 'low' (force ALLEGED), 'normal' (reset to auto), 'high' (promote ALLEGED→OPERATIVE)",
     )
     note: Optional[str] = Field(None, description="Reason for the override")
+    run_id: Optional[str] = Field(None, description="Active run ID for audit attribution; validated server-side against run_session")
 
 
 class CorrectAssertionRequest(BaseModel):

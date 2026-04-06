@@ -314,7 +314,22 @@ class MatterModel:
         triggers a targeted proof_state recompute for all issues linked to
         the corrected assertion — so issue-level prioritization in the loop
         reflects the correction, not a stale pre-correction state (SO-2).
+
+        run_id is validated: if provided but not a running session for this matter,
+        it is silently cleared to None so stale IDs cannot misattribute audit rows
+        regardless of the calling path (REST, in-process, or engine).
         """
+        # Model-level run_id guard — covers all callers (r37 MEDIUM fix).
+        if run_id:
+            try:
+                _valid_run = self.db.execute(
+                    "SELECT 1 FROM run_session WHERE id=? AND matter_id=? AND status='running'",
+                    (run_id, self.matter_id),
+                ).fetchone()
+                if not _valid_run:
+                    run_id = None
+            except Exception:
+                run_id = None
         if confidence is None:
             confidence_map = {
                 BeliefState.OPERATIVE: 0.95,
