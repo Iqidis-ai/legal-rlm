@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 2 r3 partial fix: busy_timeout + covering index + module-level priority; schema v38; 733 tests)
+Last updated: 2026-04-06 (Tier 1 r17 PASS — Tier 2 r3 fixes clean; schema v38; 733 tests)
 Branch: SebihSpecial
 
 ---
@@ -359,7 +359,7 @@ None active.
 - SO-1/3/5/6/7: **PASS**; SO-2/4: **PARTIAL** (improving post-#023)
 - Tier 1 Q4/SO-2 stale pre-state: **CLEAN** (4 rounds, r4 confirmed 2026-04-05)
 - Adversarial audit #027: DONE — FIXED; Tier 1 r14–r16 CLEAN on all #027 fixes (2026-04-06)
-- Next: Tier 1 r17 correctness + perf (verify Tier 2 r3 fixes clean — busy_timeout, covering index, module constant); adversarial #028 due ~r19–r21
+- Next: Tier 1 r18 correctness + perf (clean loop); adversarial #028 due ~r19–r20
 
 ## Architectural Backlog (Tier 2 HIGH remaining)
 
