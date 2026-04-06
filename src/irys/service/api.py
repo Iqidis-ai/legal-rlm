@@ -422,13 +422,9 @@ async def _run_investigation(
         # Use state._run_id set by the engine at run-start — more exact than recent_runs(1)
         # which can return a different run when multiple runs overlap on the same matter (r37 fix).
         job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
-        job.run_id = getattr(result.state, "_run_id", None)
+        job.run_id = getattr(result.state, "_run_id", None)  # exact; no recent_runs(1) race
         if job.matter_id and job.matter_id in _active_matter_models:
             _mm = _active_matter_models[job.matter_id]
-            if not job.run_id:
-                recent = _mm.ledger.recent_runs(1)
-                if recent:
-                    job.run_id = recent[0]["id"]
             try:
                 job.open_gaps = _mm.gaps.open_gaps(min_materiality=0.3)
             except Exception:
@@ -732,11 +728,7 @@ async def _run_upload_investigation(
             job.completed_at - job.created_at
         ).total_seconds()
 
-        if job.matter_id and job.matter_id in _active_matter_models:
-            recent = _active_matter_models[job.matter_id].ledger.recent_runs(1)
-            if recent:
-                job.run_id = recent[0]["id"]
-
+        # Upload jobs are not investigation runs; no run_id to attribute.
         logger.info(f"Upload job {job_id} completed in {job.duration_seconds:.1f}s (mode={'local' if is_local else 's3'})")
 
         # Call webhook if provided
@@ -1127,13 +1119,9 @@ async def _run_urls_investigation(
         ).total_seconds()
 
         job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
-        job.run_id = getattr(result.state, "_run_id", None)  # exact run; avoid recent_runs(1) race
+        job.run_id = getattr(result.state, "_run_id", None)  # exact; no recent_runs(1) race
         if job.matter_id and job.matter_id in _active_matter_models:
             _url_mm = _active_matter_models[job.matter_id]
-            if not job.run_id:
-                recent = _url_mm.ledger.recent_runs(1)
-                if recent:
-                    job.run_id = recent[0]["id"]
             try:
                 job.open_gaps = _url_mm.gaps.open_gaps(min_materiality=0.3)
             except Exception:
