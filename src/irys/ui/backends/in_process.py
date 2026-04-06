@@ -78,6 +78,9 @@ class InProcessBackend(UIBackend):
     async def stop_run(self, matter_id: str, run_id: str) -> dict:
         try:
             model = self._get_matter_model(matter_id)
+            run = model.ledger.get_run(run_id)
+            if run and run.objective in ("manual_flush", "background_flush"):
+                return {"status": "error", "detail": f"Run '{run_id}' is a utility flush run and cannot be stopped"}
             model.ledger.request_stop(run_id)
             return {"status": "stop_requested", "run_id": run_id}
         except Exception as exc:
@@ -247,6 +250,8 @@ class InProcessBackend(UIBackend):
                 return {"status": "error", "detail": f"Run '{run_id}' not found"}
             if run.status != "running":
                 return {"status": "error", "detail": f"Run is not active (status: {run.status})"}
+            if run.objective in ("manual_flush", "background_flush"):
+                return {"status": "error", "detail": f"Run '{run_id}' is a utility flush run and cannot be redirected"}
             issue = model.issues.get_issue(issue_id)
             if issue is None:
                 return {"status": "error", "detail": f"Issue '{issue_id}' not found"}
