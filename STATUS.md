@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 r41 CLEAN + Perf PASS — 14 rounds r27-r40; run_id attribution chain complete; schema v39)
+Last updated: 2026-04-06 (Tier 1 adv#029 r7 CLEAN + Perf CLEAN — schema v40; durable pending queues; flush endpoint; proof_state at flush)
 Branch: SebihSpecial
 
 ---
