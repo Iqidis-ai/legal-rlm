@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-05 (Tier 1 CLEAN r4: Q4/SO-2 stale pre-state fully closed; OCC + write_transaction())
+Last updated: 2026-04-06 (Tier 1+2 MEDIUM fixes: _profile_pool semantic gate + complete_run() idempotency; 725 tests pass)
 Branch: SebihSpecial
 
 ---
@@ -99,11 +99,36 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 **Tier 1 reviews:** CLEAN (r6) — all HIGH/MEDIUM issues resolved. See commit history for full fix trail.
 
+**Tier 2 implementations (2026-04-06, from Tier 2 Scaling+Architecture review):**
+1. SO-4 semantic attribution gate: `_build_issue_profiles()` + `_best_semantic_issue()` Jaccard gate;
+   unannotated initial_searches + SPO graph leads now validated against issue content before round-robin
+2. SO-2 frontier-aware BFS budget: `_effective_max_work = min(2000, seeds*3)` when `seeds*2 > MAX_WORK`
+3. SO-2 assertion_revision read path: `detect_oscillation()` detects A→B→A cycles; emits SYSTEM_WARNING
+4. SO-1 real reuse telemetry: schema v36 adds `llm_calls_avoided`/`llm_calls_required` to run_session;
+   `true_reuse_rate = avoided / (avoided + required)` replaces assertion-count proxy in run summary
+
 ---
 
 ## Active Work
 
-### JUST COMPLETED — Tier 1 CLEAN r6: post-audit #023 Tier 1 MEDIUM/LOW (2026-04-06)
+### JUST COMPLETED — Tier 1+2 MEDIUM fixes (2026-04-06, commit 1cddd8e)
+
+Two MEDIUM bugs found by Tier 1 review of Tier 2 implementations — both fixed:
+
+**MEDIUM 1 — Semantic gate _profile_pool NameError (engine.py):**
+- `_profile_pool` was referenced in initial_searches loop and SPO fallback but never defined
+- Fix: `_profile_pool = list(_issue_profiles.keys())` added after `_issue_profiles` build
+- SPO lead fallback changed from `_biased_pool` to `_profile_pool`
+- Stale issue IDs that failed profile lookup are now excluded from round-robin fallback
+
+**MEDIUM 2 — complete_run() not idempotent (reasoning.py):**
+- SQL always SET `llm_calls_avoided=?` / `llm_calls_required=?` — replay with None overwrote stored values
+- Fix: SQL uses `COALESCE(?, llm_calls_avoided)` / `COALESCE(?, llm_calls_required)`
+- First call stores real values; recovery/replay calls with None preserve them
+
+HEAD: 1cddd8e — Tests: 725/725
+
+### PREVIOUSLY COMPLETED — Tier 1 CLEAN r6: post-audit #023 Tier 1 MEDIUM/LOW (2026-04-06)
 
 **r5 fixes (commit f2dfaea):**
 1. **schema.py**: SCHEMA_VERSION restored to 35 with no-op _migration_v35 — monotonic lineage preserved; any DB at v35 stays valid.
