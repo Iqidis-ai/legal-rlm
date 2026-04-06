@@ -505,6 +505,11 @@ class MatterRuntimeAdapter:
                         changed_object_type="assertion",
                         changed_object_id=result.assertion_id,
                     )
+        # Delete the originally-drained correction rows from DB now that replay is
+        # complete. Newly-enqueued second-level truncated rows (different IDs)
+        # are left intact for recovery. This is delete-after-replay for crash safety
+        # (adv#029 SO-1 correctness fix r2).
+        self.model.delete_pending_propagation_db("correction", _correction_ids)
 
         # Merge durable evidence-pending (nodes truncated by a prior flush, keyed by
         # originating (cause, run_id)) with current-request NEW_EVIDENCE seeds (r29–r33 fix).
@@ -558,6 +563,11 @@ class MatterRuntimeAdapter:
                                 changed_object_type="assertion",
                                 changed_object_id=result.assertion_id,
                             )
+        # Delete the originally-drained evidence rows from DB now that replay is
+        # complete. Newly-enqueued second-level truncated rows (different IDs)
+        # are left intact for recovery. delete-after-replay for crash safety
+        # (adv#029 SO-1 correctness fix r2).
+        self.model.delete_pending_propagation_db("evidence", list(_evidence_carry))
 
         # Proof_state recompute for all assertions revised in this flush — covers issues
         # linked to any corrected or re-evaluated assertion so that issue-level consumers

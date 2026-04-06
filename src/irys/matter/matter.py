@@ -311,19 +311,14 @@ class MatterModel:
         Returns assertion_id → originating_run_id. Called by RuntimeModel.flush_revisions()
         so correction-truncated nodes are included in the next BFS sweep (adv#028 HIGH fix).
         Lock protects dict clear/copy atomicity across concurrent REST requests (r25 fix).
-        Also deletes the corresponding DB rows so the work is not replayed after a restart
-        (adv#029 SO-1 HIGH fix).
+        NOTE: DB rows are NOT deleted here. flush_revisions() calls
+        delete_pending_propagation_db() AFTER replay completes so that a crash
+        between drain and end-of-replay still recovers the drained work on the
+        next open (adv#029 SO-1 crash-safety fix).
         """
         with self._correction_pending_lock:
             result = dict(self._correction_pending)
             self._correction_pending.clear()
-            try:
-                self.db.execute(
-                    "DELETE FROM pending_propagation WHERE matter_id=? AND queue='correction'",
-                    (self.matter_id,),
-                )
-            except Exception:
-                pass
         return result
 
     def enqueue_evidence_pending(
@@ -361,20 +356,36 @@ class MatterModel:
     def drain_evidence_pending(self) -> "dict[str, tuple[RevisionCause, str | None]]":
         """Return and clear truncated evidence assertion IDs → (cause, run_id) (thread-safe).
 
-        Also deletes the corresponding DB rows so the work is not replayed after a restart
-        (adv#029 SO-1 HIGH fix).
+        NOTE: DB rows are NOT deleted here. flush_revisions() calls
+        delete_pending_propagation_db() AFTER replay completes (crash-safe delete-after-replay).
         """
         with self._evidence_pending_lock:
             result = dict(self._evidence_pending)
             self._evidence_pending.clear()
+        return result
+
+    def delete_pending_propagation_db(self, queue: str, assertion_ids: "list[str]") -> None:
+        """Delete specific assertion IDs from the durable pending_propagation table.
+
+        Called by flush_revisions() AFTER replay of the drained set is complete, ensuring
+        only successfully-processed rows are removed.  Newly-enqueued second-level
+        truncated rows (inserted by enqueue_*_pending during replay) are left intact and
+        recovered on the next flush or restart.  assertion_ids is the original drain
+        snapshot, not the current queue state.
+        """
+        if not assertion_ids:
+            return
+        _SQL_PARAM_LIMIT = 900
+        for _bs in range(0, len(assertion_ids), _SQL_PARAM_LIMIT):
+            _batch = assertion_ids[_bs : _bs + _SQL_PARAM_LIMIT]
             try:
                 self.db.execute(
-                    "DELETE FROM pending_propagation WHERE matter_id=? AND queue='evidence'",
-                    (self.matter_id,),
+                    "DELETE FROM pending_propagation WHERE matter_id=? AND queue=?"
+                    " AND assertion_id IN ({})".format(",".join("?" * len(_batch))),
+                    [self.matter_id, queue] + _batch,
                 )
             except Exception:
                 pass
-        return result
 
     def correct_assertion(
         self,

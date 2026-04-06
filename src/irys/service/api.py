@@ -1525,8 +1525,14 @@ async def flush_pending_propagation(matter_id: str):
     """
     model = _get_matter_model_or_404(matter_id)
     from irys.matter.runtime import MatterRuntimeAdapter
-    adapter = MatterRuntimeAdapter(model, run_id=None)
-    revised = adapter.flush_revisions()
+    # Start a real run so ledger.append_event(run_id=...) satisfies the NOT NULL FK
+    # constraint on ledger_event.run_id (run_id=None would violate it).
+    flush_run_id = model.start_run("Standalone flush", objective="manual_flush")
+    try:
+        adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
+        revised = adapter.flush_revisions()
+    finally:
+        model.complete_run(flush_run_id)
     return {"status": "ok", "revised_count": revised}
 
 
