@@ -1292,12 +1292,12 @@ class RLMEngine:
         _issue_pool = _orient_issue_ids  # fallback pool: distribute leads across orientation issues
         # SO-4: coverage-biased fallback pool — weakest issue first so the first
         # unannotated search targets the proof gap, then round-robin for the rest.
-        # This replaces the old "all unannotated → weakest_id" which bunched every
-        # bare-string search onto one issue regardless of relevance.
-        if weakest_id and weakest_id in _issue_pool:
+        # weakest_id is always included even if it is not in _orient_issue_ids (e.g. it is an
+        # issue from a prior run that was not re-emitted by the orientation LLM this run).
+        if weakest_id:
             _biased_pool = [weakest_id] + [i for i in _issue_pool if i != weakest_id]
         else:
-            _biased_pool = _issue_pool
+            _biased_pool = list(_issue_pool)
         # Parse initial_searches: support new dict form {"term": "...", "issue_idx": N}
         # and legacy string form for backward compatibility.
         # Use `or []` to handle null from LLM (MEDIUM guard).
@@ -1314,18 +1314,22 @@ class RLMEngine:
                     # Exclude booleans (bool is a subclass of int in Python).
                     _valid_idx = isinstance(_iidx, int) and not isinstance(_iidx, bool)
                     _initial_searches.append((_term.strip(), _iidx if _valid_idx else None))
+        # Use a separate counter for bare-string (unannotated) searches so that LLM-annotated
+        # entries don't shift the round-robin rotation for later unannotated entries.
+        _bare_idx: int = 0
         for _idx, (_search_term, _lm_issue_idx) in enumerate(_initial_searches):
             # Assign focus_issue_id using priority order:
             # 1. LLM-specified issue_idx → raw issues[] position → issue_id via
             #    _raw_idx_to_issue_id (not filtered _orient_issue_ids, so skipped
             #    issues don't shift indices for later entries — MEDIUM fix).
             # 2. Coverage-biased round-robin (weakest first) when LLM didn't annotate.
-            #    Old behavior (all unannotated → weakest_id) bunched every bare-string
-            #    search on one issue; now we spread while still biasing toward weaker.
+            #    Uses _bare_idx (counts only unannotated searches) so annotated entries
+            #    don't shift the rotation for later bare-string searches.
             if _lm_issue_idx is not None:
                 _focus_id = _raw_idx_to_issue_id.get(_lm_issue_idx)
             elif _biased_pool:
-                _focus_id = _biased_pool[_idx % len(_biased_pool)]
+                _focus_id = _biased_pool[_bare_idx % len(_biased_pool)]
+                _bare_idx += 1
             else:
                 _focus_id = None
             priority = 0.9 if (_focus_id and _idx == 0) else 0.8

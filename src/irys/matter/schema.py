@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 34
+SCHEMA_VERSION = 35
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -1419,6 +1419,14 @@ def _migration_v33(conn) -> None:
     )
 
 
+def _migration_v35(conn) -> None:  # noqa: ARG001
+    """Reserved no-op: v35 was previously issued with a duplicate index (ix_assertion_prop_key
+    identical to v32's ix_assertion_prop_nolayer) and reverted. The version slot is kept here
+    as a no-op so that any database that was touched by that short-lived build (schema_version=35)
+    remains valid and future real migrations start at v36.
+    """
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1457,6 +1465,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (32, _migration_v32),
     (33, _migration_v33),
     (34, _migration_v34),
+    (35, _migration_v35),
 ]
 
 

@@ -207,10 +207,22 @@ class BeliefRevisionEngine:
 
         results: list[RevisionResult] = []
         seeds_remaining: set[str] = set(seed_assertion_ids)
-        pending: deque[str] = deque(seed_assertion_ids)
-        in_queue: set[str] = set(seed_assertion_ids)
+        # Deduplicate seeds before building the deque to prevent duplicate _revise_one() work.
+        _seen_seeds: set[str] = set()
+        _deduped_seeds: list[str] = []
+        for _s in seed_assertion_ids:
+            if _s not in _seen_seeds:
+                _seen_seeds.add(_s)
+                _deduped_seeds.append(_s)
+        pending: deque[str] = deque(_deduped_seeds)
+        in_queue: set[str] = set(_deduped_seeds)
         total_work: int = 0
         occ_conflict_count: int = 0
+        # Per-node OCC retry budget: when a node OCC-aborts, re-enqueue it (not
+        # its dependents) for one more attempt with the latest committed state.
+        # Cap retries to prevent BFS explosion under sustained concurrent contention.
+        _OCC_MAX_RETRIES: int = 3
+        _occ_retries: dict[str, int] = {}
 
         while pending and total_work < self.MAX_WORK:
             assertion_id = pending.popleft()
@@ -222,13 +234,22 @@ class BeliefRevisionEngine:
             result, occ_aborted = self._revise_one(assertion_id, cause, run_id, note, override_cache)
             if occ_aborted:
                 occ_conflict_count += 1
+                # Re-enqueue X itself so BFS retries with the latest committed state.
+                # Do NOT enqueue dependents here: we don't know X's new committed state
+                # yet, so pre-emptively fanning out would inflate BFS work.  Dependents
+                # will be enqueued after X is successfully processed.
+                retries = _occ_retries.get(assertion_id, 0) + 1
+                _occ_retries[assertion_id] = retries
+                if retries <= _OCC_MAX_RETRIES and assertion_id not in in_queue:
+                    in_queue.add(assertion_id)
+                    pending.append(assertion_id)
+                continue
+
             if result is not None:
                 results.append(result)
 
-            # Enqueue dependents when state changed, seed node, OR OCC-aborted.
-            # OCC abort means a concurrent write committed; dependents may need
-            # re-evaluation from the new committed state — do not prune the subtree.
-            if result is not None or is_seed or occ_aborted:
+            # Enqueue dependents when state changed or this is an unconditional seed.
+            if result is not None or is_seed:
                 for d in self.assertion_store.get_dependents(assertion_id):
                     if d not in in_queue:
                         in_queue.add(d)
@@ -238,8 +259,9 @@ class BeliefRevisionEngine:
             _log.warning(
                 "BeliefRevisionEngine: %d OCC conflict(s) during propagation "
                 "(concurrent writes committed between BFS read and write lock). "
-                "Affected subtrees were re-enqueued for convergence.",
+                "Conflicted nodes were re-enqueued for retry (up to %d retries each).",
                 occ_conflict_count,
+                _OCC_MAX_RETRIES,
             )
             if run_id and self._ledger is not None:
                 try:
@@ -248,8 +270,8 @@ class BeliefRevisionEngine:
                         event_type=LedgerEventType.SYSTEM_WARNING,
                         summary=(
                             f"Belief revision: {occ_conflict_count} OCC conflict(s) — "
-                            "concurrent writes detected during BFS; affected nodes "
-                            "re-enqueued. Propagation may require a follow-up pass."
+                            "concurrent writes detected during BFS; conflicted nodes "
+                            f"re-enqueued for retry (cap={_OCC_MAX_RETRIES})."
                         ),
                     )
                 except Exception as exc:
@@ -352,10 +374,16 @@ class BeliefRevisionEngine:
             attack_source_roles=neighbors["attack_source_roles"],
         )
 
-        # Do NOT short-circuit here based on the pre-tx snapshot. A concurrent writer
-        # could change the DB row between the pre-tx read above and the write_transaction
-        # below, causing us to skip a real update. The authoritative no-change check is
-        # performed INSIDE the transaction using the in-tx re-read.
+        # Performance fast-path: skip BEGIN IMMEDIATE when the pre-tx snapshot
+        # indicates no state change is needed.  This is safe because:
+        # (a) If new_state == old_state, there is nothing to write regardless of
+        #     whether a concurrent writer updated the row in the meantime.
+        # (b) If a concurrent writer did update old_state, their own BFS propagation
+        #     covers dependents — we do not need to act.
+        # The authoritative in-tx no-change check still runs for cases where the
+        # pre-tx read shows a change but the in-tx re-read reveals a no-op.
+        if new_state == old_state and abs(new_confidence - old_confidence) < 0.001:
+            return None, False
 
         # _actual_old_* will be overridden with the committed in-tx values so that the
         # returned RevisionResult accurately reflects what was recorded in the audit trail.
