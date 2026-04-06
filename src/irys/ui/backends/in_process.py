@@ -268,19 +268,25 @@ class InProcessBackend(UIBackend):
             return {"status": "error", "detail": f"Invalid belief state: {new_state!r}"}
         try:
             result = model.correct_assertion(assertion_id, belief_state, run_id=run_id, note=reason)
-            resp = {"status": "corrected", "assertion_id": assertion_id}
-            if getattr(result, "propagation_truncated", False):
-                resp["warning"] = "Belief revision truncated — background flush scheduled"
-                # Mirror the REST endpoint: schedule a background flush so SO-2
-                # convergence is guaranteed without waiting for the next run.
+        except Exception as exc:
+            return {"status": "error", "detail": str(exc)}
+        resp = {"status": "corrected", "assertion_id": assertion_id}
+        if getattr(result, "propagation_truncated", False):
+            # Mirror the REST endpoint: schedule a background flush so SO-2
+            # convergence is guaranteed without waiting for the next run.
+            # daemon=False: thread must finish before process exit to avoid
+            # stranding a utility run in 'running' state on shutdown.
+            try:
                 threading.Thread(
                     target=_in_process_background_flush,
                     args=(matter_id, model),
-                    daemon=True,
+                    daemon=False,
                 ).start()
-            return resp
-        except Exception as exc:
-            return {"status": "error", "detail": str(exc)}
+                resp["warning"] = "Belief revision truncated — background flush scheduled"
+            except Exception as te:
+                _log.warning("could not start background flush thread for %s: %s", matter_id, te)
+                resp["warning"] = "Belief revision truncated — proof state will refresh on next run"
+        return resp
 
     async def redirect_run(
         self, matter_id: str, run_id: str, issue_id: str
