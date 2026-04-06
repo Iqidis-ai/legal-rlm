@@ -1352,9 +1352,12 @@ class RLMEngine:
                 # Semantic gate: accept best match or abstain (None)
                 _focus_id = self._best_semantic_issue(_search_term, _issue_profiles)
                 _bare_idx += 1
-            elif _profile_pool:
-                # No profiles available — structural round-robin as last resort
-                _focus_id = _profile_pool[_bare_idx % len(_profile_pool)]
+            elif _biased_pool:
+                # No profiles available (< 2 issues or all profile builds failed)
+                # — structural round-robin over full pool as last resort.
+                # _profile_pool would always be empty here (it's a subset of _issue_profiles)
+                # so use _biased_pool directly for the structural fallback.
+                _focus_id = _biased_pool[_bare_idx % len(_biased_pool)]
                 _bare_idx += 1
             else:
                 _focus_id = None
@@ -1438,8 +1441,9 @@ class RLMEngine:
                 _spo_focus: "Optional[str]" = None
                 if _issue_profiles:
                     _spo_focus = self._best_semantic_issue(_pred_phrase, _issue_profiles)
-                elif _profile_pool:
-                    _spo_focus = _profile_pool[_spo_leads_added % len(_profile_pool)]
+                elif _biased_pool:
+                    # No profiles — structural fallback to biased_pool
+                    _spo_focus = _biased_pool[_spo_leads_added % len(_biased_pool)]
                 state.add_lead(
                     description=f"SPO graph expansion: search for '{_pred_phrase}' relationships",
                     source="spo_graph",
