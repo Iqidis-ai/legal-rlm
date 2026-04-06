@@ -500,7 +500,8 @@ class MatterModel:
         if run_id:
             try:
                 _valid_run = self.db.execute(
-                    "SELECT 1 FROM run_session WHERE id=? AND matter_id=? AND status='running'",
+                    "SELECT 1 FROM run_session WHERE id=? AND matter_id=? AND status='running'"
+                    " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))",
                     (run_id, self.matter_id),
                 ).fetchone()
                 if not _valid_run:
