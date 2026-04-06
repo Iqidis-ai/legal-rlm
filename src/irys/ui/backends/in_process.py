@@ -133,7 +133,9 @@ class InProcessBackend(UIBackend):
             run = model.ledger.get_run(run_id)
             if run and run.objective in ("manual_flush", "background_flush"):
                 return {"status": "error", "detail": f"Run '{run_id}' is a utility flush run and cannot be stopped"}
-            model.ledger.request_stop(run_id)
+            applied = model.ledger.request_stop(run_id)
+            if not applied:
+                return {"status": "error", "detail": f"Run '{run_id}' completed before stop could be applied"}
             return {"status": "stop_requested", "run_id": run_id}
         except Exception as exc:
             return {"status": "error", "detail": str(exc)}
@@ -324,7 +326,9 @@ class InProcessBackend(UIBackend):
             issue = model.issues.get_issue(issue_id)
             if issue is None:
                 return {"status": "error", "detail": f"Issue '{issue_id}' not found"}
-            model.ledger.request_redirect(run_id, issue_id)
+            applied = model.ledger.request_redirect(run_id, issue_id)
+            if not applied:
+                return {"status": "error", "detail": f"Run '{run_id}' completed before redirect could be applied"}
             return {
                 "status": "redirect_requested",
                 "run_id": run_id,

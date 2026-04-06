@@ -214,20 +214,21 @@ class AssertionStore:
                 and row["predicate_key"] is None
                 and candidate.predicate_key is not None
             ):
-                # Write revision rows for each SPO field being upgraded (SO-2 audit trail).
-                # Old value is always null (upgrade condition), new values from candidate.
-                _spo_fields = [
-                    ("predicate_key", candidate.predicate_key),
-                    ("subject_ref_type", candidate.subject_ref_type),
-                    ("subject_ref_id", candidate.subject_ref_id),
-                    ("object_json", candidate.object_json),
-                    ("temporal_scope_start", candidate.temporal_scope_start),
-                    ("temporal_scope_end", candidate.temporal_scope_end),
+                # Write revision rows for each SPO field that is actually changing.
+                # Use actual old values from the canonical row (not hardcoded null) because
+                # temporal_scope_* and others can be set without predicate_key.
+                _spo_fields_with_old = [
+                    ("predicate_key", row["predicate_key"], candidate.predicate_key),
+                    ("subject_ref_type", row["subject_ref_type"], candidate.subject_ref_type),
+                    ("subject_ref_id", row["subject_ref_id"], candidate.subject_ref_id),
+                    ("object_json", row["object_json"], candidate.object_json),
+                    ("temporal_scope_start", row["temporal_scope_start"], candidate.temporal_scope_start),
+                    ("temporal_scope_end", row["temporal_scope_end"], candidate.temporal_scope_end),
                 ]
                 _spo_rev_rows = [
-                    (field, _json_mod.dumps(None), _json_mod.dumps(new_val))
-                    for field, new_val in _spo_fields
-                    if new_val is not None
+                    (field, _json_mod.dumps(old_val), _json_mod.dumps(new_val))
+                    for field, old_val, new_val in _spo_fields_with_old
+                    if old_val != new_val
                 ]
                 if _spo_rev_rows:
                     self.write_revision_rows(

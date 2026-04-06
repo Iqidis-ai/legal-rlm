@@ -475,6 +475,8 @@ class AppState:
                         ).fetchone()
                         run_id = row["id"] if row else None
                     if run_id:
+                        # Best-effort DB flag: _stop_event is already set above so the engine
+                        # will halt regardless of whether this run is still in running state.
                         engine._matter_model.ledger.request_stop(run_id)
             except Exception:
                 pass
