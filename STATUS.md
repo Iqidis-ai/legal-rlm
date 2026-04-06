@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 adv#029 r7 CLEAN + Perf CLEAN — schema v40; durable pending queues; flush endpoint; proof_state at flush)
+Last updated: 2026-04-06 (Tier 1 adv#030 r9 CLEAN + Perf CLEAN — utility run isolation: lock-before-start_run, fail_run on exception, utility-run filter across all stop/redirect/correct/trust selectors at REST + in-process + ledger layers)
 Branch: SebihSpecial
 
 ---
