@@ -124,10 +124,14 @@ class HttpBackend(UIBackend):
         assertion_id: str,
         new_state: str,
         reason: str,
+        run_id: "str | None" = None,
     ) -> dict:
+        payload: dict = {"new_belief_state": new_state, "note": reason}
+        if run_id is not None:
+            payload["run_id"] = run_id
         return await self._post(
             f"/matter/{matter_id}/assertions/{assertion_id}/correct",
-            {"new_belief_state": new_state, "note": reason},
+            payload,
         )
 
     async def redirect_run(

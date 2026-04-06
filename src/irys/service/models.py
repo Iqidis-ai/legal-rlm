@@ -148,6 +148,7 @@ class CorrectAssertionRequest(BaseModel):
     )
     confidence: float = Field(0.8, ge=0.0, le=1.0, description="Confidence level 0.0–1.0")
     note: str = Field(..., description="Reason for the correction")
+    run_id: Optional[str] = Field(None, description="Active run ID for audit attribution; server falls back to latest running run if omitted")
 
 
 class SearchRequest(BaseModel):

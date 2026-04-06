@@ -1745,19 +1745,21 @@ async def correct_assertion(
                    "disputed/superseded/withdrawn/inferred/resolved/unknown",
         )
 
-    # Look up active run before correction so run_id is attributed on the revision rows
-    # (r34 fix: previously the run_id was only used for the synthetic clarification below).
-    _active_run_id: "str | None" = None
-    try:
-        _active_run_row = model.db.execute(
-            "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
-            " ORDER BY started_at DESC LIMIT 1",
-            (matter_id,),
-        ).fetchone()
-        if _active_run_row is not None:
-            _active_run_id = _active_run_row["id"]
-    except Exception:
-        pass
+    # Single active-run lookup shared by both the correction attribution and steering
+    # injection — prevents divergence if two runs overlap on the same matter (r35 fix).
+    # Client-provided request.run_id takes precedence over server-side lookup.
+    _active_run_id: "str | None" = getattr(request, "run_id", None)
+    if not _active_run_id:
+        try:
+            _active_run_row = model.db.execute(
+                "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
+                " ORDER BY started_at DESC LIMIT 1",
+                (matter_id,),
+            ).fetchone()
+            if _active_run_row is not None:
+                _active_run_id = _active_run_row["id"]
+        except Exception:
+            pass
 
     try:
         result = model.correct_assertion(
@@ -1774,27 +1776,21 @@ async def correct_assertion(
     # so the currently-running investigation loop re-examines related evidence.
     try:
         assertion_record = model.assertions.get(assertion_id)
-        if assertion_record is not None:
-            active_run = model.db.execute(
-                "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
-                " ORDER BY started_at DESC LIMIT 1",
-                (matter_id,),
-            ).fetchone()
-            if active_run is not None:
-                prop_text = assertion_record.proposition_text[:100]
-                synth_note = request.note or ""
-                synth_q_id = model.clarifications.add_question(
-                    question_text=(
-                        f"User correction: '{prop_text}' → {request.new_belief_state}"
-                    ),
-                    run_id=active_run["id"],
-                    why_it_matters="User directly corrected an assertion during this run",
-                )
-                model.clarifications.answer_question(
-                    synth_q_id,
-                    f"Assertion '{prop_text}' corrected to {request.new_belief_state}. "
-                    f"Re-examine evidence related to this claim. {synth_note}".strip(),
-                )
+        if assertion_record is not None and _active_run_id is not None:
+            prop_text = assertion_record.proposition_text[:100]
+            synth_note = request.note or ""
+            synth_q_id = model.clarifications.add_question(
+                question_text=(
+                    f"User correction: '{prop_text}' → {request.new_belief_state}"
+                ),
+                run_id=_active_run_id,
+                why_it_matters="User directly corrected an assertion during this run",
+            )
+            model.clarifications.answer_question(
+                synth_q_id,
+                f"Assertion '{prop_text}' corrected to {request.new_belief_state}. "
+                f"Re-examine evidence related to this claim. {synth_note}".strip(),
+            )
     except Exception:
         pass  # steering injection is best-effort; never block the response
 
