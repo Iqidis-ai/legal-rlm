@@ -210,6 +210,7 @@ class BeliefRevisionEngine:
         pending: deque[str] = deque(seed_assertion_ids)
         in_queue: set[str] = set(seed_assertion_ids)
         total_work: int = 0
+        occ_conflict_count: int = 0
 
         while pending and total_work < self.MAX_WORK:
             assertion_id = pending.popleft()
@@ -218,15 +219,41 @@ class BeliefRevisionEngine:
             seeds_remaining.discard(assertion_id)
             total_work += 1
 
-            result = self._revise_one(assertion_id, cause, run_id, note, override_cache)
+            result, occ_aborted = self._revise_one(assertion_id, cause, run_id, note, override_cache)
+            if occ_aborted:
+                occ_conflict_count += 1
             if result is not None:
                 results.append(result)
 
-            if result is not None or is_seed:
+            # Enqueue dependents when state changed, seed node, OR OCC-aborted.
+            # OCC abort means a concurrent write committed; dependents may need
+            # re-evaluation from the new committed state — do not prune the subtree.
+            if result is not None or is_seed or occ_aborted:
                 for d in self.assertion_store.get_dependents(assertion_id):
                     if d not in in_queue:
                         in_queue.add(d)
                         pending.append(d)
+
+        if occ_conflict_count:
+            _log.warning(
+                "BeliefRevisionEngine: %d OCC conflict(s) during propagation "
+                "(concurrent writes committed between BFS read and write lock). "
+                "Affected subtrees were re-enqueued for convergence.",
+                occ_conflict_count,
+            )
+            if run_id and self._ledger is not None:
+                try:
+                    self._ledger.append_event(
+                        run_id=run_id,
+                        event_type=LedgerEventType.SYSTEM_WARNING,
+                        summary=(
+                            f"Belief revision: {occ_conflict_count} OCC conflict(s) — "
+                            "concurrent writes detected during BFS; affected nodes "
+                            "re-enqueued. Propagation may require a follow-up pass."
+                        ),
+                    )
+                except Exception as exc:
+                    _log.warning("Failed to record OCC ledger event: %s", exc, exc_info=True)
 
         truncated = bool(pending)
         if truncated:
@@ -293,15 +320,19 @@ class BeliefRevisionEngine:
         run_id: Optional[str],
         note: Optional[str],
         _override_cache: "list[tuple[str, str]] | None" = None,
-    ) -> Optional[RevisionResult]:
+    ) -> "tuple[Optional[RevisionResult], bool]":
         """
         Revise a single assertion's belief state based on its graph neighbors.
 
-        Returns RevisionResult if the state changed, None otherwise.
+        Returns (result, occ_aborted):
+        - result: RevisionResult if state changed, None if no change or row missing.
+        - occ_aborted: True if an OCC conflict caused the write to be skipped.
+          BFS callers MUST enqueue dependents even when occ_aborted=True so the
+          downstream subtree is not silently pruned.
         """
         record = self.assertion_store.get(assertion_id)
         if record is None:
-            return None
+            return None, False
 
         old_state = BeliefState(record.belief_state)
         old_confidence = record.confidence
@@ -345,7 +376,7 @@ class BeliefRevisionEngine:
                 (assertion_id,),
             ).fetchone()
             if _intx_row is None:
-                return None
+                return None, False
             _intx_old_state = BeliefState(_intx_row["belief_state"])
             _intx_old_conf = float(_intx_row["confidence"])
             _actual_old_state = _intx_old_state
@@ -354,11 +385,11 @@ class BeliefRevisionEngine:
             # OCC (Optimistic Concurrency Control): if the row changed since our
             # pre-tx snapshot, a concurrent writer committed between L302 and here.
             # Abort rather than overwrite a newer committed state with a stale
-            # BFS-computed target. In the single-worker deployment this is rare;
-            # the BFS engine will naturally re-visit the node on the next run.
+            # BFS-computed target. Return occ_aborted=True so the BFS caller
+            # re-enqueues dependents and does not silently prune the subtree.
             if (_intx_old_state != old_state
                     or abs(_intx_old_conf - old_confidence) >= 0.001):
-                return None  # Conflict detected; do not overwrite concurrent commit
+                return None, True  # Conflict; caller must still enqueue dependents
 
             # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
             # Use in-tx values for both diff detection and old_value_json.
@@ -379,7 +410,7 @@ class BeliefRevisionEngine:
             if not _rev_rows:
                 # In-tx state already matches the BFS target; nothing to write.
                 # Commits an empty transaction (harmless) and returns None.
-                return None
+                return None, False
 
             self.assertion_store.write_revision_rows(
                 assertion_id, _rev_rows, _id(),
@@ -408,7 +439,7 @@ class BeliefRevisionEngine:
             old_confidence=_actual_old_conf,
             new_confidence=new_confidence,
             cause=cause,
-        )
+        ), False
 
     def force_state(
         self,
