@@ -1172,12 +1172,14 @@ class RLMEngine:
                 # answer invalidates the cache even when the count stays the same.
                 _ans = sorted(
                     f"{q.get('question_text','')}:{q.get('answer_text','')}"
-                    for q in self._matter_model.clarifications.get_answered()
+                    for q in self._matter_model.clarifications.get_answered(limit=100)
                 )
                 _iss = sorted(i["title"] for i in self._matter_model.issues.get_open_issues())
                 # Hash gap descriptions (not just count) to detect content changes.
+                # limit=100 prevents full-table scan on large corpora; any change in the
+                # top-100 highest-materiality gaps invalidates the orientation cache.
                 _gaps_fp = sorted(
-                    g.get("description", "") for g in self._matter_model.gaps.open_gaps()
+                    g.get("description", "") for g in self._matter_model.gaps.open_gaps(limit=100)
                 )
                 _anns = sorted(
                     a.get("annotation_text", "") for a in self._matter_model.annotations.list_recent()
