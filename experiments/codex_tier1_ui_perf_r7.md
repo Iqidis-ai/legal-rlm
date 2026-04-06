@@ -1,11 +1,17 @@
-**Findings**
-r7 Codex session verified both r6 perf fixes are present in current code:
-- ix_clarification_matter_answered index: SCHEMA_VERSION=37, DDL at schema.py:518, migration v37 at schema.py:1433 ✓
-- engine._orient() _stats param: present at engine.py:1132; investigate() passes _stats=stats at engine.py:1046 ✓
+FAIL
 
-**Additional MEDIUM found by session**: engine.py:1175 calls `get_answered()` and `open_gaps()` without limits
-for orientation cache fingerprint — full-table scans on large matters.
+- Medium: HTTP gaps/clarifications service endpoints ignore `limit` param —
+  `api.py:1339/1696` called store methods unbounded even when HTTP backend sent limit.
+- Medium: `get_open_issues()` uses `ORDER BY (salience * materiality) DESC` expression sort;
+  `get_issue_coverage_report()` re-sorts by coverage_fraction anyway — wasted O(n log n) work.
 
-**Fix applied (commit bc66624)**: `get_answered(limit=100)` and `open_gaps(limit=100)` in fingerprint computation.
+**Verification (confirmed correct):**
+- schema v37 ix_clarification_matter_answered: present at schema.py:518 ✓
+- engine._orient() _stats param + stats dedup: present at engine.py:1046/1132/1144 ✓
+- orientation fingerprint get_answered(limit=100) + open_gaps(limit=100): present ✓
 
-**Status**: FAIL (one new MEDIUM found and fixed). Proceeding to r8 for clean verification.
+**All MEDIUMs fixed in commit 8c05d21:**
+- service get_pending_clarifications() + get_matter_gaps() accept limit param
+- get_open_issues(order_by_score=False) skips sort for get_issue_coverage_report()
+
+Static review only.

@@ -1,11 +1,17 @@
-**Findings**
-r7 Codex session could not read updated source files via PowerShell (constrained language mode).
-Session repeated r6 findings as stale. All r6 findings verified manually as fixed in current code:
+FAIL
 
-- HIGH (app.py type guard): `hasattr(backend, "_get_irys")` check present at app.py:303-304 ✓
-- MEDIUM (redirect validation): `model.ledger.get_run()`, status check, `model.issues.get_issue()` present at in_process.py:259-264 ✓
-- MEDIUM (early-stop race): Acknowledged as acceptable for dev-only tool; `is_running` guard prevents generator continuation ✓
+1. `HIGH` The Run flow still bypasses `UIBackend` — `_run_thread()` calls `_get_irys()` directly.
+   The `hasattr` guard only converts the crash to an error message.
 
-**Verified by**: code inspection (grep) + 725/725 tests passing.
+2. `MEDIUM` `do_redirect()` still shows ✅ success even when backend returns `{"status": "error", ...}`.
 
-**Status**: All r6 HIGH/MEDIUMs fixed. Session inconclusive due to PowerShell restriction. Proceeding to r8 for clean verification.
+3. `MEDIUM` Panel methods (list_issues, list_assertions, list_gaps, list_clarifications,
+   get_steering_surface, get_quant_summary) catch exceptions and return empty payloads.
+   UI sees "No open issues." / "No assertions." instead of "Error loading: <detail>".
+
+**All three fixed in commit 8c05d21:**
+- HIGH: _run_thread delegates to InProcessBackend.run_investigation_thread() via isinstance + callbacks
+- MEDIUM: do_redirect() checks result.get("status")=="error"
+- MEDIUM: panel methods now propagate exceptions to AppState loaders
+
+Static review only; no tests were run by auditor.
