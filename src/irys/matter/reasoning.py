@@ -199,9 +199,16 @@ class ReasoningLedgerStore:
             )
 
     def request_stop(self, run_id: str) -> None:
-        """Set stop_requested flag — checked by the engine between iterations."""
+        """Set stop_requested flag — checked by the engine between iterations.
+
+        Silently ignores utility flush runs (manual_flush / background_flush) so
+        user stop actions cannot accidentally target a flush instead of a real
+        investigation.
+        """
         self.db.execute(
-            "UPDATE run_session SET stop_requested=1 WHERE id=?", (run_id,)
+            "UPDATE run_session SET stop_requested=1 WHERE id=?"
+            " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))",
+            (run_id,),
         )
 
     def is_stop_requested(self, run_id: str) -> bool:
@@ -211,9 +218,13 @@ class ReasoningLedgerStore:
         return bool(row["stop_requested"]) if row else False
 
     def request_redirect(self, run_id: str, issue_id: str) -> None:
-        """Signal the engine to redirect focus to the given issue on the next iteration."""
+        """Signal the engine to redirect focus to the given issue on the next iteration.
+
+        Silently ignores utility flush runs (manual_flush / background_flush).
+        """
         self.db.execute(
-            "UPDATE run_session SET redirect_requested=1, active_branch_issue_id=? WHERE id=?",
+            "UPDATE run_session SET redirect_requested=1, active_branch_issue_id=? WHERE id=?"
+            " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))",
             (issue_id, run_id),
         )
 
