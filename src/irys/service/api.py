@@ -1329,6 +1329,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         _urls_open_gaps: list[dict] = []
         if urls_matter_id:
             try:
+                _matter_model_last_used[urls_matter_id] = datetime.now()
                 _um = _active_matter_models.get(urls_matter_id)
                 if _um is not None:
                     _urls_open_gaps = _um.gaps.open_gaps(min_materiality=0.3)
