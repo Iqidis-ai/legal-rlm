@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 r45 CLEAN — run_id provenance through occurrence_upgrade; SO-2 assertion history endpoint with pagination+matter-isolation; 740 tests passing)
+Last updated: 2026-04-06 (adv#031 r6 CLEAN — SPO revision rows+COALESCE backfill; stop/redirect TOCTOU fix; SSE real 404; 740 tests passing)
 Branch: SebihSpecial
 
 ---
