@@ -60,11 +60,14 @@ def _in_process_background_flush_loop(matter_id: str, model) -> None:
         # Final race: work enqueued between last event check and release
         if model._bg_flush_event.is_set():
             if model._bg_flush_running.acquire(blocking=False):
-                threading.Thread(
-                    target=_in_process_background_flush_loop,
-                    args=(matter_id, model),
-                    daemon=False,
-                ).start()
+                try:
+                    threading.Thread(
+                        target=_in_process_background_flush_loop,
+                        args=(matter_id, model),
+                        daemon=False,
+                    ).start()
+                except Exception:
+                    model._bg_flush_running.release()
 
 
 class InProcessBackend(UIBackend):

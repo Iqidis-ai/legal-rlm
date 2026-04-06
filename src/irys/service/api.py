@@ -1946,9 +1946,12 @@ def _background_flush_loop(matter_id: str, model) -> None:
         if model._bg_flush_event.is_set():
             if model._bg_flush_running.acquire(blocking=False):
                 import threading as _threading
-                _threading.Thread(
-                    target=_background_flush_loop, args=(matter_id, model), daemon=False
-                ).start()
+                try:
+                    _threading.Thread(
+                        target=_background_flush_loop, args=(matter_id, model), daemon=False
+                    ).start()
+                except Exception:
+                    model._bg_flush_running.release()
 
 
 def _background_flush(matter_id: str, model) -> None:
