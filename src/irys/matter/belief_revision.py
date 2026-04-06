@@ -357,7 +357,7 @@ class BeliefRevisionEngine:
             # BFS-computed target. In the single-worker deployment this is rare;
             # the BFS engine will naturally re-visit the node on the next run.
             if (_intx_old_state != old_state
-                    or abs(_intx_old_conf - old_confidence) > 0.001):
+                    or abs(_intx_old_conf - old_confidence) >= 0.001):
                 return None  # Conflict detected; do not overwrite concurrent commit
 
             # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
