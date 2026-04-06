@@ -17,6 +17,7 @@ import logging
 from ..core.models import GeminiClient, ModelTier
 from ..core.repository import MatterRepository
 from ..core.search import SearchResults
+from ..core.utils import jaccard_similarity as _jaccard_similarity
 from ..matter.enums import SourceRole as _SourceRole
 from ..matter.runtime import infer_source_role as _infer_source_role
 from .state import InvestigationState, StepType, ThinkingStep, Citation, Lead, classify_query
@@ -1298,6 +1299,13 @@ class RLMEngine:
             _biased_pool = [weakest_id] + [i for i in _issue_pool if i != weakest_id]
         else:
             _biased_pool = list(_issue_pool)
+        # SO-4 semantic gate: build text profiles for each issue in the pool once,
+        # so unannotated searches can be validated against issue content (title +
+        # predicates) rather than assigned purely structurally.  Profile building is
+        # lightweight (DB lookups of short text rows) and skips gracefully on any error.
+        _issue_profiles: "dict[str, str]" = (
+            self._build_issue_profiles(_biased_pool) if len(_biased_pool) >= 2 else {}
+        )
         # Parse initial_searches: support new dict form {"term": "...", "issue_idx": N}
         # and legacy string form for backward compatibility.
         # Use `or []` to handle null from LLM (MEDIUM guard).
@@ -1322,11 +1330,21 @@ class RLMEngine:
             # 1. LLM-specified issue_idx → raw issues[] position → issue_id via
             #    _raw_idx_to_issue_id (not filtered _orient_issue_ids, so skipped
             #    issues don't shift indices for later entries — MEDIUM fix).
-            # 2. Coverage-biased round-robin (weakest first) when LLM didn't annotate.
-            #    Uses _bare_idx (counts only unannotated searches) so annotated entries
-            #    don't shift the rotation for later bare-string searches.
+            # 2. Semantic gate: Jaccard similarity of search term against issue profiles.
+            #    Accepts the best match only if score > threshold AND margin > gap.
+            #    Abstains (None) if no issue has meaningful overlap — wrong attribution
+            #    is worse than no attribution (SO-4).
+            # 3. Coverage-biased round-robin (weakest first) as last resort when
+            #    semantic gate has insufficient profile data (< 2 issues) or the
+            #    search term is too generic for any issue to dominate.
             if _lm_issue_idx is not None:
                 _focus_id = _raw_idx_to_issue_id.get(_lm_issue_idx)
+            elif _issue_profiles:
+                _focus_id = self._best_semantic_issue(_search_term, _issue_profiles)
+                if _focus_id is None:
+                    # Semantic gate abstained — fall back to round-robin but increment counter
+                    _focus_id = _biased_pool[_bare_idx % len(_biased_pool)]
+                _bare_idx += 1
             elif _biased_pool:
                 _focus_id = _biased_pool[_bare_idx % len(_biased_pool)]
                 _bare_idx += 1
@@ -1406,10 +1424,13 @@ class RLMEngine:
                 _pred_phrase = _pred_key.replace("_", " ").strip()
                 if not _pred_phrase or len(_pred_phrase) < 3:
                     continue
-                # Use the same biased pool as initial_searches so SPO leads rotate across
-                # issues rather than all pinning to weakest_id (SO-4 attribution fix).
-                _spo_focus = (_biased_pool[_spo_leads_added % len(_biased_pool)]
-                              if _biased_pool else None)
+                # SO-4 semantic gate: try to match pred_phrase to the most relevant issue.
+                # Fall back to biased-pool round-robin if gate abstains or profiles unavailable.
+                _spo_focus: "Optional[str]" = None
+                if _issue_profiles:
+                    _spo_focus = self._best_semantic_issue(_pred_phrase, _issue_profiles)
+                if _spo_focus is None and _biased_pool:
+                    _spo_focus = _biased_pool[_spo_leads_added % len(_biased_pool)]
                 state.add_lead(
                     description=f"SPO graph expansion: search for '{_pred_phrase}' relationships",
                     source="spo_graph",
@@ -3311,6 +3332,66 @@ class RLMEngine:
         except Exception:
             pass  # enrichment is advisory; never block search
         return search_term
+
+    def _build_issue_profiles(self, issue_ids: list[str]) -> "dict[str, str]":
+        """Build text profiles for SO-4 semantic attribution gate.
+
+        A profile is the issue title concatenated with its open predicate descriptions.
+        Used by _best_semantic_issue() to validate structural attribution proposals
+        before they are committed to lead.focus_issue_id.
+
+        Returns an empty dict if the matter model is unavailable (gate skips gracefully).
+        """
+        if self._matter_model is None or not issue_ids:
+            return {}
+        profiles: dict[str, str] = {}
+        for iid in issue_ids:
+            try:
+                issue_row = self._matter_model.issues.get_issue(iid)
+                parts: list[str] = [((issue_row or {}).get("title") or "")]
+                predicates = self._matter_model.issues.get_predicates(iid, limit=4)
+                for p in predicates:
+                    desc = (p.get("description") or "").strip()
+                    if desc:
+                        parts.append(desc)
+                profile = " ".join(p for p in parts if p)
+                if profile.strip():
+                    profiles[iid] = profile
+            except Exception:
+                pass  # profile for this issue unavailable; skip
+        return profiles
+
+    @staticmethod
+    def _best_semantic_issue(
+        text: str,
+        issue_profiles: "dict[str, str]",
+        min_score: float = 0.05,
+        min_margin: float = 0.03,
+    ) -> "Optional[str]":
+        """Return the best-matching issue_id if semantically confident, else None.
+
+        Uses word-level Jaccard similarity between the input text and issue profiles.
+        Returns None (abstain) when:
+        - The pool has fewer than 2 issues (no comparison possible).
+        - Top score is below min_score (no meaningful overlap at all).
+        - Margin between best and second-best is below min_margin (ambiguous).
+
+        Abstaining is safer than wrong attribution: a None focus_issue_id simply
+        means the search runs without issue bias, not that it is assigned to a wrong issue.
+        """
+        if not text or not issue_profiles or len(issue_profiles) < 2:
+            return None
+        scored = sorted(
+            ((iid, _jaccard_similarity(text, profile))
+             for iid, profile in issue_profiles.items()),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        best_id, best_score = scored[0]
+        second_score = scored[1][1]
+        if best_score >= min_score and (best_score - second_score) >= min_margin:
+            return best_id
+        return None  # Abstain — not confident enough to attribute
 
     def _build_advocacy_gate_block(self) -> str:
         """Build a mandatory hedging gate for issues supported only by advocacy sources (SO-5).

@@ -224,8 +224,18 @@ class BeliefRevisionEngine:
         # Cap retries to prevent BFS explosion under sustained concurrent contention.
         _OCC_MAX_RETRIES: int = 3
         _occ_retries: dict[str, int] = {}
+        # Frontier-aware work budget: scale up when seed count is large enough that
+        # seeds alone would consume more than half the budget — leaving insufficient
+        # room for propagation.  Only activates when needed (preserves MAX_WORK as a
+        # hard cap in tests and for small seed counts).  Ceiling is 2000.
+        _n_seeds = len(_deduped_seeds)
+        _effective_max_work: int = (
+            min(2000, max(self.MAX_WORK, _n_seeds * 3))
+            if _n_seeds * 2 > self.MAX_WORK
+            else self.MAX_WORK
+        )
 
-        while pending and total_work < self.MAX_WORK:
+        while pending and total_work < _effective_max_work:
             assertion_id = pending.popleft()
             in_queue.discard(assertion_id)
             is_seed = assertion_id in seeds_remaining
@@ -305,7 +315,7 @@ class BeliefRevisionEngine:
         if truncated:
             _reasons = []
             if pending:
-                _reasons.append(f"MAX_WORK={self.MAX_WORK} reached with {len(pending)} nodes remaining")
+                _reasons.append(f"work budget={_effective_max_work} reached with {len(pending)} nodes remaining")
             if occ_exhausted_count:
                 _reasons.append(f"{occ_exhausted_count} node(s) abandoned after OCC retry cap ({_OCC_MAX_RETRIES})")
             _log.warning(
