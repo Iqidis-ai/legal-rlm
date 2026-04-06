@@ -101,28 +101,32 @@ async def _cleanup_loop(config: ServiceConfig):
                 (now - job.completed_at).total_seconds() > config.cleanup_after_seconds
             ]
             _expired_set = set(expired)
+            _idle_cutoff = now - timedelta(seconds=config.cleanup_after_seconds)
             for job_id in expired:
                 job = _jobs[job_id]
                 if job.matter_id and job.matter_id in _active_matter_models:
-                    # Only evict the model if no other non-expired job references this matter.
+                    # Only evict the model if:
+                    # (a) no other non-expired job still references this matter, AND
+                    # (b) the model has not been recently accessed (last_used < idle_cutoff).
+                    # Checking last_used prevents evicting a model that is actively used
+                    # by a background flush or concurrent request even though its job aged out.
                     _other_live = any(
                         jid not in _expired_set and j.matter_id == job.matter_id
                         for jid, j in _jobs.items()
                         if jid != job_id
                     )
-                    if not _other_live:
+                    _last = _matter_model_last_used.get(job.matter_id, datetime.min)
+                    if not _other_live and _last < _idle_cutoff:
                         _active_matter_models.pop(job.matter_id, None)
                         _matter_model_last_used.pop(job.matter_id, None)
                         # Note: SQLiteMatterDB uses threading.local so db.close() from
                         # this thread only closes this thread's handle. Background-flush
-                        # threads hold their own per-thread connections which are released
-                        # when their thread exits. Relying on GC/thread-exit for cleanup.
+                        # threads hold their own per-thread connections released on thread exit.
                 del _jobs[job_id]
                 logger.debug(f"Cleaned up job {job_id}")
             # Evict matter models not backed by any active job (rehydrated models).
             # These are not associated with a job so the per-job eviction above misses them.
             _live_matter_ids = {j.matter_id for j in _jobs.values() if j.matter_id}
-            _idle_cutoff = now - timedelta(seconds=config.cleanup_after_seconds)
             for _mid in list(_active_matter_models.keys()):
                 if _mid not in _live_matter_ids:
                     if _matter_model_last_used.get(_mid, datetime.min) < _idle_cutoff:
