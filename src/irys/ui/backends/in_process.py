@@ -290,21 +290,33 @@ class InProcessBackend(UIBackend):
         set_current_run_id=None,
         set_current_matter_id=None,
         set_final_output=None,
+        stop_event: Optional["threading.Event"] = None,
     ) -> None:
         """Run investigation in the calling thread (which must be a daemon Thread).
 
         Encapsulates irys.investigate() + UI update queue logic. AppState._run_thread
         delegates here so the Run tab goes through the backend, not around it.
         Callbacks let AppState track run_id, matter_id, and irys ref for stop/redirect.
+
+        stop_event: if set before or during thread startup, cancels before investigate()
+        begins (handles early-stop race where run_session doesn't exist yet).
         """
         import queue as _queue
 
         async def _inner():
+            # Early-stop check: if user pressed Stop before investigation starts, bail.
+            if stop_event is not None and stop_event.is_set():
+                update_q.put(("error", "Investigation stopped before it began."))
+                return
             irys = self._get_irys()
             if on_irys_created is not None:
                 on_irys_created(irys)
             if on_step is not None:
                 irys.on_step(on_step)
+            # Second check after irys ref is set (covers the on_irys_created window).
+            if stop_event is not None and stop_event.is_set():
+                update_q.put(("error", "Investigation stopped before it began."))
+                return
             try:
                 result = await irys.investigate(query, repo_path)
                 state = result.state

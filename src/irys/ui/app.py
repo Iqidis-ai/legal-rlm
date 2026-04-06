@@ -144,9 +144,15 @@ def _fmt_assertions(assertions: list) -> str:
         prop = (a.get("proposition_text") or "")[:55]
         state = a.get("belief_state") or "—"
         conf = f"{float(a.get('confidence', 0)):.2f}" if a.get("confidence") is not None else "—"
-        # list_recent() returns primary_source_role / primary_speech_act; fall
-        # back to the bare field names for older callers or alternate backends.
-        src = a.get("source_role") or a.get("primary_source_role") or "—"
+        # list_recent() returns source_roles (list of distinct roles) + primary_source_role.
+        # Show MULTI-SOURCE[...] when an assertion spans multiple source types (SO-5).
+        src_roles = a.get("source_roles", [])
+        if len(src_roles) > 1:
+            src = f"MULTI-SOURCE[{','.join(src_roles)}]"
+        elif src_roles:
+            src = src_roles[0]
+        else:
+            src = a.get("source_role") or a.get("primary_source_role") or "—"
         speech = a.get("speech_act") or a.get("primary_speech_act") or "—"
         lines.append(f"| `{assertion_id}` | {prop} | {state} | {conf} | {src} | {speech} |")
     return "\n".join(lines)
@@ -256,6 +262,9 @@ class AppState:
         self.current_matter_id: Optional[str] = None
         self.current_run_id: Optional[str] = None
         self._irys_ref = None  # weak ref to active Irys instance for stop
+        # Stop event: set by stop_investigation() to signal early-stop before
+        # the first engine step fires (when run_session may not exist yet).
+        self._stop_event = threading.Event()
 
     def backend(self) -> InProcessBackend:
         if self._backend is None:
@@ -316,6 +325,7 @@ class AppState:
             set_current_run_id=lambda rid: setattr(self, "current_run_id", rid),
             set_current_matter_id=lambda mid: setattr(self, "current_matter_id", mid),
             set_final_output=lambda o: setattr(self, "final_output", o),
+            stop_event=self._stop_event,
         )
 
     def stream_investigation(
@@ -331,6 +341,7 @@ class AppState:
         self.update_queue = call_queue
         self.final_output = ""
         self.current_run_id = None
+        self._stop_event.clear()  # reset stop signal for new investigation
 
         if not repo_path or not __import__("pathlib").Path(repo_path).exists():
             yield ("", "", "", "❌ Invalid repository path", "")
@@ -423,15 +434,16 @@ class AppState:
     def stop_investigation(self):
         """Stop the running investigation.
 
-        Sets is_running=False to break the UI generator, and calls
-        ledger.request_stop() on the run_id so the engine honors it on
-        the next iteration check.
+        Sets is_running=False to break the UI generator, sets _stop_event to
+        signal early-stop before run_session exists, and calls ledger.request_stop()
+        on the run_id so the engine honors it on the next iteration check.
 
         Early-stop race: if the user presses Stop before the first thinking-step
         callback fires (i.e. current_run_id is still None), fall back to querying
         the DB directly for the most recent running run on this matter.
         """
         self.is_running = False
+        self._stop_event.set()  # signal early-stop before run_session exists
         if self._irys_ref is not None:
             try:
                 engine = self._irys_ref._engine
@@ -478,25 +490,37 @@ class AppState:
         except Exception as exc:
             return f"Error loading assertions: {exc}"
 
-    def load_gaps(self, matter_id: str) -> str:
+    def load_gaps(self, matter_id: str) -> tuple[str, str]:
+        """Return (gaps_and_steering_markdown, top_redirect_issue_id).
+
+        The second value auto-populates the Redirect form's issue_id field so
+        the steering surface is actionable without manual copy-paste (SO-3).
+        """
         if not matter_id or matter_id == "—":
-            return "No matter loaded."
+            return "No matter loaded.", ""
         try:
             gaps = _run_async(self.backend().list_gaps(matter_id))
             clarifications = _run_async(self.backend().list_clarifications(matter_id))
             gap_section = _fmt_gaps(gaps, clarifications)
         except Exception as exc:
             gap_section = f"⚠️ Error loading gaps: {exc}"
+        actions: list = []
         try:
             run_id = getattr(self, "current_run_id", None)
             actions = _run_async(self.backend().get_steering_surface(matter_id, run_id=run_id))
             steering_section = _fmt_steering(actions)
-        except Exception:
-            steering_section = ""
+        except Exception as exc:
+            steering_section = f"⚠️ Steering surface error: {exc}"
         sections = [gap_section]
         if steering_section:
             sections.append("\n" + steering_section)
-        return "\n".join(sections)
+        # Extract the highest-priority redirect_focus issue_id to auto-populate the form.
+        top_redirect_issue = ""
+        for action in actions:
+            if action.get("action_type") == "redirect_focus":
+                top_redirect_issue = action.get("params", {}).get("issue_id", "")
+                break
+        return "\n".join(sections), top_redirect_issue
 
     def load_quant(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
@@ -694,10 +718,17 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 correction_btn = gr.Button("Apply Correction", variant="primary")
                 correction_result = gr.Textbox(label="Result", interactive=False)
 
+                def _correct_and_refresh(mid, aid, new_state_str, reason):
+                    """Apply correction and refresh assertions + overview panels (SO-2)."""
+                    result_text = state.do_correct_assertion(mid, aid, new_state_str, reason)
+                    if result_text.startswith("✅"):
+                        return result_text, state.load_assertions(mid), state.load_overview(mid)
+                    return result_text, gr.update(), gr.update()
+
                 correction_btn.click(
-                    fn=state.do_correct_assertion,
+                    fn=_correct_and_refresh,
                     inputs=[matter_id_box, correction_assertion_id, correction_new_state, correction_reason],
-                    outputs=[correction_result],
+                    outputs=[correction_result, assertions_md, overview_md],
                 )
 
             # ============================================================
@@ -709,18 +740,24 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     refresh_gaps_btn = gr.Button("Refresh Gaps", variant="secondary")
                 gaps_md = gr.Markdown("Run an investigation first.")
 
-                refresh_gaps_btn.click(
-                    fn=lambda mid: state.load_gaps(mid),
-                    inputs=[matter_id_box],
-                    outputs=[gaps_md],
-                )
-
                 gr.Markdown("### Redirect Investigation")
-                gr.Markdown("Redirect the current run to focus on a specific issue.")
+                gr.Markdown(
+                    "Redirect the current run to a specific issue. "
+                    "**Refresh Gaps** auto-populates the Issue ID from the top steering recommendation."
+                )
                 with gr.Row():
                     redirect_run_id = gr.Textbox(label="Run ID", scale=2)
                     fill_run_id_btn = gr.Button("← Use Active Run", scale=1)
                     redirect_issue_id = gr.Textbox(label="Issue ID to redirect toward", scale=2)
+
+                # Registered here (after redirect_issue_id is defined) so that
+                # load_gaps() can auto-populate the redirect form from the top
+                # steering recommendation (makes the steering surface actionable — SO-3).
+                refresh_gaps_btn.click(
+                    fn=lambda mid: state.load_gaps(mid),
+                    inputs=[matter_id_box],
+                    outputs=[gaps_md, redirect_issue_id],
+                )
                 redirect_btn = gr.Button("Redirect", variant="primary")
                 redirect_result = gr.Textbox(label="Result", interactive=False)
 
