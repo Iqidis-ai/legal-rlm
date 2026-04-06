@@ -2952,7 +2952,12 @@ class TrustOverrideStore:
         return [dict(r) for r in rows]
 
     def delete(self, document_pattern: str) -> bool:
-        """Remove a trust override. Returns True if a row was deleted."""
+        """Remove a trust override. Returns True if a row was deleted.
+
+        Normalizes backslashes to forward slashes before matching, consistent
+        with set() which normalizes on insert.
+        """
+        document_pattern = document_pattern.replace("\\\\", "/").replace("\\", "/")
         cur = self.db.execute(
             "DELETE FROM document_trust_override WHERE matter_id=? AND document_pattern=?",
             (self.matter_id, document_pattern),
