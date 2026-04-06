@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 2 r3 FAIL→FIXED; 733 tests — supersession recovery work fully validated)
+Last updated: 2026-04-06 (Tier 2 r3 partial fix: busy_timeout + covering index + module-level priority; schema v38; 733 tests)
 Branch: SebihSpecial
 
 ---
@@ -162,11 +162,14 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 ### JUST COMPLETED — Tier 2 r3 Scaling + Architecture checkpoint (2026-04-06)
 
-- MEDIUM: inlined SQL CASE expression was unnecessary duplication — belief_revision.py already imports from graph.py, no circular import exists. Replaced with Python `_initial_belief_state()` call (the canonical mapping). (commit 94998c6)
-- LOWs: recovery fan-out bounded by BFS budget; BEGIN IMMEDIATE contention negligible; assertion_revision no-op rows O(log N) query cost.
-- TMS soundness: recovery policy correct for JTMS-like tracking; supersession chain recovery (C→A→B, C withdrawn → B recovers) handled correctly by fixpoint BFS.
+- MEDIUM (circular import): inlined SQL CASE was unnecessary; belief_revision.py already imports from graph.py. Replaced with `_initial_belief_state()` call. (commit 94998c6)
+- HIGH #2 (busy_timeout): `PRAGMA busy_timeout=5000` added to SQLiteMatterDB — prevents immediate "database is locked" failure under concurrent writers. (commit 0bea302)
+- MEDIUM #1 (module-level priority): `_SPEECH_ACT_RECOVERY_PRIORITY` promoted from inline per-call dict to module-level constant. (commit 0bea302)
+- LOW #2 (covering index): schema v38 adds `ix_assertion_revision_lock` partial index on `(assertion_id, new_value_json, created_at DESC) WHERE changed_field='belief_state'`. User-lock query is now O(log N) regardless of lock-row count. (commit 0bea302)
+- HIGH #1 (bulk withdrawal truncation): DEFERRED — pre-existing BFS budget architectural limitation. Use flush_revisions() batching or raise MAX_WORK for large-scale supersession rollbacks. Documented in code.
+- MEDIUM #2 (JTMS heuristic): documented explicitly — heuristic defeat/recovery, not full JTMS. Incorrect states possible for partial amendments and time-scoped supersession.
 
-HEAD: 94998c6 — Tests: 733/733
+HEAD: 0bea302 — Tests: 733/733, schema v38
 
 ### PREVIOUSLY COMPLETED — Tier 1 r14–r16 post-#027 cycle NOW CLEAN (2026-04-06)
 
@@ -356,7 +359,7 @@ None active.
 - SO-1/3/5/6/7: **PASS**; SO-2/4: **PARTIAL** (improving post-#023)
 - Tier 1 Q4/SO-2 stale pre-state: **CLEAN** (4 rounds, r4 confirmed 2026-04-05)
 - Adversarial audit #027: DONE — FIXED; Tier 1 r14–r16 CLEAN on all #027 fixes (2026-04-06)
-- Next: Tier 1 r17 correctness + perf (verify Tier 2 r3 fix clean); adversarial #028 due ~r19–r21
+- Next: Tier 1 r17 correctness + perf (verify Tier 2 r3 fixes clean — busy_timeout, covering index, module constant); adversarial #028 due ~r19–r21
 
 ## Architectural Backlog (Tier 2 HIGH remaining)
 

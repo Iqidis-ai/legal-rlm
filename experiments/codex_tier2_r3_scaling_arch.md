@@ -1,4 +1,4 @@
-PARTIAL FIX (commit see below, 733 tests, schema v38)
+PARTIAL FIX (commit 0bea302, 733 tests, schema v38)
 
 HIGH #2 FIXED. HIGH #1 deferred (architectural — documented). MEDIUM #1 FIXED. LOW #2 FIXED.
 
