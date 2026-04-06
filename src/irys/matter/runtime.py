@@ -473,7 +473,7 @@ class MatterRuntimeAdapter:
                 summary=(
                     f"Deferred correction replay: {len(_correction_ids)} assertion(s) "
                     f"from {len(_orig_runs)} originating run(s)"
-                    + (f": {', '.join(_orig_runs[:5])}" if _orig_runs else "")
+                    + (f": {', '.join(_orig_runs)}" if _orig_runs else "")
                 ),
             )
         for i in range(0, len(_correction_ids), _seed_batch):
@@ -489,7 +489,9 @@ class MatterRuntimeAdapter:
             if _unvisited:
                 # Re-enqueue work dropped by a second truncation so the next
                 # flush_revisions() call can continue where this one left off.
-                self.model.enqueue_correction_pending(_unvisited, run_id=None)
+                # Use self.run_id so second-level nodes are traceable to this flush run
+                # rather than being completely unattributed (r31 MEDIUM fix).
+                self.model.enqueue_correction_pending(_unvisited, run_id=self.run_id)
             for result in _cr_results:
                 if result.old_belief_state != result.new_belief_state:
                     _revised_ids.add(result.assertion_id)
@@ -504,40 +506,46 @@ class MatterRuntimeAdapter:
                         changed_object_id=result.assertion_id,
                     )
 
-        # Merge durable evidence-pending (nodes truncated by a prior flush) with any
-        # new seeds accumulated this request so all pending work is processed in one pass
-        # (r29 MEDIUM fix: new-evidence truncation no longer silently drops work).
-        _evidence_carry = self.model.drain_evidence_pending()
-        if not self._pending_assertion_ids and not _evidence_carry:
-            return len(_revised_ids)
-        # Batch size = MAX_WORK // 2 so each call has room for both seeds and
-        # fan-out propagation within the effective work budget.
-        pending_list = list(dict.fromkeys(_evidence_carry + list(self._pending_assertion_ids)))
+        # Merge durable evidence-pending (nodes truncated by a prior flush, with their
+        # originating cause) with current-request NEW_EVIDENCE seeds (r29/r31 MEDIUM fix).
+        # Group by cause so each replay batch uses the correct RevisionCause — not always
+        # NEW_EVIDENCE (r31 MEDIUM cause-attribution fix).
+        _evidence_carry: dict[str, RevisionCause] = self.model.drain_evidence_pending()
+        for aid in self._pending_assertion_ids:
+            if aid not in _evidence_carry:
+                _evidence_carry[aid] = RevisionCause.NEW_EVIDENCE
         self._pending_assertion_ids.clear()
-        for i in range(0, len(pending_list), _seed_batch):
-            batch = pending_list[i : i + _seed_batch]
-            _ev_unvisited: list[str] = []
-            results = self.model.apply_revision(
-                seed_assertion_ids=batch,
-                cause=RevisionCause.NEW_EVIDENCE,
-                run_id=self.run_id,
-                _collect_unvisited=_ev_unvisited,
-            )
-            if _ev_unvisited:
-                self.model.enqueue_evidence_pending(_ev_unvisited)
-            for result in results:
-                if result.old_belief_state != result.new_belief_state:
-                    _revised_ids.add(result.assertion_id)
-                    self.model.ledger.append_event(
-                        run_id=self.run_id,
-                        event_type=LedgerEventType.ASSERTION_REVISED,
-                        summary=(
-                            f"Belief revised: {result.old_belief_state.value} → "
-                            f"{result.new_belief_state.value}"
-                        ),
-                        changed_object_type="assertion",
-                        changed_object_id=result.assertion_id,
-                    )
+        if not _evidence_carry:
+            return len(_revised_ids)
+        # Group by cause to avoid mixing revision causes within one apply_revision() call.
+        _by_cause: dict[RevisionCause, list[str]] = {}
+        for aid, cause in _evidence_carry.items():
+            _by_cause.setdefault(cause, []).append(aid)
+        for cause, ids in _by_cause.items():
+            for i in range(0, len(ids), _seed_batch):
+                batch = ids[i : i + _seed_batch]
+                _ev_unvisited: list[str] = []
+                results = self.model.apply_revision(
+                    seed_assertion_ids=batch,
+                    cause=cause,
+                    run_id=self.run_id,
+                    _collect_unvisited=_ev_unvisited,
+                )
+                if _ev_unvisited:
+                    self.model.enqueue_evidence_pending(_ev_unvisited, cause=cause)
+                for result in results:
+                    if result.old_belief_state != result.new_belief_state:
+                        _revised_ids.add(result.assertion_id)
+                        self.model.ledger.append_event(
+                            run_id=self.run_id,
+                            event_type=LedgerEventType.ASSERTION_REVISED,
+                            summary=(
+                                f"Belief revised: {result.old_belief_state.value} → "
+                                f"{result.new_belief_state.value}"
+                            ),
+                            changed_object_type="assertion",
+                            changed_object_id=result.assertion_id,
+                        )
         return len(_revised_ids)
 
     # ------------------------------------------------------------------
@@ -735,7 +743,7 @@ class MatterRuntimeAdapter:
         trust_level: 'low' | 'normal' | 'high'
         Returns override_id.
         """
-        return self.model.trust_overrides.set(document_pattern, trust_level, note)
+        return self.model.set_trust_override(document_pattern, trust_level, note)
 
     def list_trust_overrides(self) -> list[dict]:
         """Return all trust overrides for this matter."""

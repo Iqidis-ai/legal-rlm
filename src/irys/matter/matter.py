@@ -86,9 +86,10 @@ class MatterModel:
         # preserved.  Protected by a lock for concurrent REST requests (r25 fix).
         self._correction_pending: dict[str, "str | None"] = {}
         self._correction_pending_lock = threading.Lock()
-        # New-evidence assertion IDs dropped by BFS truncation during flush_revisions().
-        # Drained at the start of the next flush_revisions() new-evidence pass (r29 fix).
-        self._evidence_pending_ids: set[str] = set()
+        # Assertion IDs dropped by BFS truncation during flush_revisions(), keyed by their
+        # originating RevisionCause so replay uses the correct cause not always NEW_EVIDENCE
+        # (r31 MEDIUM fix). First-write wins: earlier cause preserved on repeated truncation.
+        self._evidence_pending: "dict[str, RevisionCause]" = {}
         self._evidence_pending_lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -272,22 +273,32 @@ class MatterModel:
             self._correction_pending.clear()
         return result
 
-    def enqueue_evidence_pending(self, ids: list[str]) -> None:
-        """Add new-evidence assertion IDs dropped by BFS truncation to the durable queue.
+    def enqueue_evidence_pending(
+        self,
+        ids: list[str],
+        cause: "RevisionCause" = None,
+    ) -> None:
+        """Add BFS-truncated assertion IDs to the durable evidence queue with their cause.
 
-        Drained at the start of the next flush_revisions() new-evidence pass so work
-        dropped by a budget-constrained flush is not silently lost (r29 MEDIUM fix).
+        cause: the RevisionCause that produced these seeds (TRUST_OVERRIDE, CONFLICT_DETECTION,
+        NEW_EVIDENCE, etc.) so flush_revisions() can replay them under the correct cause rather
+        than always using NEW_EVIDENCE (r31 MEDIUM fix). Defaults to NEW_EVIDENCE if not given.
+        First-write wins: an earlier cause is preserved if the node is already queued.
         """
         if not ids:
             return
+        from .enums import RevisionCause as _RC  # local import to avoid circular risk
+        _cause = cause if cause is not None else _RC.NEW_EVIDENCE
         with self._evidence_pending_lock:
-            self._evidence_pending_ids.update(ids)
+            for aid in ids:
+                if aid not in self._evidence_pending:
+                    self._evidence_pending[aid] = _cause
 
-    def drain_evidence_pending(self) -> list[str]:
-        """Return and clear truncated new-evidence assertion IDs (thread-safe)."""
+    def drain_evidence_pending(self) -> "dict[str, RevisionCause]":
+        """Return and clear truncated evidence assertion IDs → cause (thread-safe)."""
         with self._evidence_pending_lock:
-            result = list(self._evidence_pending_ids)
-            self._evidence_pending_ids.clear()
+            result = dict(self._evidence_pending)
+            self._evidence_pending.clear()
         return result
 
     def correct_assertion(
@@ -465,7 +476,7 @@ class MatterModel:
                     note=f"Document trust override set to '{trust_level}' for {document_pattern!r}",
                     _collect_unvisited=_trust_unvisited,
                 )
-                self.enqueue_evidence_pending(_trust_unvisited)
+                self.enqueue_evidence_pending(_trust_unvisited, cause=RevisionCause.TRUST_OVERRIDE)
         except (sqlite3.Error, ValueError, RuntimeError) as exc:
             _log.warning("Trust override belief revision failed for %r: %s", document_pattern, exc)
 
@@ -1007,7 +1018,7 @@ class MatterModel:
                 note="Automatic: conflicting amount values detected for same subject",
                 _collect_unvisited=_conflict_unvisited,
             )
-            self.enqueue_evidence_pending(_conflict_unvisited)
+            self.enqueue_evidence_pending(_conflict_unvisited, cause=RevisionCause.CONFLICT_DETECTION)
 
         return gap_ids
 
