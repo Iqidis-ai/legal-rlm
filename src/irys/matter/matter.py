@@ -687,16 +687,21 @@ class MatterModel:
 
         # Targeted proof state recompute: only recompute issues linked to affected assertions.
         # Falls back to compute_all() when affected_ids is empty (pattern matched nothing).
+        # Chunks affected_ids to stay within SQLite's ~999 bind-variable limit.
         try:
             if affected_ids:
-                issue_rows = self.db.execute(
-                    "SELECT DISTINCT issue_id FROM assertion_issue_link WHERE assertion_id IN ({})".format(
-                        ",".join("?" * len(affected_ids))
-                    ),
-                    affected_ids,
-                ).fetchall()
-                if issue_rows:
-                    # Pre-fetch overrides once for all targeted issue recomputes.
+                _SQL_PARAM_LIMIT = 900
+                issue_ids_to_recompute: set[str] = set()
+                for _bs in range(0, len(affected_ids), _SQL_PARAM_LIMIT):
+                    _batch = affected_ids[_bs : _bs + _SQL_PARAM_LIMIT]
+                    _rows = self.db.execute(
+                        "SELECT DISTINCT issue_id FROM assertion_issue_link"
+                        " WHERE assertion_id IN ({})".format(",".join("?" * len(_batch))),
+                        _batch,
+                    ).fetchall()
+                    issue_ids_to_recompute.update(r["issue_id"] for r in _rows)
+                if issue_ids_to_recompute:
+                    # Pre-fetch overrides once; batch all writes in one transaction.
                     _ov_rows = self.db.execute(
                         """SELECT document_pattern, trust_level FROM document_trust_override
                            WHERE matter_id=? AND trust_level != 'normal'
@@ -706,10 +711,11 @@ class MatterModel:
                     _preloaded = [
                         (r["document_pattern"], r["trust_level"]) for r in _ov_rows
                     ]
-                    for row in issue_rows:
-                        self.proof_state.compute_and_store(
-                            row["issue_id"], _preloaded_overrides=_preloaded
-                        )
+                    with self.db.transaction():
+                        for _iid in issue_ids_to_recompute:
+                            self.proof_state.compute_and_store(
+                                _iid, _preloaded_overrides=_preloaded
+                            )
             else:
                 # No assertions matched — still run full recompute in case the override
                 # pattern will match future assertions (eager proof state refresh).
