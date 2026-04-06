@@ -115,32 +115,40 @@ def _fmt_overview(data: dict) -> str:
 def _fmt_issues(issues: list) -> str:
     if not issues:
         return "No open issues."
-    lines = ["| Issue | Coverage | Proof | Supporting | Attacking |",
-             "|-------|----------|-------|------------|-----------|"]
+    lines = [
+        "| ID (copy to redirect) | Issue | Coverage | Proof | Sup | Atk |",
+        "|-----------------------|-------|----------|-------|-----|-----|",
+    ]
     for iss in issues:
-        title = (iss.get("title") or iss.get("id", "?"))[:40]
+        issue_id = iss.get("id", "?")
+        short_id = issue_id[:12]  # show enough to identify; user copies full value from table
+        title = (iss.get("title") or issue_id)[:38]
         cov = _fmt_coverage(iss.get("coverage_fraction"))
         proof = iss.get("proof_status") or "—"
         sup = iss.get("supporting_count", "—")
         atk = iss.get("attacking_count", "—")
-        lines.append(f"| {title} | {cov} | {proof} | {sup} | {atk} |")
+        lines.append(f"| `{short_id}` | {title} | {cov} | {proof} | {sup} | {atk} |")
     return "\n".join(lines)
 
 
 def _fmt_assertions(assertions: list) -> str:
     if not assertions:
         return "No assertions."
-    lines = ["| Proposition | State | Confidence | Source | Speech Act |",
-             "|-------------|-------|------------|--------|------------|"]
+    lines = [
+        "| ID (copy to correct) | Proposition | State | Conf | Source | Speech |",
+        "|----------------------|-------------|-------|------|--------|--------|",
+    ]
     for a in assertions:
-        prop = (a.get("proposition_text") or "")[:60]
+        assertion_id = a.get("id", "?")
+        short_id = assertion_id[:12]
+        prop = (a.get("proposition_text") or "")[:55]
         state = a.get("belief_state") or "—"
         conf = f"{float(a.get('confidence', 0)):.2f}" if a.get("confidence") is not None else "—"
         # list_recent() returns primary_source_role / primary_speech_act; fall
         # back to the bare field names for older callers or alternate backends.
         src = a.get("source_role") or a.get("primary_source_role") or "—"
         speech = a.get("speech_act") or a.get("primary_speech_act") or "—"
-        lines.append(f"| {prop} | {state} | {conf} | {src} | {speech} |")
+        lines.append(f"| `{short_id}` | {prop} | {state} | {conf} | {src} | {speech} |")
     return "\n".join(lines)
 
 
@@ -150,8 +158,8 @@ def _fmt_gaps(gaps: list, clarifications: list) -> str:
         parts.append("### Open Gaps")
         for g in gaps:
             desc = g.get("description") or g.get("gap_type", "?")
-            mat = g.get("materiality") or ""
-            mat_str = f" [{mat}]" if mat else ""
+            mat = g.get("materiality_score") or g.get("materiality") or ""
+            mat_str = f" [materiality: {mat:.2f}]" if isinstance(mat, (int, float)) else (f" [{mat}]" if mat else "")
             parts.append(f"- {desc}{mat_str}")
     if clarifications:
         parts.append("\n### Pending Clarifications")
@@ -160,6 +168,65 @@ def _fmt_gaps(gaps: list, clarifications: list) -> str:
             impact = c.get("expected_impact") or ""
             parts.append(f"- **{q}**" + (f"\n  *Impact: {impact}*" if impact else ""))
     return "\n".join(parts) if parts else "No open gaps or clarifications."
+
+
+def _fmt_steering(actions: list) -> str:
+    """Format get_ledger_steering_surface() output as actionable recommendations."""
+    if not actions:
+        return "No steering recommendations available."
+    lines = ["### Steering Recommendations\n"]
+    for a in actions:
+        action_type = a.get("action_type", "unknown")
+        description = a.get("description", "")
+        rationale = a.get("rationale", "")
+        priority = a.get("priority", "")
+        priority_str = f" **[{priority.upper()}]**" if priority else ""
+        lines.append(f"**{action_type}**{priority_str}: {description}")
+        if rationale:
+            lines.append(f"  > {rationale[:120]}")
+        # Show action params useful for the UI (issue_id, gap_id, assertion_id)
+        params = a.get("params", {})
+        if params:
+            param_str = " | ".join(f"`{k}: {str(v)[:40]}`" for k, v in params.items() if v)
+            lines.append(f"  *Params: {param_str}*")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _fmt_quant(payment_recon: dict, damages: list) -> str:
+    """Format quant reconciliation and damages waterfall (SO-6)."""
+    parts = []
+
+    # Payment reconciliation
+    if payment_recon and payment_recon.get("total_invoiced") is not None:
+        inv = payment_recon.get("total_invoiced", 0)
+        paid = payment_recon.get("total_paid", 0)
+        exp = payment_recon.get("net_exposure", 0)
+        currency = payment_recon.get("currency", "USD")
+        parts.append("### Payment Reconciliation")
+        parts.append(f"| Metric | Amount ({currency}) |")
+        parts.append("|--------|--------|")
+        parts.append(f"| Total Invoiced | {inv:,.2f}" if isinstance(inv, (int, float)) else f"| Total Invoiced | {inv}")
+        parts.append(f"| Total Paid | {paid:,.2f}" if isinstance(paid, (int, float)) else f"| Total Paid | {paid}")
+        parts.append(f"| **Net Exposure** | **{exp:,.2f}**" if isinstance(exp, (int, float)) else f"| Net Exposure | {exp}")
+        if payment_recon.get("conflict_count", 0):
+            parts.append(f"\n⚠️ {payment_recon['conflict_count']} conflicting amounts detected.")
+
+    # Damages waterfall
+    if damages:
+        parts.append("\n### Damages Waterfall")
+        parts.append("| Component | Claimed | Sources | Conflicts |")
+        parts.append("|-----------|---------|---------|-----------|")
+        for d in damages:
+            comp = d.get("component") or "(uncategorised)"
+            amt = d.get("claimed_amount", 0)
+            amt_str = f"{amt:,.2f}" if isinstance(amt, (int, float)) else str(amt)
+            srcs = d.get("source_count", 0)
+            conflicts = len(d.get("conflicts", []))
+            conflict_str = f"⚠️ {conflicts}" if conflicts else "—"
+            parts.append(f"| {comp} | {amt_str} | {srcs} | {conflict_str} |")
+
+    return "\n".join(parts) if parts else "No quantitative facts extracted yet. Run an investigation first."
 
 
 # ---------------------------------------------------------------------------
@@ -413,9 +480,30 @@ class AppState:
         try:
             gaps = _run_async(self.backend().list_gaps(matter_id))
             clarifications = _run_async(self.backend().list_clarifications(matter_id))
-            return _fmt_gaps(gaps, clarifications)
+            gap_section = _fmt_gaps(gaps, clarifications)
         except Exception as exc:
-            return f"Error loading gaps: {exc}"
+            gap_section = f"⚠️ Error loading gaps: {exc}"
+        try:
+            actions = _run_async(self.backend().get_steering_surface(matter_id))
+            steering_section = _fmt_steering(actions)
+        except Exception:
+            steering_section = ""
+        sections = [gap_section]
+        if steering_section:
+            sections.append("\n" + steering_section)
+        return "\n".join(sections)
+
+    def load_quant(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "No matter loaded."
+        try:
+            quant_data = _run_async(self.backend().get_quant_summary(matter_id))
+            return _fmt_quant(
+                quant_data.get("payment_reconciliation", {}),
+                quant_data.get("damages_waterfall", []),
+            )
+        except Exception as exc:
+            return f"⚠️ Error loading quantitative data: {exc}"
 
     def do_correct_assertion(
         self, matter_id: str, assertion_id: str, new_state: str, reason: str
@@ -639,6 +727,25 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     fn=state.do_redirect,
                     inputs=[matter_id_box, redirect_run_id, redirect_issue_id],
                     outputs=[redirect_result],
+                )
+
+            # ============================================================
+            # Tab 6: Quant (SO-6)
+            # ============================================================
+            with gr.TabItem("Quant", id="quant"):
+                gr.Markdown(
+                    "**SO-6** — Quantitative intelligence: payment reconciliation, "
+                    "damages waterfall, numeric conflicts. Numbers from the matter model, "
+                    "not extracted from prose."
+                )
+                with gr.Row():
+                    refresh_quant_btn = gr.Button("Refresh Quant", variant="secondary")
+                quant_md = gr.Markdown("Run an investigation first.")
+
+                refresh_quant_btn.click(
+                    fn=lambda mid: state.load_quant(mid),
+                    inputs=[matter_id_box],
+                    outputs=[quant_md],
                 )
 
     return demo

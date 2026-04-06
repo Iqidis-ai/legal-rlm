@@ -260,3 +260,24 @@ class InProcessBackend(UIBackend):
             return {"status": "redirect_requested", "issue_id": issue_id}
         except Exception as exc:
             return {"status": "error", "detail": str(exc)}
+
+    # ------------------------------------------------------------------ #
+    # SO-3 / SO-6 supplemental surfaces                                   #
+    # ------------------------------------------------------------------ #
+
+    async def get_steering_surface(self, matter_id: str) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        try:
+            return model.get_ledger_steering_surface()
+        except Exception:
+            return []
+
+    async def get_quant_summary(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        try:
+            return {
+                "payment_reconciliation": model.reconcile_payment_chain(),
+                "damages_waterfall": model.get_damages_waterfall(),
+            }
+        except Exception:
+            return {"payment_reconciliation": {}, "damages_waterfall": []}

@@ -101,3 +101,17 @@ class UIBackend(ABC):
         self, matter_id: str, run_id: str, issue_id: str
     ) -> dict:
         ...
+
+    # ------------------------------------------------------------------ #
+    # SO-3 / SO-6 supplemental surfaces                                   #
+    # ------------------------------------------------------------------ #
+
+    @abstractmethod
+    async def get_steering_surface(self, matter_id: str) -> list[dict]:
+        """Return structured steering actions from get_ledger_steering_surface()."""
+        ...
+
+    @abstractmethod
+    async def get_quant_summary(self, matter_id: str) -> dict:
+        """Return {payment_reconciliation, damages_waterfall} for SO-6 panel."""
+        ...
