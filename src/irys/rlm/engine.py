@@ -1968,18 +1968,14 @@ class RLMEngine:
             _basename_freq: dict[str, int] = {}
             for _h in _top_hits_for_lookup:
                 _basename_freq[_h.filename.lower()] = _basename_freq.get(_h.filename.lower(), 0) + 1
+            _all_paths = [_h.file_path for _h in _top_hits_for_lookup]
             _hit_by_name: dict[str, object] = {}
             for _h in _top_hits_for_lookup:
-                _hit_by_name[_h.file_path] = _h        # most specific: full path (always)
-                if _basename_freq[_h.filename.lower()] == 1:
-                    _hit_by_name[_h.filename] = _h     # basename only when unambiguous
-                    _hit_by_name[_h.filename.lower()] = _h
-                else:
-                    # Register 'parent_dir/filename' for model to use when basenames collide
-                    # — matches what _format_search_results shows in the prompt.
-                    _disambig = f"{Path(_h.file_path).parent.name}/{_h.filename}"
-                    _hit_by_name[_disambig] = _h
-                    _hit_by_name[_disambig.lower()] = _h
+                _hit_by_name[_h.file_path] = _h        # full path (always unique)
+                # Register the same unique suffix the formatter showed the model
+                _display = self._unique_display_name(_h.file_path, _all_paths)
+                _hit_by_name[_display] = _h
+                _hit_by_name[_display.lower()] = _h
 
             # Fallback: top-hit doc_id and source role for facts with no source_file
             _top_hits = results.top(1)
@@ -4576,23 +4572,34 @@ class RLMEngine:
 
         return words[0]
 
+    @staticmethod
+    def _unique_display_name(file_path: str, all_paths: list) -> str:
+        """Return shortest path suffix of file_path that is unique among all_paths.
+
+        Starts from just the filename and adds parent components until unique.
+        Falls back to the full path if all suffix depths collide (highly unlikely).
+        """
+        parts = Path(file_path).parts
+        for depth in range(1, len(parts) + 1):
+            candidate = "/".join(parts[-depth:])
+            if sum(
+                1 for p in all_paths
+                if "/".join(Path(p).parts[-depth:]).lower() == candidate.lower()
+            ) == 1:
+                return candidate
+        return file_path  # full path as ultimate fallback
+
     def _format_search_results(self, results: SearchResults, max_hits: int = 10) -> str:
         """Format search results for LLM consumption.
 
-        When multiple hits share the same filename, shows 'parent_dir/filename'
-        so the model can return a unique identifier for per-fact source attribution.
+        Uses the shortest unique path suffix per hit so the model can return a
+        stable, unambiguous file identifier even when basenames collide.
         """
         hits = list(results.top(max_hits))
-        # Count basenames to detect collisions
-        _basename_freq: dict[str, int] = {}
-        for h in hits:
-            _basename_freq[h.filename.lower()] = _basename_freq.get(h.filename.lower(), 0) + 1
+        all_paths = [h.file_path for h in hits]
         lines = []
         for hit in hits:
-            if _basename_freq[hit.filename.lower()] > 1:
-                display_name = f"{Path(hit.file_path).parent.name}/{hit.filename}"
-            else:
-                display_name = hit.filename
+            display_name = self._unique_display_name(hit.file_path, all_paths)
             lines.append(f"File: {display_name} (page {hit.page_num})")
             lines.append(f"Match: {hit.match_text}")
             if hit.context_before:
