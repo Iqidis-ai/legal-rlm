@@ -1312,6 +1312,9 @@ class RLMEngine:
         _issue_profiles: "dict[str, str]" = (
             self._build_issue_profiles(_biased_pool) if len(_biased_pool) >= 2 else {}
         )
+        # DB-verified IDs only — subset of _biased_pool where a profile was successfully built.
+        # Used for round-robin fallback to avoid stale IDs that failed the profile lookup.
+        _profile_pool: "list[str]" = list(_issue_profiles.keys())
         # Parse initial_searches: support new dict form {"term": "...", "issue_idx": N}
         # and legacy string form for backward compatibility.
         # Use `or []` to handle null from LLM (MEDIUM guard).
@@ -1338,21 +1341,21 @@ class RLMEngine:
             #    issues don't shift indices for later entries — MEDIUM fix).
             # 2. Semantic gate: Jaccard similarity of search term against issue profiles.
             #    Accepts the best match only if score > threshold AND margin > gap.
-            #    Abstains (None) if no issue has meaningful overlap — wrong attribution
-            #    is worse than no attribution (SO-4).
-            # 3. Coverage-biased round-robin (weakest first) as last resort when
-            #    semantic gate has insufficient profile data (< 2 issues) or the
-            #    search term is too generic for any issue to dominate.
+            #    Abstains (None) if no issue clears both thresholds.
+            # 3. When semantic gate abstains, fall back to round-robin over
+            #    _profile_pool (IDs known to exist in DB) so a stale _biased_pool ID
+            #    (e.g. weakest_id from a prior run that no longer exists) cannot receive
+            #    attribution for facts that would then fail the issue-link insert.
             if _lm_issue_idx is not None:
                 _focus_id = _raw_idx_to_issue_id.get(_lm_issue_idx)
             elif _issue_profiles:
                 _focus_id = self._best_semantic_issue(_search_term, _issue_profiles)
-                if _focus_id is None:
-                    # Semantic gate abstained — fall back to round-robin but increment counter
-                    _focus_id = _biased_pool[_bare_idx % len(_biased_pool)]
+                if _focus_id is None and _profile_pool:
+                    # Semantic gate abstained — round-robin over DB-verified IDs only
+                    _focus_id = _profile_pool[_bare_idx % len(_profile_pool)]
                 _bare_idx += 1
-            elif _biased_pool:
-                _focus_id = _biased_pool[_bare_idx % len(_biased_pool)]
+            elif _profile_pool:
+                _focus_id = _profile_pool[_bare_idx % len(_profile_pool)]
                 _bare_idx += 1
             else:
                 _focus_id = None
@@ -1435,8 +1438,8 @@ class RLMEngine:
                 _spo_focus: "Optional[str]" = None
                 if _issue_profiles:
                     _spo_focus = self._best_semantic_issue(_pred_phrase, _issue_profiles)
-                if _spo_focus is None and _biased_pool:
-                    _spo_focus = _biased_pool[_spo_leads_added % len(_biased_pool)]
+                if _spo_focus is None and _profile_pool:
+                    _spo_focus = _profile_pool[_spo_leads_added % len(_profile_pool)]
                 state.add_lead(
                     description=f"SPO graph expansion: search for '{_pred_phrase}' relationships",
                     source="spo_graph",

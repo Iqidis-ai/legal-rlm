@@ -157,7 +157,8 @@ class ReasoningLedgerStore:
             self.db.execute(
                 "UPDATE run_session"
                 " SET status=?, completed_at=?, reuse_rate=?,"
-                "     llm_calls_avoided=?, llm_calls_required=?"
+                "     llm_calls_avoided=COALESCE(?, llm_calls_avoided),"
+                "     llm_calls_required=COALESCE(?, llm_calls_required)"
                 " WHERE id=? AND matter_id=?",
                 (RunStatus.COMPLETED.value, now, reuse_rate,
                  llm_calls_avoided, llm_calls_required,
