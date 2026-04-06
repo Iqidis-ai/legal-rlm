@@ -120,10 +120,13 @@ def create_app(config: Optional[ServiceConfig] = None) -> FastAPI:
         redoc_url="/redoc",
     )
 
-    # CORS middleware
+    # CORS middleware — permissive for local dev/research use.
+    # KNOWN DEFERRED: no authentication or authorization layer is implemented.
+    # This service is designed for trusted internal/local use only. Before any
+    # network-exposed deployment, add an API key or OAuth2 guard via FastAPI Depends.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Configure for production
+        allow_origins=["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

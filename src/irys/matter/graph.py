@@ -937,8 +937,8 @@ class AssertionStore:
                         existing_links.add((src_id, dst_id))
                         existing_links.add((dst_id, src_id))
                         created += 1
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _log.warning("detect_heuristic_contradictions: link insert failed (%s→%s): %s", src_id, dst_id, _e)
         return created
 
     def mine_and_mark_contradictions(
@@ -1004,8 +1004,8 @@ class AssertionStore:
                         )
                         if _truncated_nodes is not None:
                             _truncated_nodes.extend(_fs_result.truncation_pending)
-            except Exception:
-                pass  # belief revision failure does not abort gap recording
+            except Exception as _e:
+                _log.warning("mine_and_mark_contradictions: force_state failed for %s: %s", attacked_id, _e)
 
             try:
                 # Record gap for any open conflict that isn't already resolved.
@@ -1020,8 +1020,8 @@ class AssertionStore:
                         affected_type="assertion",
                         affected_id=attacked_id,
                     )
-            except Exception:
-                pass  # gap recording failure does not abort the mining pass
+            except Exception as _e:
+                _log.warning("mine_and_mark_contradictions: gap record failed for %s: %s", attacked_id, _e)
 
         return conflicts
 
