@@ -1531,8 +1531,13 @@ async def flush_pending_propagation(matter_id: str):
     try:
         adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
         revised = adapter.flush_revisions()
-    finally:
-        model.complete_run(flush_run_id)
+    except Exception as exc:
+        try:
+            model.fail_run(flush_run_id, str(exc))
+        except Exception:
+            pass
+        raise
+    model.complete_run(flush_run_id)
     return {"status": "ok", "revised_count": revised}
 
 
@@ -1877,15 +1882,27 @@ def _background_flush(matter_id: str, model) -> None:
     Called as a FastAPI BackgroundTask after a truncated correct_assertion() so
     deferred propagation converges without waiting for the next investigation run
     (adv#030 HIGH fix — SO-2 convergence guarantee).
+
+    Acquires model._flush_lock BEFORE opening a run_session so that while we wait
+    for an in-progress investigation to finish, no spurious 'running' row exists that
+    stop_investigation / set_trust_override / correct_assertion could mistakenly
+    target as the active investigation (adv#030 correctness r2 HIGH fix).
     """
     try:
         from irys.matter.runtime import MatterRuntimeAdapter
-        flush_run_id = model.start_run("Background flush", objective="background_flush")
-        try:
-            adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
-            adapter.flush_revisions()
-        finally:
-            model.complete_run(flush_run_id)
+        with model._flush_lock:
+            flush_run_id = model.start_run("Background flush", objective="background_flush")
+            try:
+                adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
+                adapter._flush_revisions_locked()
+            except Exception as exc:
+                try:
+                    model.fail_run(flush_run_id, str(exc))
+                except Exception:
+                    pass
+                raise
+            else:
+                model.complete_run(flush_run_id)
     except Exception as exc:
         logger.warning("background_flush failed for matter %s: %s", matter_id, exc)
 
