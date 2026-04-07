@@ -105,6 +105,9 @@ ORIENTATION_PROMPT = """You are an expert legal analyst conducting due diligence
 Repository Structure:
 {structure}
 
+Document Listing:
+{file_listing}
+
 Total files: {total_files}
 
 User Query: {query}
@@ -112,13 +115,15 @@ User Query: {query}
 Your task is to create a strategic research plan. Think like an experienced litigator or investigator.
 
 Consider:
-1. What are the CORE legal issues that need to be established?
-2. Which document types are MOST LIKELY to contain direct evidence? (e.g., contracts for terms, emails for intent, financials for damages)
-3. What SPECIFIC search terms will find relevant passages? Include legal terms, party names, key dates, and transaction-specific language.
-4. What is your preliminary hypothesis based on the query structure?
+1. READ THE DOCUMENT LISTING CAREFULLY. File names reveal what each document IS (e.g., "Master_Service_Agreement.pdf" is a contract, "Complaint_Filed_2024.pdf" is a pleading, "Invoice_March.xlsx" is financial). Use file names to identify the MOST IMPORTANT documents.
+2. What are the CORE legal issues that need to be established?
+3. Which specific documents from the listing are MOST LIKELY to contain direct evidence? Name them explicitly in your search terms.
+4. What SPECIFIC search terms will find relevant passages? Use party names, document-specific terms, and key phrases you expect to find IN those documents.
+5. What is your preliminary hypothesis based on the query and the document names?
 
 PRIORITIZE:
-- Primary source documents (contracts, pleadings) over secondary (correspondence)
+- Primary source documents (contracts, pleadings, agreements) over secondary (correspondence)
+- Documents whose filenames suggest they contain key evidence for the query
 - Documents with dates matching key events
 - Files mentioning specific parties or amounts
 - If a PRIORITY FOCUS issue is listed in Existing Matter Intelligence, direct the first 2-3 `initial_searches` specifically toward that issue before broadening to general exploration
@@ -159,7 +164,7 @@ This enables the system to link discovered facts to the correct issue.
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "4"
+_ORIENTATION_CACHE_VERSION = "5"
 
 
 def _format_matter_context(ctx) -> str:
@@ -1256,6 +1261,19 @@ class RLMEngine:
 
         structure_str = "\n".join(f"  {folder}: {count} files" for folder, count in structure.items())
 
+        # Include actual filenames so the LLM can make informed decisions about
+        # which documents are most likely relevant (e.g., "Master_Service_Agreement.pdf"
+        # is clearly a contract, "Acorn_Invoice_2024.xlsx" is financial).
+        # Limit to 100 filenames to avoid prompt bloat on large repos.
+        file_list = repo.list_files()
+        file_listing_lines = []
+        for f in file_list[:100]:
+            size_kb = f.size_bytes / 1024
+            file_listing_lines.append(f"  {f.relative_path} ({f.file_type}, {size_kb:.0f}KB)")
+        if len(file_list) > 100:
+            file_listing_lines.append(f"  ... and {len(file_list) - 100} more files")
+        file_listing_str = "\n".join(file_listing_lines) if file_listing_lines else "  (no supported files found)"
+
         # Read persisted matter state — activates SO-1 (reuse) and SO-4 (issue-driven)
         adapter = getattr(state, "_matter_adapter", None)
         matter_ctx = adapter.get_context() if adapter is not None else None
@@ -1266,6 +1284,7 @@ class RLMEngine:
 
         prompt = ORIENTATION_PROMPT.format(
             structure=structure_str,
+            file_listing=file_listing_str,
             total_files=stats.total_files,
             query=state.query,
             matter_context=_format_matter_context(matter_ctx),

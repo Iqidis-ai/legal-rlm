@@ -1130,6 +1130,21 @@ class MatterModel:
         ).fetchall()
         pred_counts = {r["issue_id"]: r["pred_count"] for r in pred_rows}
 
+        # Gap 3: count contested and blocked predicates per issue.
+        contested_rows = self.db.execute(
+            """SELECT ip.issue_id,
+                      SUM(CASE WHEN ip.status='contested' THEN 1 ELSE 0 END) AS contested,
+                      SUM(CASE WHEN ip.status='blocked' THEN 1 ELSE 0 END) AS blocked
+               FROM issue_predicate ip
+               JOIN issue i ON i.id = ip.issue_id
+               WHERE i.matter_id=? AND i.status='open'
+                 AND ip.status IN ('contested','blocked')
+               GROUP BY ip.issue_id""",
+            (mid,),
+        ).fetchall()
+        contested_counts = {r["issue_id"]: int(r["contested"]) for r in contested_rows}
+        blocked_counts = {r["issue_id"]: int(r["blocked"]) for r in contested_rows}
+
         proof_gap_rows = self.db.execute(
             """SELECT gl.affected_id AS issue_id, g.id AS gap_id
                FROM gap g
@@ -1192,6 +1207,8 @@ class MatterModel:
                 "proof_status": proof_status,
                 "has_proof_gap": has_gap,
                 "gap_id": proof_gaps.get(iid),
+                "contested_predicates": contested_counts.get(iid, 0),
+                "blocked_predicates": blocked_counts.get(iid, 0),
             }
             if subtree_rollup:
                 entry["subtree_coverage"] = round(subtree_rollup["coverage_fraction"], 4)

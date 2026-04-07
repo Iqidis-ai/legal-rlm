@@ -191,6 +191,12 @@ def _fmt_issues(issues: list) -> str:
         pred_cnt = iss.get("predicate_count", 0)
         if pred_cnt:
             details.append(f"{pred_cnt} elements")
+        contested = iss.get("contested_predicates", 0)
+        blocked = iss.get("blocked_predicates", 0)
+        if contested:
+            details.append(f"⚠️ {contested} disputed")
+        if blocked:
+            details.append(f"🚫 {blocked} blocked")
 
         # Subtree info for parent issues
         subtree_cov = iss.get("subtree_coverage")
@@ -242,6 +248,30 @@ def _fmt_assertions(assertions: list) -> str:
             icon = _trust_icon(src)
         speech = a.get("speech_act") or a.get("primary_speech_act") or "—"
         lines.append(f"| {icon} | {prop} | {state} | {conf} | {src} | {speech} | `{assertion_id}` |")
+    return "\n".join(lines)
+
+
+_ASSUMPTION_STATUS_ICONS = {
+    "provisional": "⏳", "confirmed": "✅", "invalidated": "❌",
+}
+
+def _fmt_assumptions(assumptions: list) -> str:
+    if not assumptions:
+        return "*No assumptions recorded yet.*"
+    lines = ["These are the working assumptions Irys is using. "
+             "If any are wrong, the conclusions that depend on them may change.\n"]
+    for a in assumptions:
+        status = a.get("status", "provisional")
+        icon = _ASSUMPTION_STATUS_ICONS.get(status, "⏳")
+        stmt = a.get("statement") or "?"
+        cond = a.get("invalidation_condition") or ""
+        line = f"- {icon} **{stmt}**"
+        if cond:
+            line += f"  \n  *Would be invalidated if: {cond}*"
+        rationale = a.get("rationale") or ""
+        if rationale:
+            line += f"  \n  *Rationale: {rationale[:120]}*"
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -669,6 +699,15 @@ class AppState:
                 break
         return "\n".join(sections), top_redirect_issue
 
+    def load_assumptions(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "No matter loaded."
+        try:
+            assumptions = _run_async(self.backend().list_assumptions(matter_id))
+            return _fmt_assumptions(assumptions)
+        except Exception as exc:
+            return f"Error loading assumptions: {exc}"
+
     def load_quant(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
             return "No matter loaded."
@@ -883,6 +922,13 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     "spots. They'll appear here after your first investigation.*"
                 )
 
+                gr.Markdown("---")
+                gr.Markdown("### Working Assumptions")
+                assumptions_md = gr.Markdown(
+                    "*Irys tracks what it's assuming to be true. If an assumption "
+                    "turns out to be wrong, conclusions that depend on it are flagged.*"
+                )
+
                 with gr.Row():
                     refresh_sidebar_btn = gr.Button("Refresh All", variant="secondary", size="sm")
 
@@ -1018,12 +1064,13 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             overview = state.load_overview(mid)
             issues = state.load_issues(mid)
             gaps_text, top_issue = state.load_gaps(mid)
-            return overview, issues, gaps_text, top_issue
+            assumptions = state.load_assumptions(mid)
+            return overview, issues, gaps_text, assumptions, top_issue
 
         refresh_sidebar_btn.click(
             fn=_refresh_all,
             inputs=[matter_id_box],
-            outputs=[overview_md, issues_md, gaps_md, redirect_issue_id],
+            outputs=[overview_md, issues_md, gaps_md, assumptions_md, redirect_issue_id],
         )
 
         # --- Detail panel refreshes ---

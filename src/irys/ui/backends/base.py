@@ -126,3 +126,8 @@ class UIBackend(ABC):
     async def get_quant_summary(self, matter_id: str) -> dict:
         """Return {payment_reconciliation, damages_waterfall} for SO-6 panel."""
         ...
+
+    @abstractmethod
+    async def list_assumptions(self, matter_id: str, limit: int = 30) -> list[dict]:
+        """Return active/all assumptions for the matter (Gap 3)."""
+        ...

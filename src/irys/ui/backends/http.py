@@ -161,3 +161,6 @@ class HttpBackend(UIBackend):
         recon = await self._get(f"/matter/{matter_id}/reconciliation")
         damages = await self._get(f"/matter/{matter_id}/damages-waterfall")
         return {"payment_reconciliation": recon, "damages_waterfall": damages}
+
+    async def list_assumptions(self, matter_id: str, limit: int = 30) -> list[dict]:
+        return await self._get(f"/matter/{matter_id}/assumptions?limit={limit}")

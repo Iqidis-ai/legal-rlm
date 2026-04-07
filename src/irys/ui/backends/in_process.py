@@ -445,6 +445,10 @@ class InProcessBackend(UIBackend):
             "damages_waterfall": model.get_damages_waterfall(),
         }
 
+    async def list_assumptions(self, matter_id: str, limit: int = 30) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.assumptions.get_all(max_rows=limit)
+
     # ------------------------------------------------------------------ #
     # Streaming investigation (InProcessBackend-specific)                 #
     # ------------------------------------------------------------------ #
