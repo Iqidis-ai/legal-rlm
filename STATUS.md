@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 r50 CLEAN — 7 commits: api.py matter model lifecycle (eviction, async rehydration, concurrency, size limits); 740 tests passing)
+Last updated: 2026-04-06 (Tier 1 r55 CLEAN — api.py sync matter lifecycle complete; adversarial #032: SO-3 UI gap HIGH + fake SO metrics HIGH)
 Branch: SebihSpecial
 
 ---
@@ -17,15 +17,13 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 
 | Outcome | Status | Notes |
 |---------|--------|-------|
-| SO-1: Durable Matter Model | **PASS** | Audit #022 PASS — hot path genuinely reuses persisted state via run-start context, hydration, and caches |
-| SO-2: Typed Assertion Graph + Truth Maintenance | **PARTIAL** | Audit #022: belief revision + proof_state recompute real. SPO retry now covers partial coverage. assertion_revision table (v34) closes Q4 HIGH. Remaining: success signal now exposes propagation_truncated; review SO-2 coverage rate |
-| SO-3: User-Steerable Reasoning | **PASS** | Audit #022 PASS — stop/redirect/correction/clarification/annotations/trust all wired |
-| SO-4: Issue-Driven Architecture | **PARTIAL** | Audit #022: weighted coverage used by loop. Predicate resolution now wired in production (ANALYZE_FINDINGS_PROMPT step 5 → resolve_predicate_by_description). Remaining: _focus_issue_id attribution is heuristic |
-| SO-5: Source-Aware Intelligence | **PASS** | Audit #022 PASS — source-role classification, trust overrides, advocacy-only gating are real behavioral changes |
-| SO-6: Quantitative Intelligence | **PASS** | Audit #022 PASS — numeric facts structured, persisted, reconciled, conflict-checked, force-surfaced |
-| SO-7: Missingness Modeled | **PASS** | Audit #022 PASS — gaps tied to issues/assertions, surfaced in synthesis, converted to clarifications |
-| SO-6: Quantitative Intelligence | **PARTIAL** | Audit #021: quant is a sidecar subsystem, not core retrieval/proof backbone. Real gates + reconciliation, but not mandatory in all proof paths |
-| SO-7: Missingness Modeled | **PASS** | Audit #021 PASS — gaps recorded, proof gaps detected, high-materiality gaps generate clarifications |
+| SO-1: Durable Matter Model | **PASS** | Audit #032: enqueue DB-first ✓, pending work reloads on reopen ✓ |
+| SO-2: Typed Assertion Graph + Truth Maintenance | **PARTIAL** | Audit #032: assertion_revision for NULL→non-NULL ✓. Remaining: propagation_truncated signal; SO-2 coverage rate |
+| SO-3: User-Steerable Reasoning | **PARTIAL** | Audit #032 HIGH: Gradio hard-wired to InProcessBackend; live trace is raw strings not structured SSE; no UI/service resume route. Stop/redirect/correction wired in backend but not exercisable through shipped UI surface. |
+| SO-4: Issue-Driven Architecture | **PARTIAL** | Audit #032: heuristic issue attribution (LLM issue_idx + Jaccard gate), not hard issue-grounded retrieval backbone |
+| SO-5: Source-Aware Intelligence | **PASS** | Audit #031 PASS — source-role classification, trust overrides, advocacy-only gating real |
+| SO-6: Quantitative Intelligence | **PASS** | Audit #031 PASS — numeric facts structured, reconciled, conflict-checked |
+| SO-7: Missingness Modeled | **PASS** | Audit #031 PASS — gaps recorded, proof gaps detected, high-materiality gaps generate clarifications |
 
 ---
 
