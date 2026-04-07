@@ -137,9 +137,27 @@ class InProcessBackend(UIBackend):
             ],
         }
 
+    def _resolve_active_run_id(self, model: Any, run_id: str) -> str:
+        """HIGH adv#035/r82: if run_id points to an interrupted run, find the actually
+        running run for this matter. This handles the UI steerability gap where
+        current_run_id still points to the old interrupted run during a resumed
+        investigation (do_resume() updates current_run_id only after completion)."""
+        run = model.ledger.get_run(run_id)
+        if run is not None and run.status == "interrupted":
+            active = model.db.execute(
+                "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
+                " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))"
+                " ORDER BY started_at DESC LIMIT 1",
+                (model.matter_id,),
+            ).fetchone()
+            if active:
+                return active["id"]
+        return run_id
+
     async def stop_run(self, matter_id: str, run_id: str) -> dict:
         try:
             model = self._get_matter_model(matter_id)
+            run_id = self._resolve_active_run_id(model, run_id)
             run = model.ledger.get_run(run_id)
             if run and run.objective in ("manual_flush", "background_flush"):
                 return {"status": "error", "detail": f"Run '{run_id}' is a utility flush run and cannot be stopped"}
@@ -363,6 +381,7 @@ class InProcessBackend(UIBackend):
     ) -> dict:
         model = self._get_matter_model(matter_id)
         try:
+            run_id = self._resolve_active_run_id(model, run_id)
             run = model.ledger.get_run(run_id)
             if run is None:
                 return {"status": "error", "detail": f"Run '{run_id}' not found"}
