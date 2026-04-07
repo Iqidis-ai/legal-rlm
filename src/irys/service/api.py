@@ -1541,8 +1541,8 @@ async def redirect_investigation(matter_id: str, run_id: str, request: RedirectR
     run = model.ledger.get_run(run_id)
     if run is None or run.matter_id != model.matter_id:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in this matter")
-    if run.status != "running":
-        raise HTTPException(status_code=409, detail=f"Run is not active (status: {run.status})")
+    if run.status not in ("running", "interrupted"):
+        raise HTTPException(status_code=409, detail=f"Run is not active or interrupted (status: {run.status})")
     if run.objective in ("manual_flush", "background_flush"):
         raise HTTPException(status_code=409, detail=f"Run '{run_id}' is a utility flush run and cannot be redirected")
     issue = model.issues.get_issue(request.issue_id)
@@ -2817,7 +2817,7 @@ async def resume_run(matter_id: str, run_id: str):
     # production use with long-running resumes, move this to the background-jobs
     # mechanism (same as the async /investigate endpoint).
     try:
-        result = await irys.resume_investigation(checkpoint_path)
+        result = await irys.resume_investigation(checkpoint_path, original_run_id=run_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Resume failed: {exc}") from exc
 

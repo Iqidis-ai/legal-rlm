@@ -82,10 +82,20 @@ class InProcessBackend(UIBackend):
 
     def _get_irys(self) -> Irys:
         if self._irys is None:
+            import os
+            import tempfile
+            from pathlib import Path as _Path
+            # Default checkpoint_dir so stop→resume works out of the box.
+            # Uses IRYS_CHECKPOINT_DIR env var if set, otherwise a persistent
+            # tempdir path (survives for the session).
+            ckpt = os.environ.get("IRYS_CHECKPOINT_DIR") or str(
+                _Path(tempfile.gettempdir()) / "irys" / "checkpoints"
+            )
             self._irys = Irys(
                 config=IrysConfig(
                     api_key=self.api_key,
                     enable_matter_model=True,
+                    checkpoint_dir=ckpt,
                 )
             )
         return self._irys
@@ -161,7 +171,7 @@ class InProcessBackend(UIBackend):
             # Wire the same matter model so ledger entries go to the correct DB
             irys._ensure_initialized()
             irys._engine._matter_model = model
-            result = await irys.resume_investigation(checkpoint_path)
+            result = await irys.resume_investigation(checkpoint_path, original_run_id=run_id)
             new_run_id = getattr(result.state, "_run_id", None)
             return {"status": "resumed", "run_id": run_id, "new_run_id": new_run_id}
         except Exception as exc:

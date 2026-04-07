@@ -187,11 +187,14 @@ class Irys:
     async def resume_investigation(
         self,
         checkpoint_path: "str | Path",
+        original_run_id: "str | None" = None,
     ) -> "InvestigationResult":
         """Resume a stopped investigation from a checkpoint file.
 
         Args:
             checkpoint_path: Path to the checkpoint file (from run_session.next_action)
+            original_run_id: The interrupted run_session.id; if it has a pending redirect,
+                the redirect is propagated to the new resumed run (SO-3 stop→redirect→resume).
 
         Returns:
             InvestigationResult with findings and output from the resumed run
@@ -200,7 +203,9 @@ class Irys:
 
         self._telemetry.start_operation("resume_investigation")
         try:
-            state = await self._engine.resume_investigation(checkpoint_path)
+            state = await self._engine.resume_investigation(
+                checkpoint_path, original_run_id=original_run_id
+            )
         finally:
             self._telemetry.end_operation(
                 "resume_investigation",

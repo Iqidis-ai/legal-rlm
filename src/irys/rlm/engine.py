@@ -4754,12 +4754,16 @@ class RLMEngine:
     async def resume_investigation(
         self,
         checkpoint_path: str | Path,
+        original_run_id: "str | None" = None,
     ) -> InvestigationState:
         """
         Resume investigation from checkpoint.
 
         Args:
             checkpoint_path: Path to checkpoint file
+            original_run_id: The interrupted run_session.id to check for a pending
+                redirect (set by user via request_redirect() after stop). If present
+                and redirect_requested=1, the redirect is propagated to the new run.
 
         Returns:
             InvestigationState with completed investigation
@@ -4767,7 +4771,7 @@ class RLMEngine:
         state = InvestigationState.load_checkpoint(checkpoint_path)
         repo = MatterRepository(state.repository_path)
 
-        self._emit_step(state, StepType.THINKING, f"Resuming investigation from checkpoint")
+        self._emit_step(state, StepType.THINKING, "Resuming investigation from checkpoint")
 
         # Wire matter adapter so resumed runs get ledger entries + stop propagation
         from ..matter.runtime import MatterRuntimeAdapter, NullMatterAdapter
@@ -4775,6 +4779,20 @@ class RLMEngine:
         if self.config.enable_matter_model and self._matter_model is not None:
             run_id = self._matter_model.start_run(f"Resume: {state.query[:120]}")
             state._matter_adapter = MatterRuntimeAdapter(self._matter_model, run_id)
+
+            # Propagate pending redirect from original interrupted run (SO-3).
+            # When a user clicks Redirect on a stopped run, the redirect_requested flag
+            # and active_branch_issue_id are stored on the old run. We copy them to the
+            # new run so _investigate_loop() picks up the user's chosen focus.
+            if original_run_id is not None:
+                try:
+                    orig = self._matter_model.ledger.get_run(original_run_id)
+                    if orig and orig.redirect_requested and orig.active_branch_issue_id:
+                        self._matter_model.ledger.request_redirect(
+                            run_id, orig.active_branch_issue_id
+                        )
+                except Exception:
+                    pass
         else:
             state._matter_adapter = NullMatterAdapter()
 
