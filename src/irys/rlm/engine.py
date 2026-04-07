@@ -537,7 +537,7 @@ class RLMEngine:
                 "success_criteria": "",
                 "key_issues": [],
                 "strategy": f"{'SIMPLE' if is_simple else 'COMPLEX'} synthesis, "
-                           f"{'docs only' if can_answer_from_docs else f'needs external — gap: {gap}'}",
+                           f"{'docs only' if can_answer_from_docs else f'requires external legal research — gap: {gap}'}",
                 "iteration": 1,
             },
         )
