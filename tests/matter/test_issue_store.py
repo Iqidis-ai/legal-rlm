@@ -429,3 +429,148 @@ def test_add_predicates_batch_deduplicates_input(model):
     )
     assert len(ids) == 2
     assert len(model.issues.get_predicates(issue_id)) == 2
+
+
+# ---------------------------------------------------------------------------
+# Gap 3: Predicate status transitions (open → resolved/contested/blocked)
+# ---------------------------------------------------------------------------
+
+def test_set_predicate_status_contested(model):
+    """Predicate can be set to 'contested' when evidence supports both sides."""
+    issue_id, _ = model.issues.upsert_issue("Contested claim", IssueType.CLAIM)
+    pred_id = model.issues.add_predicate(issue_id, "duty of care existed")
+    assert model.issues.set_predicate_status(pred_id, "contested")
+    preds = model.issues.get_predicates_by_status(issue_id, statuses=("contested",))
+    assert len(preds) == 1
+    assert preds[0]["status"] == "contested"
+
+
+def test_set_predicate_status_blocked(model):
+    """Predicate can be set to 'blocked' when assumption gate fails."""
+    issue_id, _ = model.issues.upsert_issue("Blocked claim", IssueType.CLAIM)
+    pred_id = model.issues.add_predicate(issue_id, "contract was signed")
+    assert model.issues.set_predicate_status(pred_id, "blocked")
+    preds = model.issues.get_predicates_by_status(issue_id, statuses=("blocked",))
+    assert len(preds) == 1
+    assert preds[0]["status"] == "blocked"
+
+
+def test_set_predicate_status_invalid_raises(model):
+    """Invalid status raises ValueError."""
+    issue_id, _ = model.issues.upsert_issue("Bad status", IssueType.CLAIM)
+    pred_id = model.issues.add_predicate(issue_id, "some element")
+    with pytest.raises(ValueError, match="Invalid predicate status"):
+        model.issues.set_predicate_status(pred_id, "invalid_status")
+
+
+def test_get_predicates_by_status_multi(model):
+    """get_predicates_by_status returns predicates matching multiple statuses."""
+    issue_id, _ = model.issues.upsert_issue("Multi-status", IssueType.CLAIM)
+    p1 = model.issues.add_predicate(issue_id, "element A")
+    p2 = model.issues.add_predicate(issue_id, "element B")
+    p3 = model.issues.add_predicate(issue_id, "element C")
+    model.issues.set_predicate_status(p1, "contested")
+    model.issues.set_predicate_status(p2, "blocked")
+    # p3 stays open
+    mixed = model.issues.get_predicates_by_status(
+        issue_id, statuses=("open", "contested", "blocked")
+    )
+    assert len(mixed) == 3
+    statuses = {p["status"] for p in mixed}
+    assert statuses == {"open", "contested", "blocked"}
+
+
+def test_predicate_status_back_to_open(model):
+    """A contested/blocked predicate can be reset to open."""
+    issue_id, _ = model.issues.upsert_issue("Reset", IssueType.CLAIM)
+    pred_id = model.issues.add_predicate(issue_id, "element X")
+    model.issues.set_predicate_status(pred_id, "contested")
+    model.issues.set_predicate_status(pred_id, "open")
+    preds = model.issues.get_predicates(issue_id)
+    assert len(preds) == 1
+    assert preds[0]["status"] == "open"
+
+
+# ---------------------------------------------------------------------------
+# Gap 3: AssumptionStore CRUD
+# ---------------------------------------------------------------------------
+
+def test_assumption_upsert_and_get(model):
+    """Basic assumption creation and retrieval."""
+    aid = model.assumptions.upsert(
+        statement="Contract was validly executed",
+        rationale="No signed copy produced yet",
+        invalidation_condition="Opposing party produces unsigned draft only",
+    )
+    assert aid
+    active = model.assumptions.get_active()
+    assert len(active) == 1
+    assert active[0]["statement"] == "Contract was validly executed"
+    assert active[0]["status"] == "provisional"
+
+
+def test_assumption_dedup(model):
+    """Same statement re-upserted returns existing ID and updates fields."""
+    aid1 = model.assumptions.upsert(statement="Jurisdiction is proper")
+    aid2 = model.assumptions.upsert(
+        statement="Jurisdiction is proper",
+        rationale="Updated rationale",
+    )
+    assert aid1 == aid2
+    assert model.assumptions.count() == 1
+
+
+def test_assumption_confirm_and_invalidate(model):
+    """Assumptions can be confirmed or invalidated."""
+    aid = model.assumptions.upsert(statement="Statute of limitations not expired")
+    model.assumptions.confirm(aid)
+    all_a = model.assumptions.get_all()
+    assert all_a[0]["status"] == "confirmed"
+    # Confirmed assumptions don't appear in get_active (only provisional)
+    assert len(model.assumptions.get_active()) == 0
+
+    aid2 = model.assumptions.upsert(statement="Defendant was served properly")
+    model.assumptions.invalidate(aid2, reason="Service was defective")
+    all_a = model.assumptions.get_all()
+    inv = [a for a in all_a if a["status"] == "invalidated"]
+    assert len(inv) == 1
+
+
+def test_assumption_link_and_blocking(model):
+    """Linked invalidated assumption blocks its target."""
+    issue_id, _ = model.issues.upsert_issue("Breach claim", IssueType.CLAIM)
+    pred_id = model.issues.add_predicate(issue_id, "contract existed")
+
+    aid = model.assumptions.upsert(statement="Signed contract is authentic")
+    model.assumptions.link(aid, "predicate", pred_id)
+
+    # Provisional assumption doesn't block
+    assert not model.assumptions.has_blocking_assumptions("predicate", pred_id)
+    assert model.assumptions.has_unresolved_assumptions("predicate", pred_id)
+
+    # Invalidated assumption blocks
+    model.assumptions.invalidate(aid, reason="Signature disputed")
+    assert model.assumptions.has_blocking_assumptions("predicate", pred_id)
+    assert not model.assumptions.has_unresolved_assumptions("predicate", pred_id)
+
+
+def test_assumption_link_idempotent(model):
+    """Duplicate link returns existing ID without creating a new row."""
+    aid = model.assumptions.upsert(statement="Test assumption")
+    lid1 = model.assumptions.link(aid, "issue", "iss-123")
+    lid2 = model.assumptions.link(aid, "issue", "iss-123")
+    assert lid1 == lid2
+
+
+def test_assumption_get_for_target(model):
+    """get_for_target returns assumptions linked to a specific target."""
+    aid1 = model.assumptions.upsert(statement="Assumption A")
+    aid2 = model.assumptions.upsert(statement="Assumption B")
+    model.assumptions.link(aid1, "issue", "iss-1")
+    model.assumptions.link(aid2, "issue", "iss-1")
+    model.assumptions.link(aid1, "issue", "iss-2")
+
+    linked = model.assumptions.get_for_target("issue", "iss-1")
+    assert len(linked) == 2
+    linked2 = model.assumptions.get_for_target("issue", "iss-2")
+    assert len(linked2) == 1

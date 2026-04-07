@@ -1,5 +1,6 @@
 """AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
-DocumentInventoryStore, TrustOverrideStore, DocumentAnnotationStore, ReasoningCacheStore.
+DocumentInventoryStore, TrustOverrideStore, DocumentAnnotationStore, ReasoningCacheStore,
+AssumptionStore.
 
 The assertion store is the heart of the intelligence layer. It maintains
 typed assertions with speech-act classification, support/attack links,
@@ -1760,6 +1761,44 @@ class IssueStore:
                 (predicate_id, self.matter_id),
             )
         return cursor.rowcount > 0
+
+    def set_predicate_status(
+        self, predicate_id: str, status: str, reason: str | None = None
+    ) -> bool:
+        """Set predicate status to any valid value (Gap 3: conditional logic).
+
+        Valid statuses: open, resolved, contested, blocked.
+        Returns True if updated.
+        """
+        valid = ("open", "resolved", "contested", "blocked")
+        if status not in valid:
+            raise ValueError(f"Invalid predicate status '{status}'; must be one of {valid}")
+        with self.db.transaction():
+            cursor = self.db.execute(
+                "UPDATE issue_predicate SET status=?"
+                " WHERE id=? AND issue_id IN (SELECT id FROM issue WHERE matter_id=?)",
+                (status, predicate_id, self.matter_id),
+            )
+        return cursor.rowcount > 0
+
+    def get_predicates_by_status(
+        self,
+        issue_id: str,
+        statuses: tuple[str, ...] = ("open", "contested", "blocked"),
+    ) -> list[dict]:
+        """Return predicates for an issue filtered by status(es).
+
+        Extends get_predicates() to support the full status lifecycle
+        (open/resolved/contested/blocked) introduced in Gap 3.
+        """
+        placeholders = ",".join("?" for _ in statuses)
+        rows = self.db.execute(
+            f"SELECT id, issue_id, description, burden_side, status, created_at"
+            f" FROM issue_predicate WHERE issue_id=? AND status IN ({placeholders})"
+            f" ORDER BY created_at",
+            (issue_id, *statuses),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def resolve_predicate_by_description(self, issue_id: str, description: str) -> bool:
         """Mark the first open predicate matching description as resolved.
@@ -3991,3 +4030,158 @@ class ProofStateStore:
             score = assertion_ratio
 
         return round(min(max(score, 0.0), 1.0), 4)
+
+
+class AssumptionStore:
+    """CRUD for the assumption / assumption_link tables (Gap 3: conditional logic).
+
+    Assumptions are provisional beliefs that gate predicate resolution.
+    Each assumption can be linked to issues, predicates, or assertions via
+    assumption_link. When an assumption is invalidated, any predicate it
+    guards should be marked 'blocked' rather than resolved.
+
+    Status lifecycle: provisional → confirmed | invalidated
+    """
+
+    VALID_STATUSES = ("provisional", "confirmed", "invalidated")
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def upsert(
+        self,
+        statement: str,
+        rationale: str | None = None,
+        invalidation_condition: str | None = None,
+        source_kind: str = "system",
+        status: str = "provisional",
+    ) -> str:
+        """Insert or update an assumption. Returns assumption ID.
+
+        Deduplicates on (matter_id, statement) — if an assumption with the same
+        statement already exists, updates rationale/condition/status and returns
+        the existing ID.
+        """
+        now = _now()
+        existing = self.db.execute(
+            "SELECT id FROM assumption WHERE matter_id=? AND statement=?",
+            (self.matter_id, statement),
+        ).fetchone()
+        if existing:
+            aid = existing["id"]
+            self.db.execute(
+                "UPDATE assumption SET rationale=?, invalidation_condition=?,"
+                " source_kind=?, status=?, updated_at=? WHERE id=?",
+                (rationale, invalidation_condition, source_kind, status, now, aid),
+            )
+            return aid
+        aid = _id()
+        self.db.execute(
+            "INSERT INTO assumption (id, matter_id, statement, rationale,"
+            " invalidation_condition, source_kind, status, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (aid, self.matter_id, statement, rationale,
+             invalidation_condition, source_kind, status, now, now),
+        )
+        return aid
+
+    def link(self, assumption_id: str, target_type: str, target_id: str) -> str:
+        """Link an assumption to a target (issue, predicate, assertion).
+
+        Returns link ID. Idempotent — duplicate links are ignored.
+        """
+        existing = self.db.execute(
+            "SELECT id FROM assumption_link WHERE assumption_id=?"
+            " AND target_type=? AND target_id=?",
+            (assumption_id, target_type, target_id),
+        ).fetchone()
+        if existing:
+            return existing["id"]
+        lid = _id()
+        self.db.execute(
+            "INSERT INTO assumption_link (id, assumption_id, target_type,"
+            " target_id, created_at) VALUES (?,?,?,?,?)",
+            (lid, assumption_id, target_type, target_id, _now()),
+        )
+        return lid
+
+    def get_for_target(
+        self, target_type: str, target_id: str, max_rows: int = 50
+    ) -> list[dict]:
+        """Return assumptions linked to a specific target."""
+        rows = self.db.execute(
+            "SELECT a.* FROM assumption a"
+            " JOIN assumption_link al ON al.assumption_id = a.id"
+            " WHERE al.target_type=? AND al.target_id=? AND a.matter_id=?"
+            " ORDER BY a.created_at DESC LIMIT ?",
+            (target_type, target_id, self.matter_id, max_rows),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_active(self, max_rows: int = 50) -> list[dict]:
+        """Return all provisional assumptions for this matter."""
+        rows = self.db.execute(
+            "SELECT * FROM assumption WHERE matter_id=? AND status='provisional'"
+            " ORDER BY created_at DESC LIMIT ?",
+            (self.matter_id, max_rows),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_all(self, max_rows: int = 100) -> list[dict]:
+        """Return all assumptions for this matter regardless of status."""
+        rows = self.db.execute(
+            "SELECT * FROM assumption WHERE matter_id=?"
+            " ORDER BY created_at DESC LIMIT ?",
+            (self.matter_id, max_rows),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_status(self, assumption_id: str, status: str, reason: str | None = None) -> bool:
+        """Set assumption status. Returns True if updated."""
+        if status not in self.VALID_STATUSES:
+            raise ValueError(f"Invalid assumption status: {status}")
+        now = _now()
+        cursor = self.db.execute(
+            "UPDATE assumption SET status=?, rationale=COALESCE(?, rationale),"
+            " updated_at=? WHERE id=? AND matter_id=?",
+            (status, reason, now, assumption_id, self.matter_id),
+        )
+        return cursor.rowcount > 0
+
+    def confirm(self, assumption_id: str) -> bool:
+        """Mark assumption as confirmed."""
+        return self.set_status(assumption_id, "confirmed")
+
+    def invalidate(self, assumption_id: str, reason: str | None = None) -> bool:
+        """Mark assumption as invalidated."""
+        return self.set_status(assumption_id, "invalidated", reason)
+
+    def count(self) -> int:
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM assumption WHERE matter_id=?",
+            (self.matter_id,),
+        ).fetchone()
+        return row[0]
+
+    def has_blocking_assumptions(self, target_type: str, target_id: str) -> bool:
+        """Check if any linked assumptions are invalidated (blocking the target)."""
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM assumption a"
+            " JOIN assumption_link al ON al.assumption_id = a.id"
+            " WHERE al.target_type=? AND al.target_id=? AND a.matter_id=?"
+            " AND a.status='invalidated'",
+            (target_type, target_id, self.matter_id),
+        ).fetchone()
+        return row[0] > 0
+
+    def has_unresolved_assumptions(self, target_type: str, target_id: str) -> bool:
+        """Check if any linked assumptions are still provisional (unresolved)."""
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM assumption a"
+            " JOIN assumption_link al ON al.assumption_id = a.id"
+            " WHERE al.target_type=? AND al.target_id=? AND a.matter_id=?"
+            " AND a.status='provisional'",
+            (target_type, target_id, self.matter_id),
+        ).fetchone()
+        return row[0] > 0

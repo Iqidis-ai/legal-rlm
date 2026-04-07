@@ -213,6 +213,20 @@ def _format_matter_context(ctx) -> str:
             txt = (ann.get("annotation_text") or "")[:150]
             ann_type = (ann.get("annotation_type") or "strategic").upper()
             lines.append(f"  [{ann_type}] {doc}: {txt}")
+    # Gap 3: surface active assumptions so orientation/synthesis can caveat conclusions
+    if getattr(ctx, "active_assumptions", None):
+        lines.append(f"- Active assumptions ({len(ctx.active_assumptions)} provisional):")
+        for asm in ctx.active_assumptions[:8]:
+            stmt = (asm.get("statement") or "")[:120]
+            cond = asm.get("invalidation_condition") or ""
+            line = f"  * ASSUMED: {stmt}"
+            if cond:
+                line += f" [invalidated if: {cond[:80]}]"
+            lines.append(line)
+        lines.append(
+            "  → Conclusions depending on these assumptions must be qualified. "
+            "If evidence contradicts an assumption, flag the conflict."
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -268,7 +282,8 @@ Respond in COMPACT JSON (keep under 3000 chars):
     "new_leads": [{{"desc": "...", "priority": 0.8}}],
     "hypothesis_update": "string or null",
     "next_searches": ["term1", "term2"],
-    "predicates_satisfied": ["verbatim element text from Issue Focus, or empty array"]
+    "predicates_satisfied": ["verbatim element text from Issue Focus, or empty array"],
+    "predicates_contested": ["verbatim element text where evidence supports BOTH sides, or empty array"]
 }}
 """
 
@@ -2025,6 +2040,7 @@ class RLMEngine:
                 "hypothesis_update": None,
                 "next_searches": [],
                 "predicates_satisfied": [],
+                "predicates_contested": [],
             })
             # Cache for warm runs
             if self._matter_model is not None:
@@ -2232,9 +2248,61 @@ class RLMEngine:
                 _orig = _allowed.get(_ps_key)
                 if _orig:
                     try:
+                        # Gap 3: check assumption gates before resolving.
+                        # Find the predicate row to get its ID for assumption checks.
+                        _pred_rows = self._matter_model.issues.get_predicates(
+                            _focus_issue_id, limit=20
+                        )
+                        _pred_match = next(
+                            (p for p in _pred_rows
+                             if (p.get("description") or "").strip().lower() == _ps_key),
+                            None
+                        )
+                        if _pred_match:
+                            pid = _pred_match["id"]
+                            # If any linked assumption is invalidated → block the predicate
+                            if self._matter_model.assumptions.has_blocking_assumptions(
+                                "predicate", pid
+                            ):
+                                self._matter_model.issues.set_predicate_status(
+                                    pid, "blocked"
+                                )
+                                continue
+                        # No blocking assumptions → resolve normally
                         self._matter_model.issues.resolve_predicate_by_description(
                             _focus_issue_id, _orig
                         )
+                    except Exception:
+                        pass
+
+        # Gap 3: handle contested predicates — LLM signals that evidence
+        # supports both sides of an element.
+        _preds_contested = analysis.get("predicates_contested") or []
+        if (isinstance(_preds_contested, list) and _focus_issue_id
+                and self._matter_model is not None and _pred_allowlist):
+            _allowed_c = {
+                d.strip('"').strip("'").strip().lower(): d
+                for d in _pred_allowlist
+            }
+            for _pc in _preds_contested:
+                if not isinstance(_pc, str):
+                    continue
+                _pc_key = _pc.strip().strip('"').strip("'").strip().lower()
+                _orig_c = _allowed_c.get(_pc_key)
+                if _orig_c:
+                    try:
+                        _pred_rows_c = self._matter_model.issues.get_predicates(
+                            _focus_issue_id, limit=20
+                        )
+                        _pred_match_c = next(
+                            (p for p in _pred_rows_c
+                             if (p.get("description") or "").strip().lower() == _pc_key),
+                            None
+                        )
+                        if _pred_match_c:
+                            self._matter_model.issues.set_predicate_status(
+                                _pred_match_c["id"], "contested"
+                            )
                     except Exception:
                         pass
 
@@ -3438,6 +3506,22 @@ class RLMEngine:
             lines.append(f"  Issue: \"{title}\"")
             for desc in pred_descs:
                 lines.append(f"  Element to prove: \"{desc}\"")
+
+            # Gap 3: surface contested/blocked predicates so the LLM knows
+            # which elements are disputed or assumption-gated.
+            contested = self._matter_model.issues.get_predicates_by_status(
+                focus_issue_id, statuses=("contested", "blocked")
+            )
+            for cp in contested[:3]:
+                status = cp.get("status", "")
+                desc = cp.get("description", "")
+                if status == "contested":
+                    lines.append(f"  ⚠ CONTESTED element: \"{desc}\" — parties disagree; "
+                                 "present BOTH sides with supporting evidence.")
+                elif status == "blocked":
+                    lines.append(f"  🚫 BLOCKED element: \"{desc}\" — depends on an unresolved "
+                                 "assumption; note the dependency, do not treat as established.")
+
             lines.append("  → Extract facts that support OR disprove these specific elements.")
             block = "\n".join(lines) + "\n"
             # Escape braces so the block is safe to pass through str.format() in the

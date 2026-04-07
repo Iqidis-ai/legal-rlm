@@ -22,7 +22,7 @@ from .db import SQLiteMatterDB
 from .graph import (
     AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
     DocumentInventoryStore, ReasoningCacheStore, TrustOverrideStore, DocumentAnnotationStore,
-    DecisionContextStore, AuthorityStore, ProofStateStore,
+    DecisionContextStore, AuthorityStore, ProofStateStore, AssumptionStore,
 )
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
@@ -74,6 +74,7 @@ class MatterModel:
         self.decision_context = DecisionContextStore(db, matter_id)
         self.authority = AuthorityStore(db, matter_id)
         self.proof_state = ProofStateStore(db, matter_id)
+        self.assumptions = AssumptionStore(db, matter_id)
         # In-memory snapshot of assertion counts captured at run start.
         # Keyed by run_id.  Allows complete_run() to compute reuse_rate without
         # an extra SELECT round-trip (DB is the authoritative fallback).
@@ -1005,6 +1006,10 @@ class MatterModel:
         ).fetchall()
         key_predicates = [r["predicate_key"] for r in pred_rows]
 
+        # Gap 3: inject active assumptions so the engine can surface them in
+        # orientation and respect assumption-gated predicates.
+        active_assumptions = self.assumptions.get_active(max_rows=20)
+
         return QueryMatterContext(
             matter_id=self.matter_id,
             matter_name=matter_name,
@@ -1018,6 +1023,7 @@ class MatterModel:
             document_annotations=document_annotations,
             weakest_issue_id=weakest_issue_id,
             key_predicates=key_predicates,
+            active_assumptions=active_assumptions,
         )
 
     @staticmethod
