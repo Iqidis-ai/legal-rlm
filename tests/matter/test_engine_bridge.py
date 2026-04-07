@@ -301,7 +301,7 @@ def test_build_source_calibration_groups_by_role():
 
     assert "ADVOCACY" in calibration or "advocacy" in calibration.lower()
     assert "OPERATIVE" in calibration or "operative" in calibration.lower()
-    assert "WARNING" in calibration  # always has the advocacy amplification warning
+    assert "ANTI-AMPLIFICATION" in calibration  # always has the advocacy anti-amplification rules
 
 
 def test_build_source_calibration_no_model():

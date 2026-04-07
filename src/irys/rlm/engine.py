@@ -2931,8 +2931,10 @@ class RLMEngine:
                 why="All leads exhausted or investigation complete",
             )
 
-        # Compile all findings
+        # Compile all findings, sorted by source trust (Gap 2: trust-aware synthesis).
+        # Operative/authoritative facts appear first so the LLM weights them more heavily.
         facts = state.findings.get("accumulated_facts", [])
+        facts = self._sort_facts_by_trust(facts)
         findings_text = "\n".join(f"• {fact}" for fact in facts[:75])
 
         # Get citations with verification status
@@ -3612,6 +3614,34 @@ class RLMEngine:
         lines.append("")  # blank line before next block
         return "\n".join(lines) + "\n"
 
+    # Trust rank for sorting facts: lower = higher trust = appears first.
+    _TRUST_RANK = {
+        "OPERATIVE": 0, "AUTHORITATIVE": 1, "PROCEDURAL": 2,
+        "INFORMAL": 3, "DRAFT": 4, "POST_HOC": 5, "ADVOCACY": 6,
+        "UNKNOWN": 7,
+    }
+    _ROLE_PATTERN = __import__("re").compile(r'^\[([A-Z_]+(?:\[[^\]]*\])?)\]')
+
+    def _sort_facts_by_trust(self, facts: list[str]) -> list[str]:
+        """Sort facts by source-role trust rank (Gap 2: trust-aware synthesis).
+
+        Operative/authoritative facts appear first, advocacy last. Multi-source
+        facts use the highest-trust role. Unknown/unprefixed facts sort last.
+        """
+        def _rank(fact: str) -> int:
+            m = self._ROLE_PATTERN.match(fact)
+            if not m:
+                return 99
+            tag = m.group(1)
+            # Handle MULTI-SOURCE[OPERATIVE,ADVOCACY] → use best role
+            if tag.startswith("MULTI-SOURCE"):
+                inner = tag[len("MULTI-SOURCE["):-1] if tag.endswith("]") else ""
+                roles = [r.strip() for r in inner.split(",")]
+                return min(self._TRUST_RANK.get(r, 99) for r in roles) if roles else 99
+            return self._TRUST_RANK.get(tag, 99)
+
+        return sorted(facts, key=_rank)
+
     def _build_source_calibration(self, state: InvestigationState) -> str:
         """
         Build a source-role calibration block for the synthesis prompt (SO-5).
@@ -3720,8 +3750,23 @@ class RLMEngine:
             pass
 
         lines.append(
-            "\nWARNING: Facts from ADVOCACY sources represent one party's position, not "
-            "established truth. Do not amplify advocacy material as if it were operative fact."
+            "\n=== SOURCE TRUST HIERARCHY (MANDATORY — follow this ordering) ===\n"
+            "1. OPERATIVE (contracts, signed agreements, court orders) — highest trust\n"
+            "2. AUTHORITATIVE (statutes, regulations, published case law)\n"
+            "3. PROCEDURAL (filings, docket entries, certificates of service)\n"
+            "4. INFORMAL (emails, letters, meeting notes)\n"
+            "5. DRAFT (unsigned drafts, redline versions, proposals)\n"
+            "6. POST_HOC (post-hoc explanations, summaries written after events)\n"
+            "7. ADVOCACY (complaints, briefs, demand letters, pleadings) — lowest trust\n"
+            "\nANTI-AMPLIFICATION RULES:\n"
+            "• NEVER present advocacy allegations as established fact.\n"
+            "• ALWAYS qualify advocacy-sourced claims: 'Plaintiff alleges...', "
+            "'According to the complaint...', 'Defendant argues...'.\n"
+            "• When advocacy and operative sources conflict, the operative source controls.\n"
+            "• Do NOT let advocacy material's confident tone inflate its weight.\n"
+            "• If the ONLY source for a proposition is advocacy, explicitly note that "
+            "it lacks independent corroboration.\n"
+            "• Facts corroborated by multiple source types are stronger than single-source facts."
         )
         return "\n".join(lines)
 

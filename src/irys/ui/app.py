@@ -206,30 +206,42 @@ def _fmt_issues(issues: list) -> str:
     return "\n".join(lines)
 
 
+_TRUST_ICONS = {
+    "OPERATIVE": "🟢", "AUTHORITATIVE": "🔵", "PROCEDURAL": "⚪",
+    "INFORMAL": "🟡", "DRAFT": "🟡", "POST_HOC": "🟠", "ADVOCACY": "🔴",
+}
+
+def _trust_icon(role: str) -> str:
+    """Return a colored dot indicating source trust level."""
+    return _TRUST_ICONS.get(role.upper(), "⚪") if role else "⚪"
+
 def _fmt_assertions(assertions: list) -> str:
     if not assertions:
         return "No assertions."
     lines = [
-        "| ID (paste to correct) | Proposition | State | Conf | Source | Speech |",
-        "|-----------------------|-------------|-------|------|--------|--------|",
+        "| Trust | Proposition | State | Conf | Source | Speech | ID |",
+        "|-------|-------------|-------|------|--------|--------|----|",
     ]
     for a in assertions:
         assertion_id = a.get("id", "?")
-        # Full ID — backend correct_assertion() requires exact match.
         prop = (a.get("proposition_text") or "")[:55]
         state = a.get("belief_state") or "—"
         conf = f"{float(a.get('confidence', 0)):.2f}" if a.get("confidence") is not None else "—"
-        # list_recent() returns source_roles (list of distinct roles) + primary_source_role.
-        # Show MULTI-SOURCE[...] when an assertion spans multiple source types (SO-5).
         src_roles = a.get("source_roles", [])
         if len(src_roles) > 1:
-            src = f"MULTI-SOURCE[{','.join(src_roles)}]"
+            src = f"MULTI[{','.join(src_roles)}]"
+            # Use highest-trust role for icon
+            best = min(src_roles, key=lambda r: list(_TRUST_ICONS).index(r.upper())
+                       if r.upper() in _TRUST_ICONS else 99)
+            icon = _trust_icon(best)
         elif src_roles:
             src = src_roles[0]
+            icon = _trust_icon(src)
         else:
             src = a.get("source_role") or a.get("primary_source_role") or "—"
+            icon = _trust_icon(src)
         speech = a.get("speech_act") or a.get("primary_speech_act") or "—"
-        lines.append(f"| `{assertion_id}` | {prop} | {state} | {conf} | {src} | {speech} |")
+        lines.append(f"| {icon} | {prop} | {state} | {conf} | {src} | {speech} | `{assertion_id}` |")
     return "\n".join(lines)
 
 
