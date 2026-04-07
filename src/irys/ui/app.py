@@ -509,13 +509,16 @@ class AppState:
         run_id = self.current_run_id
 
         if matter_id and run_id:
-            # Canonical path: route through the backend abstraction.
-            # Use a short timeout so the click handler stays responsive; the
-            # is_running=False + _stop_event are already set above.
-            try:
-                _run_async(self.backend().stop_run(matter_id, run_id), timeout=5)
-            except Exception:
-                pass
+            # Canonical path: fire-and-forget so the click handler returns
+            # immediately. is_running=False + _stop_event are already set above,
+            # so the UI generator exits; the engine checks the stop flag on its
+            # next iteration and the ledger.request_stop() write lands async.
+            def _do_stop(mid: str, rid: str) -> None:
+                try:
+                    _run_async(self.backend().stop_run(mid, rid))
+                except Exception:
+                    pass
+            threading.Thread(target=_do_stop, args=(matter_id, run_id), daemon=True).start()
         elif self._irys_ref is not None:
             # Early-stop race: no run_id yet — fall back to direct DB query.
             try:
