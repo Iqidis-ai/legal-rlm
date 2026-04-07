@@ -1126,6 +1126,10 @@ class RLMEngine:
                     state, StepType.THINKING,
                     "Stopped by user — partial state preserved",
                 )
+                # MEDIUM r71: clear any partial final_output written by _synthesize()
+                # before it returned early, so callers don't surface an incomplete memo
+                # under an interrupted status.
+                state.findings.pop("final_output", None)
                 self._save_checkpoint(state, iteration=None)
                 state.interrupt()
                 if run_id is not None:
@@ -4942,6 +4946,8 @@ class RLMEngine:
                         state, StepType.THINKING,
                         "Stopped by user — partial state preserved",
                     )
+                    # MEDIUM r71: clear partial final_output (mirrors investigate() path)
+                    state.findings.pop("final_output", None)
                     self._save_checkpoint(state, iteration=None)
                     state.interrupt()
                     if run_id is not None:
