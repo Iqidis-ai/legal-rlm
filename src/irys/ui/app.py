@@ -655,8 +655,8 @@ class AppState:
                         self._last_resume_error = None
             except Exception as exc:
                 self._last_resume_error = str(exc)
+        self._last_resume_error = None  # clear stale error before submit (LOW r69)
         _ASYNC_EXECUTOR.submit(_do_resume)
-        self._last_resume_error = None  # clear stale error on launch
         return f"⏳ Resume of run {run_id} launched — monitor via Overview or Ledger Events. Check _last_resume_error if progress stalls."
 
     def do_redirect(self, matter_id: str, run_id: str, issue_id: str) -> str:

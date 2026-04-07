@@ -1071,6 +1071,21 @@ class RLMEngine:
             # Phase 2.5: Verify citations
             await self._verify_citations(state, repo)
 
+            # Re-check stop after verify — _verify_citations() may have broken out early
+            # without the caller knowing, leaving some citations unchecked. If stop was
+            # requested, save checkpoint and interrupt rather than completing the run.
+            _adapter_post_verify = getattr(state, "_matter_adapter", None)
+            if _adapter_post_verify is not None and _adapter_post_verify.is_stop_requested():
+                self._emit_step(
+                    state, StepType.THINKING,
+                    "Stopped by user during citation verification — partial state preserved",
+                )
+                self._save_checkpoint(state, iteration=None)
+                state.interrupt()
+                if run_id is not None:
+                    self._matter_model.interrupt_run(run_id)
+                return state
+
             # Phase 2.75: Detect gaps BEFORE synthesis so they appear in the memo (SO-7).
             # Running these here means _build_gap_summary() in _synthesize() finds them.
             # Each detector is isolated so one failure never suppresses the other.
@@ -4868,6 +4883,19 @@ class RLMEngine:
 
                 await self._verify_citations(state, repo)
 
+                # Re-check stop after verify — same as investigate() path (HIGH r69)
+                _adapter_post_verify = getattr(state, "_matter_adapter", None)
+                if _adapter_post_verify is not None and _adapter_post_verify.is_stop_requested():
+                    self._emit_step(
+                        state, StepType.THINKING,
+                        "Stopped by user during citation verification — partial state preserved",
+                    )
+                    self._save_checkpoint(state, iteration=None)
+                    state.interrupt()
+                    if run_id is not None:
+                        self._matter_model.interrupt_run(run_id)
+                    return state
+
                 # Phase 2.75: Same maintenance block as normal investigate()
                 if run_id is not None:
                     try:
@@ -4920,6 +4948,16 @@ class RLMEngine:
                 # may still be valid for a re-resume attempt. Only clean up on
                 # successful completion. (adv#034 MEDIUM)
                 self._matter_model.fail_run(run_id, str(e))
+            # HIGH r69: restore next_action on the original interrupted run so it
+            # remains re-resumable. clear_next_action() was called as a fence before
+            # the new run started; if that new run fails we must put the path back.
+            if original_run_id is not None and self._matter_model is not None:
+                try:
+                    self._matter_model.ledger.set_next_action(
+                        original_run_id, str(checkpoint_path)
+                    )
+                except Exception:
+                    pass
             raise
 
         return state
