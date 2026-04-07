@@ -4811,13 +4811,13 @@ class RLMEngine:
             # new run so _investigate_loop() picks up the user's chosen focus.
             if original_run_id is not None:
                 try:
-                    orig = self._matter_model.ledger.get_run(original_run_id)
-                    # Clear next_action on original run FIRST — closes the race window
-                    # where a concurrent /redirect to the old run_id could still succeed
-                    # (request_redirect() requires next_action IS NOT NULL for interrupted
-                    # runs). Must happen before request_redirect() on the new run so no
-                    # redirects to the old run_id can slip in and be lost.
+                    # Fence FIRST: clear_next_action blocks new /redirect calls to the
+                    # old run_id (request_redirect() requires next_action IS NOT NULL for
+                    # interrupted runs). Read orig AFTER the fence so we see the committed
+                    # redirect state as of the fence point — avoids a stale-snapshot race
+                    # where a concurrent redirect arrives between the read and the fence.
                     self._matter_model.ledger.clear_next_action(original_run_id)
+                    orig = self._matter_model.ledger.get_run(original_run_id)
                     if orig and orig.redirect_requested and orig.active_branch_issue_id:
                         self._matter_model.ledger.request_redirect(
                             run_id, orig.active_branch_issue_id
