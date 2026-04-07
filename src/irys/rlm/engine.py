@@ -2392,8 +2392,14 @@ class RLMEngine:
                     focus_issue_id=_validated_fid_ns,
                 )
 
-        # Deep read top documents in parallel
-        top_files = list(results.by_file().keys())[:self.config.parallel_reads]
+        # Deep read top documents in parallel — sort by best hit score per file
+        # so the most relevant documents get read first (fixes insertion-order bias).
+        _by_file = results.by_file()
+        top_files = sorted(
+            _by_file.keys(),
+            key=lambda fp: max((h.score for h in _by_file[fp]), default=0),
+            reverse=True,
+        )[:self.config.parallel_reads]
         if top_files:
             focus_issue_id = lead.focus_issue_id if lead is not None else None
             await self._batch_deep_read(state, repo, top_files, focus_issue_id=focus_issue_id)
@@ -2545,8 +2551,16 @@ class RLMEngine:
             state.documents_read += 1
             state.llm_calls_required += 1  # SO-1 telemetry: cold-path doc read
 
-            # Use excerpt for analysis
-            content = doc.get_excerpt(self.config.excerpt_chars)
+            # Critical documents (contracts, judgments, complaints, agreements) get
+            # 3x the excerpt window so we don't lose key clauses to truncation.
+            # Uses the same DOCUMENT_PRIORITY weights from search scoring.
+            from ..core.search import get_document_priority
+            _doc_priority = get_document_priority(doc.filename)
+            if _doc_priority >= 1.3:
+                _excerpt_chars = min(self.config.excerpt_chars * 3, len(doc.full_text))
+            else:
+                _excerpt_chars = self.config.excerpt_chars
+            content = doc.get_excerpt(_excerpt_chars)
 
             prompt = DEEP_READ_PROMPT.format(
                 filename=doc.filename,
