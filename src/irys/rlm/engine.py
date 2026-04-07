@@ -4843,13 +4843,15 @@ class RLMEngine:
             InvestigationState with completed investigation
         """
         state = InvestigationState.load_checkpoint(checkpoint_path)
-        # MEDIUM r72/r73: scrub any stale final_output from interrupted checkpoints.
-        # Only applies to status=="interrupted" — completed/failed checkpoints carry a
-        # legitimate memo that must not be erased (MEDIUM r73: unconditional scrub was
-        # too broad). Service and UI callers already enforce interrupted-only, but guard
-        # at the engine level too. A resumed run rewrites final_output via _synthesize();
-        # a re-stopped resume correctly leaves it absent (formatters return empty string).
-        if state.status == "interrupted":
+        # MEDIUM r72/r74: scrub any stale final_output from non-terminal checkpoints.
+        # Checkpoints are written BEFORE interrupt() flips state.status (state.py:1496),
+        # so a checkpoint from an interrupted run serializes its pre-interrupt status
+        # (typically "running"), never "interrupted". The correct guard is
+        # "not completed/failed" — those are the only statuses that carry a legitimate
+        # final memo. Completed/failed checkpoints must not be erased (r73).
+        # Service/UI callers already reject non-interrupted runs via ledger status, but
+        # guard at the engine level for direct callers too.
+        if state.status not in ("completed", "failed"):
             state.findings.pop("final_output", None)
         repo = MatterRepository(state.repository_path)
 
