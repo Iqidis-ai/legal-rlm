@@ -2058,6 +2058,7 @@ class MatterModel:
                WHERE matter_id=? AND status='completed' AND reuse_rate IS NOT NULL
                  AND assertions_at_start > 0
                  AND (objective IS NULL OR (objective != 'manual_flush' AND objective != 'background_flush'))
+                 AND resumed_from IS NULL
                ORDER BY completed_at DESC LIMIT 5""",
             (self.matter_id,),
         ).fetchall()
