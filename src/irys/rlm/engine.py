@@ -5046,10 +5046,25 @@ class RLMEngine:
                 # Do NOT clean up checkpoints on resume failure — the checkpoint
                 # (state.id file) is the original interrupted run's checkpoint and
                 # may still be valid for a re-resume attempt. (adv#034 MEDIUM)
+                # MEDIUM r78: if fail_run() throws (e.g. DB locked), attempt a bare
+                # autocommit UPDATE as a last-resort fallback so the new run doesn't
+                # stay 'running' and block future resumes via the running-run guard.
                 try:
                     self._matter_model.fail_run(run_id, str(e))
-                except Exception:
-                    pass  # Don't mask the original exception with a fail_run failure
+                except Exception as _fail_exc:
+                    logger.warning(
+                        "fail_run(%s) raised during resume cleanup; attempting direct "
+                        "status update fallback: %s",
+                        run_id, _fail_exc,
+                    )
+                    try:
+                        self._matter_model.ledger.db.execute(
+                            "UPDATE run_session SET status='failed'"
+                            " WHERE id=? AND matter_id=?",
+                            (run_id, self._matter_model.matter_id),
+                        )
+                    except Exception:
+                        pass  # Best-effort; manual cleanup may be needed
             raise
 
         return state
