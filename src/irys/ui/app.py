@@ -509,33 +509,34 @@ class AppState:
         run_id = self.current_run_id
 
         if matter_id and run_id:
-            # Canonical path: fire-and-forget so the click handler returns
-            # immediately. is_running=False + _stop_event are already set above,
-            # so the UI generator exits; the engine checks the stop flag on its
-            # next iteration and the ledger.request_stop() write lands async.
-            def _do_stop(mid: str, rid: str) -> None:
-                try:
-                    _run_async(self.backend().stop_run(mid, rid))
-                except Exception:
-                    pass
-            threading.Thread(target=_do_stop, args=(matter_id, run_id), daemon=True).start()
+            # Canonical path: submit directly to the shared executor (bounded at 8
+            # workers) for fire-and-forget. is_running=False + _stop_event are
+            # already set above, so the UI generator exits; the engine picks up
+            # the stop flag on its next iteration. Discarding the future silences
+            # any exception from the stop call (idempotent stop is safe).
+            _ASYNC_EXECUTOR.submit(asyncio.run, self.backend().stop_run(matter_id, run_id))
         elif self._irys_ref is not None:
             # Early-stop race: no run_id yet — fall back to direct DB query.
-            try:
-                engine = self._irys_ref._engine
-                if engine and engine._matter_model:
-                    row = engine._matter_model.db.execute(
-                        "SELECT id FROM run_session WHERE matter_id=?"
-                        " AND status='running'"
-                        " AND (objective IS NULL OR objective NOT IN"
-                        " ('manual_flush','background_flush'))"
-                        " ORDER BY started_at DESC LIMIT 1",
-                        (engine._matter_model.matter_id,),
-                    ).fetchone()
-                    if row:
-                        engine._matter_model.ledger.request_stop(row["id"])
-            except Exception:
-                pass
+            # Run in the executor so the click handler returns without blocking
+            # on SQLite's 5s busy_timeout.
+            irys_ref = self._irys_ref  # snapshot before thread runs
+            def _early_stop() -> None:
+                try:
+                    engine = irys_ref._engine
+                    if engine and engine._matter_model:
+                        row = engine._matter_model.db.execute(
+                            "SELECT id FROM run_session WHERE matter_id=?"
+                            " AND status='running'"
+                            " AND (objective IS NULL OR objective NOT IN"
+                            " ('manual_flush','background_flush'))"
+                            " ORDER BY started_at DESC LIMIT 1",
+                            (engine._matter_model.matter_id,),
+                        ).fetchone()
+                        if row:
+                            engine._matter_model.ledger.request_stop(row["id"])
+                except Exception:
+                    pass
+            threading.Thread(target=_early_stop, daemon=True).start()
         # current_run_id intentionally NOT cleared here — see docstring.
         return gr.update()
 
