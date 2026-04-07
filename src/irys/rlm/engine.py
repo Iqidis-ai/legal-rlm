@@ -1118,6 +1118,20 @@ class RLMEngine:
             # Phase 3: Final synthesis (reads gaps via _build_gap_summary)
             await self._synthesize(state)
 
+            # Re-check stop after synthesis — _synthesize() returns early on stop
+            # (HIGH r70: a stop during Phase 2.75 or synthesis must not complete the run)
+            _adapter_post_synth = getattr(state, "_matter_adapter", None)
+            if _adapter_post_synth is not None and _adapter_post_synth.is_stop_requested():
+                self._emit_step(
+                    state, StepType.THINKING,
+                    "Stopped by user — partial state preserved",
+                )
+                self._save_checkpoint(state, iteration=None)
+                state.interrupt()
+                if run_id is not None:
+                    self._matter_model.interrupt_run(run_id)
+                return state
+
             state.complete()
             if run_id is not None:
                 self._cleanup_checkpoints(state)
@@ -4832,6 +4846,9 @@ class RLMEngine:
         # Wire matter adapter so resumed runs get ledger entries + stop propagation
         from ..matter.runtime import MatterRuntimeAdapter, NullMatterAdapter
         run_id = None
+        # Captured redirect issue so the except block can restore it on resume failure
+        # (MEDIUM r70: clear_redirect clears the flag before work starts; restore on fail)
+        _orig_redirect_issue: "str | None" = None
         if self.config.enable_matter_model and self._matter_model is not None:
             run_id = self._matter_model.start_run(f"Resume: {state.query[:120]}")
             state._matter_adapter = MatterRuntimeAdapter(self._matter_model, run_id)
@@ -4850,6 +4867,7 @@ class RLMEngine:
                     self._matter_model.ledger.clear_next_action(original_run_id)
                     orig = self._matter_model.ledger.get_run(original_run_id)
                     if orig and orig.redirect_requested and orig.active_branch_issue_id:
+                        _orig_redirect_issue = orig.active_branch_issue_id
                         self._matter_model.ledger.request_redirect(
                             run_id, orig.active_branch_issue_id
                         )
@@ -4917,6 +4935,19 @@ class RLMEngine:
 
                 await self._synthesize(state)
 
+                # Re-check stop after synthesis — same as investigate() path (HIGH r70)
+                _adapter_post_synth = getattr(state, "_matter_adapter", None)
+                if _adapter_post_synth is not None and _adapter_post_synth.is_stop_requested():
+                    self._emit_step(
+                        state, StepType.THINKING,
+                        "Stopped by user — partial state preserved",
+                    )
+                    self._save_checkpoint(state, iteration=None)
+                    state.interrupt()
+                    if run_id is not None:
+                        self._matter_model.interrupt_run(run_id)
+                    return state
+
                 state.complete()
                 if run_id is not None:
                     self._cleanup_checkpoints(state)
@@ -4958,6 +4989,16 @@ class RLMEngine:
                     )
                 except Exception:
                     pass
+                # MEDIUM r70: also restore the redirect flag if it was cleared during
+                # propagation. set_next_action runs first so the interrupted-run guard
+                # (next_action IS NOT NULL) is satisfied when request_redirect fires.
+                if _orig_redirect_issue is not None:
+                    try:
+                        self._matter_model.ledger.request_redirect(
+                            original_run_id, _orig_redirect_issue
+                        )
+                    except Exception:
+                        pass
             raise
 
         return state

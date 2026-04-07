@@ -167,17 +167,15 @@ class InProcessBackend(UIBackend):
                 return {"status": "error", "detail": f"Run '{run_id}' has no checkpoint — was stopped before first checkpoint interval"}
             if not _Path(checkpoint_path).exists():
                 return {"status": "error", "detail": f"Checkpoint file not found: {checkpoint_path}"}
-            # Guard against concurrent-resume double-click: check that no other run
-            # is currently in RUNNING status for this matter (mirrors service gate).
-            # Use limit=None (or a large cap) to avoid missing old still-running rows
-            # that would be scrolled past by a limit=20 window. (MEDIUM r69)
-            running = model.ledger.recent_runs(limit=1000)
-            if any(
-                r["status"] == "running"
-                and r["id"] != run_id
-                and r.get("objective") not in ("manual_flush", "background_flush")
-                for r in running
-            ):
+            # Guard against concurrent-resume double-click: mirror the service gate —
+            # indexed fetchone instead of materializing N rows. (MEDIUM r69, LOW r70)
+            running = model.db.execute(
+                "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
+                " AND id != ?"
+                " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))",
+                (model.matter_id, run_id),
+            ).fetchone()
+            if running:
                 return {"status": "error", "detail": "Another run is already active for this matter — wait for it to complete or stop it before resuming"}
             irys = self._get_irys()
             # Wire the same matter model so ledger entries go to the correct DB
