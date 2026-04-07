@@ -1,0 +1,10 @@
+CLEAN
+
+I do not see a correctness defect in this block.
+
+- Signature parity: the normal path at [engine.py:1114](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1114) and the resume path at [engine.py:4835](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4835) both call `generate_clarifications_from_gaps(run_id=run_id, top_n=3, min_materiality=0.5)`, matching the method definition at [matter.py:1162](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L1162).
+- `run_id` ordering is correct: resume creates `run_id` at [engine.py:4776](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4776), stores `state._run_id` at [engine.py:4786](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4786), and only then enters phase-2.75 at [engine.py:4805](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4805).
+- `asyncio.run()` in the executor is not a conflict here: `_ASYNC_EXECUTOR` runs ordinary callables, not a persistent event loop. A worker thread can run one `asyncio.run(...)` task and later another; that is not nested-loop usage. The new resume path at [app.py:645](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/app.py#L645) / [app.py:651](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/app.py#L651) matches the existing pattern already used by `_run_async` at [app.py:36](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/app.py#L36) and stop at [app.py:517](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/app.py#L517).
+- This UI path only instantiates `InProcessBackend` via [app.py:287](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/app.py#L287), so there is no new shared-`AsyncClient` cross-loop issue introduced by this change.
+
+Residual gap: I did not find resume-specific tests for this exact completion tail / fire-and-forget path, although the underlying clarification and maintenance helpers are tested. That is a coverage gap, not a correctness finding for `c36e6e8`.
