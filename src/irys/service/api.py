@@ -1523,8 +1523,11 @@ def _resolve_resumed_run_id(model: Any, run_id: str) -> str:
             ).fetchone()
             if row is not None:
                 return row["id"]
-    except Exception:
-        pass  # resolver is best-effort; fall back to original id
+    except Exception as exc:
+        logger.warning(
+            "_resolve_resumed_run_id(%s) failed — falling back to original id: %s",
+            run_id, exc,
+        )
     return run_id
 
 
