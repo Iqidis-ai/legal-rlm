@@ -2762,6 +2762,9 @@ class RLMEngine:
         unverified_count = 0
 
         for citation in unverified:
+            # Honour stop request mid-verification (SO-3 — adv#034 HIGH #3)
+            if _adapter is not None and _adapter.is_stop_requested():
+                break
             try:
                 # Try to find the document
                 doc = repo.read(citation.document)
@@ -4731,7 +4734,12 @@ class RLMEngine:
         if not self.config.checkpoint_dir:
             return
         try:
-            ckpt_dir = Path(self.config.checkpoint_dir)
+            matter_id = (
+                self._matter_model.matter_id
+                if self._matter_model is not None
+                else getattr(state, "_matter_id", "default")
+            )
+            ckpt_dir = Path(self.config.checkpoint_dir) / matter_id
             for pattern in (
                 f"latest_{state.id}.json",
                 f"checkpoint_{state.id}_iter*.json",
@@ -4754,18 +4762,26 @@ class RLMEngine:
         if not self.config.checkpoint_dir:
             return
 
-        Path(self.config.checkpoint_dir).mkdir(parents=True, exist_ok=True)
+        # Use per-matter subdirectory so checkpoint files from different matters
+        # cannot collide even if state.id (8-char) repeats across many matters.
+        matter_id = (
+            self._matter_model.matter_id if self._matter_model is not None else "default"
+        )
+        ckpt_dir = Path(self.config.checkpoint_dir) / matter_id
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+        # Stamp matter_id onto state so the checkpoint payload carries its own identity.
+        # Resume validation can then reject a checkpoint loaded for the wrong matter.
+        if not getattr(state, "_matter_id", None) and self._matter_model is not None:
+            state._matter_id = self._matter_model.matter_id
 
         if iteration is not None:
-            checkpoint_path = (
-                Path(self.config.checkpoint_dir)
-                / f"checkpoint_{state.id}_iter{iteration}.json"
-            )
+            checkpoint_path = ckpt_dir / f"checkpoint_{state.id}_iter{iteration}.json"
             state.save_checkpoint(checkpoint_path)
             logger.info("Saved checkpoint: %s", checkpoint_path)
 
         # Always write/overwrite the latest pointer
-        latest_path = Path(self.config.checkpoint_dir) / f"latest_{state.id}.json"
+        latest_path = ckpt_dir / f"latest_{state.id}.json"
         state.save_checkpoint(latest_path)
 
         # Persist latest checkpoint path into run_session.next_action for resume
@@ -4899,7 +4915,10 @@ class RLMEngine:
         except Exception as e:
             state.fail(str(e))
             if run_id is not None:
-                self._cleanup_checkpoints(state)
+                # Do NOT clean up checkpoints on resume failure — the checkpoint
+                # (state.id file) is the original interrupted run's checkpoint and
+                # may still be valid for a re-resume attempt. Only clean up on
+                # successful completion. (adv#034 MEDIUM)
                 self._matter_model.fail_run(run_id, str(e))
             raise
 

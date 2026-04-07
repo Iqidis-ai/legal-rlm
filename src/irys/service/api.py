@@ -2792,10 +2792,17 @@ async def resume_run(matter_id: str, run_id: str):
             status_code=400,
             detail=f"Checkpoint file not found: {checkpoint_path}",
         )
-    # Validate checkpoint can be loaded and repository still exists
+    # Validate checkpoint can be loaded, belongs to this matter, and repository still exists
     try:
         from irys.rlm.state import InvestigationState
         ckpt_state = InvestigationState.load_checkpoint(checkpoint_path)
+        # Cross-matter isolation: reject if checkpoint was written for a different matter
+        ckpt_matter_id = getattr(ckpt_state, "_matter_id", None)
+        if ckpt_matter_id and ckpt_matter_id != model.matter_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Checkpoint belongs to matter '{ckpt_matter_id}', not '{model.matter_id}'",
+            )
         if not _Path(ckpt_state.repository_path).exists():
             raise HTTPException(
                 status_code=400,

@@ -1654,6 +1654,9 @@ class InvestigationState:
             "id": self.id,
             "query": self.query,
             "repository_path": self.repository_path,
+            # Identity fields for cross-matter validation on resume
+            "_matter_id": getattr(self, "_matter_id", None),
+            "_run_id": getattr(self, "_run_id", None),
             "thinking_steps": [
                 {
                     "id": s.id,
@@ -1759,6 +1762,11 @@ class InvestigationState:
             query=data["query"],
             repository_path=data["repository_path"],
         )
+        # Restore identity fields for cross-matter validation
+        if data.get("_matter_id"):
+            state._matter_id = data["_matter_id"]
+        if data.get("_run_id"):
+            state._run_id = data["_run_id"]
 
         # Restore thinking steps
         for s in data.get("thinking_steps", []):
@@ -1866,11 +1874,24 @@ class InvestigationState:
         return state
 
     def save_checkpoint(self, path: str | Path):
-        """Save state to checkpoint file."""
+        """Save state to checkpoint file (atomic: write temp then rename)."""
+        import os
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.to_dict(), f, indent=2)
+        tmp = path.with_suffix(".tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.to_dict(), f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            # Atomic replace: no reader sees a half-written file
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise
 
     @classmethod
     def load_checkpoint(cls, path: str | Path) -> "InvestigationState":

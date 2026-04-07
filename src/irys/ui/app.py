@@ -279,6 +279,7 @@ class AppState:
         self.final_output = ""
         self.current_matter_id: Optional[str] = None
         self.current_run_id: Optional[str] = None
+        self._last_resume_error: Optional[str] = None  # set by do_resume() on failure
         self._irys_ref = None  # weak ref to active Irys instance for stop
         # Stop event: set by stop_investigation() to signal early-stop before
         # the first engine step fires (when run_session may not exist yet).
@@ -643,13 +644,20 @@ class AppState:
         def _do_resume() -> None:
             try:
                 result = asyncio.run(self.backend().resume_run(mid, rid))
-                new_rid = result.get("new_run_id") if isinstance(result, dict) else None
-                if new_rid:
-                    self.current_run_id = new_rid
-            except Exception:
-                pass
+                if isinstance(result, dict):
+                    if result.get("status") == "error":
+                        # Surface pre-validation errors to a discoverable attribute
+                        self._last_resume_error = result.get("detail", "Unknown error")
+                        return
+                    new_rid = result.get("new_run_id")
+                    if new_rid:
+                        self.current_run_id = new_rid
+                        self._last_resume_error = None
+            except Exception as exc:
+                self._last_resume_error = str(exc)
         _ASYNC_EXECUTOR.submit(_do_resume)
-        return f"⏳ Resume of run {run_id} launched in background — monitor via Overview or Ledger Events."
+        self._last_resume_error = None  # clear stale error on launch
+        return f"⏳ Resume of run {run_id} launched — monitor via Overview or Ledger Events. Check _last_resume_error if progress stalls."
 
     def do_redirect(self, matter_id: str, run_id: str, issue_id: str) -> str:
         if not matter_id or not run_id or not issue_id:

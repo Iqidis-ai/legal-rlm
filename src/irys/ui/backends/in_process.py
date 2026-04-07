@@ -167,6 +167,11 @@ class InProcessBackend(UIBackend):
                 return {"status": "error", "detail": f"Run '{run_id}' has no checkpoint — was stopped before first checkpoint interval"}
             if not _Path(checkpoint_path).exists():
                 return {"status": "error", "detail": f"Checkpoint file not found: {checkpoint_path}"}
+            # Guard against concurrent-resume double-click: check that no other run
+            # is currently in RUNNING status for this matter (mirrors service gate).
+            running = model.ledger.recent_runs(limit=20)
+            if any(r["status"] == "running" and r["id"] != run_id for r in running):
+                return {"status": "error", "detail": "Another run is already active for this matter — wait for it to complete or stop it before resuming"}
             irys = self._get_irys()
             # Wire the same matter model so ledger entries go to the correct DB
             irys._ensure_initialized()
