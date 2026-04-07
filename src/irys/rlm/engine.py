@@ -4724,13 +4724,20 @@ class RLMEngine:
         Prevents unbounded disk accumulation: both per-iteration files
         (checkpoint_<state.id>_iter*.json) and the latest pointer
         (latest_<state.id>.json) are removed.
+
+        Uses exact prefixes that match _save_checkpoint() naming to avoid
+        matching unrelated JSON files that happen to contain the state id substring.
         """
         if not self.config.checkpoint_dir:
             return
         try:
             ckpt_dir = Path(self.config.checkpoint_dir)
-            for f in list(ckpt_dir.glob(f"*{state.id}*.json")):
-                f.unlink(missing_ok=True)
+            for pattern in (
+                f"latest_{state.id}.json",
+                f"checkpoint_{state.id}_iter*.json",
+            ):
+                for f in list(ckpt_dir.glob(pattern)):
+                    f.unlink(missing_ok=True)
         except Exception:
             pass
 
@@ -4809,10 +4816,12 @@ class RLMEngine:
                         self._matter_model.ledger.request_redirect(
                             run_id, orig.active_branch_issue_id
                         )
-                        # Clear on original run so subsequent /redirect calls to the
-                        # old run_id return an error rather than silently succeeding
-                        # and being lost (zombie steerability — r64 MEDIUM #1).
                         self._matter_model.ledger.clear_redirect(original_run_id)
+                    # Clear next_action on original run — signals it has been resumed.
+                    # request_redirect() requires next_action IS NOT NULL for interrupted
+                    # runs, so post-resume redirects to the old run_id correctly fail
+                    # rather than silently succeeding and being lost (r64/r65 MEDIUM #1).
+                    self._matter_model.ledger.clear_next_action(original_run_id)
                 except Exception:
                     pass
         else:

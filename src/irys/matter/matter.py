@@ -1299,7 +1299,8 @@ class MatterModel:
                      AND subject_type=?
                      AND COALESCE(subject_id, '')=?
                      AND (currency=? OR (currency IS NULL AND ?=''))
-                     AND assertion_id IS NOT NULL""",
+                     AND assertion_id IS NOT NULL
+                   ORDER BY created_at ASC""",
                 (self.matter_id, subject, subject_id or "", currency, currency),
             ).fetchall()
             aids = [r["assertion_id"] for r in rows]
@@ -1307,6 +1308,8 @@ class MatterModel:
                 # Cap at 20 before O(k²) nested link loop to bound worst-case work
                 # when many assertions share the same (subject_type, '', currency) bucket
                 # (e.g. unlabelled invoices all with NULL subject_id).
+                # ORDER BY created_at ASC so the earliest-ingested assertions are
+                # consistently chosen rather than arbitrary storage order.
                 aids = aids[:20]
                 # Wire bidirectional contradicts links (idempotent via UNIQUE index)
                 for i, a1 in enumerate(aids):

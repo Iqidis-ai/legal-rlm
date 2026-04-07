@@ -1402,11 +1402,13 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             repository=str(temp_dir),
         )
 
-        # Cleanup
-        await s3_repo.cleanup(job_id)
+        _urls_sync_interrupted = (getattr(result.state, "status", None) == "interrupted")
+        # Preserve temp dir when interrupted — checkpoint references this path for resume.
+        if not _urls_sync_interrupted:
+            await s3_repo.cleanup(job_id)
 
         duration = time.time() - start_time
-        logger.info(f"URL sync investigation {job_id} completed in {duration:.1f}s")
+        logger.info(f"URL sync investigation {job_id} {'interrupted' if _urls_sync_interrupted else 'completed'} in {duration:.1f}s")
 
         citations, entities = _serialize_result(result)
         _urls_open_gaps: list[dict] = []

@@ -244,15 +244,18 @@ class ReasoningLedgerStore:
         """Signal the engine to redirect focus to the given issue on the next iteration.
 
         Silently ignores utility flush runs (manual_flush / background_flush).
-        Accepts both 'running' and 'interrupted' status: an interrupted run can have
-        a redirect focus set before resume, which is then propagated to the new run
-        session by resume_investigation().
+        Accepts 'running' and 'interrupted' status: an interrupted run can have a
+        redirect focus set before resume, which is then propagated to the new run by
+        resume_investigation(). For interrupted runs, also requires next_action IS NOT NULL
+        (i.e. the run has not been resumed yet — resume clears next_action on the original
+        run to prevent zombie steerability: post-resume redirects to the old run_id).
 
         Returns True if the flag was actually set, False if run not found or utility.
         """
         cur = self.db.execute(
             "UPDATE run_session SET redirect_requested=1, active_branch_issue_id=? WHERE id=?"
-            " AND status IN ('running', 'interrupted')"
+            " AND (status='running'"
+            "      OR (status='interrupted' AND next_action IS NOT NULL))"
             " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))",
             (issue_id, run_id),
         )
