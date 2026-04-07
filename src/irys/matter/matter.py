@@ -1985,11 +1985,20 @@ class MatterModel:
         quant_fact_count = self.quant.count()
         actor_count = self.actors.count()
 
-        # SO-3: steerability is a capability flag — the infrastructure is always
-        # wired (engine checks is_stop_requested() throughout the run loop).
-        # This is True unconditionally; it reflects presence of the mechanism,
-        # not runtime activity which cannot be measured from stored state.
-        steerability: "bool | None" = True
+        # SO-3: steerability — True only if this matter has at least one completed
+        # run session, confirming the interruptible engine was actually used on it.
+        # False (not None) if the matter exists but has never been investigated;
+        # None on DB error.  An empty matter returning True would be manufactured
+        # compliance — the auditor must be able to observe actual engine use.
+        steerability: "bool | None" = None
+        try:
+            sr_row = self.db.execute(
+                "SELECT COUNT(*) AS n FROM run_session WHERE matter_id=?",
+                (self.matter_id,),
+            ).fetchone()
+            steerability = bool(int(sr_row["n"]) > 0) if sr_row else False
+        except Exception:
+            steerability = None
 
         # SO-2: belief_revision — True if any revision events exist for this matter.
         # A count > 0 means the truth-maintenance system has actually revised beliefs.
@@ -2057,7 +2066,7 @@ class MatterModel:
             "issues_with_proof_gap": issues_with_proof_gap,
             # SO-1: reuse rate averaged over recent completed runs (target > 0.70)
             "reuse_rate": reuse_rate_avg,
-            # SO-3: steerability is a capability flag (infrastructure always wired)
+            # SO-3: True if ≥1 run_session recorded (interruptible engine confirmed used)
             "steerability": steerability,
             # SO-2: True if belief_revision_event records exist (revisions have occurred)
             "belief_revision": belief_revision,
