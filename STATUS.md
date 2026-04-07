@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 r61 — SO-3 UI wiring CLEAN; adv#032 SO-3 UI HIGH fixed; resume route remaining)
+Last updated: 2026-04-06 (Tier 1 r63 CLEAN — SO-3 resume route complete; adv#032 fully closed)
 Branch: SebihSpecial
 
 ---
@@ -19,7 +19,7 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 |---------|--------|-------|
 | SO-1: Durable Matter Model | **PASS** | Audit #032: enqueue DB-first ✓, pending work reloads on reopen ✓ |
 | SO-2: Typed Assertion Graph + Truth Maintenance | **PARTIAL** | Audit #032: assertion_revision for NULL→non-NULL ✓. Remaining: propagation_truncated signal; SO-2 coverage rate |
-| SO-3: User-Steerable Reasoning | **PARTIAL** | Adv#032 HIGH partially fixed: stop now routes via backend (non-blocking fire-and-forget); structured ledger events replace raw thinking trace post-run; current_run_id preserved after stop (enables post-stop redirect). Remaining: resume route (service expose) + shared matter DB root for HTTP path. |
+| SO-3: User-Steerable Reasoning | **PARTIAL** | Adv#032 HIGH closed: stop via backend; structured ledger trace; run_id preserved; resume route added. Remaining: shared matter DB root (in-process vs service open different DB paths — prerequisite for HTTP hybrid path). |
 | SO-4: Issue-Driven Architecture | **PARTIAL** | Audit #032: heuristic issue attribution (LLM issue_idx + Jaccard gate), not hard issue-grounded retrieval backbone |
 | SO-5: Source-Aware Intelligence | **PASS** | Audit #031 PASS — source-role classification, trust overrides, advocacy-only gating real |
 | SO-6: Quantitative Intelligence | **PASS** | Audit #031 PASS — numeric facts structured, reconciled, conflict-checked |
@@ -174,12 +174,22 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
    - Trace box label: "Thinking Steps" → "Ledger Events (structured after run; live steps during run)"
    - Tier 1 r58–r61: HIGH/MEDIUM/LOW fixed iteratively; CLEAN at r61
 
-**Known residual gaps (SO-3 not yet PASS):**
-- Resume route not exposed (stop ends run; resume requires `checkpoint_dir` in service + new endpoint) — see design gate `codex_design_gate_so3_ui.md` item 3
-- Shared matter DB root (in-process vs service open different DB paths) — prerequisite for HTTP stop/redirect to be coherent
-- Narrow early-stop race window (~500ms before `_matter_model` init) — acceptable known limitation
+**Resume route complete (commits `6c03131` + `c36e6e8`):**
+- `checkpoint_dir` in `service/config.py` (IRYS_CHECKPOINT_DIR)
+- `_save_checkpoint()` forces checkpoint on stop; writes path to `run_session.next_action`
+- `complete_run()` / `fail_run()` clear `next_action`; `interrupt_run()` preserves it
+- `resume_investigation()` in engine: stop branch + phase-2.75 + correct completion tail
+- `Irys.resume_investigation()` public wrapper in `api.py`
+- `UIBackend.resume_run()` → InProcessBackend (full) + HttpBackend (HTTP delegate)
+- Service: `POST /matter/{id}/runs/{id}/resume` with full validation
+- UI: Resume button in Gaps & Steering panel (fire-and-forget via executor)
 
-HEAD: e59ec84 — Tests: 733/733 (no test changes in this block)
+**Known residual gaps (SO-3 not yet PASS):**
+- Shared matter DB root: in-process opens `MatterModel.open(repo_key)` while service uses `IRYS_MATTER_DB_DIR/<corpus_key>` — different paths unless aligned by env config. Prerequisite for HTTP stop/redirect/resume to operate on the same DB.
+- Narrow early-stop race window (~500ms before `_matter_model` init) — acceptable known limitation
+- Service resume endpoint is synchronous (blocks HTTP worker for full investigation) — acceptable for minimal surface; production should use background jobs
+
+HEAD: c36e6e8 — Tests: 740/740
 
 ### JUST COMPLETED — Tier 2 r3 Scaling + Architecture checkpoint (2026-04-06)
 
