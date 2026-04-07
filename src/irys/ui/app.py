@@ -517,9 +517,9 @@ class AppState:
             _ASYNC_EXECUTOR.submit(asyncio.run, self.backend().stop_run(matter_id, run_id))
         elif self._irys_ref is not None:
             # Early-stop race: no run_id yet — fall back to direct DB query.
-            # Run in the executor so the click handler returns without blocking
-            # on SQLite's 5s busy_timeout.
-            irys_ref = self._irys_ref  # snapshot before thread runs
+            # Submit to the bounded executor (same pool as canonical path) so
+            # the click handler returns without blocking on SQLite's busy_timeout.
+            irys_ref = self._irys_ref  # snapshot before task runs
             def _early_stop() -> None:
                 try:
                     engine = irys_ref._engine
@@ -536,7 +536,7 @@ class AppState:
                             engine._matter_model.ledger.request_stop(row["id"])
                 except Exception:
                     pass
-            threading.Thread(target=_early_stop, daemon=True).start()
+            _ASYNC_EXECUTOR.submit(_early_stop)
         # current_run_id intentionally NOT cleared here — see docstring.
         return gr.update()
 
