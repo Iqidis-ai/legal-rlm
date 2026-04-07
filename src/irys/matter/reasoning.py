@@ -157,12 +157,15 @@ class ReasoningLedgerStore:
         (avoided + required = total LLM opportunities; true reuse = avoided/total).
 
         Clears next_action so completed runs are not shown as resumable.
+        Also atomically clears stop_requested and redirect_requested so no
+        stale steering flags can strand on a completed run (r91 TOCTOU fix).
         """
         now = _now()
         with self.db.transaction():
             self.db.execute(
                 "UPDATE run_session"
                 " SET status=?, completed_at=?, reuse_rate=?, next_action=NULL,"
+                "     stop_requested=0, redirect_requested=0,"
                 "     llm_calls_avoided=COALESCE(?, llm_calls_avoided),"
                 "     llm_calls_required=COALESCE(?, llm_calls_required)"
                 " WHERE id=? AND matter_id=?",
