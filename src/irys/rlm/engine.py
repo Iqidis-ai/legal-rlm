@@ -4791,6 +4791,10 @@ class RLMEngine:
                         self._matter_model.ledger.request_redirect(
                             run_id, orig.active_branch_issue_id
                         )
+                        # Clear on original run so subsequent /redirect calls to the
+                        # old run_id return an error rather than silently succeeding
+                        # and being lost (zombie steerability — r64 MEDIUM #1).
+                        self._matter_model.ledger.clear_redirect(original_run_id)
                 except Exception:
                     pass
         else:

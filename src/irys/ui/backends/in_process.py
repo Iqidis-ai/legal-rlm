@@ -356,8 +356,8 @@ class InProcessBackend(UIBackend):
             run = model.ledger.get_run(run_id)
             if run is None:
                 return {"status": "error", "detail": f"Run '{run_id}' not found"}
-            if run.status != "running":
-                return {"status": "error", "detail": f"Run is not active (status: {run.status})"}
+            if run.status not in ("running", "interrupted"):
+                return {"status": "error", "detail": f"Run is not active or interrupted (status: {run.status})"}
             if run.objective in ("manual_flush", "background_flush"):
                 return {"status": "error", "detail": f"Run '{run_id}' is a utility flush run and cannot be redirected"}
             issue = model.issues.get_issue(issue_id)

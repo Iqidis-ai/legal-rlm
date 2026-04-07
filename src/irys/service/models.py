@@ -12,6 +12,7 @@ class JobStatus(str, Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+    INTERRUPTED = "interrupted"  # stopped by user; checkpoint available for resume
 
 
 class InvestigateRequest(BaseModel):

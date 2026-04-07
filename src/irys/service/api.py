@@ -453,6 +453,7 @@ async def _run_investigation(
     job.status = JobStatus.PROCESSING
     s3_repo = None
     temp_dir = None
+    _run_interrupted = False  # set True on user stop; temp dir kept for resume
 
     try:
         # Download documents from S3
@@ -478,19 +479,22 @@ async def _run_investigation(
         )
 
         # Extract results
-        job.analysis = result.output
-        job.citations, job.entities = _serialize_result(result)
-        job.documents_processed = result.state.documents_read
-        job.status = JobStatus.COMPLETED
-        job.completed_at = datetime.now()
-        job.duration_seconds = (
-            job.completed_at - job.created_at).total_seconds()
-
-        # Record run_id, pending_clarifications, open_gaps from the matter model (SO-7).
-        # Use state._run_id set by the engine at run-start — more exact than recent_runs(1)
-        # which can return a different run when multiple runs overlap on the same matter (r37 fix).
-        job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
         job.run_id = getattr(result.state, "_run_id", None)  # exact; no recent_runs(1) race
+        job.documents_processed = result.state.documents_read
+        job.completed_at = datetime.now()
+        job.duration_seconds = (job.completed_at - job.created_at).total_seconds()
+        job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
+
+        if getattr(result.state, "status", None) == "interrupted":
+            # User stopped the run — checkpoint written; temp dir preserved for resume.
+            _run_interrupted = True
+            job.status = JobStatus.INTERRUPTED
+        else:
+            job.analysis = result.output
+            job.citations, job.entities = _serialize_result(result)
+            job.status = JobStatus.COMPLETED
+
+        # Record open_gaps from the matter model (SO-7).
         if job.matter_id and job.matter_id in _active_matter_models:
             _mm = _active_matter_models[job.matter_id]
             try:
@@ -498,7 +502,7 @@ async def _run_investigation(
             except Exception:
                 pass
 
-        logger.info(f"Job {job_id} completed in {job.duration_seconds:.1f}s")
+        logger.info(f"Job {job_id} {job.status.value} in {job.duration_seconds:.1f}s")
 
         # Call webhook if provided
         if request.callback_url:
@@ -511,8 +515,8 @@ async def _run_investigation(
         job.completed_at = datetime.now()
 
     finally:
-        # Cleanup temp files
-        if s3_repo and temp_dir:
+        # Preserve temp dir when interrupted — checkpoint references this path for resume.
+        if not _run_interrupted and s3_repo and temp_dir:
             await s3_repo.cleanup(job_id)
 
 
@@ -743,6 +747,7 @@ async def _run_upload_investigation(
     s3_repo = None
     temp_dir = None
     is_local = s3_prefix.startswith("local:")
+    _run_interrupted = False  # set True on user stop; temp dir kept for resume
 
     try:
         if is_local:
@@ -775,27 +780,27 @@ async def _run_upload_investigation(
             repository=str(temp_dir),
         )
 
-        # Extract results
-        job.analysis = result.output
-        job.citations, job.entities = _serialize_result(result)
-        job.documents_processed = result.state.documents_read
-        job.status = JobStatus.COMPLETED
-        job.completed_at = datetime.now()
-        job.duration_seconds = (
-            job.completed_at - job.created_at
-        ).total_seconds()
-
-        # Use exact state._run_id set by engine (same pattern as other async handlers).
-        # Upload jobs with a wired matter model DO create a run; recent_runs(1) was removed
-        # to avoid concurrent-run race, so use state._run_id directly (r39 fix).
+        # Extract results — use exact state._run_id (r39 fix: avoids concurrent-run race).
         job.run_id = getattr(result.state, "_run_id", None)
+        job.documents_processed = result.state.documents_read
+        job.completed_at = datetime.now()
+        job.duration_seconds = (job.completed_at - job.created_at).total_seconds()
         job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
+
+        if getattr(result.state, "status", None) == "interrupted":
+            _run_interrupted = True
+            job.status = JobStatus.INTERRUPTED
+        else:
+            job.analysis = result.output
+            job.citations, job.entities = _serialize_result(result)
+            job.status = JobStatus.COMPLETED
+
         if job.matter_id and job.matter_id in _active_matter_models:
             try:
                 job.open_gaps = _active_matter_models[job.matter_id].gaps.open_gaps(min_materiality=0.3)
             except Exception:
                 pass
-        logger.info(f"Upload job {job_id} completed in {job.duration_seconds:.1f}s (mode={'local' if is_local else 's3'})")
+        logger.info(f"Upload job {job_id} {job.status.value} in {job.duration_seconds:.1f}s (mode={'local' if is_local else 's3'})")
 
         # Call webhook if provided
         if callback_url:
@@ -808,7 +813,9 @@ async def _run_upload_investigation(
         job.completed_at = datetime.now()
 
     finally:
-        if is_local:
+        if _run_interrupted:
+            pass  # Preserve temp dir — checkpoint references this path for resume
+        elif is_local:
             # LOCAL MODE: Delete temp directory
             import shutil
             if temp_dir and temp_dir.exists():
@@ -1063,17 +1070,20 @@ async def upload_investigate_sync(
             repository=str(temp_dir),
         )
 
-        # Cleanup temp files
-        if config.storage_mode == "local":
-            import shutil
-            if temp_dir and temp_dir.exists():
-                shutil.rmtree(temp_dir)
-        else:
-            if s3_repo:
-                await s3_repo.cleanup(job_id)
-            # Cleanup S3 files (unless keep_files=True)
-            if not keep_files and s3_repo and s3_prefix:
-                await s3_repo.delete_prefix(s3_prefix)
+        _sync_interrupted = (getattr(result.state, "status", None) == "interrupted")
+
+        # Cleanup temp files — skip if interrupted; checkpoint references this path for resume.
+        if not _sync_interrupted:
+            if config.storage_mode == "local":
+                import shutil
+                if temp_dir and temp_dir.exists():
+                    shutil.rmtree(temp_dir)
+            else:
+                if s3_repo:
+                    await s3_repo.cleanup(job_id)
+                # Cleanup S3 files (unless keep_files=True)
+                if not keep_files and s3_repo and s3_prefix:
+                    await s3_repo.delete_prefix(s3_prefix)
 
         duration = time.time() - start_time
         logger.info(f"Sync investigation {job_id} completed in {duration:.1f}s (mode={config.storage_mode})")
@@ -1209,6 +1219,7 @@ async def _run_urls_investigation(
     job.status = JobStatus.PROCESSING
     s3_repo = None
     temp_dir = None
+    _run_interrupted = False  # set True on user stop; temp dir kept for resume
 
     try:
         # Create S3 repository (bucket from first URL, or config default)
@@ -1236,17 +1247,20 @@ async def _run_urls_investigation(
         )
 
         # Extract results
-        job.analysis = result.output
-        job.citations, job.entities = _serialize_result(result)
-        job.documents_processed = result.state.documents_read
-        job.status = JobStatus.COMPLETED
-        job.completed_at = datetime.now()
-        job.duration_seconds = (
-            job.completed_at - job.created_at
-        ).total_seconds()
-
-        job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
         job.run_id = getattr(result.state, "_run_id", None)  # exact; no recent_runs(1) race
+        job.documents_processed = result.state.documents_read
+        job.completed_at = datetime.now()
+        job.duration_seconds = (job.completed_at - job.created_at).total_seconds()
+        job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
+
+        if getattr(result.state, "status", None) == "interrupted":
+            _run_interrupted = True
+            job.status = JobStatus.INTERRUPTED
+        else:
+            job.analysis = result.output
+            job.citations, job.entities = _serialize_result(result)
+            job.status = JobStatus.COMPLETED
+
         if job.matter_id and job.matter_id in _active_matter_models:
             _url_mm = _active_matter_models[job.matter_id]
             try:
@@ -1254,7 +1268,7 @@ async def _run_urls_investigation(
             except Exception:
                 pass
 
-        logger.info(f"URLs job {job_id} completed in {job.duration_seconds:.1f}s")
+        logger.info(f"URLs job {job_id} {job.status.value} in {job.duration_seconds:.1f}s")
 
         # Call webhook if provided
         if request.callback_url:
@@ -1267,8 +1281,8 @@ async def _run_urls_investigation(
         job.completed_at = datetime.now()
 
     finally:
-        # Cleanup temp files
-        if s3_repo and temp_dir:
+        # Preserve temp dir when interrupted — checkpoint references this path for resume.
+        if not _run_interrupted and s3_repo and temp_dir:
             await s3_repo.cleanup(job_id)
 
 
