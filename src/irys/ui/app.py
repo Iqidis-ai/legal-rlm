@@ -56,6 +56,18 @@ def _fmt_coverage(frac: Optional[float]) -> str:
     return f"{frac:.0%}"
 
 
+def _fmt_ledger_event(event: dict) -> str:
+    """Format a single ledger event dict into a human-readable trace line."""
+    seq = event.get("seq_no", "?")
+    etype = event.get("event_type", "?")
+    summary = event.get("summary", "")
+    why = event.get("why", "")
+    line = f"#{seq} {etype} | {summary}"
+    if why:
+        line += f"\n  ↳ {why}"
+    return line
+
+
 def _fmt_overview(data: dict) -> str:
     if not data:
         return "No matter loaded."
@@ -396,13 +408,13 @@ class AppState:
 
                 elif update_type == "complete":
                     self.is_running = False
-                    self.current_run_id = None  # no active run after completion
+                    # NOTE: current_run_id is NOT cleared here — kept for post-run
+                    # redirect and panel refreshes. Cleared only when a new investigation
+                    # starts (at the top of stream_investigation).
                     state = data
                     elapsed = time.time() - start_time
                     summary = state.get_summary()
                     metrics = summary.get("metrics", {})
-                    avoided = metrics.get("llm_calls_avoided", 0)
-                    required = metrics.get("llm_calls_required", 0)
                     true_rate = metrics.get("true_reuse_rate")
                     rate_str = f"{true_rate:.1%}" if true_rate is not None else "—"
                     status = (
@@ -410,9 +422,31 @@ class AppState:
                         f"Docs: {state.documents_read} ({state.documents_from_cache} cached) | "
                         f"Reuse: {rate_str}"
                     )
+                    # Replace raw thinking trace with structured ledger events so the
+                    # Reasoning Trace tab shows durable, matter-model-backed content.
+                    structured_trace = "\n".join(call_thinking[-80:])  # fallback
+                    if self.current_matter_id and self.current_run_id:
+                        try:
+                            events: list[dict] = []
+                            async def _collect_events(mid: str, rid: str) -> list[dict]:
+                                collected: list[dict] = []
+                                async for ev in self.backend().stream_run_events(mid, rid):
+                                    collected.append(ev)
+                                    if len(collected) >= 500:
+                                        break
+                                return collected
+                            events = _run_async(
+                                _collect_events(self.current_matter_id, self.current_run_id)
+                            )
+                            if events:
+                                structured_trace = "\n".join(
+                                    _fmt_ledger_event(ev) for ev in events
+                                )
+                        except Exception:
+                            pass  # keep raw thinking fallback
                     yield (
                         self.final_output,
-                        "\n".join(call_thinking[-80:]),
+                        structured_trace,
                         "\n".join(call_citations) or "—",
                         status,
                         self.current_matter_id or "—",
@@ -447,40 +481,48 @@ class AppState:
     def stop_investigation(self):
         """Stop the running investigation.
 
-        Sets is_running=False to break the UI generator, sets _stop_event to
-        signal early-stop before run_session exists, and calls ledger.request_stop()
-        on the run_id so the engine honors it on the next iteration check.
+        Sets is_running=False and _stop_event (breaks the UI generator before
+        run_session exists). Routes stop through backend().stop_run() so both
+        InProcessBackend and HttpBackend are covered — no direct engine access.
 
-        Early-stop race: if the user presses Stop before the first thinking-step
-        callback fires (i.e. current_run_id is still None), fall back to querying
-        the DB directly for the most recent running run on this matter.
+        Does NOT clear current_run_id so the redirect button in Gaps & Steering
+        remains usable after stop (redirect must be sent before the engine fully
+        halts; the run transitions away from 'running' once the engine iteration
+        completes).  current_run_id is cleared only when a new investigation starts.
+
+        Early-stop race: if stop is pressed before the first on_step fires
+        (current_run_id is still None), falls back to querying the DB via _irys_ref.
         """
         self.is_running = False
-        self._stop_event.set()   # signal early-stop before run_session exists
-        if self._irys_ref is not None:
+        self._stop_event.set()  # breaks UI generator before run_session exists
+
+        matter_id = self.current_matter_id
+        run_id = self.current_run_id
+
+        if matter_id and run_id:
+            # Canonical path: route through the backend abstraction.
+            try:
+                _run_async(self.backend().stop_run(matter_id, run_id))
+            except Exception:
+                pass
+        elif self._irys_ref is not None:
+            # Early-stop race: no run_id yet — fall back to direct DB query.
             try:
                 engine = self._irys_ref._engine
                 if engine and engine._matter_model:
-                    # Capture run_id BEFORE clearing current_run_id.
-                    run_id = self.current_run_id
-                    if run_id is None:
-                        # Race: stop pressed before first step — find running run from DB
-                        row = engine._matter_model.db.execute(
-                            "SELECT id FROM run_session WHERE matter_id=?"
-                            " AND status='running'"
-                            " AND (objective IS NULL OR objective NOT IN"
-                            " ('manual_flush','background_flush'))"
-                            " ORDER BY started_at DESC LIMIT 1",
-                            (engine._matter_model.matter_id,),
-                        ).fetchone()
-                        run_id = row["id"] if row else None
-                    if run_id:
-                        # Best-effort DB flag: _stop_event is already set above so the engine
-                        # will halt regardless of whether this run is still in running state.
-                        engine._matter_model.ledger.request_stop(run_id)
+                    row = engine._matter_model.db.execute(
+                        "SELECT id FROM run_session WHERE matter_id=?"
+                        " AND status='running'"
+                        " AND (objective IS NULL OR objective NOT IN"
+                        " ('manual_flush','background_flush'))"
+                        " ORDER BY started_at DESC LIMIT 1",
+                        (engine._matter_model.matter_id,),
+                    ).fetchone()
+                    if row:
+                        engine._matter_model.ledger.request_stop(row["id"])
             except Exception:
                 pass
-        self.current_run_id = None  # no active run after stop (cleared after request_stop)
+        # current_run_id intentionally NOT cleared here — see docstring.
         return gr.update()
 
     def load_overview(self, matter_id: str) -> str:
@@ -649,7 +691,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         run_output = gr.Markdown()
                     with gr.TabItem("Reasoning Trace (live)"):
                         trace_box = gr.Textbox(
-                            label="Thinking Steps",
+                            label="Ledger Events (structured after run; live steps during run)",
                             lines=35,
                             interactive=False,
                             autoscroll=True,
