@@ -1154,6 +1154,19 @@ class RLMEngine:
                     llm_calls_avoided=state.llm_calls_avoided,
                     llm_calls_required=state.llm_calls_required,
                 )
+                # adv#036 MEDIUM: if a redirect arrived during verify/synthesize it was
+                # never consumed by _investigate_loop(). Surface this to the user and
+                # clear the stale flag so the completed run is not left with redirect=1.
+                try:
+                    if self._matter_model.ledger.is_redirect_requested(run_id):
+                        self._matter_model.ledger.clear_redirect(run_id)
+                        self._emit_step(
+                            state, StepType.THINKING,
+                            "Redirect received too late — investigation completed "
+                            "before it could be applied; resubmit on a new run",
+                        )
+                except Exception:
+                    pass
                 # Generate clarification questions from open gaps (SO-7)
                 self._matter_model.generate_clarifications_from_gaps(
                     run_id=run_id,
@@ -5010,6 +5023,17 @@ class RLMEngine:
                         llm_calls_avoided=state.llm_calls_avoided,
                         llm_calls_required=state.llm_calls_required,
                     )
+                    # adv#036 MEDIUM: same late-redirect check as investigate() path.
+                    try:
+                        if self._matter_model.ledger.is_redirect_requested(run_id):
+                            self._matter_model.ledger.clear_redirect(run_id)
+                            self._emit_step(
+                                state, StepType.THINKING,
+                                "Redirect received too late — investigation completed "
+                                "before it could be applied; resubmit on a new run",
+                            )
+                    except Exception:
+                        pass
                     # Mirror normal completion tail: clarifications + reasoning trail
                     try:
                         self._matter_model.generate_clarifications_from_gaps(
