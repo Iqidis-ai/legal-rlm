@@ -1148,16 +1148,9 @@ class RLMEngine:
 
             state.complete()
             if run_id is not None:
-                self._cleanup_checkpoints(state)
-                self._matter_model.complete_run(
-                    run_id,
-                    llm_calls_avoided=state.llm_calls_avoided,
-                    llm_calls_required=state.llm_calls_required,
-                )
-                # adv#036 MEDIUM: if a redirect arrived during verify/synthesize it was
-                # never consumed by _investigate_loop(). Surface this to the user via a
-                # durable ledger event and clear the stale flag. Uses append_event()
-                # rather than _emit_step(THINKING) so the notice appears in reasoning_trail.
+                # adv#036 MEDIUM (r90 fix): check BEFORE complete_run() so the event is
+                # committed while the run is still 'running' in the DB. Live streamers
+                # stop polling once they see terminal status; writing after would race.
                 try:
                     if self._matter_model.ledger.is_redirect_requested(run_id):
                         self._matter_model.ledger.clear_redirect(run_id)
@@ -1169,10 +1162,16 @@ class RLMEngine:
                                 "Redirect received too late — investigation completed "
                                 "before it could be applied; resubmit on a new run"
                             ),
-                            why="adv#036: late redirect cleared at run completion",
+                            why="adv#036: late redirect cleared before run completion",
                         )
                 except Exception:
                     pass
+                self._cleanup_checkpoints(state)
+                self._matter_model.complete_run(
+                    run_id,
+                    llm_calls_avoided=state.llm_calls_avoided,
+                    llm_calls_required=state.llm_calls_required,
+                )
                 # Generate clarification questions from open gaps (SO-7)
                 self._matter_model.generate_clarifications_from_gaps(
                     run_id=run_id,
@@ -5023,13 +5022,8 @@ class RLMEngine:
 
                 state.complete()
                 if run_id is not None:
-                    self._cleanup_checkpoints(state)
-                    self._matter_model.complete_run(
-                        run_id,
-                        llm_calls_avoided=state.llm_calls_avoided,
-                        llm_calls_required=state.llm_calls_required,
-                    )
-                    # adv#036 MEDIUM: same late-redirect check as investigate() path.
+                    # adv#036 MEDIUM (r90 fix): check BEFORE complete_run() — same
+                    # rationale as investigate() path above.
                     try:
                         if self._matter_model.ledger.is_redirect_requested(run_id):
                             self._matter_model.ledger.clear_redirect(run_id)
@@ -5041,10 +5035,16 @@ class RLMEngine:
                                     "Redirect received too late — investigation completed "
                                     "before it could be applied; resubmit on a new run"
                                 ),
-                                why="adv#036: late redirect cleared at run completion",
+                                why="adv#036: late redirect cleared before run completion",
                             )
                     except Exception:
                         pass
+                    self._cleanup_checkpoints(state)
+                    self._matter_model.complete_run(
+                        run_id,
+                        llm_calls_avoided=state.llm_calls_avoided,
+                        llm_calls_required=state.llm_calls_required,
+                    )
                     # Mirror normal completion tail: clarifications + reasoning trail
                     try:
                         self._matter_model.generate_clarifications_from_gaps(
