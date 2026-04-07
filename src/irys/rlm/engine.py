@@ -1197,7 +1197,29 @@ class RLMEngine:
             state.fail(str(e))
             if run_id is not None:
                 self._cleanup_checkpoints(state)
-                self._matter_model.fail_run(run_id, str(e))
+                # adv#037 MEDIUM: mirror the resume path's fail_run() robustness.
+                # If fail_run() raises (e.g. DB locked) the run would stay 'running'
+                # and block future investigations on the matter. Attempt a bare
+                # autocommit UPDATE as a last-resort fallback.
+                try:
+                    self._matter_model.fail_run(run_id, str(e))
+                except Exception as _fail_exc:
+                    logger.warning(
+                        "fail_run(%s) raised during investigate() cleanup; "
+                        "attempting direct status update fallback: %s",
+                        run_id, _fail_exc,
+                    )
+                    try:
+                        from datetime import datetime as _datetime, timezone as _tz
+                        _now_iso = _datetime.now(_tz.utc).isoformat()
+                        self._matter_model.ledger.db.execute(
+                            "UPDATE run_session SET status='failed', completed_at=?,"
+                            " next_action=NULL, stop_requested=0, redirect_requested=0"
+                            " WHERE id=? AND matter_id=?",
+                            (_now_iso, run_id, self._matter_model.matter_id),
+                        )
+                    except Exception:
+                        pass
             raise
 
         return state
