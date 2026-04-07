@@ -1127,18 +1127,19 @@ class RLMEngine:
             # Phase 3: Final synthesis (reads gaps via _build_gap_summary)
             await self._synthesize(state)
 
-            # Re-check stop after synthesis — _synthesize() returns early on stop
-            # (HIGH r70: a stop during Phase 2.75 or synthesis must not complete the run)
-            _adapter_post_synth = getattr(state, "_matter_adapter", None)
-            if _adapter_post_synth is not None and _adapter_post_synth.is_stop_requested():
+            # HIGH adv#035: use final_output PRESENCE rather than is_stop_requested()
+            # to decide whether to interrupt. _synthesize() commits SO-1/SO-4 side
+            # effects (authority extraction, proof state, cache) before the caller sees
+            # the stop flag — checking is_stop_requested() here would interrupt a fully-
+            # synthesized run and leave those side effects orphaned. Instead: if
+            # _synthesize() returned early (stop was seen at its entry check → no output
+            # written), interrupt cleanly. If final_output is present, synthesis
+            # completed — commit the run regardless of a late stop signal.
+            if "final_output" not in state.findings:
                 self._emit_step(
                     state, StepType.THINKING,
                     "Stopped by user — partial state preserved",
                 )
-                # MEDIUM r71: clear any partial final_output written by _synthesize()
-                # before it returned early, so callers don't surface an incomplete memo
-                # under an interrupted status.
-                state.findings.pop("final_output", None)
                 self._save_checkpoint(state, iteration=None)
                 state.interrupt()
                 if run_id is not None:
@@ -2802,10 +2803,12 @@ class RLMEngine:
 
         verified_count = 0
         unverified_count = 0
+        _stopped_early = False
 
         for citation in unverified:
             # Honour stop request mid-verification (SO-3 — adv#034 HIGH #3)
             if _adapter is not None and _adapter.is_stop_requested():
+                _stopped_early = True
                 break
             try:
                 # Try to find the document
@@ -2846,11 +2849,21 @@ class RLMEngine:
                 unverified_count += 1
 
         stats = state.get_verification_stats()
-        self._emit_step(
-            state,
-            StepType.VERIFY,
-            f"Verification complete: {stats['verified']} verified, {stats['unverified']} unverified",
-        )
+        # LOW adv#035: only emit "complete" when the full list was processed; a
+        # stop-interrupted verify loop must not log a false completion signal.
+        if _stopped_early:
+            self._emit_step(
+                state,
+                StepType.VERIFY,
+                f"Verification interrupted: {stats['verified']} verified, "
+                f"{stats['unverified']} unverified (partial — stopped by user)",
+            )
+        else:
+            self._emit_step(
+                state,
+                StepType.VERIFY,
+                f"Verification complete: {stats['verified']} verified, {stats['unverified']} unverified",
+            )
 
     async def _synthesize(self, state: InvestigationState):
         """Phase 3: Final synthesis using Pro model."""
@@ -4887,8 +4900,8 @@ class RLMEngine:
                 _claimed = self._matter_model.ledger.clear_next_action(original_run_id)
                 if not _claimed:
                     raise ConcurrentResumeError(
-                        f"Run '{original_run_id}' has already been claimed by a "
-                        "concurrent resume request — only one resume can proceed"
+                        f"Run '{original_run_id}' cannot be resumed: it is not in "
+                        "'interrupted' status, or a concurrent resume already claimed it"
                     )
                 # Fenced read: get redirect state AFTER claiming so we see any
                 # concurrent redirect that arrived before the fence.
@@ -4969,15 +4982,12 @@ class RLMEngine:
 
                 await self._synthesize(state)
 
-                # Re-check stop after synthesis — same as investigate() path (HIGH r70)
-                _adapter_post_synth = getattr(state, "_matter_adapter", None)
-                if _adapter_post_synth is not None and _adapter_post_synth.is_stop_requested():
+                # HIGH adv#035: same final_output presence check as investigate() path
+                if "final_output" not in state.findings:
                     self._emit_step(
                         state, StepType.THINKING,
                         "Stopped by user — partial state preserved",
                     )
-                    # MEDIUM r71: clear partial final_output (mirrors investigate() path)
-                    state.findings.pop("final_output", None)
                     self._save_checkpoint(state, iteration=None)
                     state.interrupt()
                     if run_id is not None:
@@ -5014,15 +5024,9 @@ class RLMEngine:
 
         except Exception as e:
             state.fail(str(e))
-            if run_id is not None:
-                # Do NOT clean up checkpoints on resume failure — the checkpoint
-                # (state.id file) is the original interrupted run's checkpoint and
-                # may still be valid for a re-resume attempt. Only clean up on
-                # successful completion. (adv#034 MEDIUM)
-                self._matter_model.fail_run(run_id, str(e))
-            # HIGH r69/r76: restore next_action on the original interrupted run so it
-            # remains re-resumable. Only restore when _claimed=True — if the CAS was
-            # never won, next_action was never cleared and must not be overwritten.
+            # MEDIUM adv#035: restore BEFORE fail_run() so a DB failure in fail_run()
+            # (e.g. lock/busy) cannot leave the original run orphaned after the CAS claim.
+            # HIGH r69/r76: only restore when _claimed=True.
             if _claimed and original_run_id is not None and self._matter_model is not None:
                 try:
                     self._matter_model.ledger.set_next_action(
@@ -5030,9 +5034,7 @@ class RLMEngine:
                     )
                 except Exception:
                     pass
-                # MEDIUM r70: also restore the redirect flag if it was cleared during
-                # propagation. set_next_action runs first so the interrupted-run guard
-                # (next_action IS NOT NULL) is satisfied when request_redirect fires.
+                # Restore redirect flag (MEDIUM r70)
                 if _orig_redirect_issue is not None:
                     try:
                         self._matter_model.ledger.request_redirect(
@@ -5040,6 +5042,14 @@ class RLMEngine:
                         )
                     except Exception:
                         pass
+            if run_id is not None:
+                # Do NOT clean up checkpoints on resume failure — the checkpoint
+                # (state.id file) is the original interrupted run's checkpoint and
+                # may still be valid for a re-resume attempt. (adv#034 MEDIUM)
+                try:
+                    self._matter_model.fail_run(run_id, str(e))
+                except Exception:
+                    pass  # Don't mask the original exception with a fail_run failure
             raise
 
         return state

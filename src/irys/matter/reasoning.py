@@ -215,9 +215,13 @@ class ReasoningLedgerStore:
         already NULL. Callers that use this as a CAS fence (resume_investigation) must
         check the return value: rowcount==0 means a concurrent call beat them to it.
         """
+        # HIGH adv#035: also require status='interrupted' so direct engine callers
+        # cannot claim a RUNNING run's checkpoint via resume. Running runs write
+        # next_action at each checkpoint, so IS NOT NULL alone is insufficient.
         cur = self.db.execute(
             "UPDATE run_session SET next_action=NULL"
-            " WHERE id=? AND matter_id=? AND next_action IS NOT NULL",
+            " WHERE id=? AND matter_id=? AND next_action IS NOT NULL"
+            " AND status='interrupted'",
             (run_id, self.matter_id),
         )
         return cur.rowcount > 0
