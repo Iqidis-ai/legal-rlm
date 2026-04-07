@@ -151,12 +151,14 @@ class ReasoningLedgerStore:
         pre-existed when the run started (assertions_at_start / assertions_at_end).
         ``llm_calls_avoided`` / ``llm_calls_required``: SO-1 real reuse telemetry
         (avoided + required = total LLM opportunities; true reuse = avoided/total).
+
+        Clears next_action so completed runs are not shown as resumable.
         """
         now = _now()
         with self.db.transaction():
             self.db.execute(
                 "UPDATE run_session"
-                " SET status=?, completed_at=?, reuse_rate=?,"
+                " SET status=?, completed_at=?, reuse_rate=?, next_action=NULL,"
                 "     llm_calls_avoided=COALESCE(?, llm_calls_avoided),"
                 "     llm_calls_required=COALESCE(?, llm_calls_required)"
                 " WHERE id=? AND matter_id=?",
@@ -171,11 +173,12 @@ class ReasoningLedgerStore:
             )
 
     def fail_run(self, run_id: str, reason: str) -> None:
-        """Mark a run session as failed."""
+        """Mark a run session as failed. Clears next_action — failed runs are not resumable."""
         now = _now()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE run_session SET status=?, completed_at=? WHERE id=? AND matter_id=?",
+                "UPDATE run_session SET status=?, completed_at=?, next_action=NULL"
+                " WHERE id=? AND matter_id=?",
                 (RunStatus.FAILED.value, now, run_id, self.matter_id),
             )
             self._append_event(
@@ -197,6 +200,20 @@ class ReasoningLedgerStore:
                 event_type=LedgerEventType.USER_INTERRUPTED,
                 summary="Run interrupted by user stop request",
             )
+
+    def set_next_action(self, run_id: str, next_action: str) -> None:
+        """Store checkpoint path in run_session.next_action for SO-3 resume."""
+        self.db.execute(
+            "UPDATE run_session SET next_action=? WHERE id=? AND matter_id=?",
+            (next_action, run_id, self.matter_id),
+        )
+
+    def clear_next_action(self, run_id: str) -> None:
+        """Clear next_action when a run completes/fails — only interrupted runs stay resumable."""
+        self.db.execute(
+            "UPDATE run_session SET next_action=NULL WHERE id=? AND matter_id=?",
+            (run_id, self.matter_id),
+        )
 
     def request_stop(self, run_id: str) -> bool:
         """Set stop_requested flag — checked by the engine between iterations.

@@ -31,6 +31,7 @@ class ServiceConfig:
     # Storage Settings (for small instances)
     temp_dir: str = "/tmp/irys"
     matter_db_dir: str = "/tmp/irys/matters"  # Persistent matter model DBs
+    checkpoint_dir: str = "/tmp/irys/checkpoints"  # Investigation checkpoint files (SO-3 resume)
     max_temp_size_mb: int = 500  # Max temp storage before cleanup
     cleanup_after_seconds: int = 300  # 5 minutes
     max_concurrent_jobs: int = 3
@@ -71,6 +72,7 @@ class ServiceConfig:
             # Storage Settings
             temp_dir=os.getenv("IRYS_TEMP_DIR", "/tmp/irys"),
             matter_db_dir=os.getenv("IRYS_MATTER_DB_DIR", "/tmp/irys/matters"),
+            checkpoint_dir=os.getenv("IRYS_CHECKPOINT_DIR", "/tmp/irys/checkpoints"),
             max_temp_size_mb=int(os.getenv("IRYS_MAX_TEMP_SIZE_MB", "500")),
             cleanup_after_seconds=int(os.getenv("IRYS_CLEANUP_SECONDS", "300")),
             max_concurrent_jobs=int(os.getenv("IRYS_MAX_CONCURRENT_JOBS", "3")),

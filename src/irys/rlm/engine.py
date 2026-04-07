@@ -1060,6 +1060,9 @@ class RLMEngine:
             _adapter = getattr(state, "_matter_adapter", None)
             if _adapter is not None and _adapter.is_stop_requested():
                 self._emit_step(state, StepType.THINKING, "Stopped by user — partial state preserved")
+                # Force checkpoint on stop so the resume route always has a file to use.
+                # iteration=None because we are not at a clean periodic boundary.
+                self._save_checkpoint(state, iteration=None)
                 state.interrupt()
                 if run_id is not None:
                     self._matter_model.interrupt_run(run_id)
@@ -4713,18 +4716,40 @@ class RLMEngine:
                 for row in rows
             ])
 
-    def _save_checkpoint(self, state: InvestigationState, iteration: int):
-        """Save investigation checkpoint."""
+    def _save_checkpoint(
+        self, state: InvestigationState, iteration: "int | None" = None
+    ):
+        """Save investigation checkpoint.
+
+        iteration=None is used on the forced stop path (no clean iteration boundary).
+        In that case only the latest_<state.id>.json file is written (no per-iter file).
+        Also writes the latest checkpoint path into run_session.next_action so the
+        resume route can locate the file without scanning the filesystem.
+        """
         if not self.config.checkpoint_dir:
             return
 
-        checkpoint_path = Path(self.config.checkpoint_dir) / f"checkpoint_{state.id}_iter{iteration}.json"
-        state.save_checkpoint(checkpoint_path)
-        logger.info(f"Saved checkpoint: {checkpoint_path}")
+        Path(self.config.checkpoint_dir).mkdir(parents=True, exist_ok=True)
 
-        # Also save latest checkpoint reference
+        if iteration is not None:
+            checkpoint_path = (
+                Path(self.config.checkpoint_dir)
+                / f"checkpoint_{state.id}_iter{iteration}.json"
+            )
+            state.save_checkpoint(checkpoint_path)
+            logger.info("Saved checkpoint: %s", checkpoint_path)
+
+        # Always write/overwrite the latest pointer
         latest_path = Path(self.config.checkpoint_dir) / f"latest_{state.id}.json"
         state.save_checkpoint(latest_path)
+
+        # Persist latest checkpoint path into run_session.next_action for resume
+        run_id = getattr(state, "_run_id", None)
+        if run_id is not None and self._matter_model is not None:
+            try:
+                self._matter_model.ledger.set_next_action(run_id, str(latest_path))
+            except Exception:
+                pass
 
     async def resume_investigation(
         self,
@@ -4754,11 +4779,44 @@ class RLMEngine:
             state._matter_adapter = NullMatterAdapter()
 
         try:
-            # Continue investigation loop if not complete
+            # Continue investigation loop if not already complete
             if state.status not in ("completed", "failed"):
+                # Set run_id on state so periodic checkpoints write next_action correctly
+                if run_id is not None:
+                    state._run_id = run_id
+
                 await self._investigate_loop(state, repo)
+
+                # Mirror normal investigate() stop/interrupt branch
+                _adapter = getattr(state, "_matter_adapter", None)
+                if _adapter is not None and _adapter.is_stop_requested():
+                    self._emit_step(
+                        state, StepType.THINKING,
+                        "Stopped by user during resumed investigation — partial state preserved",
+                    )
+                    self._save_checkpoint(state, iteration=None)
+                    state.interrupt()
+                    if run_id is not None:
+                        self._matter_model.interrupt_run(run_id)
+                    return state
+
                 await self._verify_citations(state, repo)
                 await self._synthesize(state)
+
+                # Mirror normal completion tail: clarifications + reasoning trail
+                if run_id is not None:
+                    try:
+                        clarifications = self._matter_model.generate_clarifications(run_id=run_id)
+                        state.pending_clarifications = [
+                            c.question for c in clarifications if c and hasattr(c, "question")
+                        ]
+                    except Exception:
+                        pass
+                    try:
+                        state.reasoning_trail = self._matter_model.ledger.get_events(run_id)
+                    except Exception:
+                        pass
+
                 state.complete()
                 if run_id is not None:
                     self._matter_model.complete_run(

@@ -140,6 +140,33 @@ class InProcessBackend(UIBackend):
         except Exception as exc:
             return {"status": "error", "detail": str(exc)}
 
+    async def resume_run(self, matter_id: str, run_id: str) -> dict:
+        """Resume an interrupted run from its checkpoint (InProcessBackend)."""
+        try:
+            from pathlib import Path as _Path
+            model = self._get_matter_model(matter_id)
+            run = model.ledger.get_run(run_id)
+            if run is None:
+                return {"status": "error", "detail": f"Run '{run_id}' not found"}
+            if run.status != "interrupted":
+                return {"status": "error", "detail": f"Run '{run_id}' is not interrupted (status={run.status})"}
+            if run.objective in ("manual_flush", "background_flush"):
+                return {"status": "error", "detail": f"Run '{run_id}' is a utility flush run and cannot be resumed"}
+            checkpoint_path = run.next_action
+            if not checkpoint_path:
+                return {"status": "error", "detail": f"Run '{run_id}' has no checkpoint — was stopped before first checkpoint interval"}
+            if not _Path(checkpoint_path).exists():
+                return {"status": "error", "detail": f"Checkpoint file not found: {checkpoint_path}"}
+            irys = self._get_irys()
+            # Wire the same matter model so ledger entries go to the correct DB
+            irys._ensure_initialized()
+            irys._engine._matter_model = model
+            result = await irys.resume_investigation(checkpoint_path)
+            new_run_id = getattr(result.state, "_run_id", None)
+            return {"status": "resumed", "run_id": run_id, "new_run_id": new_run_id}
+        except Exception as exc:
+            return {"status": "error", "detail": str(exc)}
+
     # ------------------------------------------------------------------ #
     # Overview / dashboard                                                  #
     # ------------------------------------------------------------------ #

@@ -184,6 +184,34 @@ class Irys:
             format=self.config.output_format,
         )
 
+    async def resume_investigation(
+        self,
+        checkpoint_path: "str | Path",
+    ) -> "InvestigationResult":
+        """Resume a stopped investigation from a checkpoint file.
+
+        Args:
+            checkpoint_path: Path to the checkpoint file (from run_session.next_action)
+
+        Returns:
+            InvestigationResult with findings and output from the resumed run
+        """
+        self._ensure_initialized()
+
+        self._telemetry.start_operation("resume_investigation")
+        try:
+            state = await self._engine.resume_investigation(checkpoint_path)
+        finally:
+            self._telemetry.end_operation(
+                "resume_investigation",
+                "resume_complete",
+                {},
+            )
+
+        formatter = get_formatter(self.config.output_format)
+        output = formatter.format(state)
+        return InvestigationResult(state=state, output=output, format=self.config.output_format)
+
     async def summarize(
         self,
         files: list[str | Path],

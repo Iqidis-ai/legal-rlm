@@ -142,6 +142,9 @@ class HttpBackend(UIBackend):
             {"issue_id": issue_id},
         )
 
+    async def resume_run(self, matter_id: str, run_id: str) -> dict:
+        return await self._post(f"/matter/{matter_id}/runs/{run_id}/resume")
+
     # ------------------------------------------------------------------ #
     # SO-3 / SO-6 supplemental surfaces                                   #
     # ------------------------------------------------------------------ #

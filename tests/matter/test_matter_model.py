@@ -591,8 +591,9 @@ def test_get_so_metrics_empty_model(model):
     # No assertions yet — structure/role rates are None (not enough data)
     assert m["assertion_structure_rate"] is None
     assert m["source_role_known_rate"] is None
-    # Steerability is a capability flag — always True
-    assert m["steerability"] is True
+    # Steerability: False on empty model — no steerable investigation runs have occurred yet.
+    # (Reflects real history, not unconditional True.)
+    assert m["steerability"] is False
     # Belief revision: False on empty model (no revision events yet)
     assert m["belief_revision"] is False
     # Counts are zero
@@ -661,7 +662,7 @@ def test_get_so_metrics_targets_met(model):
     assert tm["source_role_known_rate"] is True
     # No issues → issue_coverage_avg is None → target_met is None (not enough data)
     assert tm["issue_coverage_avg"] is None
-    assert tm["steerability"] is True    # capability flag — always passes
+    assert tm["steerability"] is False   # no run_session rows yet → steerability=False → target not met
     assert tm["belief_revision"] is False  # no revision events yet → does not pass target
 
 

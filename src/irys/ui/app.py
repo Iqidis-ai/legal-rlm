@@ -631,6 +631,22 @@ class AppState:
         except Exception as exc:
             return f"❌ Error: {exc}"
 
+    def do_resume(self, matter_id: str, run_id: str) -> str:
+        if not matter_id or not run_id:
+            return "Provide matter ID and run ID."
+        try:
+            result = _run_async(self.backend().resume_run(matter_id, run_id))
+            if isinstance(result, dict) and result.get("status") == "error":
+                return f"❌ {result.get('detail', result)}"
+            new_rid = result.get("new_run_id") if isinstance(result, dict) else None
+            msg = f"✅ Resumed run {run_id}"
+            if new_rid:
+                msg += f" → new run {new_rid}"
+                self.current_run_id = new_rid
+            return msg
+        except Exception as exc:
+            return f"❌ Error: {exc}"
+
     def do_redirect(self, matter_id: str, run_id: str, issue_id: str) -> str:
         if not matter_id or not run_id or not issue_id:
             return "Provide matter ID, run ID, and issue ID."
@@ -865,6 +881,29 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     fn=state.do_redirect,
                     inputs=[matter_id_box, redirect_run_id, redirect_issue_id],
                     outputs=[redirect_result],
+                )
+
+                gr.Markdown("### Resume Stopped Investigation")
+                gr.Markdown(
+                    "Resume an interrupted investigation from its last checkpoint. "
+                    "Fill the run ID below and click Resume. "
+                    "The run must be in **interrupted** status with a checkpoint saved."
+                )
+                with gr.Row():
+                    resume_run_id = gr.Textbox(label="Run ID to Resume", scale=3)
+                    fill_resume_run_id_btn = gr.Button("← Use Last Run", scale=1)
+                resume_btn = gr.Button("Resume Investigation", variant="primary")
+                resume_result = gr.Textbox(label="Resume Result", interactive=False)
+
+                fill_resume_run_id_btn.click(
+                    fn=lambda: state.current_run_id or "",
+                    inputs=[],
+                    outputs=[resume_run_id],
+                )
+                resume_btn.click(
+                    fn=state.do_resume,
+                    inputs=[matter_id_box, resume_run_id],
+                    outputs=[resume_result],
                 )
 
             # ============================================================

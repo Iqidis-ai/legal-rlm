@@ -102,6 +102,11 @@ class UIBackend(ABC):
     ) -> dict:
         ...
 
+    @abstractmethod
+    async def resume_run(self, matter_id: str, run_id: str) -> dict:
+        """Resume an interrupted run from its checkpoint. Returns {new_run_id, status}."""
+        ...
+
     # ------------------------------------------------------------------ #
     # SO-3 / SO-6 supplemental surfaces                                   #
     # ------------------------------------------------------------------ #

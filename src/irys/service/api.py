@@ -465,7 +465,7 @@ async def _run_investigation(
 
         # Run investigation
         from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
+        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model, checkpoint_dir=config.checkpoint_dir)
         corpus_key = _compute_corpus_key(f"s3://{config.s3_bucket}/{request.s3_prefix}")
         matter_id = _wire_matter_model(irys, str(temp_dir), corpus_key, config)
         if matter_id:
@@ -758,7 +758,7 @@ async def _run_upload_investigation(
             temp_dir = await s3_repo.download_to_temp(job_id)
 
         from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
+        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model, checkpoint_dir=config.checkpoint_dir)
         # corpus_key must have been set by the upload endpoint from file content hashes.
         # If absent (should never happen), skip matter model wiring rather than fall back
         # to a per-run job_id — a per-run key would silently fragment the matter DB (SO-1).
@@ -1046,7 +1046,7 @@ async def upload_investigate_sync(
 
         # Run investigation
         from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
+        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model, checkpoint_dir=config.checkpoint_dir)
         sync_matter_id = _wire_matter_model(irys, str(temp_dir), sync_corpus_key, config)
 
         # Pin the model: increment refcount so the orphan-eviction pass in _cleanup_loop
@@ -1223,7 +1223,7 @@ async def _run_urls_investigation(
 
         # Run investigation
         from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
+        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model, checkpoint_dir=config.checkpoint_dir)
         corpus_key = _compute_corpus_key(",".join(sorted(_url_to_str(u) for u in request.s3_urls)))
         matter_id = _wire_matter_model(irys, str(temp_dir), corpus_key, config)
         if matter_id:
@@ -1373,7 +1373,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
 
         # Run investigation
         from irys import Irys
-        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model)
+        irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model, checkpoint_dir=config.checkpoint_dir)
         urls_corpus_key = _compute_corpus_key(",".join(sorted(_url_to_str(u) for u in request.s3_urls)))
         urls_matter_id = _wire_matter_model(irys, str(temp_dir), urls_corpus_key, config)
 
@@ -2728,3 +2728,98 @@ async def stop_run(matter_id: str, run_id: str):
         why="User-initiated stop — investigation will halt after current iteration",
     )
     return {"status": "stop_requested", "run_id": run_id, "matter_id": matter_id}
+
+
+@app.post(
+    "/matter/{matter_id}/runs/{run_id}/resume",
+    tags=["UI"],
+    responses={
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        400: {"model": ErrorResponse},
+    },
+)
+async def resume_run(matter_id: str, run_id: str):
+    """Resume an interrupted run from its checkpoint.
+
+    Validates that:
+    - The run exists and belongs to this matter
+    - The run status is 'interrupted'
+    - The run has a checkpoint path in next_action
+    - The checkpoint file exists on disk
+    - No other steerable run is currently running for this matter
+
+    Returns the new run_id created for the resumed investigation.
+    """
+    from pathlib import Path as _Path
+    from irys.api import Irys
+
+    model = await _get_matter_model_or_404(matter_id)
+    run = model.ledger.get_run(run_id)
+    if run is None or run.matter_id != model.matter_id:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in this matter")
+    if run.status != "interrupted":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run '{run_id}' is not interrupted (status={run.status}) — only interrupted runs can be resumed",
+        )
+    if run.objective in ("manual_flush", "background_flush"):
+        raise HTTPException(status_code=409, detail=f"Run '{run_id}' is a utility flush run and cannot be resumed")
+    checkpoint_path = run.next_action
+    if not checkpoint_path:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Run '{run_id}' has no checkpoint — was stopped before the first checkpoint interval",
+        )
+    if not _Path(checkpoint_path).exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Checkpoint file not found: {checkpoint_path}",
+        )
+    # Validate checkpoint can be loaded and repository still exists
+    try:
+        from irys.rlm.state import InvestigationState
+        ckpt_state = InvestigationState.load_checkpoint(checkpoint_path)
+        if not _Path(ckpt_state.repository_path).exists():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Repository path no longer exists: {ckpt_state.repository_path}",
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Cannot load checkpoint: {exc}") from exc
+
+    # Reject if another steerable run is already running for this matter
+    running = model.db.execute(
+        "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
+        " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))",
+        (matter_id,),
+    ).fetchone()
+    if running:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Matter '{matter_id}' already has a running investigation: {running['id']}",
+        )
+
+    irys = Irys(
+        api_key=config.gemini_api_key,
+        enable_matter_model=config.enable_matter_model,
+        checkpoint_dir=config.checkpoint_dir,
+    )
+    irys._ensure_initialized()
+    # Wire the already-open matter model so the resumed run uses the same DB
+    irys._engine._matter_model = model
+
+    try:
+        result = await irys.resume_investigation(checkpoint_path)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Resume failed: {exc}") from exc
+
+    new_run_id = getattr(result.state, "_run_id", None)
+    return {
+        "status": "resumed",
+        "original_run_id": run_id,
+        "new_run_id": new_run_id,
+        "matter_id": matter_id,
+    }
