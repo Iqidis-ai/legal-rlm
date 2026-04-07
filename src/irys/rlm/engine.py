@@ -5032,8 +5032,16 @@ class RLMEngine:
                     self._matter_model.ledger.set_next_action(
                         original_run_id, str(checkpoint_path)
                     )
-                except Exception:
-                    pass
+                except Exception as _restore_exc:
+                    # MEDIUM r80: if restore write fails the original run is permanently
+                    # non-resumable via normal routes. Log a WARNING with the run_id so
+                    # operators can manually repair (set next_action via direct DB write).
+                    logger.warning(
+                        "CRITICAL: failed to restore next_action on original interrupted "
+                        "run '%s' after resume failure — run may require manual repair. "
+                        "checkpoint_path=%s error=%s",
+                        original_run_id, checkpoint_path, _restore_exc,
+                    )
                 # Restore redirect flag (MEDIUM r70)
                 if _orig_redirect_issue is not None:
                     try:
@@ -5060,8 +5068,8 @@ class RLMEngine:
                     try:
                         # MEDIUM r79: also set completed_at + next_action=NULL to
                         # match fail_run() semantics (no event logged — best-effort)
-                        import datetime as _dt
-                        _now_iso = _dt.datetime.utcnow().isoformat()
+                        from datetime import datetime as _datetime, timezone as _tz
+                        _now_iso = _datetime.now(_tz.utc).isoformat()
                         self._matter_model.ledger.db.execute(
                             "UPDATE run_session"
                             " SET status='failed', completed_at=?, next_action=NULL"
