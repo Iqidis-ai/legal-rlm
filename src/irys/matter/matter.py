@@ -1985,15 +1985,17 @@ class MatterModel:
         quant_fact_count = self.quant.count()
         actor_count = self.actors.count()
 
-        # SO-3: steerability — True only if this matter has at least one completed
-        # run session, confirming the interruptible engine was actually used on it.
-        # False (not None) if the matter exists but has never been investigated;
-        # None on DB error.  An empty matter returning True would be manufactured
-        # compliance — the auditor must be able to observe actual engine use.
+        # SO-3: steerability — True only if this matter has at least one investigation
+        # run session (not a utility flush run).  Uses the same objective filter as
+        # request_stop() / request_redirect() in reasoning.py so only runs that are
+        # actually stoppable/redirectable are counted.  False if no qualifying runs;
+        # None on DB error.  A matter with only flush history must not report True.
         steerability: "bool | None" = None
         try:
             sr_row = self.db.execute(
-                "SELECT COUNT(*) AS n FROM run_session WHERE matter_id=?",
+                "SELECT COUNT(*) AS n FROM run_session WHERE matter_id=?"
+                " AND (objective IS NULL OR objective NOT IN"
+                " ('manual_flush','background_flush'))",
                 (self.matter_id,),
             ).fetchone()
             steerability = bool(int(sr_row["n"]) > 0) if sr_row else False
