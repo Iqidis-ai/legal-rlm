@@ -4843,6 +4843,13 @@ class RLMEngine:
             InvestigationState with completed investigation
         """
         state = InvestigationState.load_checkpoint(checkpoint_path)
+        # MEDIUM r72: scrub any stale final_output from the checkpoint. Interrupted
+        # checkpoints written before the r71 fix (or stopped mid-synthesis) may carry
+        # a partial memo. Strip it at load time so every non-complete stop branch and
+        # re-resume-then-stop path starts clean. A completed resume will write a fresh
+        # final_output via _synthesize(); an interrupted resume leaves it absent, which
+        # is correct — formatters return empty string for missing key.
+        state.findings.pop("final_output", None)
         repo = MatterRepository(state.repository_path)
 
         self._emit_step(state, StepType.THINKING, "Resuming investigation from checkpoint")
