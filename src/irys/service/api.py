@@ -978,6 +978,13 @@ async def upload_investigate_sync(
     temp_dir = None
     sync_matter_id = None  # must be visible in finally for unpin
 
+    # Cheap validation before incrementing the concurrency slot so invalid requests
+    # don't briefly consume a slot.
+    if len(files) > config.max_documents_per_job:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files ({len(files)}). Max: {config.max_documents_per_job}",
+        )
     # Concurrency cap: each sync request may buffer up to
     # max_documents_per_job × max_document_size_mb of body data in RAM simultaneously.
     if _active_sync_requests >= config.max_concurrent_jobs:
@@ -987,13 +994,6 @@ async def upload_investigate_sync(
         )
     _active_sync_requests += 1
     try:
-        # Check file count
-        if len(files) > config.max_documents_per_job:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Too many files ({len(files)}). Max: {config.max_documents_per_job}",
-            )
-
         # Read files into memory
         _max_bytes = config.max_document_size_mb * 1024 * 1024
         file_data = []
@@ -1349,6 +1349,11 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
     temp_dir = None
     urls_matter_id = None  # must be visible in finally for unpin
 
+    if len(request.s3_urls) > config.max_documents_per_job:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many URLs ({len(request.s3_urls)}). Max: {config.max_documents_per_job}",
+        )
     if _active_sync_requests >= config.max_concurrent_jobs:
         raise HTTPException(
             status_code=429,
@@ -1356,13 +1361,6 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         )
     _active_sync_requests += 1
     try:
-        # Check URL count
-        if len(request.s3_urls) > config.max_documents_per_job:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Too many URLs ({len(request.s3_urls)}). Max: {config.max_documents_per_job}",
-            )
-
         # Create S3 repository
         s3_repo = S3Repository(
             bucket=config.s3_bucket or "placeholder",
