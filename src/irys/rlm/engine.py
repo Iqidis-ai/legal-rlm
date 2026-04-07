@@ -1105,6 +1105,7 @@ class RLMEngine:
 
             state.complete()
             if run_id is not None:
+                self._cleanup_checkpoints(state)
                 self._matter_model.complete_run(
                     run_id,
                     llm_calls_avoided=state.llm_calls_avoided,
@@ -1134,6 +1135,7 @@ class RLMEngine:
         except Exception as e:
             state.fail(str(e))
             if run_id is not None:
+                self._cleanup_checkpoints(state)
                 self._matter_model.fail_run(run_id, str(e))
             raise
 
@@ -4716,6 +4718,22 @@ class RLMEngine:
                 for row in rows
             ])
 
+    def _cleanup_checkpoints(self, state: InvestigationState) -> None:
+        """Delete all checkpoint files for this state on run completion/failure.
+
+        Prevents unbounded disk accumulation: both per-iteration files
+        (checkpoint_<state.id>_iter*.json) and the latest pointer
+        (latest_<state.id>.json) are removed.
+        """
+        if not self.config.checkpoint_dir:
+            return
+        try:
+            ckpt_dir = Path(self.config.checkpoint_dir)
+            for f in list(ckpt_dir.glob(f"*{state.id}*.json")):
+                f.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     def _save_checkpoint(
         self, state: InvestigationState, iteration: "int | None" = None
     ):
@@ -4847,6 +4865,7 @@ class RLMEngine:
 
                 state.complete()
                 if run_id is not None:
+                    self._cleanup_checkpoints(state)
                     self._matter_model.complete_run(
                         run_id,
                         llm_calls_avoided=state.llm_calls_avoided,
@@ -4870,6 +4889,7 @@ class RLMEngine:
         except Exception as e:
             state.fail(str(e))
             if run_id is not None:
+                self._cleanup_checkpoints(state)
                 self._matter_model.fail_run(run_id, str(e))
             raise
 

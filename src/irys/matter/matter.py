@@ -1304,6 +1304,10 @@ class MatterModel:
             ).fetchall()
             aids = [r["assertion_id"] for r in rows]
             if len(aids) >= 2:
+                # Cap at 20 before O(k²) nested link loop to bound worst-case work
+                # when many assertions share the same (subject_type, '', currency) bucket
+                # (e.g. unlabelled invoices all with NULL subject_id).
+                aids = aids[:20]
                 # Wire bidirectional contradicts links (idempotent via UNIQUE index)
                 for i, a1 in enumerate(aids):
                     for a2 in aids[i + 1:]:
