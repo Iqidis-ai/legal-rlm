@@ -4863,29 +4863,40 @@ class RLMEngine:
         # Captured redirect issue so the except block can restore it on resume failure
         # (MEDIUM r70: clear_redirect clears the flag before work starts; restore on fail)
         _orig_redirect_issue: "str | None" = None
+
+        # HIGH r75: Concurrent-resume CAS — atomically claim the checkpoint by clearing
+        # next_action BEFORE creating a new run row. clear_next_action() now uses
+        # `AND next_action IS NOT NULL` so only the first caller gets rowcount>0.
+        # If rowcount==0, another resume beat us to it; reject immediately without
+        # creating a dangling run_session row.
+        if (
+            original_run_id is not None
+            and self.config.enable_matter_model
+            and self._matter_model is not None
+        ):
+            claimed = self._matter_model.ledger.clear_next_action(original_run_id)
+            if not claimed:
+                raise RuntimeError(
+                    f"Run '{original_run_id}' has already been claimed by a concurrent "
+                    "resume request — only one resume can proceed at a time"
+                )
+            # Read pending redirect AFTER claiming (fenced read — avoids stale snapshot
+            # where a concurrent redirect arrives between the read and the fence)
+            orig = self._matter_model.ledger.get_run(original_run_id)
+            if orig and orig.redirect_requested and orig.active_branch_issue_id:
+                _orig_redirect_issue = orig.active_branch_issue_id
+
         if self.config.enable_matter_model and self._matter_model is not None:
             run_id = self._matter_model.start_run(f"Resume: {state.query[:120]}")
             state._matter_adapter = MatterRuntimeAdapter(self._matter_model, run_id)
 
-            # Propagate pending redirect from original interrupted run (SO-3).
-            # When a user clicks Redirect on a stopped run, the redirect_requested flag
-            # and active_branch_issue_id are stored on the old run. We copy them to the
-            # new run so _investigate_loop() picks up the user's chosen focus.
-            if original_run_id is not None:
+            # Propagate the captured redirect to the new run (SO-3)
+            if original_run_id is not None and _orig_redirect_issue is not None:
                 try:
-                    # Fence FIRST: clear_next_action blocks new /redirect calls to the
-                    # old run_id (request_redirect() requires next_action IS NOT NULL for
-                    # interrupted runs). Read orig AFTER the fence so we see the committed
-                    # redirect state as of the fence point — avoids a stale-snapshot race
-                    # where a concurrent redirect arrives between the read and the fence.
-                    self._matter_model.ledger.clear_next_action(original_run_id)
-                    orig = self._matter_model.ledger.get_run(original_run_id)
-                    if orig and orig.redirect_requested and orig.active_branch_issue_id:
-                        _orig_redirect_issue = orig.active_branch_issue_id
-                        self._matter_model.ledger.request_redirect(
-                            run_id, orig.active_branch_issue_id
-                        )
-                        self._matter_model.ledger.clear_redirect(original_run_id)
+                    self._matter_model.ledger.request_redirect(
+                        run_id, _orig_redirect_issue
+                    )
+                    self._matter_model.ledger.clear_redirect(original_run_id)
                 except Exception:
                     pass
         else:

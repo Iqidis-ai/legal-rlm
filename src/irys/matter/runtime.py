@@ -683,13 +683,15 @@ class MatterRuntimeAdapter:
 
     def request_redirect(self, issue_id: str) -> None:
         """Signal the engine to redirect focus to the given issue on the next iteration."""
-        self.model.ledger.request_redirect(self.run_id, issue_id)
-        self.model.ledger.append_event(
-            run_id=self.run_id,
-            event_type=LedgerEventType.BRANCH_SELECTED,
-            summary=f"User requested redirect to issue: {issue_id[:60]}",
-            branch_issue_id=issue_id,
-        )
+        applied = self.model.ledger.request_redirect(self.run_id, issue_id)
+        # LOW r75: only log BRANCH_SELECTED when the DB update actually succeeded
+        if applied:
+            self.model.ledger.append_event(
+                run_id=self.run_id,
+                event_type=LedgerEventType.BRANCH_SELECTED,
+                summary=f"User requested redirect to issue: {issue_id[:60]}",
+                branch_issue_id=issue_id,
+            )
 
     def is_redirect_requested(self) -> bool:
         return self.model.ledger.is_redirect_requested(self.run_id)
@@ -719,12 +721,14 @@ class MatterRuntimeAdapter:
     def request_stop(self) -> None:
         """Signal the engine to stop after the current iteration."""
         self._stop_flag = True
-        self.model.ledger.request_stop(self.run_id)
-        self.model.ledger.append_event(
-            run_id=self.run_id,
-            event_type=LedgerEventType.USER_INTERRUPTED,
-            summary="User requested stop",
-        )
+        applied = self.model.ledger.request_stop(self.run_id)
+        # LOW r75: only log USER_INTERRUPTED when the DB update actually succeeded
+        if applied:
+            self.model.ledger.append_event(
+                run_id=self.run_id,
+                event_type=LedgerEventType.USER_INTERRUPTED,
+                summary="User requested stop",
+            )
 
     def is_stop_requested(self) -> bool:
         # Fast path: in-memory flag — O(1), never stale for same-process stops.

@@ -208,12 +208,19 @@ class ReasoningLedgerStore:
             (next_action, run_id, self.matter_id),
         )
 
-    def clear_next_action(self, run_id: str) -> None:
-        """Clear next_action when a run completes/fails — only interrupted runs stay resumable."""
-        self.db.execute(
-            "UPDATE run_session SET next_action=NULL WHERE id=? AND matter_id=?",
+    def clear_next_action(self, run_id: str) -> bool:
+        """Clear next_action when a run completes/fails — only interrupted runs stay resumable.
+
+        Returns True if the field was actually cleared (rowcount > 0), False if it was
+        already NULL. Callers that use this as a CAS fence (resume_investigation) must
+        check the return value: rowcount==0 means a concurrent call beat them to it.
+        """
+        cur = self.db.execute(
+            "UPDATE run_session SET next_action=NULL"
+            " WHERE id=? AND matter_id=? AND next_action IS NOT NULL",
             (run_id, self.matter_id),
         )
+        return cur.rowcount > 0
 
     def request_stop(self, run_id: str) -> bool:
         """Set stop_requested flag — checked by the engine between iterations.
