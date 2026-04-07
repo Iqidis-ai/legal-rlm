@@ -180,11 +180,18 @@ class ReasoningLedgerStore:
             )
 
     def fail_run(self, run_id: str, reason: str) -> None:
-        """Mark a run session as failed. Clears next_action — failed runs are not resumable."""
+        """Mark a run session as failed.
+
+        Clears next_action (failed runs are not resumable) and atomically
+        clears stop_requested/redirect_requested for consistency with
+        complete_run() — stale steering flags must not survive terminal status
+        (r94 LOW fix).
+        """
         now = _now()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE run_session SET status=?, completed_at=?, next_action=NULL"
+                "UPDATE run_session SET status=?, completed_at=?, next_action=NULL,"
+                " stop_requested=0, redirect_requested=0"
                 " WHERE id=? AND matter_id=?",
                 (RunStatus.FAILED.value, now, run_id, self.matter_id),
             )

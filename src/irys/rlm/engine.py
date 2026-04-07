@@ -5133,11 +5133,12 @@ class RLMEngine:
                     try:
                         # MEDIUM r79: also set completed_at + next_action=NULL to
                         # match fail_run() semantics (no event logged — best-effort)
+                        # r94 LOW: also clear steering flags to match fail_run()
                         from datetime import datetime as _datetime, timezone as _tz
                         _now_iso = _datetime.now(_tz.utc).isoformat()
                         self._matter_model.ledger.db.execute(
-                            "UPDATE run_session"
-                            " SET status='failed', completed_at=?, next_action=NULL"
+                            "UPDATE run_session SET status='failed', completed_at=?,"
+                            " next_action=NULL, stop_requested=0, redirect_requested=0"
                             " WHERE id=? AND matter_id=?",
                             (_now_iso, run_id, self._matter_model.matter_id),
                         )
