@@ -403,6 +403,16 @@ class InProcessBackend(UIBackend):
             applied = model.ledger.request_redirect(run_id, issue_id)
             if not applied:
                 return {"status": "error", "detail": f"Run '{run_id}' completed before redirect could be applied"}
+            # Log the steering event so the reasoning trail reflects the user action (SO-3).
+            # Service API does the same at service/api.py:1606.
+            from irys.matter.enums import LedgerEventType
+            model.ledger.append_event(
+                run_id=run_id,
+                event_type=LedgerEventType.USER_REDIRECTED,
+                summary=f"User redirected to issue: {issue.get('title', issue_id)[:80]}",
+                why="User-initiated redirect via local UI",
+                branch_issue_id=issue_id,
+            )
             return {
                 "status": "redirect_requested",
                 "run_id": run_id,
