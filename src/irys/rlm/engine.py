@@ -1155,15 +1155,21 @@ class RLMEngine:
                     llm_calls_required=state.llm_calls_required,
                 )
                 # adv#036 MEDIUM: if a redirect arrived during verify/synthesize it was
-                # never consumed by _investigate_loop(). Surface this to the user and
-                # clear the stale flag so the completed run is not left with redirect=1.
+                # never consumed by _investigate_loop(). Surface this to the user via a
+                # durable ledger event and clear the stale flag. Uses append_event()
+                # rather than _emit_step(THINKING) so the notice appears in reasoning_trail.
                 try:
                     if self._matter_model.ledger.is_redirect_requested(run_id):
                         self._matter_model.ledger.clear_redirect(run_id)
-                        self._emit_step(
-                            state, StepType.THINKING,
-                            "Redirect received too late — investigation completed "
-                            "before it could be applied; resubmit on a new run",
+                        from irys.matter.enums import LedgerEventType as _LET
+                        self._matter_model.ledger.append_event(
+                            run_id=run_id,
+                            event_type=_LET.USER_REDIRECTED,
+                            summary=(
+                                "Redirect received too late — investigation completed "
+                                "before it could be applied; resubmit on a new run"
+                            ),
+                            why="adv#036: late redirect cleared at run completion",
                         )
                 except Exception:
                     pass
@@ -5027,10 +5033,15 @@ class RLMEngine:
                     try:
                         if self._matter_model.ledger.is_redirect_requested(run_id):
                             self._matter_model.ledger.clear_redirect(run_id)
-                            self._emit_step(
-                                state, StepType.THINKING,
-                                "Redirect received too late — investigation completed "
-                                "before it could be applied; resubmit on a new run",
+                            from irys.matter.enums import LedgerEventType as _LET
+                            self._matter_model.ledger.append_event(
+                                run_id=run_id,
+                                event_type=_LET.USER_REDIRECTED,
+                                summary=(
+                                    "Redirect received too late — investigation completed "
+                                    "before it could be applied; resubmit on a new run"
+                                ),
+                                why="adv#036: late redirect cleared at run completion",
                             )
                     except Exception:
                         pass
