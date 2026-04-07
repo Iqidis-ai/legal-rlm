@@ -1,0 +1,7 @@
+CLEAN.
+
+[src/irys/matter/reasoning.py#L182](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L182) now clears `stop_requested` and `redirect_requested` in the same transaction that marks the run failed, and [src/irys/rlm/engine.py#L5129](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L5129) updates the resume-path bare fallback to match. I did not find another `failed` terminal write that still leaves stale steering flags behind; the normal investigate fallback was already doing that at [src/irys/rlm/engine.py#L1216](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1216).
+
+I do not see a new correctness issue from clearing the steering flags in `fail_run()`. `request_stop()` only applies to `status='running'` and `request_redirect()` only to `running` or resumable `interrupted` runs at [src/irys/matter/reasoning.py#L243](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L243) and [src/irys/matter/reasoning.py#L268](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L268), while resume propagation only reads redirect state from an interrupted parent at [src/irys/rlm/engine.py#L4953](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4953). Failed runs are terminal, so preserving those flags would only leave stale steerability state.
+
+Code review only; no tests were run in this read-only session.
