@@ -1,0 +1,13 @@
+**Findings**
+- HIGH: The REST/UI resume path is still broken end-to-end. In [`api.py#L2829`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L2829), `resume_run()` constructs `Irys(...)` from `config.*`, but this function never defines `config`. Once validation passes, the endpoint will raise `NameError` before `resume_investigation()` runs, so SO-3 resume is not actually usable through the service surface. See [`api.py#L2758`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L2758) and [`api.py#L2829`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L2829).
+
+- MEDIUM: The new restore-failure warning is not an adequate mitigation for the broader best-effort `next_action` hole. Normal checkpoint persistence still swallows `set_next_action()` failures silently in [`engine.py#L4842`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4842). If that DB write fails during checkpointing or during a stop, the checkpoint file exists but `run_session.next_action` can stay stale or null, making resume impossible or resuming from older state with no operator signal. The new log in [`engine.py#L5039`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L5039) only covers the later restore-after-failed-resume path.
+
+- LOW: The new message says `CRITICAL:` but is emitted via `logger.warning` in [`engine.py#L5039`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L5039). If ops alerting keys off log level rather than message text, the manual-repair condition can still be missed. That is observability improvement, not robust mitigation.
+
+**Assessment**
+- On (1): no, I would not call the new warning adequate mitigation. It makes one failure mode visible, but it does not restore resumability and it does not cover the still-silent hot path in `_save_checkpoint()`.
+- On (2): the tz-aware timestamp fix is correct. [`engine.py#L5071`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L5071) now uses `datetime.now(timezone.utc).isoformat()`, which matches [`reasoning.py#L17`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L17) exactly.
+- On (3): not CLEAN. I found 1 remaining HIGH and 1 remaining MEDIUM in the reviewed SO-3 stop/redirect/resume path.
+
+Static review only; I did not run tests in this read-only environment.

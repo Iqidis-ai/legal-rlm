@@ -1,0 +1,5 @@
+CLEAN
+
+No performance findings in commit `720c300dd4450f0bbaa186540c4653a1ea3938ba`. The new `logger.warning(...)` in [_resolve_resumed_run_id](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1507) only runs on the exception fallback path, and that helper is only used by the run-scoped stop/redirect endpoints in [api.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1590) and [api.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L2767). It does not touch the engine’s hot loop, polling path, or steady-state throughput.
+
+Residual risk is limited to log volume if the resolver starts failing repeatedly and clients keep retrying stop/redirect, but that is operator-driven and acceptable for surfacing a real fault.

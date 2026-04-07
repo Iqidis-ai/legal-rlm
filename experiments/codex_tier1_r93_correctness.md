@@ -1,0 +1,7 @@
+CLEAN
+
+The exclusion in [matter.py#L2057](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L2057) correctly fixes the SO-1 aggregation contamination. In current code, `resumed_from` is only set by the actual resume flow in [engine.py#L4936](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4936), and every run snapshots `assertions_at_start` from the matter’s current persisted assertion count in [matter.py#L244](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L244). So a resumed child is measuring reuse against a state already enriched by the interrupted run’s partial work, which is not comparable to a genuine fresh-query warm-start/cold-start comparison.
+
+I do not see a current scenario where a resumed run should still be included. If you later add a “resume but discard prior partial work” or “restart from checkpoint as a fresh run” mode, that should be recorded as a normal new run with `resumed_from = NULL`, or with a separate flag; otherwise this filter would become too coarse. No new correctness issues stood out in `bb441f66daaacd45498667e42f5a930e28bed7c3`.
+
+Residual testing gap: I did not find a targeted regression test for resumed-run exclusion in `get_so_metrics()`, and I did not run the test suite for this review.

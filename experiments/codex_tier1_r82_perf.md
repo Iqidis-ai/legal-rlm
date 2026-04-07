@@ -1,0 +1,7 @@
+CLEAN
+
+No material performance issues in `89bafc3`.
+
+The new `get_config()` in [`src/irys/service/api.py:2770`](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L2770) is not a concern. `get_config()` is memoized with `@lru_cache()` in [`src/irys/service/config.py:108`](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/config.py#L108), so after first use in a process it is just a cheap cached lookup. On this endpoint, that cost is drowned out by the existing work: matter-model lookup, DB reads, checkpoint file load, filesystem existence checks, `Irys` initialization, and then the full inline `resume_investigation()` call in [`src/irys/service/api.py:2829`](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L2829) and [`src/irys/service/api.py:2844`](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L2844).
+
+The added warning in [`src/irys/rlm/engine.py:4846`](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4846) only runs on the exception path, so it does not affect steady-state checkpoint performance. The only nit is that `resume_run()` now does one cached `get_config()` lookup while `_get_matter_model_or_404()` also does one internally, but that is still firmly in micro-optimization territory, not a material regression.

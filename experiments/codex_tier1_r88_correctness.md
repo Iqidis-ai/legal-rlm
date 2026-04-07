@@ -1,0 +1,7 @@
+CLEAN.
+
+The change at [api.py:1526](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1526) fully addresses the r87 LOW on silent exception swallowing. `_resolve_resumed_run_id()` no longer hides unexpected failures behind `except Exception: pass`; it now emits a `WARNING` with the `run_id` and exception while preserving the same best-effort fallback to the original ID. That closes the observability gap without changing resolver behavior.
+
+The remaining parent→resumed-child regression-test gap is still LOW and does not block CLEAN for this commit. This patch does not change the lineage-resolution logic used by the redirect/stop call sites at [api.py:1590](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1590) and [api.py:2767](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L2767); it only makes failure visible. Existing service tests in [test_matter_api.py:117](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/tests/service/test_matter_api.py#L117) and [test_matter_api.py:165](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/tests/service/test_matter_api.py#L165) still miss the resumed-child path, but that is coverage debt rather than a correctness blocker here.
+
+I did not run tests; this is a diff-only review of commit `720c300dd4450f0bbaa186540c4653a1ea3938ba`.

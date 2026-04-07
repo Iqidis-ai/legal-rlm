@@ -1,0 +1,7 @@
+CLEAN
+
+I do not see a material performance issue in `e254b6c`.
+
+`_resolve_active_run_id()` adds one extra primary-key `get_run()` on every stop/redirect call, and only if that row is already `interrupted` does it issue the second “find the current running run” lookup ([in_process.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/backends/in_process.py#L140), [in_process.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/backends/in_process.py#L157), [in_process.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/backends/in_process.py#L379)). Those paths are user-triggered control actions, not per-step or per-token hot paths in the engine/UI loop ([app.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/app.py#L491), [app.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/app.py#L662)). The fallback query is also index-friendly against `run_session(matter_id, status, started_at)` ([schema.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/schema.py#L164)).
+
+Residual note: there is a small redundant read because `stop_run` / `redirect_run` call `get_run()` again after resolution ([reasoning.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L301)). If desired, that can be cleaned up by returning the resolved row from `_resolve_active_run_id()`, but I would not treat it as a performance finding.

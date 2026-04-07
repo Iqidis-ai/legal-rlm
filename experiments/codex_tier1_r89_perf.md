@@ -1,0 +1,5 @@
+CLEAN.
+
+No Tier 1 performance findings in the added completion-tail blocks at [engine.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1150) and [engine.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L5020). The added cost is one single-row `SELECT` plus a conditional single-row `UPDATE` on `run_session.id` ([reasoning.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L279), [reasoning.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L291), [schema.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/schema.py#L150)), and it executes once at run completion after `complete_run()`, not in the investigation hot loop. The extra `_emit_step(..., StepType.THINKING, ...)` is also low-cost because THINKING steps are kept in memory and are not persisted to the durable ledger path ([engine.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4443)).
+
+Static review only; no runtime profiling was needed for this change because the new work is terminal-path and constant-time.

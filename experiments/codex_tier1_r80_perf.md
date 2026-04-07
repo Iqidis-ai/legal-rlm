@@ -1,0 +1,3 @@
+CLEAN.
+
+The `import datetime as _dt` in [engine.py:5063](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L5063) is on a double-failure cleanup path after `fail_run()` already threw, so it is not a hot path. In CPython the module is cached after the first import, so subsequent executions are just a cheap lookup; the exception handling and fallback DB write at [engine.py:5065](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L5065) dominate cost by orders of magnitude. No material performance concern.

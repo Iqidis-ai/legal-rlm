@@ -1,0 +1,5 @@
+CLEAN.
+
+No performance findings in [`_migration_v41()`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/schema.py#L1539). This is a migration-only path, not a steady-state runtime path, and the repo uses stdlib `sqlite3` end-to-end ([`db.py`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/db.py#L7), [`db.py`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/db.py#L15)), so narrowing the catch to `sqlite3.OperationalError` does not introduce a throughput or memory regression. The extra import and string check are negligible startup-only costs.
+
+Residual risk/testing gap: I did not find a dedicated v41 regression test in [`tests/matter/test_schema.py`](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/tests/matter/test_schema.py) covering both the expected duplicate-column no-op and a non-duplicate `OperationalError` re-raise. That is a correctness coverage gap, not a performance finding.
