@@ -656,8 +656,19 @@ class AppState:
             except Exception as exc:
                 self._last_resume_error = str(exc)
         self._last_resume_error = None  # clear stale error before submit (LOW r69)
-        _ASYNC_EXECUTOR.submit(_do_resume)
-        return f"⏳ Resume of run {run_id} launched — monitor via Overview or Ledger Events. Check _last_resume_error if progress stalls."
+        future = _ASYNC_EXECUTOR.submit(_do_resume)
+        # r96 MEDIUM: wait briefly so fast pre-validation failures surface immediately.
+        # Pre-validation (run exists, is interrupted, has checkpoint) completes in
+        # milliseconds; real investigations take seconds-to-minutes and will time out.
+        import concurrent.futures as _cf
+        try:
+            future.result(timeout=0.5)
+            # Completed within 0.5s — fast pre-validation failure or very small repo.
+            if self._last_resume_error:
+                return f"❌ Resume failed: {self._last_resume_error}"
+        except _cf.TimeoutError:
+            pass  # Still running — genuine investigation launch
+        return f"⏳ Resume of run {run_id} launched — monitor via Overview or Ledger Events."
 
     def do_redirect(self, matter_id: str, run_id: str, issue_id: str) -> str:
         if not matter_id or not run_id or not issue_id:

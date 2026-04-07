@@ -163,6 +163,8 @@ class InProcessBackend(UIBackend):
             model = self._get_matter_model(matter_id)
             run_id = self._resolve_active_run_id(model, run_id)
             run = model.ledger.get_run(run_id)
+            if run is not None and run.matter_id != model.matter_id:
+                return {"status": "error", "detail": f"Run '{run_id}' does not belong to matter '{matter_id}'"}
             if run and run.objective in ("manual_flush", "background_flush"):
                 return {"status": "error", "detail": f"Run '{run_id}' is a utility flush run and cannot be stopped"}
             applied = model.ledger.request_stop(run_id)
@@ -389,6 +391,8 @@ class InProcessBackend(UIBackend):
             run = model.ledger.get_run(run_id)
             if run is None:
                 return {"status": "error", "detail": f"Run '{run_id}' not found"}
+            if run.matter_id != model.matter_id:
+                return {"status": "error", "detail": f"Run '{run_id}' does not belong to matter '{matter_id}'"}
             if run.status not in ("running", "interrupted"):
                 return {"status": "error", "detail": f"Run is not active or interrupted (status: {run.status})"}
             if run.objective in ("manual_flush", "background_flush"):
