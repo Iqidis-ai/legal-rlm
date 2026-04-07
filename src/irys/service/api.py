@@ -140,7 +140,7 @@ async def _cleanup_loop(config: ServiceConfig):
             # Skip models that are currently pinned by an in-flight sync run; evicting them
             # mid-investigation would cause open_gaps to return empty after the run.
             _live_matter_ids = ({j.matter_id for j in _jobs.values() if j.matter_id}
-                                | _sync_running_matter_ids)
+                                | _sync_running_matter_ids.keys())
             for _mid in list(_active_matter_models.keys()):
                 if _mid not in _live_matter_ids:
                     if _matter_model_last_used.get(_mid, datetime.min) < _idle_cutoff:
