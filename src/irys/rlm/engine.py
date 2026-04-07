@@ -4812,16 +4812,17 @@ class RLMEngine:
             if original_run_id is not None:
                 try:
                     orig = self._matter_model.ledger.get_run(original_run_id)
+                    # Clear next_action on original run FIRST — closes the race window
+                    # where a concurrent /redirect to the old run_id could still succeed
+                    # (request_redirect() requires next_action IS NOT NULL for interrupted
+                    # runs). Must happen before request_redirect() on the new run so no
+                    # redirects to the old run_id can slip in and be lost.
+                    self._matter_model.ledger.clear_next_action(original_run_id)
                     if orig and orig.redirect_requested and orig.active_branch_issue_id:
                         self._matter_model.ledger.request_redirect(
                             run_id, orig.active_branch_issue_id
                         )
                         self._matter_model.ledger.clear_redirect(original_run_id)
-                    # Clear next_action on original run — signals it has been resumed.
-                    # request_redirect() requires next_action IS NOT NULL for interrupted
-                    # runs, so post-resume redirects to the old run_id correctly fail
-                    # rather than silently succeeding and being lost (r64/r65 MEDIUM #1).
-                    self._matter_model.ledger.clear_next_action(original_run_id)
                 except Exception:
                     pass
         else:
