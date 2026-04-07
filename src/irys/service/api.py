@@ -1504,6 +1504,30 @@ async def get_pending_clarifications(matter_id: str, limit: int = 20):
     return model.clarifications.get_pending(limit=limit)
 
 
+def _resolve_resumed_run_id(model: Any, run_id: str) -> str:
+    """adv#036 HIGH: resolve a stale interrupted run_id to its live resumed child.
+
+    When a client supplies the original interrupted run_id for stop/redirect but
+    the run has already been resumed, the resumed child is the correct target.
+    Uses the resumed_from lineage column (schema v41) for an exact proof — not a
+    count heuristic. Falls back to the original run_id if no live resumed child
+    is found (e.g., not yet resumed, or no matter-model path).
+    """
+    try:
+        run = model.ledger.get_run(run_id)
+        if run is not None and run.status == "interrupted":
+            row = model.db.execute(
+                "SELECT id FROM run_session"
+                " WHERE matter_id=? AND status='running' AND resumed_from=?",
+                (model.matter_id, run_id),
+            ).fetchone()
+            if row is not None:
+                return row["id"]
+    except Exception:
+        pass  # resolver is best-effort; fall back to original id
+    return run_id
+
+
 @app.post(
     "/matter/{matter_id}/stop",
     tags=["Matter Model"],
@@ -1552,8 +1576,15 @@ async def redirect_investigation(matter_id: str, run_id: str, request: RedirectR
 
     Sets redirect_requested=1 and records the target issue_id; the engine
     picks this up on the next iteration and pivots retrieval accordingly.
+
+    If run_id points to an interrupted run that has been resumed, the resolver
+    auto-discovers the live resumed child via the resumed_from lineage column
+    (adv#036 HIGH fix) so redirect reliably targets the running investigation.
+    If no resumed child is running yet, redirect is queued on the interrupted
+    run itself and will be picked up when resume starts.
     """
     model = await _get_matter_model_or_404(matter_id)
+    run_id = _resolve_resumed_run_id(model, run_id)
     run = model.ledger.get_run(run_id)
     if run is None or run.matter_id != model.matter_id:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in this matter")
@@ -2724,8 +2755,13 @@ async def stop_run(matter_id: str, run_id: str):
 
     Preferred over the matter-level /matter/{matter_id}/stop when the UI
     has a specific run_id (e.g., from the live investigation panel).
+
+    If run_id points to an interrupted run that has been resumed, the resolver
+    auto-discovers the live resumed child via the resumed_from lineage column
+    (adv#036 HIGH fix) so stop reliably targets the running investigation.
     """
     model = await _get_matter_model_or_404(matter_id)
+    run_id = _resolve_resumed_run_id(model, run_id)
     run = model.ledger.get_run(run_id)
     if run is None or run.matter_id != model.matter_id:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in this matter")
