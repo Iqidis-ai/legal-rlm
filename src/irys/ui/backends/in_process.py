@@ -141,17 +141,21 @@ class InProcessBackend(UIBackend):
         """HIGH adv#035/r82: if run_id points to an interrupted run, find the actually
         running run for this matter. This handles the UI steerability gap where
         current_run_id still points to the old interrupted run during a resumed
-        investigation (do_resume() updates current_run_id only after completion)."""
+        investigation (do_resume() updates current_run_id only after completion).
+
+        Only resolves when there is EXACTLY ONE non-utility running run (HIGH r83):
+        if zero or multiple exist we fall back to the original run_id so we never
+        accidentally steer an unrelated investigation.
+        """
         run = model.ledger.get_run(run_id)
         if run is not None and run.status == "interrupted":
-            active = model.db.execute(
+            active_rows = model.db.execute(
                 "SELECT id FROM run_session WHERE matter_id=? AND status='running'"
-                " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))"
-                " ORDER BY started_at DESC LIMIT 1",
+                " AND (objective IS NULL OR objective NOT IN ('manual_flush','background_flush'))",
                 (model.matter_id,),
-            ).fetchone()
-            if active:
-                return active["id"]
+            ).fetchall()
+            if len(active_rows) == 1:
+                return active_rows[0]["id"]
         return run_id
 
     async def stop_run(self, matter_id: str, run_id: str) -> dict:
