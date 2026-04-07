@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 40
+SCHEMA_VERSION = 41
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -158,7 +158,8 @@ CREATE TABLE IF NOT EXISTS run_session (
     redirect_requested INTEGER NOT NULL DEFAULT 0,
     next_action     TEXT,
     started_at      TEXT NOT NULL,
-    completed_at    TEXT
+    completed_at    TEXT,
+    resumed_from    TEXT
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS ix_run_matter
@@ -1535,6 +1536,23 @@ def _migration_v39(conn) -> None:
         raise
 
 
+def _migration_v41(conn) -> None:
+    """Add resumed_from to run_session for resume lineage tracking (r84 HIGH).
+
+    _resolve_active_run_id() previously used a count heuristic (exactly one
+    running non-utility run in the matter) which could target an unrelated run.
+    This column stores the original interrupted run_id that a resume was started
+    from, enabling an exact lineage query instead of a count assumption.
+
+    Idempotent: fresh DBs already have the column in the CREATE TABLE DDL;
+    SQLite does not support ADD COLUMN IF NOT EXISTS so we swallow the duplicate.
+    """
+    try:
+        conn.execute("ALTER TABLE run_session ADD COLUMN resumed_from TEXT")
+    except Exception:
+        pass  # column already exists (fresh DB created with updated DDL)
+
+
 def _migration_v40(conn) -> None:
     """Add pending_propagation table for durable correction/evidence queue persistence.
 
@@ -1605,6 +1623,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (38, _migration_v38),
     (39, _migration_v39),
     (40, _migration_v40),
+    (41, _migration_v41),
 ]
 
 

@@ -42,12 +42,16 @@ class ReasoningLedgerStore:
         query: str,
         objective: Optional[str] = None,
         assertions_at_start: Optional[int] = None,
+        resumed_from: Optional[str] = None,
     ) -> str:
         """Start a new run session. Returns run_id.
 
         ``assertions_at_start`` should be the assertion count snapshotted
         immediately before calling this method so that ``reuse_rate`` can be
         computed when the run completes.
+
+        ``resumed_from`` is the interrupted run_id this run was started to
+        resume, if any.  Stored for lineage-based run resolution (r84 HIGH).
         """
         run_id = _id()
         now = _now()
@@ -55,12 +59,12 @@ class ReasoningLedgerStore:
             self.db.execute(
                 """INSERT INTO run_session
                    (id, matter_id, query, objective, status, started_at,
-                    assertions_at_start)
-                   VALUES (?,?,?,?,?,?,?)""",
+                    assertions_at_start, resumed_from)
+                   VALUES (?,?,?,?,?,?,?,?)""",
                 (
                     run_id, self.matter_id, query, objective,
                     RunStatus.RUNNING.value, now,
-                    assertions_at_start,
+                    assertions_at_start, resumed_from,
                 ),
             )
             # Seed the first ledger event
@@ -319,6 +323,7 @@ class ReasoningLedgerStore:
             completed_at=d.get("completed_at"),
             assertions_at_start=d.get("assertions_at_start"),
             reuse_rate=d.get("reuse_rate"),
+            resumed_from=d.get("resumed_from"),
         )
 
     def recent_runs(self, limit: int = 10) -> list[dict]:

@@ -149,3 +149,4 @@ class RunSessionRecord:
     completed_at: Optional[str] = None
     assertions_at_start: Optional[int] = None
     reuse_rate: Optional[float] = None
+    resumed_from: Optional[str] = None

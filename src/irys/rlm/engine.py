@@ -4915,7 +4915,10 @@ class RLMEngine:
                     _orig_redirect_issue = orig.active_branch_issue_id
 
             if self.config.enable_matter_model and self._matter_model is not None:
-                run_id = self._matter_model.start_run(f"Resume: {state.query[:120]}")
+                run_id = self._matter_model.start_run(
+                    f"Resume: {state.query[:120]}",
+                    resumed_from=original_run_id,
+                )
                 state._matter_adapter = MatterRuntimeAdapter(self._matter_model, run_id)
 
                 # Propagate the captured redirect to the new run (SO-3)

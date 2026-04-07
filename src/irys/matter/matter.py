@@ -227,15 +227,24 @@ class MatterModel:
     # Run lifecycle
     # ------------------------------------------------------------------
 
-    def start_run(self, query: str, objective: Optional[str] = None) -> str:
+    def start_run(
+        self,
+        query: str,
+        objective: Optional[str] = None,
+        resumed_from: Optional[str] = None,
+    ) -> str:
         """Start a new investigation run. Returns run_id.
 
         Snapshots the current assertion count so that ``complete_run`` can
         compute a measurable reuse_rate (SO-1 success criterion: > 0.70 on
         repeated queries over a stable matter).
+
+        ``resumed_from`` is the interrupted run_id this run is resuming, if any.
         """
         assertions_at_start = self.assertions.count()
-        run_id = self.ledger.start_run(query, objective, assertions_at_start)
+        run_id = self.ledger.start_run(
+            query, objective, assertions_at_start, resumed_from=resumed_from
+        )
         # Cache snapshot in memory so complete_run() avoids a DB round-trip.
         self._run_snapshots[run_id] = assertions_at_start
         return run_id
