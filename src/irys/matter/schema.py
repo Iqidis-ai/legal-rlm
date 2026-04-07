@@ -1547,10 +1547,12 @@ def _migration_v41(conn) -> None:
     Idempotent: fresh DBs already have the column in the CREATE TABLE DDL;
     SQLite does not support ADD COLUMN IF NOT EXISTS so we swallow the duplicate.
     """
+    import sqlite3 as _sqlite3
     try:
         conn.execute("ALTER TABLE run_session ADD COLUMN resumed_from TEXT")
-    except Exception:
-        pass  # column already exists (fresh DB created with updated DDL)
+    except _sqlite3.OperationalError as exc:
+        if "duplicate column" not in str(exc).lower():
+            raise
 
 
 def _migration_v40(conn) -> None:
