@@ -150,8 +150,11 @@ scaling risks beyond the current single-matter dev scope:
 
 2. **Multiple live MatterModel instances** — `_wire_matter_model` always opens a fresh model
    and overwrites the registry. Post-eviction rehydration can create a second instance,
-   splitting coordination state (flush lock, pending queues, run snapshots). Fix: enforce
-   one live in-process owner per matter_id with ref-counting or an acquire-or-wait pattern.
+   splitting coordination state (flush lock, pending queues, run snapshots). Also confirmed
+   by Tier 1 r54 review (2026-04-06): overlapping sync runs on the same corpus each get a
+   fresh instance, so deferred replay / flush serialization is not truly per-matter. Fix:
+   enforce one live in-process owner per matter_id with ref-counting or an acquire-or-wait
+   pattern.
 
 3. **Background flush thread count unbound** — with 100+ active matters and frequent
    truncation, per-model non-daemon flush threads accumulate with no service-wide cap.
