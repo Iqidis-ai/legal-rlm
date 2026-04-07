@@ -814,6 +814,15 @@ Respond in JSON format:
 
 
 
+class ConcurrentResumeError(RuntimeError):
+    """Raised when a second resume request races the first on the same interrupted run.
+
+    Callers (service endpoint) should surface this as HTTP 409, not 500.
+    The original run's next_action has NOT been modified — the losing caller
+    never claimed the checkpoint so no restore is needed.
+    """
+
+
 class RLMEngine:
     """
     Recursive Language Model investigation engine.
@@ -4860,49 +4869,49 @@ class RLMEngine:
         # Wire matter adapter so resumed runs get ledger entries + stop propagation
         from ..matter.runtime import MatterRuntimeAdapter, NullMatterAdapter
         run_id = None
-        # Captured redirect issue so the except block can restore it on resume failure
-        # (MEDIUM r70: clear_redirect clears the flag before work starts; restore on fail)
         _orig_redirect_issue: "str | None" = None
-
-        # HIGH r75: Concurrent-resume CAS — atomically claim the checkpoint by clearing
-        # next_action BEFORE creating a new run row. clear_next_action() now uses
-        # `AND next_action IS NOT NULL` so only the first caller gets rowcount>0.
-        # If rowcount==0, another resume beat us to it; reject immediately without
-        # creating a dangling run_session row.
-        if (
-            original_run_id is not None
-            and self.config.enable_matter_model
-            and self._matter_model is not None
-        ):
-            claimed = self._matter_model.ledger.clear_next_action(original_run_id)
-            if not claimed:
-                raise RuntimeError(
-                    f"Run '{original_run_id}' has already been claimed by a concurrent "
-                    "resume request — only one resume can proceed at a time"
-                )
-            # Read pending redirect AFTER claiming (fenced read — avoids stale snapshot
-            # where a concurrent redirect arrives between the read and the fence)
-            orig = self._matter_model.ledger.get_run(original_run_id)
-            if orig and orig.redirect_requested and orig.active_branch_issue_id:
-                _orig_redirect_issue = orig.active_branch_issue_id
-
-        if self.config.enable_matter_model and self._matter_model is not None:
-            run_id = self._matter_model.start_run(f"Resume: {state.query[:120]}")
-            state._matter_adapter = MatterRuntimeAdapter(self._matter_model, run_id)
-
-            # Propagate the captured redirect to the new run (SO-3)
-            if original_run_id is not None and _orig_redirect_issue is not None:
-                try:
-                    self._matter_model.ledger.request_redirect(
-                        run_id, _orig_redirect_issue
-                    )
-                    self._matter_model.ledger.clear_redirect(original_run_id)
-                except Exception:
-                    pass
-        else:
-            state._matter_adapter = NullMatterAdapter()
+        # HIGH r76: track whether this call actually won the CAS so the except block
+        # can gate next_action/redirect restoration on only the winner.
+        _claimed = False
 
         try:
+            # HIGH r75/r76: Concurrent-resume CAS — atomically claim the checkpoint by
+            # clearing next_action BEFORE creating a new run row.  The entire setup
+            # block lives inside this try so that any failure after the claim (e.g.
+            # start_run() throws) lands in the except block and restores next_action.
+            if (
+                original_run_id is not None
+                and self.config.enable_matter_model
+                and self._matter_model is not None
+            ):
+                _claimed = self._matter_model.ledger.clear_next_action(original_run_id)
+                if not _claimed:
+                    raise ConcurrentResumeError(
+                        f"Run '{original_run_id}' has already been claimed by a "
+                        "concurrent resume request — only one resume can proceed"
+                    )
+                # Fenced read: get redirect state AFTER claiming so we see any
+                # concurrent redirect that arrived before the fence.
+                orig = self._matter_model.ledger.get_run(original_run_id)
+                if orig and orig.redirect_requested and orig.active_branch_issue_id:
+                    _orig_redirect_issue = orig.active_branch_issue_id
+
+            if self.config.enable_matter_model and self._matter_model is not None:
+                run_id = self._matter_model.start_run(f"Resume: {state.query[:120]}")
+                state._matter_adapter = MatterRuntimeAdapter(self._matter_model, run_id)
+
+                # Propagate the captured redirect to the new run (SO-3)
+                if original_run_id is not None and _orig_redirect_issue is not None:
+                    try:
+                        self._matter_model.ledger.request_redirect(
+                            run_id, _orig_redirect_issue
+                        )
+                        self._matter_model.ledger.clear_redirect(original_run_id)
+                    except Exception:
+                        pass
+            else:
+                state._matter_adapter = NullMatterAdapter()
+
             # Continue investigation loop if not already complete
             if state.status not in ("completed", "failed"):
                 # Set run_id on state so periodic checkpoints write next_action correctly
@@ -4998,6 +5007,11 @@ class RLMEngine:
                     except Exception:
                         pass
 
+        except ConcurrentResumeError:
+            # CAS was rejected — next_action was never cleared, so no restore needed.
+            # Propagate as-is; the service layer converts this to HTTP 409.
+            raise
+
         except Exception as e:
             state.fail(str(e))
             if run_id is not None:
@@ -5006,10 +5020,10 @@ class RLMEngine:
                 # may still be valid for a re-resume attempt. Only clean up on
                 # successful completion. (adv#034 MEDIUM)
                 self._matter_model.fail_run(run_id, str(e))
-            # HIGH r69: restore next_action on the original interrupted run so it
-            # remains re-resumable. clear_next_action() was called as a fence before
-            # the new run started; if that new run fails we must put the path back.
-            if original_run_id is not None and self._matter_model is not None:
+            # HIGH r69/r76: restore next_action on the original interrupted run so it
+            # remains re-resumable. Only restore when _claimed=True — if the CAS was
+            # never won, next_action was never cleared and must not be overwritten.
+            if _claimed and original_run_id is not None and self._matter_model is not None:
                 try:
                     self._matter_model.ledger.set_next_action(
                         original_run_id, str(checkpoint_path)

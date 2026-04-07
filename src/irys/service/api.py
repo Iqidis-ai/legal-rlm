@@ -2842,6 +2842,13 @@ async def resume_run(matter_id: str, run_id: str):
     try:
         result = await irys.resume_investigation(checkpoint_path, original_run_id=run_id)
     except Exception as exc:
+        # LOW r76: concurrent resume races are a 409, not a 500
+        from ..rlm.engine import ConcurrentResumeError
+        if isinstance(exc, ConcurrentResumeError):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Concurrent resume conflict: {exc}",
+            ) from exc
         raise HTTPException(status_code=500, detail=f"Resume failed: {exc}") from exc
 
     new_run_id = getattr(result.state, "_run_id", None)
