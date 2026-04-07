@@ -33,10 +33,10 @@ _ASYNC_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 )
 
 
-def _run_async(coro):
+def _run_async(coro, timeout: float = 30):
     """Run a coroutine from a sync context without conflicting with existing loops."""
     future = _ASYNC_EXECUTOR.submit(asyncio.run, coro)
-    return future.result(timeout=30)
+    return future.result(timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -56,8 +56,14 @@ def _fmt_coverage(frac: Optional[float]) -> str:
     return f"{frac:.0%}"
 
 
-def _fmt_ledger_event(event: dict) -> str:
-    """Format a single ledger event dict into a human-readable trace line."""
+def _fmt_ledger_event(event: dict) -> str | None:
+    """Format a single ledger event dict into a human-readable trace line.
+
+    Returns None for synthetic sentinel dicts (e.g. run_terminal, error) that
+    stream_run_events() appends after the real persisted events.
+    """
+    if "event_type" not in event:
+        return None  # terminal sentinel {"event":"run_terminal"} or {"error":...}
     seq = event.get("seq_no", "?")
     etype = event.get("event_type", "?")
     summary = event.get("summary", "")
@@ -439,9 +445,12 @@ class AppState:
                                 _collect_events(self.current_matter_id, self.current_run_id)
                             )
                             if events:
-                                structured_trace = "\n".join(
+                                formatted = [
                                     _fmt_ledger_event(ev) for ev in events
-                                )
+                                ]
+                                lines = [f for f in formatted if f is not None]
+                                if lines:
+                                    structured_trace = "\n".join(lines)
                         except Exception:
                             pass  # keep raw thinking fallback
                     yield (
@@ -501,8 +510,10 @@ class AppState:
 
         if matter_id and run_id:
             # Canonical path: route through the backend abstraction.
+            # Use a short timeout so the click handler stays responsive; the
+            # is_running=False + _stop_event are already set above.
             try:
-                _run_async(self.backend().stop_run(matter_id, run_id))
+                _run_async(self.backend().stop_run(matter_id, run_id), timeout=5)
             except Exception:
                 pass
         elif self._irys_ref is not None:
