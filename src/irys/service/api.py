@@ -2811,6 +2811,11 @@ async def resume_run(matter_id: str, run_id: str):
     # Wire the already-open matter model so the resumed run uses the same DB
     irys._engine._matter_model = model
 
+    # NOTE: resume_investigation() runs synchronously in-line here, blocking this
+    # request handler for the full investigation duration. This is intentional for
+    # the minimal SO-3 surface — matches the sync investigate endpoints. For
+    # production use with long-running resumes, move this to the background-jobs
+    # mechanism (same as the async /investigate endpoint).
     try:
         result = await irys.resume_investigation(checkpoint_path)
     except Exception as exc:

@@ -4801,21 +4801,27 @@ class RLMEngine:
                     return state
 
                 await self._verify_citations(state, repo)
-                await self._synthesize(state)
 
-                # Mirror normal completion tail: clarifications + reasoning trail
+                # Phase 2.75: Same maintenance block as normal investigate()
                 if run_id is not None:
                     try:
-                        clarifications = self._matter_model.generate_clarifications(run_id=run_id)
-                        state.pending_clarifications = [
-                            c.question for c in clarifications if c and hasattr(c, "question")
-                        ]
-                    except Exception:
-                        pass
+                        self._matter_model.detect_quant_conflicts(run_id=run_id)
+                    except Exception as _qc_exc:
+                        logger.warning("Quant conflict detection failed, continuing: %s", _qc_exc)
                     try:
-                        state.reasoning_trail = self._matter_model.ledger.get_events(run_id)
-                    except Exception:
-                        pass
+                        self._detect_proof_gaps()
+                    except Exception as _pg_exc:
+                        logger.warning("Proof gap detection failed, continuing: %s", _pg_exc)
+                    try:
+                        self._matter_model.mine_contradictions(run_id=run_id)
+                    except Exception as _mc_exc:
+                        logger.warning("Contradiction mining failed, continuing: %s", _mc_exc)
+                    try:
+                        self._matter_model.detect_document_version_chains()
+                    except Exception as _vc_exc:
+                        logger.warning("Version chain detection failed, continuing: %s", _vc_exc)
+
+                await self._synthesize(state)
 
                 state.complete()
                 if run_id is not None:
@@ -4824,6 +4830,20 @@ class RLMEngine:
                         llm_calls_avoided=state.llm_calls_avoided,
                         llm_calls_required=state.llm_calls_required,
                     )
+                    # Mirror normal completion tail: clarifications + reasoning trail
+                    try:
+                        self._matter_model.generate_clarifications_from_gaps(
+                            run_id=run_id, top_n=3, min_materiality=0.5
+                        )
+                        state.pending_clarifications = (
+                            self._matter_model.clarifications.get_pending()
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        state.reasoning_trail = self._matter_model.ledger.get_events(run_id)
+                    except Exception:
+                        pass
 
         except Exception as e:
             state.fail(str(e))

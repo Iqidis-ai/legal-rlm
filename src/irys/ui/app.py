@@ -634,18 +634,22 @@ class AppState:
     def do_resume(self, matter_id: str, run_id: str) -> str:
         if not matter_id or not run_id:
             return "Provide matter ID and run ID."
-        try:
-            result = _run_async(self.backend().resume_run(matter_id, run_id))
-            if isinstance(result, dict) and result.get("status") == "error":
-                return f"❌ {result.get('detail', result)}"
-            new_rid = result.get("new_run_id") if isinstance(result, dict) else None
-            msg = f"✅ Resumed run {run_id}"
-            if new_rid:
-                msg += f" → new run {new_rid}"
-                self.current_run_id = new_rid
-            return msg
-        except Exception as exc:
-            return f"❌ Error: {exc}"
+        # Launch resume in the executor (fire-and-forget): investigation can be
+        # much longer than the 30s _run_async default timeout. The run will complete
+        # in the background; the user can monitor progress via Overview / Ledger Events.
+        # Pre-validation errors (not interrupted, no checkpoint) are surfaced in the
+        # result dict but swallowed here — user can check Overview/status.
+        mid, rid = matter_id, run_id  # snapshot before task runs
+        def _do_resume() -> None:
+            try:
+                result = asyncio.run(self.backend().resume_run(mid, rid))
+                new_rid = result.get("new_run_id") if isinstance(result, dict) else None
+                if new_rid:
+                    self.current_run_id = new_rid
+            except Exception:
+                pass
+        _ASYNC_EXECUTOR.submit(_do_resume)
+        return f"⏳ Resume of run {run_id} launched in background — monitor via Overview or Ledger Events."
 
     def do_redirect(self, matter_id: str, run_id: str, issue_id: str) -> str:
         if not matter_id or not run_id or not issue_id:
