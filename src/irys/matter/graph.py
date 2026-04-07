@@ -1801,6 +1801,217 @@ class IssueStore:
         ).fetchone()
         return row[0]
 
+    # ------------------------------------------------------------------ #
+    # Tree traversal (Gap 1: hierarchical issue model)                    #
+    # ------------------------------------------------------------------ #
+
+    def get_children(self, issue_id: str, include_closed: bool = False) -> list[dict]:
+        """Return direct children of an issue, ordered by sort_order."""
+        status_clause = "" if include_closed else " AND status='open'"
+        rows = self.db.execute(
+            f"SELECT * FROM issue WHERE matter_id=? AND parent_issue_id=?"
+            f"{status_clause} ORDER BY sort_order, id",
+            (self.matter_id, issue_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_ancestors(self, issue_id: str, include_self: bool = False) -> list[dict]:
+        """Return ancestors from immediate parent up to root. Cycle-safe.
+
+        If include_self is True, the issue itself is the first element.
+        Result order: [self?], parent, grandparent, ..., root.
+        """
+        ancestors: list[dict] = []
+        visited: set[str] = set()
+        current_id: Optional[str] = issue_id
+
+        if include_self:
+            issue = self.get_issue(issue_id)
+            if issue:
+                ancestors.append(issue)
+                visited.add(issue_id)
+                current_id = issue.get("parent_issue_id")
+            else:
+                return []
+        else:
+            issue = self.get_issue(issue_id)
+            if not issue:
+                return []
+            visited.add(issue_id)
+            current_id = issue.get("parent_issue_id")
+
+        while current_id and current_id not in visited:
+            visited.add(current_id)
+            parent = self.get_issue(current_id)
+            if not parent:
+                break
+            ancestors.append(parent)
+            current_id = parent.get("parent_issue_id")
+
+        return ancestors
+
+    def get_depth(self, issue_id: str) -> int:
+        """Return the depth of an issue in the tree (root = 0). Cycle-safe."""
+        return len(self.get_ancestors(issue_id))
+
+    def get_subtree(
+        self,
+        issue_id: str,
+        max_depth: Optional[int] = None,
+        include_self: bool = True,
+        include_closed: bool = False,
+    ) -> list[dict]:
+        """Return all descendants via BFS. Cycle-safe, bounded depth.
+
+        Result is BFS order (parent before children). Each dict gets an extra
+        '_depth' key indicating depth relative to the root issue (root = 0).
+        """
+        root = self.get_issue(issue_id)
+        if not root:
+            return []
+
+        result: list[dict] = []
+        visited: set[str] = {issue_id}
+
+        if include_self:
+            root["_depth"] = 0
+            result.append(root)
+
+        # BFS queue: (issue_id, depth)
+        queue: list[tuple[str, int]] = [(issue_id, 0)]
+
+        while queue:
+            parent_id, depth = queue.pop(0)
+            if max_depth is not None and depth >= max_depth:
+                continue
+            children = self.get_children(parent_id, include_closed=include_closed)
+            for child in children:
+                cid = child["id"]
+                if cid in visited:
+                    continue
+                visited.add(cid)
+                child["_depth"] = depth + 1
+                result.append(child)
+                queue.append((cid, depth + 1))
+
+        return result
+
+    def get_root_issues(self, include_closed: bool = False) -> list[dict]:
+        """Return top-level issues (no parent), ordered by salience * materiality."""
+        status_clause = "" if include_closed else " AND status='open'"
+        rows = self.db.execute(
+            f"SELECT * FROM issue WHERE matter_id=? AND parent_issue_id IS NULL"
+            f"{status_clause} ORDER BY (salience * materiality) DESC, id ASC",
+            (self.matter_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def compute_coverage_rollup(self, issue_id: str, include_closed: bool = False) -> dict:
+        """Compute aggregate coverage for an issue and all its descendants.
+
+        For leaf issues (no children), coverage = its own assertion support ratio.
+        For parent issues, coverage = weighted average of children's coverage,
+        weighted by (materiality * salience).
+
+        Returns dict with: coverage_fraction, supporting_count, attacking_count,
+        predicate_total, predicate_resolved, subtree_size, leaf_issue_ids,
+        weakest_leaf_id, weakest_leaf_coverage.
+        """
+        subtree = self.get_subtree(issue_id, include_self=True, include_closed=include_closed)
+        if not subtree:
+            return {
+                "coverage_fraction": 0.0, "supporting_count": 0,
+                "attacking_count": 0, "predicate_total": 0,
+                "predicate_resolved": 0, "subtree_size": 0,
+                "leaf_issue_ids": [], "weakest_leaf_id": None,
+                "weakest_leaf_coverage": 0.0,
+            }
+
+        # Find leaf nodes (issues with no children in the subtree)
+        parent_ids = {i.get("parent_issue_id") for i in subtree}
+        all_ids = {i["id"] for i in subtree}
+        leaf_ids = all_ids - parent_ids
+
+        # Compute per-issue coverage from assertions and predicates
+        coverage_map: dict[str, float] = {}
+        sup_map: dict[str, int] = {}
+        atk_map: dict[str, int] = {}
+        pred_total = 0
+        pred_resolved = 0
+
+        for issue in subtree:
+            iid = issue["id"]
+            # Count supporting/attacking assertions
+            rows = self.db.execute(
+                "SELECT relation_type, COUNT(*) as cnt"
+                " FROM assertion_issue_link WHERE issue_id=?"
+                " GROUP BY relation_type",
+                (iid,),
+            ).fetchall()
+            sup = sum(r["cnt"] for r in rows if r["relation_type"] in ("supports", "establishes"))
+            atk = sum(r["cnt"] for r in rows if r["relation_type"] in ("attacks", "negates"))
+            sup_map[iid] = sup
+            atk_map[iid] = atk
+
+            # Predicate coverage for this issue
+            preds = self.db.execute(
+                "SELECT status FROM issue_predicate WHERE issue_id=?",
+                (iid,),
+            ).fetchall()
+            p_total = len(preds)
+            p_resolved = sum(1 for p in preds if p["status"] == "resolved")
+            pred_total += p_total
+            pred_resolved += p_resolved
+
+            # Leaf coverage: predicate-based if predicates exist, else assertion ratio
+            if iid in leaf_ids:
+                if p_total > 0:
+                    coverage_map[iid] = p_resolved / p_total
+                elif sup + atk > 0:
+                    coverage_map[iid] = sup / (sup + atk)
+                else:
+                    coverage_map[iid] = 0.0
+
+        # Bottom-up rollup: parent coverage = weighted avg of children
+        # Process in reverse BFS order (deepest first)
+        for issue in reversed(subtree):
+            iid = issue["id"]
+            if iid in coverage_map:
+                continue  # leaf — already computed
+            children = [i for i in subtree if i.get("parent_issue_id") == iid]
+            if not children:
+                coverage_map[iid] = 0.0
+                continue
+            total_weight = 0.0
+            weighted_sum = 0.0
+            for child in children:
+                cid = child["id"]
+                w = (child.get("materiality") or 0.5) * (child.get("salience") or 0.5)
+                weighted_sum += coverage_map.get(cid, 0.0) * w
+                total_weight += w
+            coverage_map[iid] = weighted_sum / total_weight if total_weight > 0 else 0.0
+
+        # Find weakest leaf
+        weakest_id = None
+        weakest_cov = 1.0
+        for lid in leaf_ids:
+            cov = coverage_map.get(lid, 0.0)
+            if cov < weakest_cov:
+                weakest_cov = cov
+                weakest_id = lid
+
+        return {
+            "coverage_fraction": coverage_map.get(issue_id, 0.0),
+            "supporting_count": sum(sup_map.values()),
+            "attacking_count": sum(atk_map.values()),
+            "predicate_total": pred_total,
+            "predicate_resolved": pred_resolved,
+            "subtree_size": len(subtree),
+            "leaf_issue_ids": list(leaf_ids),
+            "weakest_leaf_id": weakest_id,
+            "weakest_leaf_coverage": weakest_cov,
+        }
+
 
 class ClarificationStore:
     """

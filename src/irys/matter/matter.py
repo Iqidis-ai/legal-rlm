@@ -965,16 +965,26 @@ class MatterModel:
             ).fetchall()
             pred_counts_ctx = {r["issue_id"]: r["pred_count"] for r in pred_rows_ctx}
 
+            # Use subtree-aware weakness: for each root issue, find its weakest
+            # leaf descendant. The engine should target the most specific weak element,
+            # not just the top-level claim (Gap 1: hierarchical issue model).
             def _weakness(issue: dict) -> tuple:
                 w_support = support_counts.get(issue["id"], 0.0)
                 pred_cnt = pred_counts_ctx.get(issue["id"], 0)
                 coverage = self._coverage_fraction(w_support, pred_cnt)
                 priority = issue["materiality"] * issue["salience"] * (1.0 - coverage)
-                # Higher priority = higher weakness; negate for min()
                 return (-priority, issue["id"])
 
             weakest = min(open_issues, key=_weakness)
             weakest_issue_id = weakest["id"]
+
+            # If the weakest issue has children, drill down to its weakest leaf
+            children = self.issues.get_children(weakest_issue_id)
+            if children:
+                rollup = self.issues.compute_coverage_rollup(weakest_issue_id)
+                leaf_id = rollup.get("weakest_leaf_id")
+                if leaf_id:
+                    weakest_issue_id = leaf_id
 
         # Answered clarifications: inject user context into orientation (limit to 3 most recent)
         answered_clarifications = self.clarifications.get_answered(limit=3)
@@ -1129,12 +1139,13 @@ class MatterModel:
 
         report = []
         for issue in open_issues:
-            w_support = support_counts.get(issue["id"], 0.0)
-            raw_cnt = raw_counts.get(issue["id"], 0)
-            pred_cnt = pred_counts.get(issue["id"], 0)
-            atk_cnt = attack_counts.get(issue["id"], 0)
+            iid = issue["id"]
+            w_support = support_counts.get(iid, 0.0)
+            raw_cnt = raw_counts.get(iid, 0)
+            pred_cnt = pred_counts.get(iid, 0)
+            atk_cnt = attack_counts.get(iid, 0)
             coverage = self._coverage_fraction(w_support, pred_cnt)
-            has_gap = issue["id"] in proof_gaps
+            has_gap = iid in proof_gaps
             # Derive proof_status from coverage + gap so UI panel shows meaningful state
             if has_gap:
                 proof_status = "gap"
@@ -1146,20 +1157,43 @@ class MatterModel:
                 proof_status = "weak"
             else:
                 proof_status = "none"
-            report.append({
-                "id": issue["id"],
+
+            # Hierarchy metadata for UI tree rendering
+            parent_id = issue.get("parent_issue_id")
+            depth = self.issues.get_depth(iid) if parent_id else 0
+            children = self.issues.get_children(iid)
+            child_ids = [c["id"] for c in children]
+
+            # Subtree rollup for parent issues (shows aggregate weakness)
+            subtree_rollup = None
+            if child_ids:
+                subtree_rollup = self.issues.compute_coverage_rollup(iid)
+
+            entry = {
+                "id": iid,
                 "title": issue.get("title", ""),
                 "issue_type": issue.get("issue_type", ""),
                 "materiality": issue.get("materiality", 0.0),
                 "salience": issue.get("salience", 0.0),
+                "burden_side": issue.get("burden_side"),
+                "parent_issue_id": parent_id,
+                "depth": depth,
+                "child_ids": child_ids,
                 "supporting_count": raw_cnt,
                 "attacking_count": atk_cnt,
                 "predicate_count": pred_cnt,
                 "coverage_fraction": round(coverage, 4),
                 "proof_status": proof_status,
                 "has_proof_gap": has_gap,
-                "gap_id": proof_gaps.get(issue["id"]),
-            })
+                "gap_id": proof_gaps.get(iid),
+            }
+            if subtree_rollup:
+                entry["subtree_coverage"] = round(subtree_rollup["coverage_fraction"], 4)
+                entry["weakest_leaf_id"] = subtree_rollup.get("weakest_leaf_id")
+                entry["weakest_leaf_coverage"] = round(subtree_rollup.get("weakest_leaf_coverage", 0.0), 4)
+                entry["subtree_size"] = subtree_rollup["subtree_size"]
+
+            report.append(entry)
 
         report.sort(key=lambda x: x["coverage_fraction"])
         return report

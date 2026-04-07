@@ -14,7 +14,9 @@ Architecture: in-process for local dev (InProcessBackend), HTTP for deployed ser
 import asyncio
 import concurrent.futures
 import os
+import pathlib
 import queue
+import shutil
 import threading
 import time
 from typing import Generator, Optional
@@ -37,6 +39,25 @@ def _run_async(coro, timeout: float = 30):
     """Run a coroutine from a sync context without conflicting with existing loops."""
     future = _ASYNC_EXECUTOR.submit(asyncio.run, coro)
     return future.result(timeout=timeout)
+
+
+# ---------------------------------------------------------------------------
+# Workspace management
+# ---------------------------------------------------------------------------
+
+
+
+def _clear_matter(path: str) -> tuple[str, str]:
+    """Delete the .irys/ model data for a matter folder (keeps documents).
+    Returns (folder_name, status_message)."""
+    if not path or not path.strip():
+        return "", "No folder selected."
+    folder = pathlib.Path(path.strip())
+    irys_dir = folder / ".irys"
+    if irys_dir.exists():
+        shutil.rmtree(str(irys_dir))
+        return folder.name, f"Cleared analysis for '{folder.name}'. Documents kept. Next run starts fresh."
+    return folder.name, f"No analysis data found in '{folder.name}'."
 
 
 # ---------------------------------------------------------------------------
@@ -95,10 +116,10 @@ def _fmt_overview(data: dict) -> str:
     struct = so.get("assertion_structure_rate")
     src = so.get("source_role_known_rate")
     lines.append(
-        f"\n**SO-1 reuse:** {f'{reuse:.1%}' if reuse is not None else '—'}  |  "
-        f"**SO-2 structure:** {f'{struct:.1%}' if struct is not None else '—'}  |  "
-        f"**SO-4 coverage:** {f'{cov:.1%}' if cov is not None else '—'}  |  "
-        f"**SO-5 source calibration:** {f'{src:.1%}' if src is not None else '—'}"
+        f"\n**Reuse rate:** {f'{reuse:.1%}' if reuse is not None else '—'}  |  "
+        f"**Structured facts:** {f'{struct:.1%}' if struct is not None else '—'}  |  "
+        f"**Issue coverage:** {f'{cov:.1%}' if cov is not None else '—'}  |  "
+        f"**Source calibration:** {f'{src:.1%}' if src is not None else '—'}"
     )
 
     # Weakest issues
@@ -133,19 +154,55 @@ def _fmt_overview(data: dict) -> str:
 def _fmt_issues(issues: list) -> str:
     if not issues:
         return "No open issues."
-    lines = [
-        "| ID (paste to redirect) | Issue | Coverage | Proof | Sup | Atk |",
-        "|------------------------|-------|----------|-------|-----|-----|",
-    ]
-    for iss in issues:
-        issue_id = iss.get("id", "?")
-        title = (iss.get("title") or issue_id)[:38]
-        cov = _fmt_coverage(iss.get("coverage_fraction"))
-        proof = iss.get("proof_status") or "—"
-        sup = iss.get("supporting_count", "—")
-        atk = iss.get("attacking_count", "—")
-        # Full ID shown — backend get_issue() requires exact match; truncated IDs silently fail.
-        lines.append(f"| `{issue_id}` | {title} | {cov} | {proof} | {sup} | {atk} |")
+
+    # Build lookup for tree rendering
+    by_id = {i["id"]: i for i in issues}
+    # Sort by depth then coverage so tree structure is visible
+    sorted_issues = sorted(issues, key=lambda i: (i.get("depth", 0), i.get("coverage_fraction", 0)))
+
+    # Render as indented list with coverage bars
+    _proof_icons = {
+        "strong": "🟢", "partial": "🟡", "weak": "🟠",
+        "gap": "🔴", "none": "⚪",
+    }
+    lines = []
+    for iss in sorted_issues:
+        depth = iss.get("depth", 0)
+        indent = "  " * depth
+        title = iss.get("title") or iss.get("id", "?")
+        cov = iss.get("coverage_fraction", 0)
+        proof = iss.get("proof_status", "none")
+        icon = _proof_icons.get(proof, "⚪")
+        sup = iss.get("supporting_count", 0)
+        atk = iss.get("attacking_count", 0)
+        burden = iss.get("burden_side") or ""
+        burden_str = f" [{burden}]" if burden else ""
+
+        # Coverage bar: 10 chars wide
+        filled = int(cov * 10)
+        bar = "█" * filled + "░" * (10 - filled)
+
+        line = f"{indent}{icon} **{title}**{burden_str}  {bar} {cov:.0%}"
+        details = []
+        if sup:
+            details.append(f"{sup} supporting")
+        if atk:
+            details.append(f"{atk} attacking")
+        pred_cnt = iss.get("predicate_count", 0)
+        if pred_cnt:
+            details.append(f"{pred_cnt} elements")
+
+        # Subtree info for parent issues
+        subtree_cov = iss.get("subtree_coverage")
+        if subtree_cov is not None:
+            weakest = iss.get("weakest_leaf_coverage", 0)
+            size = iss.get("subtree_size", 0)
+            details.append(f"subtree: {subtree_cov:.0%} avg, weakest {weakest:.0%}, {size} issues")
+
+        if details:
+            line += f"  *({', '.join(details)})*"
+        lines.append(line)
+
     return "\n".join(lines)
 
 
@@ -697,256 +754,309 @@ class AppState:
 def create_app(api_key: Optional[str] = None) -> gr.Blocks:
     state = AppState(api_key=api_key)
 
-    with gr.Blocks(title="Irys RLM") as demo:
-        gr.Markdown("# Irys RLM — Legal Intelligence System")
+    _theme = gr.themes.Soft(
+        primary_hue=gr.themes.colors.blue,
+        secondary_hue=gr.themes.colors.slate,
+        neutral_hue=gr.themes.colors.slate,
+        font=gr.themes.GoogleFont("Inter"),
+        font_mono=gr.themes.GoogleFont("JetBrains Mono"),
+    )
+    _css = """
+    .mono textarea { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+    .status-bar textarea { font-weight: 600; font-size: 13px; }
+    .compact-id { font-size: 11px !important; }
+    .compact-id textarea { font-size: 11px; color: #888; }
+    .sidebar-section { border-left: 3px solid #e2e8f0; padding-left: 12px; }
+    .hero-text { font-size: 15px; color: #475569; margin-bottom: 4px !important; }
+    footer { display: none !important; }
+    .gap-highlight { background: #fef3c7; border-radius: 6px; padding: 8px; }
+    """
 
-        # Shared matter_id state (populated after a run completes)
-        matter_id_box = gr.Textbox(
-            label="Active Matter ID",
-            placeholder="Populated after first run",
-            interactive=False,
-            scale=1,
+    with gr.Blocks(title="Irys — Legal Intelligence", theme=_theme, css=_css) as demo:
+
+        # Hidden matter_id state — auto-populated, never shown prominently
+        matter_id_box = gr.Textbox(visible=False)
+
+        # ==================================================================
+        # HEADER
+        # ==================================================================
+        gr.Markdown(
+            "# Irys\n"
+            "Analyze your legal matter. Point to a folder of case documents and "
+            "ask questions in plain English."
         )
 
-        with gr.Tabs():
+        # ==================================================================
+        # INPUT
+        # ==================================================================
+        with gr.Row():
+            repo_path = gr.Textbox(
+                label="Matter folder",
+                placeholder="Paste the path to your case folder",
+                scale=4,
+            )
+            matter_status = gr.Textbox(
+                label="",
+                interactive=False,
+                scale=1,
+                elem_classes=["compact-id"],
+            )
 
-            # ============================================================
-            # Tab 1: Run / Investigate
-            # ============================================================
-            with gr.TabItem("Run", id="run"):
+        query = gr.Textbox(
+            label="Question",
+            placeholder="What are the key claims and defenses? What damages are alleged?",
+            lines=2,
+        )
+        with gr.Row():
+            submit_btn = gr.Button("Investigate", variant="primary", scale=4)
+            stop_btn = gr.Button("Stop", variant="stop", scale=1)
+            clear_matter_btn = gr.Button("Reset matter", variant="stop", size="sm", scale=1)
+
+        status_box = gr.Textbox(
+            label="Status",
+            interactive=False,
+            elem_classes=["status-bar"],
+        )
+
+        # ==================================================================
+        # MAIN AREA: Analysis (wide) + Intelligence Sidebar (narrow)
+        # ==================================================================
+        with gr.Row():
+
+            # ---------- LEFT: Analysis output ----------
+            with gr.Column(scale=3):
+                run_output = gr.Markdown(
+                    value=(
+                        "*Select documents above, type a question, and click **Investigate**. "
+                        "Irys will read every document, extract structured facts, map the issues, "
+                        "and give you a sourced analysis.*"
+                    )
+                )
+
+                with gr.Accordion("Reasoning Trace — watch Irys think step by step", open=False):
+                    trace_box = gr.Textbox(
+                        label="Live reasoning steps during investigation, structured ledger after",
+                        lines=25,
+                        interactive=False,
+                        autoscroll=True,
+                        elem_classes=["mono"],
+                    )
+
+                with gr.Accordion("Sources & Citations", open=False):
+                    citations_box = gr.Textbox(
+                        label="Documents and pages referenced",
+                        lines=12,
+                        interactive=False,
+                    )
+
+            # ---------- RIGHT: Intelligence sidebar ----------
+            with gr.Column(scale=1, min_width=280):
+                gr.Markdown("### Matter Intelligence")
+                overview_md = gr.Markdown(
+                    "*Run your first investigation to see matter intelligence here — "
+                    "key metrics, weakest issues, and open gaps.*"
+                )
+
+                gr.Markdown("---")
+                gr.Markdown("### Issues & Evidence")
+                issues_md = gr.Markdown(
+                    "*After investigation, this shows every claim, defense, and element "
+                    "with evidence coverage. Low coverage = proof gap.*"
+                )
+
+                gr.Markdown("---")
+                gr.Markdown("### What's Missing")
+                gaps_md = gr.Markdown(
+                    "*Irys tracks missing documents, unanswered questions, and weak "
+                    "spots. They'll appear here after your first investigation.*"
+                )
+
+                with gr.Row():
+                    refresh_sidebar_btn = gr.Button("Refresh All", variant="secondary", size="sm")
+
+        # ==================================================================
+        # DETAIL ACCORDIONS (below main area)
+        # ==================================================================
+
+        with gr.Accordion("Extracted Facts — every fact from your documents, with source and confidence", open=False):
+            gr.Markdown(
+                "Each fact shows where it came from, how confident Irys is, and how it's characterized "
+                "(e.g., *alleged* in a complaint vs. *operative* in a signed contract). "
+                "If something is wrong, correct it below — Irys will automatically update any "
+                "conclusions that depended on that fact."
+            )
+            assertions_md = gr.Markdown("*Facts will appear here after an investigation.*")
+            refresh_assertions_btn = gr.Button("Refresh Facts", variant="secondary", size="sm")
+
+            with gr.Accordion("Correct a fact", open=False):
                 gr.Markdown(
-                    "Point to a folder of legal documents and ask a question. "
-                    "**Same folder = same matter model** — each run builds on prior state."
+                    "Copy a Fact ID from the table above, choose the correct characterization, "
+                    "and explain why. Irys will propagate the correction through its analysis."
                 )
                 with gr.Row():
-                    with gr.Column(scale=3):
-                        repo_path = gr.Textbox(
-                            label="Repository Path",
-                            placeholder="Full path to folder containing legal documents",
-                        )
-                        query = gr.Textbox(
-                            label="Query",
-                            placeholder="What do you want to investigate?",
-                            lines=3,
-                        )
-                        with gr.Row():
-                            submit_btn = gr.Button("Investigate", variant="primary", scale=4)
-                            stop_btn = gr.Button("Stop", variant="stop", scale=1)
-                    with gr.Column(scale=1):
-                        status_box = gr.Textbox(
-                            label="Status",
-                            lines=3,
-                            interactive=False,
-                            elem_classes=["status-bar"],
-                        )
-
-                with gr.Tabs():
-                    with gr.TabItem("Analysis"):
-                        run_output = gr.Markdown()
-                    with gr.TabItem("Reasoning Trace (live)"):
-                        trace_box = gr.Textbox(
-                            label="Ledger Events (structured after run; live steps during run)",
-                            lines=35,
-                            interactive=False,
-                            autoscroll=True,
-                            elem_classes=["mono"],
-                        )
-                    with gr.TabItem("Citations"):
-                        citations_box = gr.Textbox(
-                            label="Sources",
-                            lines=20,
-                            interactive=False,
-                        )
-
-                run_outputs = [run_output, trace_box, citations_box, status_box, matter_id_box]
-
-                submit_btn.click(
-                    fn=state.stream_investigation,
-                    inputs=[query, repo_path],
-                    outputs=run_outputs,
-                )
-                stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
-
-                gr.Examples(
-                    examples=[
-                        ["What are the key claims and defenses in this dispute?", ""],
-                        ["What damages are claimed and what is the evidentiary basis?", ""],
-                        ["Who are the key parties and what documents are missing?", ""],
-                    ],
-                    inputs=[query, repo_path],
-                )
-
-            # ============================================================
-            # Tab 2: Overview
-            # ============================================================
-            with gr.TabItem("Overview", id="overview"):
-                gr.Markdown("**Landing page** — matter state, SO metrics, weakest issues, open gaps.")
-                with gr.Row():
-                    refresh_overview_btn = gr.Button("Refresh Overview", variant="secondary")
-                overview_md = gr.Markdown("Run an investigation first to populate this panel.")
-
-                def _refresh_overview(mid):
-                    return state.load_overview(mid)
-
-                refresh_overview_btn.click(
-                    fn=_refresh_overview,
-                    inputs=[matter_id_box],
-                    outputs=[overview_md],
-                )
-
-            # ============================================================
-            # Tab 3: Issues / Proof (SO-4)
-            # ============================================================
-            with gr.TabItem("Issues", id="issues"):
-                gr.Markdown("**SO-4** — Issue tree with coverage fraction, proof status, supporting/attacking counts.")
-                with gr.Row():
-                    refresh_issues_btn = gr.Button("Refresh Issues", variant="secondary")
-                issues_md = gr.Markdown("Run an investigation first.")
-
-                def _refresh_issues(mid):
-                    return state.load_issues(mid)
-
-                refresh_issues_btn.click(
-                    fn=_refresh_issues,
-                    inputs=[matter_id_box],
-                    outputs=[issues_md],
-                )
-
-            # ============================================================
-            # Tab 4: Assertions / Evidence (SO-2)
-            # ============================================================
-            with gr.TabItem("Assertions", id="assertions"):
-                gr.Markdown("**SO-2** — Typed assertion table. Correct assertions inline.")
-                with gr.Row():
-                    refresh_assertions_btn = gr.Button("Refresh Assertions", variant="secondary")
-                assertions_md = gr.Markdown("Run an investigation first.")
-
-                refresh_assertions_btn.click(
-                    fn=lambda mid: state.load_assertions(mid),
-                    inputs=[matter_id_box],
-                    outputs=[assertions_md],
-                )
-
-                gr.Markdown("### Correct an Assertion")
-                with gr.Row():
-                    correction_assertion_id = gr.Textbox(label="Assertion ID", scale=2)
+                    correction_assertion_id = gr.Textbox(
+                        label="Fact ID (copy from table above)", scale=2,
+                    )
                     correction_new_state = gr.Dropdown(
-                        label="New Belief State",
+                        label="Correct characterization",
                         choices=[
-                            "alleged", "argued", "admitted", "operative", "performed",
-                            "disputed", "superseded", "withdrawn", "inferred", "resolved",
+                            ("Alleged — claimed but not proven", "alleged"),
+                            ("Argued — legal argument, not fact", "argued"),
+                            ("Admitted — acknowledged by opposing party", "admitted"),
+                            ("Operative — from a binding document", "operative"),
+                            ("Performed — action that occurred", "performed"),
+                            ("Disputed — parties disagree", "disputed"),
+                            ("Superseded — replaced by later document", "superseded"),
+                            ("Withdrawn — retracted by source", "withdrawn"),
+                            ("Inferred — deduced from other facts", "inferred"),
+                            ("Resolved — settled or decided", "resolved"),
                         ],
                         scale=1,
                     )
-                correction_reason = gr.Textbox(label="Reason", lines=2)
+                correction_reason = gr.Textbox(
+                    label="Why is this correction needed?",
+                    placeholder="e.g. This is from the signed contract, not the complaint",
+                    lines=2,
+                )
                 correction_btn = gr.Button("Apply Correction", variant="primary")
                 correction_result = gr.Textbox(label="Result", interactive=False)
 
-                def _correct_and_refresh(mid, aid, new_state_str, reason):
-                    """Apply correction and refresh assertions + issues + overview (SO-2).
+        with gr.Accordion("Financials — payments, damages, and numeric disputes", open=False):
+            gr.Markdown(
+                "Invoices, payments, damages claims, and numeric conflicts — "
+                "pulled directly from your documents and reconciled. "
+                "If two documents disagree on an amount, Irys flags the conflict."
+            )
+            quant_md = gr.Markdown("*Financial data will appear here after an investigation.*")
+            refresh_quant_btn = gr.Button("Refresh Financials", variant="secondary", size="sm")
 
-                    Belief revision after a correction can change proof states (which
-                    affects issue coverage), so all three panels must refresh.
-                    """
-                    result_text = state.do_correct_assertion(mid, aid, new_state_str, reason)
-                    if result_text.startswith("✅"):
-                        return (
-                            result_text,
-                            state.load_assertions(mid),
-                            state.load_issues(mid),
-                            state.load_overview(mid),
-                        )
-                    return result_text, gr.update(), gr.update(), gr.update()
+        with gr.Accordion("Steering Controls — redirect or resume an investigation", open=False):
+            gr.Markdown(
+                "**Redirect:** If Irys is investigating the wrong thing, redirect it to focus "
+                "on a specific issue. The investigation will shift focus at the next step.\n\n"
+                "**Resume:** If you stopped an investigation, you can pick up where it left off."
+            )
+            with gr.Row():
+                with gr.Column():
+                    gr.Markdown("#### Redirect to a Specific Issue")
+                    redirect_issue_id = gr.Textbox(
+                        label="Issue ID (copy from Issues panel, or auto-filled from gap analysis)",
+                        placeholder="Auto-populated when you click Refresh All",
+                    )
+                    redirect_btn = gr.Button("Redirect Investigation", variant="primary")
+                    redirect_result = gr.Textbox(label="Result", interactive=False)
+                with gr.Column():
+                    gr.Markdown("#### Resume Stopped Investigation")
+                    gr.Markdown(
+                        "Click below to continue the last investigation from where it was stopped."
+                    )
+                    resume_btn = gr.Button("Resume Last Investigation", variant="primary")
+                    resume_result = gr.Textbox(label="Result", interactive=False)
 
-                correction_btn.click(
-                    fn=_correct_and_refresh,
-                    inputs=[matter_id_box, correction_assertion_id, correction_new_state, correction_reason],
-                    outputs=[correction_result, assertions_md, issues_md, overview_md],
-                )
+        # ==================================================================
+        # WIRING
+        # ==================================================================
 
-            # ============================================================
-            # Tab 5: Gaps & Steering (SO-7 + SO-3)
-            # ============================================================
-            with gr.TabItem("Gaps & Steering", id="gaps"):
-                gr.Markdown("**SO-7** — Open gaps and missing documents. **SO-3** — Redirect and steering controls.")
-                with gr.Row():
-                    refresh_gaps_btn = gr.Button("Refresh Gaps", variant="secondary")
-                gaps_md = gr.Markdown("Run an investigation first.")
+        # --- Folder detection: check for existing .irys/ when path changes ---
+        def _check_folder(path: str) -> str:
+            if not path or not path.strip():
+                return ""
+            p = pathlib.Path(path.strip())
+            if not p.exists():
+                return "Folder not found"
+            if not p.is_dir():
+                return "Not a folder"
+            doc_count = sum(1 for f in p.iterdir() if f.is_file() and not f.name.startswith("."))
+            has_model = (p / ".irys" / "matter.sqlite3").exists()
+            if has_model:
+                return f"Existing matter ({doc_count} files) — continuing from previous analysis"
+            return f"New matter ({doc_count} files) — will start fresh"
 
-                gr.Markdown("### Redirect Investigation")
-                gr.Markdown(
-                    "Redirect the current run to a specific issue. "
-                    "**Refresh Gaps** auto-populates the Issue ID from the top steering recommendation."
-                )
-                with gr.Row():
-                    redirect_run_id = gr.Textbox(label="Run ID", scale=2)
-                    fill_run_id_btn = gr.Button("← Use Active Run", scale=1)
-                    redirect_issue_id = gr.Textbox(label="Issue ID to redirect toward", scale=2)
+        repo_path.change(
+            fn=_check_folder,
+            inputs=[repo_path],
+            outputs=[matter_status],
+        )
 
-                # Registered here (after redirect_issue_id is defined) so that
-                # load_gaps() can auto-populate the redirect form from the top
-                # steering recommendation (makes the steering surface actionable — SO-3).
-                refresh_gaps_btn.click(
-                    fn=lambda mid: state.load_gaps(mid),
-                    inputs=[matter_id_box],
-                    outputs=[gaps_md, redirect_issue_id],
-                )
-                redirect_btn = gr.Button("Redirect", variant="primary")
-                redirect_result = gr.Textbox(label="Result", interactive=False)
+        # Clear removes .irys/ so next run starts fresh
+        def _clear_and_report(path: str) -> tuple[str, str]:
+            if not path or not path.strip():
+                return "", "No folder selected"
+            result = _clear_matter(path)
+            return _check_folder(path), result[1]
 
-                # Populate run_id from the active investigation (SO-3 steerability).
-                fill_run_id_btn.click(
-                    fn=lambda: state.current_run_id or "",
-                    inputs=[],
-                    outputs=[redirect_run_id],
-                )
-                redirect_btn.click(
-                    fn=state.do_redirect,
-                    inputs=[matter_id_box, redirect_run_id, redirect_issue_id],
-                    outputs=[redirect_result],
-                )
+        clear_matter_btn.click(
+            fn=_clear_and_report,
+            inputs=[repo_path],
+            outputs=[matter_status, status_box],
+        )
 
-                gr.Markdown("### Resume Stopped Investigation")
-                gr.Markdown(
-                    "Resume an interrupted investigation from its last checkpoint. "
-                    "Fill the run ID below and click Resume. "
-                    "The run must be in **interrupted** status with a checkpoint saved."
-                )
-                with gr.Row():
-                    resume_run_id = gr.Textbox(label="Run ID to Resume", scale=3)
-                    fill_resume_run_id_btn = gr.Button("← Use Last Run", scale=1)
-                resume_btn = gr.Button("Resume Investigation", variant="primary")
-                resume_result = gr.Textbox(label="Resume Result", interactive=False)
+        # --- Investigation stream ---
+        run_outputs = [run_output, trace_box, citations_box, status_box, matter_id_box]
 
-                fill_resume_run_id_btn.click(
-                    fn=lambda: state.current_run_id or "",
-                    inputs=[],
-                    outputs=[resume_run_id],
-                )
-                resume_btn.click(
-                    fn=state.do_resume,
-                    inputs=[matter_id_box, resume_run_id],
-                    outputs=[resume_result],
-                )
+        submit_btn.click(
+            fn=state.stream_investigation,
+            inputs=[query, repo_path],
+            outputs=run_outputs,
+        )
+        stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
-            # ============================================================
-            # Tab 6: Quant (SO-6)
-            # ============================================================
-            with gr.TabItem("Quant", id="quant"):
-                gr.Markdown(
-                    "**SO-6** — Quantitative intelligence: payment reconciliation, "
-                    "damages waterfall, numeric conflicts. Numbers from the matter model, "
-                    "not extracted from prose."
-                )
-                with gr.Row():
-                    refresh_quant_btn = gr.Button("Refresh Quant", variant="secondary")
-                quant_md = gr.Markdown("Run an investigation first.")
+        # --- Sidebar refresh (all panels at once) ---
+        def _refresh_all(mid):
+            overview = state.load_overview(mid)
+            issues = state.load_issues(mid)
+            gaps_text, top_issue = state.load_gaps(mid)
+            return overview, issues, gaps_text, top_issue
 
-                refresh_quant_btn.click(
-                    fn=lambda mid: state.load_quant(mid),
-                    inputs=[matter_id_box],
-                    outputs=[quant_md],
+        refresh_sidebar_btn.click(
+            fn=_refresh_all,
+            inputs=[matter_id_box],
+            outputs=[overview_md, issues_md, gaps_md, redirect_issue_id],
+        )
+
+        # --- Detail panel refreshes ---
+        refresh_assertions_btn.click(
+            fn=lambda mid: state.load_assertions(mid),
+            inputs=[matter_id_box],
+            outputs=[assertions_md],
+        )
+        refresh_quant_btn.click(
+            fn=lambda mid: state.load_quant(mid),
+            inputs=[matter_id_box],
+            outputs=[quant_md],
+        )
+
+        # --- Correction ---
+        def _correct_and_refresh(mid, aid, new_state_str, reason):
+            result_text = state.do_correct_assertion(mid, aid, new_state_str, reason)
+            if result_text.startswith("\u2705"):
+                return (
+                    result_text,
+                    state.load_assertions(mid),
+                    state.load_issues(mid),
+                    state.load_overview(mid),
                 )
+            return result_text, gr.update(), gr.update(), gr.update()
+
+        correction_btn.click(
+            fn=_correct_and_refresh,
+            inputs=[matter_id_box, correction_assertion_id, correction_new_state, correction_reason],
+            outputs=[correction_result, assertions_md, issues_md, overview_md],
+        )
+
+        # --- Steering: redirect uses current run_id automatically ---
+        redirect_btn.click(
+            fn=lambda mid, issue_id: state.do_redirect(mid, state.current_run_id or "", issue_id),
+            inputs=[matter_id_box, redirect_issue_id],
+            outputs=[redirect_result],
+        )
+
+        # --- Steering: resume uses current run_id automatically ---
+        resume_btn.click(
+            fn=lambda mid: state.do_resume(mid, state.current_run_id or ""),
+            inputs=[matter_id_box],
+            outputs=[resume_result],
+        )
 
     return demo
 
@@ -962,15 +1072,10 @@ def main():
 
     api_key = args.api_key or os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        print("⚠️  No GEMINI_API_KEY — set it or pass --api-key")
+        print("No GEMINI_API_KEY set — pass --api-key or set the env var")
 
     demo = create_app(api_key=api_key)
-    demo.launch(
-        server_port=args.port,
-        share=args.share,
-        theme=gr.themes.Soft(),
-        css=".mono textarea { font-family: monospace; font-size: 12px; }",
-    )
+    demo.launch(server_port=args.port, share=args.share)
 
 
 if __name__ == "__main__":
