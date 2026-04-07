@@ -178,6 +178,7 @@ class ReasoningLedgerStore:
                 event_type=LedgerEventType.RUN_COMPLETED,
                 summary=summary or "Run completed successfully",
             )
+        self._seq_cache.pop(run_id, None)  # r96 MEDIUM: release dead cache entry
 
     def fail_run(self, run_id: str, reason: str) -> None:
         """Mark a run session as failed.
@@ -200,6 +201,7 @@ class ReasoningLedgerStore:
                 event_type=LedgerEventType.RUN_FAILED,
                 summary=f"Run failed: {reason[:200]}",
             )
+        self._seq_cache.pop(run_id, None)  # r96 MEDIUM: release dead cache entry
 
     def interrupt_run(self, run_id: str) -> None:
         """Mark a run session as interrupted by user stop."""
@@ -214,6 +216,7 @@ class ReasoningLedgerStore:
                 event_type=LedgerEventType.USER_INTERRUPTED,
                 summary="Run interrupted by user stop request",
             )
+        self._seq_cache.pop(run_id, None)  # r96 MEDIUM: release dead cache entry
 
     def set_next_action(self, run_id: str, next_action: str) -> None:
         """Store checkpoint path in run_session.next_action for SO-3 resume."""
