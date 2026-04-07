@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-04-06 (Tier 1 r55 CLEAN — api.py sync matter lifecycle complete; adversarial #032: SO-3 UI gap HIGH + fake SO metrics HIGH)
+Last updated: 2026-04-06 (Tier 1 r61 — SO-3 UI wiring CLEAN; adv#032 SO-3 UI HIGH fixed; resume route remaining)
 Branch: SebihSpecial
 
 ---
@@ -19,7 +19,7 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 |---------|--------|-------|
 | SO-1: Durable Matter Model | **PASS** | Audit #032: enqueue DB-first ✓, pending work reloads on reopen ✓ |
 | SO-2: Typed Assertion Graph + Truth Maintenance | **PARTIAL** | Audit #032: assertion_revision for NULL→non-NULL ✓. Remaining: propagation_truncated signal; SO-2 coverage rate |
-| SO-3: User-Steerable Reasoning | **PARTIAL** | Audit #032 HIGH: Gradio hard-wired to InProcessBackend; live trace is raw strings not structured SSE; no UI/service resume route. Stop/redirect/correction wired in backend but not exercisable through shipped UI surface. |
+| SO-3: User-Steerable Reasoning | **PARTIAL** | Adv#032 HIGH partially fixed: stop now routes via backend (non-blocking fire-and-forget); structured ledger events replace raw thinking trace post-run; current_run_id preserved after stop (enables post-stop redirect). Remaining: resume route (service expose) + shared matter DB root for HTTP path. |
 | SO-4: Issue-Driven Architecture | **PARTIAL** | Audit #032: heuristic issue attribution (LLM issue_idx + Jaccard gate), not hard issue-grounded retrieval backbone |
 | SO-5: Source-Aware Intelligence | **PASS** | Audit #031 PASS — source-role classification, trust overrides, advocacy-only gating real |
 | SO-6: Quantitative Intelligence | **PASS** | Audit #031 PASS — numeric facts structured, reconciled, conflict-checked |
@@ -157,6 +157,29 @@ architectural gaps discovered through Tier 1 / adversarial Codex reviews.
 ---
 
 ## Active Work
+
+### JUST COMPLETED — SO-3 UI wiring + Tier 1 r57–r61 (2026-04-06)
+
+**Adversarial #032 HIGH partially closed:**
+
+1. **SO metrics fake HIGH** (matter.py `get_so_metrics()`):
+   - `steerability` was unconditionally `True` — fixed: queries `run_session` with `objective NOT IN ('manual_flush','background_flush')` filter (commit `8c553c4`)
+   - r57 MEDIUM (residual): historical rows pre-wiring cannot be distinguished — schema migration needed to add capability marker; accepted as known limitation
+
+2. **SO-3 UI wiring** (app.py — commits `e11f056`, `5d69367`, `1b996c6`, `c5009a8`, `e59ec84`):
+   - `stop_investigation()` routes through `backend().stop_run()` (InProcessBackend/HttpBackend); non-blocking fire-and-forget via `_ASYNC_EXECUTOR.submit`; early-stop fallback also async
+   - `current_run_id` NOT cleared on stop — enables post-stop redirect in Gaps & Steering
+   - `stream_investigation()` complete handler loads structured ledger events via `backend().stream_run_events()` after run; falls back to raw trace if streaming fails
+   - `_fmt_ledger_event()` helper; filters terminal/error sentinel dicts from event stream
+   - Trace box label: "Thinking Steps" → "Ledger Events (structured after run; live steps during run)"
+   - Tier 1 r58–r61: HIGH/MEDIUM/LOW fixed iteratively; CLEAN at r61
+
+**Known residual gaps (SO-3 not yet PASS):**
+- Resume route not exposed (stop ends run; resume requires `checkpoint_dir` in service + new endpoint) — see design gate `codex_design_gate_so3_ui.md` item 3
+- Shared matter DB root (in-process vs service open different DB paths) — prerequisite for HTTP stop/redirect to be coherent
+- Narrow early-stop race window (~500ms before `_matter_model` init) — acceptable known limitation
+
+HEAD: e59ec84 — Tests: 733/733 (no test changes in this block)
 
 ### JUST COMPLETED — Tier 2 r3 Scaling + Architecture checkpoint (2026-04-06)
 
