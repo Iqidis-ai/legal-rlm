@@ -4844,8 +4844,13 @@ class RLMEngine:
         if run_id is not None and self._matter_model is not None:
             try:
                 self._matter_model.ledger.set_next_action(run_id, str(latest_path))
-            except Exception:
-                pass
+            except Exception as _sna_exc:
+                # MEDIUM r81: log so operators know this run may be non-resumable
+                logger.warning(
+                    "set_next_action(%s, %s) failed during checkpoint — run may not "
+                    "be resumable if this persists: %s",
+                    run_id, latest_path, _sna_exc,
+                )
 
     async def resume_investigation(
         self,

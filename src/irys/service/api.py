@@ -2767,6 +2767,7 @@ async def resume_run(matter_id: str, run_id: str):
 
     Returns the new run_id created for the resumed investigation.
     """
+    config = get_config()  # HIGH r81: was missing — endpoint raised NameError before reaching resume
     from pathlib import Path as _Path
     from irys.api import Irys
 
