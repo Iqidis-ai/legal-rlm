@@ -843,9 +843,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         with gr.Row():
             repo_path = gr.Textbox(
                 label="Matter folder",
-                placeholder="Paste the path to your case folder",
+                placeholder="Paste a path or click Browse",
                 scale=4,
             )
+            browse_btn = gr.Button("Browse", variant="secondary", scale=1, min_width=80)
             matter_status = gr.Textbox(
                 label="",
                 interactive=False,
@@ -1029,6 +1030,28 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             if has_model:
                 return f"Existing matter ({doc_count} files) — continuing from previous analysis"
             return f"New matter ({doc_count} files) — will start fresh"
+
+        def _browse_folder() -> tuple[str, str]:
+            """Open native folder picker dialog and return (path, status)."""
+            try:
+                import tkinter as tk
+                from tkinter import filedialog
+                root = tk.Tk()
+                root.withdraw()
+                root.attributes("-topmost", True)
+                folder = filedialog.askdirectory(title="Select matter folder")
+                root.destroy()
+                if folder:
+                    return folder, _check_folder(folder)
+                return gr.update(), gr.update()
+            except Exception:
+                return gr.update(), "Folder picker unavailable — paste a path instead"
+
+        browse_btn.click(
+            fn=_browse_folder,
+            inputs=[],
+            outputs=[repo_path, matter_status],
+        )
 
         repo_path.change(
             fn=_check_folder,
