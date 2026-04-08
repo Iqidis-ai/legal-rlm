@@ -3154,6 +3154,8 @@ class DocumentCardStore:
         operative_status: str = "unknown",
         privilege_flag: bool = False,
         unresolved_flags: Optional[list] = None,
+        source_role: Optional[str] = None,
+        signatories_json: Optional[str] = None,
     ) -> str:
         """Insert or update a document card for the given inventory doc_id."""
         now = _now()
@@ -3166,8 +3168,9 @@ class DocumentCardStore:
                 effective_date, discovery_date, purpose,
                 rhetorical_posture, reliability_posture,
                 operative_status, privilege_flag, unresolved_flags,
+                source_role, signatories_json,
                 created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(doc_id) DO UPDATE SET
                  title = COALESCE(excluded.title, document_card.title),
                  doc_type = COALESCE(excluded.doc_type, document_card.doc_type),
@@ -3186,6 +3189,8 @@ class DocumentCardStore:
                  operative_status = excluded.operative_status,
                  privilege_flag = excluded.privilege_flag,
                  unresolved_flags = COALESCE(excluded.unresolved_flags, document_card.unresolved_flags),
+                 source_role = COALESCE(excluded.source_role, document_card.source_role),
+                 signatories_json = COALESCE(excluded.signatories_json, document_card.signatories_json),
                  updated_at = excluded.updated_at
             """,
             (card_id, doc_id, title, doc_type, doc_subtype, source_side,
@@ -3193,6 +3198,7 @@ class DocumentCardStore:
              effective_date, discovery_date, purpose,
              rhetorical_posture, reliability_posture,
              operative_status, int(privilege_flag), flags_json,
+             source_role, signatories_json,
              now, now),
         )
         # Return the actual card id (might be existing row on conflict)

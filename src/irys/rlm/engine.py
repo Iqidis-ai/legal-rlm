@@ -2700,10 +2700,30 @@ class RLMEngine:
         # WITHOUT needing a query or issue context (Priority 1: cold-path split).
         unprofiled = []
         if self._matter_model is not None:
-            unprofiled_rows = self._matter_model.list_documents_needing_profile(limit=200)
+            _mm = self._matter_model
+            # Ensure every new file has an inventory row BEFORE the profiling
+            # phase — list_needing_profile() only returns existing rows, so
+            # truly new files would be invisible without this pre-registration.
+            import hashlib as _hl
+            for nf in new_files:
+                _nf_path = str(nf.relative_path)
+                _nf_abs = Path(repo.base_path) / _nf_path
+                try:
+                    _raw = _nf_abs.read_bytes()
+                    _sha = _hl.sha256(_raw).hexdigest()
+                    _mm.inventory.upsert(
+                        relative_path=_nf_path,
+                        sha256=_sha,
+                        size_bytes=len(_raw),
+                        file_type=Path(_nf_path).suffix.lstrip(".") or None,
+                    )
+                except Exception:
+                    pass  # unreadable files will be skipped during profiling too
+
+            unprofiled_rows = _mm.list_documents_needing_profile(limit=200)
             unprofiled_paths = {r["relative_path"] for r in unprofiled_rows}
-            unprofiled = [fp for fp in [str(f.relative_path) for f in new_files]
-                          if fp in unprofiled_paths]
+            unprofiled = [str(f.relative_path) for f in new_files
+                          if str(f.relative_path) in unprofiled_paths]
 
         if unprofiled:
             self._emit_step(
@@ -2739,9 +2759,13 @@ class RLMEngine:
         """Profile multiple documents with controlled parallelism (query-agnostic)."""
         if not file_paths:
             return
+        _adapter = getattr(state, "_matter_adapter", None)
         sem = asyncio.Semaphore(self.config.parallel_reads)
 
         async def limited_profile(fp: str):
+            # Cooperative stop check (SO-3) before each profile
+            if _adapter is not None and _adapter.is_stop_requested():
+                return
             async with sem:
                 return await self._profile_document(state, repo, fp)
 
@@ -2771,6 +2795,11 @@ class RLMEngine:
         if _mm is None:
             return
 
+        # Cooperative stop check (SO-3)
+        _adapter = getattr(state, "_matter_adapter", None)
+        if _adapter is not None and _adapter.is_stop_requested():
+            return
+
         _fp = Path(file_path)
         try:
             _rel_path = str(_fp.relative_to(repo.base_path))
@@ -2794,11 +2823,11 @@ class RLMEngine:
             # Read a limited excerpt for profiling (first ~2000 chars is enough
             # to classify type, source role, and structure)
             content = repo.read(file_path)
-            if not content or not content.text:
+            if not content or not content.full_text:
                 _mm.inventory.mark_profile_complete(doc_id)
                 return
 
-            excerpt = content.text[:3000]
+            excerpt = content.full_text[:3000]
             prompt = f"""Classify this legal document. Respond in JSON only.
 
 Document: {_fp.name}
@@ -2846,8 +2875,8 @@ Return:
 
         except Exception as e:
             logger.debug("Profile failed for %s: %s", _rel_path, e)
-            # Still mark complete to avoid retrying broken docs endlessly
-            _mm.inventory.mark_profile_complete(doc_id)
+            # Leave as 'profiling' — not retried (list_needing_profile only
+            # returns 'pending'), but not falsely marked as profiled either.
 
     async def _batch_deep_read(
         self,

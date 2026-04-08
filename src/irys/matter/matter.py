@@ -929,6 +929,7 @@ class MatterModel:
             doc_type=analysis.get("doc_type"),
             doc_subtype=analysis.get("doc_subtype"),
             source_side=analysis.get("doc_source_role") or analysis.get("source_side"),
+            source_role=analysis.get("doc_source_role"),
             author=analysis.get("author"),
             sender=analysis.get("sender"),
             recipient=analysis.get("recipient"),
@@ -979,6 +980,7 @@ class MatterModel:
             doc_type=analysis.get("doc_type"),
             doc_subtype=analysis.get("doc_subtype"),
             source_side=analysis.get("doc_source_role") or analysis.get("source_side"),
+            source_role=analysis.get("doc_source_role"),
             author=analysis.get("author"),
             sender=analysis.get("sender"),
             recipient=analysis.get("recipient"),
@@ -1018,27 +1020,52 @@ class MatterModel:
     ) -> list[dict]:
         """Detect and persist version families for specified docs (or all).
 
-        Uses DocumentInventoryStore.detect_version_chains() to find families,
-        then persists family_id/version_chain_id on each member.
-        Returns list of family dicts with members.
+        Uses DocumentInventoryStore.detect_version_chains() to find version
+        links, groups them into families, and persists family_id/version_chain_id.
+        Returns list of link dicts created.
         """
-        families = self.inventory.detect_version_chains()
-        results = []
-        for family in families:
-            members = family.get("members", [])
-            member_ids = [m["id"] for m in members if m.get("id")]
+        from collections import defaultdict
+
+        links = self.inventory.detect_version_chains(gap_store=self.gaps)
+        if not links:
+            return []
+
+        # Group links into families by connected component (union-find).
+        # Each link has source_doc_id and target_doc_id.
+        parent: dict[str, str] = {}
+
+        def find(x: str) -> str:
+            while parent.get(x, x) != x:
+                parent[x] = parent.get(parent[x], parent[x])
+                x = parent[x]
+            return x
+
+        def union(a: str, b: str):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        for link in links:
+            sid, tid = link["source_doc_id"], link["target_doc_id"]
+            parent.setdefault(sid, sid)
+            parent.setdefault(tid, tid)
+            union(sid, tid)
+
+        # Collect family members
+        families: dict[str, list[str]] = defaultdict(list)
+        for doc_id in parent:
+            families[find(doc_id)].append(doc_id)
+
+        for family_id, member_ids in families.items():
             if doc_ids is not None:
-                # Only process families that include at least one requested doc
                 if not any(mid in doc_ids for mid in member_ids):
                     continue
-            if member_ids:
-                family_id = member_ids[0]  # use first member as family id
-                chain_id = family.get("chain_id")
+            if len(member_ids) >= 2:
                 self.inventory.set_family_membership(
-                    member_ids, family_id, chain_id
+                    member_ids, family_id, version_chain_id=family_id
                 )
-            results.append(family)
-        return results
+
+        return links
 
     def get_document_card(
         self,
