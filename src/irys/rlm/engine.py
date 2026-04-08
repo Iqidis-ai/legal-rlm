@@ -2819,7 +2819,6 @@ class RLMEngine:
             return
 
         doc_id = row["id"]
-        _mm.inventory.mark_profile_started(doc_id)
 
         # Helper: ensure a minimal card exists (never overwrite rich cards).
         def _ensure_fallback_card():
@@ -2829,16 +2828,20 @@ class RLMEngine:
                 _sal = min(1.0, get_document_priority(_rel_path) / 2.0)
                 _mm.inventory.set_salience(doc_id, _sal)
 
-        # --- Phase A: Read document (deterministic — bad format = terminal) ---
+        # --- Phase A: Read document ---
+        # Status stays 'pending' during read. If read fails (transient I/O,
+        # locked file, OR permanent parse error), the doc stays pending and
+        # retries next run. Read failures are cheap (no LLM cost) and the
+        # 200-doc batch cap prevents queue starvation.
         try:
             content = repo.read(file_path)
         except Exception as e:
-            logger.debug("Profile read failed (terminal) for %s: %s", _rel_path, e)
+            logger.debug("Profile read failed for %s: %s", _rel_path, e)
             try:
                 _ensure_fallback_card()
             except Exception:
                 pass
-            _mm.inventory.mark_profile_failed(doc_id)
+            # Leave as 'pending' — retries next run. No LLM cost incurred.
             return
 
         if not content or not content.full_text:
@@ -2846,7 +2849,8 @@ class RLMEngine:
             _mm.inventory.mark_profile_complete(doc_id)
             return
 
-        # --- Phase B: LLM classification (transient — retry on next run) ---
+        # --- Phase B: LLM classification (mark started to prevent dupes) ---
+        _mm.inventory.mark_profile_started(doc_id)
         try:
             excerpt = content.full_text[:3000]
             prompt = f"""Classify this legal document. Respond in JSON only.
