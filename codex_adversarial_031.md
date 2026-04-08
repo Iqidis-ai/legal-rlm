@@ -1,1 +1,0 @@
-The repo has a project instruction file at `.claude/CLAUDE.md`; there is no repo-root `CLAUDE.md` in this checkout. I’m checking whether “memory files” live elsewhere in the workspace or in the Codex memory directory before moving into code and test analysis.

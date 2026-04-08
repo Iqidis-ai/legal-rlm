@@ -58,8 +58,6 @@ from .core.reader import DocumentReader, DocumentContent
 # RLM components (for advanced usage)
 from .rlm.state import InvestigationState
 from .rlm.engine import RLMEngine, RLMConfig
-from .rlm.templates import get_template, suggest_template, get_template_names
-
 # Output formatters
 from .output import get_formatter
 
@@ -90,9 +88,6 @@ __all__ = [
     "InvestigationState",
     "RLMEngine",
     "RLMConfig",
-    "get_template",
-    "suggest_template",
-    "get_template_names",
     # Output
     "get_formatter",
 ]

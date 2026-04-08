@@ -11,7 +11,6 @@ import logging
 
 from .core.models import GeminiClient, ModelTier
 from .core.repository import MatterRepository
-from .core.cache import ResponseCache, LRUCache
 from .core.utils import (
     setup_logging,
     TelemetryCollector,
@@ -22,7 +21,6 @@ from .core.utils import (
 )
 from .rlm.engine import RLMEngine, RLMConfig
 from .rlm.state import InvestigationState
-from .rlm.templates import get_template, suggest_template, get_template_names
 from .output import get_formatter
 
 logger = logging.getLogger("irys")
@@ -77,7 +75,6 @@ class Irys:
         # Initialize components
         self._client: Optional[GeminiClient] = None
         self._engine: Optional[RLMEngine] = None
-        self._cache: Optional[ResponseCache] = None
         self._telemetry = TelemetryCollector()
         self._matter_models: dict[str, Any] = {}  # repo_path → MatterModel
 
@@ -89,10 +86,6 @@ class Irys:
         """Ensure components are initialized."""
         if self._client is None:
             self._client = GeminiClient(api_key=self.config.api_key)
-
-        if self._cache is None and self.config.cache_enabled:
-            self._cache = ResponseCache(
-                ttl_seconds=self.config.cache_ttl_seconds)
 
         if self._engine is None:
             engine_config = RLMConfig(
@@ -124,7 +117,6 @@ class Irys:
         self,
         query: str,
         repository: str | Path,
-        template: Optional[str] = None,
     ) -> "InvestigationResult":
         """
         Run an investigation.
@@ -132,7 +124,6 @@ class Irys:
         Args:
             query: The legal question to investigate
             repository: Path to document repository
-            template: Optional investigation template name
 
         Returns:
             InvestigationResult with findings and output
@@ -155,13 +146,6 @@ class Irys:
                 from .matter import MatterModel
                 self._matter_models[repo_key] = MatterModel.open(repo_key)
             self._engine._matter_model = self._matter_models[repo_key]
-
-        # Apply template if specified
-        if template:
-            tmpl = get_template(template)
-            if tmpl:
-                # Could enhance query with template guidance
-                logger.info(f"Using template: {tmpl.name}")
 
         # Run investigation
         self._telemetry.start_operation("investigation")
@@ -270,14 +254,6 @@ class Irys:
             }
             for hit in results.top(20)
         ]
-
-    def suggest_template(self, query: str) -> Optional[str]:
-        """Suggest an investigation template for a query."""
-        return suggest_template(query)
-
-    def list_templates(self) -> list[str]:
-        """List available investigation templates."""
-        return get_template_names()
 
     def get_telemetry(self) -> dict[str, Any]:
         """Get telemetry summary."""
