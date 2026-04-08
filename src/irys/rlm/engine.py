@@ -1636,8 +1636,9 @@ class RLMEngine:
             # Track facts before this iteration for diminishing returns check
             facts_before = len(state.findings.get("accumulated_facts", []))
 
-            # Close-loop feedback: apply term boost/demotion from prior iterations
-            if hasattr(state, 'apply_feedback_to_leads'):
+            # Close-loop feedback: apply term boost/demotion once (not per-iteration
+            # to avoid compounding — MEDIUM #6 from Codex review).
+            if iteration == 0 and hasattr(state, 'apply_feedback_to_leads'):
                 state.apply_feedback_to_leads()
 
             pending_leads = state.get_pending_leads()
@@ -2059,12 +2060,24 @@ class RLMEngine:
                         queries, file_paths=candidates, require_all=False,
                     )
                     state.searches_performed += 1
-                    # Stage 2: if weak results, fall back to full repo with primary query
+                    # Stage 2: if weak results, merge with full repo search
                     if len(results.hits) < 2:
-                        results = repo.search(
+                        fallback = repo.search(
                             queries[0], context_lines=3, max_workers=max_workers,
                         )
                         state.searches_performed += 1
+                        # Merge: combine hits, dedup by (file_path, line_num)
+                        seen = {(h.file_path, h.line_num) for h in results.hits}
+                        merged_hits = list(results.hits)
+                        for h in fallback.hits:
+                            if (h.file_path, h.line_num) not in seen:
+                                merged_hits.append(h)
+                        results = type(results)(
+                            query=queries[0],
+                            hits=merged_hits,
+                            files_searched=fallback.files_searched,
+                            total_matches=len(merged_hits),
+                        )
                 elif candidates:
                     results = repo.search(
                         queries[0], context_lines=3, max_workers=max_workers,
@@ -2072,10 +2085,21 @@ class RLMEngine:
                     )
                     state.searches_performed += 1
                     if len(results.hits) < 2:
-                        results = repo.search(
+                        fallback = repo.search(
                             queries[0], context_lines=3, max_workers=max_workers,
                         )
                         state.searches_performed += 1
+                        seen = {(h.file_path, h.line_num) for h in results.hits}
+                        merged_hits = list(results.hits)
+                        for h in fallback.hits:
+                            if (h.file_path, h.line_num) not in seen:
+                                merged_hits.append(h)
+                        results = type(results)(
+                            query=queries[0],
+                            hits=merged_hits,
+                            files_searched=fallback.files_searched,
+                            total_matches=len(merged_hits),
+                        )
                 else:
                     # No memory — full repo search (cold start)
                     results = repo.search(
@@ -2090,9 +2114,9 @@ class RLMEngine:
                     if _adp is not None and lead.focus_issue_id is not None:
                         from ..matter.enums import GapType
                         _adp.record_gap(
-                            description=f"No documents found for search: '{search_term}'",
+                            description=f"No documents found for search: '{queries[0]}'",
                             gap_type=GapType.MISSING_DOCUMENT,
-                            expected_artifact=search_term,
+                            expected_artifact=queries[0],
                             materiality=0.4,
                             affected_type="issue",
                             affected_id=lead.focus_issue_id,
@@ -2662,6 +2686,7 @@ class RLMEngine:
         self._emit_step(state, StepType.READING, f"Deep reading: {Path(file_path).name}")
 
         _rel_path: Optional[str] = None  # set before _reading_in_progress; used in except
+        _owns_in_progress = False  # track if THIS coroutine added the marker
         try:
             # Cold/hot split (SO-1): check inventory BEFORE the expensive repo.read()
             # so hot-path documents skip PDF parsing entirely, not just LLM calls.
@@ -2684,6 +2709,7 @@ class RLMEngine:
             if _rel_path in state._reading_in_progress:
                 return
             state._reading_in_progress.add(_rel_path)
+            _owns_in_progress = True
 
             if _mm is not None:
                 import hashlib as _hl
@@ -3164,9 +3190,11 @@ class RLMEngine:
                     affected_id=focus_issue_id,
                 )
         finally:
-            # Always clean up in-progress marker so the file can be retried on
-            # transient failures. Previously only cleaned up in except branch.
-            if _rel_path is not None:
+            # Only clean up if THIS coroutine added the marker (ownership-safe).
+            # Without this check, a second coroutine that returned early at the
+            # guard would still discard the marker in its finally, allowing a
+            # third coroutine to start a duplicate cold-path read.
+            if _owns_in_progress and _rel_path is not None:
                 state._reading_in_progress.discard(_rel_path)
 
     async def _verify_citations(self, state: InvestigationState, repo: MatterRepository):
