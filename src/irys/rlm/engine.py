@@ -1081,6 +1081,13 @@ class RLMEngine:
             # Phase 1: Orientation — pass pre-computed stats to avoid a second glob walk
             await self._orient(state, repo, _stats=stats)
 
+            # Phase 1.5: Document Ingestion — read all new/changed documents BEFORE
+            # searching. This ensures the system understands what's in the repo
+            # before generating search leads. Already-ingested files are skipped
+            # (hot path via DocumentInventoryStore). Search becomes targeted
+            # follow-up, not blind exploration.
+            await self._ingest_documents(state, repo)
+
             # Phase 2: Iterative investigation loop
             await self._investigate_loop(state, repo)
 
@@ -2403,6 +2410,63 @@ class RLMEngine:
         if top_files:
             focus_issue_id = lead.focus_issue_id if lead is not None else None
             await self._batch_deep_read(state, repo, top_files, focus_issue_id=focus_issue_id)
+
+    async def _ingest_documents(
+        self, state: InvestigationState, repo: MatterRepository
+    ):
+        """Phase 1.5: Read all new/changed documents before searching.
+
+        Pipeline inversion: read first, then search. The matter model's
+        DocumentInventoryStore tracks which files have been ingested. On cold
+        start all files are new; on warm start only changed/added files get
+        read. Already-ingested files are skipped via the hot path inside
+        _deep_read_document().
+
+        This runs BEFORE the investigation loop so that:
+        - Facts are extracted from ALL documents, not just search matches
+        - The investigation loop generates targeted search leads from actual
+          document content, not blind keyword guesses
+        - The system never misses a document because search terms didn't match
+        """
+        _adapter = getattr(state, "_matter_adapter", None)
+        if _adapter is not None and _adapter.is_stop_requested():
+            return
+
+        all_files = repo.list_files()
+        file_paths = [str(f.relative_path) for f in all_files]
+
+        if not file_paths:
+            self._emit_step(state, StepType.READING, "No documents found in folder")
+            return
+
+        # Check which files are already ingested (warm path)
+        new_files = file_paths
+        if self._matter_model is not None:
+            ingested = set(self._matter_model.inventory.get_ingested_paths())
+            # Also check if content changed (sha256 mismatch resets to pending)
+            new_files = [fp for fp in file_paths if fp not in ingested]
+
+        if not new_files:
+            self._emit_step(
+                state, StepType.READING,
+                f"All {len(file_paths)} documents already ingested — using cached intelligence",
+            )
+            return
+
+        self._emit_step(
+            state, StepType.READING,
+            f"Reading {len(new_files)} document{'s' if len(new_files) != 1 else ''}"
+            + (f" ({len(file_paths) - len(new_files)} already cached)"
+               if len(new_files) < len(file_paths) else ""),
+        )
+
+        # Use the weakest issue (from orientation) as focus for fact extraction
+        ctx = _adapter.get_context() if _adapter is not None else None
+        focus_issue_id = ctx.weakest_issue_id if ctx else None
+
+        await self._batch_deep_read(
+            state, repo, new_files, focus_issue_id=focus_issue_id
+        )
 
     async def _batch_deep_read(
         self,
