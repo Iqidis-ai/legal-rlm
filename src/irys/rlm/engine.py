@@ -2674,9 +2674,8 @@ class RLMEngine:
                     pass  # unreadable files will be skipped during profiling too
 
             unprofiled_rows = _mm.list_documents_needing_profile(limit=200)
-            unprofiled_paths = {r["relative_path"] for r in unprofiled_rows}
-            # Include new files AND existing docs needing backfill
-            unprofiled = [p for p in unprofiled_paths]
+            # Preserve salience ordering from list_needing_profile (highest first)
+            unprofiled = [r["relative_path"] for r in unprofiled_rows]
 
         if unprofiled:
             self._emit_step(
@@ -2827,7 +2826,12 @@ class RLMEngine:
             # to classify type, source role, and structure)
             content = repo.read(file_path)
             if not content or not content.full_text:
-                _mm.inventory.mark_profile_complete(doc_id)
+                # Create a minimal card so doc is not invisible to candidate
+                # selection (which inner-joins on document_card).
+                _mm.upsert_document_profile(
+                    relative_path=_rel_path,
+                    analysis={"doc_type": "unknown", "operative_status": "unknown"},
+                )
                 return
 
             excerpt = content.full_text[:3000]
@@ -2878,9 +2882,15 @@ Return:
 
         except Exception as e:
             logger.debug("Profile failed for %s: %s", _rel_path, e)
-            # Mark as 'failed' — distinct from 'profiled' (success) and
-            # 'pending' (never attempted). Deep-read will still run and
-            # can create the card as a fallback.
+            # Create a minimal card so doc is not invisible to candidate
+            # selection (which inner-joins on document_card).
+            try:
+                _mm.upsert_document_profile(
+                    relative_path=_rel_path,
+                    analysis={"doc_type": "unknown", "operative_status": "unknown"},
+                )
+            except Exception:
+                pass
             _mm.inventory.mark_profile_failed(doc_id)
 
     async def _batch_deep_read(
