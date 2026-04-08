@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 41
+SCHEMA_VERSION = 42
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -204,7 +204,10 @@ CREATE TABLE IF NOT EXISTS document_inventory (
     family_id       TEXT,
     version_chain_id TEXT,
     salience_score  REAL NOT NULL DEFAULT 0.5,
-    last_read_at    TEXT
+    last_read_at    TEXT,
+    maintenance_status TEXT NOT NULL DEFAULT 'pending',
+    profiled_at     TEXT,
+    last_maintained_at TEXT
 ) STRICT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_path
@@ -254,6 +257,8 @@ CREATE TABLE IF NOT EXISTS document_card (
     operative_status TEXT NOT NULL DEFAULT 'unknown',
     privilege_flag  INTEGER NOT NULL DEFAULT 0,
     unresolved_flags TEXT,
+    source_role     TEXT,
+    signatories_json TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 ) STRICT;
@@ -263,6 +268,9 @@ CREATE INDEX IF NOT EXISTS ix_card_type
 
 CREATE INDEX IF NOT EXISTS ix_card_operative
     ON document_card(source_side, operative_status, effective_date);
+
+CREATE INDEX IF NOT EXISTS ix_card_source_role
+    ON document_card(source_role);
 """
 
 _DDL_SPANS = """
@@ -333,6 +341,25 @@ CREATE TABLE IF NOT EXISTS actor_affiliation (
     end_date    TEXT,
     created_at  TEXT NOT NULL
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS document_actor_role (
+    id          TEXT PRIMARY KEY,
+    doc_id      TEXT NOT NULL REFERENCES document_inventory(id),
+    actor_id    TEXT NOT NULL REFERENCES actor(id),
+    role_type   TEXT NOT NULL,
+    raw_name    TEXT,
+    confidence  REAL NOT NULL DEFAULT 1.0,
+    created_at  TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_doc_actor_role_doc
+    ON document_actor_role(doc_id, role_type);
+
+CREATE INDEX IF NOT EXISTS ix_doc_actor_role_actor
+    ON document_actor_role(actor_id, role_type);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_doc_actor_role
+    ON document_actor_role(doc_id, actor_id, role_type);
 """
 
 _DDL_ISSUES = """
@@ -1536,6 +1563,65 @@ def _migration_v39(conn) -> None:
         raise
 
 
+def _migration_v42(conn) -> None:
+    """Add cold-path maintenance columns + document_actor_role table.
+
+    Priority 1: split cold-path into query-agnostic profiling + issue-specific
+    extraction. document_inventory gets maintenance_status/profiled_at/last_maintained_at
+    to track profiling state. document_card gets source_role + signatories_json.
+    document_actor_role links actors to documents with role types.
+    """
+    import sqlite3 as _sqlite3
+    # document_inventory: maintenance columns
+    for col_def in [
+        "ALTER TABLE document_inventory ADD COLUMN maintenance_status TEXT NOT NULL DEFAULT 'pending'",
+        "ALTER TABLE document_inventory ADD COLUMN profiled_at TEXT",
+        "ALTER TABLE document_inventory ADD COLUMN last_maintained_at TEXT",
+    ]:
+        try:
+            conn.execute(col_def)
+        except _sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
+    # document_card: source_role + signatories
+    for col_def in [
+        "ALTER TABLE document_card ADD COLUMN source_role TEXT",
+        "ALTER TABLE document_card ADD COLUMN signatories_json TEXT",
+    ]:
+        try:
+            conn.execute(col_def)
+        except _sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_card_source_role ON document_card(source_role)"
+    )
+    # document_actor_role table
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS document_actor_role (
+               id          TEXT PRIMARY KEY,
+               doc_id      TEXT NOT NULL REFERENCES document_inventory(id),
+               actor_id    TEXT NOT NULL REFERENCES actor(id),
+               role_type   TEXT NOT NULL,
+               raw_name    TEXT,
+               confidence  REAL NOT NULL DEFAULT 1.0,
+               created_at  TEXT NOT NULL
+           ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_doc_actor_role_doc"
+        " ON document_actor_role(doc_id, role_type)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_doc_actor_role_actor"
+        " ON document_actor_role(actor_id, role_type)"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_doc_actor_role"
+        " ON document_actor_role(doc_id, actor_id, role_type)"
+    )
+
+
 def _migration_v41(conn) -> None:
     """Add resumed_from to run_session for resume lineage tracking (r84 HIGH).
 
@@ -1626,6 +1712,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (39, _migration_v39),
     (40, _migration_v40),
     (41, _migration_v41),
+    (42, _migration_v42),
 ]
 
 

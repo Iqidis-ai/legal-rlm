@@ -24,6 +24,7 @@ def test_in_memory_db_creates_schema():
         "gap", "gap_link",
         "quant_fact",
         "clarification_question",
+        "document_actor_role",
     ]:
         assert required in tables, f"Missing table: {required}"
 

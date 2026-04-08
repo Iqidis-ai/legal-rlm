@@ -2695,11 +2695,31 @@ class RLMEngine:
         new_files.sort(key=_file_score, reverse=True)
         file_paths = [str(f.relative_path) for f in new_files]
 
+        # Phase 1: Query-agnostic profiling for docs that haven't been profiled.
+        # This populates document cards (type, source role, operative status)
+        # WITHOUT needing a query or issue context (Priority 1: cold-path split).
+        unprofiled = []
+        if self._matter_model is not None:
+            unprofiled_rows = self._matter_model.list_documents_needing_profile(limit=200)
+            unprofiled_paths = {r["relative_path"] for r in unprofiled_rows}
+            unprofiled = [fp for fp in [str(f.relative_path) for f in new_files]
+                          if fp in unprofiled_paths]
+
+        if unprofiled:
+            self._emit_step(
+                state, StepType.READING,
+                f"Profiling {len(unprofiled)} new document{'s' if len(unprofiled) != 1 else ''}"
+                + " — classifying types, roles, and structure",
+            )
+            await self._batch_profile(state, repo, unprofiled)
+
+        # Phase 2: Query-coupled deep read for fact extraction.
+        # Only process docs that still need evidence extraction for current query.
         self._emit_step(
             state, StepType.READING,
             f"Reading {len(file_paths)} document{'s' if len(file_paths) != 1 else ''}"
             + (f" ({cached_count} already cached)" if cached_count else "")
-            + f" — starting with most relevant to your query",
+            + f" — extracting evidence relevant to your query",
         )
 
         # Use the weakest issue (from orientation) as focus for fact extraction
@@ -2709,6 +2729,125 @@ class RLMEngine:
         await self._batch_deep_read(
             state, repo, file_paths, focus_issue_id=focus_issue_id
         )
+
+    async def _batch_profile(
+        self,
+        state: InvestigationState,
+        repo: MatterRepository,
+        file_paths: list[str],
+    ):
+        """Profile multiple documents with controlled parallelism (query-agnostic)."""
+        if not file_paths:
+            return
+        sem = asyncio.Semaphore(self.config.parallel_reads)
+
+        async def limited_profile(fp: str):
+            async with sem:
+                return await self._profile_document(state, repo, fp)
+
+        tasks = [limited_profile(fp) for fp in file_paths]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Document profile failed: {file_paths[i]}: {result}")
+
+    async def _profile_document(
+        self,
+        state: InvestigationState,
+        repo: MatterRepository,
+        file_path: str,
+    ):
+        """Query-agnostic document profiling: classify what a document IS.
+
+        This is the first phase of the cold-path split (Priority 1). It reads
+        the document and extracts structural metadata (type, source role,
+        operative status, signatories, purpose) WITHOUT any query or issue
+        context. The results are persisted as a document card.
+
+        Unlike _deep_read_document which extracts issue-specific evidence,
+        this only builds the document's identity in the matter model.
+        """
+        _mm = self._matter_model
+        if _mm is None:
+            return
+
+        _fp = Path(file_path)
+        try:
+            _rel_path = str(_fp.relative_to(repo.base_path))
+        except ValueError:
+            _rel_path = file_path
+
+        # Skip if already profiled
+        row = _mm.db.execute(
+            "SELECT id, maintenance_status FROM document_inventory WHERE matter_id = ? AND relative_path = ?",
+            (_mm.matter_id, _rel_path),
+        ).fetchone()
+        if row is None:
+            return
+        if row["maintenance_status"] not in ("pending",):
+            return
+
+        doc_id = row["id"]
+        _mm.inventory.mark_profile_started(doc_id)
+
+        try:
+            # Read a limited excerpt for profiling (first ~2000 chars is enough
+            # to classify type, source role, and structure)
+            content = repo.read(file_path)
+            if not content or not content.text:
+                _mm.inventory.mark_profile_complete(doc_id)
+                return
+
+            excerpt = content.text[:3000]
+            prompt = f"""Classify this legal document. Respond in JSON only.
+
+Document: {_fp.name}
+Content (excerpt):
+{excerpt}
+
+Return:
+{{
+    "doc_type": "contract|pleading|correspondence|invoice|court_order|memo|report|notice|exhibit|other",
+    "doc_subtype": "specific subtype (e.g. services_agreement, demand_letter)",
+    "title": "descriptive title",
+    "doc_source_role": "advocacy|operative|authoritative|procedural|informal|draft|post_hoc|unknown",
+    "author": "author name or null",
+    "sender": "sender or null",
+    "recipient": "recipient or null",
+    "creation_date": "YYYY-MM-DD or null",
+    "effective_date": "YYYY-MM-DD or null",
+    "operative_status": "operative|superseded|draft|expired|disputed|unknown",
+    "purpose": "one-sentence description (max 80 chars)",
+    "rhetorical_posture": "neutral|adversarial|cooperative|protective|informational",
+    "unresolved_flags": ["any open questions"]
+}}"""
+
+            state.llm_calls_required += 1
+            response = await self.client.complete(prompt, tier=ModelTier.LITE)
+            analysis = self._parse_json_safe(response, {
+                "doc_type": "other",
+                "doc_source_role": "unknown",
+                "operative_status": "unknown",
+            })
+
+            _mm.upsert_document_profile(
+                relative_path=_rel_path,
+                analysis=analysis,
+            )
+
+            # Emit a brief profiling trace
+            _doc_type = analysis.get("doc_type", "unknown")
+            _purpose = analysis.get("purpose", "")
+            self._emit_step(
+                state, StepType.READING,
+                f"Profiled {_fp.name}: {_doc_type}"
+                + (f" — {_purpose[:60]}" if _purpose else ""),
+            )
+
+        except Exception as e:
+            logger.debug("Profile failed for %s: %s", _rel_path, e)
+            # Still mark complete to avoid retrying broken docs endlessly
+            _mm.inventory.mark_profile_complete(doc_id)
 
     async def _batch_deep_read(
         self,

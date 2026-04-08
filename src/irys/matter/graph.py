@@ -1,6 +1,6 @@
 """AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
-DocumentInventoryStore, DocumentCardStore, SpanStore, TrustOverrideStore,
-DocumentAnnotationStore, ReasoningCacheStore, AssumptionStore.
+DocumentInventoryStore, DocumentCardStore, SpanStore, DocumentActorRoleStore,
+TrustOverrideStore, DocumentAnnotationStore, ReasoningCacheStore, AssumptionStore.
 
 The assertion store is the heart of the intelligence layer. It maintains
 typed assertions with speech-act classification, support/attack links,
@@ -2809,6 +2809,59 @@ class DocumentInventoryStore:
         return row[0]
 
     # ------------------------------------------------------------------
+    # Cold-path maintenance scheduling (Priority 1)
+    # ------------------------------------------------------------------
+
+    def list_needing_profile(self, limit: int = 200) -> list[dict]:
+        """Return docs that have not yet been profiled (maintenance_status='pending').
+
+        Ordered by salience descending so the most-important documents get
+        profiled first. Used by the query-agnostic maintenance scheduler.
+        """
+        rows = self.db.execute(
+            """SELECT id, relative_path, file_type, sha256, size_bytes,
+                      salience_score, ingest_status
+               FROM document_inventory
+               WHERE matter_id = ? AND maintenance_status = 'pending'
+               ORDER BY salience_score DESC
+               LIMIT ?""",
+            (self.matter_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_profile_started(self, doc_id: str) -> None:
+        """Set maintenance_status='profiling' to prevent duplicate work."""
+        self.db.execute(
+            "UPDATE document_inventory SET maintenance_status='profiling' WHERE id=?",
+            (doc_id,),
+        )
+
+    def mark_profile_complete(self, doc_id: str) -> None:
+        """Set maintenance_status='profiled' and record profiled_at timestamp."""
+        now = _now()
+        self.db.execute(
+            """UPDATE document_inventory
+               SET maintenance_status='profiled', profiled_at=?, last_maintained_at=?
+               WHERE id=?""",
+            (now, now, doc_id),
+        )
+
+    def set_family_membership(
+        self,
+        doc_ids: list[str],
+        family_id: str,
+        version_chain_id: Optional[str] = None,
+    ) -> None:
+        """Assign a batch of documents to a family/version chain."""
+        for doc_id in doc_ids:
+            self.db.execute(
+                """UPDATE document_inventory
+                   SET family_id=?, version_chain_id=?
+                   WHERE id=?""",
+                (family_id, version_chain_id, doc_id),
+            )
+
+    # ------------------------------------------------------------------
     # Document relations and version-chain detection (spec §14, §26)
     # ------------------------------------------------------------------
 
@@ -3319,6 +3372,96 @@ class SpanStore:
             (document_id,),
         ).fetchone()
         return row["cnt"] if row else 0
+
+    def upsert_many(self, document_id: str, specs: list[dict]) -> list[str]:
+        """Batch-insert multiple spans for a document.
+
+        Each spec dict should contain keys matching upsert() parameters:
+        span_type, span_text, and optional page_start, page_end, etc.
+        Returns list of span IDs.
+        """
+        ids = []
+        for spec in specs:
+            sid = self.upsert(
+                document_id=document_id,
+                span_type=spec.get("span_type", "quote"),
+                span_text=spec.get("span_text", ""),
+                page_start=spec.get("page_start"),
+                page_end=spec.get("page_end"),
+                line_start=spec.get("line_start"),
+                line_end=spec.get("line_end"),
+                char_start=spec.get("char_start"),
+                char_end=spec.get("char_end"),
+                section_ref=spec.get("section_ref"),
+                clause_ref=spec.get("clause_ref"),
+                ordinal_in_doc=spec.get("ordinal_in_doc"),
+            )
+            ids.append(sid)
+        return ids
+
+
+class DocumentActorRoleStore:
+    """Links actors to documents with role types.
+
+    Wraps the ``document_actor_role`` table — each row records that a specific
+    actor plays a specific role in a specific document (e.g., "author",
+    "signatory", "recipient", "named_party", "witness").
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def upsert(
+        self,
+        doc_id: str,
+        actor_id: str,
+        role_type: str,
+        *,
+        raw_name: Optional[str] = None,
+        confidence: float = 1.0,
+    ) -> str:
+        """Insert or update a document-actor role link."""
+        now = _now()
+        role_id = _id()
+        self.db.execute(
+            """INSERT INTO document_actor_role
+               (id, doc_id, actor_id, role_type, raw_name, confidence, created_at)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(doc_id, actor_id, role_type)
+               DO UPDATE SET raw_name = COALESCE(excluded.raw_name, document_actor_role.raw_name),
+                             confidence = excluded.confidence""",
+            (role_id, doc_id, actor_id, role_type, raw_name, confidence, now),
+        )
+        row = self.db.execute(
+            "SELECT id FROM document_actor_role WHERE doc_id=? AND actor_id=? AND role_type=?",
+            (doc_id, actor_id, role_type),
+        ).fetchone()
+        return row["id"] if row else role_id
+
+    def list_by_document(self, doc_id: str) -> list[dict]:
+        """Return all actor roles for a document."""
+        rows = self.db.execute(
+            """SELECT dar.*, a.canonical_name, a.actor_type
+               FROM document_actor_role dar
+               JOIN actor a ON dar.actor_id = a.id
+               WHERE dar.doc_id = ?
+               ORDER BY dar.role_type, a.canonical_name""",
+            (doc_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_by_actor(self, actor_id: str) -> list[dict]:
+        """Return all document roles for an actor."""
+        rows = self.db.execute(
+            """SELECT dar.*, di.relative_path
+               FROM document_actor_role dar
+               JOIN document_inventory di ON dar.doc_id = di.id
+               WHERE dar.actor_id = ?
+               ORDER BY dar.role_type""",
+            (actor_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 class ReasoningCacheStore:

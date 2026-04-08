@@ -21,8 +21,8 @@ _log = logging.getLogger(__name__)
 from .db import SQLiteMatterDB
 from .graph import (
     AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
-    DocumentInventoryStore, DocumentCardStore, SpanStore, ReasoningCacheStore,
-    TrustOverrideStore, DocumentAnnotationStore,
+    DocumentInventoryStore, DocumentCardStore, SpanStore, DocumentActorRoleStore,
+    ReasoningCacheStore, TrustOverrideStore, DocumentAnnotationStore,
     DecisionContextStore, AuthorityStore, ProofStateStore, AssumptionStore,
 )
 from .reasoning import ReasoningLedgerStore
@@ -71,6 +71,7 @@ class MatterModel:
         self.inventory = DocumentInventoryStore(db, matter_id)
         self.document_cards = DocumentCardStore(db, matter_id)
         self.spans = SpanStore(db, matter_id)
+        self.doc_actor_roles = DocumentActorRoleStore(db, matter_id)
         self.cache = ReasoningCacheStore(db, matter_id)
         self.trust_overrides = TrustOverrideStore(db, matter_id)
         self.annotations = DocumentAnnotationStore(db, matter_id)
@@ -947,6 +948,97 @@ class MatterModel:
         self.inventory.set_salience(doc_id, min(1.0, base_salience))
 
         return card_id
+
+    def upsert_document_profile(
+        self,
+        relative_path: str,
+        analysis: dict,
+        *,
+        file_type: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Query-agnostic document profiling: write card + mark profiled.
+
+        Unlike upsert_document_intelligence (which is called during query-time
+        deep-read), this is called during the maintenance loop and does NOT
+        depend on any query or issue context.
+
+        Returns dict with card_id, doc_id, and profile summary, or None if
+        the inventory row is missing.
+        """
+        row = self.db.execute(
+            "SELECT id FROM document_inventory WHERE matter_id = ? AND relative_path = ?",
+            (self.matter_id, relative_path),
+        ).fetchone()
+        if row is None:
+            return None
+        doc_id = row["id"]
+
+        card_id = self.document_cards.upsert(
+            doc_id,
+            title=analysis.get("title") or analysis.get("doc_title"),
+            doc_type=analysis.get("doc_type"),
+            doc_subtype=analysis.get("doc_subtype"),
+            source_side=analysis.get("doc_source_role") or analysis.get("source_side"),
+            author=analysis.get("author"),
+            sender=analysis.get("sender"),
+            recipient=analysis.get("recipient"),
+            creation_date=analysis.get("creation_date"),
+            effective_date=analysis.get("effective_date"),
+            purpose=analysis.get("purpose"),
+            rhetorical_posture=analysis.get("rhetorical_posture"),
+            reliability_posture=analysis.get("reliability_posture"),
+            operative_status=analysis.get("operative_status", "unknown"),
+            privilege_flag=bool(analysis.get("privilege_flag")),
+            unresolved_flags=analysis.get("unresolved_flags"),
+        )
+
+        # Update salience
+        from ..core.search import get_document_priority
+        base_salience = get_document_priority(relative_path) / 2.0
+        self.inventory.set_salience(doc_id, min(1.0, base_salience))
+
+        # Mark profiled in inventory
+        self.inventory.mark_profile_complete(doc_id)
+
+        return {
+            "card_id": card_id,
+            "doc_id": doc_id,
+            "doc_type": analysis.get("doc_type"),
+            "source_role": analysis.get("doc_source_role"),
+            "operative_status": analysis.get("operative_status", "unknown"),
+        }
+
+    def list_documents_needing_profile(self, limit: int = 200) -> list[dict]:
+        """Return docs that need query-agnostic profiling."""
+        return self.inventory.list_needing_profile(limit=limit)
+
+    def refresh_document_families(
+        self,
+        doc_ids: Optional[list[str]] = None,
+    ) -> list[dict]:
+        """Detect and persist version families for specified docs (or all).
+
+        Uses DocumentInventoryStore.detect_version_chains() to find families,
+        then persists family_id/version_chain_id on each member.
+        Returns list of family dicts with members.
+        """
+        families = self.inventory.detect_version_chains()
+        results = []
+        for family in families:
+            members = family.get("members", [])
+            member_ids = [m["id"] for m in members if m.get("id")]
+            if doc_ids is not None:
+                # Only process families that include at least one requested doc
+                if not any(mid in doc_ids for mid in member_ids):
+                    continue
+            if member_ids:
+                family_id = member_ids[0]  # use first member as family id
+                chain_id = family.get("chain_id")
+                self.inventory.set_family_membership(
+                    member_ids, family_id, chain_id
+                )
+            results.append(family)
+        return results
 
     def get_document_card(
         self,
