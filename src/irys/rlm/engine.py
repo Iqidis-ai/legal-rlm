@@ -2831,6 +2831,10 @@ class RLMEngine:
                 # card exists — never overwrite an existing rich card.
                 if _mm.document_cards.get_by_doc_id(doc_id) is None:
                     _mm.document_cards.upsert(doc_id, doc_type="unknown")
+                    # Set filename-derived salience so ranking isn't weakened
+                    from ..core.search import get_document_priority
+                    _sal = min(1.0, get_document_priority(_rel_path) / 2.0)
+                    _mm.inventory.set_salience(doc_id, _sal)
                 _mm.inventory.mark_profile_complete(doc_id)
                 return
 
@@ -2886,9 +2890,19 @@ Return:
             try:
                 if _mm.document_cards.get_by_doc_id(doc_id) is None:
                     _mm.document_cards.upsert(doc_id, doc_type="unknown")
+                    # Set filename-derived salience so ranking isn't weakened
+                    from ..core.search import get_document_priority
+                    _sal = min(1.0, get_document_priority(_rel_path) / 2.0)
+                    _mm.inventory.set_salience(doc_id, _sal)
             except Exception:
                 pass
-            _mm.inventory.mark_profile_failed(doc_id)
+            # Reset to pending so transient failures (network, LLM) retry
+            # next run. Permanent issues (empty text) are handled above
+            # and never reach this path.
+            _mm.db.execute(
+                "UPDATE document_inventory SET maintenance_status='pending' WHERE id=?",
+                (doc_id,),
+            )
 
     async def _batch_deep_read(
         self,
