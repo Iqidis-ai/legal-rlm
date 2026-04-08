@@ -37,4 +37,7 @@ if __name__ == "__main__":
 
     app = create_app(api_key=api_key)
     print("\n🚀 Launching Irys RLM UI on http://localhost:7862")
-    app.launch(server_port=7862)
+    app.launch(
+        server_port=7862,
+        share=False,
+    )

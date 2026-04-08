@@ -2414,50 +2414,86 @@ class RLMEngine:
     async def _ingest_documents(
         self, state: InvestigationState, repo: MatterRepository
     ):
-        """Phase 1.5: Read all new/changed documents before searching.
+        """Phase 1.5: Read documents before searching.
 
-        Pipeline inversion: read first, then search. The matter model's
-        DocumentInventoryStore tracks which files have been ingested. On cold
-        start all files are new; on warm start only changed/added files get
-        read. Already-ingested files are skipped via the hot path inside
-        _deep_read_document().
-
-        This runs BEFORE the investigation loop so that:
-        - Facts are extracted from ALL documents, not just search matches
-        - The investigation loop generates targeted search leads from actual
-          document content, not blind keyword guesses
-        - The system never misses a document because search terms didn't match
+        Simultaneously checks existing intelligence in .irys/ AND evaluates
+        filenames against the query to decide what to read and in what order.
+        Already-ingested files are skipped. New/changed files are scored by
+        query relevance (filename match + document type priority) so the most
+        informative documents get read first.
         """
         _adapter = getattr(state, "_matter_adapter", None)
         if _adapter is not None and _adapter.is_stop_requested():
             return
 
         all_files = repo.list_files()
-        file_paths = [str(f.relative_path) for f in all_files]
-
-        if not file_paths:
+        if not all_files:
             self._emit_step(state, StepType.READING, "No documents found in folder")
             return
 
-        # Check which files are already ingested (warm path)
-        new_files = file_paths
+        # Check existing intelligence — which files are already ingested?
+        ingested: set[str] = set()
         if self._matter_model is not None:
             ingested = set(self._matter_model.inventory.get_ingested_paths())
-            # Also check if content changed (sha256 mismatch resets to pending)
-            new_files = [fp for fp in file_paths if fp not in ingested]
+
+        new_files = [f for f in all_files if str(f.relative_path) not in ingested]
+        cached_count = len(all_files) - len(new_files)
 
         if not new_files:
             self._emit_step(
                 state, StepType.READING,
-                f"All {len(file_paths)} documents already ingested — using cached intelligence",
+                f"All {len(all_files)} documents already ingested — using cached intelligence",
             )
             return
 
+        # Score new files by query relevance: filename keywords + document type priority.
+        # Most informative documents get read first (contracts before misc, query-matching
+        # filenames before generic ones).
+        from ..core.search import get_document_priority
+        query_terms = {w.lower() for w in state.query.split() if len(w) > 3}
+
+        # Use orientation plan hints if available (document_priority, relevant_folders)
+        plan = state.findings.get("initial_plan") or {}
+        plan_doc_types = [d.lower() for d in (plan.get("document_priority") or [])]
+        plan_folders = {f.lower() for f in (plan.get("relevant_folders") or [])}
+
+        def _file_score(f) -> float:
+            score = 0.0
+            name_lower = f.filename.lower()
+            path_lower = str(f.relative_path).lower()
+
+            # Document type priority (contracts=1.5, emails=0.9, etc.)
+            score += get_document_priority(f.filename)
+
+            # Filename matches query terms (e.g., query "resignation" matches "Letters of resignation.pdf")
+            for term in query_terms:
+                if term in name_lower:
+                    score += 2.0
+                    break  # one match is enough signal
+
+            # Orientation plan ranked this document type
+            for rank, doc_type in enumerate(plan_doc_types):
+                if doc_type in name_lower:
+                    score += 1.0 - (rank * 0.1)  # higher-ranked types score more
+                    break
+
+            # File is in a folder the orientation flagged as relevant
+            for folder in plan_folders:
+                if folder in path_lower:
+                    score += 0.5
+                    break
+
+            return score
+
+        # Sort by score descending — most relevant first
+        new_files.sort(key=_file_score, reverse=True)
+        file_paths = [str(f.relative_path) for f in new_files]
+
         self._emit_step(
             state, StepType.READING,
-            f"Reading {len(new_files)} document{'s' if len(new_files) != 1 else ''}"
-            + (f" ({len(file_paths) - len(new_files)} already cached)"
-               if len(new_files) < len(file_paths) else ""),
+            f"Reading {len(file_paths)} document{'s' if len(file_paths) != 1 else ''}"
+            + (f" ({cached_count} already cached)" if cached_count else "")
+            + f" — starting with most relevant to your query",
         )
 
         # Use the weakest issue (from orientation) as focus for fact extraction
@@ -2465,7 +2501,7 @@ class RLMEngine:
         focus_issue_id = ctx.weakest_issue_id if ctx else None
 
         await self._batch_deep_read(
-            state, repo, new_files, focus_issue_id=focus_issue_id
+            state, repo, file_paths, focus_issue_id=focus_issue_id
         )
 
     async def _batch_deep_read(
