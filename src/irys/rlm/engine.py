@@ -2645,6 +2645,47 @@ class RLMEngine:
         new_files = [f for f in all_files if str(f.relative_path) not in ingested]
         cached_count = len(all_files) - len(new_files)
 
+        # Phase 1: Query-agnostic profiling for docs that haven't been profiled.
+        # This populates document cards (type, source role, operative status)
+        # WITHOUT needing a query or issue context (Priority 1: cold-path split).
+        #
+        # Runs even when new_files is empty — handles historical backfill for
+        # existing DBs upgraded to v42 whose documents are already ingested but
+        # lack document cards (Codex Tier 1 HIGH: backfill path).
+        unprofiled: list[str] = []
+        if self._matter_model is not None:
+            _mm = self._matter_model
+            # Lightweight pre-registration: create inventory rows for new files
+            # using os.stat (no full-file read). SHA is computed later during
+            # deep-read to avoid redundant I/O (Codex Tier 1 MEDIUM: perf).
+            import os as _os
+            for nf in new_files:
+                _nf_path = str(nf.relative_path)
+                _nf_abs = Path(repo.base_path) / _nf_path
+                try:
+                    _st = _nf_abs.stat()
+                    _mm.inventory.upsert(
+                        relative_path=_nf_path,
+                        sha256="pending",  # placeholder — updated in _deep_read_document
+                        size_bytes=_st.st_size,
+                        file_type=Path(_nf_path).suffix.lstrip(".") or None,
+                    )
+                except Exception:
+                    pass  # unreadable files will be skipped during profiling too
+
+            unprofiled_rows = _mm.list_documents_needing_profile(limit=200)
+            unprofiled_paths = {r["relative_path"] for r in unprofiled_rows}
+            # Include new files AND existing docs needing backfill
+            unprofiled = [p for p in unprofiled_paths]
+
+        if unprofiled:
+            self._emit_step(
+                state, StepType.READING,
+                f"Profiling {len(unprofiled)} document{'s' if len(unprofiled) != 1 else ''}"
+                + " — classifying types, roles, and structure",
+            )
+            await self._batch_profile(state, repo, unprofiled)
+
         if not new_files:
             self._emit_step(
                 state, StepType.READING,
@@ -2694,44 +2735,6 @@ class RLMEngine:
         # Sort by score descending — most relevant first
         new_files.sort(key=_file_score, reverse=True)
         file_paths = [str(f.relative_path) for f in new_files]
-
-        # Phase 1: Query-agnostic profiling for docs that haven't been profiled.
-        # This populates document cards (type, source role, operative status)
-        # WITHOUT needing a query or issue context (Priority 1: cold-path split).
-        unprofiled = []
-        if self._matter_model is not None:
-            _mm = self._matter_model
-            # Ensure every new file has an inventory row BEFORE the profiling
-            # phase — list_needing_profile() only returns existing rows, so
-            # truly new files would be invisible without this pre-registration.
-            import hashlib as _hl
-            for nf in new_files:
-                _nf_path = str(nf.relative_path)
-                _nf_abs = Path(repo.base_path) / _nf_path
-                try:
-                    _raw = _nf_abs.read_bytes()
-                    _sha = _hl.sha256(_raw).hexdigest()
-                    _mm.inventory.upsert(
-                        relative_path=_nf_path,
-                        sha256=_sha,
-                        size_bytes=len(_raw),
-                        file_type=Path(_nf_path).suffix.lstrip(".") or None,
-                    )
-                except Exception:
-                    pass  # unreadable files will be skipped during profiling too
-
-            unprofiled_rows = _mm.list_documents_needing_profile(limit=200)
-            unprofiled_paths = {r["relative_path"] for r in unprofiled_rows}
-            unprofiled = [str(f.relative_path) for f in new_files
-                          if str(f.relative_path) in unprofiled_paths]
-
-        if unprofiled:
-            self._emit_step(
-                state, StepType.READING,
-                f"Profiling {len(unprofiled)} new document{'s' if len(unprofiled) != 1 else ''}"
-                + " — classifying types, roles, and structure",
-            )
-            await self._batch_profile(state, repo, unprofiled)
 
         # Phase 2: Query-coupled deep read for fact extraction.
         # Only process docs that still need evidence extraction for current query.
@@ -2875,8 +2878,10 @@ Return:
 
         except Exception as e:
             logger.debug("Profile failed for %s: %s", _rel_path, e)
-            # Leave as 'profiling' — not retried (list_needing_profile only
-            # returns 'pending'), but not falsely marked as profiled either.
+            # Mark as 'failed' — distinct from 'profiled' (success) and
+            # 'pending' (never attempted). Deep-read will still run and
+            # can create the card as a fallback.
+            _mm.inventory.mark_profile_failed(doc_id)
 
     async def _batch_deep_read(
         self,

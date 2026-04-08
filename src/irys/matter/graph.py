@@ -2846,6 +2846,17 @@ class DocumentInventoryStore:
             (now, now, doc_id),
         )
 
+    def mark_profile_failed(self, doc_id: str) -> None:
+        """Set maintenance_status='failed' — distinct from profiled (success)
+        and pending (never attempted). Deep-read can still create the card."""
+        now = _now()
+        self.db.execute(
+            """UPDATE document_inventory
+               SET maintenance_status='failed', last_maintained_at=?
+               WHERE id=?""",
+            (now, doc_id),
+        )
+
     def set_family_membership(
         self,
         doc_ids: list[str],
