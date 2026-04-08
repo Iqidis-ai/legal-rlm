@@ -141,8 +141,13 @@ Respond in JSON format:
     "initial_searches": [{{"term": "search term", "issue_idx": 0}}, {{"term": "term2", "issue_idx": 1}}, ...],
     "search_rationale": "Why these search terms will find relevant evidence",
     "document_priority": ["most important doc type", "second most important", ...],
+    "target_documents": ["exact_filename_1.pdf", "exact_filename_2.docx"],
     "hypothesis": "Your initial hypothesis based on query analysis"
 }}
+
+For target_documents: list the EXACT filenames from the Document Listing above that you
+believe are the highest-value retrieval targets. These should be specific files, not types.
+Maximum 10 filenames. These will be used as durable retrieval targets throughout the investigation.
 
 Issue types: claim=a party's primary legal claim, defense=an affirmative defense,
 damages=a damages component or exposure, contract_question=a disputed contract interpretation,
@@ -164,7 +169,7 @@ This enables the system to link discovered facts to the correct issue.
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "5"
+_ORIENTATION_CACHE_VERSION = "6"
 
 
 def _format_matter_context(ctx) -> str:
@@ -376,6 +381,20 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
    - post_hoc: expert reports, declarations, analysis written after the events to explain or opine
    - unknown: cannot determine from document content alone
 
+9. DOCUMENT CARD (classify this document for the matter model):
+   - doc_type: broad category — "contract", "pleading", "correspondence", "invoice", "court_order", "memo", "report", "notice", "exhibit", "other"
+   - doc_subtype: specific subtype — e.g. "services_agreement", "demand_letter", "email_chain", "expert_report"
+   - title: document title or best descriptive label (e.g. "Master Services Agreement between Acme and Beta Corp")
+   - author: primary author name if identifiable (null if unknown)
+   - sender: sender if correspondence (null otherwise)
+   - recipient: recipient if correspondence (null otherwise)
+   - creation_date: ISO date of creation/execution if stated (null if unknown)
+   - effective_date: ISO date when terms take effect (null if not applicable)
+   - operative_status: "operative" (binding/in-force), "superseded", "draft", "expired", "disputed", "unknown"
+   - purpose: one-sentence description of what this document does (max 80 chars)
+   - rhetorical_posture: "neutral", "adversarial", "cooperative", "protective", "informational"
+   - unresolved_flags: list of open questions about this document, e.g. ["missing signature page", "references Amendment 3 not in file"]
+
 Respond in COMPACT JSON (STRICT: under 4000 chars total):
 {{
     "key_facts": [{{"fact": "...", "page": N, "issue_relation": "supports", "effective_date": "2023-03-15", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD"}}],
@@ -385,7 +404,19 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
     "fact_relationships": [{{"from_idx": 0, "to_idx": 2, "relation": "supports"}}],
     "connections": ["doc reference 1"],
     "concerns": ["issue 1"],
-    "doc_source_role": "advocacy|operative|authoritative|procedural|informal|draft|post_hoc|unknown"
+    "doc_source_role": "advocacy|operative|authoritative|procedural|informal|draft|post_hoc|unknown",
+    "doc_type": "contract|pleading|correspondence|invoice|court_order|memo|report|notice|exhibit|other",
+    "doc_subtype": "specific_subtype_here",
+    "title": "Descriptive document title",
+    "author": "Author Name or null",
+    "sender": "Sender or null",
+    "recipient": "Recipient or null",
+    "creation_date": "YYYY-MM-DD or null",
+    "effective_date": "YYYY-MM-DD or null",
+    "operative_status": "operative|superseded|draft|expired|disputed|unknown",
+    "purpose": "One-sentence description of what this document does",
+    "rhetorical_posture": "neutral|adversarial|cooperative|protective|informational",
+    "unresolved_flags": ["any open questions about this document"]
 }}
 """
 
@@ -1515,6 +1546,20 @@ class RLMEngine:
                 focus_issue_id=_focus_id,
             )
 
+        # Target documents: preserve specific filenames from orientation as
+        # high-priority search leads. These are exact filename strings that the
+        # LLM identified as highest-value retrieval targets from the listing.
+        _target_docs = plan.get("target_documents") or []
+        for _td in (_target_docs if isinstance(_target_docs, list) else [])[:10]:
+            if isinstance(_td, str) and _td.strip():
+                state.add_lead(
+                    description=f"Target document: {_td.strip()}",
+                    source="orientation_target",
+                    priority=0.85,
+                    search_term=_td.strip(),
+                    focus_issue_id=_biased_pool[0] if _biased_pool else None,
+                )
+
         # If no valid searches were produced (either planner returned none or all were
         # filtered as blank/non-string), fall back: weakest issue title → query tokens.
         # Use _initial_searches (post-filter) so sanitized-empty plans hit this branch.
@@ -1969,9 +2014,14 @@ class RLMEngine:
         if self._matter_model is None:
             return None
 
+        # Pass lead's search_term/description as query so candidates
+        # are boosted by filename-token overlap (filename intelligence).
+        _query = lead.search_term or lead.description or ""
+
         # Get candidates from document cards + inventory (highest salience first)
         candidates = self._matter_model.list_search_seed_docs(
             issue_id=lead.focus_issue_id,
+            query=_query,
             limit=max_files,
         )
         if not candidates:
@@ -2470,6 +2520,27 @@ class RLMEngine:
                     except Exception:
                         pass
 
+        # Lawyer-facing search analysis summary: what changed, what was found.
+        _search_summary_parts = []
+        if _search_assertion_ids:
+            _n_recorded = sum(1 for a in _search_assertion_ids if a)
+            _search_summary_parts.append(f"{_n_recorded} facts recorded")
+        _n_satisfied = len([p for p in (_preds_satisfied or []) if isinstance(p, str)])
+        _n_contested = len([p for p in (_preds_contested or []) if isinstance(p, str)])
+        if _n_satisfied:
+            _search_summary_parts.append(f"{_n_satisfied} elements satisfied")
+        if _n_contested:
+            _search_summary_parts.append(f"{_n_contested} elements contested")
+        # Top source docs for the attorney
+        _top_docs = [h.filename for h in results.top(3)]
+        if _top_docs:
+            _search_summary_parts.append(f"Sources: {', '.join(_top_docs)}")
+        if _search_summary_parts:
+            self._emit_step(
+                state, StepType.FINDING,
+                f"Search '{results.query[:50]}' — {'; '.join(_search_summary_parts)}",
+            )
+
         # Update hypothesis if changed
         if analysis.get("hypothesis_update"):
             state.hypothesis = analysis["hypothesis_update"]
@@ -2537,16 +2608,13 @@ class RLMEngine:
                     focus_issue_id=_validated_fid_ns,
                 )
 
-        # Deep read top documents in parallel — sort by best hit score per file
-        # so the most relevant documents get read first (fixes insertion-order bias).
-        _by_file = results.by_file()
-        top_files = sorted(
-            _by_file.keys(),
-            key=lambda fp: max((h.score for h in _by_file[fp]), default=0),
-            reverse=True,
+        # Deep read top documents — use card-aware ranking when available (MEDIUM #5),
+        # which boosts docs with unresolved flags and operative status.
+        focus_issue_id = lead.focus_issue_id if lead is not None else None
+        top_files = self._select_deep_read_targets(
+            state, results, lead, focus_issue_id,
         )[:self.config.parallel_reads]
         if top_files:
-            focus_issue_id = lead.focus_issue_id if lead is not None else None
             await self._batch_deep_read(state, repo, top_files, focus_issue_id=focus_issue_id)
 
     async def _ingest_documents(
@@ -3117,6 +3185,35 @@ class RLMEngine:
                             })
                         except Exception:
                             pass  # non-fatal
+
+            # Lawyer-facing deep-read summary: tell attorneys what we learned
+            # from this document in plain language, not engineer metrics.
+            _doc_name = Path(file_path).name
+            _src_role = analysis.get("doc_source_role", "unknown")
+            _doc_type = analysis.get("doc_type") or _src_role
+            _n_facts = len(analysis.get("key_facts", []))
+            _n_quotes = len(analysis.get("quotes", []))
+            _concerns = analysis.get("concerns") or []
+            _connections = analysis.get("connections") or []
+            _unresolved = analysis.get("unresolved_flags") or []
+            _purpose = analysis.get("purpose") or ""
+
+            # Build a concise attorney-readable summary
+            _summary_parts = [f"{_doc_name} ({_doc_type})"]
+            if _purpose:
+                _summary_parts.append(_purpose[:80])
+            if _n_facts:
+                _summary_parts.append(f"{_n_facts} key facts extracted")
+            if _concerns:
+                _summary_parts.append(f"Flags: {'; '.join(str(c) for c in _concerns[:2])}")
+            if _connections:
+                _summary_parts.append(f"References: {', '.join(str(c) for c in _connections[:2])}")
+            if _unresolved:
+                _summary_parts.append(f"Open questions: {'; '.join(str(u) for u in _unresolved[:2])}")
+            self._emit_step(
+                state, StepType.FINDING,
+                " — ".join(_summary_parts),
+            )
 
             # Mark document as fully ingested so future runs take the hot path (SO-1)
             if _mm is not None and _inventory_doc_id is not None:

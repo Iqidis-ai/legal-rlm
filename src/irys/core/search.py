@@ -42,14 +42,19 @@ DOCUMENT_PRIORITY = {
 
 
 def get_document_priority(filename: str) -> float:
-    """Get priority weight for a document based on its name/type."""
-    filename_lower = filename.lower()
+    """Get priority weight for a document based on its name/type.
 
+    Additive: a filename matching multiple keywords (e.g. "Amendment to
+    Employment Agreement") accumulates boosts from all matches rather
+    than returning only the first hit.
+    """
+    filename_lower = filename.lower()
+    bonus = 0.0
     for doc_type, priority in DOCUMENT_PRIORITY.items():
         if doc_type in filename_lower:
-            return priority
+            bonus += (priority - 1.0)  # accumulate the boost portion
 
-    return 1.0  # Default priority
+    return 1.0 + bonus if bonus > 0.0 else 1.0
 
 
 # Legal term synonyms for query expansion

@@ -1881,11 +1881,11 @@ def test_orientation_prompt_contains_priority_focus_instruction():
 
 
 def test_orientation_cache_version_bumped():
-    """_ORIENTATION_CACHE_VERSION must be '5' after file_listing addition."""
+    """_ORIENTATION_CACHE_VERSION must be '6' after target_documents + document card fields."""
     from irys.rlm.engine import _ORIENTATION_CACHE_VERSION
-    assert _ORIENTATION_CACHE_VERSION == "5", (
-        "_ORIENTATION_CACHE_VERSION must be bumped to '5' after adding file_listing "
-        "to ORIENTATION_PROMPT (SO-1 stale-cache prevention)"
+    assert _ORIENTATION_CACHE_VERSION == "6", (
+        "_ORIENTATION_CACHE_VERSION must be bumped to '6' after adding target_documents "
+        "to ORIENTATION_PROMPT and document card fields to DEEP_READ_PROMPT"
     )
 
 

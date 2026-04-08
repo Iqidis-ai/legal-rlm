@@ -971,25 +971,74 @@ class MatterModel:
         """Return candidate relative_paths from document memory for search targeting.
 
         Pulls from document_cards + document_inventory and returns paths
-        ranked by salience. Used by _candidate_files_for_lead to narrow
-        search to known-relevant files before falling back to full repo scan.
+        ranked by a composite score:
+        - Base: salience_score from inventory
+        - Boost +0.4: document has assertions linked to ``issue_id``
+        - Boost +0.2: document has unresolved flags
+        - Boost +0.15: document filename contains a query term (>3 chars)
         """
         candidates = self.document_cards.list_candidates(
-            doc_types=doc_types, limit=limit,
+            doc_types=doc_types, limit=limit * 2,  # over-fetch for re-ranking
         )
-        paths = [c["relative_path"] for c in candidates if c.get("relative_path")]
 
-        # If cards are sparse, supplement with high-salience inventory rows
+        # Build set of doc_ids that have assertions linked to target issue
+        _issue_doc_ids: set = set()
+        if issue_id:
+            try:
+                rows = self.db.execute(
+                    """SELECT DISTINCT o.document_id FROM assertion_issue_link ail
+                       JOIN occurrence o ON ail.assertion_id = o.assertion_id
+                       WHERE ail.issue_id = ? AND o.document_id IS NOT NULL""",
+                    (issue_id,),
+                ).fetchall()
+                _issue_doc_ids = {r["document_id"] for r in rows}
+            except Exception:
+                pass  # table may not exist yet
+
+        # Query terms for filename matching
+        _query_terms: set = set()
+        if query:
+            _query_terms = {w.lower() for w in query.split() if len(w) > 3}
+
+        # Score and sort candidates
+        scored: list[tuple[float, str]] = []
+        for c in candidates:
+            path = c.get("relative_path")
+            if not path:
+                continue
+            score = c.get("salience_score") or 0.0
+            # Boost docs linked to target issue
+            if _issue_doc_ids and c.get("doc_id") in _issue_doc_ids:
+                score += 0.4
+            # Boost docs with unresolved flags (under-explored)
+            flags = c.get("unresolved_flags")
+            if flags and isinstance(flags, list) and len(flags) > 0:
+                score += 0.2
+            # Boost docs whose filename matches query terms
+            if _query_terms:
+                path_lower = path.lower()
+                if any(t in path_lower for t in _query_terms):
+                    score += 0.15
+            scored.append((score, path))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        paths = [p for _, p in scored]
+
+        # Supplement with high-salience inventory rows not already in card results
         if len(paths) < limit:
             remaining = limit - len(paths)
+            path_set = set(paths)
             inv_rows = self.db.execute(
                 """SELECT relative_path FROM document_inventory
                    WHERE matter_id = ? AND relative_path NOT IN ({})
                    ORDER BY salience_score DESC, last_read_at ASC NULLS FIRST
                    LIMIT ?""".format(",".join("?" * len(paths)) if paths else "'__none__'"),
-                [self.matter_id] + paths + [remaining],
+                [self.matter_id] + list(path_set) + [remaining],
             ).fetchall()
-            paths.extend(r["relative_path"] for r in inv_rows)
+            for r in inv_rows:
+                rp = r["relative_path"]
+                if rp not in path_set:
+                    paths.append(rp)
 
         return paths[:limit]
 
