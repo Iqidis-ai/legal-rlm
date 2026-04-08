@@ -1029,7 +1029,7 @@ class RLMEngine:
                     await self._emit_lead_started(state, ext_lead)
                     if data:
                         self._external_research["case_law"].extend(data)
-                        items = [{"name": c.get("case_name", "Unknown"), "citation": c.get("citation", ""), "snippet": (c.get("snippet") or "")[:200]} for c in data]
+                        items = [{"name": c.get("case_name", "Unknown"), "citation": c.get("citation", ""), "snippet": (c.get("snippet") or "")[:200], "url": c.get("url", "")} for c in data]
                         await self._emit_lead_update(state, ext_lead.id, "external_results", {
                             "source": "caselaw", "count": len(data), "items": items,
                         })
@@ -1043,7 +1043,7 @@ class RLMEngine:
                     web_results = data.get("results", [])
                     if web_results:
                         self._external_research["web"].extend(web_results)
-                        items = [{"name": r.get("title", "Untitled"), "snippet": (r.get("content") or "")[:200]} for r in web_results]
+                        items = [{"name": r.get("title", "Untitled"), "snippet": (r.get("content") or "")[:200], "url": r.get("url", "")} for r in web_results]
                         await self._emit_lead_update(state, ext_lead.id, "external_results", {
                             "source": "web", "count": len(web_results), "items": items,
                         })
@@ -1061,7 +1061,7 @@ class RLMEngine:
                     _, cases = await search_case_law(query)
                     if cases:
                         self._external_research["case_law"].extend(cases)
-                        items = [{"name": c.get("case_name", "Unknown"), "citation": c.get("citation", ""), "snippet": (c.get("snippet") or "")[:200]} for c in cases]
+                        items = [{"name": c.get("case_name", "Unknown"), "citation": c.get("citation", ""), "snippet": (c.get("snippet") or "")[:200], "url": c.get("url", "")} for c in cases]
                         await self._emit_lead_update(state, ext_lead.id, "external_results", {
                             "source": "caselaw", "count": len(cases), "items": items,
                         })
@@ -1077,7 +1077,7 @@ class RLMEngine:
                     web_results = result_data.get("results", [])
                     if web_results:
                         self._external_research["web"].extend(web_results)
-                        items = [{"name": r.get("title", "Untitled"), "snippet": (r.get("content") or "")[:200]} for r in web_results]
+                        items = [{"name": r.get("title", "Untitled"), "snippet": (r.get("content") or "")[:200], "url": r.get("url", "")} for r in web_results]
                         await self._emit_lead_update(state, ext_lead.id, "external_results", {
                             "source": "web", "count": len(web_results), "items": items,
                         })
