@@ -72,8 +72,17 @@ LEGAL_SYNONYMS = {
 }
 
 
-def expand_query(query: str, max_expansions: int = 3) -> list[str]:
-    """Expand a search query with synonyms and related terms."""
+def expand_query(
+    query: str,
+    max_expansions: int = 3,
+    context_terms: list[str] | None = None,
+) -> list[str]:
+    """Expand a search query with synonyms, related terms, and issue context.
+
+    When *context_terms* are provided (e.g. active predicates or party names),
+    the top 1-2 are fused with the original query to produce issue-aware
+    expansion variants.
+    """
     expanded = [query]
     query_lower = query.lower()
 
@@ -84,6 +93,16 @@ def expand_query(query: str, max_expansions: int = 3) -> list[str]:
                 expanded_query = query_lower.replace(term, synonym)
                 if expanded_query not in expanded:
                     expanded.append(expanded_query)
+
+    # Issue-aware context fusion: append top context terms to create
+    # targeted variants (e.g. "breach" + "payment_obligation" → "breach payment obligation")
+    if context_terms:
+        for ct in context_terms[:2]:
+            ct_clean = ct.replace("_", " ").lower()
+            if ct_clean not in query_lower:
+                variant = f"{query_lower} {ct_clean}"
+                if variant not in expanded:
+                    expanded.append(variant)
 
     return expanded[:max_expansions + 1]
 

@@ -1636,6 +1636,10 @@ class RLMEngine:
             # Track facts before this iteration for diminishing returns check
             facts_before = len(state.findings.get("accumulated_facts", []))
 
+            # Close-loop feedback: apply term boost/demotion from prior iterations
+            if hasattr(state, 'apply_feedback_to_leads'):
+                state.apply_feedback_to_leads()
+
             pending_leads = state.get_pending_leads()
 
             if not pending_leads:
@@ -1923,6 +1927,97 @@ class RLMEngine:
                 f"Hydrated {loaded} facts from prior matter model run (SO-1 reuse)",
             )
 
+    def _build_lead_queries(
+        self,
+        lead: Lead,
+        focus_issue_id: Optional[str],
+        max_queries: int = 8,
+    ) -> list[str]:
+        """Build expanded search queries for a lead, issue-aware."""
+        from ..core.search import expand_query
+        search_term = lead.search_term or self._extract_search_term(lead.description)
+
+        # Issue context enrichment
+        if focus_issue_id and self._matter_model is not None:
+            search_term = self._enrich_search_term_with_issue_context(
+                search_term, focus_issue_id
+            )
+
+        # Gather context terms from active predicates for issue-aware expansion
+        context_terms: list[str] = []
+        if focus_issue_id and self._matter_model is not None:
+            preds = self._matter_model.issues.get_predicates(focus_issue_id, limit=3)
+            context_terms = [
+                p.get("predicate_key") or p.get("description", "")
+                for p in preds if p.get("predicate_key") or p.get("description")
+            ][:2]
+
+        return expand_query(search_term, max_expansions=max_queries - 1, context_terms=context_terms)
+
+    def _candidate_files_for_lead(
+        self,
+        state: InvestigationState,
+        repo: MatterRepository,
+        lead: Lead,
+        max_files: int = 120,
+    ) -> Optional[list[str]]:
+        """Return candidate file paths from document memory for targeted search.
+
+        Returns None to signal full-repo fallback when no memory is available.
+        """
+        if self._matter_model is None:
+            return None
+
+        # Get candidates from document cards + inventory (highest salience first)
+        candidates = self._matter_model.list_search_seed_docs(
+            issue_id=lead.focus_issue_id,
+            limit=max_files,
+        )
+        if not candidates:
+            return None
+
+        return candidates
+
+    def _select_deep_read_targets(
+        self,
+        state: InvestigationState,
+        results,
+        lead: Lead,
+        focus_issue_id: Optional[str],
+    ) -> list[str]:
+        """Select which files from search results to deep-read.
+
+        Prioritizes: issue-linked evidence gaps > new/unread docs >
+        higher salience > unresolved card flags.
+        """
+        # Get files sorted by max hit score (existing behavior)
+        top_files = sorted(
+            results.by_file().keys(),
+            key=lambda fp: max((h.score for h in results.by_file()[fp]), default=0),
+            reverse=True,
+        )
+
+        # If we have document cards, re-rank by combining search score with card intelligence
+        if self._matter_model is not None:
+            scored: list[tuple[float, str]] = []
+            for fp in top_files:
+                search_score = max((h.score for h in results.by_file()[fp]), default=0)
+                bonus = 0.0
+                card = self._matter_model.get_document_card(relative_path=fp)
+                if card:
+                    # Boost docs with unresolved flags
+                    flags = card.get("unresolved_flags") or []
+                    if flags:
+                        bonus += 0.3
+                    # Boost operative documents
+                    if card.get("operative_status") == "operative":
+                        bonus += 0.2
+                scored.append((search_score + bonus, fp))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            top_files = [fp for _, fp in scored]
+
+        return top_files[:self.config.max_leads_per_level]
+
     async def _investigate_lead(
         self,
         state: InvestigationState,
@@ -1951,23 +2046,42 @@ class RLMEngine:
 
                 self._emit_step(state, StepType.SEARCH, f"Investigating: {lead.description}")
 
-                # Use preserved raw search term if available (SO-4); else extract from description.
-                # Raw terms avoid token collapse from _extract_search_term for issue-focused leads.
-                search_term = lead.search_term or self._extract_search_term(lead.description)
+                # Build issue-aware queries with expansion
+                queries = self._build_lead_queries(lead, lead.focus_issue_id)
 
-                # SO-4: Issue-driven search enrichment.
-                # When a lead targets a specific issue, append the issue's first open
-                # predicate keywords to bias retrieval toward documents relevant to
-                # that issue's proof elements — not just query-token surface matches.
-                if lead.focus_issue_id and self._matter_model is not None:
-                    search_term = self._enrich_search_term_with_issue_context(
-                        search_term, lead.focus_issue_id
-                    )
-
-                # Perform search (scale workers based on doc count)
+                # Candidate-first: try memory-seeded file list before full repo
+                candidates = self._candidate_files_for_lead(state, repo, lead)
                 max_workers = min(4, max(1, self._doc_count))
-                results = repo.search(search_term, context_lines=3, max_workers=max_workers)
-                state.searches_performed += 1
+
+                if candidates and len(queries) > 1:
+                    # Stage 1: search only candidate files with expanded queries
+                    results = repo.search_multi(
+                        queries, file_paths=candidates, require_all=False,
+                    )
+                    state.searches_performed += 1
+                    # Stage 2: if weak results, fall back to full repo with primary query
+                    if len(results.hits) < 2:
+                        results = repo.search(
+                            queries[0], context_lines=3, max_workers=max_workers,
+                        )
+                        state.searches_performed += 1
+                elif candidates:
+                    results = repo.search(
+                        queries[0], context_lines=3, max_workers=max_workers,
+                        file_paths=candidates,
+                    )
+                    state.searches_performed += 1
+                    if len(results.hits) < 2:
+                        results = repo.search(
+                            queries[0], context_lines=3, max_workers=max_workers,
+                        )
+                        state.searches_performed += 1
+                else:
+                    # No memory — full repo search (cold start)
+                    results = repo.search(
+                        queries[0], context_lines=3, max_workers=max_workers,
+                    )
+                    state.searches_performed += 1
 
                 if not results.hits:
                     state.mark_lead_investigated(lead.id, "No results found")
@@ -2955,6 +3069,29 @@ class RLMEngine:
                             affected_id=_gap_aff_id,
                         )
 
+            # Persist document intelligence card (Change 6: write cards during deep-read)
+            if _mm is not None and _inventory_doc_id is not None:
+                try:
+                    _mm.upsert_document_intelligence(
+                        relative_path=_rel_path,
+                        analysis=analysis,
+                        focus_issue_id=focus_issue_id,
+                    )
+                except Exception as _card_err:
+                    logger.debug("Document card persistence failed for %s: %s", _rel_path, _card_err)
+
+                # Persist quote spans for section-level read memory
+                for quote in analysis.get("quotes", [])[:5]:
+                    if isinstance(quote, dict) and quote.get("text"):
+                        try:
+                            _mm.add_doc_span(_inventory_doc_id, {
+                                "span_type": "quote",
+                                "span_text": quote["text"][:500],
+                                "page_start": quote.get("page"),
+                            })
+                        except Exception:
+                            pass  # non-fatal
+
             # Mark document as fully ingested so future runs take the hot path (SO-1)
             if _mm is not None and _inventory_doc_id is not None:
                 try:
@@ -3014,10 +3151,6 @@ class RLMEngine:
 
         except Exception as e:
             self._emit_step(state, StepType.ERROR, f"Failed to read {file_path}: {e}")
-            # Remove from in-progress so a subsequent lead can retry on transient failures.
-            # Permanent failures (corrupted file) will re-fail and re-record the gap below.
-            if _rel_path is not None:
-                state._reading_in_progress.discard(_rel_path)
             # Record as gap: document exists in search index but could not be read (SO-7)
             _adp = getattr(state, "_matter_adapter", None)
             if _adp is not None:
@@ -3030,6 +3163,11 @@ class RLMEngine:
                     affected_type="issue" if focus_issue_id else None,
                     affected_id=focus_issue_id,
                 )
+        finally:
+            # Always clean up in-progress marker so the file can be retried on
+            # transient failures. Previously only cleaned up in except branch.
+            if _rel_path is not None:
+                state._reading_in_progress.discard(_rel_path)
 
     async def _verify_citations(self, state: InvestigationState, repo: MatterRepository):
         """Verify citations by checking if quoted text exists in documents."""

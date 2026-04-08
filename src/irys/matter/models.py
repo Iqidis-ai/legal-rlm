@@ -127,6 +127,8 @@ class QueryMatterContext:
     # SO-2: top predicate_key values from the typed assertion graph.
     # Used by orientation to generate SPO-aware search leads (e.g. "Party A owes_money_to Party B").
     key_predicates: list[str] = field(default_factory=list)
+    # Document intelligence: how many documents have structured cards
+    document_card_count: int = 0
 
 
 # ---------------------------------------------------------------------------

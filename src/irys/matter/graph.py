@@ -1,6 +1,6 @@
 """AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
-DocumentInventoryStore, TrustOverrideStore, DocumentAnnotationStore, ReasoningCacheStore,
-AssumptionStore.
+DocumentInventoryStore, DocumentCardStore, SpanStore, TrustOverrideStore,
+DocumentAnnotationStore, ReasoningCacheStore, AssumptionStore.
 
 The assertion store is the heart of the intelligence layer. It maintains
 typed assertions with speech-act classification, support/attack links,
@@ -2953,6 +2953,14 @@ class DocumentInventoryStore:
 
         return result
 
+    def set_salience(self, doc_id: str, salience_score: float) -> None:
+        """Update the salience score for a document inventory row."""
+        salience_score = max(0.0, min(1.0, salience_score))
+        self.db.execute(
+            "UPDATE document_inventory SET salience_score = ? WHERE id = ?",
+            (salience_score, doc_id),
+        )
+
     def get_operative_version(self, doc_id: str) -> str:
         """
         Return the ID of the operative (latest) version in the chain containing doc_id.
@@ -3056,6 +3064,261 @@ class DocumentInventoryStore:
                 )
 
         return created
+
+
+class DocumentCardStore:
+    """Per-document intelligence card store.
+
+    Wraps the ``document_card`` table — each row is a structured summary of
+    what a document IS: its type, source side, author, rhetorical posture,
+    operative status, and unresolved flags.  Cards are written during
+    ``_deep_read_document`` cold-path and read during retrieval planning
+    to bias search toward high-value or under-explored documents.
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def upsert(
+        self,
+        doc_id: str,
+        *,
+        title: Optional[str] = None,
+        doc_type: Optional[str] = None,
+        doc_subtype: Optional[str] = None,
+        source_side: Optional[str] = None,
+        author: Optional[str] = None,
+        sender: Optional[str] = None,
+        recipient: Optional[str] = None,
+        creation_date: Optional[str] = None,
+        sent_date: Optional[str] = None,
+        effective_date: Optional[str] = None,
+        discovery_date: Optional[str] = None,
+        purpose: Optional[str] = None,
+        rhetorical_posture: Optional[str] = None,
+        reliability_posture: Optional[str] = None,
+        operative_status: str = "unknown",
+        privilege_flag: bool = False,
+        unresolved_flags: Optional[list] = None,
+    ) -> str:
+        """Insert or update a document card for the given inventory doc_id."""
+        now = _now()
+        card_id = str(uuid.uuid4())
+        flags_json = _json_mod.dumps(unresolved_flags) if unresolved_flags else None
+        self.db.execute(
+            """INSERT INTO document_card
+               (id, doc_id, title, doc_type, doc_subtype, source_side,
+                author, sender, recipient, creation_date, sent_date,
+                effective_date, discovery_date, purpose,
+                rhetorical_posture, reliability_posture,
+                operative_status, privilege_flag, unresolved_flags,
+                created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(doc_id) DO UPDATE SET
+                 title = COALESCE(excluded.title, document_card.title),
+                 doc_type = COALESCE(excluded.doc_type, document_card.doc_type),
+                 doc_subtype = COALESCE(excluded.doc_subtype, document_card.doc_subtype),
+                 source_side = COALESCE(excluded.source_side, document_card.source_side),
+                 author = COALESCE(excluded.author, document_card.author),
+                 sender = COALESCE(excluded.sender, document_card.sender),
+                 recipient = COALESCE(excluded.recipient, document_card.recipient),
+                 creation_date = COALESCE(excluded.creation_date, document_card.creation_date),
+                 sent_date = COALESCE(excluded.sent_date, document_card.sent_date),
+                 effective_date = COALESCE(excluded.effective_date, document_card.effective_date),
+                 discovery_date = COALESCE(excluded.discovery_date, document_card.discovery_date),
+                 purpose = COALESCE(excluded.purpose, document_card.purpose),
+                 rhetorical_posture = COALESCE(excluded.rhetorical_posture, document_card.rhetorical_posture),
+                 reliability_posture = COALESCE(excluded.reliability_posture, document_card.reliability_posture),
+                 operative_status = excluded.operative_status,
+                 privilege_flag = excluded.privilege_flag,
+                 unresolved_flags = COALESCE(excluded.unresolved_flags, document_card.unresolved_flags),
+                 updated_at = excluded.updated_at
+            """,
+            (card_id, doc_id, title, doc_type, doc_subtype, source_side,
+             author, sender, recipient, creation_date, sent_date,
+             effective_date, discovery_date, purpose,
+             rhetorical_posture, reliability_posture,
+             operative_status, int(privilege_flag), flags_json,
+             now, now),
+        )
+        # Return the actual card id (might be existing row on conflict)
+        row = self.db.execute(
+            "SELECT id FROM document_card WHERE doc_id = ?", (doc_id,)
+        ).fetchone()
+        return row["id"] if row else card_id
+
+    def get_by_doc_id(self, doc_id: str) -> Optional[dict]:
+        """Return card dict for an inventory doc_id, or None."""
+        row = self.db.execute(
+            "SELECT * FROM document_card WHERE doc_id = ?", (doc_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        if d.get("unresolved_flags"):
+            try:
+                d["unresolved_flags"] = _json_mod.loads(d["unresolved_flags"])
+            except (ValueError, TypeError):
+                d["unresolved_flags"] = []
+        return d
+
+    def get_by_path(self, relative_path: str) -> Optional[dict]:
+        """Return card dict by joining inventory on relative_path."""
+        row = self.db.execute(
+            """SELECT dc.* FROM document_card dc
+               JOIN document_inventory di ON dc.doc_id = di.id
+               WHERE di.matter_id = ? AND di.relative_path = ?""",
+            (self.matter_id, relative_path),
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        if d.get("unresolved_flags"):
+            try:
+                d["unresolved_flags"] = _json_mod.loads(d["unresolved_flags"])
+            except (ValueError, TypeError):
+                d["unresolved_flags"] = []
+        return d
+
+    def list_candidates(
+        self,
+        doc_types: Optional[list] = None,
+        unresolved_only: bool = False,
+        issue_id: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Return cards ranked by salience/recency for retrieval planning.
+
+        Joins document_inventory to include salience_score and path.
+        """
+        sql = """SELECT dc.*, di.relative_path, di.salience_score, di.last_read_at
+                 FROM document_card dc
+                 JOIN document_inventory di ON dc.doc_id = di.id
+                 WHERE di.matter_id = ?"""
+        params: list = [self.matter_id]
+        if doc_types:
+            placeholders = ",".join("?" * len(doc_types))
+            sql += f" AND dc.doc_type IN ({placeholders})"
+            params.extend(doc_types)
+        if unresolved_only:
+            sql += " AND dc.unresolved_flags IS NOT NULL AND dc.unresolved_flags != '[]'"
+        sql += " ORDER BY di.salience_score DESC, di.last_read_at ASC NULLS FIRST"
+        sql += " LIMIT ?"
+        params.append(limit)
+        rows = self.db.execute(sql, params).fetchall()
+        results = []
+        for row in rows:
+            d = dict(row)
+            if d.get("unresolved_flags"):
+                try:
+                    d["unresolved_flags"] = _json_mod.loads(d["unresolved_flags"])
+                except (ValueError, TypeError):
+                    d["unresolved_flags"] = []
+            results.append(d)
+        return results
+
+    def count(self) -> int:
+        """Return total number of document cards for this matter."""
+        row = self.db.execute(
+            """SELECT COUNT(*) as cnt FROM document_card dc
+               JOIN document_inventory di ON dc.doc_id = di.id
+               WHERE di.matter_id = ?""",
+            (self.matter_id,),
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+
+class SpanStore:
+    """Section-level read memory for documents.
+
+    Wraps the ``span`` table — each row represents a located section, clause,
+    quote, or evidence anchor within a document.  Spans enable section-level
+    re-read avoidance: the engine can check which parts of a document have
+    already been analyzed and target only untouched sections.
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def upsert(
+        self,
+        document_id: str,
+        span_type: str,
+        span_text: str,
+        *,
+        page_start: Optional[int] = None,
+        page_end: Optional[int] = None,
+        line_start: Optional[int] = None,
+        line_end: Optional[int] = None,
+        char_start: Optional[int] = None,
+        char_end: Optional[int] = None,
+        section_ref: Optional[str] = None,
+        clause_ref: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        ordinal_in_doc: Optional[int] = None,
+        text_hash: Optional[str] = None,
+    ) -> str:
+        """Insert or locate a span row. Deduplicates on (document_id, text_hash, span_type, page_start, char_start)."""
+        if text_hash is None:
+            text_hash = hashlib.sha256(span_text.encode()).hexdigest()
+        now = _now()
+        span_id = str(uuid.uuid4())
+        self.db.execute(
+            """INSERT INTO span
+               (id, document_id, span_type, span_text, text_hash,
+                page_start, page_end, line_start, line_end,
+                char_start, char_end, section_ref, clause_ref,
+                parent_span_id, ordinal_in_doc, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(document_id, text_hash, span_type, page_start, char_start)
+               DO UPDATE SET span_text = excluded.span_text
+            """,
+            (span_id, document_id, span_type, span_text, text_hash,
+             page_start, page_end, line_start, line_end,
+             char_start, char_end, section_ref, clause_ref,
+             parent_span_id, ordinal_in_doc, now),
+        )
+        # Return actual span id (may be existing row on conflict)
+        row = self.db.execute(
+            "SELECT id FROM span WHERE document_id = ? AND text_hash = ? AND span_type = ?",
+            (document_id, text_hash, span_type),
+        ).fetchone()
+        return row["id"] if row else span_id
+
+    def list_by_document(
+        self,
+        document_id: str,
+        span_type: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Return spans for a document, optionally filtered by type."""
+        if span_type:
+            rows = self.db.execute(
+                """SELECT * FROM span
+                   WHERE document_id = ? AND span_type = ?
+                   ORDER BY ordinal_in_doc ASC NULLS LAST, page_start ASC NULLS LAST
+                   LIMIT ?""",
+                (document_id, span_type, limit),
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                """SELECT * FROM span
+                   WHERE document_id = ?
+                   ORDER BY ordinal_in_doc ASC NULLS LAST, page_start ASC NULLS LAST
+                   LIMIT ?""",
+                (document_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_by_document(self, document_id: str) -> int:
+        """Return total span count for a document."""
+        row = self.db.execute(
+            "SELECT COUNT(*) as cnt FROM span WHERE document_id = ?",
+            (document_id,),
+        ).fetchone()
+        return row["cnt"] if row else 0
 
 
 class ReasoningCacheStore:

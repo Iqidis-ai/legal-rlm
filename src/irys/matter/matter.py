@@ -21,7 +21,8 @@ _log = logging.getLogger(__name__)
 from .db import SQLiteMatterDB
 from .graph import (
     AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
-    DocumentInventoryStore, ReasoningCacheStore, TrustOverrideStore, DocumentAnnotationStore,
+    DocumentInventoryStore, DocumentCardStore, SpanStore, ReasoningCacheStore,
+    TrustOverrideStore, DocumentAnnotationStore,
     DecisionContextStore, AuthorityStore, ProofStateStore, AssumptionStore,
 )
 from .reasoning import ReasoningLedgerStore
@@ -68,6 +69,8 @@ class MatterModel:
         self.ledger = ReasoningLedgerStore(db, matter_id)
         self.belief = BeliefRevisionEngine(db, self.assertions, self.ledger)
         self.inventory = DocumentInventoryStore(db, matter_id)
+        self.document_cards = DocumentCardStore(db, matter_id)
+        self.spans = SpanStore(db, matter_id)
         self.cache = ReasoningCacheStore(db, matter_id)
         self.trust_overrides = TrustOverrideStore(db, matter_id)
         self.annotations = DocumentAnnotationStore(db, matter_id)
@@ -890,6 +893,124 @@ class MatterModel:
         )
 
     # ------------------------------------------------------------------
+    # Document intelligence (cards + spans)
+    # ------------------------------------------------------------------
+
+    def upsert_document_intelligence(
+        self,
+        relative_path: str,
+        analysis: dict,
+        focus_issue_id: Optional[str] = None,
+        file_type: Optional[str] = None,
+    ) -> Optional[str]:
+        """Map LLM deep-read output into a document card + salience update.
+
+        ``analysis`` should contain fields from the LLM response:
+        doc_type, doc_subtype, doc_source_role, title, author, sender,
+        recipient, creation_date, effective_date, purpose,
+        rhetorical_posture, reliability_posture, operative_status,
+        privilege_flag, unresolved_flags.
+
+        Returns the card_id or None if the inventory row is missing.
+        """
+        # Resolve inventory doc_id from relative_path
+        row = self.db.execute(
+            "SELECT id FROM document_inventory WHERE matter_id = ? AND relative_path = ?",
+            (self.matter_id, relative_path),
+        ).fetchone()
+        if row is None:
+            return None
+        doc_id = row["id"]
+
+        card_id = self.document_cards.upsert(
+            doc_id,
+            title=analysis.get("title") or analysis.get("doc_title"),
+            doc_type=analysis.get("doc_type"),
+            doc_subtype=analysis.get("doc_subtype"),
+            source_side=analysis.get("doc_source_role") or analysis.get("source_side"),
+            author=analysis.get("author"),
+            sender=analysis.get("sender"),
+            recipient=analysis.get("recipient"),
+            creation_date=analysis.get("creation_date"),
+            effective_date=analysis.get("effective_date"),
+            purpose=analysis.get("purpose"),
+            rhetorical_posture=analysis.get("rhetorical_posture"),
+            reliability_posture=analysis.get("reliability_posture"),
+            operative_status=analysis.get("operative_status", "unknown"),
+            privilege_flag=bool(analysis.get("privilege_flag")),
+            unresolved_flags=analysis.get("unresolved_flags"),
+        )
+
+        # Update salience based on document type + whether it's linked to issues
+        from ..core.search import get_document_priority
+        base_salience = get_document_priority(relative_path) / 2.0  # normalize to [0,1]
+        self.inventory.set_salience(doc_id, min(1.0, base_salience))
+
+        return card_id
+
+    def get_document_card(
+        self,
+        relative_path: Optional[str] = None,
+        doc_id: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Retrieve a document card by path or inventory ID."""
+        if doc_id:
+            return self.document_cards.get_by_doc_id(doc_id)
+        if relative_path:
+            return self.document_cards.get_by_path(relative_path)
+        return None
+
+    def list_search_seed_docs(
+        self,
+        issue_id: Optional[str] = None,
+        query: Optional[str] = None,
+        doc_types: Optional[list] = None,
+        include_related_versions: bool = False,
+        limit: int = 120,
+    ) -> list[str]:
+        """Return candidate relative_paths from document memory for search targeting.
+
+        Pulls from document_cards + document_inventory and returns paths
+        ranked by salience. Used by _candidate_files_for_lead to narrow
+        search to known-relevant files before falling back to full repo scan.
+        """
+        candidates = self.document_cards.list_candidates(
+            doc_types=doc_types, limit=limit,
+        )
+        paths = [c["relative_path"] for c in candidates if c.get("relative_path")]
+
+        # If cards are sparse, supplement with high-salience inventory rows
+        if len(paths) < limit:
+            remaining = limit - len(paths)
+            inv_rows = self.db.execute(
+                """SELECT relative_path FROM document_inventory
+                   WHERE matter_id = ? AND relative_path NOT IN ({})
+                   ORDER BY salience_score DESC, last_read_at ASC NULLS FIRST
+                   LIMIT ?""".format(",".join("?" * len(paths)) if paths else "'__none__'"),
+                [self.matter_id] + paths + [remaining],
+            ).fetchall()
+            paths.extend(r["relative_path"] for r in inv_rows)
+
+        return paths[:limit]
+
+    def add_doc_span(self, doc_id: str, payload: dict) -> str:
+        """Record a span (section/clause/quote) for a document."""
+        return self.spans.upsert(
+            document_id=doc_id,
+            span_type=payload.get("span_type", "quote"),
+            span_text=payload.get("span_text", ""),
+            page_start=payload.get("page_start"),
+            page_end=payload.get("page_end"),
+            line_start=payload.get("line_start"),
+            line_end=payload.get("line_end"),
+            char_start=payload.get("char_start"),
+            char_end=payload.get("char_end"),
+            section_ref=payload.get("section_ref"),
+            clause_ref=payload.get("clause_ref"),
+            ordinal_in_doc=payload.get("ordinal_in_doc"),
+        )
+
+    # ------------------------------------------------------------------
     # Query context (read at start of each run)
     # ------------------------------------------------------------------
 
@@ -1010,6 +1131,9 @@ class MatterModel:
         # orientation and respect assumption-gated predicates.
         active_assumptions = self.assumptions.get_active(max_rows=20)
 
+        # Document intelligence: count of documents with structured cards
+        doc_card_count = self.document_cards.count()
+
         return QueryMatterContext(
             matter_id=self.matter_id,
             matter_name=matter_name,
@@ -1024,6 +1148,7 @@ class MatterModel:
             weakest_issue_id=weakest_issue_id,
             key_predicates=key_predicates,
             active_assumptions=active_assumptions,
+            document_card_count=doc_card_count,
         )
 
     @staticmethod

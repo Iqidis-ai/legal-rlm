@@ -245,6 +245,7 @@ class MatterRepository:
         case_sensitive: bool = False,
         context_lines: int = 2,
         max_workers: Optional[int] = None,
+        file_paths: Optional[list] = None,
     ) -> SearchResults:
         """
         Search for query across all documents.
@@ -257,17 +258,25 @@ class MatterRepository:
             case_sensitive: Case sensitive matching
             context_lines: Lines of context around matches
             max_workers: Max parallel workers for search (default scales with file count)
+            file_paths: When provided, search only these files instead of walking
+                the full repo. Paths should be relative to base_path or absolute.
 
         Returns:
             SearchResults with all matches
         """
-        # Get files to search
-        if folder:
-            pattern = f"{folder}/**/*"
+        if file_paths is not None:
+            # Candidate-first: search only the specified files
+            files = [
+                self._resolve_path(p) for p in file_paths
+                if self._resolve_path(p).exists()
+            ]
         else:
-            pattern = "**/*"
-
-        files = [f.path for f in self.list_files(pattern, file_types)]
+            # Full repo walk
+            if folder:
+                pattern = f"{folder}/**/*"
+            else:
+                pattern = "**/*"
+            files = [f.path for f in self.list_files(pattern, file_types)]
 
         # Scale workers based on file count if not specified
         if max_workers is None:
@@ -287,14 +296,24 @@ class MatterRepository:
         queries: list[str],
         folder: Optional[str] = None,
         require_all: bool = False,
+        file_paths: Optional[list] = None,
     ) -> SearchResults:
-        """Search for multiple terms."""
-        if folder:
-            pattern = f"{folder}/**/*"
-        else:
-            pattern = "**/*"
+        """Search for multiple terms.
 
-        files = [f.path for f in self.list_files(pattern)]
+        When file_paths is provided, search only those files instead of
+        walking the full repository.
+        """
+        if file_paths is not None:
+            files = [
+                self._resolve_path(p) for p in file_paths
+                if self._resolve_path(p).exists()
+            ]
+        else:
+            if folder:
+                pattern = f"{folder}/**/*"
+            else:
+                pattern = "**/*"
+            files = [f.path for f in self.list_files(pattern)]
         return self.search_engine.search_multi(queries, files, require_all)
 
     # === UTILITIES ===
