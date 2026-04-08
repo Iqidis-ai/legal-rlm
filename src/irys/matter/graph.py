@@ -2848,11 +2848,12 @@ class DocumentInventoryStore:
 
     def mark_profile_failed(self, doc_id: str) -> None:
         """Set maintenance_status='failed' — distinct from profiled (success)
-        and pending (never attempted). Deep-read can still create the card."""
+        and pending (never attempted). Clears profiled_at to avoid
+        misclassifying failed docs as successfully profiled."""
         now = _now()
         self.db.execute(
             """UPDATE document_inventory
-               SET maintenance_status='failed', last_maintained_at=?
+               SET maintenance_status='failed', profiled_at=NULL, last_maintained_at=?
                WHERE id=?""",
             (now, doc_id),
         )

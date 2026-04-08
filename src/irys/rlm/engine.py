@@ -2826,12 +2826,12 @@ class RLMEngine:
             # to classify type, source role, and structure)
             content = repo.read(file_path)
             if not content or not content.full_text:
-                # Create a minimal card so doc is not invisible to candidate
-                # selection (which inner-joins on document_card).
-                _mm.upsert_document_profile(
-                    relative_path=_rel_path,
-                    analysis={"doc_type": "unknown", "operative_status": "unknown"},
-                )
+                # Ensure a card exists so doc is not invisible to candidate
+                # selection (inner join on document_card). Only create if no
+                # card exists — never overwrite an existing rich card.
+                if _mm.document_cards.get_by_doc_id(doc_id) is None:
+                    _mm.document_cards.upsert(doc_id, doc_type="unknown")
+                _mm.inventory.mark_profile_complete(doc_id)
                 return
 
             excerpt = content.full_text[:3000]
@@ -2882,13 +2882,10 @@ Return:
 
         except Exception as e:
             logger.debug("Profile failed for %s: %s", _rel_path, e)
-            # Create a minimal card so doc is not invisible to candidate
-            # selection (which inner-joins on document_card).
+            # Ensure a card exists (never overwrite an existing rich card).
             try:
-                _mm.upsert_document_profile(
-                    relative_path=_rel_path,
-                    analysis={"doc_type": "unknown", "operative_status": "unknown"},
-                )
+                if _mm.document_cards.get_by_doc_id(doc_id) is None:
+                    _mm.document_cards.upsert(doc_id, doc_type="unknown")
             except Exception:
                 pass
             _mm.inventory.mark_profile_failed(doc_id)
