@@ -214,6 +214,8 @@ class RLMApp:
         citation_parts = [f"[{len(self.citations_log) + 1}] {citation.document}{page_str}"]
         if citation.context:
             citation_parts.append(f"    {citation.context}")
+        if citation.url:
+            citation_parts.append(f"    Link: {citation.url}")
         if citation.text:
             # Show full text (truncate only for display if extremely long)
             text_display = citation.text if len(citation.text) <= 500 else citation.text[:500] + "..."
