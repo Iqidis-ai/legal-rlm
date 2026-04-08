@@ -2821,23 +2821,33 @@ class RLMEngine:
         doc_id = row["id"]
         _mm.inventory.mark_profile_started(doc_id)
 
-        try:
-            # Read a limited excerpt for profiling (first ~2000 chars is enough
-            # to classify type, source role, and structure)
-            content = repo.read(file_path)
-            if not content or not content.full_text:
-                # Ensure a card exists so doc is not invisible to candidate
-                # selection (inner join on document_card). Only create if no
-                # card exists — never overwrite an existing rich card.
-                if _mm.document_cards.get_by_doc_id(doc_id) is None:
-                    _mm.document_cards.upsert(doc_id, doc_type="unknown")
-                    # Set filename-derived salience so ranking isn't weakened
-                    from ..core.search import get_document_priority
-                    _sal = min(1.0, get_document_priority(_rel_path) / 2.0)
-                    _mm.inventory.set_salience(doc_id, _sal)
-                _mm.inventory.mark_profile_complete(doc_id)
-                return
+        # Helper: ensure a minimal card exists (never overwrite rich cards).
+        def _ensure_fallback_card():
+            if _mm.document_cards.get_by_doc_id(doc_id) is None:
+                _mm.document_cards.upsert(doc_id, doc_type="unknown")
+                from ..core.search import get_document_priority
+                _sal = min(1.0, get_document_priority(_rel_path) / 2.0)
+                _mm.inventory.set_salience(doc_id, _sal)
 
+        # --- Phase A: Read document (deterministic — bad format = terminal) ---
+        try:
+            content = repo.read(file_path)
+        except Exception as e:
+            logger.debug("Profile read failed (terminal) for %s: %s", _rel_path, e)
+            try:
+                _ensure_fallback_card()
+            except Exception:
+                pass
+            _mm.inventory.mark_profile_failed(doc_id)
+            return
+
+        if not content or not content.full_text:
+            _ensure_fallback_card()
+            _mm.inventory.mark_profile_complete(doc_id)
+            return
+
+        # --- Phase B: LLM classification (transient — retry on next run) ---
+        try:
             excerpt = content.full_text[:3000]
             prompt = f"""Classify this legal document. Respond in JSON only.
 
@@ -2885,20 +2895,13 @@ Return:
             )
 
         except Exception as e:
-            logger.debug("Profile failed for %s: %s", _rel_path, e)
-            # Ensure a card exists (never overwrite an existing rich card).
+            logger.debug("Profile LLM failed (transient) for %s: %s", _rel_path, e)
             try:
-                if _mm.document_cards.get_by_doc_id(doc_id) is None:
-                    _mm.document_cards.upsert(doc_id, doc_type="unknown")
-                    # Set filename-derived salience so ranking isn't weakened
-                    from ..core.search import get_document_priority
-                    _sal = min(1.0, get_document_priority(_rel_path) / 2.0)
-                    _mm.inventory.set_salience(doc_id, _sal)
+                _ensure_fallback_card()
             except Exception:
                 pass
-            # Reset to pending so transient failures (network, LLM) retry
-            # next run. Permanent issues (empty text) are handled above
-            # and never reach this path.
+            # Reset to pending so transient LLM/network failures retry next
+            # run. Deterministic read failures are handled above as terminal.
             _mm.db.execute(
                 "UPDATE document_inventory SET maintenance_status='pending' WHERE id=?",
                 (doc_id,),
