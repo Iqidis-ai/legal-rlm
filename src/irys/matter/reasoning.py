@@ -43,6 +43,8 @@ class ReasoningLedgerStore:
         objective: Optional[str] = None,
         assertions_at_start: Optional[int] = None,
         resumed_from: Optional[str] = None,
+        operation_type: str = "query",
+        trigger: str = "user",
     ) -> str:
         """Start a new run session. Returns run_id.
 
@@ -52,6 +54,11 @@ class ReasoningLedgerStore:
 
         ``resumed_from`` is the interrupted run_id this run was started to
         resume, if any.  Stored for lineage-based run resolution (r84 HIGH).
+
+        ``operation_type`` classifies the session: 'query', 'revise', 'ingest',
+        'lint', or 'maintenance'.
+
+        ``trigger`` indicates who/what started this: 'user', 'system', 'api'.
         """
         run_id = _id()
         now = _now()
@@ -59,12 +66,13 @@ class ReasoningLedgerStore:
             self.db.execute(
                 """INSERT INTO run_session
                    (id, matter_id, query, objective, status, started_at,
-                    assertions_at_start, resumed_from)
-                   VALUES (?,?,?,?,?,?,?,?)""",
+                    assertions_at_start, resumed_from, operation_type, trigger)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (
                     run_id, self.matter_id, query, objective,
                     RunStatus.RUNNING.value, now,
                     assertions_at_start, resumed_from,
+                    operation_type, trigger,
                 ),
             )
             # Seed the first ledger event

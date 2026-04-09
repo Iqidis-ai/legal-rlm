@@ -1566,18 +1566,28 @@ class IssueStore:
         sort_order: int = 0,
     ) -> tuple[str, bool]:
         """
-        Create or retrieve an issue by normalized title.
+        Create or retrieve an issue by normalized title scoped to parent + type.
         Returns (issue_id, is_new).
         """
         normalized_title = " ".join(title.lower().split())
         now = _now()
 
         with self.db.transaction():
-            row = self.db.execute(
-                """SELECT id FROM issue
-                   WHERE matter_id=? AND LOWER(title)=?""",
-                (self.matter_id, normalized_title),
-            ).fetchone()
+            if parent_issue_id:
+                row = self.db.execute(
+                    """SELECT id FROM issue
+                       WHERE matter_id=? AND LOWER(title)=?
+                       AND parent_issue_id=? AND issue_type=?""",
+                    (self.matter_id, normalized_title,
+                     parent_issue_id, issue_type.value),
+                ).fetchone()
+            else:
+                row = self.db.execute(
+                    """SELECT id FROM issue
+                       WHERE matter_id=? AND LOWER(title)=?
+                       AND parent_issue_id IS NULL AND issue_type=?""",
+                    (self.matter_id, normalized_title, issue_type.value),
+                ).fetchone()
 
             if row is not None:
                 return row["id"], False
@@ -3977,7 +3987,7 @@ class AuthorityStore:
         rows = self.db.execute(
             "SELECT * FROM authority WHERE "
             + " AND ".join(clauses)
-            + " ORDER BY weight DESC, citation ASC LIMIT ?",
+            + " ORDER BY precedential_rank DESC, weight DESC, citation ASC LIMIT ?",
             params,
         ).fetchall()
         return [self._row_to_dict(r) for r in rows]
@@ -3989,7 +3999,7 @@ class AuthorityStore:
                FROM authority a
                JOIN authority_issue_link l ON l.authority_id = a.id
                WHERE l.issue_id=?
-               ORDER BY a.weight DESC, a.citation ASC""",
+               ORDER BY a.precedential_rank DESC, a.weight DESC, a.citation ASC""",
             (issue_id,),
         ).fetchall()
         results = []

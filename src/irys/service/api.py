@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import pathlib as _pathlib
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -11,6 +12,25 @@ from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
+
+
+def _load_dotenv() -> None:
+    """Load .env file from project root into os.environ (stdlib only)."""
+    env_path = _pathlib.Path(__file__).resolve().parents[3] / ".env"
+    if not env_path.is_file():
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip()
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+_load_dotenv()
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, File, UploadFile, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -1740,7 +1760,10 @@ async def flush_pending_propagation(matter_id: str):
     with model._flush_lock:
         # Start a real run so ledger.append_event(run_id=...) satisfies the NOT NULL FK
         # constraint on ledger_event.run_id (run_id=None would violate it).
-        flush_run_id = model.start_run("Standalone flush", objective="manual_flush")
+        flush_run_id = model.start_run(
+            "Standalone flush", objective="manual_flush",
+            operation_type="maintenance", trigger="api",
+        )
         try:
             adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
             revised = adapter._flush_revisions_locked()
@@ -1809,28 +1832,6 @@ async def delete_document_annotation(matter_id: str, annotation_id: str):
     model = await _get_matter_model_or_404(matter_id)
     deleted = model.annotations.delete(annotation_id)
     return {"status": "deleted" if deleted else "not_found", "annotation_id": annotation_id}
-
-
-@app.get(
-    "/matter/{matter_id}/reconcile",
-    tags=["Matter Model"],
-    responses={404: {"model": ErrorResponse}},
-)
-async def get_reconciliation(matter_id: str, currency: str = "USD"):
-    """Return a payment reconciliation summary grouped by subject type.
-
-    Groups all extracted monetary amounts by subject_type (invoice, payment,
-    fee, damages, etc.) and sums each bucket. Compare invoice vs payment totals
-    to identify claimed exposure.
-    """
-    model = await _get_matter_model_or_404(matter_id)
-    reconciliation = model.reconcile(currency=currency)
-    conflicts = model.quant.get_conflicts()
-    return {
-        "currency": currency,
-        "by_subject": reconciliation,
-        "conflicts": conflicts,
-    }
 
 
 @app.get(
@@ -2191,7 +2192,10 @@ def _do_one_background_flush(matter_id: str, model) -> None:
     _matter_model_last_used[matter_id] = datetime.now()
     from irys.matter.runtime import MatterRuntimeAdapter
     with model._flush_lock:
-        flush_run_id = model.start_run("Background flush", objective="background_flush")
+        flush_run_id = model.start_run(
+            "Background flush", objective="background_flush",
+            operation_type="maintenance", trigger="system",
+        )
         try:
             adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
             adapter._flush_revisions_locked()

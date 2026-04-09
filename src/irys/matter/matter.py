@@ -237,6 +237,8 @@ class MatterModel:
         query: str,
         objective: Optional[str] = None,
         resumed_from: Optional[str] = None,
+        operation_type: str = "query",
+        trigger: str = "user",
     ) -> str:
         """Start a new investigation run. Returns run_id.
 
@@ -245,10 +247,13 @@ class MatterModel:
         repeated queries over a stable matter).
 
         ``resumed_from`` is the interrupted run_id this run is resuming, if any.
+        ``operation_type`` classifies the session: 'query', 'revise', 'maintenance'.
+        ``trigger`` indicates who/what started this: 'user', 'system', 'api'.
         """
         assertions_at_start = self.assertions.count()
         run_id = self.ledger.start_run(
-            query, objective, assertions_at_start, resumed_from=resumed_from
+            query, objective, assertions_at_start, resumed_from=resumed_from,
+            operation_type=operation_type, trigger=trigger,
         )
         # Cache snapshot in memory so complete_run() avoids a DB round-trip.
         self._run_snapshots[run_id] = assertions_at_start
@@ -1103,16 +1108,13 @@ class MatterModel:
         # Build set of doc_ids that have assertions linked to target issue
         _issue_doc_ids: set = set()
         if issue_id:
-            try:
-                rows = self.db.execute(
-                    """SELECT DISTINCT o.document_id FROM assertion_issue_link ail
-                       JOIN occurrence o ON ail.assertion_id = o.assertion_id
-                       WHERE ail.issue_id = ? AND o.document_id IS NOT NULL""",
-                    (issue_id,),
-                ).fetchall()
-                _issue_doc_ids = {r["document_id"] for r in rows}
-            except Exception:
-                pass  # table may not exist yet
+            rows = self.db.execute(
+                """SELECT DISTINCT ao.document_id FROM assertion_issue_link ail
+                   JOIN assertion_occurrence ao ON ail.assertion_id = ao.assertion_id
+                   WHERE ail.issue_id = ? AND ao.document_id IS NOT NULL""",
+                (issue_id,),
+            ).fetchall()
+            _issue_doc_ids = {r["document_id"] for r in rows}
 
         # Query terms for filename matching
         _query_terms: set = set()

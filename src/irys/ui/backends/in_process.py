@@ -25,7 +25,10 @@ def _do_one_in_process_flush(matter_id: str, model) -> None:
     """Execute a single flush pass. Called from within the flush loop with _bg_flush_running held."""
     from ...matter.runtime import MatterRuntimeAdapter
     with model._flush_lock:
-        flush_run_id = model.start_run("Background flush", objective="background_flush")
+        flush_run_id = model.start_run(
+            "Background flush", objective="background_flush",
+            operation_type="maintenance", trigger="system",
+        )
         try:
             adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
             adapter._flush_revisions_locked()
@@ -76,9 +79,6 @@ class InProcessBackend(UIBackend):
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         self._irys: Optional[Irys] = None
-        # Active run tracking: run_id → event queue
-        self._event_queues: dict[str, queue.Queue] = {}
-        self._active_runs: dict[str, dict] = {}
 
     def _get_irys(self) -> Irys:
         if self._irys is None:

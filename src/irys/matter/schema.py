@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 42
+SCHEMA_VERSION = 43
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -157,6 +157,8 @@ CREATE TABLE IF NOT EXISTS run_session (
     stop_requested  INTEGER NOT NULL DEFAULT 0,
     redirect_requested INTEGER NOT NULL DEFAULT 0,
     next_action     TEXT,
+    operation_type  TEXT NOT NULL DEFAULT 'query',
+    trigger         TEXT NOT NULL DEFAULT 'user',
     started_at      TEXT NOT NULL,
     completed_at    TEXT,
     resumed_from    TEXT
@@ -613,6 +615,7 @@ CREATE TABLE IF NOT EXISTS authority (
     holdings         TEXT,
     key_rules        TEXT,
     weight           TEXT NOT NULL DEFAULT 'persuasive',
+    precedential_rank INTEGER NOT NULL DEFAULT 0,
     applicability    TEXT,
     source_doc_id    TEXT,
     source_span_id   TEXT,
@@ -1667,6 +1670,25 @@ def _migration_v40(conn) -> None:
     )
 
 
+def _migration_v43(conn) -> None:
+    """Phase 1 correctness floor: authority ranking + run session operation typing.
+
+    1. Add precedential_rank to authority for numeric ordering (replaces lexical weight sort).
+    2. Add operation_type and trigger to run_session so flush/lint/ingest sessions
+       are distinguishable from user query runs.
+    """
+    for stmt in [
+        "ALTER TABLE authority ADD COLUMN precedential_rank INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE run_session ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'query'",
+        "ALTER TABLE run_session ADD COLUMN trigger TEXT NOT NULL DEFAULT 'user'",
+    ]:
+        try:
+            conn.execute(stmt)
+        except Exception:
+            pass  # column already exists from DDL
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1713,6 +1735,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (40, _migration_v40),
     (41, _migration_v41),
     (42, _migration_v42),
+    (43, _migration_v43),
 ]
 
 

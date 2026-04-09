@@ -1143,8 +1143,26 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
     return demo
 
 
+def _load_dotenv() -> None:
+    """Load .env file from project root into os.environ (stdlib only)."""
+    env_path = pathlib.Path(__file__).resolve().parents[3] / ".env"
+    if not env_path.is_file():
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip()
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
 def main():
     import argparse
+
+    _load_dotenv()
 
     parser = argparse.ArgumentParser(description="Irys RLM UI")
     parser.add_argument("--api-key", help="Gemini API key")
