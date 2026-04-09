@@ -186,9 +186,9 @@ def test_so5_speech_act_elevation_complaint_vs_contract():
     """SO-5 core test: complaint → ALLEGED; contract → OPERATIVE.
 
     The same proposition ("Defendant owes $500,000") asserted in a complaint
-    and in a signed contract must be stored with different speech acts.
-    Advocacy documents auto-elevate to ALLEGED; operative documents auto-elevate
-    to OPERATIVE. This distinction must survive in the assertion occurrence rows.
+    and in a signed contract produces SEPARATE assertions under claim identity v2
+    because the speaker scope differs (plaintiff side vs neutral). Each assertion
+    has its own occurrence with the correct speech act.
     """
     from irys.matter.runtime import MatterRuntimeAdapter
     from irys.matter.enums import SpeechAct
@@ -209,19 +209,22 @@ def test_so5_speech_act_elevation_complaint_vs_contract():
         document_id="Master_Service_Agreement.pdf",  # OPERATIVE → OPERATIVE
     )
 
-    # These are the SAME canonical assertion (same proposition_text hash)
-    assert aid_complaint == aid_contract, (
-        "Same proposition should map to one canonical assertion regardless of source"
+    # Under claim identity v2, different speaker scopes → different assertions.
+    # plaintiff_complaint.pdf → source_side="plaintiff" → speaker_scope_key="side:plaintiff"
+    # Master_Service_Agreement.pdf → source_side=None → speaker_scope_key="speaker:unknown"
+    assert aid_complaint != aid_contract, (
+        "Different speaker scopes should produce separate assertions under claim identity v2"
     )
 
-    # But the OCCURRENCES must differ in speech_act
-    occs = model.assertions.get_occurrences(aid_complaint)
-    assert len(occs) == 2, f"Expected 2 occurrences, got {len(occs)}"
-
-    speech_acts = {occ["speech_act"] for occ in occs}
-    assert SpeechAct.ALLEGED.value in speech_acts, (
-        f"Complaint occurrence should be ALLEGED; got speech_acts={speech_acts}"
+    # Each assertion has exactly one occurrence with the correct speech act
+    occs_complaint = model.assertions.get_occurrences(aid_complaint)
+    assert len(occs_complaint) >= 1
+    assert any(occ["speech_act"] == SpeechAct.ALLEGED.value for occ in occs_complaint), (
+        f"Complaint occurrence should be ALLEGED; got {[o['speech_act'] for o in occs_complaint]}"
     )
-    assert SpeechAct.OPERATIVE.value in speech_acts, (
-        f"Contract occurrence should be OPERATIVE; got speech_acts={speech_acts}"
+
+    occs_contract = model.assertions.get_occurrences(aid_contract)
+    assert len(occs_contract) >= 1
+    assert any(occ["speech_act"] == SpeechAct.OPERATIVE.value for occ in occs_contract), (
+        f"Contract occurrence should be OPERATIVE; got {[o['speech_act'] for o in occs_contract]}"
     )

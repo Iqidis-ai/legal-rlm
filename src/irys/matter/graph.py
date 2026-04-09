@@ -22,7 +22,7 @@ from .enums import (
     BeliefState, SpeechAct, SourceRole, ModelLayer, AssertionKind,
     AssertionLinkType, OriginKind, GapType, IssueType, SOURCE_TRUST_WEIGHTS,
 )
-from .models import AssertionCandidate, AssertionRecord, RevisionResult
+from .models import AssertionCandidate, AssertionRecord, RevisionResult, ClaimIdentity
 
 
 def _now() -> str:
@@ -81,104 +81,292 @@ class AssertionStore:
         self.db = db
         self.matter_id = matter_id
 
+    @staticmethod
+    def _pick_occurrence_value(existing_value, candidate_value, promote: bool):
+        if existing_value is None:
+            return candidate_value
+        if promote and candidate_value is not None:
+            return candidate_value
+        return existing_value
+
+    def resolve_claim_key(self, candidate: AssertionCandidate) -> ClaimIdentity:
+        return candidate.resolve_claim_identity()
+
+    def _resolve_document_inventory_id(self, candidate: AssertionCandidate) -> Optional[str]:
+        if candidate.document_inventory_id:
+            return candidate.document_inventory_id
+        doc_norm = (candidate.document_id or "").replace("\\", "/")
+        if not doc_norm:
+            return None
+        row = self.db.execute(
+            "SELECT id FROM document_inventory WHERE matter_id=? AND relative_path=?",
+            (self.matter_id, doc_norm),
+        ).fetchone()
+        return row["id"] if row else None
+
+    def _find_occurrence(
+        self,
+        document_inventory_id: Optional[str],
+        document_id: str,
+        speech_act: str,
+        span_id: Optional[str],
+        claim_key: Optional[str] = None,
+    ):
+        """Find a prior occurrence for the same (doc, speech_act, span) position.
+
+        When claim_key is provided, first tries an exact match (same claim or its
+        legacy predecessor). Falls back to a broader search only when span_id is
+        non-null (positional re-extraction). This prevents genuinely different facts
+        from the same document colliding when both have span_id=None.
+        """
+        # Exact match: same claim_key_candidate (re-extraction of the same fact)
+        if claim_key:
+            row = self.db.execute(
+                """SELECT ao.*
+                   FROM assertion_occurrence ao
+                   JOIN assertion a ON a.id = ao.assertion_id
+                   WHERE a.matter_id=?
+                     AND COALESCE(ao.document_inventory_id, ao.document_id)=COALESCE(?, ?)
+                     AND ao.speech_act=?
+                     AND COALESCE(ao.span_id, '')=COALESCE(?, '')
+                     AND ao.claim_key_candidate=?
+                   ORDER BY ao.created_at ASC, ao.id ASC
+                   LIMIT 1""",
+                (self.matter_id, document_inventory_id, document_id, speech_act, span_id, claim_key),
+            ).fetchone()
+            if row:
+                return row
+
+        # Broader match only when span_id is set (positional dedup).
+        # Without a span_id, different facts from the same doc would collide.
+        if span_id:
+            return self.db.execute(
+                """SELECT ao.*
+                   FROM assertion_occurrence ao
+                   JOIN assertion a ON a.id = ao.assertion_id
+                   WHERE a.matter_id=?
+                     AND COALESCE(ao.document_inventory_id, ao.document_id)=COALESCE(?, ?)
+                     AND ao.speech_act=?
+                     AND ao.span_id=?
+                   ORDER BY ao.created_at ASC, ao.id ASC
+                   LIMIT 1""",
+                (self.matter_id, document_inventory_id, document_id, speech_act, span_id),
+            ).fetchone()
+
+        return None
+
     def upsert_occurrence(self, candidate: AssertionCandidate, run_id: Optional[str] = None) -> tuple[str, bool]:
         """
-        Upsert a canonical assertion and record one occurrence.
+        Upsert a canonical assertion keyed by claim_key and record one occurrence.
+
+        proposition_key remains legacy compatibility only and is never used as the
+        canonical uniqueness key after claim identity v2.
 
         Returns (assertion_id, is_new_assertion).
-        If the proposition already exists, only the occurrence is inserted.
         """
-        prop_key = candidate.proposition_key()
+        identity = self.resolve_claim_key(candidate)
+        prop_key = identity.legacy_proposition_key
         now = _now()
         _init_state, _init_conf = _initial_belief_state(candidate.speech_act)
         _candidate_id = _id()
+        _doc_norm = (candidate.document_id or "").replace("\\\\", "/").replace("\\", "/")
+        _doc_basename = pathlib.Path(_doc_norm).name if _doc_norm else None
+        document_inventory_id = self._resolve_document_inventory_id(candidate)
+        raw_text = candidate.raw_text or candidate.proposition_text
 
         with self.db.transaction():
-            # INSERT OR IGNORE avoids a SELECT-then-INSERT race: two concurrent callers
-            # both attempting INSERT on the same proposition_key would previously cause
-            # the second to hit an IntegrityError. INSERT OR IGNORE lets both proceed
-            # safely — one inserts, the other is silently ignored.
-            # unique key: (matter_id, model_layer, proposition_key) — see ux_assertion_prop.
+            # Ambiguity detection for non-Tier-A resolutions: warn if the same
+            # proposition_key already maps to a different claim_key.
+            if identity.resolution_strategy != "tier_a_structured":
+                competing_rows = self.db.execute(
+                    """SELECT id, claim_key
+                       FROM assertion
+                       WHERE matter_id=? AND model_layer=? AND proposition_key=?
+                         AND claim_key IS NOT NULL
+                         AND claim_key != ?
+                       ORDER BY canonicalization_confidence DESC, created_at ASC""",
+                    (
+                        self.matter_id,
+                        candidate.model_layer.value,
+                        prop_key,
+                        identity.claim_key,
+                    ),
+                ).fetchall()
+                if competing_rows:
+                    _log.warning(
+                        "claim_identity_ambiguous matter=%s prop_key=%s candidate=%s competing=%s",
+                        self.matter_id,
+                        prop_key,
+                        identity.claim_key,
+                        [r["id"] for r in competing_rows],
+                    )
+
+            # INSERT OR IGNORE keyed on ux_assertion_claim_key (matter_id, model_layer, claim_key).
             _assert_cur = self.db.execute(
                 """INSERT OR IGNORE INTO assertion
-                   (id, matter_id, proposition_key, proposition_text,
-                    model_layer, assertion_kind,
-                    subject_ref_type, subject_ref_id, predicate_key, object_json,
-                    temporal_scope_start, temporal_scope_end,
+                   (id, matter_id, proposition_key, claim_key, identity_version,
+                    proposition_text, model_layer, assertion_kind, polarity,
+                    canonical_subject_key, subject_ref_type, subject_ref_id, predicate_key,
+                    canonical_object_key, object_json, temporal_scope_start, temporal_scope_end,
+                    temporal_identity_key, speaker_scope_key, canonicalization_confidence,
                     belief_state, confidence, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    _candidate_id, self.matter_id, prop_key,
+                    _candidate_id,
+                    self.matter_id,
+                    prop_key,
+                    identity.claim_key,
+                    identity.identity_version,
                     candidate.proposition_text,
                     candidate.model_layer.value,
                     candidate.assertion_kind.value,
+                    identity.polarity,
+                    identity.canonical_subject_key,
                     candidate.subject_ref_type,
                     candidate.subject_ref_id,
                     candidate.predicate_key,
+                    identity.canonical_object_key,
                     candidate.object_json,
                     candidate.temporal_scope_start,
                     candidate.temporal_scope_end,
+                    identity.temporal_identity_key,
+                    identity.speaker_scope_key,
+                    identity.canonicalization_confidence,
                     _init_state.value,
                     _init_conf,
-                    now, now,
+                    now,
+                    now,
                 ),
             )
             is_new = _assert_cur.rowcount > 0
 
             if is_new:
                 assertion_id = _candidate_id
-                row = None  # No existing row — upgrade logic does not apply
+                row = None
             else:
-                # The INSERT was ignored: re-SELECT to get the actual stored ID, state,
-                # and SPO payload fields so we can upgrade them if the candidate is richer.
-                # Must match matter, layer, AND prop key (same filters as the unique index).
                 row = self.db.execute(
-                    "SELECT id, belief_state, confidence,"
-                    " predicate_key, subject_ref_type, subject_ref_id,"
-                    " object_json, temporal_scope_start, temporal_scope_end"
-                    " FROM assertion"
-                    " WHERE matter_id=? AND model_layer=? AND proposition_key=?",
-                    (self.matter_id, candidate.model_layer.value, prop_key),
+                    """SELECT id, belief_state, confidence,
+                              predicate_key, subject_ref_type, subject_ref_id,
+                              object_json, temporal_scope_start, temporal_scope_end,
+                              claim_key, identity_version, polarity,
+                              canonical_subject_key, canonical_object_key,
+                              temporal_identity_key, speaker_scope_key,
+                              canonicalization_confidence
+                       FROM assertion
+                       WHERE matter_id=? AND model_layer=? AND claim_key=?""",
+                    (
+                        self.matter_id,
+                        candidate.model_layer.value,
+                        identity.claim_key,
+                    ),
                 ).fetchone()
                 assertion_id = row["id"]
 
-            # Always attempt to insert an occurrence (even for known assertions from new docs).
-            # Capture the cursor so we can detect whether the row was actually inserted
-            # (rowcount=1) or silently ignored due to the UNIQUE index (rowcount=0).
-            occ_id = _id()
-            _doc_norm = (candidate.document_id or "").replace("\\\\", "/").replace("\\", "/")
-            _doc_basename = pathlib.Path(_doc_norm).name if _doc_norm else None
-            _occ_cur = self.db.execute(
-                """INSERT OR IGNORE INTO assertion_occurrence
-                   (id, assertion_id, document_id, doc_basename, span_id,
-                    speaker_actor_id, source_role, source_side,
-                    speech_act, origin_kind, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    occ_id, assertion_id,
-                    candidate.document_id,
-                    _doc_basename,
-                    candidate.span_id,
-                    candidate.speaker_actor_id,
-                    candidate.source_role.value,
-                    candidate.source_side,
-                    candidate.speech_act.value,
-                    candidate.origin_kind.value,
-                    now,
-                ),
+            # Find existing occurrence for this doc+speech_act+span+claim
+            existing_occurrence = self._find_occurrence(
+                document_inventory_id,
+                candidate.document_id,
+                candidate.speech_act.value,
+                candidate.span_id,
+                claim_key=identity.claim_key,
+            )
+            occurrence_added_to_assertion = (
+                existing_occurrence is None
+                or existing_occurrence["assertion_id"] != assertion_id
             )
 
+            if existing_occurrence is None:
+                self.db.execute(
+                    """INSERT INTO assertion_occurrence
+                       (id, assertion_id, document_id, document_inventory_id, doc_basename,
+                        raw_text, span_id, speaker_actor_id, source_role, source_side,
+                        speech_act, origin_kind, subject_ref_type, subject_ref_id,
+                        predicate_key, object_json, temporal_scope_start, temporal_scope_end,
+                        polarity, speaker_scope_key, claim_key_candidate, resolution_strategy,
+                        extraction_confidence, created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        _id(),
+                        assertion_id,
+                        candidate.document_id,
+                        document_inventory_id,
+                        _doc_basename,
+                        raw_text,
+                        candidate.span_id,
+                        candidate.speaker_actor_id,
+                        candidate.source_role.value,
+                        candidate.source_side,
+                        candidate.speech_act.value,
+                        candidate.origin_kind.value,
+                        candidate.subject_ref_type,
+                        candidate.subject_ref_id,
+                        candidate.predicate_key,
+                        candidate.object_json,
+                        candidate.temporal_scope_start,
+                        candidate.temporal_scope_end,
+                        identity.polarity,
+                        identity.speaker_scope_key,
+                        identity.claim_key,
+                        identity.resolution_strategy,
+                        identity.canonicalization_confidence,
+                        now,
+                    ),
+                )
+            else:
+                existing_conf = (
+                    existing_occurrence["extraction_confidence"]
+                    if existing_occurrence["extraction_confidence"] is not None
+                    else 0.0
+                )
+                promote = identity.canonicalization_confidence >= existing_conf
+                self.db.execute(
+                    """UPDATE assertion_occurrence
+                       SET assertion_id=?,
+                           document_id=?,
+                           document_inventory_id=COALESCE(document_inventory_id, ?),
+                           doc_basename=COALESCE(doc_basename, ?),
+                           raw_text=COALESCE(raw_text, ?),
+                           subject_ref_type=?,
+                           subject_ref_id=?,
+                           predicate_key=?,
+                           object_json=?,
+                           temporal_scope_start=?,
+                           temporal_scope_end=?,
+                           polarity=?,
+                           speaker_scope_key=?,
+                           claim_key_candidate=?,
+                           resolution_strategy=?,
+                           extraction_confidence=?
+                       WHERE id=?""",
+                    (
+                        assertion_id,
+                        candidate.document_id,
+                        document_inventory_id,
+                        _doc_basename,
+                        raw_text,
+                        self._pick_occurrence_value(existing_occurrence["subject_ref_type"], candidate.subject_ref_type, promote),
+                        self._pick_occurrence_value(existing_occurrence["subject_ref_id"], candidate.subject_ref_id, promote),
+                        self._pick_occurrence_value(existing_occurrence["predicate_key"], candidate.predicate_key, promote),
+                        self._pick_occurrence_value(existing_occurrence["object_json"], candidate.object_json, promote),
+                        self._pick_occurrence_value(existing_occurrence["temporal_scope_start"], candidate.temporal_scope_start, promote),
+                        self._pick_occurrence_value(existing_occurrence["temporal_scope_end"], candidate.temporal_scope_end, promote),
+                        identity.polarity if promote else (existing_occurrence["polarity"] or identity.polarity),
+                        self._pick_occurrence_value(existing_occurrence["speaker_scope_key"], identity.speaker_scope_key, promote),
+                        identity.claim_key if promote or existing_occurrence["claim_key_candidate"] is None else existing_occurrence["claim_key_candidate"],
+                        identity.resolution_strategy if promote or existing_occurrence["resolution_strategy"] is None else existing_occurrence["resolution_strategy"],
+                        max(existing_conf, identity.canonicalization_confidence),
+                        existing_occurrence["id"],
+                    ),
+                )
+
             # Upgrade canonical belief_state only when:
-            #   (a) the occurrence was actually new (not a duplicate re-ingest), AND
+            #   (a) the occurrence was actually new for this assertion, AND
             #   (b) the assertion is not in a terminal state (SUPERSEDED/WITHDRAWN).
-            # Running the upgrade before the INSERT OR IGNORE would overwrite user-corrected
-            # or graph-derived states on duplicate ingestion with no new evidence.
-            if not is_new and _occ_cur.rowcount > 0:
+            if not is_new and occurrence_added_to_assertion:
                 _new_state, _new_conf = _initial_belief_state(candidate.speech_act)
                 _current_conf = row["confidence"] if row["confidence"] is not None else 0.5
                 _TERMINAL = (BeliefState.SUPERSEDED.value, BeliefState.WITHDRAWN.value)
                 if _new_conf > _current_conf and row["belief_state"] not in _TERMINAL:
-                    # Write immutable field-diff rows before mutating (SO-2, Q4 HIGH).
                     _up_rev_rows: list[tuple[str, str, str]] = []
                     if row["belief_state"] != _new_state.value:
                         _up_rev_rows.append((
@@ -201,51 +389,46 @@ class AssertionStore:
                         (_new_state.value, _new_conf, now, assertion_id),
                     )
 
-            # Upgrade SPO payload for any null fields the candidate can fill in.
-            # Gated on candidate having a predicate_key (only upgrade from rich extractions),
-            # but the canonical row can have predicate_key already set — other null SPO
-            # fields (e.g. temporal_scope from a later, richer extraction) can still be
-            # backfilled. COALESCE in the UPDATE enforces NULL→non-NULL only semantics.
-            # (HIGH #3 SPO-payload-loss fix; adv#031 SO-2 audit + r3 backfill gate fix)
-            _spo_field_names = (
+            # Upgrade identity + SPO fields on existing assertions (NULL→non-NULL backfill).
+            _identity_field_names = (
                 "predicate_key", "subject_ref_type", "subject_ref_id",
                 "object_json", "temporal_scope_start", "temporal_scope_end",
+                "claim_key", "identity_version", "polarity",
+                "canonical_subject_key", "canonical_object_key",
+                "temporal_identity_key", "speaker_scope_key",
             )
-            # Note: _occ_cur.rowcount check is intentionally omitted here.
-            # COALESCE in the UPDATE prevents overwriting existing values, so it is
-            # safe to attempt SPO backfill even on duplicate occurrences (rowcount=0)
-            # from a richer re-parse of the same document/span.
             if (
                 not is_new
                 and row is not None
                 and candidate.predicate_key is not None
-                and any(row[f] is None for f in _spo_field_names)
+                and any(row[f] is None for f in _identity_field_names)
             ):
-                # Write revision rows ONLY for true NULL→non-NULL upgrades.
-                # Existing non-null values are preserved by COALESCE in the UPDATE below,
-                # so we never record a revision for a field we are not actually changing.
-                _spo_fields_with_old = [
+                _identity_fields_with_old = [
                     ("predicate_key", row["predicate_key"], candidate.predicate_key),
                     ("subject_ref_type", row["subject_ref_type"], candidate.subject_ref_type),
                     ("subject_ref_id", row["subject_ref_id"], candidate.subject_ref_id),
                     ("object_json", row["object_json"], candidate.object_json),
                     ("temporal_scope_start", row["temporal_scope_start"], candidate.temporal_scope_start),
                     ("temporal_scope_end", row["temporal_scope_end"], candidate.temporal_scope_end),
+                    ("claim_key", row["claim_key"], identity.claim_key),
+                    ("identity_version", row["identity_version"], identity.identity_version if row["identity_version"] == "legacy_text_v1" else row["identity_version"]),
+                    ("polarity", row["polarity"], identity.polarity),
+                    ("canonical_subject_key", row["canonical_subject_key"], identity.canonical_subject_key),
+                    ("canonical_object_key", row["canonical_object_key"], identity.canonical_object_key),
+                    ("temporal_identity_key", row["temporal_identity_key"], identity.temporal_identity_key if row["temporal_identity_key"] == "atemporal" else row["temporal_identity_key"]),
+                    ("speaker_scope_key", row["speaker_scope_key"], identity.speaker_scope_key),
                 ]
-                _spo_rev_rows = [
+                _identity_rev_rows = [
                     (field, _json_mod.dumps(None), _json_mod.dumps(new_val))
-                    for field, old_val, new_val in _spo_fields_with_old
+                    for field, old_val, new_val in _identity_fields_with_old
                     if old_val is None and new_val is not None
                 ]
-                if _spo_rev_rows:
+                if _identity_rev_rows:
                     self.write_revision_rows(
-                        assertion_id, _spo_rev_rows, _id(),
+                        assertion_id, _identity_rev_rows, _id(),
                         "occurrence_upgrade", "system",
                         run_id=run_id,
                     )
-                    # COALESCE preserves existing non-null canonical values — only fills in NULLs.
-                    # Only run the UPDATE when there is actually something to fill in; skip if
-                    # _spo_rev_rows is empty to avoid a spurious updated_at bump.
                     self.db.execute(
                     """UPDATE assertion
                        SET subject_ref_type=COALESCE(subject_ref_type, ?),
@@ -254,6 +437,20 @@ class AssertionStore:
                            object_json=COALESCE(object_json, ?),
                            temporal_scope_start=COALESCE(temporal_scope_start, ?),
                            temporal_scope_end=COALESCE(temporal_scope_end, ?),
+                           claim_key=COALESCE(claim_key, ?),
+                           identity_version=CASE
+                               WHEN identity_version='legacy_text_v1' THEN ?
+                               ELSE identity_version
+                           END,
+                           polarity=?,
+                           canonical_subject_key=COALESCE(canonical_subject_key, ?),
+                           canonical_object_key=COALESCE(canonical_object_key, ?),
+                           temporal_identity_key=CASE
+                               WHEN temporal_identity_key='atemporal' AND ? != 'atemporal' THEN ?
+                               ELSE temporal_identity_key
+                           END,
+                           speaker_scope_key=COALESCE(speaker_scope_key, ?),
+                           canonicalization_confidence=MAX(canonicalization_confidence, ?),
                            updated_at=?
                        WHERE id=?""",
                     (
@@ -263,6 +460,15 @@ class AssertionStore:
                         candidate.object_json,
                         candidate.temporal_scope_start,
                         candidate.temporal_scope_end,
+                        identity.claim_key,
+                        identity.identity_version,
+                        identity.polarity,
+                        identity.canonical_subject_key,
+                        identity.canonical_object_key,
+                        identity.temporal_identity_key,
+                        identity.temporal_identity_key,
+                        identity.speaker_scope_key,
+                        identity.canonicalization_confidence,
                         now,
                         assertion_id,
                     ),
@@ -735,14 +941,10 @@ class AssertionStore:
         proposition_text: str,
         model_layer: Optional[str] = None,
     ) -> Optional["AssertionRecord"]:
-        """Look up an assertion by normalized proposition text.
+        """Legacy compatibility lookup by normalized proposition text.
 
-        If *model_layer* is supplied the lookup is restricted to that layer,
-        which is the correct behaviour when the caller knows which reasoning
-        layer the assertion lives in (record / reality / proof / legal /
-        decision_context).  Without an explicit layer the query can return an
-        assertion from any layer — callers should supply the layer whenever
-        possible to avoid cross-layer leakage.
+        proposition_key is no longer unique inside a model layer once claim identity v2
+        lands, so this method must be deterministic and clearly treated as fallback-only.
         """
         import hashlib
         normalized = " ".join(proposition_text.lower().split())
@@ -750,18 +952,15 @@ class AssertionStore:
         if model_layer is not None:
             row = self.db.execute(
                 "SELECT * FROM assertion"
-                " WHERE matter_id=? AND model_layer=? AND proposition_key=?",
+                " WHERE matter_id=? AND model_layer=? AND proposition_key=?"
+                " ORDER BY canonicalization_confidence DESC, created_at ASC LIMIT 1",
                 (self.matter_id, model_layer, prop_key),
             ).fetchone()
         else:
-            # No layer specified: return the earliest-created assertion with this
-            # proposition key across all layers.  ORDER BY + LIMIT 1 ensures
-            # deterministic output even when the same text exists in multiple layers.
-            # Callers should supply model_layer to avoid cross-layer leakage.
             row = self.db.execute(
                 "SELECT * FROM assertion"
                 " WHERE matter_id=? AND proposition_key=?"
-                " ORDER BY created_at ASC LIMIT 1",
+                " ORDER BY canonicalization_confidence DESC, created_at ASC LIMIT 1",
                 (self.matter_id, prop_key),
             ).fetchone()
         if row is None:

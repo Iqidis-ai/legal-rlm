@@ -508,14 +508,15 @@ def test_upsert_occurrence_upgrade_writes_revision_rows(model):
     )
     a_id, _ = model.record_assertion(c1)
 
-    # Second ingest at higher confidence (operative source)
+    # Second ingest at higher confidence (operative source, same speaker scope
+    # so both map to same claim_key under claim identity v2)
     c2 = AssertionCandidate(
         proposition_text="Defendant breached the agreement.",
         model_layer=ModelLayer.RECORD,
         assertion_kind=AssertionKind.FACTUAL,
         document_id="signed_agreement.pdf",
         source_role=SourceRole.OPERATIVE,
-        source_side="neutral",
+        source_side="plaintiff",
         speech_act=SpeechAct.OPERATIVE,
         origin_kind=OriginKind.EXTRACTED,
     )

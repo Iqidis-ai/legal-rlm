@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 43
+SCHEMA_VERSION = 44
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -27,37 +27,74 @@ CREATE TABLE IF NOT EXISTS assertion (
     id              TEXT PRIMARY KEY,
     matter_id       TEXT NOT NULL REFERENCES matter(id),
     proposition_key TEXT NOT NULL,
+    claim_key       TEXT,
+    identity_version TEXT NOT NULL DEFAULT 'legacy_text_v1',
     proposition_text TEXT NOT NULL,
     model_layer     TEXT NOT NULL,
     assertion_kind  TEXT NOT NULL,
+    polarity        TEXT NOT NULL DEFAULT 'affirmed',
+    canonical_subject_key TEXT,
     subject_ref_type TEXT,
     subject_ref_id   TEXT,
     predicate_key    TEXT,
+    canonical_object_key TEXT,
     object_json      TEXT,
     temporal_scope_start TEXT,
     temporal_scope_end   TEXT,
+    temporal_identity_key TEXT NOT NULL DEFAULT 'atemporal',
+    speaker_scope_key TEXT,
+    canonicalization_confidence REAL NOT NULL DEFAULT 0.0,
     belief_state    TEXT NOT NULL DEFAULT 'unknown',
     confidence      REAL NOT NULL DEFAULT 0.5,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 ) STRICT;
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_assertion_prop
-    ON assertion(matter_id, model_layer, proposition_key);
+CREATE INDEX IF NOT EXISTS ix_assertion_prop_legacy
+    ON assertion(matter_id, model_layer, proposition_key, canonicalization_confidence DESC, created_at ASC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_assertion_claim_key
+    ON assertion(matter_id, model_layer, claim_key)
+    WHERE claim_key IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS ix_assertion_subject
     ON assertion(subject_ref_type, subject_ref_id, predicate_key);
+
+CREATE INDEX IF NOT EXISTS ix_assertion_identity_lookup
+    ON assertion(
+        matter_id,
+        subject_ref_type,
+        subject_ref_id,
+        predicate_key,
+        canonical_object_key,
+        polarity,
+        temporal_identity_key
+    );
 
 CREATE TABLE IF NOT EXISTS assertion_occurrence (
     id              TEXT PRIMARY KEY,
     assertion_id    TEXT NOT NULL REFERENCES assertion(id),
     document_id     TEXT NOT NULL,
+    document_inventory_id TEXT REFERENCES document_inventory(id),
+    doc_basename    TEXT,
+    raw_text        TEXT,
     span_id         TEXT,
     speaker_actor_id TEXT,
     source_role     TEXT NOT NULL DEFAULT 'unknown',
     source_side     TEXT,
     speech_act      TEXT NOT NULL,
     origin_kind     TEXT NOT NULL DEFAULT 'extracted',
+    subject_ref_type TEXT,
+    subject_ref_id   TEXT,
+    predicate_key    TEXT,
+    object_json      TEXT,
+    temporal_scope_start TEXT,
+    temporal_scope_end   TEXT,
+    polarity        TEXT NOT NULL DEFAULT 'affirmed',
+    speaker_scope_key TEXT,
+    claim_key_candidate TEXT,
+    resolution_strategy TEXT,
+    extraction_confidence REAL NOT NULL DEFAULT 0.0,
     created_at      TEXT NOT NULL
 ) STRICT;
 
@@ -69,6 +106,15 @@ CREATE INDEX IF NOT EXISTS ix_occurrence_assertion_created
 
 CREATE INDEX IF NOT EXISTS ix_occurrence_document
     ON assertion_occurrence(document_id, span_id);
+
+CREATE INDEX IF NOT EXISTS ix_occurrence_doc_basename
+    ON assertion_occurrence(doc_basename);
+
+CREATE INDEX IF NOT EXISTS ix_occurrence_doc_ref
+    ON assertion_occurrence(document_inventory_id, created_at);
+
+CREATE INDEX IF NOT EXISTS ix_occurrence_claim_candidate
+    ON assertion_occurrence(claim_key_candidate);
 
 CREATE INDEX IF NOT EXISTS ix_assertion_matter_created
     ON assertion(matter_id, created_at DESC);
@@ -87,7 +133,12 @@ CREATE INDEX IF NOT EXISTS ix_assertion_matter_predicate
 -- Widened in v12 to include span identity so same (assertion, doc, speech_act)
 -- can have multiple occurrences when they come from different source spans.
 CREATE UNIQUE INDEX IF NOT EXISTS ix_occurrence_unique_doc
-    ON assertion_occurrence(assertion_id, document_id, speech_act, COALESCE(span_id, ''));
+    ON assertion_occurrence(
+        assertion_id,
+        COALESCE(document_inventory_id, document_id),
+        speech_act,
+        COALESCE(span_id, '')
+    );
 
 CREATE TABLE IF NOT EXISTS assertion_link (
     id              TEXT PRIMARY KEY,
@@ -1313,9 +1364,12 @@ def _migration_v27(conn) -> None:
     and extracting the basename in Python (no SQLite BASENAME() function exists).
     """
     import pathlib as _pathlib
-    conn.execute(
-        "ALTER TABLE assertion_occurrence ADD COLUMN doc_basename TEXT"
-    )
+    try:
+        conn.execute(
+            "ALTER TABLE assertion_occurrence ADD COLUMN doc_basename TEXT"
+        )
+    except Exception:
+        pass  # column already exists from DDL
     rows = conn.execute(
         "SELECT id, document_id FROM assertion_occurrence WHERE document_id IS NOT NULL"
     ).fetchall()
@@ -1689,6 +1743,334 @@ def _migration_v43(conn) -> None:
     conn.commit()
 
 
+def _migration_v44(conn) -> None:
+    """Phase 2 claim identity v2: add identity columns to assertion and occurrence tables.
+
+    1. Assertion table: claim_key, identity_version, polarity, canonical_subject_key,
+       canonical_object_key, temporal_identity_key, speaker_scope_key, canonicalization_confidence.
+    2. Assertion_occurrence table: document_inventory_id, raw_text, SPO parse fields,
+       polarity, speaker_scope_key, claim_key_candidate, resolution_strategy, extraction_confidence.
+    3. Replace ux_assertion_prop unique index with legacy covering index + claim_key unique index.
+    4. Widen ix_occurrence_unique_doc to prefer document_inventory_id over document_id.
+    5. Backfill document_inventory_id and occurrence parse fields from parent assertions.
+    6. Python-side claim identity backfill: resolve claim_key for every existing occurrence
+       and split assertions whose occurrences disagree on claim_key.
+    """
+    from datetime import datetime, timezone
+    from .models import AssertionCandidate, ClaimIdentity
+    from .enums import ModelLayer, AssertionKind, SpeechAct, SourceRole, OriginKind
+
+    # --- Step 1: ALTER TABLE assertion ---
+    assertion_alters = [
+        "ALTER TABLE assertion ADD COLUMN claim_key TEXT",
+        "ALTER TABLE assertion ADD COLUMN identity_version TEXT NOT NULL DEFAULT 'legacy_text_v1'",
+        "ALTER TABLE assertion ADD COLUMN polarity TEXT NOT NULL DEFAULT 'affirmed'",
+        "ALTER TABLE assertion ADD COLUMN canonical_subject_key TEXT",
+        "ALTER TABLE assertion ADD COLUMN canonical_object_key TEXT",
+        "ALTER TABLE assertion ADD COLUMN temporal_identity_key TEXT NOT NULL DEFAULT 'atemporal'",
+        "ALTER TABLE assertion ADD COLUMN speaker_scope_key TEXT",
+        "ALTER TABLE assertion ADD COLUMN canonicalization_confidence REAL NOT NULL DEFAULT 0.0",
+    ]
+    for stmt in assertion_alters:
+        try:
+            conn.execute(stmt)
+        except Exception:
+            pass  # column already exists
+
+    # --- Step 2: ALTER TABLE assertion_occurrence ---
+    occurrence_alters = [
+        "ALTER TABLE assertion_occurrence ADD COLUMN document_inventory_id TEXT REFERENCES document_inventory(id)",
+        "ALTER TABLE assertion_occurrence ADD COLUMN raw_text TEXT",
+        "ALTER TABLE assertion_occurrence ADD COLUMN subject_ref_type TEXT",
+        "ALTER TABLE assertion_occurrence ADD COLUMN subject_ref_id TEXT",
+        "ALTER TABLE assertion_occurrence ADD COLUMN predicate_key TEXT",
+        "ALTER TABLE assertion_occurrence ADD COLUMN object_json TEXT",
+        "ALTER TABLE assertion_occurrence ADD COLUMN temporal_scope_start TEXT",
+        "ALTER TABLE assertion_occurrence ADD COLUMN temporal_scope_end TEXT",
+        "ALTER TABLE assertion_occurrence ADD COLUMN polarity TEXT NOT NULL DEFAULT 'affirmed'",
+        "ALTER TABLE assertion_occurrence ADD COLUMN speaker_scope_key TEXT",
+        "ALTER TABLE assertion_occurrence ADD COLUMN claim_key_candidate TEXT",
+        "ALTER TABLE assertion_occurrence ADD COLUMN resolution_strategy TEXT",
+        "ALTER TABLE assertion_occurrence ADD COLUMN extraction_confidence REAL NOT NULL DEFAULT 0.0",
+    ]
+    for stmt in occurrence_alters:
+        try:
+            conn.execute(stmt)
+        except Exception:
+            pass  # column already exists
+
+    # --- Step 3: Replace ux_assertion_prop with legacy index + claim_key unique ---
+    conn.execute("DROP INDEX IF EXISTS ux_assertion_prop")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_assertion_prop_legacy"
+        " ON assertion(matter_id, model_layer, proposition_key,"
+        " canonicalization_confidence DESC, created_at ASC)"
+    )
+
+    # --- Step 4: Widen occurrence unique index ---
+    conn.execute("DROP INDEX IF EXISTS ix_occurrence_unique_doc")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_occurrence_unique_doc"
+        " ON assertion_occurrence("
+        "     assertion_id,"
+        "     COALESCE(document_inventory_id, document_id),"
+        "     speech_act,"
+        "     COALESCE(span_id, '')"
+        " )"
+    )
+
+    # New occurrence indexes
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_occurrence_doc_ref"
+        " ON assertion_occurrence(document_inventory_id, created_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_occurrence_claim_candidate"
+        " ON assertion_occurrence(claim_key_candidate)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_assertion_identity_lookup"
+        " ON assertion("
+        "     matter_id,"
+        "     subject_ref_type,"
+        "     subject_ref_id,"
+        "     predicate_key,"
+        "     canonical_object_key,"
+        "     polarity,"
+        "     temporal_identity_key"
+        " )"
+    )
+
+    # --- Step 5: Backfill document_inventory_id from relative_path ---
+    conn.execute("""
+        UPDATE assertion_occurrence
+        SET document_inventory_id = (
+            SELECT di.id
+            FROM assertion a
+            JOIN document_inventory di
+              ON di.matter_id = a.matter_id
+             AND REPLACE(di.relative_path, char(92), '/') = REPLACE(assertion_occurrence.document_id, char(92), '/')
+            WHERE a.id = assertion_occurrence.assertion_id
+            LIMIT 1
+        )
+        WHERE document_inventory_id IS NULL
+    """)
+
+    # Backfill occurrence parse fields from parent assertion
+    conn.execute("""
+        UPDATE assertion_occurrence
+        SET raw_text = COALESCE(raw_text, (SELECT proposition_text FROM assertion WHERE assertion.id = assertion_occurrence.assertion_id)),
+            subject_ref_type = COALESCE(subject_ref_type, (SELECT subject_ref_type FROM assertion WHERE assertion.id = assertion_occurrence.assertion_id)),
+            subject_ref_id = COALESCE(subject_ref_id, (SELECT subject_ref_id FROM assertion WHERE assertion.id = assertion_occurrence.assertion_id)),
+            predicate_key = COALESCE(predicate_key, (SELECT predicate_key FROM assertion WHERE assertion.id = assertion_occurrence.assertion_id)),
+            object_json = COALESCE(object_json, (SELECT object_json FROM assertion WHERE assertion.id = assertion_occurrence.assertion_id)),
+            temporal_scope_start = COALESCE(temporal_scope_start, (SELECT temporal_scope_start FROM assertion WHERE assertion.id = assertion_occurrence.assertion_id)),
+            temporal_scope_end = COALESCE(temporal_scope_end, (SELECT temporal_scope_end FROM assertion WHERE assertion.id = assertion_occurrence.assertion_id)),
+            polarity = COALESCE(polarity, 'affirmed')
+    """)
+
+    conn.commit()
+
+    # --- Step 6: Python-side claim identity backfill ---
+    import uuid
+    import logging
+    _log = logging.getLogger(__name__)
+
+    rows = conn.execute("""
+        SELECT ao.id AS occ_id, ao.assertion_id,
+               ao.document_id, ao.speech_act, ao.speaker_actor_id,
+               ao.source_role, ao.source_side, ao.origin_kind,
+               COALESCE(ao.subject_ref_type, a.subject_ref_type) AS subject_ref_type,
+               COALESCE(ao.subject_ref_id, a.subject_ref_id) AS subject_ref_id,
+               COALESCE(ao.predicate_key, a.predicate_key) AS predicate_key,
+               COALESCE(ao.object_json, a.object_json) AS object_json,
+               COALESCE(ao.temporal_scope_start, a.temporal_scope_start) AS temporal_scope_start,
+               COALESCE(ao.temporal_scope_end, a.temporal_scope_end) AS temporal_scope_end,
+               COALESCE(ao.raw_text, a.proposition_text) AS raw_text,
+               a.proposition_text, a.model_layer, a.assertion_kind
+        FROM assertion_occurrence ao
+        JOIN assertion a ON a.id = ao.assertion_id
+    """).fetchall()
+
+    # Resolve claim identity for each occurrence
+    occ_identities = {}  # occ_id -> ClaimIdentity
+    for r in rows:
+        try:
+            cand = AssertionCandidate(
+                proposition_text=r["proposition_text"],
+                model_layer=ModelLayer(r["model_layer"]),
+                assertion_kind=AssertionKind(r["assertion_kind"]),
+                document_id=r["document_id"] or "",
+                raw_text=r["raw_text"],
+                speaker_actor_id=r["speaker_actor_id"],
+                source_role=SourceRole(r["source_role"]) if r["source_role"] else SourceRole.UNKNOWN,
+                source_side=r["source_side"],
+                speech_act=SpeechAct(r["speech_act"]) if r["speech_act"] else SpeechAct.EXTRACTED,
+                origin_kind=OriginKind(r["origin_kind"]) if r["origin_kind"] else OriginKind.EXTRACTED,
+                subject_ref_type=r["subject_ref_type"],
+                subject_ref_id=r["subject_ref_id"],
+                predicate_key=r["predicate_key"],
+                object_json=r["object_json"],
+                temporal_scope_start=r["temporal_scope_start"],
+                temporal_scope_end=r["temporal_scope_end"],
+            )
+            identity = cand.resolve_claim_identity()
+            occ_identities[r["occ_id"]] = identity
+
+            # Update occurrence with resolved identity
+            conn.execute(
+                """UPDATE assertion_occurrence
+                   SET claim_key_candidate=?, resolution_strategy=?,
+                       speaker_scope_key=COALESCE(speaker_scope_key, ?),
+                       extraction_confidence=?
+                   WHERE id=?""",
+                (
+                    identity.claim_key,
+                    identity.resolution_strategy,
+                    identity.speaker_scope_key,
+                    identity.canonicalization_confidence,
+                    r["occ_id"],
+                ),
+            )
+        except Exception as exc:
+            _log.warning("v44 backfill skip occ=%s: %s", r["occ_id"], exc)
+
+    conn.commit()
+
+    # Group occurrences by assertion_id
+    from collections import defaultdict
+    assertion_groups = defaultdict(list)  # assertion_id -> [(occ_id, ClaimIdentity)]
+    for r in rows:
+        occ_id = r["occ_id"]
+        if occ_id in occ_identities:
+            assertion_groups[r["assertion_id"]].append((occ_id, occ_identities[occ_id]))
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    for assertion_id, occ_list in assertion_groups.items():
+        # Group by claim_key
+        by_claim = defaultdict(list)
+        for occ_id, identity in occ_list:
+            by_claim[identity.claim_key].append((occ_id, identity))
+
+        if len(by_claim) <= 1:
+            # All occurrences agree — update assertion in place
+            if occ_list:
+                _, identity = occ_list[0]
+                conn.execute(
+                    """UPDATE assertion
+                       SET claim_key=?, identity_version='claim_v2',
+                           polarity=?, canonical_subject_key=?,
+                           canonical_object_key=?,
+                           temporal_identity_key=?, speaker_scope_key=?,
+                           canonicalization_confidence=?, updated_at=?
+                       WHERE id=?""",
+                    (
+                        identity.claim_key, identity.polarity,
+                        identity.canonical_subject_key,
+                        identity.canonical_object_key,
+                        identity.temporal_identity_key,
+                        identity.speaker_scope_key,
+                        identity.canonicalization_confidence,
+                        now, assertion_id,
+                    ),
+                )
+        else:
+            # Multiple claim keys — keep largest group on existing row, split rest
+            sorted_groups = sorted(by_claim.items(), key=lambda x: -len(x[1]))
+            # Largest group stays on the original assertion
+            keep_key, keep_occs = sorted_groups[0]
+            _, keep_identity = keep_occs[0]
+            conn.execute(
+                """UPDATE assertion
+                   SET claim_key=?, identity_version='claim_v2',
+                       polarity=?, canonical_subject_key=?,
+                       canonical_object_key=?,
+                       temporal_identity_key=?, speaker_scope_key=?,
+                       canonicalization_confidence=?, updated_at=?
+                   WHERE id=?""",
+                (
+                    keep_identity.claim_key, keep_identity.polarity,
+                    keep_identity.canonical_subject_key,
+                    keep_identity.canonical_object_key,
+                    keep_identity.temporal_identity_key,
+                    keep_identity.speaker_scope_key,
+                    keep_identity.canonicalization_confidence,
+                    now, assertion_id,
+                ),
+            )
+
+            # Split remaining groups into new assertion rows
+            for split_key, split_occs in sorted_groups[1:]:
+                new_id = uuid.uuid4().hex
+                _, split_identity = split_occs[0]
+                conn.execute(
+                    """INSERT INTO assertion (
+                           id, matter_id, proposition_key, claim_key, identity_version,
+                           proposition_text, model_layer, assertion_kind, polarity,
+                           canonical_subject_key, subject_ref_type, subject_ref_id,
+                           predicate_key, canonical_object_key, object_json,
+                           temporal_scope_start, temporal_scope_end,
+                           temporal_identity_key, speaker_scope_key,
+                           canonicalization_confidence,
+                           belief_state, confidence, created_at, updated_at
+                       )
+                       SELECT
+                           ?, matter_id, proposition_key, ?, 'claim_v2',
+                           proposition_text, model_layer, assertion_kind, ?,
+                           ?, subject_ref_type, subject_ref_id,
+                           predicate_key, ?, object_json,
+                           temporal_scope_start, temporal_scope_end,
+                           ?, ?,
+                           ?,
+                           belief_state, confidence, created_at, ?
+                       FROM assertion WHERE id=?""",
+                    (
+                        new_id, split_identity.claim_key,
+                        split_identity.polarity,
+                        split_identity.canonical_subject_key,
+                        split_identity.canonical_object_key,
+                        split_identity.temporal_identity_key,
+                        split_identity.speaker_scope_key,
+                        split_identity.canonicalization_confidence,
+                        now, assertion_id,
+                    ),
+                )
+
+                # Move occurrences to the new assertion
+                split_occ_ids = [oid for oid, _ in split_occs]
+                placeholders = ",".join("?" for _ in split_occ_ids)
+                conn.execute(
+                    f"UPDATE assertion_occurrence SET assertion_id=? WHERE id IN ({placeholders})",
+                    [new_id] + split_occ_ids,
+                )
+
+                # Clone issue links conservatively
+                conn.execute(
+                    """INSERT OR IGNORE INTO assertion_issue_link
+                       (id, assertion_id, issue_id, relation_type, created_at)
+                       SELECT lower(hex(randomblob(16))), ?, issue_id, relation_type, created_at
+                       FROM assertion_issue_link
+                       WHERE assertion_id=?""",
+                    (new_id, assertion_id),
+                )
+
+                _log.info(
+                    "v44 split assertion=%s new=%s claim_key=%s occs=%d",
+                    assertion_id, new_id, split_key, len(split_occs),
+                )
+
+    conn.commit()
+
+    # Create the claim_key unique index after backfill
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_assertion_claim_key"
+        " ON assertion(matter_id, model_layer, claim_key)"
+        " WHERE claim_key IS NOT NULL"
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -1736,6 +2118,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (41, _migration_v41),
     (42, _migration_v42),
     (43, _migration_v43),
+    (44, _migration_v44),
 ]
 
 
