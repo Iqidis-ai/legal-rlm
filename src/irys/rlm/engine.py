@@ -2130,7 +2130,7 @@ class RLMEngine:
                 search_results=results_text,
             )
             # Use FLASH for analysis
-            response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+            response = await self.client.complete(prompt, tier=ModelTier.FLASH, json_mode=True)
             analysis = self._parse_json_safe(response, {
                 "key_facts": [],
                 "new_leads": [],
@@ -2760,7 +2760,7 @@ Return:
 }}"""
 
             state.llm_calls_required += 1
-            response = await self.client.complete(prompt, tier=ModelTier.LITE)
+            response = await self.client.complete(prompt, tier=ModelTier.LITE, json_mode=True)
             analysis = self._parse_json_safe(response, {
                 "doc_type": "other",
                 "doc_source_role": "unknown",
@@ -2962,8 +2962,8 @@ Return:
                 focus=state.hypothesis or state.query,
             )
 
-            # Use LITE for bulk reading
-            response = await self.client.complete(prompt, tier=ModelTier.LITE)
+            # Use LITE for bulk reading; JSON mode forces valid JSON output
+            response = await self.client.complete(prompt, tier=ModelTier.LITE, json_mode=True)
 
             analysis = self._parse_json_safe(response, {
                 "key_facts": [],
@@ -4807,7 +4807,7 @@ Return:
             text=text[:5000],  # Limit text size
         )
 
-        response = await self.client.complete(prompt, tier=ModelTier.LITE)
+        response = await self.client.complete(prompt, tier=ModelTier.LITE, json_mode=True)
 
         defaults = {
             "people": [],

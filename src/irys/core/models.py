@@ -173,16 +173,6 @@ class RateLimiter:
                 self.tokens -= 1
 
 
-@dataclass
-class ThinkingCallback:
-    """Callback for streaming thinking steps."""
-    on_thinking: Optional[Callable[[str], None]] = None
-    on_search: Optional[Callable[[str], None]] = None
-    on_finding: Optional[Callable[[str, str], None]] = None
-    on_replan: Optional[Callable[[str], None]] = None
-    on_citation: Optional[Callable[[str, str, str], None]] = None
-
-
 class GeminiClient:
     """Tiered Gemini client for RLM operations with timeout, retry, and rate limiting."""
 
@@ -232,13 +222,17 @@ class GeminiClient:
             actual_cache = 0
         return actual_input, actual_output, actual_cache
 
-    def _get_config(self, tier: ModelTier) -> types.GenerateContentConfig:
+    def _get_config(
+        self, tier: ModelTier, *, json_mode: bool = False,
+    ) -> types.GenerateContentConfig:
         """Get generation config for a tier."""
         mc = MODEL_CONFIGS[tier]
         config = types.GenerateContentConfig(
             temperature=mc.temperature,
             max_output_tokens=mc.max_output_tokens,
         )
+        if json_mode:
+            config.response_mime_type = "application/json"
         if mc.thinking_level:
             config.thinking_config = types.ThinkingConfig(thinking_level=mc.thinking_level)
         return config
@@ -251,6 +245,7 @@ class GeminiClient:
         tools: Optional[list] = None,
         timeout: Optional[float] = None,
         cached_content: Optional[str] = None,
+        json_mode: bool = False,
     ) -> str:
         """Generate completion using specified tier with timeout.
 
@@ -267,7 +262,7 @@ class GeminiClient:
                 active issue tree. Do NOT cache individual document content.
         """
         mc = MODEL_CONFIGS[tier]
-        config = self._get_config(tier)
+        config = self._get_config(tier, json_mode=json_mode)
         request_timeout = timeout or self.timeout
 
         if tools:
@@ -336,105 +331,3 @@ class GeminiClient:
         logger.error(f"All {max_retries} attempts failed")
         raise last_error
 
-    async def complete_with_history(
-        self,
-        messages: list[dict],
-        tier: ModelTier = ModelTier.FLASH,
-    ) -> str:
-        """Generate completion with conversation history."""
-        mc = MODEL_CONFIGS[tier]
-        config = self._get_config(tier)
-
-        contents = []
-        for msg in messages:
-            role = "user" if msg["role"] == "user" else "model"
-            contents.append(types.Content(
-                role=role,
-                parts=[types.Part(text=msg["content"])]
-            ))
-
-        # Acquire rate limit token
-        await self._rate_limiter.acquire()
-
-        try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=mc.model_id,
-                    contents=contents,
-                    config=config,
-                ),
-                timeout=self.timeout,
-            )
-        except asyncio.TimeoutError:
-            raise TimeoutError(f"API call timed out after {self.timeout}s")
-
-        self._usage[tier].requests += 1
-        return response.text
-
-    async def batch_complete(
-        self,
-        prompts: list[str],
-        tier: ModelTier = ModelTier.LITE,
-        max_concurrent: int = 5,
-    ) -> list[str]:
-        """Process multiple prompts in parallel."""
-        semaphore = asyncio.Semaphore(max_concurrent)
-
-        async def process_one(prompt: str) -> str:
-            async with semaphore:
-                return await self.complete(prompt, tier=tier)
-
-        tasks = [process_one(p) for p in prompts]
-        return await asyncio.gather(*tasks)
-
-    def create_cached_content(
-        self,
-        content: str,
-        tier: ModelTier = ModelTier.FLASH,
-        ttl_seconds: int = 300,
-        display_name: Optional[str] = None,
-    ) -> Optional[str]:
-        """Create a Gemini cached content resource and return its name (resource ID).
-
-        Use this for hot reusable prefixes that are injected into many calls within
-        a run: system instructions, matter summaries, active issue tree text.
-        Pass the returned name as `cached_content` in subsequent `complete()` calls.
-
-        Charges: cache write is 1.25x input cost; cache reads cost 10% of input cost.
-        Minimum cache size is 32,768 tokens. TTL default is 5 minutes (300s).
-
-        Returns None on failure (caching is a performance optimization, never critical).
-        """
-        try:
-            mc = MODEL_CONFIGS[tier]
-            cached = self.client.caches.create(
-                model=mc.model_id,
-                config=types.CreateCachedContentConfig(
-                    contents=[types.Content(
-                        role="user",
-                        parts=[types.Part(text=content)],
-                    )],
-                    ttl=f"{ttl_seconds}s",
-                    display_name=display_name,
-                ),
-            )
-            return cached.name
-        except Exception as e:
-            logger.warning("Context caching failed (non-critical): %s", e)
-            return None
-
-    def get_usage(self) -> dict[str, UsageStats]:
-        """Get usage statistics per tier."""
-        return {tier.value: stats for tier, stats in self._usage.items()}
-
-    def get_total_cost(self) -> float:
-        """Get total estimated cost across all tiers."""
-        total = 0.0
-        for tier, stats in self._usage.items():
-            total += stats.estimated_cost
-        return total
-
-    def reset_usage(self):
-        """Reset usage counters."""
-        self._usage = {t: UsageStats(tier=t) for t in ModelTier}
