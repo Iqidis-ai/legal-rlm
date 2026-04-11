@@ -19,6 +19,9 @@ it is fragile.
 
 Full product specification: `IDEAL_PRODUCT_SPEC.md` in the repo root.
 
+Current implementation snapshot: `SYSTEM_STATE.md` in the repo root. Use that file for
+the live code/worktree state before relying on any "current state" language below.
+
 ---
 
 ## Sacred Outcomes
@@ -122,6 +125,9 @@ These are how we know we are winning. Not fluency. Not length. Not citation coun
 | Numeric extraction | Numbers stored structurally with source spans | >90% of numeric facts |
 
 ---
+
+Note: the section below is a historical baseline from 2026-04-02, not the live repo
+snapshot. For the current implementation state, read `SYSTEM_STATE.md`.
 
 ## Current State (as of 2026-04-02)
 
