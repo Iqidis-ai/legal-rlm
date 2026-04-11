@@ -4,7 +4,7 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 44
+SCHEMA_VERSION = 47
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS run_session (
     next_action     TEXT,
     operation_type  TEXT NOT NULL DEFAULT 'query',
     trigger         TEXT NOT NULL DEFAULT 'user',
+    research_mode   TEXT NOT NULL DEFAULT 'deep',
     started_at      TEXT NOT NULL,
     completed_at    TEXT,
     resumed_from    TEXT
@@ -546,6 +547,35 @@ CREATE INDEX IF NOT EXISTS ix_evidence_target
 
 CREATE INDEX IF NOT EXISTS ix_evidence_source
     ON evidence_link(source_type, source_id);
+
+CREATE TABLE IF NOT EXISTS evidence_edge (
+    id                          TEXT PRIMARY KEY,
+    matter_id                   TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    source_kind                 TEXT NOT NULL,
+    source_id                   TEXT NOT NULL,
+    source_document_inventory_id TEXT REFERENCES document_inventory(id),
+    source_span_id              TEXT,
+    source_occurrence_id        TEXT,
+    target_kind                 TEXT NOT NULL,
+    target_id                   TEXT NOT NULL,
+    relation_type               TEXT NOT NULL,
+    proof_weight                REAL NOT NULL DEFAULT 0.5,
+    source_confidence           REAL NOT NULL DEFAULT 1.0,
+    admissibility_status        TEXT,
+    vulnerability_json          TEXT,
+    note                        TEXT,
+    created_at                  TEXT NOT NULL,
+    updated_at                  TEXT NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_evidence_edge
+    ON evidence_edge(matter_id, source_kind, source_id, target_kind, target_id, relation_type);
+
+CREATE INDEX IF NOT EXISTS ix_evidence_edge_target
+    ON evidence_edge(matter_id, target_kind, target_id, relation_type, proof_weight DESC);
+
+CREATE INDEX IF NOT EXISTS ix_evidence_edge_source
+    ON evidence_edge(matter_id, source_kind, source_id);
 """
 
 _DDL_QUANT = """
@@ -706,6 +736,9 @@ CREATE TABLE IF NOT EXISTS proof_state (
     total_predicate_count       INTEGER NOT NULL DEFAULT 0,
     satisfied_predicate_count   INTEGER NOT NULL DEFAULT 0,
     proof_status                TEXT NOT NULL DEFAULT 'insufficient',
+    support_score               REAL NOT NULL DEFAULT 0.0,
+    attack_score                REAL NOT NULL DEFAULT 0.0,
+    coverage_version            TEXT NOT NULL DEFAULT 'proof_v2',
     notes                       TEXT,
     computed_at                 TEXT NOT NULL
 ) STRICT;
@@ -2071,6 +2104,100 @@ def _migration_v44(conn) -> None:
     conn.commit()
 
 
+def _migration_v45(conn) -> None:
+    """Phase 3: evidence_edge table + proof_state columns for unified proof metric.
+
+    evidence_edge: provenance-rich evidence links between any two objects
+    (assertion→issue, work_product→issue, etc.) with source confidence,
+    admissibility tracking, and vulnerability notes.
+
+    proof_state additions:
+    - support_score / attack_score: raw weighted sums (pre-formula) so
+      consumers can inspect components without re-deriving from edges.
+    - coverage_version: tracks which formula version produced the snapshot
+      so stale rows can be detected after formula changes.
+    """
+    # --- evidence_edge table (DDL already in _DDL_EVIDENCE for fresh DBs) ---
+    for stmt in _DDL_EVIDENCE.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            try:
+                conn.execute(stmt)
+            except Exception:
+                pass  # Already exists on fresh DBs that ran _DDL_EVIDENCE
+
+    # --- proof_state new columns ---
+    for alter in (
+        "ALTER TABLE proof_state ADD COLUMN support_score REAL NOT NULL DEFAULT 0.0",
+        "ALTER TABLE proof_state ADD COLUMN attack_score REAL NOT NULL DEFAULT 0.0",
+        "ALTER TABLE proof_state ADD COLUMN coverage_version TEXT NOT NULL DEFAULT 'proof_v2'",
+    ):
+        try:
+            conn.execute(alter)
+        except Exception:
+            pass  # Already present on fresh DBs
+
+    conn.commit()
+
+
+def _migration_v46(conn) -> None:
+    """Add durable LLM usage tracking.
+
+    1. llm_call: one row per Gemini API request with tokens, cost, latency, and outcome.
+    2. run_session aggregates: cheap totals for UI/status queries.
+    """
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS llm_call (
+               id                  TEXT PRIMARY KEY,
+               matter_id           TEXT NOT NULL REFERENCES matter(id),
+               run_id              TEXT REFERENCES run_session(id),
+               model_tier          TEXT NOT NULL,
+               model_id            TEXT NOT NULL,
+               usage_label         TEXT,
+               input_tokens        INTEGER NOT NULL DEFAULT 0,
+               cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
+               output_tokens       INTEGER NOT NULL DEFAULT 0,
+               total_prompt_tokens INTEGER NOT NULL DEFAULT 0,
+               estimated_cost_usd  REAL NOT NULL DEFAULT 0.0,
+               latency_ms          INTEGER NOT NULL DEFAULT 0,
+               success             INTEGER NOT NULL DEFAULT 1,
+               error_kind          TEXT,
+               created_at          TEXT NOT NULL
+           ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_llm_call_matter"
+        " ON llm_call(matter_id, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_llm_call_run"
+        " ON llm_call(run_id, created_at DESC)"
+    )
+    for alter in (
+        "ALTER TABLE run_session ADD COLUMN llm_input_tokens INTEGER",
+        "ALTER TABLE run_session ADD COLUMN llm_cache_read_tokens INTEGER",
+        "ALTER TABLE run_session ADD COLUMN llm_output_tokens INTEGER",
+        "ALTER TABLE run_session ADD COLUMN llm_request_count INTEGER",
+        "ALTER TABLE run_session ADD COLUMN llm_estimated_cost_usd REAL",
+    ):
+        try:
+            conn.execute(alter)
+        except Exception:
+            pass
+    conn.commit()
+
+
+def _migration_v47(conn) -> None:
+    """Add research_mode to run_session for explicit budget/audit tracking."""
+    try:
+        conn.execute(
+            "ALTER TABLE run_session ADD COLUMN research_mode TEXT NOT NULL DEFAULT 'deep'"
+        )
+    except Exception:
+        pass
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -2119,6 +2246,9 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (42, _migration_v42),
     (43, _migration_v43),
     (44, _migration_v44),
+    (45, _migration_v45),
+    (46, _migration_v46),
+    (47, _migration_v47),
 ]
 
 

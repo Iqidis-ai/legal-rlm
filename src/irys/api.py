@@ -1,15 +1,11 @@
-"""High-level API for the Irys RLM system.
+"""High-level API for the Irys RLM system."""
 
-Units 41-50: Integration, API, and final polish.
-"""
-
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Any, Callable
 from pathlib import Path
-import asyncio
 import logging
 
-from .core.models import GeminiClient, ModelTier
+from .core.models import GeminiClient
 from .core.repository import MatterRepository
 from .core.utils import (
     setup_logging,
@@ -18,7 +14,7 @@ from .core.utils import (
     validate_file_path,
 )
 from .rlm.engine import RLMEngine, RLMConfig
-from .rlm.state import InvestigationState
+from .rlm.state import InvestigationState, normalize_research_mode
 from .output import get_formatter
 
 logger = logging.getLogger("irys")
@@ -35,8 +31,6 @@ class IrysConfig:
     max_depth: int = 5
     max_leads_per_level: int = 5
     checkpoint_dir: Optional[str] = None
-    cache_enabled: bool = True
-    cache_ttl_seconds: int = 3600
     output_format: str = "markdown"
     log_level: str = "INFO"
     enable_matter_model: bool = True  # Persist intelligence to durable SQLite store (default on)
@@ -111,10 +105,28 @@ class Irys:
         if self._engine:
             self._engine.on_step = callback
 
+    def _attach_usage_summary(
+        self,
+        state: InvestigationState,
+        usage_before: dict,
+    ) -> None:
+        """Attach Gemini token/cost deltas to the state and run_session."""
+        if self._client is None:
+            return
+        usage = self._client.get_usage_delta(usage_before)
+        state.llm_usage = usage
+        run_id = getattr(state, "_run_id", None)
+        if run_id and self._engine and self._engine._matter_model is not None:
+            try:
+                self._engine._matter_model.record_run_usage_summary(run_id, usage)
+            except Exception:
+                logger.debug("Could not persist run usage summary for run %s", run_id)
+
     async def investigate(
         self,
         query: str,
         repository: str | Path,
+        research_mode: "str | None" = None,
     ) -> "InvestigationResult":
         """
         Run an investigation.
@@ -136,6 +148,8 @@ class Irys:
             raise ValueError(f"Invalid repository: {', '.join(issues)}")
 
         self._ensure_initialized()
+        if research_mode is not None:
+            research_mode = normalize_research_mode(research_mode, strict=True)
 
         # Wire matter model for this repository (SO-1: durable per-repo store)
         if self.config.enable_matter_model:
@@ -147,14 +161,20 @@ class Irys:
 
         # Run investigation
         self._telemetry.start_operation("investigation")
+        usage_before = self._client.snapshot_usage()
         try:
-            state = await self._engine.investigate(query, repository)
+            state = await self._engine.investigate(
+                query,
+                repository,
+                research_mode=research_mode,
+            )
         finally:
             self._telemetry.end_operation(
                 "investigation",
                 "investigate_complete",
                 {"query_length": len(query)},
             )
+        self._attach_usage_summary(state, usage_before)
 
         # Format output
         formatter = get_formatter(self.config.output_format)
@@ -170,6 +190,8 @@ class Irys:
         self,
         checkpoint_path: "str | Path",
         original_run_id: "str | None" = None,
+        follow_up_query: "str | None" = None,
+        research_mode: "str | None" = None,
     ) -> "InvestigationResult":
         """Resume a stopped investigation from a checkpoint file.
 
@@ -177,16 +199,24 @@ class Irys:
             checkpoint_path: Path to the checkpoint file (from run_session.next_action)
             original_run_id: The interrupted run_session.id; if it has a pending redirect,
                 the redirect is propagated to the new resumed run (SO-3 stop→redirect→resume).
+            follow_up_query: Optional new user query to continue from the saved state
+                with a refined objective.
 
         Returns:
             InvestigationResult with findings and output from the resumed run
         """
         self._ensure_initialized()
+        if research_mode is not None:
+            research_mode = normalize_research_mode(research_mode, strict=True)
 
         self._telemetry.start_operation("resume_investigation")
+        usage_before = self._client.snapshot_usage()
         try:
             state = await self._engine.resume_investigation(
-                checkpoint_path, original_run_id=original_run_id
+                checkpoint_path,
+                original_run_id=original_run_id,
+                follow_up_query=follow_up_query,
+                research_mode=research_mode,
             )
         finally:
             self._telemetry.end_operation(
@@ -194,33 +224,11 @@ class Irys:
                 "resume_complete",
                 {},
             )
+        self._attach_usage_summary(state, usage_before)
 
         formatter = get_formatter(self.config.output_format)
         output = formatter.format(state)
         return InvestigationResult(state=state, output=output, format=self.config.output_format)
-
-    async def summarize(
-        self,
-        files: list[str | Path],
-        repository: Optional[str | Path] = None,
-    ) -> dict[str, Any]:
-        """
-        Summarize documents.
-
-        Args:
-            files: List of file paths to summarize
-            repository: Optional repository for context
-
-        Returns:
-            Dict with individual and collection summaries
-        """
-        self._ensure_initialized()
-
-        file_paths = [Path(f) for f in files]
-        repo = MatterRepository(
-            repository or file_paths[0].parent) if repository or file_paths else None
-
-        return await self._engine.summarize_documents(file_paths, repo)
 
     async def search(
         self,
@@ -253,13 +261,9 @@ class Irys:
             for hit in results.top(20)
         ]
 
-    def get_telemetry(self) -> dict[str, Any]:
-        """Get telemetry summary."""
-        return self._telemetry.get_summary()
-
 
 # =============================================================================
-# Unit 42: Investigation Result
+# Investigation Result
 # =============================================================================
 
 @dataclass
@@ -313,190 +317,11 @@ class InvestigationResult:
         }
 
 
-# =============================================================================
-# Unit 43: Batch Investigation
-# =============================================================================
-
-async def batch_investigate(
-    queries: list[str],
-    repository: str | Path,
-    config: Optional[IrysConfig] = None,
-    parallel: bool = True,
-) -> list[InvestigationResult]:
-    """
-    Run multiple investigations.
-
-    Args:
-        queries: List of queries
-        repository: Document repository path
-        config: Configuration
-        parallel: Whether to run in parallel
-
-    Returns:
-        List of InvestigationResult objects
-    """
-    irys = Irys(config=config)
-
-    if parallel:
-        tasks = [irys.investigate(q, repository) for q in queries]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        return [r for r in results if isinstance(r, InvestigationResult)]
-    else:
-        results = []
-        for query in queries:
-            try:
-                result = await irys.investigate(query, repository)
-                results.append(result)
-            except Exception as e:
-                logger.error(
-                    f"Investigation failed for query '{query[:50]}...': {e}")
-        return results
-
-
-# =============================================================================
-# Unit 44: Quick Functions
-# =============================================================================
-
-async def quick_search(
-    query: str,
-    repository: str | Path,
-    api_key: Optional[str] = None,
-) -> list[dict]:
-    """Quick search function."""
-    irys = Irys(api_key=api_key)
-    return await irys.search(query, repository)
-
-
-async def quick_summarize(
-    files: list[str | Path],
-    api_key: Optional[str] = None,
-) -> dict:
-    """Quick summarize function."""
-    irys = Irys(api_key=api_key)
-    return await irys.summarize(files)
-
-
-# =============================================================================
-# Unit 45: Repository Analysis
-# =============================================================================
-
-async def analyze_repository(
-    repository: str | Path,
-    api_key: Optional[str] = None,
-) -> dict[str, Any]:
-    """
-    Analyze a document repository.
-
-    Returns overview, statistics, and document types.
-    """
-    repo = MatterRepository(repository)
-    stats = repo.get_stats()
-    structure = repo.get_structure()
-
-    # Categorize documents
-    from .core.clustering import cluster_by_document_type
-    files = repo.list_files()
-    documents = [f.path for f in files]
-    categories = cluster_by_document_type([str(d) for d in documents])
-
-    return {
-        "path": str(repository),
-        "stats": {
-            "total_files": stats.total_files,
-            "total_size_mb": round(stats.total_size_bytes / (1024 * 1024), 2),
-            "file_types": stats.files_by_type,
-        },
-        "structure": structure,
-        "categories": {k: len(v) for k, v in categories.items()},
-        "sample_files": [str(d) for d in documents[:10]],
-    }
-
-
-# =============================================================================
-# Unit 46-50: Convenience and Polish
-# =============================================================================
-
-# Unit 46: Default instance
-_default_irys: Optional[Irys] = None
-
-
-def get_irys(api_key: Optional[str] = None) -> Irys:
-    """Get or create default Irys instance."""
-    global _default_irys
-    if _default_irys is None:
-        _default_irys = Irys(api_key=api_key)
-    return _default_irys
-
-
-# Unit 47: Sync wrappers for async functions
-def investigate_sync(
-    query: str,
-    repository: str | Path,
-    api_key: Optional[str] = None,
-) -> InvestigationResult:
-    """Synchronous wrapper for investigate."""
-    irys = Irys(api_key=api_key)
-    return asyncio.run(irys.investigate(query, repository))
-
-
-def search_sync(
-    query: str,
-    repository: str | Path,
-    api_key: Optional[str] = None,
-) -> list[dict]:
-    """Synchronous wrapper for search."""
-    irys = Irys(api_key=api_key)
-    return asyncio.run(irys.search(query, repository))
-
-
-# Unit 48: Version info
 __version__ = "0.1.0"
 
-
-def get_version() -> str:
-    """Get Irys version."""
-    return __version__
-
-
-# Unit 49: Health check
-async def health_check(api_key: Optional[str] = None) -> dict[str, Any]:
-    """
-    Check system health.
-
-    Returns status of all components.
-    """
-    status = {
-        "version": __version__,
-        "components": {},
-    }
-
-    # Check Gemini client
-    try:
-        client = GeminiClient(api_key=api_key)
-        # Could make a test call here
-        status["components"]["gemini"] = "ok"
-    except Exception as e:
-        status["components"]["gemini"] = f"error: {e}"
-
-    return status
-
-
-# Unit 50: Export all public APIs
 __all__ = [
-    # Main classes
     "Irys",
     "IrysConfig",
     "InvestigationResult",
-    # Functions
-    "batch_investigate",
-    "quick_search",
-    "quick_summarize",
-    "analyze_repository",
-    "get_irys",
-    "investigate_sync",
-    "search_sync",
-    "health_check",
-    "get_version",
-    # Version
     "__version__",
 ]

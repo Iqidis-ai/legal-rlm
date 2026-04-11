@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 from pydantic import BaseModel, Field
 
 
@@ -15,15 +15,19 @@ class JobStatus(str, Enum):
     INTERRUPTED = "interrupted"  # stopped by user; checkpoint available for resume
 
 
+ResearchModeValue = Literal["simple", "deep", "sebih_special"]
+
+
 class InvestigateRequest(BaseModel):
     """Request to start an investigation."""
     query: str = Field(..., description="Investigation query")
     s3_prefix: str = Field(..., description="S3 prefix containing documents")
+    research_mode: Optional[ResearchModeValue] = Field(
+        None,
+        description="Investigation budget profile: simple, deep, or sebih_special",
+    )
     callback_url: Optional[str] = Field(
         None, description="URL to POST results when complete"
-    )
-    options: Optional[dict[str, Any]] = Field(
-        default_factory=dict, description="Additional investigation options"
     )
 
     class Config:
@@ -77,6 +81,7 @@ class JobResult(BaseModel):
     matter_id: Optional[str] = None
     run_id: Optional[str] = None
     corpus_key: Optional[str] = None  # Stable corpus identity; matter DB is keyed to this
+    llm_usage: Optional[dict[str, Any]] = None
     # SO-7: open gaps and clarifications included so no extra fetch needed after async job
     pending_clarifications: list[dict[str, Any]] = []
     open_gaps: list[dict[str, Any]] = []
@@ -94,6 +99,7 @@ class MatterStatsResponse(BaseModel):
     quant_fact_count: int
     pending_clarifications: int
     recent_runs: int
+    llm: Optional[dict[str, Any]] = None
 
 
 class StopRunRequest(BaseModel):
@@ -104,6 +110,18 @@ class StopRunRequest(BaseModel):
 class RedirectRunRequest(BaseModel):
     """Request to redirect investigation to a specific issue."""
     issue_id: str = Field(..., description="Issue ID to redirect investigation toward")
+
+
+class ResumeRunRequest(BaseModel):
+    """Optional request body for resuming an interrupted run."""
+    follow_up_query: Optional[str] = Field(
+        None,
+        description="Optional new user query to continue from the checkpoint with a refined objective",
+    )
+    research_mode: Optional[ResearchModeValue] = Field(
+        None,
+        description="Optional investigation budget profile override: simple, deep, or sebih_special",
+    )
 
 
 class AnswerClarificationRequest(BaseModel):
@@ -237,6 +255,10 @@ class SyncInvestigateResponse(BaseModel):
         default_factory=list,
         description="Open evidentiary gaps (materiality >= 0.3) detected during investigation (SO-7)",
     )
+    llm_usage: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Gemini token and estimated cost totals for this run",
+    )
 
 
 # === S3 URL Models ===
@@ -256,6 +278,10 @@ UrlInput = str | UrlWithMetadata
 class S3UrlsInvestigateRequest(BaseModel):
     """Request to investigate documents by URLs (S3 or HTTP)."""
     query: str = Field(..., description="Investigation query")
+    research_mode: Optional[ResearchModeValue] = Field(
+        None,
+        description="Investigation budget profile: simple, deep, or sebih_special",
+    )
     s3_urls: list[UrlInput] = Field(
         ...,
         description=(
@@ -268,9 +294,6 @@ class S3UrlsInvestigateRequest(BaseModel):
     )
     callback_url: Optional[str] = Field(
         None, description="URL to POST results when complete"
-    )
-    options: Optional[dict[str, Any]] = Field(
-        default_factory=dict, description="Additional investigation options"
     )
 
     class Config:

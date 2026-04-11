@@ -16,11 +16,19 @@ import logging
 
 from ..core.models import GeminiClient, ModelTier
 from ..core.repository import MatterRepository
-from ..core.search import SearchResults
+from ..core.search import SearchResults, SearchHit
 from ..core.utils import jaccard_similarity as _jaccard_similarity
 from ..matter.enums import SourceRole as _SourceRole
 from ..matter.runtime import infer_source_role as _infer_source_role
-from .state import InvestigationState, StepType, ThinkingStep, Citation, Lead, classify_query
+from .state import (
+    InvestigationState,
+    StepType,
+    ThinkingStep,
+    Citation,
+    Lead,
+    ResearchMode,
+    normalize_research_mode,
+)
 
 # SO-5: module-level map from LLM-returned doc_source_role strings to SourceRole enums.
 # Built automatically from enum values so it never drifts when new roles are added.
@@ -99,6 +107,23 @@ class RLMConfig:
     enable_matter_model: bool = True  # When True, persist facts to SQLite matter model
 
 
+@dataclass(frozen=True)
+class ResearchBudgetProfile:
+    """Effective per-run investigation budget for a research mode."""
+
+    mode: str
+    max_depth: int
+    min_depth: int
+    max_iterations: int
+    depth_citation_threshold: int
+    confidence_threshold: int
+    min_citations: int
+    diminishing_returns_fact_threshold: int
+    diminishing_returns_min_citations: int
+    diminishing_returns_min_confidence: int
+    very_low_productivity_max_facts: int
+
+
 # System prompts for different stages
 ORIENTATION_PROMPT = """You are an expert legal analyst conducting due diligence on a document repository.
 
@@ -126,6 +151,7 @@ PRIORITIZE:
 - Documents whose filenames suggest they contain key evidence for the query
 - Documents with dates matching key events
 - Files mentioning specific parties or amounts
+- Existing Matter Intelligence about open gaps, missing evidence, and weakly supported issues
 - If a PRIORITY FOCUS issue is listed in Existing Matter Intelligence, direct the first 2-3 `initial_searches` specifically toward that issue before broadening to general exploration
 
 Respond in JSON format:
@@ -163,13 +189,19 @@ Predicates drive targeted document search — make them concrete and searchable.
 For initial_searches: each entry must include "term" (the search string) and "issue_idx"
 (0-based index into the issues array above identifying which issue this search targets).
 This enables the system to link discovered facts to the correct issue.
+
+IMPORTANT — search term format:
+Each "term" must be a simple literal phrase or exact filename that grep can match.
+DO NOT use boolean operators (AND, OR, NOT), quotes as search syntax, or wildcards.
+Good: "breach of contract", "Invoice_March.xlsx", "termination clause"
+Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 """
 
 # Bump this version string whenever ORIENTATION_PROMPT structure changes.
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "6"
+_ORIENTATION_CACHE_VERSION = "7"
 
 
 def _format_matter_context(ctx) -> str:
@@ -251,7 +283,7 @@ Search Results for "{search_term}":
 ANALYZE THESE RESULTS CAREFULLY:
 
 1. KEY FACTS: Extract ONLY the 10 most important specific facts (STRICT LIMIT: 10 maximum):
-   - Format each fact as: {"fact": "...", "source_file": "filename_if_determinable", "issue_relation": "supports|attacks|neutral", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD by March 2023"}
+   - Format each fact as: {{"fact": "...", "source_file": "filename_if_determinable", "issue_relation": "supports|attacks|neutral", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD by March 2023"}}
    - source_file: the file identifier exactly as shown in the search results (may be "filename.pdf" or "folder/filename.pdf" when multiple files share the same name)
    - issue_relation: whether this fact SUPPORTS the current hypothesis, ATTACKS/undermines it, or is NEUTRAL
    - subject: entity performing the action (person, company) — REQUIRED; provide best-effort even if uncertain (e.g. "plaintiff", "defendant", "contracting_party")
@@ -274,10 +306,11 @@ ANALYZE THESE RESULTS CAREFULLY:
    - Does this evidence SUPPORT or CONTRADICT our hypothesis?
    - What gaps remain in our understanding?
 
-4. NEXT SEARCHES: Suggest terms that will:
+4. NEXT SEARCHES: Suggest simple literal phrases that will:
    - Corroborate findings from multiple sources
    - Fill gaps in the evidence
    - Find contradictory evidence (for completeness)
+   Each term must be a plain phrase (no AND/OR/NOT operators, no quoted sub-expressions).
 
 5. PREDICATES SATISFIED (SO-4 — only if "Issue Focus" section appears above):
    - List the exact text of any "Element to prove" from the Issue Focus that is
@@ -321,7 +354,7 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
    - Directly relevant to the query/focus
    - Specific (include dates, amounts, names)
    - Keep each fact under 100 characters
-   - Format each fact as: {"fact": "...", "page": N, "issue_relation": "supports|attacks|neutral", "effective_date": "YYYY-MM-DD or null", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD by March 2023"}
+   - Format each fact as: {{"fact": "...", "page": N, "issue_relation": "supports|attacks|neutral", "effective_date": "YYYY-MM-DD or null", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD by March 2023"}}
    - issue_relation: whether the fact SUPPORTS the investigation focus, ATTACKS/undermines it, or is NEUTRAL
    - effective_date: ISO date when this fact became effective/occurred (null if not temporally scoped)
    - subject: entity performing the action (person, company) — REQUIRED; provide best-effort (e.g. "plaintiff", "defendant", "contracting_party")
@@ -441,108 +474,50 @@ Rules:
 Respond with JSON array only: [{{"index": 0, "subject": "...", "predicate": "...", "object": "..."}}]
 """
 
-SYNTHESIS_PROMPT = """You are a senior partner at a law firm drafting a legal memorandum.
+SYNTHESIS_PROMPT = """You are a senior litigation partner with decades of experience drafting \
+legal memoranda, advising on strategy, and presenting analysis to clients and courts.
+
+Think like an experienced litigator. Reason through the evidence carefully. Distinguish \
+what the record establishes from what is merely alleged. Identify the strongest and weakest \
+points. Consider what an adversary would argue. Surface assumptions that carry the analysis. \
+Write with the precision and authority expected of a top-tier law firm.
 
 Original Query: {query}
 
-Investigation Summary:
-- Documents analyzed: {docs_analyzed}
-- Searches performed: {searches}
-- Citations collected: {citation_count}
-- Maximum investigation depth: {max_depth}
+{context_packet}
 
-Working Hypothesis: {hypothesis}
+---
 
-{advocacy_gate_block}Source Calibration (CRITICAL — read before analyzing facts):
-{source_calibration}
+INSTRUCTIONS:
 
-{decision_context_block}
-Quantitative Summary (SO-6 — extracted monetary amounts):
-{quant_summary}
+Analyze the evidence above and produce a comprehensive legal memorandum. Structure your \
+analysis based on what the evidence actually warrants — include sections that are useful, \
+omit sections that would be empty or speculative.
 
-Issue Coverage (SO-4 — per-claim evidence status):
-{issue_coverage}
+Your memorandum MUST include:
+- An executive summary that leads with the conclusion (2-3 sentences)
+- A thorough analysis of the evidence with citations to source documents
+- An honest assessment of evidence strength (Strong / Moderate / Weak)
+- Actionable recommendations
 
-Known Gaps & Missing Evidence (SO-7 — MUST surface in Gaps & Limitations section):
-{gap_summary}
+Your memorandum SHOULD include (when the evidence warrants):
+- Factual background: chronological narrative grounded in operative sources
+- Financial analysis: when monetary amounts, payments, or damages are at issue
+- Contradictions or concerns: conflicting evidence, unresolved issues
+- Unsubstantiated claims: allegations supported only by advocacy sources — present \
+  as "plaintiff alleges" / "defendant contends," NEVER as established fact
 
-Structured Relationships (SO-2 — typed assertion graph, subject→predicate→object):
-{structured_relationships}
-
-Key Entities Identified:
-{entities}
-
-Evidence Gathered:
-(Each fact is labeled [ROLE] indicating its source type. Treatment rules — MANDATORY:
-  [ADVOCACY]: allegation or argument by a party — present as "plaintiff alleges," "defendant contends," NEVER as established fact
+Source-role treatment rules (MANDATORY):
+  [ADVOCACY]: allegation or argument by a party — NEVER treat as established fact
   [OPERATIVE]: signed contract, court order, executed document — treat as established
   [AUTHORITATIVE]: statute, regulation, binding case law — treat as controlling
   [PROCEDURAL]: court filing, notice, docket entry — treat as procedurally established
-  [INFORMAL]: email, note, draft communication — corroborative only, not standalone proof
-  [DRAFT]: unexecuted document — proposed, not operative
-  [UNKNOWN]: unverified source — flag explicitly)
-{findings}
+  [INFORMAL]: email, note, draft — corroborative only, not standalone proof
+  [UNKNOWN]: unverified source — flag explicitly
 
-Documentary Citations:
-{citations}
-
-PREPARE A COMPREHENSIVE LEGAL MEMORANDUM:
-
-## Executive Summary
-Provide a 2-3 sentence direct answer to the query. Lead with the conclusion.
-
-## Factual Background
-Chronological narrative of relevant events established by the evidence.
-Cite OPERATIVE and AUTHORITATIVE sources for established facts. Label advocacy-sourced claims as allegations.
-Cite sources: [Document Name, p. X]
-
-## Analysis
-
-### Key Findings
-- Finding 1 with citation [Source]
-- Finding 2 with citation [Source]
-(Prioritize VERIFIED citations. Include ONLY findings supported by [OPERATIVE] or [AUTHORITATIVE] sources.
- DO NOT list advocacy-only claims here — they belong in ## Unsubstantiated Claims below.)
-
-### Supporting Evidence
-Detail the strongest evidence supporting conclusions. Note source role for each piece of evidence.
-
-### Contradictions or Concerns
-Note any conflicting evidence or unresolved issues. Flag where only [ADVOCACY] sources support a proposition.
-
-### Evidence Strength Assessment
-Rate overall evidence as: Strong / Moderate / Weak
-Explain basis for rating. Note proportion of advocacy vs. operative sources.
-
-## Financial Analysis
-(Include ONLY if the Quantitative Summary contains non-trivial data; omit section if no numeric facts were extracted.)
-- Payment reconciliation: total invoiced/claimed amounts vs. total paid/settled amounts; net balance
-- Claimed exposure: identify the party's asserted damages or outstanding amounts with source citations
-- Unresolved numeric conflicts: list any discrepancies flagged in the Quantitative Summary with the conflicting sources
-- Dates and deadlines: key contractual or statutory dates relevant to the dispute
-
-## Entities & Relationships
-Key parties and their roles established by evidence.
-
-## Unsubstantiated Claims (Advocacy Sources Only)
-(MANDATORY if ADVOCACY-ONLY GATE fired above. OMIT if no advocacy-only issues exist.)
-For each advocacy-only issue: state what is alleged, by whom, with what source — but NEVER as fact.
-Format: "Plaintiff alleges [claim] [Source]. No operative/authoritative evidence corroborates this."
-
-## Gaps & Limitations
-- What evidence was NOT found
-- Areas needing further investigation
-- Limitations of available documents
-
-## Recommendations
-1. Immediate actions based on findings
-2. Additional investigation needed
-3. Risk mitigation steps
-
----
-Write in formal legal memorandum style. Be precise and cite everything.
-Mark unverified citations with [UNVERIFIED].
-Do not speculate beyond what evidence supports.
+Write in formal legal memorandum style. Be precise and cite everything [Document, p. X]. \
+Mark unverified citations with [UNVERIFIED]. Do not speculate beyond what evidence supports. \
+Do not hide uncertainty — surface assumptions where they carry the analysis.
 """
 
 # Additional specialized prompts for enhanced analysis
@@ -921,26 +896,62 @@ class RLMEngine:
         return results
 
     def _adapt_config_for_repo_size(self, doc_count: int):
-        """Adjust config parameters based on repository size."""
+        """Capture repository size for stop heuristics and semaphore calibration."""
         self._doc_count = doc_count
 
-        if doc_count <= 5:
-            # Small repos: reduce parallelism significantly
-            self.config.max_leads_per_level = min(self.config.max_leads_per_level, 2)
-            self.config.parallel_reads = min(self.config.parallel_reads, 2)
-            self.config.max_iterations = min(self.config.max_iterations, 8)
-            self.config.depth_citation_threshold = min(self.config.depth_citation_threshold, 8)
-        elif doc_count <= 20:
-            # Medium repos: moderate reduction
-            self.config.max_leads_per_level = min(self.config.max_leads_per_level, 3)
-            self.config.parallel_reads = min(self.config.parallel_reads, 3)
-            self.config.max_iterations = min(self.config.max_iterations, 12)
-        # Large repos: use default config
+    def _research_mode_label(self, mode: "str | None") -> str:
+        return normalize_research_mode(mode).replace("_", " ").title()
+
+    def _get_research_profile(self, state: InvestigationState) -> ResearchBudgetProfile:
+        """Resolve the effective per-run investigation budget."""
+        mode = normalize_research_mode(getattr(state, "research_mode", None))
+        if mode == ResearchMode.SIMPLE.value:
+            return ResearchBudgetProfile(
+                mode=mode,
+                max_depth=min(self.config.max_depth, 2),
+                min_depth=min(self.config.max_depth, 1),
+                max_iterations=min(self.config.max_iterations, 5),
+                depth_citation_threshold=min(self.config.depth_citation_threshold, 8),
+                confidence_threshold=60,
+                min_citations=5,
+                diminishing_returns_fact_threshold=3,
+                diminishing_returns_min_citations=2,
+                diminishing_returns_min_confidence=35,
+                very_low_productivity_max_facts=1,
+            )
+        if mode == ResearchMode.SEBIH_SPECIAL.value:
+            return ResearchBudgetProfile(
+                mode=mode,
+                max_depth=max(self.config.max_depth, 8),
+                min_depth=max(self.config.min_depth, 3),
+                max_iterations=max(self.config.max_iterations, 30),
+                depth_citation_threshold=max(self.config.depth_citation_threshold, 20),
+                confidence_threshold=82,
+                min_citations=12,
+                diminishing_returns_fact_threshold=2,
+                diminishing_returns_min_citations=4,
+                diminishing_returns_min_confidence=55,
+                very_low_productivity_max_facts=0,
+            )
+        return ResearchBudgetProfile(
+            mode=ResearchMode.DEEP.value,
+            max_depth=self.config.max_depth,
+            min_depth=self.config.min_depth,
+            max_iterations=self.config.max_iterations,
+            depth_citation_threshold=self.config.depth_citation_threshold,
+            confidence_threshold=70,
+            min_citations=7,
+            diminishing_returns_fact_threshold=3,
+            diminishing_returns_min_citations=3,
+            diminishing_returns_min_confidence=40,
+            very_low_productivity_max_facts=1,
+        )
 
     async def investigate(
         self,
         query: str,
         repository_path: str | Path,
+        research_mode: "str | None" = None,
     ) -> InvestigationState:
         """
         Run full recursive investigation.
@@ -957,7 +968,11 @@ class RLMEngine:
         repo = MatterRepository(repository_path)
         # Always store the resolved absolute path so state.repository_path is stable
         # regardless of CWD changes (e.g., FastAPI background tasks).
-        state = InvestigationState.create(query, str(repo.base_path))
+        state = InvestigationState.create(
+            query,
+            str(repo.base_path),
+            research_mode=research_mode,
+        )
 
         # Adapt configuration based on repository size.
         # _doc_count update triggers semaphore recreation in _get_semaphore() so
@@ -969,7 +984,10 @@ class RLMEngine:
 
         # Build matter adapter — real or null depending on config + injected model
         if self.config.enable_matter_model and self._matter_model is not None:
-            run_id = self._matter_model.start_run(query)
+            run_id = self._matter_model.start_run(
+                query,
+                research_mode=state.research_mode,
+            )
             matter_adapter = MatterRuntimeAdapter(self._matter_model, run_id)
         else:
             run_id = None
@@ -979,13 +997,18 @@ class RLMEngine:
         # during the investigation without waiting for it to complete.
         state._run_id = run_id
         state._matter_adapter = matter_adapter
+        _usage_ctx = None
+        if run_id is not None and self._matter_model is not None:
+            _usage_ctx = self.client.begin_usage_context(
+                matter_id=self._matter_model.matter_id,
+                run_id=run_id,
+                recorder=self._matter_model.record_llm_call,
+            )
 
-        # Classify the query
-        state.query_classification = classify_query(query)
         self._emit_step(
             state,
             StepType.THINKING,
-            f"Query classified as {state.query_classification['type']} (complexity: {state.query_classification['complexity']}/5)",
+            f"Research mode: {self._research_mode_label(state.research_mode)}",
         )
 
         try:
@@ -1159,6 +1182,9 @@ class RLMEngine:
                     except Exception:
                         pass
             raise
+        finally:
+            if _usage_ctx is not None:
+                self.client.end_usage_context(_usage_ctx)
 
         return state
 
@@ -1266,7 +1292,12 @@ class RLMEngine:
         if plan is None:
             # Cache miss or cold run: call LLM
             state.llm_calls_required += 1  # SO-1 telemetry
-            response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+            response = await self.client.complete(
+                prompt,
+                tier=ModelTier.FLASH,
+                json_mode=True,
+                usage_label="orientation",
+            )
             plan = self._parse_json_safe(response, _plan_defaults)
             # Persist for future warm runs
             if self._matter_model is not None:
@@ -1548,7 +1579,8 @@ class RLMEngine:
     async def _investigate_loop(self, state: InvestigationState, repo: MatterRepository):
         """Phase 2: Iterative investigation with recursive lead following."""
         iteration = 0
-        max_iterations = self.config.max_iterations  # Configurable limit
+        budget = self._get_research_profile(state)
+        max_iterations = budget.max_iterations
 
         while iteration < max_iterations:
             # Check user stop request before each iteration
@@ -1856,6 +1888,52 @@ class RLMEngine:
                 f"Hydrated {loaded} facts from prior matter model run (SO-1 reuse)",
             )
 
+    def _search_cached_assertions(
+        self,
+        queries: list[str],
+        issue_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> Optional[SearchResults]:
+        """Search the assertion store for already-extracted intelligence.
+
+        Converts assertion hits into pseudo-SearchResults so callers (like
+        _investigate_lead) can treat them identically to raw repo grep hits.
+        Returns None when no matter model or no hits.
+        """
+        if self._matter_model is None:
+            return None
+        try:
+            rows = self._matter_model.search_assertions(
+                queries=queries, issue_id=issue_id, limit=limit,
+            )
+        except Exception:
+            return None
+        if not rows:
+            return None
+        hits: list[SearchHit] = []
+        for r in rows:
+            _fp = r.get("primary_document_id") or "assertion"
+            _text = r.get("primary_raw_text") or r.get("proposition_text") or ""
+            _score = float(r.get("term_matches", 1)) + (0.5 if r.get("issue_match") else 0)
+            hits.append(SearchHit(
+                file_path=_fp,
+                filename=Path(_fp).name,
+                page_num=0,
+                line_num=0,
+                match_text=_text,
+                context_before=[],
+                context_after=[],
+                score=_score,
+            ))
+        sr = SearchResults(
+            query=queries[0] if queries else "",
+            hits=hits,
+            files_searched=0,
+            total_matches=len(hits),
+        )
+        sr._from_assertion_store = True  # type: ignore[attr-defined]
+        return sr
+
     def _build_lead_queries(
         self,
         lead: Lead,
@@ -1866,9 +1944,10 @@ class RLMEngine:
         from ..core.search import expand_query
         search_term = lead.search_term or self._extract_search_term(lead.description)
 
-        # Issue context enrichment
+        # Issue context enrichment — returns independent grep terms, not a mutated string
+        issue_terms: list[str] = []
         if focus_issue_id and self._matter_model is not None:
-            search_term = self._enrich_search_term_with_issue_context(
+            issue_terms = self._enrich_search_term_with_issue_context(
                 search_term, focus_issue_id
             )
 
@@ -1881,7 +1960,12 @@ class RLMEngine:
                 for p in preds if p.get("predicate_key") or p.get("description")
             ][:2]
 
-        return expand_query(search_term, max_expansions=max_queries - 1, context_terms=context_terms)
+        queries = expand_query(search_term, max_expansions=max_queries - 1, context_terms=context_terms)
+        # Append issue-derived terms as extra queries (separate, not concatenated)
+        for it in issue_terms:
+            if it not in queries:
+                queries.append(it)
+        return queries
 
     def _candidate_files_for_lead(
         self,
@@ -1923,7 +2007,12 @@ class RLMEngine:
 
         Prioritizes: issue-linked evidence gaps > new/unread docs >
         higher salience > unresolved card flags.
+        Returns [] for assertion-backed result sets — those are already extracted.
         """
+        # Assertion-backed results have line_num=0; skip deep-read
+        if results.hits and all(h.line_num == 0 for h in results.hits):
+            return []
+
         # Get files sorted by max hit score (existing behavior)
         top_files = sorted(
             results.by_file().keys(),
@@ -1982,6 +2071,31 @@ class RLMEngine:
 
                 # Build issue-aware queries with expansion
                 queries = self._build_lead_queries(lead, lead.focus_issue_id)
+
+                # Hot-path: if all documents already ingested, search cached
+                # assertions first — avoids redundant raw file grep.
+                # Hot-path: if all documents already ingested AND assertions
+                # provide sufficient coverage (>=3 hits), use them instead of raw
+                # grep. Below the threshold, fall through to repo search so we
+                # don't suppress contradictory evidence from a single stale match.
+                _ASSERTION_MIN_HITS = 3
+                if state.findings.get("all_documents_ingested"):
+                    cached = self._search_cached_assertions(
+                        queries, issue_id=lead.focus_issue_id,
+                    )
+                    if cached and len(cached.hits) >= _ASSERTION_MIN_HITS:
+                        results = cached
+                        state.searches_performed += 1
+                        self._emit_step(
+                            state, StepType.FINDING,
+                            f"Found {len(results.hits)} assertion matches for: {lead.description}",
+                        )
+                        await self._analyze_search_results(state, repo, results, lead)
+                        _adp_post = getattr(state, "_matter_adapter", None)
+                        if _adp_post is not None and _adp_post.is_stop_requested():
+                            return
+                        state.mark_lead_investigated(lead.id, f"Found {len(results.hits)} assertion matches")
+                        return
 
                 # Candidate-first: try memory-seeded file list before full repo
                 candidates = self._candidate_files_for_lead(state, repo, lead)
@@ -2130,7 +2244,12 @@ class RLMEngine:
                 search_results=results_text,
             )
             # Use FLASH for analysis
-            response = await self.client.complete(prompt, tier=ModelTier.FLASH, json_mode=True)
+            response = await self.client.complete(
+                prompt,
+                tier=ModelTier.FLASH,
+                json_mode=True,
+                usage_label="search_analysis",
+            )
             analysis = self._parse_json_safe(response, {
                 "key_facts": [],
                 "new_leads": [],
@@ -2573,6 +2692,7 @@ class RLMEngine:
                 state, StepType.READING,
                 f"All {len(all_files)} documents already ingested — using cached intelligence",
             )
+            state.findings["all_documents_ingested"] = True
             return
 
         # Score new files by query relevance: filename keywords + document type priority.
@@ -2634,6 +2754,10 @@ class RLMEngine:
         await self._batch_deep_read(
             state, repo, file_paths, focus_issue_id=focus_issue_id
         )
+        # Only mark fully ingested if the run was not stopped mid-batch
+        _post_adapter = getattr(state, "_matter_adapter", None)
+        if _post_adapter is None or not _post_adapter.is_stop_requested():
+            state.findings["all_documents_ingested"] = True
 
     async def _batch_profile(
         self,
@@ -2760,7 +2884,12 @@ Return:
 }}"""
 
             state.llm_calls_required += 1
-            response = await self.client.complete(prompt, tier=ModelTier.LITE, json_mode=True)
+            response = await self.client.complete(
+                prompt,
+                tier=ModelTier.LITE,
+                json_mode=True,
+                usage_label="document_profile",
+            )
             analysis = self._parse_json_safe(response, {
                 "doc_type": "other",
                 "doc_source_role": "unknown",
@@ -2963,7 +3092,12 @@ Return:
             )
 
             # Use LITE for bulk reading; JSON mode forces valid JSON output
-            response = await self.client.complete(prompt, tier=ModelTier.LITE, json_mode=True)
+            response = await self.client.complete(
+                prompt,
+                tier=ModelTier.LITE,
+                json_mode=True,
+                usage_label="document_deep_read",
+            )
 
             analysis = self._parse_json_safe(response, {
                 "key_facts": [],
@@ -3485,56 +3619,17 @@ Return:
         facts = self._sort_facts_by_trust(facts)
         findings_text = "\n".join(f"• {fact}" for fact in facts[:75])
 
-        # Get citations with verification status
-        citations_text = state.get_citations_formatted()
+        # Store citations and entities as structured metadata for UI panels.
+        state.findings["metadata_citations"] = state.get_citations_formatted()
+        state.findings["metadata_entities"] = state.get_entities_formatted()
 
-        # Get entity summary
-        entities_text = state.get_entities_formatted()
-
-        # Build source-role calibration from matter model (SO-5)
-        source_calibration = self._build_source_calibration(state)
-
-        # Build advocacy-only gate block (SO-5): issues with no operative/authoritative
-        # support get a mandatory hedging instruction at the top of the synthesis prompt.
-        advocacy_gate_block = self._build_advocacy_gate_block()
-
-        # Build quantitative reconciliation summary (SO-6)
-        quant_summary = self._build_quant_summary()
-
-        # Build structured gap summary (SO-7) — gaps must be in the prompt so the
-        # LLM surfaces them in the Gaps & Limitations section, not silently ignores them.
-        gap_summary = self._build_gap_summary()
-
-        # Build typed assertion relationship block (SO-2) — typed assertions with
-        # subject/predicate/object from the assertion graph, so the LLM reasons about
-        # explicit structured relationships, not just prose text.
-        structured_relationships = self._build_structured_relationships()
-
-        # Build per-issue evidence coverage summary (SO-4) — shows which claims are
-        # well-supported vs. proof-gap-exposed so the synthesis reflects issue strengths.
-        issue_coverage = self._build_issue_coverage_summary()
-
-        # Build decision-context framing block — influences output emphasis without
-        # altering the record model (Priority 1: decision-context overlays).
-        decision_context_block = self._build_decision_context_block()
+        # Dynamically assemble the context packet — only include sections that
+        # have real content. PRO gets exactly what's useful, nothing empty.
+        context_packet = await self._assemble_context_packet(state, findings_text)
 
         prompt = SYNTHESIS_PROMPT.format(
             query=state.query,
-            docs_analyzed=state.documents_read,
-            searches=state.searches_performed,
-            citation_count=len(state.citations),
-            max_depth=state.max_depth_reached,
-            hypothesis=state.hypothesis or "No specific hypothesis formed",
-            advocacy_gate_block=advocacy_gate_block,
-            source_calibration=source_calibration,
-            decision_context_block=decision_context_block,
-            quant_summary=quant_summary,
-            issue_coverage=issue_coverage,
-            gap_summary=gap_summary,
-            structured_relationships=structured_relationships or "No typed relationships extracted.",
-            entities=entities_text or "No entities identified",
-            findings=findings_text or "No specific findings accumulated",
-            citations=citations_text or "No citations collected",
+            context_packet=context_packet,
         )
 
         # Synthesis cache (SO-1): same prompt → skip PRO LLM call on warm runs.
@@ -3554,7 +3649,11 @@ Return:
         else:
             # Use PRO for final synthesis
             state.llm_calls_required += 1
-            response = await self.client.complete(prompt, tier=ModelTier.PRO)
+            response = await self.client.complete(
+                prompt,
+                tier=ModelTier.PRO,
+                usage_label="synthesis",
+            )
             if self._matter_model is not None:
                 try:
                     self._matter_model.cache.put("synthesis", _syn_key, response)
@@ -3984,6 +4083,22 @@ Return:
             ]
             lines = [f"Issue Focus (SO-4 — prioritize facts addressing these elements):"]
             lines.append(f"  Issue: \"{title}\"")
+
+            # Surface current coverage state so the strategist/lead-gen LLM
+            # sees what's already supported vs. what needs more evidence.
+            try:
+                ps = self._matter_model.proof_state.get(focus_issue_id)
+                if ps:
+                    support = ps.get("support_score") or 0
+                    coverage = ps.get("coverage_fraction") or 0
+                    lines.append(f"  Current support: {support:.0%} | Coverage: {coverage:.0%}")
+                    if ps.get("has_proof_gap"):
+                        lines.append("  ⚠ PROOF GAP: at least one required element has no evidence")
+                    if ps.get("advocacy_only"):
+                        lines.append("  ⚠ ADVOCACY-ONLY: all supporting evidence is from advocacy sources")
+            except Exception:
+                pass  # proof state unavailable; continue without it
+
             for desc in pred_descs:
                 lines.append(f"  Element to prove: \"{desc}\"")
 
@@ -4013,16 +4128,16 @@ Return:
 
     def _enrich_search_term_with_issue_context(
         self, search_term: str, focus_issue_id: str
-    ) -> str:
-        """Enrich a search term with the issue's first open predicate keywords (SO-4).
+    ) -> list[str]:
+        """Return additional grep terms derived from the issue's predicates (SO-4).
 
-        Biases retrieval toward documents relevant to the issue's proof elements,
-        not just surface query-token matches. Predicate description is preferred
-        over issue title for maximum specificity. Returns the original search_term
-        unchanged on any error (enrichment is advisory, never blocks search).
+        Returns a list of independent search phrases drawn from predicate
+        descriptions or the issue title. Each phrase is grep-compatible (no
+        boolean operators). Returns [] on any error — enrichment is advisory,
+        never blocks search.
         """
         if self._matter_model is None:
-            return search_term
+            return []
         try:
             predicates = self._matter_model.issues.get_predicates(focus_issue_id, limit=1)
             if predicates:
@@ -4038,10 +4153,10 @@ Return:
             if kws:
                 enrichment = " ".join(kws)
                 if enrichment.lower() not in search_term.lower():
-                    return f"{search_term} {enrichment}"
+                    return [enrichment]
         except Exception:
             pass  # enrichment is advisory; never block search
-        return search_term
+        return []
 
     def _build_issue_profiles(self, issue_ids: list[str]) -> "dict[str, str]":
         """Build text profiles for SO-4 semantic attribution gate.
@@ -4205,6 +4320,124 @@ Return:
             return self._TRUST_RANK.get(tag, 99)
 
         return sorted(facts, key=_rank)
+
+    async def _assemble_context_packet(
+        self, state: InvestigationState, findings_text: str
+    ) -> str:
+        """Dynamically build the context packet for synthesis.
+
+        Uses a LITE call to decide which sections are relevant to the query.
+        Advocacy gate and evidence are always included (non-negotiable).
+        Everything else is selected by the LLM based on the query.
+        """
+        # Gather all candidate sections (label → content).
+        # Only sections with real content are candidates.
+        candidates: dict[str, str] = {}
+
+        source_cal = self._build_source_calibration(state)
+        if source_cal and source_cal.strip():
+            candidates["source_calibration"] = (
+                "Source Calibration (read before analyzing facts):\n" + source_cal
+            )
+
+        decision_ctx = self._build_decision_context_block()
+        if decision_ctx and decision_ctx.strip():
+            candidates["decision_context"] = decision_ctx.rstrip()
+
+        entities_text = state.get_entities_formatted()
+        if entities_text and entities_text.strip():
+            candidates["entities"] = "Key Entities Identified:\n" + entities_text
+
+        relationships = self._build_structured_relationships()
+        if relationships and relationships.strip():
+            candidates["relationships"] = (
+                "Structured Relationships (subject-predicate-object):\n" + relationships
+            )
+
+        quant = self._build_quant_summary()
+        if quant and quant.strip():
+            candidates["quantitative"] = "Quantitative Summary:\n" + quant
+
+        citations_text = state.get_citations_formatted()
+        if citations_text and citations_text.strip():
+            candidates["citations"] = "Documentary Citations:\n" + citations_text
+
+        # Use LITE to decide which candidate sections are relevant to the query.
+        selected_keys = list(candidates.keys())  # default: include all
+        if candidates:
+            try:
+                selected_keys = await self._select_relevant_sections(
+                    state.query, candidates
+                )
+            except Exception:
+                pass  # on failure, include everything — safe default
+
+        # Assemble the final packet.
+        sections: list[str] = []
+
+        # Advocacy gate — always first, non-negotiable SO-5 behavioral gate
+        advocacy_gate = self._build_advocacy_gate_block()
+        if advocacy_gate.strip():
+            sections.append(advocacy_gate.rstrip())
+
+        # Selected sections in a stable order
+        _ORDER = [
+            "source_calibration", "decision_context", "entities",
+            "relationships", "quantitative", "citations",
+        ]
+        for key in _ORDER:
+            if key in selected_keys and key in candidates:
+                sections.append(candidates[key])
+
+        # Evidence — always included (core input, non-negotiable)
+        sections.append(
+            "Evidence Gathered:\n"
+            + (findings_text or "No specific findings accumulated")
+        )
+
+        return "\n\n".join(sections)
+
+    async def _select_relevant_sections(
+        self, query: str, candidates: dict[str, str]
+    ) -> list[str]:
+        """LITE call: given the query, decide which context sections are useful.
+
+        Returns the keys from candidates that should be included in the
+        synthesis context packet.
+        """
+        # Build a brief summary of each candidate for the selector
+        summaries = []
+        for key, content in candidates.items():
+            # First 150 chars as preview
+            preview = content[:150].replace("\n", " ")
+            summaries.append(f"- {key}: {preview}...")
+
+        prompt = (
+            "You are preparing a context packet for a senior attorney who will "
+            "analyze evidence and write a legal memorandum.\n\n"
+            f"Query: {query}\n\n"
+            "Available context sections:\n"
+            + "\n".join(summaries)
+            + "\n\nWhich sections are relevant to answering this query? "
+            "Return ONLY a JSON array of the relevant section keys. "
+            "Include a section if it would help the attorney reason about "
+            "the query. Exclude sections that are irrelevant or would be noise.\n"
+            "Example: [\"entities\", \"citations\"]"
+        )
+
+        response = await self.client.complete(
+            prompt,
+            tier=ModelTier.LITE,
+            json_mode=True,
+            usage_label="section_selection",
+        )
+
+        import json as _json
+        selected = _json.loads(response)
+        if isinstance(selected, list):
+            # Validate keys
+            return [k for k in selected if k in candidates]
+        return list(candidates.keys())  # fallback
 
     def _build_source_calibration(self, state: InvestigationState) -> str:
         """
@@ -4680,7 +4913,12 @@ Return:
         lines = "\n".join(f"{i}: {t[:100]}" for i, t in enumerate(fact_texts))
         prompt = SPO_RETRY_PROMPT.format(facts=lines)
         try:
-            response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+            response = await self.client.complete(
+                prompt,
+                tier=ModelTier.FLASH,
+                json_mode=True,
+                usage_label="spo_retry",
+            )
             # Direct parse — response must be a JSON array; _parse_json_safe is dict-only
             text = (response or "").strip()
             if "```" in text:
@@ -4807,7 +5045,12 @@ Return:
             text=text[:5000],  # Limit text size
         )
 
-        response = await self.client.complete(prompt, tier=ModelTier.LITE, json_mode=True)
+        response = await self.client.complete(
+            prompt,
+            tier=ModelTier.LITE,
+            json_mode=True,
+            usage_label="entity_extraction",
+        )
 
         defaults = {
             "people": [],
@@ -4852,7 +5095,11 @@ Return:
             context2=context2,
         )
 
-        response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+        response = await self.client.complete(
+            prompt,
+            tier=ModelTier.FLASH,
+            usage_label="contradiction_analysis",
+        )
 
         defaults = {
             "is_contradiction": False,
@@ -4914,7 +5161,11 @@ Return:
             events=events_text or "No events found",
         )
 
-        response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+        response = await self.client.complete(
+            prompt,
+            tier=ModelTier.FLASH,
+            usage_label="timeline_analysis",
+        )
 
         defaults = {
             "chronology": [],
@@ -4962,7 +5213,11 @@ Return:
             contradicting_evidence="\n".join(f"- {e}" for e in contradicting[:5]) or "No contradicting evidence found",
         )
 
-        response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+        response = await self.client.complete(
+            prompt,
+            tier=ModelTier.FLASH,
+            usage_label="evidence_classification",
+        )
 
         defaults = {
             "claim": claim,
@@ -5000,6 +5255,7 @@ Return:
         """
         # Calculate based on multiple factors
         factors = {}
+        budget = self._get_research_profile(state)
 
         # Leads completion
         total_leads = len(state.leads)
@@ -5007,7 +5263,9 @@ Return:
         factors["leads_complete"] = (investigated_leads / max(total_leads, 1)) * 100
 
         # Depth progress
-        factors["depth_progress"] = (state.max_depth_reached / self.config.max_depth) * 100
+        factors["depth_progress"] = (
+            state.max_depth_reached / max(budget.max_depth, 1)
+        ) * 100
 
         # Citation coverage
         target_citations = 10  # Minimum target
@@ -5060,6 +5318,7 @@ Return:
             "id": state.id,
             "query": state.query,
             "status": state.status,
+            "research_mode": state.research_mode,
             "started_at": state.started_at,
             "documents_read": state.documents_read,
             "searches_performed": state.searches_performed,
@@ -5111,24 +5370,20 @@ Return:
 
     def _calculate_effective_depth(self, state: InvestigationState) -> int:
         """Calculate effective max depth based on investigation progress."""
+        budget = self._get_research_profile(state)
         if not self.config.adaptive_depth:
-            return self.config.max_depth
+            return budget.max_depth
 
-        base_depth = self.config.max_depth
+        base_depth = budget.max_depth
 
         # Reduce depth if we have many citations already
-        if len(state.citations) >= self.config.depth_citation_threshold:
-            return max(self.config.min_depth, base_depth - 2)
+        if len(state.citations) >= budget.depth_citation_threshold:
+            return max(budget.min_depth, base_depth - 2)
 
         # Reduce depth if confidence is high
         confidence = state.get_confidence_score()
         if confidence["score"] >= 70:
-            return max(self.config.min_depth, base_depth - 1)
-
-        # Increase depth if we have few leads
-        pending_leads = len(state.get_pending_leads())
-        if pending_leads > 10:
-            return min(base_depth + 1, 7)  # Cap at 7
+            return max(budget.min_depth, base_depth - 1)
 
         return base_depth
 
@@ -5137,39 +5392,21 @@ Return:
 
         Uses four criteria:
         1. Repository size - small repos terminate faster
-        2. Query complexity - simpler queries terminate faster
+        2. Research mode - simpler modes terminate faster
         3. Diminishing returns - stop if recent iterations add few new facts
         4. Verified citations - keep this requirement (per user preference)
 
         Returns:
             (should_continue, reason) - reason explains why we stopped/continue
         """
+        budget = self._get_research_profile(state)
         # Always continue if minimum criteria not met
-        if state.max_depth_reached < self.config.min_depth:
+        if state.max_depth_reached < budget.min_depth:
             return True, "Building minimum evidence base"
 
         confidence = state.get_confidence_score()
-
-        # Get query complexity thresholds based on query type
-        query_type = state.query_classification.get("type", "unknown") if state.query_classification else "unknown"
-        complexity = state.query_classification.get("complexity", 3) if state.query_classification else 3
-
-        # Define thresholds per query type (confidence_threshold, min_citations)
-        thresholds = {
-            "factual": (60, 5),      # Simple fact lookup - terminate quickly
-            "procedural": (65, 6),   # Process/timeline questions
-            "analytical": (75, 8),   # Deeper analysis needed
-            "comparative": (80, 10), # Need multiple perspectives
-            "evaluative": (85, 12),  # Most thorough investigation
-            "unknown": (70, 7),      # Default middle ground
-        }
-
-        conf_threshold, min_citations = thresholds.get(query_type, (70, 7))
-
-        # Adjust thresholds based on complexity (1-5 scale)
-        # Lower complexity = lower threshold, higher complexity = higher threshold
-        complexity_adjustment = (complexity - 3) * 5  # -10 to +10 adjustment
-        conf_threshold = max(50, min(90, conf_threshold + complexity_adjustment))
+        conf_threshold = budget.confidence_threshold
+        min_citations = budget.min_citations
 
         # NEW: Adjust thresholds for small document sets
         # With fewer documents, we need fewer citations and can terminate earlier
@@ -5180,9 +5417,14 @@ Return:
             min_citations = min(min_citations, self._doc_count)
             conf_threshold = max(45, conf_threshold - 10)
 
-        # Check 1: Query complexity-aware confidence check
+        mode_label = self._research_mode_label(budget.mode)
+
+        # Check 1: Mode-aware confidence check
         if confidence["score"] >= conf_threshold and len(state.citations) >= min_citations:
-            return False, f"Sufficient evidence for {query_type} query (confidence: {confidence['score']:.0f}%, {len(state.citations)} citations)"
+            return False, (
+                f"Sufficient evidence for {mode_label} mode "
+                f"(confidence: {confidence['score']:.0f}%, {len(state.citations)} citations)"
+            )
 
         # Check 2: For small repos, terminate if we've read all documents
         if self._doc_count > 0 and state.documents_read >= self._doc_count:
@@ -5191,21 +5433,32 @@ Return:
 
         # Check 3: Diminishing returns - stop if last 2 iterations added < 3 facts each
         # For small repos, be more aggressive (< 2 facts)
-        fact_threshold = 2 if self._doc_count <= 5 else 3
+        fact_threshold = budget.diminishing_returns_fact_threshold
         if len(state.facts_per_iteration) >= 2:
             recent_facts = state.facts_per_iteration[-2:]
             if all(f < fact_threshold for f in recent_facts):
                 # Diminishing returns detected - but only stop if we have SOME evidence
-                min_citations_for_stop = 2 if self._doc_count <= 5 else 3
-                if len(state.citations) >= min_citations_for_stop and confidence["score"] >= 40:
-                    return False, f"Diminishing returns (last 2 iterations: {recent_facts[0]}, {recent_facts[1]} new facts)"
+                min_citations_for_stop = budget.diminishing_returns_min_citations
+                if self._doc_count <= 5:
+                    min_citations_for_stop = min(min_citations_for_stop, max(2, self._doc_count))
+                if (
+                    len(state.citations) >= min_citations_for_stop
+                    and confidence["score"] >= budget.diminishing_returns_min_confidence
+                ):
+                    return False, (
+                        f"Diminishing returns in {mode_label} mode "
+                        f"(last 2 iterations: {recent_facts[0]}, {recent_facts[1]} new facts)"
+                    )
 
         # Check 4: Extreme diminishing returns - 3 iterations with 0-1 facts each
         if len(state.facts_per_iteration) >= 3:
             recent_facts = state.facts_per_iteration[-3:]
-            if all(f <= 1 for f in recent_facts):
+            if all(f <= budget.very_low_productivity_max_facts for f in recent_facts):
                 # Very low productivity - stop regardless
-                return False, f"Very low productivity (last 3 iterations: {recent_facts} new facts each)"
+                return False, (
+                    f"Very low productivity in {mode_label} mode "
+                    f"(last 3 iterations: {recent_facts} new facts each)"
+                )
 
         # Check if we have pending leads worth investigating
         pending = state.get_pending_leads()
@@ -5213,7 +5466,10 @@ Return:
         if not high_priority:
             return False, "No high-priority leads remaining"
 
-        return True, f"Continuing investigation ({len(high_priority)} leads, confidence: {confidence['score']:.0f}%)"
+        return True, (
+            f"Continuing {mode_label} investigation "
+            f"({len(high_priority)} leads, confidence: {confidence['score']:.0f}%)"
+        )
 
     def _extract_search_term(self, lead_description: str) -> str:
         """Extract a SINGLE high-value search term from lead description.
@@ -5505,6 +5761,8 @@ Return:
         self,
         checkpoint_path: str | Path,
         original_run_id: "str | None" = None,
+        follow_up_query: "str | None" = None,
+        research_mode: "str | None" = None,
     ) -> InvestigationState:
         """
         Resume investigation from checkpoint.
@@ -5514,11 +5772,33 @@ Return:
             original_run_id: The interrupted run_session.id to check for a pending
                 redirect (set by user via request_redirect() after stop). If present
                 and redirect_requested=1, the redirect is propagated to the new run.
+            follow_up_query: Optional new user query to continue from the checkpoint
+                with a refined objective while keeping prior state.
 
         Returns:
             InvestigationState with completed investigation
         """
         state = InvestigationState.load_checkpoint(checkpoint_path)
+        previous_mode = normalize_research_mode(getattr(state, "research_mode", None))
+        state.research_mode = normalize_research_mode(
+            research_mode,
+            default=previous_mode,
+        )
+        mode_changed = state.research_mode != previous_mode
+        _follow_up_query = (follow_up_query or "").strip()
+        if _follow_up_query:
+            _prior_query = state.query
+            state.findings.setdefault("query_history", [])
+            state.findings["query_history"].append(_prior_query)
+            state.findings["continued_from_query"] = _prior_query
+            state.findings["follow_up_query"] = _follow_up_query
+            state.query = _follow_up_query
+            state.add_lead(
+                description=f"Follow-up query: {_follow_up_query}",
+                source="follow_up_query",
+                priority=1.0,
+                search_term=_follow_up_query,
+            )
         # MEDIUM r72/r74: scrub any stale final_output from non-terminal checkpoints.
         # Checkpoints are written BEFORE interrupt() flips state.status (state.py:1496),
         # so a checkpoint from an interrupted run serializes its pre-interrupt status
@@ -5540,6 +5820,7 @@ Return:
         # HIGH r76: track whether this call actually won the CAS so the except block
         # can gate next_action/redirect restoration on only the winner.
         _claimed = False
+        _usage_ctx = None
 
         try:
             # HIGH r75/r76: Concurrent-resume CAS — atomically claim the checkpoint by
@@ -5567,8 +5848,14 @@ Return:
                 run_id = self._matter_model.start_run(
                     f"Resume: {state.query[:120]}",
                     resumed_from=original_run_id,
+                    research_mode=state.research_mode,
                 )
                 state._matter_adapter = MatterRuntimeAdapter(self._matter_model, run_id)
+                _usage_ctx = self.client.begin_usage_context(
+                    matter_id=self._matter_model.matter_id,
+                    run_id=run_id,
+                    recorder=self._matter_model.record_llm_call,
+                )
 
                 # Propagate the captured redirect to the new run (SO-3)
                 if original_run_id is not None and _orig_redirect_issue is not None:
@@ -5581,6 +5868,23 @@ Return:
                         pass
             else:
                 state._matter_adapter = NullMatterAdapter()
+
+            if mode_changed:
+                state.findings["continued_from_research_mode"] = previous_mode
+                state.findings["research_mode_override"] = state.research_mode
+                self._emit_step(
+                    state,
+                    StepType.THINKING,
+                    "Research mode changed from "
+                    f"{self._research_mode_label(previous_mode)} to "
+                    f"{self._research_mode_label(state.research_mode)}",
+                )
+            else:
+                self._emit_step(
+                    state,
+                    StepType.THINKING,
+                    f"Research mode: {self._research_mode_label(state.research_mode)}",
+                )
 
             # Continue investigation loop if not already complete
             if state.status not in ("completed", "failed"):
@@ -5754,6 +6058,9 @@ Return:
                     except Exception:
                         pass  # Best-effort; manual cleanup may be needed
             raise
+        finally:
+            if _usage_ctx is not None:
+                self.client.end_usage_context(_usage_ctx)
 
         return state
 
@@ -5834,7 +6141,11 @@ Respond in JSON format:
 
 If not compound, return the original query as a single sub_query with priority 1.0."""
 
-        response = await self.client.complete(prompt, tier=ModelTier.FLASH)
+        response = await self.client.complete(
+            prompt,
+            tier=ModelTier.FLASH,
+            usage_label="query_decomposition",
+        )
 
         defaults = {
             "is_compound": False,

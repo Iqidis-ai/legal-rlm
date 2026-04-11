@@ -22,6 +22,7 @@ class UIBackend(ABC):
         repo_path: str,
         query: str,
         matter_id: Optional[str] = None,
+        research_mode: Optional[str] = None,
     ) -> dict:
         """Start an investigation. Returns {matter_id, run_id, job_id}."""
         ...
@@ -103,7 +104,13 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
-    async def resume_run(self, matter_id: str, run_id: str) -> dict:
+    async def resume_run(
+        self,
+        matter_id: str,
+        run_id: str,
+        follow_up_query: Optional[str] = None,
+        research_mode: Optional[str] = None,
+    ) -> dict:
         """Resume an interrupted run from its checkpoint. Returns {new_run_id, status}."""
         ...
 
@@ -124,10 +131,35 @@ class UIBackend(ABC):
 
     @abstractmethod
     async def get_quant_summary(self, matter_id: str) -> dict:
-        """Return {payment_reconciliation, damages_waterfall} for SO-6 panel."""
+        """Return quant summary payloads for the SO-6 panel."""
         ...
 
     @abstractmethod
     async def list_assumptions(self, matter_id: str, limit: int = 30) -> list[dict]:
         """Return active/all assumptions for the matter (Gap 3)."""
+        ...
+
+    @abstractmethod
+    async def get_timeline(self, matter_id: str, limit: int = 80) -> list[dict]:
+        """Return timeline events for the matter."""
+        ...
+
+    @abstractmethod
+    async def get_evidence_matrix(self, matter_id: str) -> dict:
+        """Return issue x source evidence coverage data."""
+        ...
+
+    @abstractmethod
+    async def get_communication_map(self, matter_id: str) -> dict:
+        """Return actor/document communication graph data."""
+        ...
+
+    @abstractmethod
+    async def list_llm_calls(
+        self,
+        matter_id: str,
+        run_id: Optional[str] = None,
+        limit: int = 120,
+    ) -> list[dict]:
+        """Return recent persisted LLM call rows for analytics."""
         ...

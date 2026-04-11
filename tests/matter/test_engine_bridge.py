@@ -1462,6 +1462,59 @@ def test_stopped_lead_remains_pending(model):
     assert adapter.is_stop_requested()
 
 
+def test_investigate_lead_uses_cached_assertions_when_all_docs_ingested(model):
+    """Hot-path leads must search cached assertions before raw repo grep."""
+    import asyncio
+    from unittest.mock import MagicMock
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.rlm.state import InvestigationState, Lead
+
+    run_id = model.start_run("cached assertion search")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_fact(
+        "Katie Shiels asks whether the dated resignation letters could be ineffective because of manifest error.",
+        document_id="emails/project_acorn_thread.txt",
+    )
+    adapter.record_fact(
+        "The resignation letters were dated retroactively, raising manifest error concerns.",
+        document_id="emails/project_acorn_thread.txt",
+    )
+    adapter.record_fact(
+        "Legal counsel flagged manifest error as a potential ground for invalidating the resignations.",
+        document_id="memos/legal_analysis.txt",
+    )
+
+    engine = RLMEngine(gemini_client=MagicMock(), config=RLMConfig(), matter_model=model)
+    captured: dict = {}
+
+    async def fake_analyze(state, repo, results, lead):
+        captured["results"] = results
+
+    engine._analyze_search_results = fake_analyze
+
+    mock_repo = MagicMock()
+    mock_repo.search = MagicMock(side_effect=AssertionError("repo.search should not run when cached assertions match"))
+    mock_repo.search_multi = MagicMock(side_effect=AssertionError("repo.search_multi should not run when cached assertions match"))
+
+    lead = Lead.create(
+        description="Search for manifest error",
+        source="test",
+        search_term="manifest error",
+    )
+    state = InvestigationState(id="hot-hit", query="what is the main issue here?", repository_path="/tmp/test")
+    state._matter_adapter = adapter
+    state.findings["all_documents_ingested"] = True
+    state.leads.append(lead)
+
+    asyncio.run(engine._investigate_lead(state, mock_repo, lead))
+
+    results = captured.get("results")
+    assert results is not None, "_investigate_lead must analyze cached assertion hits"
+    assert getattr(results, "_from_assertion_store", False) is True
+    assert results.hits, "Cached assertion search must yield at least one pseudo hit"
+    assert "manifest error" in results.hits[0].match_text.lower()
+
+
 # ---------------------------------------------------------------------------
 # SO-4: issue_type_map handles null/non-string title + all 10 IssueType values
 # ---------------------------------------------------------------------------
@@ -1562,6 +1615,161 @@ def test_orient_full_issue_type_map(model):
     for title, _, expected_type in all_types:
         assert issue_map.get(title) == expected_type.value, \
             f"Issue '{title}' expected type {expected_type.value}, got {issue_map.get(title)}"
+
+
+# ---------------------------------------------------------------------------
+# Structured extraction: JSON mode must stay enabled for model-parsed calls
+# ---------------------------------------------------------------------------
+
+def test_orient_requests_json_mode():
+    """_orient() must force JSON mode for the structured plan response."""
+    import asyncio
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+    from irys.core.repository import RepositoryStats
+    from irys.rlm.state import InvestigationState
+
+    mock_client = MagicMock()
+    mock_client.complete = AsyncMock(return_value=json.dumps({}))
+    engine = RLMEngine(
+        gemini_client=mock_client,
+        config=RLMConfig(enable_matter_model=False),
+        matter_model=None,
+    )
+
+    repo = MagicMock()
+    repo.get_stats.return_value = RepositoryStats(
+        total_files=1,
+        total_size_bytes=512,
+        files_by_type={".txt": 1},
+        folders=["."],
+    )
+    repo.get_structure.return_value = {"(root)": 1}
+    repo.list_files.return_value = []
+
+    state = InvestigationState(
+        id="test-orient-json-mode",
+        query="when is payment due",
+        repository_path=".",
+    )
+
+    asyncio.run(engine._orient(state, repo))
+
+    assert mock_client.complete.await_count == 1
+    assert mock_client.complete.await_args.kwargs["json_mode"] is True
+
+
+def test_analyze_search_results_requests_json_mode(model):
+    """_analyze_search_results() must force JSON mode for structured key_facts output."""
+    import asyncio
+    import json
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+    from irys.core.search import SearchHit, SearchResults
+    from irys.rlm.state import InvestigationState, Lead
+
+    mock_client = MagicMock()
+    mock_client.complete = AsyncMock(return_value=json.dumps({}))
+    engine = RLMEngine(
+        gemini_client=mock_client,
+        config=RLMConfig(enable_matter_model=False),
+        matter_model=None,
+    )
+
+    repo = MagicMock()
+    repo.base_path = Path.cwd()
+    state = InvestigationState(
+        id="test-search-json-mode",
+        query="when is payment due",
+        repository_path=str(Path.cwd()),
+    )
+    lead = Lead.create(description="Payment due", source="orient", search_term="payment due")
+    results = SearchResults(
+        query="payment due",
+        hits=[
+            SearchHit(
+                file_path=str(Path.cwd() / "contract.txt"),
+                filename="contract.txt",
+                page_num=1,
+                line_num=1,
+                match_text="Payment is due on January 15.",
+                score=1.0,
+            )
+        ],
+        files_searched=1,
+        total_matches=1,
+    )
+
+    asyncio.run(engine._analyze_search_results(state, repo, results, lead))
+
+    assert mock_client.complete.await_count >= 1
+    assert all(call.kwargs.get("json_mode") is True for call in mock_client.complete.await_args_list)
+
+
+def test_deep_read_document_requests_json_mode():
+    """_deep_read_document() must force JSON mode for structured deep-read output."""
+    import asyncio
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+    from irys.core.reader import DocumentContent, PageContent
+    from irys.rlm.state import InvestigationState
+
+    mock_client = MagicMock()
+    mock_client.complete = AsyncMock(return_value=json.dumps({
+        "key_facts": [],
+        "quotes": [],
+        "entities": {"people": [], "companies": [], "dates": [], "amounts": []},
+        "numeric_facts": [],
+        "fact_relationships": [],
+        "connections": [],
+        "concerns": [],
+    }))
+    engine = RLMEngine(
+        gemini_client=mock_client,
+        config=RLMConfig(enable_matter_model=False),
+        matter_model=None,
+    )
+
+    repo = MagicMock()
+    repo.base_path = "."
+    repo.read.return_value = DocumentContent(
+        path="contract.txt",
+        filename="contract.txt",
+        file_type="txt",
+        page_count=1,
+        pages=[PageContent(page_num=1, text="Payment is due on January 15.")],
+        total_chars=len("Payment is due on January 15."),
+    )
+    state = InvestigationState(
+        id="test-deep-read-json-mode",
+        query="when is payment due",
+        repository_path=".",
+    )
+
+    asyncio.run(engine._deep_read_document(state, repo, "contract.txt"))
+
+    assert mock_client.complete.await_count == 1
+    assert mock_client.complete.await_args.kwargs["json_mode"] is True
+
+
+def test_retry_spo_extraction_requests_json_mode():
+    """_retry_spo_extraction() must force JSON mode for structured SPO output."""
+    import asyncio
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_client = MagicMock()
+    mock_client.complete = AsyncMock(return_value=json.dumps([]))
+    engine = RLMEngine(
+        gemini_client=mock_client,
+        config=RLMConfig(enable_matter_model=False),
+        matter_model=None,
+    )
+
+    asyncio.run(engine._retry_spo_extraction(["Payment is due on January 15."]))
+
+    assert mock_client.complete.await_count == 1
+    assert mock_client.complete.await_args.kwargs["json_mode"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -1741,26 +1949,29 @@ def test_ledger_seq_no_cache_multiple_runs():
 
 
 # ---------------------------------------------------------------------------
-# InvestigationState serialization — query_classification + facts_per_iteration
-# + reasoning_trail (commits 21bbe3d, e86b9ff)
+# InvestigationState serialization — query_classification + research_mode +
+# facts_per_iteration + reasoning_trail
 # ---------------------------------------------------------------------------
 
 def test_investigation_state_serialization_roundtrip():
-    """to_dict() / from_dict() must preserve query_classification, facts_per_iteration,
-    and reasoning_trail without loss."""
+    """to_dict() / from_dict() must preserve serialized run controls and telemetry."""
     from irys.rlm.state import InvestigationState
 
     state = InvestigationState.create("Test query", "/repo")
+    state.research_mode = "sebih_special"
     state.query_classification = {"complexity": "high", "type": "analytical"}
     state.facts_per_iteration = [3, 5, 2, 0]
     state.reasoning_trail = [{"seq_no": 0, "summary": "Run started"}, {"seq_no": 1, "summary": "Searching"}]
+    state.llm_usage = {"request_count": 2, "estimated_cost_usd": 0.0123}
 
     data = state.to_dict()
     restored = InvestigationState.from_dict(data)
 
+    assert restored.research_mode == "sebih_special"
     assert restored.query_classification == {"complexity": "high", "type": "analytical"}
     assert restored.facts_per_iteration == [3, 5, 2, 0]
     assert restored.reasoning_trail == [{"seq_no": 0, "summary": "Run started"}, {"seq_no": 1, "summary": "Searching"}]
+    assert restored.llm_usage == {"request_count": 2, "estimated_cost_usd": 0.0123}
 
 
 def test_investigation_state_serialization_defaults():
@@ -1770,9 +1981,11 @@ def test_investigation_state_serialization_defaults():
     minimal = {"id": "abc123", "query": "test", "repository_path": "/repo"}
     state = InvestigationState.from_dict(minimal)
 
+    assert state.research_mode == "deep"
     assert state.query_classification is None
     assert state.facts_per_iteration == []
     assert state.reasoning_trail == []
+    assert state.llm_usage == {}
 
 
 # ---------------------------------------------------------------------------
@@ -1880,12 +2093,32 @@ def test_orientation_prompt_contains_priority_focus_instruction():
     )
 
 
+def test_expand_query_splits_boolean_terms_and_keeps_context_terms_separate():
+    """expand_query() must convert boolean-style planner output into literal grep terms."""
+    from irys.core.search import expand_query
+
+    expanded = expand_query(
+        '"manifest error" OR "effective resignation" AND "dated letters"',
+        context_terms=["corporate authority"],
+        max_expansions=5,
+    )
+
+    lowered = [q.lower() for q in expanded]
+    assert any("manifest error" == q for q in lowered)
+    assert any("effective resignation" == q for q in lowered)
+    assert any("dated letters" == q for q in lowered)
+    assert "corporate authority" in lowered, "Issue context must be a separate search term"
+    assert all(" or " not in q and " and " not in q for q in lowered), (
+        "Boolean operators must be stripped before grep search"
+    )
+
+
 def test_orientation_cache_version_bumped():
-    """_ORIENTATION_CACHE_VERSION must be '6' after target_documents + document card fields."""
+    """_ORIENTATION_CACHE_VERSION must be '7' after literal-query prompt guidance update."""
     from irys.rlm.engine import _ORIENTATION_CACHE_VERSION
-    assert _ORIENTATION_CACHE_VERSION == "6", (
-        "_ORIENTATION_CACHE_VERSION must be bumped to '6' after adding target_documents "
-        "to ORIENTATION_PROMPT and document card fields to DEEP_READ_PROMPT"
+    assert _ORIENTATION_CACHE_VERSION == "7", (
+        "_ORIENTATION_CACHE_VERSION must be bumped to '7' after updating ORIENTATION_PROMPT "
+        "to require literal grep-compatible search terms"
     )
 
 
@@ -1940,6 +2173,38 @@ def test_format_matter_context_no_priority_focus_when_weakest_issue_id_is_none()
     assert "PRIORITY FOCUS" not in result, (
         "_format_matter_context must NOT emit PRIORITY FOCUS when weakest_issue_id is None (SO-4 correctness)"
     )
+
+
+def test_synthesis_prompt_prioritizes_existing_evidence_before_gaps():
+    """Synthesis prompt uses dynamic context packet and deep legal reasoning identity.
+
+    The template has {query} and {context_packet} — all context sections are assembled
+    dynamically by _assemble_context_packet based on what data is actually available.
+    The prompt itself embodies a senior litigator identity for deep legal reasoning.
+    """
+    from irys.rlm.engine import SYNTHESIS_PROMPT
+
+    # Deep legal reasoning identity
+    assert "senior litigation partner" in SYNTHESIS_PROMPT
+    assert "Think like an experienced litigator" in SYNTHESIS_PROMPT
+
+    # Dynamic context packet — not hard-coded sections
+    assert "{context_packet}" in SYNTHESIS_PROMPT
+    # No hard-coded template vars for individual sections
+    assert "{citations}" not in SYNTHESIS_PROMPT
+    assert "{entities}" not in SYNTHESIS_PROMPT
+    assert "{findings}" not in SYNTHESIS_PROMPT
+    assert "{quant_summary}" not in SYNTHESIS_PROMPT
+    assert "{source_calibration}" not in SYNTHESIS_PROMPT
+
+    # Gaps, coverage, and investigation metrics belong to the strategist, not synthesis
+    assert "Known Gaps" not in SYNTHESIS_PROMPT
+    assert "Issue Coverage" not in SYNTHESIS_PROMPT
+    assert "Investigation Summary" not in SYNTHESIS_PROMPT
+
+    # Source-role treatment rules are in the prompt instructions (always relevant)
+    assert "[ADVOCACY]" in SYNTHESIS_PROMPT
+    assert "[OPERATIVE]" in SYNTHESIS_PROMPT
 
 
 # ---------------------------------------------------------------------------
@@ -2858,7 +3123,7 @@ def test_advocacy_gate_block_no_model():
 # ---------------------------------------------------------------------------
 
 def test_enrich_search_term_uses_predicate_keywords():
-    """Enrichment must append predicate keywords when issue has open predicates."""
+    """Enrichment must return predicate-based expansion terms as a list."""
     from irys.rlm.engine import RLMEngine
     from irys.matter.enums import IssueType
     model = MatterModel.open_in_memory()
@@ -2869,8 +3134,9 @@ def test_enrich_search_term_uses_predicate_keywords():
     engine._matter_model = model
 
     enriched = engine._enrich_search_term_with_issue_context("payment terms", iid)
-    assert enriched != "payment terms", "Enrichment must change the search term"
-    assert len(enriched) > len("payment terms"), "Enriched term must be longer"
+    assert isinstance(enriched, list), "Enrichment now returns list[str]"
+    assert len(enriched) >= 1, "Must produce at least one expansion term"
+    assert any("plaintiff" in t.lower() or "obligations" in t.lower() for t in enriched)
 
 
 def test_enrich_search_term_falls_back_to_issue_title():
@@ -2885,13 +3151,15 @@ def test_enrich_search_term_falls_back_to_issue_title():
     engine._matter_model = model
 
     enriched = engine._enrich_search_term_with_issue_context("email evidence", iid)
-    assert "fraudulent" in enriched.lower() or "inducement" in enriched.lower(), (
+    assert isinstance(enriched, list), "Enrichment now returns list[str]"
+    combined = " ".join(enriched).lower()
+    assert "fraudulent" in combined or "inducement" in combined, (
         "Fallback enrichment must include issue title words"
     )
 
 
 def test_enrich_search_term_no_duplicate_keywords():
-    """Enrichment must not duplicate keywords already in the search term."""
+    """Enrichment must not duplicate the search term itself."""
     from irys.rlm.engine import RLMEngine
     from irys.matter.enums import IssueType
     model = MatterModel.open_in_memory()
@@ -2901,21 +3169,22 @@ def test_enrich_search_term_no_duplicate_keywords():
     engine = RLMEngine.__new__(RLMEngine)
     engine._matter_model = model
 
-    # search_term already contains 'damages' — enrichment should not add redundant terms
-    # that are already present in the search term
+    # search_term already contains 'damages' — enrichment returns separate context terms
     enriched = engine._enrich_search_term_with_issue_context("damages calculation", iid)
-    # Either unchanged (all enrichment keywords already present) or extended with new context
-    assert enriched.startswith("damages calculation"), "Original term must be preserved as prefix"
+    assert isinstance(enriched, list), "Enrichment now returns list[str]"
+    # The original search term itself should NOT appear as an expansion term
+    for term in enriched:
+        assert term.lower() != "damages calculation", "Must not duplicate the original search term"
 
 
-def test_enrich_search_term_no_model_returns_unchanged():
-    """Without a matter model, enrichment must return the original search term."""
+def test_enrich_search_term_no_model_returns_empty():
+    """Without a matter model, enrichment must return empty list."""
     from irys.rlm.engine import RLMEngine
     engine = RLMEngine.__new__(RLMEngine)
     engine._matter_model = None
 
     result = engine._enrich_search_term_with_issue_context("payment default", "any-issue-id")
-    assert result == "payment default"
+    assert result == [], "No model → no expansion terms"
 
 
 # ---------------------------------------------------------------------------

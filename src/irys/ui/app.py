@@ -13,17 +13,20 @@ Architecture: in-process for local dev (InProcessBackend), HTTP for deployed ser
 
 import asyncio
 import concurrent.futures
+import html
 import os
 import pathlib
 import queue
 import shutil
 import threading
 import time
-from typing import Generator, Optional
+from collections import defaultdict
+from typing import Any, Generator, Optional
 
 import gradio as gr
 
 from .backends.in_process import InProcessBackend
+from ..rlm.state import normalize_research_mode
 
 # Dedicated thread pool for running async backend calls from sync Gradio callbacks.
 # InProcessBackend methods are async-in-signature but do synchronous SQLite work with
@@ -77,6 +80,10 @@ def _fmt_coverage(frac: Optional[float]) -> str:
     return f"{frac:.0%}"
 
 
+def _fmt_research_mode_label(value: Any) -> str:
+    return normalize_research_mode(value).replace("_", " ").title()
+
+
 def _fmt_ledger_event(event: dict) -> str | None:
     """Format a single ledger event dict into a human-readable trace line.
 
@@ -95,11 +102,912 @@ def _fmt_ledger_event(event: dict) -> str | None:
     return line
 
 
+def _escape(value: Any) -> str:
+    return html.escape("" if value is None else str(value))
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _truncate(value: Any, limit: int = 48) -> str:
+    # Readability-first UI rule: never cut visible text off in the dashboard.
+    return "" if value is None else str(value)
+
+
+def _fmt_percent_html(value: Optional[float]) -> str:
+    if value is None:
+        return "&mdash;"
+    return f"{value:.0%}"
+
+
+def _fmt_money(value: Any, decimals: int = 4) -> str:
+    amount = _safe_float(value, 0.0)
+    return f"${amount:,.{decimals}f}"
+
+
+def _fmt_money_short(value: Any) -> str:
+    amount = _safe_float(value, 0.0)
+    return f"${amount:,.2f}"
+
+
+def _metric_card(title: str, value: str, detail: str = "", tone: str = "default") -> str:
+    detail_html = f"<div class='viz-card-detail'>{detail}</div>" if detail else ""
+    return (
+        f"<div class='viz-card tone-{_escape(tone)}'>"
+        f"<div class='viz-card-title'>{_escape(title)}</div>"
+        f"<div class='viz-card-value'>{value}</div>"
+        f"{detail_html}"
+        f"</div>"
+    )
+
+
+def _bar_row(label: str, value: float, maximum: float, meta: str = "", tone: str = "blue") -> str:
+    pct = 0.0 if maximum <= 0 else min(100.0, max(4.0, (value / maximum) * 100.0))
+    meta_html = f"<div class='viz-bar-meta'>{meta}</div>" if meta else ""
+    return (
+        "<div class='viz-bar-row'>"
+        f"<div class='viz-bar-label'>{_escape(label)}</div>"
+        "<div class='viz-bar-track'>"
+        f"<div class='viz-bar-fill tone-{_escape(tone)}' style='width:{pct:.1f}%'></div>"
+        "</div>"
+        f"{meta_html}"
+        "</div>"
+    )
+
+
+def _fmt_overview_panel(data: dict) -> str:
+    if not data:
+        return "<div class='viz-empty'>No matter loaded.</div>"
+
+    stats = data.get("stats", {})
+    so = data.get("so_metrics", {})
+    llm = stats.get("llm", {}) if isinstance(stats.get("llm"), dict) else {}
+    llm_totals = llm.get("totals", {}) if isinstance(llm, dict) else {}
+    coverage_report = data.get("coverage_report", []) or []
+    weakest = data.get("weakest_issues", []) or []
+    gaps = data.get("top_gaps", []) or []
+    clarifications = data.get("pending_clarifications", []) or []
+
+    cards = [
+        _metric_card("Assertions", f"{_safe_int(stats.get('assertion_count', 0)):,}"),
+        _metric_card(
+            "Open Issues",
+            f"{_safe_int(stats.get('open_issue_count', 0)):,}",
+            detail=f"Gaps: {_safe_int(stats.get('open_gap_count', 0)):,}",
+        ),
+        _metric_card(
+            "Actors",
+            f"{_safe_int(stats.get('actor_count', 0)):,}",
+            detail=f"Quant facts: {_safe_int(stats.get('quant_fact_count', 0)):,}",
+        ),
+        _metric_card(
+            "LLM Cost",
+            _fmt_money(llm_totals.get("estimated_cost_usd", 0.0)),
+            detail=f"{_safe_int(llm_totals.get('request_count', 0)):,} calls",
+            tone="amber",
+        ),
+        _metric_card(
+            "Issue Coverage",
+            _fmt_percent_html(so.get("issue_coverage_avg")),
+            detail=f"Reuse: {_fmt_percent_html(so.get('reuse_rate'))}",
+            tone="green",
+        ),
+        _metric_card(
+            "Calibration",
+            _fmt_percent_html(so.get("source_role_known_rate")),
+            detail=f"Structured: {_fmt_percent_html(so.get('assertion_structure_rate'))}",
+        ),
+    ]
+
+    coverage_rows: list[str] = []
+    coverage_sorted = sorted(
+        coverage_report,
+        key=lambda issue: float(issue.get("coverage_fraction", 0.0)),
+    )
+    for issue in coverage_sorted:
+        frac = _safe_float(issue.get("coverage_fraction", 0.0))
+        meta = f"{_fmt_percent_html(frac)} coverage"
+        if issue.get("has_proof_gap"):
+            meta += " | proof gap"
+        coverage_rows.append(
+            _bar_row(issue.get("title") or issue.get("id") or "Issue", frac, 1.0, meta, tone="green")
+        )
+
+    tier_rows: list[str] = []
+    by_tier = llm_totals.get("by_tier", {}) if isinstance(llm_totals, dict) else {}
+    tier_items = list(by_tier.items()) if isinstance(by_tier, dict) else []
+    tier_max = max(
+        (_safe_float(item[1].get("estimated_cost_usd", 0.0)) for item in tier_items),
+        default=0.0,
+    )
+    for tier_name, tier_data in sorted(
+        tier_items,
+        key=lambda item: _safe_float(item[1].get("estimated_cost_usd", 0.0)),
+        reverse=True,
+    ):
+        tier_rows.append(
+            _bar_row(
+                tier_name.upper(),
+                _safe_float(tier_data.get("estimated_cost_usd", 0.0)),
+                tier_max or 1.0,
+                meta=(
+                    f"{_fmt_money(tier_data.get('estimated_cost_usd', 0.0))} | "
+                    f"{_safe_int(tier_data.get('requests', 0)):,} calls"
+                ),
+                tone="amber",
+            )
+        )
+
+    gap_items = "".join(
+        f"<li>{_escape(g.get('description') or g.get('gap_type') or 'Gap')}</li>"
+        for g in gaps
+    ) or "<li>No open gaps.</li>"
+    clarification_items = "".join(
+        "<li>"
+        f"{_escape(c.get('question_text') or c.get('question') or 'Clarification')}"
+        "</li>"
+        for c in clarifications
+    ) or "<li>No pending clarifications.</li>"
+
+    pricing_source = _escape(llm_totals.get("pricing_source", ""))
+
+    return (
+        "<div class='viz-shell'>"
+        "<div class='viz-card-grid'>"
+        + "".join(cards)
+        + "</div>"
+        + "<div class='viz-two-col'>"
+        + "<div class='viz-panel'>"
+        + "<div class='viz-panel-title'>Coverage distribution</div>"
+        + (
+            "".join(coverage_rows)
+            if coverage_rows
+            else "<div class='viz-empty'>Issue coverage will appear after investigation.</div>"
+        )
+        + "</div>"
+        + "<div class='viz-panel'>"
+        + "<div class='viz-panel-title'>LLM spend by tier</div>"
+        + (
+            "".join(tier_rows)
+            if tier_rows
+            else "<div class='viz-empty'>No LLM usage recorded yet.</div>"
+        )
+        + (
+            f"<div class='viz-footnote'>Pricing source: <a href='{pricing_source}' target='_blank'>Google Gemini API pricing</a></div>"
+            if pricing_source
+            else ""
+        )
+        + "</div>"
+        + "</div>"
+        + "<div class='viz-two-col'>"
+        + "<div class='viz-panel'>"
+        + "<div class='viz-panel-title'>Weakest issues</div>"
+        + (
+            "".join(
+                "<div class='viz-list-row'>"
+                f"<span>{_escape(issue.get('title') or issue.get('id') or 'Issue')}</span>"
+                f"<strong>{_fmt_percent_html(_safe_float(issue.get('coverage_fraction', 0.0)))}</strong>"
+                "</div>"
+                for issue in weakest
+            )
+            if weakest
+            else "<div class='viz-empty'>No issue coverage data yet.</div>"
+        )
+        + "</div>"
+        + "<div class='viz-panel'>"
+        + "<div class='viz-panel-title'>Open work</div>"
+        + "<div class='viz-list-columns'>"
+        + "<div><div class='viz-subtitle'>Gaps</div><ul>"
+        + gap_items
+        + "</ul></div>"
+        + "<div><div class='viz-subtitle'>Clarifications</div><ul>"
+        + clarification_items
+        + "</ul></div>"
+        + "</div>"
+        + "</div>"
+        + "</div>"
+        + "</div>"
+    )
+
+
+def _fmt_issues_panel(issues: list) -> str:
+    if not issues:
+        return "<div class='viz-empty'>No open issues.</div>"
+
+    rows: list[str] = []
+    for issue in sorted(
+        issues,
+        key=lambda item: (item.get("depth", 0), item.get("coverage_fraction", 0.0)),
+    ):
+        depth = max(0, _safe_int(issue.get("depth", 0)))
+        coverage = max(0.0, min(1.0, _safe_float(issue.get("coverage_fraction", 0.0))))
+        title = _escape(issue.get("title") or issue.get("id") or "Issue")
+        proof = _escape(issue.get("proof_status", "none"))
+        support = _safe_int(issue.get("supporting_count", 0))
+        attack = _safe_int(issue.get("attacking_count", 0))
+        contested = _safe_int(issue.get("contested_predicates", 0))
+        blocked = _safe_int(issue.get("blocked_predicates", 0))
+        details = [f"{support} support", f"{attack} attack"]
+        if contested:
+            details.append(f"{contested} disputed")
+        if blocked:
+            details.append(f"{blocked} blocked")
+        rows.append(
+            "<div class='issue-row' style='--issue-indent:"
+            f"{depth * 18}px'>"
+            f"<div class='issue-head'><span class='proof-pill proof-{proof}'>{proof}</span>"
+            f"<span class='issue-title'>{title}</span>"
+            f"<span class='issue-pct'>{coverage:.0%}</span></div>"
+            "<div class='issue-track'><div class='issue-fill' "
+            f"style='width:{max(6.0, coverage * 100):.1f}%'></div></div>"
+            f"<div class='issue-meta'>{_escape(' | '.join(details))}</div>"
+            "</div>"
+        )
+    return "<div class='viz-shell'><div class='issues-stack'>" + "".join(rows) + "</div></div>"
+
+
+def _fmt_timeline_panel(events: list[dict]) -> str:
+    if not events:
+        return "<div class='viz-empty'>No timeline events available.</div>"
+    items: list[str] = []
+    for event in events:
+        date = _escape(event.get("date") or "Undated")
+        title = _escape(event.get("event") or "Event")
+        source_doc = _escape(event.get("source_doc") or "Unknown source")
+        kind = _escape(event.get("kind") or "event")
+        subject = _escape(event.get("subject") or "")
+        quant_id = _escape(event.get("quant_id") or "")
+        assertion_id = _escape(event.get("assertion_id") or "")
+        meta_parts = [kind, source_doc]
+        if subject:
+            meta_parts.append(f"subject: {subject}")
+        if quant_id:
+            meta_parts.append(f"quant: {quant_id}")
+        if assertion_id:
+            meta_parts.append(f"assertion: {assertion_id}")
+        items.append(
+            "<div class='timeline-item'>"
+            f"<div class='timeline-date'>{date}</div>"
+            "<div class='timeline-line'><span class='timeline-dot'></span></div>"
+            "<div class='timeline-body'>"
+            f"<div class='timeline-title'>{title}</div>"
+            f"<div class='timeline-meta'>{_escape(' | '.join(meta_parts))}</div>"
+            "</div>"
+            "</div>"
+        )
+    return "<div class='viz-shell'><div class='timeline-list'>" + "".join(items) + "</div></div>"
+
+
+def _fmt_evidence_matrix_panel(matrix: dict) -> str:
+    if not matrix or not matrix.get("issues") or not matrix.get("sources"):
+        return "<div class='viz-empty'>Evidence matrix will populate after issues are linked to sources.</div>"
+
+    issues = list(matrix.get("issues", []))
+    sources = list(matrix.get("sources", []))
+    issue_totals = (
+        matrix.get("issue_totals", {}) if isinstance(matrix.get("issue_totals"), dict) else {}
+    )
+    source_totals = (
+        matrix.get("source_totals", {}) if isinstance(matrix.get("source_totals"), dict) else {}
+    )
+    cells = matrix.get("cells", {}) if isinstance(matrix.get("cells"), dict) else {}
+
+    issues.sort(
+        key=lambda issue: -(
+            _safe_int(issue_totals.get(issue["id"], {}).get("supporting", 0))
+            + _safe_int(issue_totals.get(issue["id"], {}).get("attacking", 0))
+        )
+    )
+    sources.sort(
+        key=lambda source: -(
+            _safe_int(source_totals.get(source, {}).get("supporting", 0))
+            + _safe_int(source_totals.get(source, {}).get("attacking", 0))
+        )
+    )
+    max_total = 1
+    for issue in issues:
+        for source in sources:
+            total = _safe_int(cells.get(issue["id"], {}).get(source, {}).get("total", 0))
+            max_total = max(max_total, total)
+
+    header = "".join(
+        f"<th title='{_escape(source)}'>{_escape(source)}</th>"
+        for source in sources
+    )
+    rows: list[str] = []
+    detail_rows: list[str] = []
+    for issue in issues:
+        row_cells: list[str] = []
+        issue_id = issue["id"]
+        for source in sources:
+            cell = cells.get(issue_id, {}).get(source, {})
+            support = _safe_int(cell.get("supporting", 0))
+            attack = _safe_int(cell.get("attacking", 0))
+            total = _safe_int(cell.get("total", 0))
+            alpha = 0.12 + (0.55 * total / max_total if total else 0.0)
+            if support and attack:
+                background = (
+                    f"linear-gradient(90deg, rgba(19,122,78,{alpha:.2f}) 0%, "
+                    f"rgba(19,122,78,{alpha:.2f}) 50%, rgba(171,52,40,{alpha:.2f}) 50%, "
+                    f"rgba(171,52,40,{alpha:.2f}) 100%)"
+                )
+            elif support:
+                background = f"rgba(19,122,78,{alpha:.2f})"
+            elif attack:
+                background = f"rgba(171,52,40,{alpha:.2f})"
+            else:
+                background = "rgba(148,163,184,0.08)"
+            tooltip = f"support: {support}, attack: {attack}, total: {total}"
+            row_cells.append(
+                "<td class='matrix-cell' "
+                f"style='background:{background}' title='{_escape(tooltip)}'>{total or ''}</td>"
+            )
+            if total:
+                detail_rows.append(
+                    "<tr>"
+                    f"<td>{_escape(issue.get('title') or issue_id)}</td>"
+                    f"<td>{_escape(source)}</td>"
+                    f"<td>{support}</td>"
+                    f"<td>{attack}</td>"
+                    f"<td>{total}</td>"
+                    "</tr>"
+                )
+        rows.append(
+            "<tr>"
+            f"<th title='{_escape(issue.get('title') or issue_id)}'>"
+            f"{_escape(issue.get('title') or issue_id)}</th>"
+            + "".join(row_cells)
+            + "</tr>"
+        )
+
+    issue_totals_rows = "".join(
+        "<tr>"
+        f"<td>{_escape(issue.get('title') or issue.get('id') or 'Issue')}</td>"
+        f"<td>{_safe_int(issue_totals.get(issue.get('id'), {}).get('supporting', 0))}</td>"
+        f"<td>{_safe_int(issue_totals.get(issue.get('id'), {}).get('attacking', 0))}</td>"
+        f"<td>{_safe_int(issue_totals.get(issue.get('id'), {}).get('supporting', 0)) + _safe_int(issue_totals.get(issue.get('id'), {}).get('attacking', 0))}</td>"
+        "</tr>"
+        for issue in issues
+    )
+    source_totals_rows = "".join(
+        "<tr>"
+        f"<td>{_escape(source)}</td>"
+        f"<td>{_safe_int(source_totals.get(source, {}).get('supporting', 0))}</td>"
+        f"<td>{_safe_int(source_totals.get(source, {}).get('attacking', 0))}</td>"
+        f"<td>{_safe_int(source_totals.get(source, {}).get('supporting', 0)) + _safe_int(source_totals.get(source, {}).get('attacking', 0))}</td>"
+        "</tr>"
+        for source in sources
+    )
+
+    return (
+        "<div class='viz-shell'>"
+        "<div class='viz-panel-title'>Support and attack by issue/source</div>"
+        "<div class='viz-footnote'>Green = support, red = attack, split cell = both.</div>"
+        "<div class='matrix-wrap matrix-wrap-heatmap'><table class='matrix-table evidence-matrix-table'><thead><tr><th>Issue</th>"
+        + header
+        + "</tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></div>"
+        + "<div class='viz-two-col'>"
+        + "<div class='viz-panel'><div class='viz-subtitle'>Issue totals</div>"
+        + "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
+        + "<th>Issue</th><th>Support</th><th>Attack</th><th>Total</th>"
+        + "</tr></thead><tbody>"
+        + (issue_totals_rows or "<tr><td colspan='4'>No issue totals available.</td></tr>")
+        + "</tbody></table></div></div>"
+        + "<div class='viz-panel'><div class='viz-subtitle'>Source totals</div>"
+        + "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
+        + "<th>Source</th><th>Support</th><th>Attack</th><th>Total</th>"
+        + "</tr></thead><tbody>"
+        + (source_totals_rows or "<tr><td colspan='4'>No source totals available.</td></tr>")
+        + "</tbody></table></div></div>"
+        + "</div>"
+        + "<div class='viz-panel'><div class='viz-subtitle'>Issue/source detail</div>"
+        + "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
+        + "<th>Issue</th><th>Source</th><th>Support</th><th>Attack</th><th>Total</th>"
+        + "</tr></thead><tbody>"
+        + (("".join(detail_rows)) or "<tr><td colspan='5'>No linked evidence cells yet.</td></tr>")
+        + "</tbody></table></div></div></div>"
+    )
+
+
+def _fmt_communication_map_panel(graph: dict) -> str:
+    actors = list(graph.get("actors", []) or [])
+    documents = list(graph.get("documents", []) or [])
+    edges = list(graph.get("actor_document_edges", []) or [])
+    actor_actor_edges = list(graph.get("actor_actor_edges", []) or [])
+    if not actors or not documents or not edges:
+        return "<div class='viz-empty'>No communication graph available yet.</div>"
+
+    actor_weights: dict[str, int] = defaultdict(int)
+    document_weights: dict[str, int] = defaultdict(int)
+    for edge in edges:
+        actor_id = edge.get("actor_id")
+        document_id = edge.get("document_id")
+        count = _safe_int(edge.get("occurrence_count", 0))
+        if actor_id:
+            actor_weights[actor_id] += count
+        if document_id:
+            document_weights[document_id] += count
+
+    actor_lookup = {actor.get("id"): actor for actor in actors}
+    actor_ids = sorted(actor_weights, key=lambda key: actor_weights[key], reverse=True)[:12]
+    doc_ids = sorted(document_weights, key=lambda key: document_weights[key], reverse=True)[:14]
+    actor_index = {actor_id: idx for idx, actor_id in enumerate(actor_ids)}
+    doc_index = {doc_id: idx for idx, doc_id in enumerate(doc_ids)}
+    filtered_edges = [
+        edge
+        for edge in edges
+        if edge.get("actor_id") in actor_index and edge.get("document_id") in doc_index
+    ]
+    if not filtered_edges:
+        return "<div class='viz-empty'>Communication graph has no dense connections to render.</div>"
+
+    width = 920
+    height = max(320, 80 + max(len(actor_ids), len(doc_ids)) * 44)
+    actor_y = {
+        actor_id: 50 + idx * ((height - 100) / max(1, len(actor_ids) - 1 or 1))
+        for actor_id, idx in actor_index.items()
+    }
+    doc_y = {
+        doc_id: 50 + idx * ((height - 100) / max(1, len(doc_ids) - 1 or 1))
+        for doc_id, idx in doc_index.items()
+    }
+    max_edge = max(
+        (_safe_int(edge.get("occurrence_count", 0)) for edge in filtered_edges),
+        default=1,
+    )
+    max_actor = max((actor_weights[actor_id] for actor_id in actor_ids), default=1)
+    max_doc = max((document_weights[doc_id] for doc_id in doc_ids), default=1)
+
+    svg_lines: list[str] = []
+    for edge in filtered_edges:
+        actor_id = edge.get("actor_id")
+        document_id = edge.get("document_id")
+        count = _safe_int(edge.get("occurrence_count", 0))
+        opacity = 0.18 + (0.60 * count / max_edge)
+        stroke_width = 1.0 + (3.5 * count / max_edge)
+        svg_lines.append(
+            f"<line x1='170' y1='{actor_y[actor_id]:.1f}' x2='730' y2='{doc_y[document_id]:.1f}' "
+            f"stroke='rgba(37,99,235,{opacity:.2f})' stroke-width='{stroke_width:.1f}' />"
+        )
+
+    svg_nodes: list[str] = []
+    for actor_id in actor_ids:
+        actor = actor_lookup.get(actor_id, {})
+        radius = 10 + (14 * actor_weights[actor_id] / max_actor)
+        svg_nodes.append(
+            f"<circle cx='140' cy='{actor_y[actor_id]:.1f}' r='{radius:.1f}' class='comm-actor-node' />"
+            f"<text x='28' y='{actor_y[actor_id] + 4:.1f}' class='comm-label comm-label-left'>"
+            f"{_escape(actor.get('name') or actor_id)}</text>"
+        )
+    for doc_id in doc_ids:
+        radius = 9 + (12 * document_weights[doc_id] / max_doc)
+        svg_nodes.append(
+            f"<circle cx='760' cy='{doc_y[doc_id]:.1f}' r='{radius:.1f}' class='comm-doc-node' />"
+            f"<text x='788' y='{doc_y[doc_id] + 4:.1f}' class='comm-label'>"
+            f"{_escape(doc_id)}</text>"
+        )
+
+    actor_doc_counts: dict[str, int] = defaultdict(int)
+    document_actor_counts: dict[str, set[str]] = defaultdict(set)
+    for edge in edges:
+        actor_id = edge.get("actor_id")
+        document_id = edge.get("document_id")
+        if actor_id and document_id:
+            actor_doc_counts[actor_id] += 1
+            document_actor_counts[document_id].add(actor_id)
+
+    actor_rows = "".join(
+        "<div class='viz-list-row'>"
+        f"<span>{_escape(actor_lookup.get(actor_id, {}).get('name') or actor_id)}</span>"
+        f"<strong>{actor_weights[actor_id]} mentions | {actor_doc_counts.get(actor_id, 0)} linked docs</strong>"
+        "</div>"
+        for actor_id in sorted(actor_weights, key=lambda key: actor_weights[key], reverse=True)
+    )
+    doc_rows = "".join(
+        "<div class='viz-list-row'>"
+        f"<span>{_escape(doc_id)}</span>"
+        f"<strong>{document_weights[doc_id]} links | {len(document_actor_counts.get(doc_id, set()))} actors</strong>"
+        "</div>"
+        for doc_id in sorted(document_weights, key=lambda key: document_weights[key], reverse=True)
+    )
+    pair_rows = "".join(
+        "<details class='viz-detail'><summary>"
+        f"{_escape(actor_lookup.get(edge.get('actor_a_id'), {}).get('name') or edge.get('actor_a_id') or '?')}"
+        f" x "
+        f"{_escape(actor_lookup.get(edge.get('actor_b_id'), {}).get('name') or edge.get('actor_b_id') or '?')}"
+        f" | {_safe_int(edge.get('shared_documents', 0))} shared docs"
+        "</summary>"
+        + "<div class='viz-detail-block'><strong>Shared documents:</strong><ul>"
+        + "".join(f"<li>{_escape(doc)}</li>" for doc in (edge.get("documents") or []))
+        + "</ul></div></details>"
+        for edge in sorted(
+            actor_actor_edges,
+            key=lambda item: _safe_int(item.get("shared_documents", 0)),
+            reverse=True,
+        )
+    ) or "<div class='viz-empty'>No repeated actor co-appearance detected yet.</div>"
+    edge_rows = "".join(
+        "<tr>"
+        f"<td>{_escape(actor_lookup.get(edge.get('actor_id'), {}).get('name') or edge.get('actor_id') or '?')}</td>"
+        f"<td>{_escape(edge.get('document_id') or '(unknown)')}</td>"
+        f"<td>{_safe_int(edge.get('occurrence_count', 0))}</td>"
+        "</tr>"
+        for edge in sorted(
+            edges,
+            key=lambda item: _safe_int(item.get('occurrence_count', 0)),
+            reverse=True,
+        )
+    )
+    visual_note = ""
+    if len(actor_weights) > len(actor_ids) or len(document_weights) > len(doc_ids):
+        visual_note = (
+            "<div class='viz-footnote'>The SVG highlights the densest actor/document slice. "
+            "Full actor, document, and edge detail is listed below.</div>"
+        )
+
+    return (
+        "<div class='viz-shell'>"
+        "<div class='viz-panel-title'>Actor/document communication map</div>"
+        "<div class='viz-footnote'>Actors on the left, documents on the right, edge width = co-occurrence count.</div>"
+        f"<svg class='comm-graph' viewBox='0 0 {width} {height}' role='img'>"
+        + "".join(svg_lines)
+        + "".join(svg_nodes)
+        + "</svg>"
+        + visual_note
+        + "<div class='viz-two-col'>"
+        + "<div class='viz-panel'><div class='viz-subtitle'>Actors</div>"
+        + actor_rows
+        + "</div>"
+        + "<div class='viz-panel'><div class='viz-subtitle'>Documents</div>"
+        + doc_rows
+        + "</div></div>"
+        + "<div class='viz-panel'>"
+        + "<div class='viz-subtitle'>Strongest actor pairs</div>"
+        + pair_rows
+        + "</div>"
+        + "<div class='viz-panel'><div class='viz-subtitle'>Actor/document edge detail</div>"
+        + "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
+        + "<th>Actor</th><th>Document</th><th>Mentions</th>"
+        + "</tr></thead><tbody>"
+        + (edge_rows or "<tr><td colspan='3'>No actor/document links yet.</td></tr>")
+        + "</tbody></table></div></div></div>"
+    )
+
+
+def _fmt_llm_analytics_panel(summary: dict, calls: list[dict]) -> str:
+    if not summary and not calls:
+        return "<div class='viz-empty'>No LLM analytics available yet.</div>"
+
+    request_count = _safe_int(summary.get("request_count", 0))
+    avg_latency = 0.0
+    fail_count = 0
+    stage_costs: dict[str, float] = defaultdict(float)
+    stage_calls: dict[str, int] = defaultdict(int)
+    model_costs: dict[str, float] = defaultdict(float)
+    total_latency = 0.0
+    latency_count = 0
+
+    for call in calls:
+        latency = _safe_float(call.get("latency_ms"), 0.0)
+        if latency > 0:
+            total_latency += latency
+            latency_count += 1
+        if not call.get("success", True):
+            fail_count += 1
+        label = call.get("usage_label") or "unknown"
+        stage_costs[label] += _safe_float(call.get("estimated_cost_usd", 0.0))
+        stage_calls[label] += 1
+        model_costs[call.get("model_tier") or "unknown"] += _safe_float(
+            call.get("estimated_cost_usd", 0.0)
+        )
+
+    if latency_count:
+        avg_latency = total_latency / latency_count
+
+    cards = [
+        _metric_card("Calls", f"{request_count:,}", detail=f"{len(calls):,} recent rows"),
+        _metric_card("Spend", _fmt_money(summary.get("estimated_cost_usd", 0.0)), tone="amber"),
+        _metric_card("Avg latency", f"{avg_latency:,.0f} ms", tone="blue"),
+        _metric_card("Failures", f"{fail_count:,}", tone="red"),
+    ]
+
+    stage_max = max(stage_costs.values(), default=0.0)
+    stage_rows = "".join(
+        _bar_row(
+            stage,
+            cost,
+            stage_max or 1.0,
+            meta=f"{_fmt_money(cost)} | {stage_calls[stage]} calls",
+            tone="amber",
+        )
+        for stage, cost in sorted(stage_costs.items(), key=lambda item: item[1], reverse=True)
+    ) or "<div class='viz-empty'>No per-stage cost data yet.</div>"
+
+    model_max = max(model_costs.values(), default=0.0)
+    model_rows = "".join(
+        _bar_row(
+            str(model).upper(),
+            cost,
+            model_max or 1.0,
+            meta=_fmt_money(cost),
+            tone="blue",
+        )
+        for model, cost in sorted(model_costs.items(), key=lambda item: item[1], reverse=True)
+    ) or "<div class='viz-empty'>No model usage yet.</div>"
+
+    table_rows = "".join(
+        "<tr>"
+        f"<td>{_escape(call.get('created_at') or '')}</td>"
+        f"<td>{_escape(call.get('usage_label') or 'unknown')}</td>"
+        f"<td>{_escape((call.get('model_tier') or 'unknown').upper())}</td>"
+        f"<td>{_escape(call.get('model_id') or '')}</td>"
+        f"<td>{_safe_int(call.get('input_tokens', 0)):,}</td>"
+        f"<td>{_safe_int(call.get('cache_read_tokens', 0)):,}</td>"
+        f"<td>{_safe_int(call.get('total_prompt_tokens', 0)):,}</td>"
+        f"<td>{_safe_int(call.get('output_tokens', 0)):,}</td>"
+        f"<td>{_safe_int(call.get('latency_ms', 0)):,} ms</td>"
+        f"<td>{_fmt_money(call.get('estimated_cost_usd', 0.0))}</td>"
+        f"<td>{_escape(call.get('run_id') or '')}</td>"
+        f"<td>{'ok' if call.get('success', True) else _escape(call.get('error_kind') or 'error')}</td>"
+        "</tr>"
+        for call in calls
+    )
+
+    pricing_source = _escape(summary.get("pricing_source", ""))
+
+    return (
+        "<div class='viz-shell'>"
+        "<div class='viz-card-grid'>"
+        + "".join(cards)
+        + "</div>"
+        + "<div class='viz-two-col'>"
+        + "<div class='viz-panel'><div class='viz-panel-title'>Cost by stage</div>"
+        + stage_rows
+        + "</div>"
+        + "<div class='viz-panel'><div class='viz-panel-title'>Cost by tier</div>"
+        + model_rows
+        + "</div>"
+        + "</div>"
+        + "<div class='viz-panel'><div class='viz-panel-title'>Recent calls</div>"
+        + "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
+        + "<th>Time</th><th>Stage</th><th>Tier</th><th>Model</th><th>In</th><th>Cache</th>"
+        + "<th>Prompt</th><th>Out</th><th>Latency</th><th>Cost</th><th>Run</th><th>Status</th></tr></thead><tbody>"
+        + (table_rows or "<tr><td colspan='12'>No recent calls.</td></tr>")
+        + "</tbody></table></div>"
+        + (
+            f"<div class='viz-footnote'>Pricing source: <a href='{pricing_source}' target='_blank'>Google Gemini API pricing</a></div>"
+            if pricing_source
+            else ""
+        )
+        + "</div></div>"
+    )
+
+
+def _fmt_quant_panel(
+    payment_recon: dict,
+    invoice_chain: list,
+    amount_conflicts: list,
+    damages: list,
+) -> str:
+    has_recon = bool(payment_recon and payment_recon.get("invoiced") is not None)
+    has_invoice_chain = bool(invoice_chain)
+    has_amount_conflicts = bool(amount_conflicts)
+    has_damages = bool(damages)
+    if not has_recon and not has_invoice_chain and not has_amount_conflicts and not has_damages:
+        return "<div class='viz-empty'>No quantitative facts extracted yet.</div>"
+
+    cards: list[str] = []
+    if has_recon:
+        cards.extend(
+            [
+                _metric_card("Invoiced", _fmt_money_short(payment_recon.get("invoiced", 0.0))),
+                _metric_card("Paid", _fmt_money_short(payment_recon.get("paid", 0.0)), tone="green"),
+                _metric_card(
+                    "Disputed",
+                    _fmt_money_short(payment_recon.get("disputed", 0.0)),
+                    tone="amber",
+                ),
+                _metric_card(
+                    "Net exposure",
+                    _fmt_money_short(payment_recon.get("exposure", 0.0)),
+                    tone="red",
+                ),
+            ]
+        )
+
+    max_amount = max(
+        (_safe_float(row.get("claimed_amount", 0.0)) for row in damages),
+        default=0.0,
+    )
+    damage_rows = "".join(
+        _bar_row(
+            row.get("component") or "(uncategorized)",
+            _safe_float(row.get("claimed_amount", 0.0)),
+            max_amount or 1.0,
+            meta=(
+                f"{_fmt_money_short(row.get('claimed_amount', 0.0))} | "
+                f"{_safe_int(row.get('source_count', 0))} sources | "
+                f"{len(row.get('conflicts', []) or [])} conflicts"
+            ),
+            tone="red",
+        )
+        for row in sorted(
+            damages,
+            key=lambda item: _safe_float(item.get("claimed_amount", 0.0)),
+            reverse=True,
+        )
+    ) or "<div class='viz-empty'>No damages waterfall available.</div>"
+
+    category_rows = ""
+    if has_recon and isinstance(payment_recon.get("by_category"), dict):
+        category_rows = "".join(
+            "<tr>"
+            f"<td>{_escape(subject_type)}</td>"
+            f"<td>{_fmt_money_short(values.get('total', 0.0))}</td>"
+            f"<td>{_safe_int(values.get('count', 0))}</td>"
+            "</tr>"
+            for subject_type, values in payment_recon.get("by_category", {}).items()
+        )
+
+    source_span_rows = ""
+    if has_recon:
+        source_span_rows = "".join(
+            "<tr>"
+            f"<td>{_escape(span.get('subject_type') or '')}</td>"
+            f"<td>{_escape(span.get('subject_id') or '')}</td>"
+            f"<td>{_fmt_money_short(span.get('amount', 0.0))}</td>"
+            f"<td>{_escape(span.get('span_id') or '')}</td>"
+            f"<td>{_escape(span.get('quant_fact_id') or '')}</td>"
+            "</tr>"
+            for span in payment_recon.get("source_spans", []) or []
+        )
+
+    invoice_rows = "".join(
+        "<tr>"
+        f"<td>{_escape(invoice.get('invoice_id') or '(unlabeled)')}</td>"
+        f"<td>{_fmt_money_short(invoice.get('invoiced', 0.0))}</td>"
+        f"<td>{_fmt_money_short(invoice.get('paid', 0.0))}</td>"
+        f"<td>{_fmt_money_short(invoice.get('outstanding', 0.0))}</td>"
+        f"<td>{'<br>'.join(_escape(str(span.get('span_id') or '')) for span in (invoice.get('source_spans') or []))}</td>"
+        "</tr>"
+        for invoice in invoice_chain
+    )
+
+    damage_details = "".join(
+        (
+            "<details class='viz-detail'><summary>"
+            f"{_escape(row.get('component') or '(uncategorized)')} | "
+            f"{_fmt_money_short(row.get('claimed_amount', 0.0))} | "
+            f"{_safe_int(row.get('source_count', 0))} source entries"
+            "</summary>"
+            + (
+                "<div class='viz-detail-block'><strong>Conflicting values:</strong><ul>"
+                + "".join(f"<li>{_escape(str(conflict))}</li>" for conflict in (row.get("conflicts") or []))
+                + "</ul></div>"
+                if row.get("conflicts")
+                else ""
+            )
+            + "<div class='viz-detail-block'><strong>Source entries:</strong><ul>"
+            + "".join(
+                "<li>"
+                f"{_fmt_money_short(entry.get('amount_value', 0.0))}"
+                f" | span: {_escape(entry.get('span_id') or '')}"
+                f" | assertion: {_escape(entry.get('assertion_id') or '')}"
+                f"<br>{_escape(entry.get('raw_text') or '')}"
+                "</li>"
+                for entry in (row.get("amounts") or [])
+            )
+            + "</ul></div></details>"
+        )
+        for row in damages
+    )
+
+    amount_conflict_details = "".join(
+        "<details class='viz-detail'><summary>"
+        f"{_escape(conflict.get('subject_type') or 'amount')} | "
+        f"{_escape(conflict.get('subject_id') or '(unlabeled)')} | "
+        f"{_escape(conflict.get('currency') or '')}"
+        "</summary>"
+        + "<div class='viz-detail-block'><strong>Values:</strong> "
+        + ", ".join(_fmt_money_short(value) for value in (conflict.get("values") or []))
+        + "</div>"
+        + (
+            "<div class='viz-detail-block'><strong>Raw texts:</strong><ul>"
+            + "".join(
+                f"<li>{_escape(text)}</li>"
+                for text in ((conflict.get("raw_texts") or []) if isinstance(conflict.get("raw_texts"), list) else [])
+            )
+            + "</ul></div>"
+            if conflict.get("raw_texts")
+            else ""
+        )
+        + "</details>"
+        for conflict in amount_conflicts
+    )
+
+    return (
+        "<div class='viz-shell'>"
+        + ("<div class='viz-card-grid'>" + "".join(cards) + "</div>" if cards else "")
+        + "<div class='viz-panel'><div class='viz-panel-title'>Damages waterfall</div>"
+        + damage_rows
+        + "</div>"
+        + (
+            "<div class='viz-two-col'>"
+            + "<div class='viz-panel'><div class='viz-panel-title'>Category totals</div>"
+            + (
+                "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
+                "<th>Category</th><th>Total</th><th>Facts</th></tr></thead><tbody>"
+                + category_rows
+                + "</tbody></table></div>"
+                if category_rows
+                else "<div class='viz-empty'>No category totals available.</div>"
+            )
+            + "</div>"
+            + "<div class='viz-panel'><div class='viz-panel-title'>Invoice reconciliation</div>"
+            + (
+                "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
+                "<th>Invoice</th><th>Invoiced</th><th>Paid</th><th>Outstanding</th><th>Source spans</th>"
+                "</tr></thead><tbody>"
+                + invoice_rows
+                + "</tbody></table></div>"
+                if invoice_rows
+                else "<div class='viz-empty'>No invoice chain available.</div>"
+            )
+            + "</div></div>"
+        )
+        + (
+            "<div class='viz-panel'><div class='viz-panel-title'>Payment grounding</div>"
+            + (
+                "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
+                "<th>Type</th><th>Subject</th><th>Amount</th><th>Span</th><th>Quant fact</th>"
+                "</tr></thead><tbody>"
+                + source_span_rows
+                + "</tbody></table></div>"
+                if source_span_rows
+                else "<div class='viz-empty'>No source span grounding available.</div>"
+            )
+            + "</div>"
+            if has_recon
+            else ""
+        )
+        + (
+            "<div class='viz-panel'><div class='viz-panel-title'>Damages source detail</div>"
+            + (damage_details or "<div class='viz-empty'>No component detail available.</div>")
+            + "</div>"
+            if has_damages
+            else ""
+        )
+        + (
+            "<div class='viz-panel'><div class='viz-panel-title'>Amount conflicts</div>"
+            + (amount_conflict_details or "<div class='viz-empty'>No amount conflicts detected.</div>")
+            + "</div>"
+            if has_amount_conflicts
+            else ""
+        )
+        + "</div>"
+    )
+
+
 def _fmt_overview(data: dict) -> str:
     if not data:
         return "No matter loaded."
     stats = data.get("stats", {})
     so = data.get("so_metrics", {})
+    llm = stats.get("llm", {}) if isinstance(stats.get("llm"), dict) else {}
+    llm_totals = llm.get("totals", {}) if isinstance(llm, dict) else {}
     lines = [
         "## Matter Overview",
         f"**Assertions:** {stats.get('assertion_count', 0)}  |  "
@@ -109,6 +1017,32 @@ def _fmt_overview(data: dict) -> str:
         f"**Quant facts:** {stats.get('quant_fact_count', 0)}  |  "
         f"**Pending clarifications:** {stats.get('pending_clarifications', 0)}",
     ]
+    if llm_totals.get("request_count", 0):
+        lines.append(
+            f"**LLM Calls:** {llm_totals.get('request_count', 0)}  |  "
+            f"**Tokens:** {llm_totals.get('input_tokens', 0):,} in / "
+            f"{llm_totals.get('cache_read_tokens', 0):,} cache / "
+            f"{llm_totals.get('output_tokens', 0):,} out  |  "
+            f"**Est. Cost:** ${float(llm_totals.get('estimated_cost_usd', 0.0) or 0.0):.4f}"
+        )
+        by_tier = llm_totals.get("by_tier", {})
+        if isinstance(by_tier, dict) and by_tier:
+            tier_parts = []
+            for tier_name, tier_data in by_tier.items():
+                tier_parts.append(
+                    f"{tier_name.upper()}: {tier_data.get('requests', 0)} calls / "
+                    f"${float(tier_data.get('estimated_cost_usd', 0.0) or 0.0):.4f}"
+                )
+            lines.append("**By Tier:** " + "  |  ".join(tier_parts[:4]))
+        last_run = llm.get("last_run", {})
+        if isinstance(last_run, dict) and last_run.get("request_count", 0):
+            lines.append(
+                f"**Last Run LLM:** {last_run.get('request_count', 0)} calls  |  "
+                f"{last_run.get('input_tokens', 0):,} in / "
+                f"{last_run.get('cache_read_tokens', 0):,} cache / "
+                f"{last_run.get('output_tokens', 0):,} out  |  "
+                f"${float(last_run.get('estimated_cost_usd', 0.0) or 0.0):.4f}"
+            )
 
     # SO metrics
     cov = so.get("issue_coverage_avg")
@@ -230,7 +1164,7 @@ def _fmt_assertions(assertions: list) -> str:
     ]
     for a in assertions:
         assertion_id = a.get("id", "?")
-        prop = (a.get("proposition_text") or "")[:55]
+        prop = a.get("proposition_text") or ""
         state = a.get("belief_state") or "—"
         conf = f"{float(a.get('confidence', 0)):.2f}" if a.get("confidence") is not None else "—"
         src_roles = a.get("source_roles", [])
@@ -270,7 +1204,7 @@ def _fmt_assumptions(assumptions: list) -> str:
             line += f"  \n  *Would be invalidated if: {cond}*"
         rationale = a.get("rationale") or ""
         if rationale:
-            line += f"  \n  *Rationale: {rationale[:120]}*"
+            line += f"  \n  *Rationale: {rationale}*"
         lines.append(line)
     return "\n".join(lines)
 
@@ -306,11 +1240,11 @@ def _fmt_steering(actions: list) -> str:
         priority_str = f" **[{priority.upper()}]**" if priority else ""
         lines.append(f"**{action_type}**{priority_str}: {description}")
         if rationale:
-            lines.append(f"  > {rationale[:120]}")
+            lines.append(f"  > {rationale}")
         # Show action params useful for the UI (issue_id, gap_id, assertion_id)
         params = a.get("params", {})
         if params:
-            param_str = " | ".join(f"`{k}: {str(v)[:40]}`" for k, v in params.items() if v)
+            param_str = " | ".join(f"`{k}: {str(v)}`" for k, v in params.items() if v)
             lines.append(f"  *Params: {param_str}*")
         lines.append("")
     return "\n".join(lines)
@@ -378,6 +1312,8 @@ class AppState:
         self.final_output = ""
         self.current_matter_id: Optional[str] = None
         self.current_run_id: Optional[str] = None
+        self.current_repo_path: Optional[str] = None
+        self.current_research_mode: str = "deep"
         self._last_resume_error: Optional[str] = None  # set by do_resume() on failure
         self._irys_ref = None  # weak ref to active Irys instance for stop
         # Stop event: set by stop_investigation() to signal early-stop before
@@ -427,6 +1363,9 @@ class AppState:
         update_q: queue.Queue,
         thinking: list,
         citations: list,
+        research_mode: str,
+        resume_matter_id: Optional[str] = None,
+        resume_run_id: Optional[str] = None,
     ):
         """Run investigation in a background thread via InProcessBackend.
 
@@ -446,6 +1385,9 @@ class AppState:
             update_q,
             thinking,
             citations,
+            research_mode=research_mode,
+            resume_matter_id=resume_matter_id,
+            resume_run_id=resume_run_id,
             on_irys_created=lambda irys: setattr(self, "_irys_ref", irys),
             on_step=self._make_on_step(update_q, thinking),
             set_current_run_id=lambda rid: setattr(self, "current_run_id", rid),
@@ -455,7 +1397,7 @@ class AppState:
         )
 
     def stream_investigation(
-        self, query: str, repo_path: str
+        self, query: str, repo_path: str, research_mode: str = "deep"
     ) -> Generator[tuple, None, None]:
         """Generator yielding (output, trace, citations, status, matter_id) tuples."""
         # Per-call local state (mitigates global AppState race for concurrent calls)
@@ -466,7 +1408,24 @@ class AppState:
         self.citations_log = call_citations
         self.update_queue = call_queue
         self.final_output = ""
+        previous_run_id = self.current_run_id
+        previous_matter_id = self.current_matter_id
+        previous_repo_path = self.current_repo_path
+        try:
+            resolved_repo_path = str(pathlib.Path(repo_path).resolve()) if repo_path else None
+        except Exception:
+            resolved_repo_path = repo_path
+        normalized_mode = normalize_research_mode(research_mode)
+        should_resume_follow_up = bool(
+            previous_run_id
+            and previous_matter_id
+            and previous_repo_path
+            and resolved_repo_path
+            and previous_repo_path == resolved_repo_path
+        )
         self.current_run_id = None
+        self.current_repo_path = resolved_repo_path
+        self.current_research_mode = normalized_mode
         # Create a fresh per-call stop event so that stopping one investigation
         # cannot interfere with a subsequent one (shared-event reuse race).
         # stop_investigation() always sets self._stop_event, which after this
@@ -486,7 +1445,16 @@ class AppState:
         self.is_running = True
         thread = threading.Thread(
             target=self._run_thread,
-            args=(query, repo_path, call_queue, call_thinking, call_citations),
+            args=(
+                query,
+                repo_path,
+                call_queue,
+                call_thinking,
+                call_citations,
+                normalized_mode,
+                previous_matter_id if should_resume_follow_up else None,
+                previous_run_id if should_resume_follow_up else None,
+            ),
             daemon=True,
         )
         thread.start()
@@ -503,7 +1471,10 @@ class AppState:
                 elapsed = time.time() - start_time
 
                 if update_type == "thinking":
-                    status = f"⏳  {elapsed:.0f}s | {len(call_thinking)} steps | {len(call_citations)} citations"
+                    status = (
+                        f"⏳  {_fmt_research_mode_label(self.current_research_mode)} | "
+                        f"{elapsed:.0f}s | {len(call_thinking)} steps | {len(call_citations)} citations"
+                    )
                     yield (
                         "*Investigating...*",
                         "\n".join(call_thinking[-80:]),
@@ -523,10 +1494,14 @@ class AppState:
                     metrics = summary.get("metrics", {})
                     true_rate = metrics.get("true_reuse_rate")
                     rate_str = f"{true_rate:.1%}" if true_rate is not None else "—"
+                    llm_calls = int(metrics.get("llm_request_count", 0) or 0)
+                    llm_cost = float(metrics.get("llm_estimated_cost_usd", 0.0) or 0.0)
+                    mode_label = _fmt_research_mode_label(getattr(state, "research_mode", None))
                     status = (
-                        f"✅  {elapsed:.0f}s | "
+                        f"✅  {mode_label} | {elapsed:.0f}s | "
                         f"Docs: {state.documents_read} ({state.documents_from_cache} cached) | "
-                        f"Reuse: {rate_str}"
+                        f"Reuse: {rate_str} | "
+                        f"LLM: {llm_calls} calls / ${llm_cost:.4f}"
                     )
                     # Replace raw thinking trace with structured ledger events so the
                     # Reasoning Trace tab shows durable, matter-model-backed content.
@@ -576,7 +1551,10 @@ class AppState:
             except queue.Empty:
                 if self.is_running:
                     elapsed = time.time() - start_time
-                    status = f"⏳  {elapsed:.0f}s | {len(call_thinking)} steps"
+                    status = (
+                        f"⏳  {_fmt_research_mode_label(self.current_research_mode)} | "
+                        f"{elapsed:.0f}s | {len(call_thinking)} steps"
+                    )
                     yield (
                         "*Investigating...*",
                         "\n".join(call_thinking[-80:]),
@@ -642,25 +1620,25 @@ class AppState:
 
     def load_overview(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
-            return "No matter loaded. Run an investigation first."
+            return "<div class='viz-empty'>No matter loaded. Run an investigation first.</div>"
         try:
             data = _run_async(self.backend().get_overview(matter_id))
-            return _fmt_overview(data)
+            return _fmt_overview_panel(data)
         except Exception as exc:
-            return f"Error loading overview: {exc}"
+            return f"<div class='viz-empty'>Error loading overview: {_escape(exc)}</div>"
 
     def load_issues(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
-            return "No matter loaded."
+            return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             issues = _run_async(self.backend().list_issues(matter_id))
-            return _fmt_issues(issues)
+            return _fmt_issues_panel(issues)
         except Exception as exc:
-            return f"Error loading issues: {exc}"
+            return f"<div class='viz-empty'>Error loading issues: {_escape(exc)}</div>"
 
     def load_assertions(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
-            return "No matter loaded."
+            return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             assertions = _run_async(self.backend().list_assertions(matter_id, limit=50))
             return _fmt_assertions(assertions)
@@ -710,15 +1688,57 @@ class AppState:
 
     def load_quant(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
-            return "No matter loaded."
+            return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             quant_data = _run_async(self.backend().get_quant_summary(matter_id))
-            return _fmt_quant(
+            return _fmt_quant_panel(
                 quant_data.get("payment_reconciliation", {}),
+                quant_data.get("invoice_reconciliation", []),
+                quant_data.get("amount_conflicts", []),
                 quant_data.get("damages_waterfall", []),
             )
         except Exception as exc:
-            return f"⚠️ Error loading quantitative data: {exc}"
+            return f"<div class='viz-empty'>Error loading quantitative data: {_escape(exc)}</div>"
+
+    def load_timeline(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            events = _run_async(self.backend().get_timeline(matter_id, limit=200))
+            return _fmt_timeline_panel(events)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading timeline: {_escape(exc)}</div>"
+
+    def load_evidence_matrix(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            matrix = _run_async(self.backend().get_evidence_matrix(matter_id))
+            return _fmt_evidence_matrix_panel(matrix)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading evidence matrix: {_escape(exc)}</div>"
+
+    def load_communication_map(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            graph = _run_async(self.backend().get_communication_map(matter_id))
+            return _fmt_communication_map_panel(graph)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading communication map: {_escape(exc)}</div>"
+
+    def load_llm_analytics(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            overview = _run_async(self.backend().get_overview(matter_id))
+            stats = overview.get("stats", {}) if isinstance(overview, dict) else {}
+            llm = stats.get("llm", {}) if isinstance(stats.get("llm"), dict) else {}
+            summary = llm.get("totals", {}) if isinstance(llm, dict) else {}
+            calls = _run_async(self.backend().list_llm_calls(matter_id, limit=250))
+            return _fmt_llm_analytics_panel(summary, calls)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading LLM analytics: {_escape(exc)}</div>"
 
     def do_correct_assertion(
         self, matter_id: str, assertion_id: str, new_state: str, reason: str
@@ -740,9 +1760,11 @@ class AppState:
         except Exception as exc:
             return f"❌ Error: {exc}"
 
-    def do_resume(self, matter_id: str, run_id: str) -> str:
+    def do_resume(self, matter_id: str, run_id: str, research_mode: str = "deep") -> str:
         if not matter_id or not run_id:
             return "Provide matter ID and run ID."
+        normalized_mode = normalize_research_mode(research_mode)
+        self.current_research_mode = normalized_mode
         # Launch resume in the executor (fire-and-forget): investigation can be
         # much longer than the 30s _run_async default timeout. The run will complete
         # in the background; the user can monitor progress via Overview / Ledger Events.
@@ -751,7 +1773,13 @@ class AppState:
         mid, rid = matter_id, run_id  # snapshot before task runs
         def _do_resume() -> None:
             try:
-                result = asyncio.run(self.backend().resume_run(mid, rid))
+                result = asyncio.run(
+                    self.backend().resume_run(
+                        mid,
+                        rid,
+                        research_mode=normalized_mode,
+                    )
+                )
                 if isinstance(result, dict):
                     if result.get("status") == "error":
                         # Surface pre-validation errors to a discoverable attribute
@@ -821,6 +1849,165 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
     .hero-text { font-size: 15px; color: #475569; margin-bottom: 4px !important; }
     footer { display: none !important; }
     .gap-highlight { background: #fef3c7; border-radius: 6px; padding: 8px; }
+    .viz-shell { display: flex; flex-direction: column; gap: 12px; }
+    .viz-empty {
+        border: 1px dashed #cbd5e1; border-radius: 12px; padding: 14px;
+        color: #64748b; background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+    }
+    .viz-card-grid {
+        display: grid; gap: 10px;
+        grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+    }
+    .viz-card {
+        border: 1px solid #dbe4ef; border-radius: 14px; padding: 12px 14px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(241,245,249,0.92));
+        box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
+    }
+    .viz-card.tone-amber { border-color: rgba(217, 119, 6, 0.18); }
+    .viz-card.tone-green { border-color: rgba(21, 128, 61, 0.18); }
+    .viz-card.tone-red { border-color: rgba(185, 28, 28, 0.18); }
+    .viz-card-title { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #64748b; }
+    .viz-card-value { font-size: 24px; font-weight: 700; color: #0f172a; margin-top: 4px; }
+    .viz-card-detail { font-size: 12px; color: #475569; margin-top: 6px; }
+    .viz-two-col {
+        display: grid; gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+    .viz-panel {
+        border: 1px solid #dbe4ef; border-radius: 14px; padding: 14px;
+        background: rgba(255,255,255,0.92);
+    }
+    .viz-panel-title { font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 10px; }
+    .viz-subtitle { font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 6px; }
+    .viz-footnote { font-size: 11px; color: #64748b; margin-top: 8px; }
+    .viz-list-row {
+        display: flex; justify-content: space-between; align-items: flex-start;
+        gap: 12px; padding: 8px 0; border-bottom: 1px solid #eef2f7;
+        font-size: 12px; color: #334155;
+    }
+    .viz-list-row span, .viz-list-row strong { white-space: normal; word-break: break-word; }
+    .viz-list-row:last-child { border-bottom: none; }
+    .viz-list-columns {
+        display: grid; gap: 14px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+    .viz-list-columns ul { margin: 0; padding-left: 18px; color: #334155; }
+    .viz-list-columns li { margin-bottom: 6px; }
+    .viz-bar-row {
+        display: grid; gap: 8px; align-items: center;
+        grid-template-columns: minmax(110px, 1fr) minmax(130px, 2fr) minmax(100px, auto);
+        margin-bottom: 8px;
+    }
+    .viz-bar-label { font-size: 12px; color: #334155; white-space: normal; word-break: break-word; }
+    .viz-bar-track { height: 10px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+    .viz-bar-fill { height: 100%; border-radius: 999px; }
+    .viz-bar-fill.tone-blue { background: linear-gradient(90deg, #2563eb, #38bdf8); }
+    .viz-bar-fill.tone-amber { background: linear-gradient(90deg, #d97706, #f59e0b); }
+    .viz-bar-fill.tone-green { background: linear-gradient(90deg, #15803d, #22c55e); }
+    .viz-bar-fill.tone-red { background: linear-gradient(90deg, #b91c1c, #ef4444); }
+    .viz-bar-meta { font-size: 12px; color: #64748b; text-align: right; }
+    .issues-stack { display: flex; flex-direction: column; gap: 10px; }
+    .issue-row {
+        padding: 10px 12px 12px calc(12px + var(--issue-indent));
+        border: 1px solid #e2e8f0; border-radius: 12px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.96));
+    }
+    .issue-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .proof-pill {
+        border-radius: 999px; padding: 2px 8px; font-size: 10px;
+        font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .proof-strong { background: rgba(21,128,61,0.12); color: #166534; }
+    .proof-partial { background: rgba(217,119,6,0.12); color: #b45309; }
+    .proof-weak { background: rgba(249,115,22,0.12); color: #c2410c; }
+    .proof-gap { background: rgba(185,28,28,0.12); color: #b91c1c; }
+    .proof-none { background: rgba(148,163,184,0.18); color: #475569; }
+    .issue-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: #0f172a; white-space: normal; word-break: break-word; }
+    .issue-pct { font-size: 12px; color: #475569; }
+    .issue-track { height: 8px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+    .issue-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #1d4ed8, #22c55e); }
+    .issue-meta { font-size: 12px; color: #64748b; margin-top: 8px; }
+    .timeline-list { position: relative; display: flex; flex-direction: column; gap: 12px; }
+    .timeline-item {
+        display: grid; gap: 12px; align-items: start;
+        grid-template-columns: 110px 18px minmax(0, 1fr);
+    }
+    .timeline-date { font-size: 12px; font-weight: 700; color: #334155; padding-top: 2px; }
+    .timeline-line { position: relative; min-height: 56px; }
+    .timeline-line::before {
+        content: ''; position: absolute; left: 8px; top: 0; bottom: -12px; width: 2px; background: #dbe4ef;
+    }
+    .timeline-dot {
+        position: absolute; left: 2px; top: 6px; width: 14px; height: 14px;
+        border-radius: 50%; background: #2563eb; box-shadow: 0 0 0 4px rgba(37,99,235,0.12);
+    }
+    .timeline-body {
+        border: 1px solid #dbe4ef; border-radius: 12px; padding: 10px 12px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.96));
+    }
+    .timeline-title { font-size: 13px; font-weight: 600; color: #0f172a; white-space: normal; word-break: break-word; }
+    .timeline-meta { font-size: 12px; color: #64748b; margin-top: 6px; white-space: normal; word-break: break-word; }
+    .matrix-wrap { overflow: auto; max-width: 100%; }
+    .matrix-wrap-heatmap {
+        overflow: auto;
+        max-width: 100%;
+        max-height: 72vh;
+        border: 1px solid #dbe4ef;
+        border-radius: 12px;
+        background: #ffffff;
+    }
+    .matrix-table, .analytics-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+    .matrix-table th, .matrix-table td, .analytics-table th, .analytics-table td {
+        border-bottom: 1px solid #e2e8f0; padding: 8px 10px; text-align: left;
+        white-space: normal; word-break: break-word; vertical-align: top;
+    }
+    .matrix-table thead th, .analytics-table thead th {
+        position: sticky; top: 0; background: #f8fafc; color: #334155; z-index: 1;
+    }
+    .matrix-cell { min-width: 52px; text-align: center !important; font-weight: 700; color: #0f172a; }
+    .evidence-matrix-table {
+        width: max-content;
+        min-width: max-content;
+        table-layout: fixed;
+    }
+    .evidence-matrix-table thead th {
+        min-width: 170px;
+        max-width: 220px;
+        background: #f8fafc;
+        z-index: 3;
+    }
+    .evidence-matrix-table thead th:first-child {
+        min-width: 220px;
+        max-width: 300px;
+        left: 0;
+        z-index: 5;
+        box-shadow: 2px 0 0 #dbe4ef;
+    }
+    .evidence-matrix-table tbody th {
+        position: sticky;
+        left: 0;
+        min-width: 220px;
+        max-width: 300px;
+        background: #f8fafc;
+        z-index: 2;
+        box-shadow: 2px 0 0 #dbe4ef;
+    }
+    .evidence-matrix-table td.matrix-cell {
+        min-width: 72px;
+        width: 72px;
+        text-align: center !important;
+    }
+    .comm-graph { width: 100%; height: auto; border: 1px solid #dbe4ef; border-radius: 14px; background: #f8fafc; overflow: visible; }
+    .comm-actor-node { fill: #1d4ed8; opacity: 0.9; }
+    .comm-doc-node { fill: #0f766e; opacity: 0.85; }
+    .comm-label { font-size: 11px; fill: #334155; font-family: 'Inter', sans-serif; }
+    .comm-label-left { text-anchor: start; }
+    .viz-detail { border-top: 1px solid #e2e8f0; padding: 10px 0; }
+    .viz-detail:first-child { border-top: none; }
+    .viz-detail summary { cursor: pointer; font-weight: 600; color: #0f172a; }
+    .viz-detail-block { margin-top: 10px; font-size: 12px; color: #334155; }
+    .viz-detail-block ul { margin: 6px 0 0 0; padding-left: 18px; }
+    .viz-detail-block li { margin-bottom: 6px; }
     """
 
     with gr.Blocks(title="Irys — Legal Intelligence", theme=_theme, css=_css) as demo:
@@ -854,11 +2041,24 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 elem_classes=["compact-id"],
             )
 
-        query = gr.Textbox(
-            label="Question",
-            placeholder="What are the key claims and defenses? What damages are alleged?",
-            lines=2,
-        )
+        with gr.Row():
+            query = gr.Textbox(
+                label="Question",
+                placeholder="What are the key claims and defenses? What damages are alleged?",
+                lines=2,
+                scale=4,
+            )
+            research_mode = gr.Dropdown(
+                label="Research Mode",
+                choices=[
+                    ("Simple", "simple"),
+                    ("Deep", "deep"),
+                    ("Sebih Special", "sebih_special"),
+                ],
+                value="deep",
+                scale=1,
+                min_width=220,
+            )
         with gr.Row():
             submit_btn = gr.Button("Investigate", variant="primary", scale=4)
             stop_btn = gr.Button("Stop", variant="stop", scale=1)
@@ -904,16 +2104,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             # ---------- RIGHT: Intelligence sidebar ----------
             with gr.Column(scale=1, min_width=280):
                 gr.Markdown("### Matter Intelligence")
-                overview_md = gr.Markdown(
-                    "*Run your first investigation to see matter intelligence here — "
-                    "key metrics, weakest issues, and open gaps.*"
+                overview_md = gr.HTML(
+                    "<div class='viz-empty'>Run your first investigation to see matter intelligence here.</div>"
                 )
 
                 gr.Markdown("---")
                 gr.Markdown("### Issues & Evidence")
-                issues_md = gr.Markdown(
-                    "*After investigation, this shows every claim, defense, and element "
-                    "with evidence coverage. Low coverage = proof gap.*"
+                issues_md = gr.HTML(
+                    "<div class='viz-empty'>Issue coverage and proof state will appear here after investigation.</div>"
                 )
 
                 gr.Markdown("---")
@@ -986,8 +2184,36 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "pulled directly from your documents and reconciled. "
                 "If two documents disagree on an amount, Irys flags the conflict."
             )
-            quant_md = gr.Markdown("*Financial data will appear here after an investigation.*")
+            quant_md = gr.HTML("<div class='viz-empty'>Financial data will appear here after an investigation.</div>")
             refresh_quant_btn = gr.Button("Refresh Financials", variant="secondary", size="sm")
+
+        with gr.Accordion("Timeline — dated events across the matter", open=False):
+            gr.Markdown(
+                "Chronological events from date facts and temporally-scoped assertions."
+            )
+            timeline_html = gr.HTML("<div class='viz-empty'>Timeline events will appear here after an investigation.</div>")
+            refresh_timeline_btn = gr.Button("Refresh Timeline", variant="secondary", size="sm")
+
+        with gr.Accordion("Evidence Matrix — which documents support which issues", open=False):
+            gr.Markdown(
+                "Rows are issues, columns are source documents, and cells show support/attack density."
+            )
+            evidence_matrix_html = gr.HTML("<div class='viz-empty'>Evidence matrix will appear here after an investigation.</div>")
+            refresh_evidence_btn = gr.Button("Refresh Evidence Matrix", variant="secondary", size="sm")
+
+        with gr.Accordion("Communication Graph — actors and documents", open=False):
+            gr.Markdown(
+                "Maps which actors appear in which documents and highlights repeated pairings."
+            )
+            communication_html = gr.HTML("<div class='viz-empty'>Communication graph will appear here after an investigation.</div>")
+            refresh_comm_btn = gr.Button("Refresh Communication Graph", variant="secondary", size="sm")
+
+        with gr.Accordion("LLM Analytics — cost, latency, and stage mix", open=False):
+            gr.Markdown(
+                "Shows recent model calls, spend by stage, and the current tier mix."
+            )
+            llm_analytics_html = gr.HTML("<div class='viz-empty'>LLM analytics will appear here after an investigation.</div>")
+            refresh_llm_btn = gr.Button("Refresh LLM Analytics", variant="secondary", size="sm")
 
         with gr.Accordion("Steering Controls — redirect or resume an investigation", open=False):
             gr.Markdown(
@@ -1007,7 +2233,8 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 with gr.Column():
                     gr.Markdown("#### Resume Stopped Investigation")
                     gr.Markdown(
-                        "Click below to continue the last investigation from where it was stopped."
+                        "Click below to continue the last investigation from where it was stopped. "
+                        "If you changed the research mode above, the resumed run will use that budget."
                     )
                     resume_btn = gr.Button("Resume Last Investigation", variant="primary")
                     resume_result = gr.Textbox(label="Result", interactive=False)
@@ -1072,28 +2299,76 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[matter_status, status_box],
         )
 
-        # --- Investigation stream ---
-        run_outputs = [run_output, trace_box, citations_box, status_box, matter_id_box]
-
-        submit_btn.click(
-            fn=state.stream_investigation,
-            inputs=[query, repo_path],
-            outputs=run_outputs,
-        )
-        stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
-
         # --- Sidebar refresh (all panels at once) ---
         def _refresh_all(mid):
             overview = state.load_overview(mid)
             issues = state.load_issues(mid)
             gaps_text, top_issue = state.load_gaps(mid)
             assumptions = state.load_assumptions(mid)
-            return overview, issues, gaps_text, assumptions, top_issue
+            assertions = state.load_assertions(mid)
+            quant = state.load_quant(mid)
+            timeline = state.load_timeline(mid)
+            evidence = state.load_evidence_matrix(mid)
+            communication = state.load_communication_map(mid)
+            llm_analytics = state.load_llm_analytics(mid)
+            return (
+                overview,
+                issues,
+                gaps_text,
+                assumptions,
+                assertions,
+                quant,
+                timeline,
+                evidence,
+                communication,
+                llm_analytics,
+                top_issue,
+            )
+
+        # --- Investigation stream ---
+        run_outputs = [run_output, trace_box, citations_box, status_box, matter_id_box]
+
+        submit_btn.click(
+            fn=state.stream_investigation,
+            inputs=[query, repo_path, research_mode],
+            outputs=run_outputs,
+        ).then(
+            # Auto-refresh all panels once synthesis completes (Task #128).
+            # Lawyers shouldn't need to click individual Refresh buttons.
+            fn=_refresh_all,
+            inputs=[matter_id_box],
+            outputs=[
+                overview_md,
+                issues_md,
+                gaps_md,
+                assumptions_md,
+                assertions_md,
+                quant_md,
+                timeline_html,
+                evidence_matrix_html,
+                communication_html,
+                llm_analytics_html,
+                redirect_issue_id,
+            ],
+        )
+        stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
         refresh_sidebar_btn.click(
             fn=_refresh_all,
             inputs=[matter_id_box],
-            outputs=[overview_md, issues_md, gaps_md, assumptions_md, redirect_issue_id],
+            outputs=[
+                overview_md,
+                issues_md,
+                gaps_md,
+                assumptions_md,
+                assertions_md,
+                quant_md,
+                timeline_html,
+                evidence_matrix_html,
+                communication_html,
+                llm_analytics_html,
+                redirect_issue_id,
+            ],
         )
 
         # --- Detail panel refreshes ---
@@ -1106,6 +2381,26 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_quant(mid),
             inputs=[matter_id_box],
             outputs=[quant_md],
+        )
+        refresh_timeline_btn.click(
+            fn=lambda mid: state.load_timeline(mid),
+            inputs=[matter_id_box],
+            outputs=[timeline_html],
+        )
+        refresh_evidence_btn.click(
+            fn=lambda mid: state.load_evidence_matrix(mid),
+            inputs=[matter_id_box],
+            outputs=[evidence_matrix_html],
+        )
+        refresh_comm_btn.click(
+            fn=lambda mid: state.load_communication_map(mid),
+            inputs=[matter_id_box],
+            outputs=[communication_html],
+        )
+        refresh_llm_btn.click(
+            fn=lambda mid: state.load_llm_analytics(mid),
+            inputs=[matter_id_box],
+            outputs=[llm_analytics_html],
         )
 
         # --- Correction ---
@@ -1135,8 +2430,8 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
         # --- Steering: resume uses current run_id automatically ---
         resume_btn.click(
-            fn=lambda mid: state.do_resume(mid, state.current_run_id or ""),
-            inputs=[matter_id_box],
+            fn=lambda mid, mode: state.do_resume(mid, state.current_run_id or "", mode),
+            inputs=[matter_id_box, research_mode],
             outputs=[resume_result],
         )
 

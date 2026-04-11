@@ -45,6 +45,7 @@ class ReasoningLedgerStore:
         resumed_from: Optional[str] = None,
         operation_type: str = "query",
         trigger: str = "user",
+        research_mode: str = "deep",
     ) -> str:
         """Start a new run session. Returns run_id.
 
@@ -66,13 +67,13 @@ class ReasoningLedgerStore:
             self.db.execute(
                 """INSERT INTO run_session
                    (id, matter_id, query, objective, status, started_at,
-                    assertions_at_start, resumed_from, operation_type, trigger)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    assertions_at_start, resumed_from, operation_type, trigger, research_mode)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     run_id, self.matter_id, query, objective,
                     RunStatus.RUNNING.value, now,
                     assertions_at_start, resumed_from,
-                    operation_type, trigger,
+                    operation_type, trigger, research_mode,
                 ),
             )
             # Seed the first ledger event
@@ -345,6 +346,12 @@ class ReasoningLedgerStore:
             assertions_at_start=d.get("assertions_at_start"),
             reuse_rate=d.get("reuse_rate"),
             resumed_from=d.get("resumed_from"),
+            research_mode=d.get("research_mode"),
+            llm_input_tokens=d.get("llm_input_tokens"),
+            llm_cache_read_tokens=d.get("llm_cache_read_tokens"),
+            llm_output_tokens=d.get("llm_output_tokens"),
+            llm_request_count=d.get("llm_request_count"),
+            llm_estimated_cost_usd=d.get("llm_estimated_cost_usd"),
         )
 
     def recent_runs(self, limit: int = 10) -> list[dict]:

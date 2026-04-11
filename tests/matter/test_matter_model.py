@@ -6,6 +6,7 @@ writes a run_session, ledger events, and assertions.
 """
 
 import pytest
+from irys.core.models import LLMCallRecord
 from irys.matter import (
     MatterModel, AssertionCandidate, SpeechAct, SourceRole,
     ModelLayer, AssertionKind, LedgerEventType, GapType,
@@ -99,12 +100,52 @@ def test_stats_covers_all_substrate_dimensions(model):
     assert stats["recent_runs"] >= 1, "stats() must report recent run count (SO-1)"
 
 
+def test_stats_include_llm_usage_summary(model):
+    """stats() must expose persisted Gemini token and cost totals for the UI."""
+    run_id = model.start_run("usage summary test")
+    model.record_llm_call(
+        LLMCallRecord(
+            run_id=run_id,
+            matter_id=model.matter_id,
+            model_tier="flash",
+            model_id="gemini-3.1-flash-lite-preview",
+            usage_label="orientation",
+            input_tokens=1200,
+            cache_read_tokens=300,
+            output_tokens=400,
+            total_prompt_tokens=1500,
+            estimated_cost_usd=0.00166,
+            latency_ms=250,
+            success=True,
+        )
+    )
+    model.record_run_usage_summary(
+        run_id,
+        {
+            "request_count": 1,
+            "input_tokens": 1200,
+            "cache_read_tokens": 300,
+            "output_tokens": 400,
+            "estimated_cost_usd": 0.00166,
+        },
+    )
+    model.complete_run(run_id)
+
+    stats = model.stats()
+    assert stats["llm"]["totals"]["request_count"] == 1
+    assert stats["llm"]["totals"]["input_tokens"] == 1200
+    assert stats["llm"]["totals"]["cache_read_tokens"] == 300
+    assert stats["llm"]["totals"]["output_tokens"] == 400
+    assert stats["llm"]["last_run"]["estimated_cost_usd"] == pytest.approx(0.00166)
+
+
 def test_run_lifecycle(model):
-    run_id = model.start_run("What are the payment obligations?")
+    run_id = model.start_run("What are the payment obligations?", research_mode="simple")
     assert run_id
 
     run = model.ledger.get_run(run_id)
     assert run.status == "running"
+    assert run.research_mode == "simple"
 
     # Events should include run_started
     events = model.ledger.get_events(run_id)

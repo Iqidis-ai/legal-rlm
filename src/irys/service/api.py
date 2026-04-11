@@ -57,6 +57,7 @@ from .models import (
     MatterStatsResponse,
     StopRunRequest,
     RedirectRunRequest,
+    ResumeRunRequest,
     AnswerClarificationRequest,
     CorrectAssertionRequest,
     TrustOverrideRequest,
@@ -496,6 +497,7 @@ async def _run_investigation(
         result = await irys.investigate(
             query=request.query,
             repository=str(temp_dir),
+            research_mode=request.research_mode,
         )
 
         # Extract results
@@ -503,6 +505,7 @@ async def _run_investigation(
         job.documents_processed = result.state.documents_read
         job.completed_at = datetime.now()
         job.duration_seconds = (job.completed_at - job.created_at).total_seconds()
+        job.llm_usage = getattr(result.state, "llm_usage", {})
         job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
 
         if getattr(result.state, "status", None) == "interrupted":
@@ -636,6 +639,10 @@ async def quick_search(request: SearchRequest):
 )
 async def upload_investigate(
     query: str = Form(..., description="Investigation query"),
+    research_mode: Optional[str] = Form(
+        None,
+        description="Investigation budget profile: simple, deep, or sebih_special",
+    ),
     files: list[UploadFile] = File(..., description="Document files to analyze"),
     callback_url: Optional[str] = Form(None, description="Webhook URL for results"),
     keep_files: bool = Form(False, description="Keep files in S3 after processing"),
@@ -732,6 +739,7 @@ async def upload_investigate(
             _run_upload_investigation,
             job_id,
             query,
+            research_mode,
             s3_prefix,
             callback_url,
             keep_files,
@@ -756,6 +764,7 @@ async def upload_investigate(
 async def _run_upload_investigation(
     job_id: str,
     query: str,
+    research_mode: Optional[str],
     s3_prefix: str,
     callback_url: Optional[str],
     keep_files: bool,
@@ -798,6 +807,7 @@ async def _run_upload_investigation(
         result = await irys.investigate(
             query=query,
             repository=str(temp_dir),
+            research_mode=research_mode,
         )
 
         # Extract results — use exact state._run_id (r39 fix: avoids concurrent-run race).
@@ -805,6 +815,7 @@ async def _run_upload_investigation(
         job.documents_processed = result.state.documents_read
         job.completed_at = datetime.now()
         job.duration_seconds = (job.completed_at - job.created_at).total_seconds()
+        job.llm_usage = getattr(result.state, "llm_usage", {})
         job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
 
         if getattr(result.state, "status", None) == "interrupted":
@@ -983,6 +994,10 @@ async def upload_search(
 )
 async def upload_investigate_sync(
     query: str = Form(..., description="Investigation query"),
+    research_mode: Optional[str] = Form(
+        None,
+        description="Investigation budget profile: simple, deep, or sebih_special",
+    ),
     files: list[UploadFile] = File(..., description="Document files to analyze"),
     keep_files: bool = Form(False, description="Keep files in S3 after processing for re-query"),
 ):
@@ -1088,6 +1103,7 @@ async def upload_investigate_sync(
         result = await irys.investigate(
             query=query,
             repository=str(temp_dir),
+            research_mode=research_mode,
         )
 
         _sync_interrupted = (getattr(result.state, "status", None) == "interrupted")
@@ -1134,6 +1150,7 @@ async def upload_investigate_sync(
             run_id=_sync_run_id,
             pending_clarifications=getattr(result.state, "pending_clarifications", []),
             open_gaps=_sync_open_gaps,
+            llm_usage=getattr(result.state, "llm_usage", {}),
         )
 
         # Add S3 prefix to response if files kept (s3 mode only)
@@ -1264,6 +1281,7 @@ async def _run_urls_investigation(
         result = await irys.investigate(
             query=request.query,
             repository=str(temp_dir),
+            research_mode=request.research_mode,
         )
 
         # Extract results
@@ -1271,6 +1289,7 @@ async def _run_urls_investigation(
         job.documents_processed = result.state.documents_read
         job.completed_at = datetime.now()
         job.duration_seconds = (job.completed_at - job.created_at).total_seconds()
+        job.llm_usage = getattr(result.state, "llm_usage", {})
         job.pending_clarifications = getattr(result.state, "pending_clarifications", [])
 
         if getattr(result.state, "status", None) == "interrupted":
@@ -1420,6 +1439,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         result = await irys.investigate(
             query=request.query,
             repository=str(temp_dir),
+            research_mode=request.research_mode,
         )
 
         _urls_sync_interrupted = (getattr(result.state, "status", None) == "interrupted")
@@ -1454,6 +1474,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             run_id=_urls_run_id,
             pending_clarifications=getattr(result.state, "pending_clarifications", []),
             open_gaps=_urls_open_gaps,
+            llm_usage=getattr(result.state, "llm_usage", {}),
         )
 
     except HTTPException:
@@ -1992,6 +2013,17 @@ async def get_matter_invoice_chain(matter_id: str, currency: str = "USD"):
 
 
 @app.get(
+    "/matter/{matter_id}/reconciliation/conflicts",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_amount_conflicts(matter_id: str):
+    """Return grouped amount conflicts for transparent SO-6 inspection."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_amount_conflicts()
+
+
+@app.get(
     "/matter/{matter_id}/metrics",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
@@ -2517,6 +2549,17 @@ async def get_communication_map(matter_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/llm-calls",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_llm_calls(matter_id: str, limit: int = 120, run_id: Optional[str] = None):
+    """Return recent persisted LLM call rows for analytics and UI visualizations."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.list_llm_calls(run_id=run_id, limit=limit)
+
+
+@app.get(
     "/matter/{matter_id}/damages-waterfall",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
@@ -2668,6 +2711,7 @@ async def get_matter_overview(matter_id: str):
         "matter_id": matter_id,
         "stats": stats,
         "so_metrics": so,
+        "coverage_report": coverage_report,
         "weakest_issues": weakest_issues,
         "top_gaps": top_gaps,
         "pending_clarifications": clarifications,
@@ -2798,7 +2842,11 @@ async def stop_run(matter_id: str, run_id: str):
         400: {"model": ErrorResponse},
     },
 )
-async def resume_run(matter_id: str, run_id: str):
+async def resume_run(
+    matter_id: str,
+    run_id: str,
+    request: Optional[ResumeRunRequest] = None,
+):
     """Resume an interrupted run from its checkpoint.
 
     Validates that:
@@ -2884,7 +2932,12 @@ async def resume_run(matter_id: str, run_id: str):
     # production use with long-running resumes, move this to the background-jobs
     # mechanism (same as the async /investigate endpoint).
     try:
-        result = await irys.resume_investigation(checkpoint_path, original_run_id=run_id)
+        result = await irys.resume_investigation(
+            checkpoint_path,
+            original_run_id=run_id,
+            follow_up_query=(request.follow_up_query if request else None),
+            research_mode=(request.research_mode if request else None),
+        )
     except Exception as exc:
         # LOW r76: concurrent resume races are a 409, not a 500
         from ..rlm.engine import ConcurrentResumeError

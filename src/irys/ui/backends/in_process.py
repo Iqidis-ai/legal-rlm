@@ -116,10 +116,11 @@ class InProcessBackend(UIBackend):
         repo_path: str,
         query: str,
         matter_id: Optional[str] = None,
+        research_mode: Optional[str] = None,
     ) -> dict:
         """Start an investigation in-process. Returns after investigation completes."""
         irys = self._get_irys()
-        result = await irys.investigate(query, repo_path)
+        result = await irys.investigate(query, repo_path, research_mode=research_mode)
         state = result.state
         # Get matter_id and run_id from the matter model if available
         engine = irys._engine
@@ -174,7 +175,13 @@ class InProcessBackend(UIBackend):
         except Exception as exc:
             return {"status": "error", "detail": str(exc)}
 
-    async def resume_run(self, matter_id: str, run_id: str) -> dict:
+    async def resume_run(
+        self,
+        matter_id: str,
+        run_id: str,
+        follow_up_query: Optional[str] = None,
+        research_mode: Optional[str] = None,
+    ) -> dict:
         """Resume an interrupted run from its checkpoint (InProcessBackend)."""
         try:
             from pathlib import Path as _Path
@@ -205,7 +212,12 @@ class InProcessBackend(UIBackend):
             # Wire the same matter model so ledger entries go to the correct DB
             irys._ensure_initialized()
             irys._engine._matter_model = model
-            result = await irys.resume_investigation(checkpoint_path, original_run_id=run_id)
+            result = await irys.resume_investigation(
+                checkpoint_path,
+                original_run_id=run_id,
+                follow_up_query=follow_up_query,
+                research_mode=research_mode,
+            )
             new_run_id = getattr(result.state, "_run_id", None)
             return {"status": "resumed", "run_id": run_id, "new_run_id": new_run_id}
         except Exception as exc:
@@ -247,6 +259,7 @@ class InProcessBackend(UIBackend):
             "matter_id": matter_id,
             "stats": stats,
             "so_metrics": so,
+            "coverage_report": coverage_report,
             "weakest_issues": weakest,
             "top_gaps": top_gaps,
             "pending_clarifications": clarifications,
@@ -442,12 +455,35 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return {
             "payment_reconciliation": model.reconcile_payment_chain(),
+            "invoice_reconciliation": model.reconcile_invoice_chain(),
+            "amount_conflicts": model.get_amount_conflicts(),
             "damages_waterfall": model.get_damages_waterfall(),
         }
 
     async def list_assumptions(self, matter_id: str, limit: int = 30) -> list[dict]:
         model = self._get_matter_model(matter_id)
         return model.assumptions.get_all(max_rows=limit)
+
+    async def get_timeline(self, matter_id: str, limit: int = 80) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.get_timeline(limit=limit)
+
+    async def get_evidence_matrix(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_evidence_matrix()
+
+    async def get_communication_map(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_communication_map()
+
+    async def list_llm_calls(
+        self,
+        matter_id: str,
+        run_id: Optional[str] = None,
+        limit: int = 120,
+    ) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.list_llm_calls(run_id=run_id, limit=limit)
 
     # ------------------------------------------------------------------ #
     # Streaming investigation (InProcessBackend-specific)                 #
@@ -460,6 +496,9 @@ class InProcessBackend(UIBackend):
         update_q: "queue.Queue",
         thinking: list,
         citations: list,
+        research_mode: Optional[str] = None,
+        resume_matter_id: Optional[str] = None,
+        resume_run_id: Optional[str] = None,
         on_irys_created=None,
         on_step=None,
         set_current_run_id=None,
@@ -493,7 +532,32 @@ class InProcessBackend(UIBackend):
                 update_q.put(("error", "Investigation stopped before it began."))
                 return
             try:
-                result = await irys.investigate(query, repo_path)
+                result = None
+                if resume_matter_id and resume_run_id:
+                    try:
+                        model = self._get_matter_model(resume_matter_id)
+                        run = model.ledger.get_run(resume_run_id)
+                        checkpoint_path = getattr(run, "next_action", None) if run else None
+                        if (
+                            run is not None
+                            and run.status == "interrupted"
+                            and checkpoint_path
+                        ):
+                            irys._engine._matter_model = model
+                            result = await irys.resume_investigation(
+                                checkpoint_path,
+                                original_run_id=resume_run_id,
+                                follow_up_query=query,
+                                research_mode=research_mode,
+                            )
+                    except Exception:
+                        result = None
+                if result is None:
+                    result = await irys.investigate(
+                        query,
+                        repo_path,
+                        research_mode=research_mode,
+                    )
                 state = result.state
                 engine = irys._engine
                 mm = engine._matter_model if engine else None

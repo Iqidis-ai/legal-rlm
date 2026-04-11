@@ -34,6 +34,43 @@ class QueryType(Enum):
     UNKNOWN = "unknown"
 
 
+class ResearchMode(Enum):
+    """User-selected investigation depth/budget profiles."""
+    SIMPLE = "simple"
+    DEEP = "deep"
+    SEBIH_SPECIAL = "sebih_special"
+
+
+def normalize_research_mode(
+    value: Any,
+    *,
+    default: "str | ResearchMode" = ResearchMode.DEEP,
+    strict: bool = False,
+) -> str:
+    """Normalize a research mode string/enum to a stable lowercase value."""
+    default_value = default.value if isinstance(default, ResearchMode) else str(default)
+    if value is None:
+        return default_value
+    if isinstance(value, ResearchMode):
+        return value.value
+
+    normalized = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "simple": ResearchMode.SIMPLE.value,
+        "deep": ResearchMode.DEEP.value,
+        "sebih_special": ResearchMode.SEBIH_SPECIAL.value,
+        "sebihspecial": ResearchMode.SEBIH_SPECIAL.value,
+        "special": ResearchMode.SEBIH_SPECIAL.value,
+    }
+    resolved = aliases.get(normalized)
+    if resolved is not None:
+        return resolved
+    if strict:
+        valid = ", ".join(mode.value for mode in ResearchMode)
+        raise ValueError(f"Invalid research_mode '{value}'. Expected one of: {valid}")
+    return default_value
+
+
 def classify_query(query: str) -> dict[str, Any]:
     """Classify a legal query by type and extract key terms."""
     query_lower = query.lower()
@@ -680,6 +717,7 @@ class InvestigationState:
     # Accumulated knowledge
     findings: dict[str, Any] = field(default_factory=dict)
     hypothesis: Optional[str] = None
+    research_mode: str = ResearchMode.DEEP.value
     query_classification: Optional[dict] = None  # Result of classify_query()
 
     # In-flight dedup: tracks repo-relative paths currently on the cold path in this run.
@@ -701,6 +739,7 @@ class InvestigationState:
     # vs. required (cache misses, cold calls). True reuse rate = avoided / (avoided + required).
     llm_calls_avoided: int = 0
     llm_calls_required: int = 0
+    llm_usage: dict[str, Any] = field(default_factory=dict)
 
     # Status
     status: str = "initialized"
@@ -718,12 +757,18 @@ class InvestigationState:
     pending_clarifications: list[dict] = field(default_factory=list)
 
     @classmethod
-    def create(cls, query: str, repository_path: str) -> "InvestigationState":
+    def create(
+        cls,
+        query: str,
+        repository_path: str,
+        research_mode: "str | ResearchMode | None" = None,
+    ) -> "InvestigationState":
         return cls(
             id=str(uuid.uuid4())[:8],
             query=query,
             repository_path=repository_path,
             started_at=datetime.now(),
+            research_mode=normalize_research_mode(research_mode),
         )
 
     def add_step(
@@ -994,6 +1039,7 @@ class InvestigationState:
         return {
             "progress_percent": min(progress, 100),
             "status": self.status,
+            "research_mode": self.research_mode,
             "elapsed_seconds": elapsed,
             "documents_read": self.documents_read,
             "searches_performed": self.searches_performed,
@@ -1530,6 +1576,7 @@ class InvestigationState:
             "id": self.id,
             "query": self.query,
             "status": self.status,
+            "research_mode": self.research_mode,
             "duration_seconds": self.duration_seconds,
             "confidence": confidence,
             "metrics": {
@@ -1544,6 +1591,12 @@ class InvestigationState:
                 "true_reuse_rate": round(
                     self.llm_calls_avoided / (self.llm_calls_avoided + self.llm_calls_required), 3
                 ) if (self.llm_calls_avoided + self.llm_calls_required) > 0 else None,
+                "llm_request_count": self.llm_usage.get("request_count", 0),
+                "llm_input_tokens": self.llm_usage.get("input_tokens", 0),
+                "llm_cache_read_tokens": self.llm_usage.get("cache_read_tokens", 0),
+                "llm_output_tokens": self.llm_usage.get("output_tokens", 0),
+                "llm_estimated_cost_usd": self.llm_usage.get("estimated_cost_usd", 0.0),
+                "llm_by_tier": self.llm_usage.get("by_tier", {}),
                 "searches_performed": self.searches_performed,
                 "citations": len(self.citations),
                 "verified_citations": verification_stats["verified"],
@@ -1562,34 +1615,70 @@ class InvestigationState:
         }
 
     def get_confidence_score(self) -> dict[str, Any]:
-        """Calculate investigation confidence score (0-100)."""
+        """Calculate an evidence-quality confidence score (0-100)."""
         factors = {}
 
-        # Factor 1: Citation coverage (0-25)
+        facts = self.findings.get("accumulated_facts", [])
         citation_count = len(self.citations)
-        factors["citations"] = min(citation_count * 2.5, 25)
-
-        # Factor 2: Verification rate (0-25)
         verification_stats = self.get_verification_stats()
+
+        role_weights = {
+            "AUTHORITATIVE": 1.0,
+            "OPERATIVE": 1.0,
+            "PROCEDURAL": 0.75,
+            "INFORMAL": 0.5,
+            "UNKNOWN": 0.4,
+            "DRAFT": 0.3,
+            "POST_HOC": 0.3,
+            "ADVOCACY": 0.2,
+        }
+
+        fact_weights: list[float] = []
+        high_trust_count = 0
+        for fact in facts:
+            label = "UNKNOWN"
+            if isinstance(fact, str) and fact.startswith("[") and "]" in fact:
+                label = fact[1:fact.index("]")]
+            weight = role_weights.get(label.upper(), 0.4)
+            fact_weights.append(weight)
+            if weight >= 0.75:
+                high_trust_count += 1
+
+        # Factor 1: Source quality (0-25)
+        if fact_weights:
+            avg_trust = sum(fact_weights) / len(fact_weights)
+            factors["source_quality"] = avg_trust * 25
+        else:
+            factors["source_quality"] = 0
+
+        # Factor 2: Weighted evidence volume (0-20)
+        factors["evidence_volume"] = min(sum(fact_weights) * 2.0, 20)
+
+        # Factor 3: High-trust support ratio (0-15)
+        if fact_weights:
+            factors["high_trust_support"] = (high_trust_count / len(fact_weights)) * 15
+        else:
+            factors["high_trust_support"] = 0
+
+        # Factor 4: Citation support (0-15)
+        factors["citations"] = min(citation_count * 1.5, 15)
+
+        # Factor 5: Verification rate (0-15)
         if verification_stats["total"] > 0:
             verified_rate = verification_stats["verified"] / verification_stats["total"]
-            factors["verification"] = verified_rate * 25
+            factors["verification"] = verified_rate * 15
         else:
             factors["verification"] = 0
 
-        # Factor 3: Document coverage (0-20)
-        if self.documents_read >= 5:
-            factors["documents"] = 20
-        else:
-            factors["documents"] = self.documents_read * 4
+        # Factor 6: Corroboration across sources (0-5)
+        unique_citation_docs = len({
+            citation.document for citation in self.citations if getattr(citation, "document", None)
+        })
+        factors["corroboration"] = min(float(unique_citation_docs), 5.0)
 
-        # Factor 4: Entity discovery (0-15)
-        entity_count = len(self.entities)
-        factors["entities"] = min(entity_count * 3, 15)
-
-        # Factor 5: Fact accumulation (0-15)
-        fact_count = len(self.findings.get("accumulated_facts", []))
-        factors["facts"] = min(fact_count * 1.5, 15)
+        # Factor 7: Consistency of the current record (0-5)
+        contradiction_penalty = min(len(self.contradictions), 5)
+        factors["consistency"] = max(0.0, 5.0 - float(contradiction_penalty))
 
         total_score = sum(factors.values())
 
@@ -1737,6 +1826,7 @@ class InvestigationState:
             ],
             "findings": self.findings,
             "hypothesis": self.hypothesis,
+            "research_mode": self.research_mode,
             "query_classification": self.query_classification,
             "facts_per_iteration": self.facts_per_iteration,
             "documents_read": self.documents_read,
@@ -1746,6 +1836,7 @@ class InvestigationState:
             "max_depth_reached": self.max_depth_reached,
             "api_calls": self.api_calls,
             "estimated_tokens": self.estimated_tokens,
+            "llm_usage": self.llm_usage,
             "status": self.status,
             "error": self.error,
             "started_at": self.started_at.isoformat() if self.started_at else None,
@@ -1855,6 +1946,7 @@ class InvestigationState:
         # Restore other fields
         state.findings = data.get("findings", {})
         state.hypothesis = data.get("hypothesis")
+        state.research_mode = normalize_research_mode(data.get("research_mode"))
         state.query_classification = data.get("query_classification")
         state.facts_per_iteration = data.get("facts_per_iteration", [])
         state.documents_read = data.get("documents_read", 0)
@@ -1864,6 +1956,7 @@ class InvestigationState:
         state.max_depth_reached = data.get("max_depth_reached", 0)
         state.api_calls = data.get("api_calls", 0)
         state.estimated_tokens = data.get("estimated_tokens", 0)
+        state.llm_usage = data.get("llm_usage", {})
         state.status = data.get("status", "initialized")
         state.error = data.get("error")
         state.started_at = datetime.fromisoformat(data["started_at"]) if data.get("started_at") else None

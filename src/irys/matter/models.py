@@ -296,3 +296,9 @@ class RunSessionRecord:
     assertions_at_start: Optional[int] = None
     reuse_rate: Optional[float] = None
     resumed_from: Optional[str] = None
+    research_mode: Optional[str] = None
+    llm_input_tokens: Optional[int] = None
+    llm_cache_read_tokens: Optional[int] = None
+    llm_output_tokens: Optional[int] = None
+    llm_request_count: Optional[int] = None
+    llm_estimated_cost_usd: Optional[float] = None

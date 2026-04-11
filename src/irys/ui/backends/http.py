@@ -43,6 +43,7 @@ class HttpBackend(UIBackend):
         repo_path: str,
         query: str,
         matter_id: Optional[str] = None,
+        research_mode: Optional[str] = None,
     ) -> dict:
         """Start an investigation via the service.
 
@@ -142,8 +143,19 @@ class HttpBackend(UIBackend):
             {"issue_id": issue_id},
         )
 
-    async def resume_run(self, matter_id: str, run_id: str) -> dict:
-        return await self._post(f"/matter/{matter_id}/runs/{run_id}/resume")
+    async def resume_run(
+        self,
+        matter_id: str,
+        run_id: str,
+        follow_up_query: Optional[str] = None,
+        research_mode: Optional[str] = None,
+    ) -> dict:
+        body: dict[str, Any] = {}
+        if follow_up_query:
+            body["follow_up_query"] = follow_up_query
+        if research_mode:
+            body["research_mode"] = research_mode
+        return await self._post(f"/matter/{matter_id}/runs/{run_id}/resume", body)
 
     # ------------------------------------------------------------------ #
     # SO-3 / SO-6 supplemental surfaces                                   #
@@ -157,10 +169,38 @@ class HttpBackend(UIBackend):
         return result if isinstance(result, list) else []
 
     async def get_quant_summary(self, matter_id: str) -> dict:
-        """Fetch quant data from two separate service endpoints and combine."""
+        """Fetch quant data from service endpoints and combine."""
         recon = await self._get(f"/matter/{matter_id}/reconciliation")
+        invoice_chain = await self._get(f"/matter/{matter_id}/reconciliation/invoices")
+        amount_conflicts = await self._get(f"/matter/{matter_id}/reconciliation/conflicts")
         damages = await self._get(f"/matter/{matter_id}/damages-waterfall")
-        return {"payment_reconciliation": recon, "damages_waterfall": damages}
+        return {
+            "payment_reconciliation": recon,
+            "invoice_reconciliation": invoice_chain,
+            "amount_conflicts": amount_conflicts,
+            "damages_waterfall": damages,
+        }
 
     async def list_assumptions(self, matter_id: str, limit: int = 30) -> list[dict]:
         return await self._get(f"/matter/{matter_id}/assumptions?limit={limit}")
+
+    async def get_timeline(self, matter_id: str, limit: int = 80) -> list[dict]:
+        return await self._get(f"/matter/{matter_id}/timeline", {"limit": limit})
+
+    async def get_evidence_matrix(self, matter_id: str) -> dict:
+        return await self._get(f"/matter/{matter_id}/evidence-matrix")
+
+    async def get_communication_map(self, matter_id: str) -> dict:
+        return await self._get(f"/matter/{matter_id}/communication-map")
+
+    async def list_llm_calls(
+        self,
+        matter_id: str,
+        run_id: Optional[str] = None,
+        limit: int = 120,
+    ) -> list[dict]:
+        params = {"limit": limit}
+        if run_id:
+            params["run_id"] = run_id
+        result = await self._get(f"/matter/{matter_id}/llm-calls", params)
+        return result if isinstance(result, list) else []

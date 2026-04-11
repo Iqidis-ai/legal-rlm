@@ -633,6 +633,58 @@ async def test_gather_with_cancellation_partial_completion(model):
     assert results[1] is None, "Slow task cancelled after stop must keep its result"
 
 
+@pytest.mark.asyncio
+async def test_resume_investigation_applies_follow_up_query(tmp_path, monkeypatch):
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.rlm.state import InvestigationState
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    checkpoint_path = tmp_path / "resume-checkpoint.json"
+
+    state = InvestigationState.create("Original query", str(repo_dir))
+    state.status = "running"
+    state.research_mode = "deep"
+    state.query_classification = {"complexity": "medium"}
+    state.findings["final_output"] = "stale output from interrupted run"
+    state.save_checkpoint(checkpoint_path)
+
+    engine = RLMEngine(gemini_client=object(), config=RLMConfig(enable_matter_model=False))
+
+    async def _fake_loop(state_obj, repo):
+        state_obj.findings["loop_seen_query"] = state_obj.query
+
+    async def _fake_verify(state_obj, repo):
+        return None
+
+    async def _fake_synthesize(state_obj):
+        state_obj.findings["final_output"] = "fresh output"
+
+    monkeypatch.setattr(engine, "_investigate_loop", _fake_loop)
+    monkeypatch.setattr(engine, "_verify_citations", _fake_verify)
+    monkeypatch.setattr(engine, "_synthesize", _fake_synthesize)
+
+    resumed = await engine.resume_investigation(
+        checkpoint_path,
+        follow_up_query="Focus on termination liability",
+        research_mode="simple",
+    )
+
+    assert resumed.query == "Focus on termination liability"
+    assert resumed.research_mode == "simple"
+    assert resumed.findings["continued_from_query"] == "Original query"
+    assert resumed.findings["follow_up_query"] == "Focus on termination liability"
+    assert resumed.findings["query_history"] == ["Original query"]
+    assert resumed.findings["continued_from_research_mode"] == "deep"
+    assert resumed.findings["research_mode_override"] == "simple"
+    assert resumed.findings["loop_seen_query"] == "Focus on termination liability"
+    assert resumed.findings["final_output"] == "fresh output"
+    assert any(
+        lead.source == "follow_up_query" and lead.search_term == "Focus on termination liability"
+        for lead in resumed.leads
+    )
+
+
 # ---------------------------------------------------------------------------
 # SO-3 structured steering surface
 # ---------------------------------------------------------------------------

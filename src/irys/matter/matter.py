@@ -14,10 +14,11 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 _log = logging.getLogger(__name__)
 
+from ..core.models import LLMCallRecord, PRICING_SOURCE_URL, PRICING_VERIFIED_AT
 from .db import SQLiteMatterDB
 from .graph import (
     AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
@@ -239,6 +240,7 @@ class MatterModel:
         resumed_from: Optional[str] = None,
         operation_type: str = "query",
         trigger: str = "user",
+        research_mode: str = "deep",
     ) -> str:
         """Start a new investigation run. Returns run_id.
 
@@ -254,6 +256,7 @@ class MatterModel:
         run_id = self.ledger.start_run(
             query, objective, assertions_at_start, resumed_from=resumed_from,
             operation_type=operation_type, trigger=trigger,
+            research_mode=research_mode,
         )
         # Cache snapshot in memory so complete_run() avoids a DB round-trip.
         self._run_snapshots[run_id] = assertions_at_start
@@ -302,6 +305,176 @@ class MatterModel:
         self._run_snapshots.pop(run_id, None)  # prevent unbounded growth on non-completion paths
         self.ledger.interrupt_run(run_id)
 
+    def record_llm_call(self, record: LLMCallRecord) -> None:
+        """Persist one Gemini API request for later cost and latency analysis."""
+        self.db.execute(
+            """INSERT INTO llm_call
+               (id, matter_id, run_id, model_tier, model_id, usage_label,
+                input_tokens, cache_read_tokens, output_tokens, total_prompt_tokens,
+                estimated_cost_usd, latency_ms, success, error_kind, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                _id(),
+                self.matter_id,
+                record.run_id,
+                record.model_tier,
+                record.model_id,
+                record.usage_label,
+                record.input_tokens,
+                record.cache_read_tokens,
+                record.output_tokens,
+                record.total_prompt_tokens,
+                record.estimated_cost_usd,
+                record.latency_ms,
+                1 if record.success else 0,
+                record.error_kind,
+                _now(),
+            ),
+        )
+
+    def summarize_llm_usage(self, run_id: Optional[str] = None) -> dict[str, Any]:
+        """Aggregate persisted Gemini usage for a matter or a single run."""
+        where = "matter_id=?"
+        params: list[Any] = [self.matter_id]
+        if run_id is not None:
+            where += " AND run_id=?"
+            params.append(run_id)
+
+        zero_summary = {
+            "request_count": 0,
+            "successful_requests": 0,
+            "failed_requests": 0,
+            "input_tokens": 0,
+            "cache_read_tokens": 0,
+            "output_tokens": 0,
+            "total_prompt_tokens": 0,
+            "estimated_cost_usd": 0.0,
+            "by_tier": {},
+            "pricing_source": PRICING_SOURCE_URL,
+            "pricing_verified_at": PRICING_VERIFIED_AT,
+        }
+
+        try:
+            totals = self.db.execute(
+                f"""SELECT COUNT(*) AS request_count,
+                           COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), 0) AS successful_requests,
+                           COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END), 0) AS failed_requests,
+                           COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                           COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                           COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                           COALESCE(SUM(total_prompt_tokens), 0) AS total_prompt_tokens,
+                           COALESCE(SUM(estimated_cost_usd), 0.0) AS estimated_cost_usd
+                    FROM llm_call
+                    WHERE {where}""",
+                params,
+            ).fetchone()
+            tier_rows = self.db.execute(
+                f"""SELECT model_tier,
+                           MIN(model_id) AS model_id,
+                           COUNT(*) AS request_count,
+                           COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                           COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                           COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                           COALESCE(SUM(total_prompt_tokens), 0) AS total_prompt_tokens,
+                           COALESCE(SUM(estimated_cost_usd), 0.0) AS estimated_cost_usd
+                    FROM llm_call
+                    WHERE {where}
+                    GROUP BY model_tier
+                    ORDER BY model_tier""",
+                params,
+            ).fetchall()
+        except Exception:
+            return zero_summary
+
+        by_tier = {
+            row["model_tier"]: {
+                "model_id": row["model_id"],
+                "requests": int(row["request_count"] or 0),
+                "input_tokens": int(row["input_tokens"] or 0),
+                "cache_read_tokens": int(row["cache_read_tokens"] or 0),
+                "output_tokens": int(row["output_tokens"] or 0),
+                "total_prompt_tokens": int(row["total_prompt_tokens"] or 0),
+                "estimated_cost_usd": round(float(row["estimated_cost_usd"] or 0.0), 6),
+            }
+            for row in tier_rows
+        }
+        return {
+            "request_count": int(totals["request_count"] or 0),
+            "successful_requests": int(totals["successful_requests"] or 0),
+            "failed_requests": int(totals["failed_requests"] or 0),
+            "input_tokens": int(totals["input_tokens"] or 0),
+            "cache_read_tokens": int(totals["cache_read_tokens"] or 0),
+            "output_tokens": int(totals["output_tokens"] or 0),
+            "total_prompt_tokens": int(totals["total_prompt_tokens"] or 0),
+            "estimated_cost_usd": round(float(totals["estimated_cost_usd"] or 0.0), 6),
+            "by_tier": by_tier,
+            "pricing_source": PRICING_SOURCE_URL,
+            "pricing_verified_at": PRICING_VERIFIED_AT,
+        }
+
+    def list_llm_calls(
+        self,
+        run_id: Optional[str] = None,
+        limit: int = 120,
+    ) -> list[dict[str, Any]]:
+        """Return recent LLM call rows for matter-level analytics surfaces."""
+        where = "matter_id=?"
+        params: list[Any] = [self.matter_id]
+        if run_id is not None:
+            where += " AND run_id=?"
+            params.append(run_id)
+        params.append(int(limit))
+        try:
+            rows = self.db.execute(
+                f"""SELECT run_id, model_tier, model_id, usage_label,
+                           input_tokens, cache_read_tokens, output_tokens,
+                           total_prompt_tokens, estimated_cost_usd, latency_ms,
+                           success, error_kind, created_at
+                    FROM llm_call
+                    WHERE {where}
+                    ORDER BY created_at DESC
+                    LIMIT ?""",
+                params,
+            ).fetchall()
+        except Exception:
+            return []
+        return [
+            {
+                "run_id": row["run_id"],
+                "model_tier": row["model_tier"],
+                "model_id": row["model_id"],
+                "usage_label": row["usage_label"],
+                "input_tokens": int(row["input_tokens"] or 0),
+                "cache_read_tokens": int(row["cache_read_tokens"] or 0),
+                "output_tokens": int(row["output_tokens"] or 0),
+                "total_prompt_tokens": int(row["total_prompt_tokens"] or 0),
+                "estimated_cost_usd": round(float(row["estimated_cost_usd"] or 0.0), 6),
+                "latency_ms": int(row["latency_ms"] or 0),
+                "success": bool(row["success"]),
+                "error_kind": row["error_kind"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def record_run_usage_summary(self, run_id: str, usage: dict[str, Any]) -> None:
+        """Persist cheap per-run Gemini totals onto run_session for UI fetches."""
+        self.db.execute(
+            "UPDATE run_session"
+            " SET llm_input_tokens=?, llm_cache_read_tokens=?, llm_output_tokens=?,"
+            "     llm_request_count=?, llm_estimated_cost_usd=?"
+            " WHERE id=? AND matter_id=?",
+            (
+                int(usage.get("input_tokens", 0) or 0),
+                int(usage.get("cache_read_tokens", 0) or 0),
+                int(usage.get("output_tokens", 0) or 0),
+                int(usage.get("request_count", 0) or 0),
+                float(usage.get("estimated_cost_usd", 0.0) or 0.0),
+                run_id,
+                self.matter_id,
+            ),
+        )
+
     # ------------------------------------------------------------------
     # Assertion management
     # ------------------------------------------------------------------
@@ -324,6 +497,15 @@ class MatterModel:
         weight: float = 1.0,
     ) -> str:
         return self.assertions.link(src_id, dst_id, link_type, weight)
+
+    def search_assertions(
+        self,
+        queries: list[str],
+        issue_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Search active assertions for hot-path query answering."""
+        return self.assertions.search(queries, issue_id=issue_id, limit=limit)
 
     def apply_revision(
         self,
@@ -1712,6 +1894,10 @@ class MatterModel:
         """
         return self.quant.reconcile_invoice_chain(currency)
 
+    def get_amount_conflicts(self) -> list[dict]:
+        """Return grouped amount conflicts for UI transparency and auditing."""
+        return self.quant.get_conflicts()
+
     # ------------------------------------------------------------------
     # Timeline view (SO-6, Priority 2 visual work product)
     # ------------------------------------------------------------------
@@ -1737,10 +1923,10 @@ class MatterModel:
         date_range_facts = self.quant.get_by_kind("date_range", limit=limit)
 
         for qf in date_facts + date_range_facts:
-            date_val = qf.get("date_value") or qf.get("date_end_value") or qf.get("raw_text", "")[:60]
+            date_val = qf.get("date_value") or qf.get("date_end_value") or qf.get("raw_text", "")
             events.append({
                 "date": date_val,
-                "event": qf.get("raw_text", "")[:200],
+                "event": qf.get("raw_text", ""),
                 "source_doc": qf.get("span_id"),
                 "quant_id": qf.get("id"),
                 "assertion_id": qf.get("assertion_id"),
@@ -1763,7 +1949,7 @@ class MatterModel:
 
         for row in temporal_rows:
             date_val = row["temporal_scope_start"]
-            desc = (row["proposition_text"] or "")[:200]
+            desc = row["proposition_text"] or ""
             events.append({
                 "date": date_val,
                 "event": desc,
@@ -2002,7 +2188,7 @@ class MatterModel:
         Categories with subject_type IS NULL are grouped under "(uncategorised)".
         """
         rows = self.db.execute(
-            """SELECT id, subject_type, subject_id, amount_value, raw_text, assertion_id
+            """SELECT id, subject_type, subject_id, amount_value, raw_text, assertion_id, span_id
                FROM quant_fact
                WHERE matter_id=? AND quant_kind='amount'
                  AND (currency=? OR (currency IS NULL AND ?='USD'))
@@ -2019,10 +2205,12 @@ class MatterModel:
         for row in rows:
             key = row["subject_type"] or "(uncategorised)"
             groups[key].append({
-                "raw_text": (row["raw_text"] or "")[:200],
+                "quant_fact_id": row["id"],
+                "raw_text": row["raw_text"] or "",
                 "amount_value": row["amount_value"],
                 "subject_id": row["subject_id"],
                 "assertion_id": row["assertion_id"],
+                "span_id": row["span_id"],
             })
 
         waterfall = []
@@ -2037,14 +2225,14 @@ class MatterModel:
             if len(unique_vals) >= 2 and max_val > 0:
                 spread = unique_vals[0] - unique_vals[-1]
                 if spread / max_val > 0.20:
-                    conflicts = [f"${v:,.2f}" for v in unique_vals[:5]]
+                    conflicts = [f"${v:,.2f}" for v in unique_vals]
 
             waterfall.append({
                 "component": component,
                 "claimed_amount": round(total, 2),
                 "source_count": len(entries),
                 "currency": currency,
-                "amounts": entries[:20],  # cap for readability
+                "amounts": entries,
                 "conflicts": conflicts,
             })
 
@@ -2275,6 +2463,25 @@ class MatterModel:
 
     def stats(self) -> dict:
         """Return a summary of matter model state."""
+        llm_totals = self.summarize_llm_usage()
+        latest_run_id: Optional[str] = None
+        try:
+            row = self.db.execute(
+                "SELECT id FROM run_session WHERE matter_id=? AND operation_type='query'"
+                " ORDER BY started_at DESC LIMIT 1",
+                (self.matter_id,),
+            ).fetchone()
+            latest_run_id = row["id"] if row else None
+        except Exception:
+            try:
+                row = self.db.execute(
+                    "SELECT id FROM run_session WHERE matter_id=?"
+                    " ORDER BY started_at DESC LIMIT 1",
+                    (self.matter_id,),
+                ).fetchone()
+                latest_run_id = row["id"] if row else None
+            except Exception:
+                latest_run_id = None
         return {
             "matter_id": self.matter_id,
             "assertion_count": self.assertions.count(),
@@ -2284,6 +2491,10 @@ class MatterModel:
             "quant_fact_count": self.quant.count(),
             "pending_clarifications": self.clarifications.count_pending(),
             "recent_runs": len(self.ledger.recent_runs(limit=5)),
+            "llm": {
+                "totals": llm_totals,
+                "last_run": self.summarize_llm_usage(run_id=latest_run_id) if latest_run_id else None,
+            },
         }
 
     def get_so_metrics(self, _coverage_report: "list[dict] | None" = None) -> dict:
