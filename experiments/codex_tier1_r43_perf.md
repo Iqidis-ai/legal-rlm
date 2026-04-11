@@ -1,8 +1,0 @@
-No performance findings in `b929577`.
-
-- The `limit + 1` fetch in [api.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1685) is the right truncation check for this endpoint. With the existing history index on [schema.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/schema.py#L143), it adds at most one extra row fetch and avoids a second probe or a `COUNT(*)`. A separate `EXISTS`/`OFFSET` query would still walk the same window and is unlikely to be cheaper here.
-- The `_decode()` helper in [api.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1700) is not a scale concern in steady state. The `try/except` cost is negligible when exceptions are not firing; `json.loads` dominates. The writer path already stores pre-serialized JSON in [graph.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/graph.py#L283), so malformed rows should be an exceptional corruption path, not the hot path.
-- No other performance regressions were introduced. The new cap at [api.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1676) actually improves worst-case request cost.
-
-Residual risk, but not introduced by this commit:
-- The query orders by `created_at DESC, batch_id DESC` in [api.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1693), while the general history index only keys `(assertion_id, created_at DESC)` in [schema.py](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/schema.py#L143). If one assertion ever accumulates a very deep history with many identical `created_at` values, SQLite may still need extra sort work, but that predates `b929577`.

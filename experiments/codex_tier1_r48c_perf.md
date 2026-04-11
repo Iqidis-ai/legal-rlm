@@ -1,7 +1,0 @@
-No findings.
-
-`TrustOverrideStore.delete()` now normalizes `document_pattern` the same way `set()` does before it hits the keyed `DELETE`, so it closes the Windows slash-mismatch bug without changing the query shape or adding meaningful cost. The extra work is just two short `replace()` calls on a non-hot administrative path, which is effectively negligible. Refs: [graph.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/graph.py#L2903), [graph.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/graph.py#L2954), [graph.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/graph.py#L2960).
-
-In the current tree, the delete flow also short-circuits when no row was removed, so there is no stale no-op recompute penalty left in this path. Refs: [graph.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/graph.py#L2965), [matter.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L743).
-
-Residual gap only: I did not find a delete-specific regression test for Windows-style patterns in the existing trust-override coverage under [test_matter_api.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/tests/service/test_matter_api.py) and [test_engine_bridge.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/tests/matter/test_engine_bridge.py). Static review only; pytest execution was blocked by policy here.

@@ -1,7 +1,0 @@
-CLEAN.
-
-I did not find a repo-local `CLAUDE.md` under this `legal-rlm` checkout, so this review is based on HEAD source.
-
-No material performance concern from the new `state.findings.pop("final_output", None)` calls in [engine.py#L1132](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1132) and [engine.py#L4950](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4950). The `pop()` itself is an O(1) dict delete on a stop-only branch, so it is not on any hot path. If anything, it slightly helps the interrupted path because `findings` is serialized into checkpoints via [state.py#L1738](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/state.py#L1738) and [state.py#L1876](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/state.py#L1876), and the report formatters also read `final_output` directly at [formatters.py#L88](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/output/formatters.py#L88) and [formatters.py#L246](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/output/formatters.py#L246). Removing a potentially large memo avoids extra JSON/output bytes on the stopped run.
-
-The only nuance is that this does not recover synthesis work already spent if stop lands after the PRO call has effectively finished in [_synthesize()](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L2841); it just prevents retaining/serving that memo. I would not count that as a material perf regression from this patch.

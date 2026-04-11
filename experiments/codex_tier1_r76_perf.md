@@ -1,9 +1,0 @@
-CLEAN
-
-I do not see a material performance issue in either change.
-
-The new CAS in [reasoning.py#L211](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L211) is still anchored by `run_session.id`, which is the table PK in [schema.py#L151](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/schema.py#L151). Adding `AND next_action IS NOT NULL` in [reasoning.py#L220](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L220) should remain a single-row lookup plus one extra row-local predicate check, not a broader scan. If anything, it is slightly better under races because it avoids a no-op update and the associated WAL/write-lock churn when the checkpoint was already claimed.
-
-Moving the claim block ahead of `start_run()` in [engine.py#L4867](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4867) does not add work on the successful path; it just reorders the same `UPDATE` + `SELECT` that already existed. The heavier setup cost is still `start_run()`, which counts assertions in [matter.py#L237](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L237), then inserts `run_session` and seeds `RUN_STARTED` in [reasoning.py#L54](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L54) and [reasoning.py#L67](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/reasoning.py#L67). On the contended path, the new order is actually cheaper because losing resume attempts now fail before paying that cost.
-
-Residual risk: this is a code/schema review, not a measured microbenchmark, but nothing material stands out.

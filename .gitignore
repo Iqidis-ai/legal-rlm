@@ -137,4 +137,7 @@ codex_design_gate_*.txt
 codex_design_*.txt
 codex_ping.txt
 .audit_tmp/
+.benchmarks/
+.claude/scheduled_tasks.lock
+experiments/
 workspace/

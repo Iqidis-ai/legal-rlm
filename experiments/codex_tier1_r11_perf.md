@@ -1,1 +1,0 @@
-I have the local formatting costs. I’m checking whether `actions` is already priority-ordered in the steering surface; if it is, the `top_redirect_issue` scan is a short first-match walk, not a latent sorting problem.

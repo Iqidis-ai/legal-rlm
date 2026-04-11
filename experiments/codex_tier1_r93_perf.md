@@ -1,5 +1,0 @@
-CLEAN.
-
-The added `AND resumed_from IS NULL` in [matter.py:2058](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/matter.py#L2058) does not introduce an obvious performance regression. This query is still a top-N read ordered by `completed_at DESC LIMIT 5`, and the repo already has `ix_run_completed` on `(matter_id, status, completed_at DESC)` in [schema.py:1224](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/matter/schema.py#L1224). The new clause is just an extra row filter while walking that recent-run index.
-
-Residual note: if a matter ever accumulates very long run histories dominated by resumed runs, a partial index for the fully filtered reuse-telemetry subset could help, but that is not warranted by this one-line change. Static review only; live planner probing was blocked by shell policy.

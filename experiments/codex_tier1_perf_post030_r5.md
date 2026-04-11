@@ -1,5 +1,0 @@
-CLEAN.
-
-I do not see a remaining lock-protocol bug in commit `768a3cd`. Across both the service loop in [api.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/service/api.py#L1927) and the in-process loop in [in_process.py](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/ui/backends/in_process.py#L48), every successful `_bg_flush_running.acquire(blocking=False)` now has a matching release on normal exit, flush-error exit, and final-race `Thread.start()` failure. The event+loop handoff is also consistent: clearing the event before each pass preserves mid-pass wakeups, and the post-release final-race recheck covers the last-check-to-release window without creating duplicate active runners.
-
-Static review only. I did not run tests, and I did not find dedicated coverage for forced `Thread.start()` failure / final-race respawn.

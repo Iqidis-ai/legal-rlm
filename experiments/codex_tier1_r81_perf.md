@@ -1,3 +1,0 @@
-CLEAN
-
-The only touched code in [`src/irys/rlm/engine.py`](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L5030) and [`src/irys/rlm/engine.py`](/C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L5068) runs on exception-only resume cleanup paths. The added `logger.warning(...)` and the switch to a tz-aware timestamp do not affect steady-state execution or any hot path, so I found no material performance issue in commit `32b6198`.

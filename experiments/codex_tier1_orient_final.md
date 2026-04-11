@@ -1,8 +1,0 @@
-**Findings**
-- MEDIUM: `FLAG`, not clean. The explicit `null` guards you asked about are present, but `_orient()` still trusts malformed non-null plan shapes. `_parse_json_safe()` only loads JSON and backfills missing keys at [engine.py:4448](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4448) and [engine.py:4452](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L4452), so wrong container types can still reach `_orient()`: `issues` is iterated directly at [engine.py:1239](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1239), `initial_searches` is sliced as a list at [engine.py:1291](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1291), and a truthy non-string `hypothesis` still gets sliced in the summary log at [engine.py:1417](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1417).
-
-**Confirmations**
-- `state.findings["issues"]` now uses `or []` at [engine.py:1215](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1215).
-- The orientation summary log uses `or []` for both `issues` and `initial_searches` at [engine.py:1413](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1413) and [engine.py:1414](C:/Users/devan/OneDrive/Desktop/Projects/legal-rlm/src/irys/rlm/engine.py#L1414).
-
-No HIGH found in this slice. If the scope is strictly explicit JSON `null` at those call sites, that narrower check passes; overall, this is still `FLAG` because the malformed non-null type path remains. Static review only; no tests run in this pass.
