@@ -141,3 +141,10 @@ codex_ping.txt
 .claude/scheduled_tasks.lock
 experiments/
 workspace/
+
+# Agentic / internal process docs (not for public repos)
+.claude/
+IDEAL_PRODUCT_SPEC.md
+SYSTEM_STATE.md
+DECISIONS.md
+ASSUMPTIONS.md
