@@ -570,7 +570,7 @@ class InProcessBackend(UIBackend):
                     for i, c in enumerate(state.citations)
                 )
                 if set_final_output is not None:
-                    set_final_output(result.output)
+                    set_final_output(state.findings.get("final_output") or result.output)
                 update_q.put(("complete", state))
             except Exception as exc:
                 update_q.put(("error", str(exc)))
