@@ -344,14 +344,6 @@ def test_extract_no_false_positives_from_plain_text(model):
 # API endpoints
 # ---------------------------------------------------------------------------
 
-@pytest.fixture
-def api_client():
-    from fastapi.testclient import TestClient
-    from irys.service.api import app, _active_matter_models
-    _active_matter_models.clear()
-    return TestClient(app), _active_matter_models
-
-
 def _reg(active, m):
     active[m.matter_id] = m
     return m.matter_id

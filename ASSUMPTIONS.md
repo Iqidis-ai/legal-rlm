@@ -6,20 +6,6 @@ and downstream work reassessed.
 
 ---
 
-## A-001: Single-User, Single-Matter Operation
-
-**Status:** Active
-**Source:** Architecture decisions, no multi-tenant requirements stated
-**Assumption:** One user working on one matter at a time. No concurrent matter isolation
-requirements. No multi-tenant separation needed.
-**Depends on:** SQLite choice (D-004), no auth layer
-**Would invalidate if:** Product is deployed for a law firm with multiple attorneys working
-simultaneously on different matters
-**Downstream impact if wrong:** Storage layer must be replaced. API must add auth. Performance
-profile changes significantly.
-
----
-
 ## A-002: Google Gemini API is Available and Stable
 
 **Status:** Active

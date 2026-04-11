@@ -575,3 +575,26 @@ def test_list_recent_for_hydration_surfaces_multi_source_roles(model):
     assert "advocacy" in roles, "source_roles_csv must include 'advocacy'"
     assert "operative" in roles, "source_roles_csv must include 'operative'"
     assert len(roles) >= 2, "Multi-source assertion must expose both distinct roles"
+
+
+def test_assertion_search_matches_proposition_text_and_filename(model):
+    """search() must support hot-path retrieval by fact text and target document filename."""
+    model.assertions.upsert_occurrence(
+        make_candidate(
+            "Katie Shiels asks whether the dated resignation letters could be ineffective because of manifest error.",
+            doc_id="emails/Letters of resignation.pdf",
+            speech_act=SpeechAct.EXTRACTED,
+            source_role=SourceRole.INFORMAL,
+        )
+    )
+
+    text_hits = model.assertions.search(["manifest error"], limit=10)
+    assert text_hits, "Assertion search must find proposition_text matches"
+    assert any("manifest error" in (row["proposition_text"] or "").lower() for row in text_hits)
+
+    file_hits = model.assertions.search(["Letters of resignation.pdf"], limit=10)
+    assert file_hits, "Assertion search must also find target-document filename matches"
+    assert any(
+        (row.get("primary_document_id") or "").endswith("Letters of resignation.pdf")
+        for row in file_hits
+    )

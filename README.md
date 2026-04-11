@@ -2,105 +2,21 @@
 
 **Recursive Language Model System for Legal Document Investigation**
 
-Irys RLM is a sophisticated legal document analysis system that uses recursive language model techniques to investigate queries against document repositories. It combines tiered Gemini model usage with structured state tracking to extract facts, entities, and citations efficiently, with intelligent early termination to balance thoroughness and cost.
+Irys RLM is a legal intelligence system that builds and maintains a persistent matter model from legal document repositories. Every query reads from and writes to a durable matter model substrate — the system never rediscovers stable structure from scratch.
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Key Features](#key-features)
-- [Architecture](#architecture)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [API Reference](#api-reference)
-- [Configuration](#configuration)
-- [Model Tiering Strategy](#model-tiering-strategy)
-- [Investigation Flow](#investigation-flow)
-- [Output Formats](#output-formats)
-- [Development](#development)
-- [Limitations](#limitations)
-
-## Overview
-
-Irys RLM answers complex legal questions by recursively investigating document repositories. Unlike simple RAG systems, it:
-
-1. **Plans investigations** - Analyzes query complexity and creates a strategic search plan
-2. **Follows leads** - Iteratively pursues investigation avenues, discovering new leads along the way
-3. **Tracks evidence** - Maintains citations with verification against source documents
-4. **Terminates intelligently** - Stops when sufficient evidence is gathered or diminishing returns detected
-5. **Synthesizes findings** - Produces a structured legal memorandum with citations
-
-## Key Features
-
-### Query-Aware Early Termination
-Different query types require different investigation depths:
-
-| Query Type | Confidence Target | Min Citations | Typical Depth |
-|-----------|------------------|---------------|---------------|
-| Factual | 60% | 5 | 2-3 iterations |
-| Procedural | 65% | 6 | 3-4 iterations |
-| Analytical | 75% | 8 | 4-5 iterations |
-| Comparative | 80% | 10 | 4-5 iterations |
-| Evaluative | 85% | 12 | 5-6 iterations |
-
-### Diminishing Returns Detection
-- Stops when recent iterations add fewer than 3 facts each
-- Prevents wasteful continued searching on exhausted leads
-- Balances thoroughness with efficiency
-
-### Citation Tracking & Verification
-- Extracts quotes with document and page references
-- Verifies citations exist in source documents
-- Tracks verification status for audit trails
-
-### Entity Extraction
-- Identifies people, organizations, dates, amounts, locations
-- Tracks mention frequency across documents
-- Links entities to their roles and relationships
-
-### Parallel Processing
-- Investigates multiple leads simultaneously
-- Parallel document reading for performance
-- Thread-safe search with concurrent workers
+Current implementation snapshot for coding agents: `SYSTEM_STATE.md`.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         USER INTERFACE                          │
-│                    (Gradio Web App / API)                       │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                           API LAYER                             │
-│                    src/irys/api.py (Irys)                       │
-│         investigate() | search() | summarize() | batch()        │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                         RLM ENGINE                              │
-│                   src/irys/rlm/engine.py                        │
-│   orient() → investigate_loop() → verify() → synthesize()       │
-└─────────────────────────────────────────────────────────────────┘
-                    │                    │
-                    ▼                    ▼
-┌───────────────────────────┐  ┌──────────────────────────────────┐
-│      STATE MANAGEMENT     │  │         MODEL CLIENT             │
-│   src/irys/rlm/state.py   │  │    src/irys/core/models.py       │
-│  citations | leads |      │  │  LITE | FLASH | PRO tiering      │
-│  entities | thinking      │  │  rate limiting | caching         │
-└───────────────────────────┘  └──────────────────────────────────┘
-                                         │
-                                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        DATA LAYER                               │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
-│  │   Repository    │  │     Search      │  │     Reader      │  │
-│  │ (document list) │  │ (grep + ranking)│  │ (PDF/DOCX/TXT)  │  │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-```
+The system is organized around seven Sacred Outcomes (SO-1 through SO-7) defined in `.claude/CLAUDE.md`. Key components:
+
+- **Matter Model** (SO-1): Persistent SQLite-backed intelligence substrate per matter
+- **Typed Assertion Graph** (SO-2): Facts stored with speech-act classification, source role, support/attack links, and belief revision
+- **User Steering** (SO-3): Stop, redirect, resume investigations; correct assertions; annotate documents
+- **Issue-Driven Architecture** (SO-4): Structured issue tree drives retrieval and synthesis
+- **Source-Aware Intelligence** (SO-5): Distinguishes advocacy, operative, authoritative, and informal sources
+- **Quantitative Intelligence** (SO-6): Structured numeric extraction, reconciliation, damages modeling
+- **Missingness Modeling** (SO-7): Gaps, missing documents, and proof gaps are surfaced proactively
 
 ### Directory Structure
 
@@ -113,16 +29,24 @@ src/irys/
 │   ├── repository.py    # Document repository access
 │   ├── reader.py        # PDF/DOCX/TXT text extraction
 │   ├── search.py        # Full-text search with ranking
-│   ├── cache.py         # LRU caching with TTL
-│   └── utils.py         # Retry logic, validation
+│   └── utils.py         # Logging, validation
 ├── rlm/
 │   ├── engine.py        # Core investigation engine
-│   ├── state.py         # Investigation state tracking
-│   └── templates.py     # Investigation templates
+│   └── state.py         # Investigation state tracking
+├── matter/
+│   ├── matter.py        # MatterModel: top-level orchestrator
+│   ├── graph.py         # All canonical stores (assertions, issues, actors, gaps, quant, etc.)
+│   ├── schema.py        # SQLite schema + migrations
+│   ├── belief_revision.py  # Truth maintenance / BFS propagation
+│   └── reasoning.py     # Reasoning ledger
+├── service/
+│   ├── api.py           # FastAPI service layer
+│   ├── config.py        # Service configuration
+│   └── s3_repository.py # S3-backed document repository
 ├── ui/
 │   └── app.py           # Gradio web interface
 └── output/
-    └── formatters.py    # Output formatting (markdown, JSON)
+    └── formatters.py    # Output formatting (markdown, JSON, HTML)
 ```
 
 ## Installation
@@ -134,337 +58,63 @@ src/irys/
 ### Setup
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd RLMs
-
-# Install dependencies
 pip install -e .
-
-# Set up environment variables
-cp .env.example .env
-# Edit .env and add your GEMINI_API_KEY
+export GEMINI_API_KEY=your_key_here
 ```
 
-### Dependencies
+## Usage
 
-| Package | Purpose |
-|---------|---------|
-| `google-genai>=1.51.0` | Gemini API access |
-| `pymupdf>=1.24.0` | PDF text extraction |
-| `python-docx>=1.1.0` | DOCX text extraction |
-| `gradio>=5.0.0` | Web interface |
-| `aiofiles>=24.1.0` | Async file operations |
-| `pydantic>=2.0.0` | Data validation |
-| `rich>=13.0.0` | Terminal formatting |
-
-## Quick Start
-
-### Using the Web UI
+### Web UI
 
 ```bash
-# Set API key
-export GEMINI_API_KEY=your_key_here
-
-# Launch UI on port 7860
-python run.py
-
-# Or on port 7862
-python run_ui.py
+python -m irys.ui.app
 ```
 
-Navigate to `http://localhost:7860` in your browser.
+### Service (FastAPI)
 
-### Using the Python API
+```bash
+uvicorn irys.service.api:app --host 0.0.0.0 --port 8000
+```
+
+API documentation is auto-generated at `/docs`.
+
+### Python API
 
 ```python
 from irys import Irys
 
-# Initialize
 irys = Irys(api_key="your-gemini-api-key")
-
-# Run investigation
 result = await irys.investigate(
     query="What are the key obligations under the contract?",
     repository="./documents"
 )
-
-# Access results
-print(result.output)           # Formatted legal memorandum
-print(result.citations)        # List of citations with sources
-print(result.entities)         # Extracted entities
-print(result.confidence)       # Confidence score (0-100)
+print(result.output)
 ```
 
-### Quick Functions
+## Model Tiering
 
-```python
-from irys import quick_search, quick_summarize
-
-# Search documents
-results = await quick_search("damages", "./documents")
-
-# Summarize files
-summary = await quick_summarize(["contract.pdf", "amendment.pdf"])
-```
-
-### Synchronous Usage
-
-```python
-from irys import investigate_sync, search_sync
-
-# For non-async contexts
-result = investigate_sync("What happened?", "./documents")
-```
-
-## API Reference
-
-### Main Classes
-
-#### `Irys`
-The primary interface for investigations.
-
-```python
-irys = Irys(
-    api_key: str,                    # Gemini API key (or set GEMINI_API_KEY env var)
-    config: IrysConfig = None        # Optional configuration
-)
-```
-
-**Methods:**
-- `investigate(query, repository, **kwargs)` - Run full investigation
-- `search(query, repository)` - Search documents
-- `summarize(files)` - Summarize documents
-- `list_templates()` - Get available investigation templates
-- `get_telemetry()` - Get usage statistics
-
-#### `IrysConfig`
-Configuration options for investigations.
-
-```python
-IrysConfig(
-    max_depth: int = 5,              # Maximum recursion depth
-    max_leads_per_level: int = 5,    # Leads to follow per iteration
-    enable_cache: bool = True,       # Enable response caching
-    cache_ttl: int = 3600,           # Cache TTL in seconds
-    output_format: str = "markdown", # Output format
-    log_level: str = "INFO"          # Logging level
-)
-```
-
-#### `InvestigationResult`
-Container for investigation results.
-
-**Properties:**
-- `query: str` - Original query
-- `output: str` - Formatted output
-- `status: str` - Investigation status
-- `success: bool` - Whether investigation succeeded
-- `citations: List[Citation]` - Extracted citations
-- `entities: Dict` - Extracted entities
-- `confidence: float` - Confidence score (0-100)
-- `quality: str` - Quality level (Excellent/Good/Adequate/Poor)
-
-### Core Components (Advanced Usage)
-
-```python
-from irys import (
-    MatterRepository,    # Document repository access
-    DocumentSearch,      # Full-text search engine
-    DocumentReader,      # Text extraction
-    RLMEngine,          # Investigation engine
-    RLMConfig,          # Engine configuration
-    InvestigationState   # State tracking
-)
-```
-
-## Configuration
-
-### RLMConfig Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `max_depth` | 5 | Maximum investigation depth |
-| `max_leads_per_level` | 5 | Leads processed per iteration |
-| `max_documents_per_search` | 10 | Top documents to deep-read |
-| `min_lead_priority` | 0.3 | Skip leads below this priority |
-| `excerpt_chars` | 8000 | Content size for LLM analysis |
-| `parallel_reads` | 5 | Concurrent document reads |
-| `adaptive_depth` | True | Adjust depth based on complexity |
-| `min_depth` | 2 | Minimum investigation depth |
-| `depth_citation_threshold` | 15 | Reduce depth if citations exceed this |
-| `max_iterations` | 20 | Hard limit on iterations |
-
-### Environment Variables
-
-```bash
-GEMINI_API_KEY=your_gemini_api_key      # Required
-ANTHROPIC_API_KEY=your_anthropic_key    # Optional (for comparison tests)
-```
-
-## Model Tiering Strategy
-
-Irys uses a three-tier model strategy to optimize cost and performance:
-
-| Tier | Model | Use Case | Cost |
-|------|-------|----------|------|
-| **LITE** | gemini-2.5-flash-lite | Bulk document reading, entity extraction | Lowest |
-| **FLASH** | gemini-2.5-flash | Search analysis, routing, planning | Medium |
-| **PRO** | gemini-2.5-pro | Final synthesis, complex analysis | Highest |
-
-**Model Assignment by Task:**
-- **Orientation** (Phase 1): FLASH with retry
-- **Lead Analysis** (Phase 2): FLASH
-- **Document Reading** (Phase 2): LITE (parallel)
-- **Citation Verification** (Phase 2.5): LITE
-- **Final Synthesis** (Phase 3): PRO with retry
-
-## Investigation Flow
-
-```
-User Query
-    │
-    ▼
-┌──────────────────────────────────────────────────────────┐
-│ PHASE 1: ORIENTATION                                      │
-│ • Analyze repository structure                            │
-│ • Classify query type (factual/analytical/evaluative)     │
-│ • Generate initial hypothesis                             │
-│ • Create strategic search plan with initial leads         │
-└──────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌──────────────────────────────────────────────────────────┐
-│ PHASE 2: ITERATIVE INVESTIGATION                          │
-│ ┌────────────────────────────────────────────────────┐   │
-│ │ For each iteration:                                 │   │
-│ │ • Get pending leads (priority > 0.3)                │   │
-│ │ • Process leads in parallel (up to 5)               │   │
-│ │   ├─ Extract search terms                           │   │
-│ │   ├─ Search repository                              │   │
-│ │   ├─ Analyze results → extract facts                │   │
-│ │   └─ Deep read top documents → citations            │   │
-│ │ • Track facts added this iteration                  │   │
-│ │ • Reprioritize leads (every 2 iterations)           │   │
-│ │ • Check termination criteria                        │   │
-│ └────────────────────────────────────────────────────┘   │
-│                                                           │
-│ Termination Criteria:                                     │
-│ ✓ Confidence + citations meet query-type threshold        │
-│ ✓ Diminishing returns (last 2 iterations < 3 facts each)  │
-│ ✓ Extreme diminishing returns (last 3 iterations ≤1 fact) │
-│ ✓ Max iterations reached                                  │
-└──────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌──────────────────────────────────────────────────────────┐
-│ PHASE 2.5: CITATION VERIFICATION                          │
-│ • Verify quoted text exists in source documents           │
-│ • Use fuzzy matching for truncated quotes                 │
-│ • Update verification status for each citation            │
-└──────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌──────────────────────────────────────────────────────────┐
-│ PHASE 3: SYNTHESIS                                        │
-│ • Compile all findings                                    │
-│ • Format citations and entities                           │
-│ • Generate legal memorandum using PRO model               │
-│ • Return InvestigationState with complete results         │
-└──────────────────────────────────────────────────────────┘
-```
-
-## Output Formats
-
-### Markdown (Default)
-Structured legal memorandum with:
-- Executive summary
-- Key findings with citations
-- Entity summary
-- Timeline (if applicable)
-- Recommendations
-
-### JSON
-Machine-readable format including:
-- All citations with metadata
-- Entity registry
-- Thinking trace
-- Confidence scores
-- Investigation statistics
+| Tier | Model | Use Case |
+|------|-------|----------|
+| **NANO** | gemini-2.5-flash-lite | Triage, classification (short output) |
+| **LITE** | gemini-2.5-flash-lite | Bulk document reading, entity extraction |
+| **FLASH** | gemini-3.1-flash-lite-preview | Search analysis, routing, planning |
+| **PRO** | gemini-2.5-pro | Final synthesis, complex analysis |
 
 ## Development
 
-### Running Tests
-
 ```bash
-# Install dev dependencies
 pip install -e ".[dev]"
-
-# Run test suite
 pytest tests/
-
-# Quick tests
-python test_quick_rlm.py
-python test_early_termination.py
 ```
 
-### Test Files
+## Supported Document Formats
 
-| File | Purpose |
-|------|---------|
-| `tests/test_integration.py` | Full integration tests |
-| `tests/test_engine.py` | RLM engine unit tests |
-| `tests/test_search.py` | Search functionality tests |
-| `test_quick_rlm.py` | Quick sanity check |
-| `test_early_termination.py` | Early termination validation |
-| `run_comparative_test.py` | Cross-model comparison |
+- **PDF** — Full support via PyMuPDF
+- **DOCX** — Full support including tables
+- **TXT** — Plain text files
 
-### Code Quality
-
-```bash
-# Linting
-ruff check src/
-
-# Type checking (if configured)
-mypy src/irys/
-```
-
-## Limitations
-
-### Supported Document Formats
-- **PDF** - Full support via PyMuPDF
-- **DOCX** - Full support including tables
-- **TXT** - Plain text files
-
-**Not Supported:**
-- Legacy `.doc` format (pre-2007)
-- `.rtf` files
-- Scanned PDFs without OCR
-
-### Search Limitations
-- Uses literal text matching (grep-style), not semantic search
-- Legal synonym expansion helps but isn't comprehensive
-- Very large repositories may require more iterations
-
-### Cost Considerations
-- PRO model calls (synthesis) are most expensive
-- Large repositories increase token usage
-- Consider setting `max_iterations` to limit costs
-
-### Rate Limiting
-- Default: 60 requests per minute with 10 burst capacity
-- Adjust `RateLimiter` settings for different API quotas
-
-## License
-
-[Add license information]
-
-## Contributing
-
-[Add contribution guidelines]
+Scanned PDFs without embedded text are not supported (no OCR).
 
 ---
 
-**Version:** 0.1.0
-**Python:** 3.11+
-**Primary API:** Google Gemini (gemini-2.5-flash-lite, gemini-2.5-flash, gemini-2.5-pro)
+**Version:** 0.1.0 | **Python:** 3.11+ | **Primary API:** Google Gemini

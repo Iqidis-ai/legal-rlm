@@ -5,7 +5,6 @@ Extracts text with page/section preservation for citation tracking.
 
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional
 import re
 
 import fitz  # PyMuPDF
@@ -58,7 +57,7 @@ class DocumentContent:
 class DocumentReader:
     """Read and extract text from PDF and DOCX files."""
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".rtf"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt"}
 
     def read(self, path: Path | str) -> DocumentContent:
         """Read a document and extract text."""
@@ -154,19 +153,6 @@ class DocumentReader:
         # Remove excessive newlines
         text = re.sub(r'\n{3,}', '\n\n', text)
         return text.strip()
-
-    def get_page_count(self, path: Path | str) -> int:
-        """Get page count without reading full content."""
-        path = Path(path)
-        suffix = path.suffix.lower()
-
-        if suffix == ".pdf":
-            doc = fitz.open(path)
-            count = len(doc)
-            doc.close()
-            return count
-        else:
-            return 1  # Non-paginated formats
 
     def can_read(self, path: Path | str) -> bool:
         """Check if file type is supported."""

@@ -12,8 +12,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import AsyncIterator, Optional
-from contextlib import asynccontextmanager
+from typing import Optional
 from urllib.parse import unquote_plus
 
 import boto3
@@ -30,8 +29,6 @@ CONTENT_TYPE_TO_EXT = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
     "application/msword": ".doc",
     "text/plain": ".txt",
-    "application/rtf": ".rtf",
-    "text/rtf": ".rtf",
 }
 
 # Magic bytes for file type detection (fallback when content-type is missing/generic)
@@ -39,7 +36,6 @@ MAGIC_BYTES = {
     b"%PDF": ".pdf",
     b"PK\x03\x04": ".docx",  # ZIP-based formats (docx, xlsx, pptx)
     b"\xd0\xcf\x11\xe0": ".doc",  # OLE compound document (old MS Office)
-    b"{\\rtf": ".rtf",
 }
 
 
@@ -400,7 +396,7 @@ class S3Repository:
 
             # Determine file extension
             ext = current_ext
-            if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".rtf"}:
+            if not ext or ext not in {".pdf", ".docx", ".doc", ".txt"}:
                 # Try to detect from Content-Type
                 content_type = head.get("ContentType")
                 ext = detect_extension_from_content_type(content_type)
@@ -511,7 +507,7 @@ class S3Repository:
 
                 # Determine file extension (prefer provided metadata)
                 ext = current_ext
-                if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".rtf"}:
+                if not ext or ext not in {".pdf", ".docx", ".doc", ".txt"}:
                     ext = detect_extension_from_content_type(content_type)
                     logger.debug(f"Content-Type '{content_type}' -> extension '{ext}'")
 

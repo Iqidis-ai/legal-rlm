@@ -179,14 +179,6 @@ def test_assertion_event_has_assertion_id(model):
 # API endpoint
 # ---------------------------------------------------------------------------
 
-@pytest.fixture
-def api_client():
-    from fastapi.testclient import TestClient
-    from irys.service.api import app, _active_matter_models
-    _active_matter_models.clear()
-    return TestClient(app), _active_matter_models
-
-
 def _reg(active, m):
     active[m.matter_id] = m
     return m.matter_id

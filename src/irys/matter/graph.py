@@ -936,6 +936,107 @@ class AssertionStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def search(
+        self,
+        queries: "list[str]",
+        issue_id: "str | None" = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Search active assertions for hot-path retrieval.
+
+        Matches against canonical proposition text plus occurrence raw_text and
+        document identifiers so filename-targeted leads can still resolve to the
+        already-ingested evidence they point to.
+        """
+        terms: list[str] = []
+        seen: set[str] = set()
+        for query in queries or []:
+            cleaned = " ".join((query or "").strip().split())
+            if len(cleaned) < 2:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            terms.append(cleaned)
+        if not terms:
+            return []
+
+        term_score_parts: list[str] = []
+        term_params: list[str] = []
+        for term in terms:
+            pattern = f"%{term.lower()}%"
+            term_score_parts.append(
+                """MAX(CASE
+                       WHEN LOWER(COALESCE(a.proposition_text, '')) LIKE ?
+                         OR LOWER(COALESCE(ao.raw_text, '')) LIKE ?
+                         OR LOWER(COALESCE(ao.document_id, '')) LIKE ?
+                         OR LOWER(COALESCE(ao.doc_basename, '')) LIKE ?
+                       THEN 1 ELSE 0 END)"""
+            )
+            term_params.extend([pattern, pattern, pattern, pattern])
+
+        term_matches_sql = " + ".join(term_score_parts)
+        issue_match_sql = (
+            "MAX(CASE WHEN ail.issue_id = ? THEN 1 ELSE 0 END)"
+            if issue_id else "0"
+        )
+
+        params: list = list(term_params)
+        if issue_id:
+            params.append(issue_id)
+        params.extend([self.matter_id, limit])
+
+        rows = self.db.execute(
+            f"""WITH matched AS (
+                   SELECT a.id,
+                          a.proposition_text,
+                          a.belief_state,
+                          a.created_at,
+                          {term_matches_sql} AS term_matches,
+                          {issue_match_sql} AS issue_match,
+                          (SELECT ao2.document_id FROM assertion_occurrence ao2
+                           WHERE ao2.assertion_id = a.id
+                           ORDER BY ao2.created_at ASC, ao2.id ASC
+                           LIMIT 1) AS primary_document_id,
+                          (SELECT ao2.raw_text FROM assertion_occurrence ao2
+                           WHERE ao2.assertion_id = a.id
+                           ORDER BY ao2.created_at ASC, ao2.id ASC
+                           LIMIT 1) AS primary_raw_text,
+                          (SELECT ao2.source_role FROM assertion_occurrence ao2
+                           WHERE ao2.assertion_id = a.id
+                           ORDER BY CASE ao2.source_role
+                             WHEN 'authoritative' THEN 6
+                             WHEN 'operative'     THEN 5
+                             WHEN 'procedural'    THEN 4
+                             WHEN 'post_hoc'      THEN 3
+                             WHEN 'informal'      THEN 2
+                             WHEN 'draft'         THEN 1
+                             WHEN 'unknown'       THEN 1
+                             WHEN 'advocacy'      THEN 0
+                             ELSE 1 END DESC,
+                                    ao2.created_at ASC,
+                                    ao2.id ASC
+                           LIMIT 1) AS source_role,
+                          (SELECT GROUP_CONCAT(DISTINCT ao2.source_role)
+                           FROM assertion_occurrence ao2
+                           WHERE ao2.assertion_id = a.id) AS source_roles_csv
+                   FROM assertion a
+                   LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
+                   LEFT JOIN assertion_issue_link ail ON ail.assertion_id = a.id
+                   WHERE a.matter_id=?
+                     AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+                   GROUP BY a.id
+               )
+               SELECT *
+               FROM matched
+               WHERE term_matches > 0
+               ORDER BY issue_match DESC, term_matches DESC, created_at DESC
+               LIMIT ?""",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_by_proposition(
         self,
         proposition_text: str,
@@ -2563,6 +2664,7 @@ class QuantStore:
         for r in rows:
             r = dict(r)
             r["values"] = [float(v) for v in (r.pop("value_list") or "").split(",") if v]
+            r["raw_texts"] = [t for t in (r.pop("texts") or "").split(" || ") if t]
             r.pop("distinct_values", None)
             conflicts.append(r)
         return conflicts

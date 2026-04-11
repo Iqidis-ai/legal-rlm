@@ -77,63 +77,81 @@ LEGAL_SYNONYMS = {
 }
 
 
+_BOOLEAN_OPERATOR_RE = re.compile(r"\b(?:and|or|not)\b", re.IGNORECASE)
+
+
+def split_query_terms(query: str) -> list[str]:
+    """Split boolean-style input into literal grep terms.
+
+    The search layer is literal/regex-based, not a boolean search engine. When an
+    upstream prompt emits expressions like ``"term1" OR "term2" AND "term3"``,
+    we must decompose that into independent literal searches before calling
+    ``DocumentSearch.search()``.
+    """
+    text = " ".join((query or "").strip().split())
+    if not text:
+        return []
+
+    if not _BOOLEAN_OPERATOR_RE.search(text):
+        return [text]
+
+    terms: list[str] = []
+    seen: set[str] = set()
+    for part in re.split(r"\b(?:and|or|not)\b|[()]", text, flags=re.IGNORECASE):
+        cleaned = " ".join(part.strip().strip("\"'").split())
+        if len(cleaned) < 2:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        terms.append(cleaned)
+
+    return terms or [text]
+
+
 def expand_query(
     query: str,
     max_expansions: int = 3,
     context_terms: list[str] | None = None,
 ) -> list[str]:
-    """Expand a search query with synonyms, related terms, and issue context.
+    """Expand a literal search query with synonyms and separate context terms.
 
-    When *context_terms* are provided (e.g. active predicates or party names),
-    the top 1-2 are fused with the original query to produce issue-aware
-    expansion variants.
+    Returned strings are always independent grep terms. We do not concatenate
+    issue context onto the main query because the underlying search backend uses
+    literal matching via ``re.escape()``.
     """
-    expanded = [query]
-    query_lower = query.lower()
+    expanded: list[str] = []
+    seen: set[str] = set()
 
-    for term, synonyms in LEGAL_SYNONYMS.items():
-        if term in query_lower:
-            # Add queries with synonyms
-            for synonym in synonyms[:max_expansions]:
-                expanded_query = query_lower.replace(term, synonym)
-                if expanded_query not in expanded:
-                    expanded.append(expanded_query)
+    def _add(term: str) -> None:
+        cleaned = " ".join((term or "").strip().split())
+        if not cleaned:
+            return
+        key = cleaned.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        expanded.append(cleaned)
 
-    # Issue-aware context fusion: append top context terms to create
-    # targeted variants (e.g. "breach" + "payment_obligation" → "breach payment obligation")
+    base_terms = split_query_terms(query)
+    for term in base_terms:
+        _add(term)
+
+    for base_term in base_terms:
+        base_lower = base_term.lower()
+        for term, synonyms in LEGAL_SYNONYMS.items():
+            if term in base_lower:
+                for synonym in synonyms[:max_expansions]:
+                    _add(base_lower.replace(term, synonym))
+
     if context_terms:
-        for ct in context_terms[:2]:
-            ct_clean = ct.replace("_", " ").lower()
-            if ct_clean not in query_lower:
-                variant = f"{query_lower} {ct_clean}"
-                if variant not in expanded:
-                    expanded.append(variant)
+        for ct in context_terms[:max_expansions]:
+            ct_clean = " ".join((ct or "").replace("_", " ").strip().split())
+            if len(ct_clean) >= 3:
+                _add(ct_clean)
 
     return expanded[:max_expansions + 1]
-
-
-def generate_related_searches(query: str) -> list[str]:
-    """Generate related search queries based on the original."""
-    related = []
-    query_lower = query.lower()
-
-    # Extract key terms (words longer than 3 chars)
-    words = [w for w in query_lower.split() if len(w) > 3]
-
-    # Generate phrase variations
-    if len(words) >= 2:
-        # Pairs of terms
-        for i in range(len(words) - 1):
-            related.append(f"{words[i]} {words[i+1]}")
-
-    # Add common legal modifiers
-    modifiers = ["material", "significant", "breach of", "failure to"]
-    for word in words[:2]:
-        for modifier in modifiers[:2]:
-            if modifier not in query_lower:
-                related.append(f"{modifier} {word}")
-
-    return related[:5]
 
 
 @dataclass
@@ -405,6 +423,3 @@ class DocumentSearch:
             total_matches=len(combined_hits),
         )
 
-    def clear_cache(self):
-        """Clear document cache."""
-        self._doc_cache.clear()

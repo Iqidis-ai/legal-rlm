@@ -108,6 +108,39 @@ def test_source_count(model):
     assert waterfall[0]["source_count"] == 3
 
 
+def test_waterfall_preserves_all_source_entries_with_grounding_fields(model):
+    q1 = model.quant.record(
+        quant_kind="amount",
+        raw_text="Invoice 1001 says $15,000",
+        amount_value=15_000.0,
+        currency="USD",
+        subject_type="invoice",
+        subject_id="inv_1001",
+        span_id="span_1",
+    )
+    q2 = model.quant.record(
+        quant_kind="amount",
+        raw_text="Follow-up spreadsheet says $15,500",
+        amount_value=15_500.0,
+        currency="USD",
+        subject_type="invoice",
+        subject_id="inv_1002",
+        span_id="span_2",
+    )
+
+    waterfall = model.get_damages_waterfall()
+    entry = waterfall[0]
+
+    assert len(entry["amounts"]) == 2
+    assert {row["quant_fact_id"] for row in entry["amounts"]} == {q1, q2}
+    assert {row["span_id"] for row in entry["amounts"]} == {"span_1", "span_2"}
+    assert all("assertion_id" in row for row in entry["amounts"])
+    assert {row["raw_text"] for row in entry["amounts"]} == {
+        "Invoice 1001 says $15,000",
+        "Follow-up spreadsheet says $15,500",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Conflict detection
 # ---------------------------------------------------------------------------
@@ -182,14 +215,6 @@ def test_currency_filter_includes_only_matching(model):
 # ---------------------------------------------------------------------------
 # API endpoint
 # ---------------------------------------------------------------------------
-
-@pytest.fixture
-def api_client():
-    from fastapi.testclient import TestClient
-    from irys.service.api import app, _active_matter_models
-    _active_matter_models.clear()
-    return TestClient(app), _active_matter_models
-
 
 def _reg(active, m):
     active[m.matter_id] = m

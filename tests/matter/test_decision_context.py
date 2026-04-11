@@ -194,14 +194,6 @@ def test_separate_matters_independent_contexts():
 # API endpoints
 # ---------------------------------------------------------------------------
 
-@pytest.fixture
-def api_client():
-    from fastapi.testclient import TestClient
-    from irys.service.api import app, _active_matter_models
-    _active_matter_models.clear()
-    return TestClient(app), _active_matter_models
-
-
 def _register_model(active_models, model):
     active_models[model.matter_id] = model
     return model.matter_id

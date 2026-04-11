@@ -48,12 +48,29 @@ class TestUsageStatsCostEstimation:
         stats.add(input_tokens=100, output_tokens=50)
         assert stats.cache_read_tokens == 0
 
+    def test_pro_large_context_uses_high_rate(self):
+        """Gemini 2.5 Pro prices prompts >200k tokens at the higher standard rate."""
+        stats = UsageStats(tier=ModelTier.PRO)
+        stats.add(input_tokens=250_000, output_tokens=100_000)
+        expected = (
+            250_000 * 2.50 / 1_000_000
+            + 100_000 * 15.00 / 1_000_000
+        )
+        assert abs(stats.estimated_cost - expected) < 1e-9
+
+    def test_pro_large_context_cache_reads_follow_high_input_rate(self):
+        """Cache reads stay at 10% of the active Pro input rate above 200k tokens."""
+        stats = UsageStats(tier=ModelTier.PRO)
+        stats.add(input_tokens=0, output_tokens=0, cache_read_tokens=250_000)
+        expected = 250_000 * 0.25 / 1_000_000
+        assert abs(stats.estimated_cost - expected) < 1e-9
+
     def test_fallback_cost_when_tier_is_none(self):
         """When tier is None, falls back to Flash pricing (not crashes)."""
         stats = UsageStats()
         stats.add(input_tokens=1_000_000, output_tokens=1_000_000)
-        # Fallback: Flash $0.30 in + $2.50 out
-        expected = 0.30 + 2.50
+        # Fallback: Flash $0.25 in + $1.50 out
+        expected = 0.25 + 1.50
         assert abs(stats.estimated_cost - expected) < 1e-9
 
     def test_accumulation(self):

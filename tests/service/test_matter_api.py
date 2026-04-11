@@ -277,30 +277,62 @@ def test_get_gaps_materiality_filter(client, register_model):
 
 
 # ---------------------------------------------------------------------------
-# GET /matter/{matter_id}/reconcile
+# GET /matter/{matter_id}/reconciliation
 # ---------------------------------------------------------------------------
 
-def test_reconcile_returns_empty_when_no_quant(client, register_model):
-    resp = client.get(f"/matter/{MATTER_ID}/reconcile")
+def test_reconciliation_returns_structure_when_no_quant(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/reconciliation")
     assert resp.status_code == 200
     data = resp.json()
     assert data["currency"] == "USD"
-    assert data["by_subject"] == {}
-    assert data["conflicts"] == []
+    assert data["invoiced"] == 0.0
+    assert data["paid"] == 0.0
 
 
-def test_reconcile_groups_by_subject(client, register_model):
+def test_reconciliation_shows_invoiced_and_paid(client, register_model):
     model = register_model
     model.quant.record(quant_kind="amount", raw_text="inv1", amount_value=50_000.0,
                        currency="USD", subject_type="invoice")
     model.quant.record(quant_kind="amount", raw_text="pmt1", amount_value=40_000.0,
                        currency="USD", subject_type="payment")
 
-    resp = client.get(f"/matter/{MATTER_ID}/reconcile")
+    resp = client.get(f"/matter/{MATTER_ID}/reconciliation")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["by_subject"]["invoice"]["total"] == 50_000.0
-    assert data["by_subject"]["payment"]["total"] == 40_000.0
+    assert data["invoiced"] == 50_000.0
+    assert data["paid"] == 40_000.0
+
+
+def test_reconciliation_conflicts_returns_raw_texts(client, register_model):
+    model = register_model
+    model.quant.record(
+        quant_kind="amount",
+        raw_text="Invoice 1042 says $50,000",
+        amount_value=50_000.0,
+        currency="USD",
+        subject_type="invoice",
+        subject_id="inv_1042",
+    )
+    model.quant.record(
+        quant_kind="amount",
+        raw_text="Revised invoice 1042 says $65,000",
+        amount_value=65_000.0,
+        currency="USD",
+        subject_type="invoice",
+        subject_id="inv_1042",
+    )
+
+    resp = client.get(f"/matter/{MATTER_ID}/reconciliation/conflicts")
+    assert resp.status_code == 200
+    conflicts = resp.json()
+    assert len(conflicts) == 1
+    assert conflicts[0]["subject_type"] == "invoice"
+    assert conflicts[0]["subject_id"] == "inv_1042"
+    assert conflicts[0]["values"] == [50000.0, 65000.0]
+    assert conflicts[0]["raw_texts"] == [
+        "Invoice 1042 says $50,000",
+        "Revised invoice 1042 says $65,000",
+    ]
 
 
 # ---------------------------------------------------------------------------

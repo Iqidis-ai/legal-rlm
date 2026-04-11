@@ -4,10 +4,9 @@ No vectors. Direct file access, reading, and search.
 """
 
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Optional, Iterator
+from dataclasses import dataclass
+from typing import Optional
 from collections import OrderedDict
-import os
 import logging
 
 from .reader import DocumentReader, DocumentContent
@@ -77,7 +76,6 @@ class MatterRepository:
         self._doc_cache_maxsize = 200
         self.search_engine = DocumentSearch(self.reader)
         self.search_engine._doc_cache = self._doc_cache  # Share cache
-        self._file_cache: Optional[list[FileInfo]] = None
         logger.info(f"Initialized repository: {base_path}")
 
     # === NAVIGATION ===
@@ -101,10 +99,18 @@ class MatterRepository:
         file_types = file_types or list(self.SUPPORTED_EXTENSIONS)
         file_types = [ft.lower() if ft.startswith(".") else f".{ft.lower()}" for ft in file_types]
 
+        # Directories to skip: .irys (metadata store), hidden dirs, common non-document dirs
+        _SKIP_DIRS = {".irys", ".git", "__pycache__", ".venv", "node_modules"}
+
         for path in self.base_path.glob(pattern):
             if path.is_file() and path.suffix.lower() in file_types:
                 # Skip temp files
                 if path.name.startswith("~$"):
+                    continue
+
+                # Skip files inside excluded directories
+                rel = path.relative_to(self.base_path)
+                if any(part in _SKIP_DIRS or part.startswith(".") for part in rel.parts[:-1]):
                     continue
 
                 files.append(FileInfo(
@@ -112,7 +118,7 @@ class MatterRepository:
                     filename=path.name,
                     file_type=path.suffix.lower(),
                     size_bytes=path.stat().st_size,
-                    relative_path=str(path.relative_to(self.base_path)),
+                    relative_path=str(rel),
                 ))
 
         return sorted(files, key=lambda f: f.relative_path)
@@ -176,63 +182,6 @@ class MatterRepository:
             self._doc_cache.move_to_end(cache_key)
 
         return self._doc_cache[cache_key]
-
-    def read_pages(self, path: str | Path, start: int, end: int) -> str:
-        """Read specific page range from a document."""
-        doc = self.read(path)
-        return doc.get_page_range(start, end)
-
-    def read_excerpt(self, path: str | Path, max_chars: int = 5000) -> str:
-        """Read excerpt of document."""
-        doc = self.read(path)
-        return doc.get_excerpt(max_chars)
-
-    def batch_read(
-        self,
-        paths: list[str | Path],
-        max_chars_per_doc: Optional[int] = None,
-    ) -> dict[str, str]:
-        """Read multiple documents."""
-        results = {}
-        for path in paths:
-            try:
-                doc = self.read(path)
-                if max_chars_per_doc:
-                    results[str(path)] = doc.get_excerpt(max_chars_per_doc)
-                else:
-                    results[str(path)] = doc.full_text
-            except Exception as e:
-                results[str(path)] = f"[ERROR: {e}]"
-        return results
-
-    def batch_read_parallel(
-        self,
-        paths: list[str | Path],
-        max_chars_per_doc: Optional[int] = None,
-        max_workers: int = 5,
-    ) -> dict[str, str]:
-        """Read multiple documents in parallel using threads."""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        results = {}
-
-        def read_one(path: str | Path) -> tuple[str, str]:
-            try:
-                doc = self.read(path)
-                if max_chars_per_doc:
-                    return str(path), doc.get_excerpt(max_chars_per_doc)
-                else:
-                    return str(path), doc.full_text
-            except Exception as e:
-                return str(path), f"[ERROR: {e}]"
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(read_one, p): p for p in paths}
-            for future in as_completed(futures):
-                path_str, content = future.result()
-                results[path_str] = content
-
-        return results
 
     # === SEARCHING ===
 
@@ -324,17 +273,6 @@ class MatterRepository:
         if path.is_absolute():
             return path
         return self.base_path / path
-
-    def get_file_info(self, path: str | Path) -> FileInfo:
-        """Get info about a specific file."""
-        full_path = self._resolve_path(path)
-        return FileInfo(
-            path=full_path,
-            filename=full_path.name,
-            file_type=full_path.suffix.lower(),
-            size_bytes=full_path.stat().st_size,
-            relative_path=str(full_path.relative_to(self.base_path)),
-        )
 
     def __repr__(self) -> str:
         stats = self.get_stats()
