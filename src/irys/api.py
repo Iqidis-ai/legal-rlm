@@ -127,6 +127,7 @@ class Irys:
         query: str,
         repository: str | Path,
         research_mode: "str | None" = None,
+        conversation_history: Optional[list[dict[str, str]]] = None,
     ) -> "InvestigationResult":
         """
         Run an investigation.
@@ -167,6 +168,7 @@ class Irys:
                 query,
                 repository,
                 research_mode=research_mode,
+                conversation_history=conversation_history,
             )
         finally:
             self._telemetry.end_operation(
@@ -192,6 +194,7 @@ class Irys:
         original_run_id: "str | None" = None,
         follow_up_query: "str | None" = None,
         research_mode: "str | None" = None,
+        conversation_history: Optional[list[dict[str, str]]] = None,
     ) -> "InvestigationResult":
         """Resume a stopped investigation from a checkpoint file.
 
@@ -217,6 +220,7 @@ class Irys:
                 original_run_id=original_run_id,
                 follow_up_query=follow_up_query,
                 research_mode=research_mode,
+                conversation_history=conversation_history,
             )
         finally:
             self._telemetry.end_operation(

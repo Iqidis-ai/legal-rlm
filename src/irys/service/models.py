@@ -22,6 +22,10 @@ class InvestigateRequest(BaseModel):
     """Request to start an investigation."""
     query: str = Field(..., description="Investigation query")
     s3_prefix: str = Field(..., description="S3 prefix containing documents")
+    conversation_history: Optional[list[dict[str, str]]] = Field(
+        None,
+        description="Optional prior visible user/assistant turns for same-session multi-turn continuity",
+    )
     research_mode: Optional[ResearchModeValue] = Field(
         None,
         description="Investigation budget profile: simple, deep, or sebih_special",
@@ -117,6 +121,10 @@ class ResumeRunRequest(BaseModel):
     follow_up_query: Optional[str] = Field(
         None,
         description="Optional new user query to continue from the checkpoint with a refined objective",
+    )
+    conversation_history: Optional[list[dict[str, str]]] = Field(
+        None,
+        description="Optional prior visible user/assistant turns for same-session multi-turn continuity",
     )
     research_mode: Optional[ResearchModeValue] = Field(
         None,

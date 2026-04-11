@@ -44,6 +44,7 @@ class HttpBackend(UIBackend):
         query: str,
         matter_id: Optional[str] = None,
         research_mode: Optional[str] = None,
+        conversation_history: Optional[list[dict[str, str]]] = None,
     ) -> dict:
         """Start an investigation via the service.
 
@@ -149,12 +150,15 @@ class HttpBackend(UIBackend):
         run_id: str,
         follow_up_query: Optional[str] = None,
         research_mode: Optional[str] = None,
+        conversation_history: Optional[list[dict[str, str]]] = None,
     ) -> dict:
         body: dict[str, Any] = {}
         if follow_up_query:
             body["follow_up_query"] = follow_up_query
         if research_mode:
             body["research_mode"] = research_mode
+        if conversation_history:
+            body["conversation_history"] = conversation_history
         return await self._post(f"/matter/{matter_id}/runs/{run_id}/resume", body)
 
     # ------------------------------------------------------------------ #

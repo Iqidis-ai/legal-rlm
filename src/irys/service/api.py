@@ -516,6 +516,7 @@ async def _run_investigation(
             query=request.query,
             repository=str(temp_dir),
             research_mode=request.research_mode,
+            conversation_history=request.conversation_history,
         )
 
         # Extract results
@@ -2955,6 +2956,7 @@ async def resume_run(
             original_run_id=run_id,
             follow_up_query=(request.follow_up_query if request else None),
             research_mode=(request.research_mode if request else None),
+            conversation_history=(request.conversation_history if request else None),
         )
     except Exception as exc:
         # LOW r76: concurrent resume races are a 409, not a 500

@@ -702,6 +702,7 @@ class InvestigationState:
     id: str
     query: str
     repository_path: str
+    conversation_history: list[dict[str, str]] = field(default_factory=list)
 
     # Progress tracking
     thinking_steps: list[ThinkingStep] = field(default_factory=list)
@@ -762,11 +763,17 @@ class InvestigationState:
         query: str,
         repository_path: str,
         research_mode: "str | ResearchMode | None" = None,
+        conversation_history: Optional[list[dict[str, str]]] = None,
     ) -> "InvestigationState":
         return cls(
             id=str(uuid.uuid4())[:8],
             query=query,
             repository_path=repository_path,
+            conversation_history=[
+                {"query": str(turn.get("query") or "").strip(), "answer": str(turn.get("answer") or "").strip()}
+                for turn in (conversation_history or [])
+                if str(turn.get("query") or "").strip() or str(turn.get("answer") or "").strip()
+            ],
             started_at=datetime.now(),
             research_mode=normalize_research_mode(research_mode),
         )
@@ -1743,6 +1750,7 @@ class InvestigationState:
             "id": self.id,
             "query": self.query,
             "repository_path": self.repository_path,
+            "conversation_history": self.conversation_history,
             # Identity fields for cross-matter validation on resume
             "_matter_id": getattr(self, "_matter_id", None),
             "_run_id": getattr(self, "_run_id", None),
@@ -1852,6 +1860,7 @@ class InvestigationState:
             id=data["id"],
             query=data["query"],
             repository_path=data["repository_path"],
+            conversation_history=data.get("conversation_history", []),
         )
         # Restore identity fields for cross-matter validation
         if data.get("_matter_id"):

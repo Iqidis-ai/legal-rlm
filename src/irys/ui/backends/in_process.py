@@ -117,10 +117,16 @@ class InProcessBackend(UIBackend):
         query: str,
         matter_id: Optional[str] = None,
         research_mode: Optional[str] = None,
+        conversation_history: Optional[list[dict[str, str]]] = None,
     ) -> dict:
         """Start an investigation in-process. Returns after investigation completes."""
         irys = self._get_irys()
-        result = await irys.investigate(query, repo_path, research_mode=research_mode)
+        result = await irys.investigate(
+            query,
+            repo_path,
+            research_mode=research_mode,
+            conversation_history=conversation_history,
+        )
         state = result.state
         # Get matter_id and run_id from the matter model if available
         engine = irys._engine
@@ -181,6 +187,7 @@ class InProcessBackend(UIBackend):
         run_id: str,
         follow_up_query: Optional[str] = None,
         research_mode: Optional[str] = None,
+        conversation_history: Optional[list[dict[str, str]]] = None,
     ) -> dict:
         """Resume an interrupted run from its checkpoint (InProcessBackend)."""
         try:
@@ -217,6 +224,7 @@ class InProcessBackend(UIBackend):
                 original_run_id=run_id,
                 follow_up_query=follow_up_query,
                 research_mode=research_mode,
+                conversation_history=conversation_history,
             )
             new_run_id = getattr(result.state, "_run_id", None)
             return {"status": "resumed", "run_id": run_id, "new_run_id": new_run_id}
@@ -497,6 +505,7 @@ class InProcessBackend(UIBackend):
         thinking: list,
         citations: list,
         research_mode: Optional[str] = None,
+        conversation_history: Optional[list[dict[str, str]]] = None,
         resume_matter_id: Optional[str] = None,
         resume_run_id: Optional[str] = None,
         on_irys_created=None,
@@ -549,6 +558,7 @@ class InProcessBackend(UIBackend):
                                 original_run_id=resume_run_id,
                                 follow_up_query=query,
                                 research_mode=research_mode,
+                                conversation_history=conversation_history,
                             )
                     except Exception:
                         result = None
@@ -557,6 +567,7 @@ class InProcessBackend(UIBackend):
                         query,
                         repo_path,
                         research_mode=research_mode,
+                        conversation_history=conversation_history,
                     )
                 state = result.state
                 engine = irys._engine

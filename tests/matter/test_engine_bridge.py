@@ -10,6 +10,7 @@ Verifies:
 """
 
 import pytest
+from irys.core.utils import validate_query
 from irys.rlm.engine import RLMConfig, RLMEngine
 from irys.matter import MatterModel
 from irys.matter.runtime import MatterRuntimeAdapter, NullMatterAdapter
@@ -2185,8 +2186,9 @@ def test_synthesis_prompt_prioritizes_existing_evidence_before_gaps():
     from irys.rlm.engine import SYNTHESIS_PROMPT
 
     # Deep legal reasoning identity
-    assert "senior litigation partner" in SYNTHESIS_PROMPT
-    assert "Think like an experienced litigator" in SYNTHESIS_PROMPT
+    assert "named partner in a top global law firm" in SYNTHESIS_PROMPT
+    assert "Critical Independence" in SYNTHESIS_PROMPT
+    assert "Pragmatic Legal Strategy" in SYNTHESIS_PROMPT
 
     # Dynamic context packet — not hard-coded sections
     assert "{context_packet}" in SYNTHESIS_PROMPT
@@ -2202,9 +2204,9 @@ def test_synthesis_prompt_prioritizes_existing_evidence_before_gaps():
     assert "Issue Coverage" not in SYNTHESIS_PROMPT
     assert "Investigation Summary" not in SYNTHESIS_PROMPT
 
-    # Source-role treatment rules are in the prompt instructions (always relevant)
-    assert "[ADVOCACY]" in SYNTHESIS_PROMPT
-    assert "[OPERATIVE]" in SYNTHESIS_PROMPT
+    # Source discipline remains explicit in the prompt instructions
+    assert "Source Discipline / Epistemic Bias Awareness" in SYNTHESIS_PROMPT
+    assert "Treat each source proportionally to its reliability and role in the matter." in SYNTHESIS_PROMPT
 
 
 # ---------------------------------------------------------------------------
@@ -2216,6 +2218,7 @@ def test_investigation_state_serialization_includes_pending_clarifications():
     from irys.rlm.state import InvestigationState
 
     state = InvestigationState.create("test query", "/repo")
+    state.conversation_history = [{"query": "tighten the answer", "answer": "Here is the draft."}]
     state.pending_clarifications = [
         {
             "id": "cl_001",
@@ -2228,10 +2231,12 @@ def test_investigation_state_serialization_includes_pending_clarifications():
 
     data = state.to_dict()
     assert "pending_clarifications" in data
+    assert data["conversation_history"] == [{"query": "tighten the answer", "answer": "Here is the draft."}]
     assert len(data["pending_clarifications"]) == 1
     assert data["pending_clarifications"][0]["question_text"] == "Do you have the signed amendment?"
 
     restored = InvestigationState.from_dict(data)
+    assert restored.conversation_history == [{"query": "tighten the answer", "answer": "Here is the draft."}]
     assert len(restored.pending_clarifications) == 1
     assert restored.pending_clarifications[0]["id"] == "cl_001"
 
@@ -2247,6 +2252,14 @@ def test_investigation_state_pending_clarifications_defaults_empty():
 
     restored = InvestigationState.from_dict(data)
     assert restored.pending_clarifications == []
+
+
+def test_validate_query_allows_long_queries():
+    """Long professional prompts should not be rejected by an arbitrary cap."""
+    query = "Draft a detailed response. " * 300
+    valid, issues = validate_query(query)
+    assert valid is True
+    assert issues == []
 
 
 def test_format_matter_context_emits_known_document_ids():

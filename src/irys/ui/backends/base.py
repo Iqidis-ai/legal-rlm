@@ -23,6 +23,7 @@ class UIBackend(ABC):
         query: str,
         matter_id: Optional[str] = None,
         research_mode: Optional[str] = None,
+        conversation_history: Optional[list[dict[str, str]]] = None,
     ) -> dict:
         """Start an investigation. Returns {matter_id, run_id, job_id}."""
         ...
@@ -110,6 +111,7 @@ class UIBackend(ABC):
         run_id: str,
         follow_up_query: Optional[str] = None,
         research_mode: Optional[str] = None,
+        conversation_history: Optional[list[dict[str, str]]] = None,
     ) -> dict:
         """Resume an interrupted run from its checkpoint. Returns {new_run_id, status}."""
         ...

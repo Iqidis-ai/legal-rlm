@@ -414,6 +414,25 @@ class GeminiClient:
         except Exception as exc:
             logger.debug("LLM usage recorder failed: %s", exc)
 
+    @staticmethod
+    def _build_chat_history(
+        conversation_history: Optional[list[dict[str, str]]],
+    ) -> list[types.Content]:
+        """Convert prior visible turns into Gemini chat history content."""
+        history: list[types.Content] = []
+        for turn in conversation_history or []:
+            user_text = str(turn.get("query") or "").strip()
+            assistant_text = str(turn.get("answer") or "").strip()
+            if user_text:
+                history.append(
+                    types.UserContent(parts=[types.Part(text=user_text)])
+                )
+            if assistant_text:
+                history.append(
+                    types.ModelContent(parts=[types.Part(text=assistant_text)])
+                )
+        return history
+
     async def complete(
         self,
         prompt: str,
@@ -424,6 +443,7 @@ class GeminiClient:
         cached_content: Optional[str] = None,
         json_mode: bool = False,
         usage_label: Optional[str] = None,
+        conversation_history: Optional[list[dict[str, str]]] = None,
     ) -> str:
         """Generate completion using specified tier with timeout.
 
@@ -448,18 +468,10 @@ class GeminiClient:
 
         if cached_content:
             config.cached_content = cached_content
-
-        contents = []
         if system_prompt:
-            contents.append(types.Content(
-                role="user",
-                parts=[types.Part(text=f"System: {system_prompt}\n\nUser: {prompt}")]
-            ))
-        else:
-            contents.append(types.Content(
-                role="user",
-                parts=[types.Part(text=prompt)]
-            ))
+            config.system_instruction = system_prompt
+
+        request_text = prompt
 
         logger.debug(f"Calling {mc.model_id} with {len(prompt)} chars")
 
@@ -468,15 +480,36 @@ class GeminiClient:
         started_at = time.perf_counter()
 
         try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.models.generate_content,
+            if conversation_history:
+                history = self._build_chat_history(conversation_history)
+                chat = self.client.chats.create(
                     model=mc.model_id,
-                    contents=contents,
                     config=config,
-                ),
-                timeout=request_timeout,
-            )
+                    history=history,
+                )
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        chat.send_message,
+                        request_text,
+                    ),
+                    timeout=request_timeout,
+                )
+            else:
+                contents = [
+                    types.Content(
+                        role="user",
+                        parts=[types.Part(text=request_text)],
+                    )
+                ]
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=mc.model_id,
+                        contents=contents,
+                        config=config,
+                    ),
+                    timeout=request_timeout,
+                )
         except asyncio.TimeoutError:
             latency_ms = int((time.perf_counter() - started_at) * 1000)
             self._record_call(

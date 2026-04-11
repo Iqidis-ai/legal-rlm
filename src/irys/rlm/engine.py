@@ -41,6 +41,94 @@ _CONTENT_ROLE_MAP["post_hoc_explanatory"] = _SourceRole.POST_HOC_EXPLANATORY
 
 logger = logging.getLogger(__name__)
 
+
+# ── Date normalisation (SO-6 timeline reliability) ──────────────────────────
+import re as _re_date
+from dateutil import parser as _dateutil_parser
+
+_QUARTER_MAP = {"q1": "01-01", "q2": "04-01", "q3": "07-01", "q4": "10-01"}
+_ISO_DATE_RE = _re_date.compile(r"^\d{4}-\d{2}-\d{2}$")
+_QUARTER_RE = _re_date.compile(r"^[Qq]([1-4])\s*(\d{4})$")
+_QUARTER_RE2 = _re_date.compile(r"^(\d{4})\s*[Qq]([1-4])$")
+_YEAR_ONLY_RE = _re_date.compile(r"^(\d{4})$")
+_MONTH_YEAR_RE = _re_date.compile(
+    r"^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})$",
+    _re_date.IGNORECASE,
+)
+_MONTH_NUM = {
+    "jan": "01", "feb": "02", "mar": "03", "apr": "04",
+    "may": "05", "jun": "06", "jul": "07", "aug": "08",
+    "sep": "09", "oct": "10", "nov": "11", "dec": "12",
+}
+
+
+def _normalize_date(raw: str, llm_value: Any = None, llm_precision: str | None = None) -> tuple[str | None, str]:
+    """Normalise a date string to ISO YYYY-MM-DD and return (iso_date, precision).
+
+    First trusts LLM-provided value/precision if they look valid, then falls back
+    to heuristic parsing of *raw*.  Returns (None, "unknown") on total failure.
+
+    Precision values: "day", "month", "quarter", "year", "unknown".
+    """
+    # 1. Try LLM-provided ISO value first.
+    if isinstance(llm_value, str) and _ISO_DATE_RE.match(llm_value.strip()):
+        iso = llm_value.strip()
+        precision = llm_precision if llm_precision in ("day", "month", "quarter", "year") else "day"
+        return iso, precision
+
+    text = (raw or "").strip()
+    if not text:
+        return None, "unknown"
+
+    # 2. Already ISO?
+    if _ISO_DATE_RE.match(text):
+        return text, llm_precision if llm_precision in ("day", "month", "quarter", "year") else "day"
+
+    # 3. Quarter patterns: "Q3 2023" or "2023 Q3"
+    m = _QUARTER_RE.match(text)
+    if m:
+        return f"{m.group(2)}-{_QUARTER_MAP['q' + m.group(1)]}", "quarter"
+    m = _QUARTER_RE2.match(text)
+    if m:
+        return f"{m.group(1)}-{_QUARTER_MAP['q' + m.group(2)]}", "quarter"
+
+    # 4. Year only: "2023"
+    m = _YEAR_ONLY_RE.match(text)
+    if m:
+        return f"{m.group(1)}-01-01", "year"
+
+    # 5. Month+year: "March 2023", "Mar 2023", "Nov. 2024"
+    m = _MONTH_YEAR_RE.match(text)
+    if m:
+        mon = _MONTH_NUM.get(m.group(1)[:3].lower())
+        if mon:
+            return f"{m.group(2)}-{mon}-01", "month"
+
+    # 6. General dateutil parse (handles "January 15, 2024", "15/01/2024", etc.)
+    try:
+        dt = _dateutil_parser.parse(text, fuzzy=False)
+        return dt.strftime("%Y-%m-%d"), llm_precision if llm_precision in ("day", "month", "quarter", "year") else "day"
+    except (ValueError, OverflowError):
+        pass
+
+    # 7. Fuzzy parse as last resort (handles "signed on March 5, 2023").
+    # Guard: dateutil fills missing month/day with today's values, producing
+    # misleading results like "sometime in 2023" → "2023-04-11".  Reject when
+    # the parsed month+day equal today's (likely defaulted, not from the text).
+    try:
+        from datetime import date as _date_cls
+        dt = _dateutil_parser.parse(text, fuzzy=True)
+        _today = _date_cls.today()
+        _looks_defaulted = (dt.month == _today.month and dt.day == _today.day
+                            and dt.year != _today.year)
+        if not _looks_defaulted:
+            return dt.strftime("%Y-%m-%d"), llm_precision if llm_precision in ("day", "month", "quarter", "year") else "day"
+    except (ValueError, OverflowError):
+        pass
+
+    return None, "unknown"
+
+
 # Pre-validated assertion link types. Checked against LLM-supplied relation strings
 # before calling adapter.record_assertion_link() to prevent repeated log_warning() DB
 # writes when the LLM returns an unsupported relation throughout a run.
@@ -284,6 +372,20 @@ def _format_matter_context(ctx) -> str:
     lines.append("")
     return "\n".join(lines)
 
+def _conversation_history_digest(conversation_history: list[dict[str, str]] | None) -> str:
+    """Stable digest input for cache keys when prior visible turns matter."""
+    if not conversation_history:
+        return ""
+    parts: list[str] = []
+    for turn in conversation_history:
+        q = str(turn.get("query") or "").strip()
+        a = str(turn.get("answer") or "").strip()
+        if q:
+            parts.append(f"U:{q}")
+        if a:
+            parts.append(f"A:{a}")
+    return "\n".join(parts)
+
 ANALYZE_FINDINGS_PROMPT = """You are a senior legal analyst extracting evidence from search results.
 
 Query: {query}
@@ -390,11 +492,12 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
 
 4. NUMERIC FACTS (SO-6 — extract ALL monetary amounts, dates, rates, counts):
    For each number, provide a structured object:
-   - kind: "amount" | "date" | "rate" | "balance" | "count"
+   - kind: "amount" | "date" | "date_range" | "rate" | "balance" | "count"
    - subject: one-word subject type — "invoice" | "payment" | "fee" | "damages" | "balance" | "rate" | "deposit" | "penalty" | "other"
    - subject_id: specific identifier if present (e.g. "Invoice #1042", "Payment #3", null if none)
-   - raw: exact text from document
-   - value: numeric value if parseable (null otherwise)
+   - raw: exact text from document (preserve original wording)
+   - value: for amounts/rates/counts: numeric value. For dates: ALWAYS use ISO format YYYY-MM-DD (e.g. "2023-03-15"). For date_range: use "YYYY-MM-DD/YYYY-MM-DD". If only month is known use first of month (e.g. "2023-03-01"). If only year, use "2023-01-01". If only quarter, use first day of quarter (Q1="01-01", Q2="04-01", Q3="07-01", Q4="10-01").
+   - date_precision: REQUIRED for kind="date" or "date_range": "day" | "month" | "quarter" | "year" (how precise the original date is)
    - currency: "USD" etc. for amounts (null if not monetary)
    - context: brief label of what this number represents (max 60 chars)
    - page: page number where this number appears (integer, null if unknown)
@@ -447,7 +550,7 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
     "key_facts": [{{"fact": "...", "page": N, "issue_relation": "supports", "effective_date": "2023-03-15", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD"}}],
     "quotes": [{{"text": "...", "page": N}}],
     "entities": {{"people": ["name1"], "dates": ["date1"], "amounts": ["$X"], "companies": ["co1"]}},
-    "numeric_facts": [{{"kind": "amount", "subject": "invoice", "subject_id": "Invoice #1042", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due", "page": 3, "assertion_idx": 2}}],
+    "numeric_facts": [{{"kind": "amount", "subject": "invoice", "subject_id": "Invoice #1042", "raw": "$50,000", "value": 50000, "currency": "USD", "context": "payment due", "page": 3, "assertion_idx": 2}}, {{"kind": "date", "subject": "payment", "subject_id": null, "raw": "March 2023", "value": "2023-03-01", "date_precision": "month", "context": "payment due date", "page": 1, "assertion_idx": 0}}],
     "fact_relationships": [{{"from_idx": 0, "to_idx": 2, "relation": "supports"}}],
     "connections": ["doc reference 1"],
     "concerns": ["issue 1"],
@@ -1113,6 +1216,7 @@ class RLMEngine:
         query: str,
         repository_path: str | Path,
         research_mode: "str | None" = None,
+        conversation_history: "list[dict[str, str]] | None" = None,
     ) -> InvestigationState:
         """
         Run full recursive investigation.
@@ -1133,6 +1237,7 @@ class RLMEngine:
             query,
             str(repo.base_path),
             research_mode=research_mode,
+            conversation_history=conversation_history,
         )
 
         # Adapt configuration based on repository size.
@@ -1431,9 +1536,10 @@ class RLMEngine:
         # Include file listing digest (not just count) so replacing a file
         # with a same-named different file invalidates the cache.
         _file_digest = _hashlib.sha256(file_listing_str.encode()).hexdigest()[:16]
+        _history_digest = _conversation_history_digest(state.conversation_history)
         _orient_key = _hashlib.sha256(
             f"{state.query.lower().strip()}\n{stats.total_files}\n{_file_digest}"
-            f"\n{_ctx_fingerprint}\nv{_ORIENTATION_CACHE_VERSION}".encode()
+            f"\n{_history_digest}\n{_ctx_fingerprint}\nv{_ORIENTATION_CACHE_VERSION}".encode()
         ).hexdigest()
 
         _plan_defaults = {
@@ -1459,6 +1565,7 @@ class RLMEngine:
                 tier=ModelTier.FLASH,
                 json_mode=True,
                 usage_label="orientation",
+                conversation_history=state.conversation_history,
             )
             plan = self._parse_json_safe(response, _plan_defaults)
             # Persist for future warm runs
@@ -3313,7 +3420,10 @@ Return:
                         issue_rel = _raw_rel_dr.lower().strip() if isinstance(_raw_rel_dr, str) else "neutral"
                         if issue_rel not in ("supports", "attacks", "neutral"):
                             issue_rel = "neutral"
-                        effective_date = fact_item.get("effective_date")
+                        _raw_eff = fact_item.get("effective_date")
+                        effective_date, _ = _normalize_date(
+                            str(_raw_eff) if _raw_eff else "", _raw_eff, None
+                        ) if _raw_eff else (None, "unknown")
                         # Extract SPO triple when LLM provides it (SO-2 typed assertions)
                         _subj = fact_item.get("subject")
                         _pred = fact_item.get("predicate")
@@ -3441,7 +3551,19 @@ Return:
                         except (TypeError, ValueError, OverflowError):
                             amount = None
                             rate = None
-                        date_val = raw if kind == "date" else None
+                        # Normalise dates to ISO YYYY-MM-DD with precision tracking (SO-6).
+                        date_val: Optional[str] = None
+                        date_end_val: Optional[str] = None
+                        _date_precision: Optional[str] = None
+                        if kind in ("date", "date_range"):
+                            llm_val = nf.get("value") if isinstance(nf.get("value"), str) else None
+                            llm_prec = nf.get("date_precision")
+                            if kind == "date_range" and isinstance(llm_val, str) and "/" in llm_val:
+                                parts = llm_val.split("/", 1)
+                                date_val, _date_precision = _normalize_date(parts[0], parts[0], llm_prec)
+                                date_end_val, _ = _normalize_date(parts[1], parts[1], llm_prec)
+                            else:
+                                date_val, _date_precision = _normalize_date(raw, llm_val, llm_prec)
                         # Ground to source assertion: prefer explicit assertion_idx from LLM
                         # (direct index into key_facts), fall back to string matching.
                         _nf_assertion_id: Optional[str] = None
@@ -3464,11 +3586,13 @@ Return:
                             "amount_value": amount,
                             "currency": nf.get("currency"),
                             "date_value": date_val,
+                            "date_end_value": date_end_val,
                             "rate_value": rate,
                             "subject_type": nf.get("subject"),
                             "subject_id": nf.get("subject_id"),
                             "assertion_id": _nf_assertion_id,
                             "span_id": _nf_span_id,
+                            "date_precision": _date_precision,
                         })
                     if _quant_specs:
                         _adp.record_quants_batch(_quant_specs)
@@ -3809,7 +3933,8 @@ Return:
         # Synthesis cache (SO-1): same prompt → skip PRO LLM call on warm runs.
         # Key hashes the full prompt text (which captures facts, gaps, quant, citations).
         import hashlib as _sh
-        _syn_key = _sh.sha256(prompt.encode()).hexdigest()
+        _history_digest = _conversation_history_digest(state.conversation_history)
+        _syn_key = _sh.sha256(f"{prompt}\n{_history_digest}".encode()).hexdigest()
         _cached_response = None
         if self._matter_model is not None:
             try:
@@ -3827,6 +3952,7 @@ Return:
                 prompt,
                 tier=ModelTier.PRO,
                 usage_label="synthesis",
+                conversation_history=state.conversation_history,
             )
             if self._matter_model is not None:
                 try:
@@ -5937,6 +6063,7 @@ Return:
         original_run_id: "str | None" = None,
         follow_up_query: "str | None" = None,
         research_mode: "str | None" = None,
+        conversation_history: "list[dict[str, str]] | None" = None,
     ) -> InvestigationState:
         """
         Resume investigation from checkpoint.
@@ -5953,6 +6080,12 @@ Return:
             InvestigationState with completed investigation
         """
         state = InvestigationState.load_checkpoint(checkpoint_path)
+        if conversation_history is not None:
+            state.conversation_history = [
+                {"query": str(turn.get("query") or "").strip(), "answer": str(turn.get("answer") or "").strip()}
+                for turn in conversation_history
+                if str(turn.get("query") or "").strip() or str(turn.get("answer") or "").strip()
+            ]
         previous_mode = normalize_research_mode(getattr(state, "research_mode", None))
         state.research_mode = normalize_research_mode(
             research_mode,

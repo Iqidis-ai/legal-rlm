@@ -325,33 +325,37 @@ def _clip_for_context(value: Any, limit: int) -> str:
     return text[: max(0, limit - 16)].rstrip() + "\n...[truncated]"
 
 
-def _build_follow_up_query(query: str, turns: list[dict[str, str]]) -> str:
-    """Build session-scoped conversational context for follow-up turns.
+def _build_conversation_history(turns: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Return bounded prior visible turns for same-session multi-turn continuity."""
+    history: list[dict[str, str]] = []
+    for turn in turns[-_SESSION_TURN_LIMIT:]:
+        query = _clip_for_context(turn.get("query"), _SESSION_QUERY_LIMIT)
+        answer = _clip_for_context(turn.get("answer"), _SESSION_ANSWER_LIMIT)
+        if query or answer:
+            history.append({"query": query, "answer": answer})
+    return history
 
-    This is intentionally bounded: the matter model already carries durable
-    evidence, so we only preserve enough prior exchange to resolve follow-up
-    references like "tighten this" or "redraft that section."
-    """
-    if not turns:
-        return query.strip()
 
-    lines = [
-        "Session conversation context for the same matter and repo.",
-        "Use this only to maintain continuity with the current drafting or analysis thread.",
-        "If the current user request conflicts with earlier turns, follow the current request.",
-        "",
-        "Prior turns:",
-    ]
-    for idx, turn in enumerate(turns[-_SESSION_TURN_LIMIT :], 1):
-        lines.append(
-            f"Turn {idx} User: {_clip_for_context(turn.get('query'), _SESSION_QUERY_LIMIT)}"
-        )
-        lines.append(
-            f"Turn {idx} Assistant: {_clip_for_context(turn.get('answer'), _SESSION_ANSWER_LIMIT)}"
-        )
-        lines.append("")
-    lines.append(f"Current user request: {query.strip()}")
-    return "\n".join(lines)
+def _build_chat_messages(
+    turns: list[dict[str, str]],
+    *,
+    pending_user: Optional[str] = None,
+    pending_assistant: Optional[str] = None,
+) -> list[dict[str, str]]:
+    """Render visible conversation history for the run UI."""
+    messages: list[dict[str, str]] = []
+    for turn in turns[-_SESSION_TURN_LIMIT:]:
+        query = str(turn.get("query") or "").strip()
+        answer = str(turn.get("answer") or "").strip()
+        if query:
+            messages.append({"role": "user", "content": query})
+        if answer:
+            messages.append({"role": "assistant", "content": answer})
+    if pending_user:
+        messages.append({"role": "user", "content": pending_user})
+    if pending_assistant:
+        messages.append({"role": "assistant", "content": pending_assistant})
+    return messages
 
 
 def _split_run_output_sections(output: Any) -> tuple[str, str]:
@@ -640,25 +644,50 @@ def _fmt_issues_panel(issues: list) -> str:
     return "<div class='viz-shell'><div class='issues-stack'>" + "".join(rows) + "</div></div>"
 
 
+_MONTH_NAMES = [
+    "", "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]
+_QUARTER_STARTS = {"01": "Q1", "04": "Q2", "07": "Q3", "10": "Q4"}
+
+
+def _display_date(iso_date: str, precision: str | None) -> str:
+    """Render an ISO date according to its precision for human-friendly display."""
+    if not iso_date or len(iso_date) < 10:
+        return iso_date or "Undated"
+    try:
+        year, month, day = iso_date[:10].split("-")
+    except ValueError:
+        return iso_date
+    if precision == "year":
+        return year
+    if precision == "quarter":
+        return f"{_QUARTER_STARTS.get(month, 'Q?')} {year}"
+    if precision == "month":
+        m_idx = int(month)
+        m_name = _MONTH_NAMES[m_idx] if 1 <= m_idx <= 12 else month
+        return f"{m_name} {year}"
+    # "day" or unknown precision — show full date in readable form
+    m_idx = int(month)
+    m_name = _MONTH_NAMES[m_idx] if 1 <= m_idx <= 12 else month
+    return f"{m_name} {int(day)}, {year}"
+
+
 def _fmt_timeline_panel(events: list[dict]) -> str:
     if not events:
         return "<div class='viz-empty'>No timeline events available.</div>"
     items: list[str] = []
     for event in events:
-        date = _escape(event.get("date") or "Undated")
+        raw_date = event.get("date") or ""
+        precision = event.get("date_precision")
+        date = _escape(_display_date(raw_date, precision) if raw_date else "Undated")
         title = _escape(event.get("event") or "Event")
         source_doc = _escape(event.get("source_doc") or "Unknown source")
         kind = _escape(event.get("kind") or "event")
         subject = _escape(event.get("subject") or "")
-        quant_id = _escape(event.get("quant_id") or "")
-        assertion_id = _escape(event.get("assertion_id") or "")
         meta_parts = [kind, source_doc]
         if subject:
-            meta_parts.append(f"subject: {subject}")
-        if quant_id:
-            meta_parts.append(f"quant: {quant_id}")
-        if assertion_id:
-            meta_parts.append(f"assertion: {assertion_id}")
+            meta_parts.append(subject)
         items.append(
             "<div class='timeline-item'>"
             f"<div class='timeline-date'>{date}</div>"
@@ -1649,6 +1678,7 @@ class AppState:
         thinking: list,
         citations: list,
         research_mode: str,
+        conversation_history: Optional[list[dict[str, str]]] = None,
         resume_matter_id: Optional[str] = None,
         resume_run_id: Optional[str] = None,
     ):
@@ -1671,6 +1701,7 @@ class AppState:
             thinking,
             citations,
             research_mode=research_mode,
+            conversation_history=conversation_history,
             resume_matter_id=resume_matter_id,
             resume_run_id=resume_run_id,
             on_irys_created=lambda irys: setattr(self, "_irys_ref", irys),
@@ -1704,15 +1735,15 @@ class AppState:
         user_query = query.strip()
         if previous_repo_path and resolved_repo_path and previous_repo_path != resolved_repo_path:
             self.session_turns = []
-        effective_query = (
-            _build_follow_up_query(user_query, self.session_turns)
+        conversation_history = (
+            _build_conversation_history(self.session_turns)
             if (
                 user_query
                 and resolved_repo_path
                 and previous_repo_path == resolved_repo_path
                 and self.session_turns
             )
-            else user_query
+            else []
         )
         normalized_mode = normalize_research_mode(research_mode)
         should_resume_follow_up = bool(
@@ -1745,12 +1776,13 @@ class AppState:
         thread = threading.Thread(
             target=self._run_thread,
             args=(
-                effective_query or query,
+                user_query or query,
                 repo_path,
                 call_queue,
                 call_thinking,
                 call_citations,
                 normalized_mode,
+                conversation_history or None,
                 previous_matter_id if should_resume_follow_up else None,
                 previous_run_id if should_resume_follow_up else None,
             ),
@@ -1775,7 +1807,11 @@ class AppState:
                         f"{elapsed:.0f}s | {len(call_thinking)} steps | {len(call_citations)} citations"
                     )
                     yield (
-                        "*Investigating...*",
+                        _build_chat_messages(
+                            self.session_turns,
+                            pending_user=user_query,
+                            pending_assistant="*Investigating...*",
+                        ),
                         "\n".join(call_thinking),
                         "\n".join(call_citations) or "—",
                         status,
@@ -1836,7 +1872,7 @@ class AppState:
                             + ("\n\n---\n\n" + supporting_text if supporting_text and supporting_text != "â€”" else "")
                         )
                     yield (
-                        self.final_output,
+                        _build_chat_messages(self.session_turns),
                         structured_trace,
                         "\n".join(call_citations) or "—",
                         status,
@@ -1847,7 +1883,11 @@ class AppState:
                 elif update_type == "error":
                     self.is_running = False
                     yield (
-                        "",
+                        _build_chat_messages(
+                            self.session_turns,
+                            pending_user=user_query,
+                            pending_assistant=f"❌ {data}",
+                        ),
                         "\n".join(call_thinking),
                         "",
                         f"❌ {data}",
@@ -1863,7 +1903,11 @@ class AppState:
                         f"{elapsed:.0f}s | {len(call_thinking)} steps"
                     )
                     yield (
-                        "*Investigating...*",
+                        _build_chat_messages(
+                            self.session_turns,
+                            pending_user=user_query,
+                            pending_assistant="*Investigating...*",
+                        ),
                         "\n".join(call_thinking),
                         "\n".join(call_citations) or "—",
                         status,
@@ -1897,15 +1941,15 @@ class AppState:
         if previous_repo_path and resolved_repo_path and previous_repo_path != resolved_repo_path:
             self.session_turns = []
 
-        effective_query = (
-            _build_follow_up_query(user_query, self.session_turns)
+        conversation_history = (
+            _build_conversation_history(self.session_turns)
             if (
                 user_query
                 and resolved_repo_path
                 and previous_repo_path == resolved_repo_path
                 and self.session_turns
             )
-            else user_query
+            else []
         )
         normalized_mode = normalize_research_mode(research_mode)
         should_resume_follow_up = bool(
@@ -1935,12 +1979,13 @@ class AppState:
         thread = threading.Thread(
             target=self._run_thread,
             args=(
-                effective_query or query,
+                user_query or query,
                 repo_path,
                 call_queue,
                 call_thinking,
                 call_citations,
                 normalized_mode,
+                conversation_history or None,
                 previous_matter_id if should_resume_follow_up else None,
                 previous_run_id if should_resume_follow_up else None,
             ),
@@ -1961,7 +2006,11 @@ class AppState:
                         f"{elapsed:.0f}s | {len(call_thinking)} steps | {len(call_citations)} citations"
                     )
                     yield (
-                        "*Investigating...*",
+                        _build_chat_messages(
+                            self.session_turns,
+                            pending_user=user_query,
+                            pending_assistant="*Investigating...*",
+                        ),
                         "\n".join(call_thinking),
                         "\n".join(call_citations) or "—",
                         status,
@@ -2024,7 +2073,7 @@ class AppState:
                         )
 
                     yield (
-                        self.final_output,
+                        _build_chat_messages(self.session_turns),
                         structured_trace,
                         supporting_text,
                         status,
@@ -2035,7 +2084,11 @@ class AppState:
                 if update_type == "error":
                     self.is_running = False
                     yield (
-                        "",
+                        _build_chat_messages(
+                            self.session_turns,
+                            pending_user=user_query,
+                            pending_assistant=f"❌ {data}",
+                        ),
                         "\n".join(call_thinking),
                         "",
                         f"❌ {data}",
@@ -2051,7 +2104,11 @@ class AppState:
                         f"{elapsed:.0f}s | {len(call_thinking)} steps"
                     )
                     yield (
-                        "*Investigating...*",
+                        _build_chat_messages(
+                            self.session_turns,
+                            pending_user=user_query,
+                            pending_assistant="*Investigating...*",
+                        ),
                         "\n".join(call_thinking),
                         "\n".join(call_citations) or "—",
                         status,
@@ -2714,12 +2771,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
             # ---------- LEFT: Analysis output ----------
             with gr.Column(scale=3):
-                run_output = gr.Markdown(
-                    value=(
-                        "*Select documents above, type a question, and click **Investigate**. "
-                        "Irys will read every document, extract structured facts, map the issues, "
-                        "and give you a sourced analysis.*"
-                    )
+                run_output = gr.Chatbot(
+                    label="Conversation",
+                    value=[
+                        {
+                            "role": "assistant",
+                            "content": (
+                                "Select documents above, type a question, and click **Investigate**. "
+                                "Irys will read every document, extract structured facts, map the issues, "
+                                "and answer in a multi-turn thread."
+                            ),
+                        }
+                    ],
+                    height=420,
                 )
 
                 with gr.Accordion("Reasoning Trace — watch Irys think step by step", open=False):
