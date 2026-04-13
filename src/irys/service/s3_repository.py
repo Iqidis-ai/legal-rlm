@@ -33,6 +33,9 @@ CONTENT_TYPE_TO_EXT = {
     "text/plain": ".txt",
     "application/rtf": ".rtf",
     "text/rtf": ".rtf",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
 }
 
 # Magic bytes for file type detection (fallback when content-type is missing/generic)
@@ -41,6 +44,8 @@ MAGIC_BYTES = {
     b"PK\x03\x04": ".docx",  # ZIP-based formats (docx, xlsx, pptx)
     b"\xd0\xcf\x11\xe0": ".doc",  # OLE compound document (old MS Office)
     b"{\\rtf": ".rtf",
+    b"\x89PNG": ".png",       # PNG signature
+    b"\xff\xd8\xff": ".jpg",  # JPEG signature
 }
 
 # Maximum number of concurrent file downloads
@@ -135,7 +140,7 @@ class S3Repository:
         Returns:
             List of S3 keys (relative to prefix)
         """
-        extensions = extensions or [".txt", ".pdf", ".docx", ".md"]
+        extensions = extensions or [".txt", ".pdf", ".docx", ".md", ".png", ".jpg", ".jpeg"]
 
         def _is_hash_filename(name: str) -> bool:
             """Check if filename looks like a content hash (hex string, no extension)."""
@@ -571,7 +576,7 @@ class S3Repository:
 
             # Determine file extension
             ext = current_ext
-            if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".rtf"}:
+            if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".md", ".rtf", ".png", ".jpg", ".jpeg"}:
                 # Try to detect from Content-Type
                 content_type = head.get("ContentType")
                 ext = detect_extension_from_content_type(content_type)
@@ -682,7 +687,7 @@ class S3Repository:
 
                 # Determine file extension (prefer provided metadata)
                 ext = current_ext
-                if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".rtf"}:
+                if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".md", ".rtf", ".png", ".jpg", ".jpeg"}:
                     ext = detect_extension_from_content_type(content_type)
                     logger.debug(f"Content-Type '{content_type}' -> extension '{ext}'")
 

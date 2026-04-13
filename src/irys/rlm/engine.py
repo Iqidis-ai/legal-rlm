@@ -221,6 +221,7 @@ class RLMEngine:
         context: Optional[Any] = None,
         message_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        setup_duration_ms: int = 0,
     ) -> InvestigationState:
         """Run full recursive investigation.
 
@@ -242,6 +243,7 @@ class RLMEngine:
 
         # Initialize per-investigation telemetry
         self._telemetry = InvestigationTelemetry(message_id=message_id, user_id=user_id)
+        self._telemetry.setup_duration_ms = setup_duration_ms
 
         # Load fact store for this repository (S3-backed when configured)
         s3_facts_config = None
@@ -1684,10 +1686,25 @@ class RLMEngine:
             await self._emit_step_async(state, StepType.READING, f"Reading: {filename}")
 
         try:
-            doc = repo.read(file_path)
+            doc, ocr_meta = await repo.read_async(file_path)
             state.documents_read += 1
             cache.mark_extracted(file_path)  # Mark as extracted
             cache.record_read_success()  # Reset consecutive failure counter
+
+            # Attach OCR telemetry if Mistral was called for this file
+            if ocr_meta is not None and self._telemetry:
+                t_step_ocr = self._telemetry.begin_step("document_read_ocr", "investigation_loop")
+                t_step_ocr.add_operation(StepOperation(
+                    type="ocr",
+                    latency_ms=ocr_meta.latency_ms,
+                    service="mistral-ocr",
+                    file_name=ocr_meta.file_name,
+                    file_type=ocr_meta.file_type,
+                    page_count=ocr_meta.page_count,
+                    timed_out=ocr_meta.timed_out,
+                    cost_usd=0.0,
+                ))
+                self._telemetry.end_step(t_step_ocr)
 
             # Dynamic excerpt limit based on query complexity
             excerpt_limit = (

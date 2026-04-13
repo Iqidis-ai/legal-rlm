@@ -22,7 +22,7 @@ def _utcnow() -> datetime:
 class StepOperation:
     """A single operation within an investigation step."""
 
-    type: str  # "llm" | "ext_search"
+    type: str  # "llm" | "ext_search" | "ocr"
     started_at: datetime = field(default_factory=_utcnow)
     latency_ms: int = 0
 
@@ -38,10 +38,16 @@ class StepOperation:
     cached: bool = False
 
     # External search fields (populated when type == "ext_search")
-    service: str = ""  # "tavily" | "courtlistener"
+    service: str = ""  # "tavily" | "courtlistener" | "mistral-ocr"
     query: str = ""
     result_count: int = 0
     usage_raw: Optional[dict] = None
+
+    # OCR fields (populated when type == "ocr")
+    file_name: str = ""   # name of the file that was OCR'd
+    file_type: str = ""   # "png" | "jpg" | "jpeg" | "pdf" | "docx"
+    page_count: int = 0   # pages returned by Mistral OCR
+    timed_out: bool = False  # True if the OCR call hit the timeout
 
     def to_dict(self) -> dict[str, Any]:
         base = {
@@ -69,6 +75,15 @@ class StepOperation:
                 "usage_raw": self.usage_raw,
                 "cost_usd": self.cost_usd,
             })
+        elif self.type == "ocr":
+            base.update({
+                "service": self.service,
+                "file_name": self.file_name,
+                "file_type": self.file_type,
+                "page_count": self.page_count,
+                "timed_out": self.timed_out,
+                "cost_usd": self.cost_usd,
+            })
         return base
 
     def details_dict(self) -> dict[str, Any]:
@@ -91,6 +106,15 @@ class StepOperation:
                 "query": self.query,
                 "result_count": self.result_count,
                 "usage_raw": self.usage_raw,
+                "cost_usd": self.cost_usd,
+            }
+        elif self.type == "ocr":
+            return {
+                "service": self.service,
+                "file_name": self.file_name,
+                "file_type": self.file_type,
+                "page_count": self.page_count,
+                "timed_out": self.timed_out,
                 "cost_usd": self.cost_usd,
             }
         return {}
@@ -144,6 +168,7 @@ class TelemetrySummary:
     started_at: datetime
     completed_at: datetime
     status: str
+    setup_duration_ms: int          # document download / preparation before investigate()
     total_duration_ms: int
     total_cost_usd: float
     total_steps: int
@@ -158,6 +183,7 @@ class TelemetrySummary:
             "started_at": self.started_at.isoformat(),
             "completed_at": self.completed_at.isoformat(),
             "status": self.status,
+            "setup_duration_ms": self.setup_duration_ms,
             "total_duration_ms": self.total_duration_ms,
             "total_cost_usd": self.total_cost_usd,
             "total_steps": self.total_steps,
@@ -184,6 +210,7 @@ class InvestigationTelemetry:
     started_at: datetime = field(default_factory=_utcnow)
     completed_at: Optional[datetime] = None
     status: Optional[str] = None
+    setup_duration_ms: int = 0      # document download / preparation before investigate()
     steps: list[InvestigationStep] = field(default_factory=list)
     _seq_counter: int = field(default=0, repr=False)
 
@@ -232,6 +259,7 @@ class InvestigationTelemetry:
             started_at=self.started_at,
             completed_at=self.completed_at,
             status=status,
+            setup_duration_ms=self.setup_duration_ms,
             total_duration_ms=total_duration_ms,
             total_cost_usd=round(total_cost_usd, 6),
             total_steps=len(self.steps),

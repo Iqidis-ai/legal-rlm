@@ -157,6 +157,7 @@ class Irys:
         context: Optional[Any] = None,
         message_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        setup_duration_ms: int = 0,
     ) -> "InvestigationResult":
         """
         Run an investigation.
@@ -205,6 +206,7 @@ class Irys:
                 context=context,
                 message_id=message_id,
                 user_id=user_id,
+                setup_duration_ms=setup_duration_ms,
             )
         finally:
             self._telemetry.end_operation(

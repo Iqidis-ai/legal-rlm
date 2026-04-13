@@ -53,7 +53,7 @@ from .api import (
 # Core components (for advanced usage)
 from .core.repository import MatterRepository
 from .core.search import DocumentSearch, SearchHit, SearchResults
-from .core.reader import DocumentReader, DocumentContent
+from .core.reader import DocumentReader, DocumentContent, OcrCallMetadata
 
 # RLM components (for advanced usage)
 from .rlm.state import InvestigationState
@@ -86,6 +86,7 @@ __all__ = [
     "SearchResults",
     "DocumentReader",
     "DocumentContent",
+    "OcrCallMetadata",
     # RLM
     "InvestigationState",
     "RLMEngine",

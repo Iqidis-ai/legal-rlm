@@ -954,8 +954,11 @@ class InvestigationState:
                     "id": l.id,
                     "description": l.description,
                     "source": l.source,
+                    "lead_type": l.lead_type,
                     "investigated": l.investigated,
                     "findings": l.findings,
+                    "started_at": l.started_at.isoformat() if l.started_at else None,
+                    "finished_at": l.finished_at.isoformat() if l.finished_at else None,
                 }
                 for l in self.leads
             ],
@@ -1061,8 +1064,11 @@ class InvestigationState:
                 id=l["id"],
                 description=l["description"],
                 source=l["source"],
+                lead_type=l.get("lead_type", "search"),
                 investigated=l.get("investigated", False),
                 findings=l.get("findings"),
+                started_at=datetime.fromisoformat(l["started_at"]) if l.get("started_at") else None,
+                finished_at=datetime.fromisoformat(l["finished_at"]) if l.get("finished_at") else None,
             )
             state.leads.append(lead)
 
