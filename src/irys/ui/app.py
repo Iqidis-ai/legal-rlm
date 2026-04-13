@@ -57,14 +57,94 @@ def _is_hash_filename(name: str) -> bool:
     return len(base) >= 32 and all(c in "0123456789abcdef" for c in base.lower())
 
 
-def _save_uploaded_files_to_temp(uploaded_files: list, session_id: str) -> pathlib.Path:
-    """Save Gradio-uploaded files to a temp dir and return the path."""
-    import json
-    import tempfile
-    temp_dir = pathlib.Path(tempfile.gettempdir()) / "irys" / session_id
-    temp_dir.mkdir(parents=True, exist_ok=True)
 
-    mapping: dict = {}
+
+# ---------------------------------------------------------------------------
+# S3 matter-folder helpers (S3 mode — no local persistence)
+# ---------------------------------------------------------------------------
+
+def _s3_bucket() -> str:
+    return os.getenv("S3_BUCKET", "")
+
+
+def _s3_matters_base_prefix() -> str:
+    prefix = os.getenv("S3_PREFIX", "").strip("/")
+    return f"{prefix}/matters" if prefix else "matters"
+
+
+def _get_s3_client():
+    import boto3
+    return boto3.client(
+        "s3",
+        region_name=os.getenv("S3_REGION", "us-east-1"),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID") or None,
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY") or None,
+    )
+
+
+def _sanitize_matter_name(name: str) -> str:
+    """Turn a human matter name into a safe S3 key segment."""
+    import re as _re
+    name = name.strip()
+    name = _re.sub(r"[^\w\s\-\.]", "", name)
+    name = _re.sub(r"\s+", "_", name)
+    return name[:80] or "untitled"
+
+
+def _list_s3_matter_names() -> list[str]:
+    """List matter names as common prefixes under matters/ in S3."""
+    bucket = _s3_bucket()
+    if not bucket:
+        return []
+    try:
+        s3 = _get_s3_client()
+        base = _s3_matters_base_prefix() + "/"
+        paginator = s3.get_paginator("list_objects_v2")
+        names: list[str] = []
+        for page in paginator.paginate(Bucket=bucket, Prefix=base, Delimiter="/"):
+            for cp in page.get("CommonPrefixes", []):
+                seg = cp["Prefix"][len(base):].rstrip("/")
+                if seg:
+                    names.append(seg.replace("_", " "))
+        return sorted(names)
+    except Exception:
+        return []
+
+
+def _s3_matter_doc_count(matter_name: str) -> str:
+    """Count documents in an S3 matter prefix."""
+    bucket = _s3_bucket()
+    if not bucket:
+        return "0 documents"
+    try:
+        s3 = _get_s3_client()
+        safe = _sanitize_matter_name(matter_name)
+        prefix = f"{_s3_matters_base_prefix()}/{safe}/"
+        paginator = s3.get_paginator("list_objects_v2")
+        count = sum(
+            1
+            for page in paginator.paginate(Bucket=bucket, Prefix=prefix)
+            for obj in page.get("Contents", [])
+            if any(obj["Key"].lower().endswith(ext) for ext in (".pdf", ".docx", ".doc", ".txt", ".md"))
+        )
+        return f"{count} document{'s' if count != 1 else ''}"
+    except Exception:
+        return "? documents"
+
+
+def _upload_files_to_s3_matter(uploaded_files: list, name: str) -> tuple[str, str]:
+    """Upload Gradio files to S3 under matters/<name>/.
+
+    Appends to existing matter if the name already exists.
+    Returns (display_name, status_message).
+    """
+    bucket = _s3_bucket()
+    if not bucket:
+        return name, "S3_BUCKET not configured — cannot upload"
+    safe = _sanitize_matter_name(name)
+    prefix = f"{_s3_matters_base_prefix()}/{safe}"
+    s3 = _get_s3_client()
+    saved = 0
     for f in uploaded_files:
         if isinstance(f, str):
             actual_path = pathlib.Path(f)
@@ -72,24 +152,104 @@ def _save_uploaded_files_to_temp(uploaded_files: list, session_id: str) -> pathl
         else:
             actual_path = pathlib.Path(f.name)
             display_name = actual_path.name
-            # Prefer orig_name when it isn't a hash
             orig = getattr(f, "orig_name", None)
             if orig and not _is_hash_filename(pathlib.Path(orig).name):
                 display_name = pathlib.Path(orig).name
+        key = f"{prefix}/{display_name}"
+        s3.upload_file(str(actual_path), bucket, key)
+        saved += 1
+    count = _s3_matter_doc_count(name)
+    display = safe.replace("_", " ")
+    return display, f"Saved {saved} file(s) to '{safe}' — {count} total"
 
-        content = actual_path.read_bytes()
-        dest = temp_dir / display_name
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(content)
 
-        if display_name != actual_path.name:
-            mapping[actual_path.name] = {"display_name": display_name}
+def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Path:
+    """Download all docs from an S3 matter to a fresh temp dir.
 
-    if mapping:
-        (temp_dir / "_filename_mapping.json").write_text(
-            json.dumps(mapping, indent=2)
-        )
+    Caller is responsible for shutil.rmtree after use.
+    """
+    import tempfile
+    bucket = _s3_bucket()
+    safe = _sanitize_matter_name(matter_name)
+    prefix = f"{_s3_matters_base_prefix()}/{safe}/"
+    temp_dir = pathlib.Path(tempfile.gettempdir()) / "irys" / session_id
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    s3 = _get_s3_client()
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            filename = key[len(prefix):]
+            if not filename or "/" in filename:
+                continue  # skip sub-prefixes
+            dest = temp_dir / filename
+            s3.download_file(bucket, key, str(dest))
     return temp_dir
+
+
+def _list_s3_matter_files(matter_name: str) -> list[str]:
+    """List document filenames in an S3 matter (flat, no sub-prefixes)."""
+    bucket = _s3_bucket()
+    if not bucket or not matter_name:
+        return []
+    try:
+        s3 = _get_s3_client()
+        safe = _sanitize_matter_name(matter_name)
+        prefix = f"{_s3_matters_base_prefix()}/{safe}/"
+        paginator = s3.get_paginator("list_objects_v2")
+        files: list[str] = []
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                filename = obj["Key"][len(prefix):]
+                if filename and "/" not in filename:
+                    files.append(filename)
+        return sorted(files)
+    except Exception:
+        return []
+
+
+def _delete_s3_matter_file(matter_name: str, filename: str) -> tuple[list[str], str]:
+    """Delete a single file from a matter. Returns (updated file list, status)."""
+    bucket = _s3_bucket()
+    if not bucket:
+        return [], "S3_BUCKET not configured"
+    if not filename:
+        return _list_s3_matter_files(matter_name), "No file selected"
+    try:
+        s3 = _get_s3_client()
+        safe = _sanitize_matter_name(matter_name)
+        key = f"{_s3_matters_base_prefix()}/{safe}/{filename}"
+        s3.delete_object(Bucket=bucket, Key=key)
+        files = _list_s3_matter_files(matter_name)
+        return files, f"Deleted '{filename}' — {len(files)} file(s) remaining"
+    except Exception as e:
+        return _list_s3_matter_files(matter_name), f"Delete failed: {e}"
+
+
+def _delete_s3_matter(matter_name: str) -> tuple[list[str], str]:
+    """Delete all files in a matter (removes the whole matter folder from S3).
+    Returns (updated matter list, status)."""
+    bucket = _s3_bucket()
+    if not bucket:
+        return _list_s3_matter_names(), "S3_BUCKET not configured"
+    if not matter_name:
+        return _list_s3_matter_names(), "No matter selected"
+    try:
+        s3 = _get_s3_client()
+        safe = _sanitize_matter_name(matter_name)
+        prefix = f"{_s3_matters_base_prefix()}/{safe}/"
+        paginator = s3.get_paginator("list_objects_v2")
+        to_delete: list[dict] = []
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                to_delete.append({"Key": obj["Key"]})
+        if to_delete:
+            for i in range(0, len(to_delete), 1000):
+                s3.delete_objects(Bucket=bucket, Delete={"Objects": to_delete[i:i + 1000]})
+        matters = _list_s3_matter_names()
+        return matters, f"Deleted matter '{matter_name}' ({len(to_delete)} file(s) removed)"
+    except Exception as e:
+        return _list_s3_matter_names(), f"Delete failed: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -2078,21 +2238,68 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         # Hidden textbox holds the resolved local path in both modes.
         repo_path = gr.Textbox(visible=False)
 
-        with gr.Row():
-            if _s3_mode:
-                file_upload = gr.File(
-                    label="Upload matter documents",
-                    file_count="multiple",
-                    scale=5,
+        if _s3_mode:
+            # --- Matter selector row ---
+            with gr.Row():
+                matter_dropdown = gr.Dropdown(
+                    label="Matter",
+                    choices=_list_s3_matter_names(),
+                    value=None,
+                    allow_custom_value=False,
+                    scale=4,
+                    interactive=True,
                 )
+                refresh_matters_btn = gr.Button("↻", variant="secondary", scale=1, min_width=60)
+                delete_matter_btn = gr.Button("Delete matter", variant="stop", scale=1, min_width=120)
                 matter_status = gr.Textbox(
                     label="",
                     interactive=False,
-                    scale=1,
+                    scale=2,
                     elem_classes=["compact-id"],
                 )
-                browse_btn = None
-            else:
+
+            # --- File list for selected matter ---
+            with gr.Accordion("Files in this matter", open=True):
+                matter_files_dropdown = gr.Dropdown(
+                    label="Files",
+                    choices=[],
+                    value=None,
+                    allow_custom_value=False,
+                    interactive=True,
+                    scale=4,
+                )
+                with gr.Row():
+                    delete_file_btn = gr.Button("Delete selected file", variant="stop", scale=1)
+                    file_manage_status = gr.Textbox(label="", interactive=False, scale=3, elem_classes=["compact-id"])
+
+            # --- Add files to existing matter ---
+            with gr.Accordion("Add Files to Selected Matter", open=False):
+                file_upload = gr.File(
+                    label="Documents (PDF, DOCX, TXT)",
+                    file_count="multiple",
+                )
+                add_files_btn = gr.Button("Add to selected matter", variant="secondary")
+                add_files_status = gr.Textbox(label="", interactive=False, elem_classes=["compact-id"])
+
+            # --- Create new matter ---
+            with gr.Accordion("Create New Matter", open=False):
+                with gr.Row():
+                    matter_name_input = gr.Textbox(
+                        label="Matter name",
+                        placeholder="e.g. Smith v Jones 2024",
+                        scale=2,
+                    )
+                    file_upload_new = gr.File(
+                        label="Initial documents (optional)",
+                        file_count="multiple",
+                        scale=4,
+                    )
+                    save_matter_btn = gr.Button("Create", variant="secondary", scale=1, min_width=100)
+                upload_status = gr.Textbox(label="", interactive=False, elem_classes=["compact-id"])
+
+            browse_btn = None
+        else:
+            with gr.Row():
                 folder_path_box = gr.Textbox(
                     label="Matter folder",
                     placeholder="Paste a path or click Browse",
@@ -2341,15 +2548,101 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 return gr.update(), "Folder picker unavailable — paste a path instead"
 
         if _s3_mode:
-            def _on_upload_change(files):
-                if not files:
-                    return "No files uploaded"
-                return f"{len(files)} file(s) ready"
+            # Select an existing matter → update status, file list, and store name in repo_path
+            def _on_matter_select(name):
+                if not name:
+                    return "", "No matter selected", gr.update(choices=[], value=None)
+                count = _s3_matter_doc_count(name)
+                files = _list_s3_matter_files(name)
+                return name, f"{name} — {count}", gr.update(choices=files, value=None)
 
-            file_upload.change(
-                fn=_on_upload_change,
-                inputs=[file_upload],
-                outputs=[matter_status],
+            matter_dropdown.change(
+                fn=_on_matter_select,
+                inputs=[matter_dropdown],
+                outputs=[repo_path, matter_status, matter_files_dropdown],
+            )
+
+            # Refresh matter list from S3
+            refresh_matters_btn.click(
+                fn=lambda: gr.update(choices=_list_s3_matter_names()),
+                inputs=[],
+                outputs=[matter_dropdown],
+            )
+
+            # Delete a single file from the selected matter
+            def _on_delete_file(matter_name, filename):
+                if not matter_name:
+                    return gr.update(), "No matter selected"
+                files, status = _delete_s3_matter_file(matter_name, filename)
+                return gr.update(choices=files, value=None), status
+
+            delete_file_btn.click(
+                fn=_on_delete_file,
+                inputs=[repo_path, matter_files_dropdown],
+                outputs=[matter_files_dropdown, file_manage_status],
+            )
+
+            # Delete entire matter from S3
+            def _on_delete_matter(matter_name):
+                if not matter_name:
+                    return gr.update(), None, gr.update(choices=[], value=None), "No matter selected", ""
+                matters, status = _delete_s3_matter(matter_name)
+                return (
+                    gr.update(choices=matters, value=None),
+                    None,
+                    gr.update(choices=[], value=None),
+                    status,
+                    "",
+                )
+
+            delete_matter_btn.click(
+                fn=_on_delete_matter,
+                inputs=[repo_path],
+                outputs=[matter_dropdown, repo_path, matter_files_dropdown, matter_status, file_manage_status],
+            )
+
+            # Add files to currently selected matter
+            def _on_add_files(files, matter_name):
+                if not matter_name or not matter_name.strip():
+                    return gr.update(), "Select a matter first", ""
+                if not files:
+                    return gr.update(), "No files selected", ""
+                try:
+                    _, status = _upload_files_to_s3_matter(files, matter_name.strip())
+                    updated_files = _list_s3_matter_files(matter_name.strip())
+                    return gr.update(choices=updated_files, value=None), status, ""
+                except Exception as e:
+                    return gr.update(), f"Upload failed: {e}", ""
+
+            add_files_btn.click(
+                fn=_on_add_files,
+                inputs=[file_upload, repo_path],
+                outputs=[matter_files_dropdown, add_files_status, file_upload],
+            )
+
+            # Create a new matter (with optional initial files), then select it
+            def _on_save_matter(files, name):
+                if not name or not name.strip():
+                    return gr.update(), "", "Enter a matter name first"
+                try:
+                    if files:
+                        display_name, status = _upload_files_to_s3_matter(files, name.strip())
+                    else:
+                        display_name = _sanitize_matter_name(name.strip()).replace("_", " ")
+                        status = f"Matter '{display_name}' ready (no files uploaded yet)"
+                    names = _list_s3_matter_names()
+                    return (
+                        gr.update(choices=names, value=display_name),
+                        display_name,
+                        status,
+                    )
+                except Exception as e:
+                    return gr.update(), "", f"Create failed: {e}"
+
+            save_matter_btn.click(
+                fn=_on_save_matter,
+                inputs=[file_upload_new, matter_name_input],
+                outputs=[matter_dropdown, repo_path, upload_status],
             )
         else:
             browse_btn.click(
@@ -2417,12 +2710,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         if _s3_mode:
             import uuid as _uuid
 
-            def _stream_s3(query_text, files, mode):
-                if not files:
-                    yield ("", "", "", "❌ Please upload documents first", "")
+            def _stream_s3(query_text, matter_name, mode):
+                if not matter_name or not matter_name.strip():
+                    yield ("", "", "", "❌ Select a matter first", "")
                     return
                 session_id = _uuid.uuid4().hex[:12]
-                temp_dir = _save_uploaded_files_to_temp(files, session_id)
+                try:
+                    temp_dir = _download_s3_matter_to_temp(matter_name.strip(), session_id)
+                except Exception as e:
+                    yield ("", "", "", f"❌ Failed to load matter: {e}", "")
+                    return
                 try:
                     yield from state.stream_investigation(query_text, str(temp_dir), mode)
                 finally:
@@ -2430,7 +2727,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
             submit_btn.click(
                 fn=_stream_s3,
-                inputs=[query, file_upload, research_mode],
+                inputs=[query, repo_path, research_mode],
                 outputs=run_outputs,
             ).then(
                 fn=_refresh_all,
