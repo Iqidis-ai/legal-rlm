@@ -2696,11 +2696,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     delete_file_btn = gr.Button("Remove file", variant="stop", scale=1, min_width=130)
                 with gr.Row():
                     file_upload = gr.File(
-                        label="Add documents to this matter",
+                        label="Add files",
                         file_count="multiple",
                         scale=4,
                     )
-                    add_files_btn = gr.Button("Upload", variant="primary", scale=1, min_width=100)
+                    add_files_btn = gr.Button("Upload Files", variant="primary", scale=1, min_width=120)
+                with gr.Row():
+                    folder_upload = gr.File(
+                        label="Add folder (select any file inside the folder)",
+                        file_count="multiple",
+                        scale=4,
+                        elem_id="folder-upload",
+                    )
+                    add_folder_btn = gr.Button("Upload Folder", variant="primary", scale=1, min_width=120)
                 with gr.Accordion("Danger zone", open=False):
                     delete_matter_btn = gr.Button("Delete entire matter", variant="stop")
                 file_manage_status = gr.HTML()
@@ -2712,8 +2720,13 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     placeholder="e.g. Smith v Jones 2024",
                 )
                 file_upload_new = gr.File(
-                    label="Initial documents (optional)",
+                    label="Initial files (optional)",
                     file_count="multiple",
+                )
+                folder_upload_new = gr.File(
+                    label="Initial folder (optional)",
+                    file_count="multiple",
+                    elem_id="folder-upload-new",
                 )
                 save_matter_btn = gr.Button("Create matter", variant="primary")
                 upload_status = gr.HTML()
@@ -3069,13 +3082,37 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 outputs=[matter_files_dropdown, file_manage_status, file_upload, matter_card_html],
             )
 
-            # Create a new matter (with optional initial files), then select it
-            def _on_save_matter(files, name):
+            def _on_add_folder(files, matter_name):
+                if not matter_name:
+                    return gr.update(), _fmt_ws_status("Select a matter first", "err"), gr.update(), gr.update()
+                if not files:
+                    return gr.update(), _fmt_ws_status("No folder selected", "info"), gr.update(), gr.update()
+                try:
+                    _upload_files_to_s3_matter(files, matter_name.strip())
+                    updated = _list_s3_matter_files(matter_name.strip())
+                    return (
+                        gr.update(choices=updated, value=None),
+                        _fmt_ws_status(f"Added {len(files)} file(s) from folder to '{matter_name}'", "ok"),
+                        None,
+                        _fmt_matter_card(matter_name, updated),
+                    )
+                except Exception as e:
+                    return gr.update(), _fmt_ws_status(f"Upload failed: {e}", "err"), gr.update(), gr.update()
+
+            add_folder_btn.click(
+                fn=_on_add_folder,
+                inputs=[folder_upload, repo_path],
+                outputs=[matter_files_dropdown, file_manage_status, folder_upload, matter_card_html],
+            )
+
+            # Create a new matter (with optional initial files/folder), then select it
+            def _on_save_matter(files, folder_files, name):
                 if not name or not name.strip():
                     return gr.update(), "", _fmt_ws_status("Enter a matter name first", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update()
                 try:
-                    if files:
-                        display_name, _ = _upload_files_to_s3_matter(files, name.strip())
+                    all_files = (files or []) + (folder_files or [])
+                    if all_files:
+                        display_name, _ = _upload_files_to_s3_matter(all_files, name.strip())
                     else:
                         display_name = _sanitize_matter_name(name.strip()).replace("_", " ")
                     names = _list_s3_matter_names()
@@ -3093,7 +3130,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
             save_matter_btn.click(
                 fn=_on_save_matter,
-                inputs=[file_upload_new, matter_name_input],
+                inputs=[file_upload_new, folder_upload_new, matter_name_input],
                 outputs=[matter_dropdown, repo_path, upload_status, matter_workspace, matter_files_dropdown, matter_card_html],
             )
         else:
@@ -3305,6 +3342,27 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box, research_mode],
             outputs=[resume_result],
         )
+
+        # Inject JS to enable folder selection on the folder-upload inputs
+        if _s3_mode:
+            _folder_upload_js = """
+() => {
+    const applyFolderAttr = () => {
+        ['folder-upload', 'folder-upload-new'].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.querySelectorAll('input[type=file]').forEach(inp => {
+                inp.setAttribute('webkitdirectory', '');
+                inp.setAttribute('directory', '');
+                inp.setAttribute('multiple', '');
+            });
+        });
+    };
+    applyFolderAttr();
+    new MutationObserver(applyFolderAttr).observe(document.body, {childList: true, subtree: true});
+}
+"""
+            demo.load(fn=None, js=_folder_upload_js)
 
     return demo
 
