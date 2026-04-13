@@ -1926,6 +1926,7 @@ class MatterModel:
             date_val = qf.get("date_value") or qf.get("date_end_value") or qf.get("raw_text", "")
             events.append({
                 "date": date_val,
+                "date_precision": qf.get("date_precision"),
                 "event": qf.get("raw_text", ""),
                 "source_doc": qf.get("span_id"),
                 "quant_id": qf.get("id"),
@@ -1952,6 +1953,7 @@ class MatterModel:
             desc = row["proposition_text"] or ""
             events.append({
                 "date": date_val,
+                "date_precision": "day",  # assertions store normalised ISO dates
                 "event": desc,
                 "source_doc": row["doc_id"],
                 "quant_id": None,

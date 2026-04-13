@@ -594,6 +594,7 @@ CREATE TABLE IF NOT EXISTS quant_fact (
     subject_id      TEXT,
     span_id         TEXT,
     assertion_id    TEXT REFERENCES assertion(id),
+    date_precision  TEXT,
     quant_dedup_key TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL
 ) STRICT;
@@ -2198,6 +2199,15 @@ def _migration_v47(conn) -> None:
     conn.commit()
 
 
+def _migration_v48(conn) -> None:
+    """Add date_precision column to quant_fact for timeline display fidelity."""
+    try:
+        conn.execute("ALTER TABLE quant_fact ADD COLUMN date_precision TEXT")
+    except Exception:
+        pass
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -2249,6 +2259,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (45, _migration_v45),
     (46, _migration_v46),
     (47, _migration_v47),
+    (48, _migration_v48),
 ]
 
 

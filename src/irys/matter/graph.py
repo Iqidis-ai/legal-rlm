@@ -2505,6 +2505,7 @@ class QuantStore:
         subject_id: Optional[str] = None,
         assertion_id: Optional[str] = None,
         span_id: Optional[str] = None,
+        date_precision: Optional[str] = None,
     ) -> str:
         """Persist a structured numeric fact. Returns quant_fact_id.
 
@@ -2522,11 +2523,11 @@ class QuantStore:
                 """INSERT OR IGNORE INTO quant_fact
                    (id, matter_id, quant_kind, amount_value, date_value, date_end_value,
                     rate_value, currency, unit, raw_text, subject_type, subject_id,
-                    span_id, assertion_id, quant_dedup_key, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    span_id, assertion_id, date_precision, quant_dedup_key, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (qf_id, self.matter_id, quant_kind, amount_value, date_value, date_end_value,
                  rate_value, currency, unit, raw_key, subject_type, subject_id,
-                 span_id, assertion_id, dedup_key, now),
+                 span_id, assertion_id, date_precision, dedup_key, now),
             )
             if cur.rowcount == 0:
                 # Already exists — return the existing ID
@@ -2572,6 +2573,7 @@ class QuantStore:
                 subject_id,
                 spec.get("span_id"),
                 spec.get("assertion_id"),
+                spec.get("date_precision"),
                 dedup_key,
                 now,
             ))
@@ -2581,8 +2583,8 @@ class QuantStore:
                 """INSERT OR IGNORE INTO quant_fact
                    (id, matter_id, quant_kind, amount_value, date_value, date_end_value,
                     rate_value, currency, unit, raw_text, subject_type, subject_id,
-                    span_id, assertion_id, quant_dedup_key, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    span_id, assertion_id, date_precision, quant_dedup_key, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 rows,
             )
         # Return candidate IDs; IDs for duplicate rows (IGNORED) are the candidate
