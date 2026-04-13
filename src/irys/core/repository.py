@@ -13,8 +13,25 @@ import mimetypes
 
 from .reader import DocumentReader, DocumentContent, OcrCallMetadata
 from .search import DocumentSearch, SearchResults, SearchHit
+from .cache import LRUCache
 
 logger = logging.getLogger(__name__)
+
+
+def _ocr_cache_max_size() -> int:
+    """Read IRYS_OCR_CACHE_ENTRIES env var, default 200."""
+    try:
+        return max(1, int(os.environ.get("IRYS_OCR_CACHE_ENTRIES", "200")))
+    except (ValueError, TypeError):
+        return 200
+
+
+# Module-level LRU cache for OCR / async-read results.
+# Keyed by the absolute file path (or S3 URL) — content-addressable in practice.
+# Survives across investigate() calls within the same process lifetime.
+# Bounded by IRYS_OCR_CACHE_ENTRIES (default 200).  Each worker process has its own
+# copy, so there is no cross-process lock needed.
+_GLOBAL_DOC_CACHE: LRUCache[DocumentContent] = LRUCache(max_size=_ocr_cache_max_size())
 
 
 @dataclass
@@ -535,17 +552,43 @@ class MatterRepository:
         Returns (DocumentContent, OcrCallMetadata | None).
         OcrCallMetadata is non-None only when a Mistral OCR call was made.
         Caches the DocumentContent result (same cache as read()).
+
+        Two-level cache:
+        1. Instance-level _doc_cache  — within a single investigate() session.
+        2. Module-level _GLOBAL_DOC_CACHE — across sessions/requests in this process.
+           Keyed by the resolved file path / S3 URL (content-addressable in practice).
+           Bounded by IRYS_OCR_CACHE_ENTRIES (default 200 entries).
+           All cache reads and writes are wrapped in try/except so a failure never
+           blocks the actual read or OCR call.
         """
         full_path = self._resolve_path(path)
         cache_key = str(full_path)
 
+        # --- Level 1: instance cache (within-session dedup) ---
         if cache_key in self._doc_cache:
-            # Already cached from a previous read — no OCR metadata to report
             return self._doc_cache[cache_key], None
 
+        # --- Level 2: global process-level cache (cross-session dedup) ---
+        try:
+            cached = _GLOBAL_DOC_CACHE.get(cache_key)
+            if cached is not None:
+                logger.debug("Global OCR cache hit: %s", full_path.name)
+                self._doc_cache[cache_key] = cached  # warm instance cache
+                return cached, None
+        except Exception:  # noqa: BLE001
+            logger.debug("Global OCR cache read error for %s — proceeding without cache", full_path.name)
+
+        # --- Cache miss: do the actual read (may invoke Mistral OCR) ---
         logger.debug(f"Reading document (async): {full_path.name}")
         doc_content, ocr_meta = await self.reader.read_async(full_path, ocr_timeout=ocr_timeout)
+
+        # Populate both caches.  A write failure is non-fatal.
         self._doc_cache[cache_key] = doc_content
+        try:
+            _GLOBAL_DOC_CACHE.set(cache_key, doc_content)
+        except Exception:  # noqa: BLE001
+            logger.debug("Global OCR cache write error for %s — continuing without caching", full_path.name)
+
         return doc_content, ocr_meta
 
     def read_pages(self, path: str | Path, start: int, end: int) -> str:

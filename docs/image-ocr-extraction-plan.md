@@ -155,6 +155,10 @@ the pattern used for `ext_search` steps.
 MISTRAL_API_KEY=xxx          # Required for OCR. Add to .env, never hardcode.
 IRYS_PDF_OCR_ENABLED=false   # Optional. Disables multimodal detection + OCR for PDF/DOCX.
                              # Images always go through OCR regardless of this flag.
+IRYS_OCR_CACHE_ENTRIES=200   # Optional. Max entries in the process-level OCR result cache.
+                             # Each entry holds the full DocumentContent for one file.
+                             # LRU eviction applies once the limit is reached.
+                             # Default: 200. Must be a positive integer.
 ```
 
 ---
@@ -171,5 +175,5 @@ IRYS_PDF_OCR_ENABLED=false   # Optional. Disables multimodal detection + OCR for
 | Sync `read()` | Raises `ValueError` for image files — callers must use `read_async()`. All other formats unchanged. |
 | Telemetry | Every Mistral OCR call → one `StepOperation(type="ocr")` on a dedicated `"document_read_ocr"` step. |
 | Within-call deduplication | `MatterRepository._doc_cache` caches `read_async()` results (including empty docs from failed OCR). OCR is not called twice for the same file within one `investigate()` call. `InvestigationCache.mark_extracted` provides a second layer of protection at the engine level. |
-| Cross-call deduplication | Not yet implemented. Each `investigate()` call creates a fresh `MatterRepository` with an empty cache. OCR will re-fire across separate questions in the same session. |
+| Cross-call deduplication | `_GLOBAL_DOC_CACHE` — a module-level `LRUCache[DocumentContent]` in `repository.py`. Keyed by the resolved file path / S3 URL (content-addressable in practice). Survives across `investigate()` calls within the same process lifetime. Bounded by `IRYS_OCR_CACHE_ENTRIES` (default 200 entries). All cache reads and writes are wrapped in `try/except` so a failure is only logged and never blocks the main flow. Each uvicorn worker process maintains its own copy — no cross-process locking needed. |
 | Cost | `cost_usd` field left as `0.0` for now. |
