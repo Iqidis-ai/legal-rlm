@@ -22,7 +22,7 @@ def _utcnow() -> datetime:
 class StepOperation:
     """A single operation within an investigation step."""
 
-    type: str  # "llm" | "ext_search"
+    type: str  # "llm" | "ext_search" | "ocr"
     started_at: datetime = field(default_factory=_utcnow)
     latency_ms: int = 0
 
@@ -38,10 +38,16 @@ class StepOperation:
     cached: bool = False
 
     # External search fields (populated when type == "ext_search")
-    service: str = ""  # "tavily" | "courtlistener"
+    service: str = ""  # "tavily" | "courtlistener" | "mistral-ocr"
     query: str = ""
     result_count: int = 0
     usage_raw: Optional[dict] = None
+
+    # OCR fields (populated when type == "ocr")
+    file_name: str = ""   # name of the file that was OCR'd
+    file_type: str = ""   # "png" | "jpg" | "jpeg" | "pdf" | "docx"
+    page_count: int = 0   # pages returned by Mistral OCR
+    timed_out: bool = False  # True if the OCR call hit the timeout
 
     def to_dict(self) -> dict[str, Any]:
         base = {
@@ -69,6 +75,15 @@ class StepOperation:
                 "usage_raw": self.usage_raw,
                 "cost_usd": self.cost_usd,
             })
+        elif self.type == "ocr":
+            base.update({
+                "service": self.service,
+                "file_name": self.file_name,
+                "file_type": self.file_type,
+                "page_count": self.page_count,
+                "timed_out": self.timed_out,
+                "cost_usd": self.cost_usd,
+            })
         return base
 
     def details_dict(self) -> dict[str, Any]:
@@ -91,6 +106,15 @@ class StepOperation:
                 "query": self.query,
                 "result_count": self.result_count,
                 "usage_raw": self.usage_raw,
+                "cost_usd": self.cost_usd,
+            }
+        elif self.type == "ocr":
+            return {
+                "service": self.service,
+                "file_name": self.file_name,
+                "file_type": self.file_type,
+                "page_count": self.page_count,
+                "timed_out": self.timed_out,
                 "cost_usd": self.cost_usd,
             }
         return {}

@@ -11,7 +11,7 @@ import json
 import logging
 import mimetypes
 
-from .reader import DocumentReader, DocumentContent
+from .reader import DocumentReader, DocumentContent, OcrCallMetadata
 from .search import DocumentSearch, SearchResults, SearchHit
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,9 @@ class MatterRepository:
     Convert to .docx or .pdf before adding to repository.
     """
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".mht", ".mhtml"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
+    # Extensions that require async read (OCR path) — sync read() will raise for these
+    _ASYNC_ONLY_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
     def __init__(self, base_path: str | Path):
         self.base_path = Path(base_path)
@@ -306,6 +308,9 @@ class MatterRepository:
         total_chars = 0
         for f in files[:50]:  # Sample first 50 files to estimate
             try:
+                # Skip image files — they require async read (OCR)
+                if Path(f.path).suffix.lower() in self._ASYNC_ONLY_EXTENSIONS:
+                    continue
                 doc = self.read(f.path)
                 total_chars += len(doc.full_text)
             except Exception:
@@ -342,6 +347,10 @@ class MatterRepository:
             if total_chars >= max_chars:
                 break
             try:
+                # Image files require async read (OCR) — skip in sync context
+                if Path(f.path).suffix.lower() in self._ASYNC_ONLY_EXTENSIONS:
+                    logger.debug(f"Skipping image file in get_all_content (use read_async): {f.filename}")
+                    continue
                 doc = self.read(f.path)
                 text = doc.full_text
                 content_parts.append(f"\n\n=== {f.filename} ===\n{text}")
@@ -515,6 +524,29 @@ class MatterRepository:
             self._doc_cache[cache_key] = self.reader.read(full_path)
 
         return self._doc_cache[cache_key]
+
+    async def read_async(
+        self,
+        path: str | Path,
+        ocr_timeout: float = 60.0,
+    ) -> tuple[DocumentContent, Optional[OcrCallMetadata]]:
+        """Async read — required for image files and OCR-fallback PDF/DOCX.
+
+        Returns (DocumentContent, OcrCallMetadata | None).
+        OcrCallMetadata is non-None only when a Mistral OCR call was made.
+        Caches the DocumentContent result (same cache as read()).
+        """
+        full_path = self._resolve_path(path)
+        cache_key = str(full_path)
+
+        if cache_key in self._doc_cache:
+            # Already cached from a previous read — no OCR metadata to report
+            return self._doc_cache[cache_key], None
+
+        logger.debug(f"Reading document (async): {full_path.name}")
+        doc_content, ocr_meta = await self.reader.read_async(full_path, ocr_timeout=ocr_timeout)
+        self._doc_cache[cache_key] = doc_content
+        return doc_content, ocr_meta
 
     def read_pages(self, path: str | Path, start: int, end: int) -> str:
         """Read specific page range from a document."""
