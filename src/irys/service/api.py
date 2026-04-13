@@ -34,7 +34,7 @@ _load_dotenv()
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, File, UploadFile, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 import httpx
 import json as _json
 
@@ -204,6 +204,24 @@ def create_app(config: Optional[ServiceConfig] = None) -> FastAPI:
 
 # Create default app instance
 app = create_app()
+
+# Mount Gradio Chat UI at /ui path (root path would override API routes)
+try:
+    import gradio as gr
+    from ..ui.chat_app import create_chat_app
+    _config = get_config()
+    gradio_app = create_chat_app(api_key=_config.gemini_api_key)
+    app = gr.mount_gradio_app(app, gradio_app, path="/ui")
+    logger.info("Gradio Chat UI mounted at /ui")
+except ImportError as e:
+    logger.warning(f"Gradio not available, UI disabled: {e}")
+except Exception as e:
+    logger.warning(f"Failed to mount Gradio UI: {e}")
+
+
+@app.get("/", include_in_schema=False)
+async def root_redirect():
+    return RedirectResponse(url="/ui")
 
 
 def _serialize_result(result) -> tuple[list, dict]:

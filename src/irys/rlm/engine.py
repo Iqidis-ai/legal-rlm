@@ -747,6 +747,7 @@ class RLMEngine:
         config: Optional[RLMConfig] = None,
         on_step: Optional[Callable[[ThinkingStep], None]] = None,
         on_citation: Optional[Callable[[Citation], None]] = None,
+        on_fact: Optional[Callable[[str], None]] = None,
         on_progress: Optional[Callable[[dict], None]] = None,
         matter_model=None,  # Optional[MatterModel] — injected when enable_matter_model=True
     ):
@@ -754,6 +755,7 @@ class RLMEngine:
         self.config = config or RLMConfig()
         self.on_step = on_step
         self.on_citation = on_citation
+        self.on_fact = on_fact
         self.on_progress = on_progress
         self._matter_model = matter_model
         # Per-investigation semaphore to limit concurrent CPU-intensive operations.
@@ -1878,7 +1880,10 @@ class RLMEngine:
                 if _obj_present:
                     _spo_parts.append(f"OBJ:{str(_obj)[:60]}")
                 prop_clean = f"[{' | '.join(_spo_parts)}] {prop_clean}"
-            state.add_facts([f"[{label}] {prop_clean}"])
+            _fact_str = f"[{label}] {prop_clean}"
+            state.add_facts([_fact_str])
+            if self.on_fact:
+                self.on_fact(_fact_str)
             loaded += 1
 
         if loaded:
@@ -2376,7 +2381,11 @@ class RLMEngine:
                         ]
 
             # Add to state with per-fact source-role prefix (SO-5)
-            state.add_facts([f"[{lbl}] {txt}" for txt, lbl, _, _rel, _spo in facts_to_add])
+            _new_facts = [f"[{lbl}] {txt}" for txt, lbl, _, _rel, _spo in facts_to_add]
+            state.add_facts(_new_facts)
+            if self.on_fact:
+                for _f in _new_facts:
+                    self.on_fact(_f)
 
             # Record into matter model with correct per-fact doc_id; collect assertion IDs
             # for graph-edge creation below (SO-2 assertion links in search analysis path).
@@ -3188,7 +3197,11 @@ Return:
                     else _infer_source_role(doc.filename)
                 )
                 _src_label = _effective_role.value.upper()
-                state.add_facts([f"[{_src_label}] {f}" for f, _, _d, _spo in facts_to_add])
+                _new_facts = [f"[{_src_label}] {f}" for f, _, _d, _spo in facts_to_add]
+                state.add_facts(_new_facts)
+                if self.on_fact:
+                    for _f in _new_facts:
+                        self.on_fact(_f)
                 # Also record into matter model if enabled; pass issue_id if from targeted lead.
                 # Use record_facts_batch() so N facts → 1 outer transaction (savepoints inside).
                 adapter = getattr(state, "_matter_adapter", None)
