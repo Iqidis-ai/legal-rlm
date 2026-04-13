@@ -45,9 +45,56 @@ def _run_async(coro, timeout: float = 30):
 
 
 # ---------------------------------------------------------------------------
-# Workspace management
+# Storage mode helpers
 # ---------------------------------------------------------------------------
 
+def _get_storage_mode() -> str:
+    return os.getenv("IRYS_STORAGE_MODE", "local")
+
+
+def _is_hash_filename(name: str) -> bool:
+    base = pathlib.Path(name).stem
+    return len(base) >= 32 and all(c in "0123456789abcdef" for c in base.lower())
+
+
+def _save_uploaded_files_to_temp(uploaded_files: list, session_id: str) -> pathlib.Path:
+    """Save Gradio-uploaded files to a temp dir and return the path."""
+    import json
+    import tempfile
+    temp_dir = pathlib.Path(tempfile.gettempdir()) / "irys" / session_id
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    mapping: dict = {}
+    for f in uploaded_files:
+        if isinstance(f, str):
+            actual_path = pathlib.Path(f)
+            display_name = actual_path.name
+        else:
+            actual_path = pathlib.Path(f.name)
+            display_name = actual_path.name
+            # Prefer orig_name when it isn't a hash
+            orig = getattr(f, "orig_name", None)
+            if orig and not _is_hash_filename(pathlib.Path(orig).name):
+                display_name = pathlib.Path(orig).name
+
+        content = actual_path.read_bytes()
+        dest = temp_dir / display_name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content)
+
+        if display_name != actual_path.name:
+            mapping[actual_path.name] = {"display_name": display_name}
+
+    if mapping:
+        (temp_dir / "_filename_mapping.json").write_text(
+            json.dumps(mapping, indent=2)
+        )
+    return temp_dir
+
+
+# ---------------------------------------------------------------------------
+# Workspace management
+# ---------------------------------------------------------------------------
 
 
 def _clear_matter(path: str) -> tuple[str, str]:
@@ -1832,6 +1879,7 @@ class AppState:
 
 def create_app(api_key: Optional[str] = None) -> gr.Blocks:
     state = AppState(api_key=api_key)
+    _s3_mode = _get_storage_mode() == "s3"
 
     _theme = gr.themes.Soft(
         primary_hue=gr.themes.colors.blue,
@@ -2027,19 +2075,37 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         # ==================================================================
         # INPUT
         # ==================================================================
+        # Hidden textbox holds the resolved local path in both modes.
+        repo_path = gr.Textbox(visible=False)
+
         with gr.Row():
-            repo_path = gr.Textbox(
-                label="Matter folder",
-                placeholder="Paste a path or click Browse",
-                scale=4,
-            )
-            browse_btn = gr.Button("Browse", variant="secondary", scale=1, min_width=80)
-            matter_status = gr.Textbox(
-                label="",
-                interactive=False,
-                scale=1,
-                elem_classes=["compact-id"],
-            )
+            if _s3_mode:
+                file_upload = gr.File(
+                    label="Upload matter documents",
+                    file_count="multiple",
+                    scale=5,
+                )
+                matter_status = gr.Textbox(
+                    label="",
+                    interactive=False,
+                    scale=1,
+                    elem_classes=["compact-id"],
+                )
+                browse_btn = None
+            else:
+                folder_path_box = gr.Textbox(
+                    label="Matter folder",
+                    placeholder="Paste a path or click Browse",
+                    scale=4,
+                )
+                browse_btn = gr.Button("Browse", variant="secondary", scale=1, min_width=80)
+                matter_status = gr.Textbox(
+                    label="",
+                    interactive=False,
+                    scale=1,
+                    elem_classes=["compact-id"],
+                )
+                file_upload = None
 
         with gr.Row():
             query = gr.Textbox(
@@ -2274,17 +2340,36 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             except Exception:
                 return gr.update(), "Folder picker unavailable — paste a path instead"
 
-        browse_btn.click(
-            fn=_browse_folder,
-            inputs=[],
-            outputs=[repo_path, matter_status],
-        )
+        if _s3_mode:
+            def _on_upload_change(files):
+                if not files:
+                    return "No files uploaded"
+                return f"{len(files)} file(s) ready"
 
-        repo_path.change(
-            fn=_check_folder,
-            inputs=[repo_path],
-            outputs=[matter_status],
-        )
+            file_upload.change(
+                fn=_on_upload_change,
+                inputs=[file_upload],
+                outputs=[matter_status],
+            )
+        else:
+            browse_btn.click(
+                fn=_browse_folder,
+                inputs=[],
+                outputs=[folder_path_box, matter_status],
+            )
+
+            folder_path_box.change(
+                fn=_check_folder,
+                inputs=[folder_path_box],
+                outputs=[matter_status],
+            )
+
+            # Keep repo_path hidden state in sync with the visible textbox
+            folder_path_box.change(
+                fn=lambda p: p,
+                inputs=[folder_path_box],
+                outputs=[repo_path],
+            )
 
         # Clear removes .irys/ so next run starts fresh
         def _clear_and_report(path: str) -> tuple[str, str]:
@@ -2293,11 +2378,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             result = _clear_matter(path)
             return _check_folder(path), result[1]
 
-        clear_matter_btn.click(
-            fn=_clear_and_report,
-            inputs=[repo_path],
-            outputs=[matter_status, status_box],
-        )
+        if not _s3_mode:
+            clear_matter_btn.click(
+                fn=_clear_and_report,
+                inputs=[repo_path],
+                outputs=[matter_status, status_box],
+            )
 
         # --- Sidebar refresh (all panels at once) ---
         def _refresh_all(mid):
@@ -2328,29 +2414,63 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         # --- Investigation stream ---
         run_outputs = [run_output, trace_box, citations_box, status_box, matter_id_box]
 
-        submit_btn.click(
-            fn=state.stream_investigation,
-            inputs=[query, repo_path, research_mode],
-            outputs=run_outputs,
-        ).then(
-            # Auto-refresh all panels once synthesis completes (Task #128).
-            # Lawyers shouldn't need to click individual Refresh buttons.
-            fn=_refresh_all,
-            inputs=[matter_id_box],
-            outputs=[
-                overview_md,
-                issues_md,
-                gaps_md,
-                assumptions_md,
-                assertions_md,
-                quant_md,
-                timeline_html,
-                evidence_matrix_html,
-                communication_html,
-                llm_analytics_html,
-                redirect_issue_id,
-            ],
-        )
+        if _s3_mode:
+            import uuid as _uuid
+
+            def _stream_s3(query_text, files, mode):
+                if not files:
+                    yield ("", "", "", "❌ Please upload documents first", "")
+                    return
+                session_id = _uuid.uuid4().hex[:12]
+                temp_dir = _save_uploaded_files_to_temp(files, session_id)
+                try:
+                    yield from state.stream_investigation(query_text, str(temp_dir), mode)
+                finally:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+
+            submit_btn.click(
+                fn=_stream_s3,
+                inputs=[query, file_upload, research_mode],
+                outputs=run_outputs,
+            ).then(
+                fn=_refresh_all,
+                inputs=[matter_id_box],
+                outputs=[
+                    overview_md,
+                    issues_md,
+                    gaps_md,
+                    assumptions_md,
+                    assertions_md,
+                    quant_md,
+                    timeline_html,
+                    evidence_matrix_html,
+                    communication_html,
+                    llm_analytics_html,
+                    redirect_issue_id,
+                ],
+            )
+        else:
+            submit_btn.click(
+                fn=state.stream_investigation,
+                inputs=[query, repo_path, research_mode],
+                outputs=run_outputs,
+            ).then(
+                fn=_refresh_all,
+                inputs=[matter_id_box],
+                outputs=[
+                    overview_md,
+                    issues_md,
+                    gaps_md,
+                    assumptions_md,
+                    assertions_md,
+                    quant_md,
+                    timeline_html,
+                    evidence_matrix_html,
+                    communication_html,
+                    llm_analytics_html,
+                    redirect_issue_id,
+                ],
+            )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
         refresh_sidebar_btn.click(
