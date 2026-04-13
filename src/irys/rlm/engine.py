@@ -221,6 +221,7 @@ class RLMEngine:
         context: Optional[Any] = None,
         message_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        setup_duration_ms: int = 0,
     ) -> InvestigationState:
         """Run full recursive investigation.
 
@@ -242,6 +243,7 @@ class RLMEngine:
 
         # Initialize per-investigation telemetry
         self._telemetry = InvestigationTelemetry(message_id=message_id, user_id=user_id)
+        self._telemetry.setup_duration_ms = setup_duration_ms
 
         # Load fact store for this repository (S3-backed when configured)
         s3_facts_config = None

@@ -168,6 +168,7 @@ class TelemetrySummary:
     started_at: datetime
     completed_at: datetime
     status: str
+    setup_duration_ms: int          # document download / preparation before investigate()
     total_duration_ms: int
     total_cost_usd: float
     total_steps: int
@@ -182,6 +183,7 @@ class TelemetrySummary:
             "started_at": self.started_at.isoformat(),
             "completed_at": self.completed_at.isoformat(),
             "status": self.status,
+            "setup_duration_ms": self.setup_duration_ms,
             "total_duration_ms": self.total_duration_ms,
             "total_cost_usd": self.total_cost_usd,
             "total_steps": self.total_steps,
@@ -208,6 +210,7 @@ class InvestigationTelemetry:
     started_at: datetime = field(default_factory=_utcnow)
     completed_at: Optional[datetime] = None
     status: Optional[str] = None
+    setup_duration_ms: int = 0      # document download / preparation before investigate()
     steps: list[InvestigationStep] = field(default_factory=list)
     _seq_counter: int = field(default=0, repr=False)
 
@@ -256,6 +259,7 @@ class InvestigationTelemetry:
             started_at=self.started_at,
             completed_at=self.completed_at,
             status=status,
+            setup_duration_ms=self.setup_duration_ms,
             total_duration_ms=total_duration_ms,
             total_cost_usd=round(total_cost_usd, 6),
             total_steps=len(self.steps),

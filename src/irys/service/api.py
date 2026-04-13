@@ -387,7 +387,9 @@ async def _run_investigation(
             prefix=request.s3_prefix,
             config=config,
         )
+        _t0 = time.monotonic()
         temp_dir = await s3_repo.download_to_temp(job_id)
+        _setup_ms = int((time.monotonic() - _t0) * 1000)
 
         # Run investigation
         irys = _make_irys(config, s3_prefix=request.s3_prefix)
@@ -402,6 +404,7 @@ async def _run_investigation(
             context=request.context,
             message_id=getattr(request, "message_id", None),
             user_id=getattr(request, "user_id", None),
+            setup_duration_ms=_setup_ms,
         )
 
         await _save_session(config, request.session_id, result)
@@ -681,6 +684,7 @@ async def _run_upload_investigation(
     is_local = s3_prefix.startswith("local:")
 
     try:
+        _t0 = time.monotonic()
         if is_local:
             # LOCAL MODE: Files already on disk
             temp_dir = Path(config.temp_dir) / job_id
@@ -692,6 +696,7 @@ async def _run_upload_investigation(
                 config=config,
             )
             temp_dir = await s3_repo.download_to_temp(job_id)
+        _setup_ms = int((time.monotonic() - _t0) * 1000)
 
         irys = _make_irys(config, s3_prefix=s3_prefix)
 
@@ -703,6 +708,7 @@ async def _run_upload_investigation(
             seed_facts=seed_facts,
             seed_citations=seed_citations,
             context=context,
+            setup_duration_ms=_setup_ms,
         )
 
         await _save_session(config, session_id, result)
@@ -930,7 +936,9 @@ async def upload_investigate_sync(
                 prefix=s3_prefix,
                 config=config,
             )
-            temp_dir = await upload_repo.download_to_temp(job_id)
+        _t0 = time.monotonic()
+        temp_dir = await upload_repo.download_to_temp(job_id)
+        _setup_ms = int((time.monotonic() - _t0) * 1000)
 
         # Parse context JSON
         context = _parse_context_json(context_json)
@@ -946,6 +954,7 @@ async def upload_investigate_sync(
             seed_facts=seed_facts,
             seed_citations=seed_citations,
             context=context,
+            setup_duration_ms=_setup_ms,
         )
 
         await _save_session(config, session_id, result)
@@ -1083,7 +1092,9 @@ async def _run_urls_investigation(
         )
 
         # Download documents from URLs
+        _t0 = time.monotonic()
         temp_dir = await s3_repo.download_urls_to_temp(job_id, request.s3_urls)
+        _setup_ms = int((time.monotonic() - _t0) * 1000)
 
         # Run investigation
         irys = _make_irys(config)
@@ -1098,6 +1109,7 @@ async def _run_urls_investigation(
             context=request.context,
             message_id=getattr(request, "message_id", None),
             user_id=getattr(request, "user_id", None),
+            setup_duration_ms=_setup_ms,
         )
 
         await _save_session(config, request.session_id, result)
@@ -1222,7 +1234,9 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         )
 
         # Download documents from URLs
+        _t0 = time.monotonic()
         temp_dir = await s3_repo.download_urls_to_temp(job_id, request.s3_urls)
+        _setup_ms = int((time.monotonic() - _t0) * 1000)
 
         # Run investigation
         irys = _make_irys(config)
@@ -1237,6 +1251,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             context=request.context,
             message_id=getattr(request, "message_id", None),
             user_id=getattr(request, "user_id", None),
+            setup_duration_ms=_setup_ms,
         )
 
         await _save_session(config, request.session_id, result)
@@ -1365,7 +1380,9 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
                 prefix="",
                 config=config,
             )
+            _t0 = time.monotonic()
             temp_dir = await s3_repo.download_urls_to_temp(job_id, request.s3_urls)
+            _setup_ms = int((time.monotonic() - _t0) * 1000)
 
             # Create Irys with callbacks wired to queue
             irys = _make_irys(config)
@@ -1453,6 +1470,7 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
                 context=request.context,
                 message_id=getattr(request, "message_id", None),
                 user_id=getattr(request, "user_id", None),
+                setup_duration_ms=_setup_ms,
             )
 
             # Save session data
