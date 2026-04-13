@@ -205,14 +205,14 @@ def create_app(config: Optional[ServiceConfig] = None) -> FastAPI:
 # Create default app instance
 app = create_app()
 
-# Mount Gradio Chat UI at /ui path (root path would override API routes)
+# Mount Gradio UI at /ui path (root path would override API routes)
 try:
     import gradio as gr
-    from ..ui.chat_app import create_chat_app
+    from ..ui.app import create_app as create_gradio_app
     _config = get_config()
-    gradio_app = create_chat_app(api_key=_config.gemini_api_key)
+    gradio_app = create_gradio_app(api_key=_config.gemini_api_key)
     app = gr.mount_gradio_app(app, gradio_app, path="/ui")
-    logger.info("Gradio Chat UI mounted at /ui")
+    logger.info("Gradio UI mounted at /ui")
 except ImportError as e:
     logger.warning(f"Gradio not available, UI disabled: {e}")
 except Exception as e:
