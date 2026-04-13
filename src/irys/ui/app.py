@@ -2033,6 +2033,56 @@ class AppState:
 
 
 # ---------------------------------------------------------------------------
+# Matter workspace UI helpers
+# ---------------------------------------------------------------------------
+
+def _fmt_matter_card(name: str, files: list[str]) -> str:
+    """Render a styled HTML card for the selected matter."""
+    if not name:
+        return (
+            "<div class='matter-empty-state'>"
+            "<div class='matter-empty-title'>No matter selected</div>"
+            "<div class='matter-empty-sub'>Choose an existing matter from the dropdown above, "
+            "or create a new one below</div>"
+            "</div>"
+        )
+    count = len(files)
+    badge = f"{count} document{'s' if count != 1 else ''}"
+    if files:
+        chips = "".join(
+            f"<div class='matter-file-chip'>"
+            f"<span class='matter-file-icon'>📄</span>"
+            f"<span>{_escape(f)}</span>"
+            f"</div>"
+            for f in files
+        )
+        files_html = f"<div class='matter-card-files'>{chips}</div>"
+    else:
+        files_html = (
+            "<div style='font-size:12px;color:#94a3b8;margin-top:2px;'>"
+            "No documents yet — upload some below"
+            "</div>"
+        )
+    return (
+        "<div class='matter-card'>"
+        "<div class='matter-card-header'>"
+        f"<span class='matter-card-name'>📁 {_escape(name)}</span>"
+        f"<span class='matter-card-badge'>{badge}</span>"
+        "</div>"
+        f"{files_html}"
+        "</div>"
+    )
+
+
+def _fmt_ws_status(msg: str, kind: str = "ok") -> str:
+    """Render a styled status pill. kind: ok | err | info"""
+    if not msg:
+        return ""
+    tone = {"ok": "ws-ok", "err": "ws-err", "info": "ws-info"}.get(kind, "ws-info")
+    return f"<div class='ws-status {tone}'>{_escape(msg)}</div>"
+
+
+# ---------------------------------------------------------------------------
 # Gradio app construction
 # ---------------------------------------------------------------------------
 
@@ -2056,6 +2106,38 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
     .sidebar-section { border-left: 3px solid #e2e8f0; padding-left: 12px; }
     .hero-text { font-size: 15px; color: #475569; margin-bottom: 4px !important; }
     footer { display: none !important; }
+    /* Matter workspace */
+    .matter-card {
+        border: 1px solid #dbe4ef; border-radius: 14px; padding: 16px 18px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(241,245,249,0.94));
+        box-shadow: 0 2px 10px rgba(15,23,42,0.06); margin-bottom: 2px;
+    }
+    .matter-card-header {
+        display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;
+    }
+    .matter-card-name { font-size: 15px; font-weight: 700; color: #0f172a; }
+    .matter-card-badge {
+        font-size: 12px; font-weight: 600; color: #2563eb;
+        background: rgba(37,99,235,0.08); border-radius: 999px; padding: 2px 10px;
+    }
+    .matter-card-files { display: flex; flex-direction: column; gap: 4px; }
+    .matter-file-chip {
+        display: flex; align-items: center; gap: 8px; font-size: 12px; color: #334155;
+        background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 5px 10px;
+    }
+    .matter-file-icon { color: #64748b; flex-shrink: 0; }
+    .matter-empty-state {
+        border: 2px dashed #cbd5e1; border-radius: 14px; padding: 32px 20px;
+        text-align: center; background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+    }
+    .matter-empty-title { font-size: 15px; font-weight: 600; color: #64748b; margin-bottom: 6px; }
+    .matter-empty-sub { font-size: 13px; color: #94a3b8; }
+    .ws-status {
+        font-size: 12px; border-radius: 8px; padding: 7px 12px; margin-top: 4px;
+    }
+    .ws-ok  { color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; }
+    .ws-err { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; }
+    .ws-info{ color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; }
     .gap-highlight { background: #fef3c7; border-radius: 6px; padding: 8px; }
     .viz-shell { display: flex; flex-direction: column; gap: 12px; }
     .viz-empty {
@@ -2242,60 +2324,54 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             # --- Matter selector row ---
             with gr.Row():
                 matter_dropdown = gr.Dropdown(
-                    label="Matter",
+                    label="Select matter",
                     choices=_list_s3_matter_names(),
                     value=None,
                     allow_custom_value=False,
-                    scale=4,
+                    scale=5,
                     interactive=True,
                 )
-                refresh_matters_btn = gr.Button("↻", variant="secondary", scale=1, min_width=60)
-                delete_matter_btn = gr.Button("Delete matter", variant="stop", scale=1, min_width=120)
-                matter_status = gr.Textbox(
-                    label="",
-                    interactive=False,
-                    scale=2,
-                    elem_classes=["compact-id"],
-                )
+                refresh_matters_btn = gr.Button("↻  Refresh", variant="secondary", scale=1, min_width=100)
 
-            # --- File list for selected matter ---
-            with gr.Accordion("Files in this matter", open=True):
-                matter_files_dropdown = gr.Dropdown(
-                    label="Files",
-                    choices=[],
-                    value=None,
-                    allow_custom_value=False,
-                    interactive=True,
-                    scale=4,
-                )
+            # --- Matter card: shows selected matter name, doc count, and file list ---
+            matter_card_html = gr.HTML(_fmt_matter_card("", []))
+
+            # --- Workspace: visible only when a matter is selected ---
+            matter_workspace = gr.Group(visible=False)
+            with matter_workspace:
                 with gr.Row():
-                    delete_file_btn = gr.Button("Delete selected file", variant="stop", scale=1)
-                    file_manage_status = gr.Textbox(label="", interactive=False, scale=3, elem_classes=["compact-id"])
-
-            # --- Add files to existing matter ---
-            with gr.Accordion("Add Files to Selected Matter", open=False):
-                file_upload = gr.File(
-                    label="Documents (PDF, DOCX, TXT)",
-                    file_count="multiple",
-                )
-                add_files_btn = gr.Button("Add to selected matter", variant="secondary")
-                add_files_status = gr.Textbox(label="", interactive=False, elem_classes=["compact-id"])
-
-            # --- Create new matter ---
-            with gr.Accordion("Create New Matter", open=False):
-                with gr.Row():
-                    matter_name_input = gr.Textbox(
-                        label="Matter name",
-                        placeholder="e.g. Smith v Jones 2024",
-                        scale=2,
+                    matter_files_dropdown = gr.Dropdown(
+                        label="Select file to remove",
+                        choices=[],
+                        value=None,
+                        allow_custom_value=False,
+                        scale=4,
+                        interactive=True,
                     )
-                    file_upload_new = gr.File(
-                        label="Initial documents (optional)",
+                    delete_file_btn = gr.Button("Remove file", variant="stop", scale=1, min_width=130)
+                with gr.Row():
+                    file_upload = gr.File(
+                        label="Add documents to this matter",
                         file_count="multiple",
                         scale=4,
                     )
-                    save_matter_btn = gr.Button("Create", variant="secondary", scale=1, min_width=100)
-                upload_status = gr.Textbox(label="", interactive=False, elem_classes=["compact-id"])
+                    add_files_btn = gr.Button("Upload", variant="primary", scale=1, min_width=100)
+                with gr.Accordion("Danger zone", open=False):
+                    delete_matter_btn = gr.Button("Delete entire matter", variant="stop")
+                file_manage_status = gr.HTML()
+
+            # --- Create new matter ---
+            with gr.Accordion("+ Create new matter", open=False):
+                matter_name_input = gr.Textbox(
+                    label="Matter name",
+                    placeholder="e.g. Smith v Jones 2024",
+                )
+                file_upload_new = gr.File(
+                    label="Initial documents (optional)",
+                    file_count="multiple",
+                )
+                save_matter_btn = gr.Button("Create matter", variant="primary")
+                upload_status = gr.HTML()
 
             browse_btn = None
         else:
@@ -2548,18 +2624,27 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 return gr.update(), "Folder picker unavailable — paste a path instead"
 
         if _s3_mode:
-            # Select an existing matter → update status, file list, and store name in repo_path
+            # Select a matter → show card, reveal workspace, populate file list
             def _on_matter_select(name):
                 if not name:
-                    return "", "No matter selected", gr.update(choices=[], value=None)
-                count = _s3_matter_doc_count(name)
+                    return (
+                        "",
+                        _fmt_matter_card("", []),
+                        gr.update(visible=False),
+                        gr.update(choices=[], value=None),
+                    )
                 files = _list_s3_matter_files(name)
-                return name, f"{name} — {count}", gr.update(choices=files, value=None)
+                return (
+                    name,
+                    _fmt_matter_card(name, files),
+                    gr.update(visible=True),
+                    gr.update(choices=files, value=None),
+                )
 
             matter_dropdown.change(
                 fn=_on_matter_select,
                 inputs=[matter_dropdown],
-                outputs=[repo_path, matter_status, matter_files_dropdown],
+                outputs=[repo_path, matter_card_html, matter_workspace, matter_files_dropdown],
             )
 
             # Refresh matter list from S3
@@ -2569,80 +2654,95 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 outputs=[matter_dropdown],
             )
 
-            # Delete a single file from the selected matter
+            # Remove a single file from the selected matter
             def _on_delete_file(matter_name, filename):
                 if not matter_name:
-                    return gr.update(), "No matter selected"
-                files, status = _delete_s3_matter_file(matter_name, filename)
-                return gr.update(choices=files, value=None), status
+                    return gr.update(), gr.update(), _fmt_ws_status("No matter selected", "err")
+                if not filename:
+                    return gr.update(), gr.update(), _fmt_ws_status("Select a file to remove first", "info")
+                files, _ = _delete_s3_matter_file(matter_name, filename)
+                return (
+                    gr.update(choices=files, value=None),
+                    _fmt_matter_card(matter_name, files),
+                    _fmt_ws_status(f"Removed '{filename}'", "ok"),
+                )
 
             delete_file_btn.click(
                 fn=_on_delete_file,
                 inputs=[repo_path, matter_files_dropdown],
-                outputs=[matter_files_dropdown, file_manage_status],
+                outputs=[matter_files_dropdown, matter_card_html, file_manage_status],
             )
 
             # Delete entire matter from S3
             def _on_delete_matter(matter_name):
                 if not matter_name:
-                    return gr.update(), None, gr.update(choices=[], value=None), "No matter selected", ""
-                matters, status = _delete_s3_matter(matter_name)
+                    return gr.update(), None, _fmt_matter_card("", []), gr.update(visible=False), gr.update(choices=[], value=None), _fmt_ws_status("No matter selected", "err")
+                matters, _ = _delete_s3_matter(matter_name)
                 return (
                     gr.update(choices=matters, value=None),
                     None,
+                    _fmt_matter_card("", []),
+                    gr.update(visible=False),
                     gr.update(choices=[], value=None),
-                    status,
-                    "",
+                    _fmt_ws_status(f"Deleted matter '{matter_name}'", "ok"),
                 )
 
             delete_matter_btn.click(
                 fn=_on_delete_matter,
                 inputs=[repo_path],
-                outputs=[matter_dropdown, repo_path, matter_files_dropdown, matter_status, file_manage_status],
+                outputs=[matter_dropdown, repo_path, matter_card_html, matter_workspace, matter_files_dropdown, file_manage_status],
             )
 
-            # Add files to currently selected matter
+            # Add files to the currently selected matter
             def _on_add_files(files, matter_name):
-                if not matter_name or not matter_name.strip():
-                    return gr.update(), "Select a matter first", ""
+                if not matter_name:
+                    return gr.update(), _fmt_ws_status("Select a matter first", "err"), gr.update(), gr.update()
                 if not files:
-                    return gr.update(), "No files selected", ""
+                    return gr.update(), _fmt_ws_status("No files selected", "info"), gr.update(), gr.update()
                 try:
-                    _, status = _upload_files_to_s3_matter(files, matter_name.strip())
-                    updated_files = _list_s3_matter_files(matter_name.strip())
-                    return gr.update(choices=updated_files, value=None), status, ""
+                    _upload_files_to_s3_matter(files, matter_name.strip())
+                    updated = _list_s3_matter_files(matter_name.strip())
+                    return (
+                        gr.update(choices=updated, value=None),
+                        _fmt_ws_status(f"Added {len(files)} file(s) to '{matter_name}'", "ok"),
+                        None,
+                        _fmt_matter_card(matter_name, updated),
+                    )
                 except Exception as e:
-                    return gr.update(), f"Upload failed: {e}", ""
+                    return gr.update(), _fmt_ws_status(f"Upload failed: {e}", "err"), gr.update(), gr.update()
 
             add_files_btn.click(
                 fn=_on_add_files,
                 inputs=[file_upload, repo_path],
-                outputs=[matter_files_dropdown, add_files_status, file_upload],
+                outputs=[matter_files_dropdown, file_manage_status, file_upload, matter_card_html],
             )
 
             # Create a new matter (with optional initial files), then select it
             def _on_save_matter(files, name):
                 if not name or not name.strip():
-                    return gr.update(), "", "Enter a matter name first"
+                    return gr.update(), "", _fmt_ws_status("Enter a matter name first", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update()
                 try:
                     if files:
-                        display_name, status = _upload_files_to_s3_matter(files, name.strip())
+                        display_name, _ = _upload_files_to_s3_matter(files, name.strip())
                     else:
                         display_name = _sanitize_matter_name(name.strip()).replace("_", " ")
-                        status = f"Matter '{display_name}' ready (no files uploaded yet)"
                     names = _list_s3_matter_names()
+                    new_files = _list_s3_matter_files(display_name)
                     return (
                         gr.update(choices=names, value=display_name),
                         display_name,
-                        status,
+                        _fmt_ws_status(f"Created '{display_name}'", "ok"),
+                        gr.update(visible=True),
+                        gr.update(choices=new_files, value=None),
+                        _fmt_matter_card(display_name, new_files),
                     )
                 except Exception as e:
-                    return gr.update(), "", f"Create failed: {e}"
+                    return gr.update(), "", _fmt_ws_status(f"Create failed: {e}", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update()
 
             save_matter_btn.click(
                 fn=_on_save_matter,
                 inputs=[file_upload_new, matter_name_input],
-                outputs=[matter_dropdown, repo_path, upload_status],
+                outputs=[matter_dropdown, repo_path, upload_status, matter_workspace, matter_files_dropdown, matter_card_html],
             )
         else:
             browse_btn.click(
