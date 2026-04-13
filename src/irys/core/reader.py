@@ -1,4 +1,4 @@
-"""Document reader for PDF, DOCX, MHT, and image files.
+"""Document reader for PDF, DOCX, MHT, Markdown, and image files.
 
 Extracts text with page/section preservation for citation tracking.
 Image files and scanned PDFs/DOCX files are processed via Mistral OCR.
@@ -147,7 +147,7 @@ class DocumentReader:
     Convert to .docx or .pdf before processing.
     """
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
 
     @staticmethod
     def _detect_type_from_magic(path: Path) -> str:
@@ -211,6 +211,8 @@ class DocumentReader:
             return self._read_docx(path)
         elif suffix == ".txt":
             return self._read_txt(path)
+        elif suffix == ".md":
+            return self._read_md(path)
         elif suffix in {".mht", ".mhtml"}:
             return self._read_mht(path)
         elif suffix in {".png", ".jpg", ".jpeg"}:
@@ -289,6 +291,22 @@ class DocumentReader:
             path=str(path),
             filename=path.name,
             file_type="txt",
+            page_count=1,
+            pages=pages,
+            total_chars=len(text),
+        )
+
+    def _read_md(self, path: Path) -> DocumentContent:
+        """Read Markdown file as plain text (no rendering, structure preserved)."""
+        text = path.read_text(encoding="utf-8", errors="replace")
+        text = self._clean_text(text)
+
+        pages = [PageContent(page_num=1, text=text)]
+
+        return DocumentContent(
+            path=str(path),
+            filename=path.name,
+            file_type="md",
             page_count=1,
             pages=pages,
             total_chars=len(text),

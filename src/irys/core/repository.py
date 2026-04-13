@@ -76,7 +76,7 @@ class MatterRepository:
     Convert to .docx or .pdf before adding to repository.
     """
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
     # Extensions that require async read (OCR path) — sync read() will raise for these
     _ASYNC_ONLY_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 

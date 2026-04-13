@@ -61,6 +61,11 @@ TEST_FILES = [
         "name": "epa_sample_letter_sent_to_commissioners_dated_february_29_2015.pdf",
         "mime": "application/pdf",
     },
+    {
+        "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/3a/83/4199bff573dcad3b836c468966a52c557f34c9f663d71b4e1d646e9884c1",
+        "name": "ASSERTION_ARCHITECTURE_SUMMARY.md",
+        "mime": "text/markdown",
+    },
 ]
 # ─────────────────────────────────────────────────────────────────────────────
 

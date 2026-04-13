@@ -576,7 +576,7 @@ class S3Repository:
 
             # Determine file extension
             ext = current_ext
-            if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".rtf", ".png", ".jpg", ".jpeg"}:
+            if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".md", ".rtf", ".png", ".jpg", ".jpeg"}:
                 # Try to detect from Content-Type
                 content_type = head.get("ContentType")
                 ext = detect_extension_from_content_type(content_type)
@@ -687,7 +687,7 @@ class S3Repository:
 
                 # Determine file extension (prefer provided metadata)
                 ext = current_ext
-                if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".rtf", ".png", ".jpg", ".jpeg"}:
+                if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".md", ".rtf", ".png", ".jpg", ".jpeg"}:
                     ext = detect_extension_from_content_type(content_type)
                     logger.debug(f"Content-Type '{content_type}' -> extension '{ext}'")
 
