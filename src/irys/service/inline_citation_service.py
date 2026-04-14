@@ -80,7 +80,7 @@ class InlineCitationService:
         answer: str,
         citations: list,
         config,
-    ) -> str:
+    ) -> tuple[str, list]:
         """Inject inline citation markers into the answer via two-pass pipeline.
 
         Args:
@@ -89,12 +89,16 @@ class InlineCitationService:
             config:    IrysConfig with enable_inline_citations flag.
 
         Returns:
-            Answer with [[cite:1]], [[cite:2]], … markers, or original on failure.
+            Tuple of (annotated_answer, reordered_citations) where:
+            - annotated_answer has [[cite:1]], [[cite:2]], … markers
+            - reordered_citations is citations sorted by first-appearance in text
+              (unreferenced citations are appended at the end)
+            On failure returns (original_answer, original_citations).
         """
         if not getattr(config, 'enable_inline_citations', False):
-            return answer
+            return answer, citations
         if not citations or not answer or not answer.strip():
-            return answer
+            return answer, citations
 
         try:
             # Split by source_type (default to "document" for backward compat)
@@ -110,11 +114,36 @@ class InlineCitationService:
             # Pass 2: end-of-sentence LLM injection for documents + web
             final = cls._inject_doc_web_with_retry(after_pass1, doc_web_cits, config, all_ids)
 
-            return cls._renumber_citations(final)
+            # Capture UUID appearance order BEFORE renumbering wipes the UUIDs.
+            # This is used to reorder state.citations so the panel matches the text.
+            reordered = cls._reorder_by_uuid_appearance(final, citations)
+
+            return cls._renumber_citations(final), reordered
 
         except Exception as e:
             logger.warning(f"Citation injection failed: {e}, returning original answer")
-            return answer
+            return answer, citations
+
+    @classmethod
+    def _reorder_by_uuid_appearance(cls, text_with_uuid_markers: str, citations: list) -> list:
+        """Return citations sorted by the first appearance of their UUID in text.
+
+        Citations whose UUIDs were not injected into the text are appended at
+        the end in their original order.  This ensures state.citations[N-1]
+        always corresponds to [[cite:N]] in the annotated answer.
+        """
+        cit_by_id = {getattr(c, 'id', None): c for c in citations if getattr(c, 'id', None)}
+
+        seen_ids: list[str] = []
+        for match in cls.CITATION_MARKER_PATTERN.finditer(text_with_uuid_markers):
+            cid = match.group(1)
+            if cid not in seen_ids:
+                seen_ids.append(cid)
+
+        referenced: set[str] = set(seen_ids)
+        reordered = [cit_by_id[cid] for cid in seen_ids if cid in cit_by_id]
+        reordered += [c for c in citations if getattr(c, 'id', None) not in referenced]
+        return reordered
 
     # -------------------------------------------------------------------------
     # Pass 1: case law — deterministic anchor replacement
