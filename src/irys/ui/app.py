@@ -454,32 +454,74 @@ def _bar_row(label: str, value: float, maximum: float, meta: str = "", tone: str
 
 
 _SIDEBAR_STYLE = """<style>
-.intel-panel{background:#0f172a;border-radius:18px;padding:18px;box-shadow:0 4px 24px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:12px;width:100%;box-sizing:border-box;}
-.intel-panel-title{font-size:13px;font-weight:700;color:#f1f5f9;letter-spacing:.06em;text-transform:uppercase;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:2px;}
-.intel-panel .viz-shell{display:flex;flex-direction:column;gap:10px;}
-.intel-panel .viz-card-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
-.intel-panel .viz-card{border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px;background:rgba(255,255,255,.06);}
-.intel-panel .viz-card.tone-amber{border-color:rgba(217,119,6,.35);}
-.intel-panel .viz-card.tone-green{border-color:rgba(21,128,61,.35);}
-.intel-panel .viz-card-title{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;margin-bottom:2px;}
-.intel-panel .viz-card-value{font-size:22px;font-weight:700;color:#f8fafc;line-height:1.1;}
-.intel-panel .viz-card-detail{font-size:11px;color:#64748b;margin-top:4px;}
-.intel-panel .viz-two-col{display:grid;grid-template-columns:1fr;gap:8px;}
-.intel-panel .viz-panel{border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:12px;background:rgba(255,255,255,.03);}
-.intel-panel .viz-panel-title{font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:8px;}
-.intel-panel .viz-subtitle{font-size:11px;font-weight:700;color:#94a3b8;margin-bottom:4px;}
-.intel-panel .viz-footnote{font-size:10px;color:#475569;margin-top:6px;}
-.intel-panel .viz-bar-row{display:flex;flex-direction:column;gap:3px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.05);}
-.intel-panel .viz-bar-label{font-size:11px;color:#cbd5e1;}
-.intel-panel .viz-bar-track{height:6px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden;margin:2px 0;}
+.intel-panel{
+  background:var(--background-fill-secondary,#f8fafc);
+  border:1px solid var(--block-border-color,#e2e8f0);
+  border-radius:14px;padding:16px;
+  box-shadow:0 2px 12px rgba(0,0,0,.06);
+  display:flex;flex-direction:column;gap:10px;
+  width:100%;box-sizing:border-box;overflow:hidden;
+}
+.intel-panel-title{
+  font-size:11px;font-weight:700;
+  color:var(--body-text-color,#0f172a);
+  letter-spacing:.08em;text-transform:uppercase;
+  padding-bottom:6px;
+  border-bottom:1px solid var(--block-border-color,#e2e8f0);
+  margin-bottom:2px;
+}
+.intel-panel .viz-shell{display:flex;flex-direction:column;gap:8px;}
+.intel-panel .viz-card-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+.intel-panel .viz-card{
+  border:1px solid var(--block-border-color,#e2e8f0);
+  border-radius:10px;padding:8px 6px;
+  background:var(--background-fill-primary,#fff);
+  overflow:hidden;
+}
+.intel-panel .viz-card.tone-amber{border-color:rgba(217,119,6,.4);}
+.intel-panel .viz-card.tone-green{border-color:rgba(21,128,61,.4);}
+.intel-panel .viz-card-title{
+  font-size:9px;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--body-text-color-subdued,#64748b);margin-bottom:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.intel-panel .viz-card-value{
+  font-size:18px;font-weight:700;
+  color:var(--body-text-color,#0f172a);line-height:1.1;
+}
+.intel-panel .viz-card-detail{
+  font-size:10px;color:var(--body-text-color-subdued,#64748b);margin-top:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.intel-panel .viz-two-col{display:grid;grid-template-columns:1fr;gap:6px;}
+.intel-panel .viz-panel{
+  border:1px solid var(--block-border-color,#e2e8f0);
+  border-radius:10px;padding:10px;
+  background:var(--background-fill-primary,#fff);
+}
+.intel-panel .viz-panel-title{
+  font-size:11px;font-weight:700;
+  color:var(--body-text-color,#0f172a);margin-bottom:6px;
+}
+.intel-panel .viz-subtitle{
+  font-size:10px;font-weight:700;
+  color:var(--body-text-color-subdued,#64748b);margin-bottom:3px;
+}
+.intel-panel .viz-footnote{font-size:10px;color:var(--body-text-color-subdued,#64748b);margin-top:4px;}
+.intel-panel .viz-bar-row{display:flex;flex-direction:column;gap:2px;padding:3px 0;border-bottom:1px solid var(--block-border-color,#e2e8f0);}
+.intel-panel .viz-bar-label{font-size:10px;color:var(--body-text-color,#334155);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.intel-panel .viz-bar-track{height:5px;border-radius:999px;background:var(--block-border-color,#e2e8f0);overflow:hidden;margin:2px 0;}
 .intel-panel .viz-bar-fill{height:100%;border-radius:999px;}
-.intel-panel .viz-bar-meta{font-size:10px;color:#64748b;}
-.intel-panel .viz-list-row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.07);font-size:12px;color:#cbd5e1;}
-.intel-panel .viz-list-row strong{white-space:nowrap;color:#94a3b8;}
-.intel-panel .viz-list-columns{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
-.intel-panel .viz-list-columns ul{margin:4px 0 0;padding-left:14px;color:#94a3b8;font-size:11px;}
-.intel-panel .viz-list-columns li{margin-bottom:4px;color:#94a3b8;}
-.intel-panel .viz-empty{border:1px dashed rgba(255,255,255,.10);border-radius:10px;padding:12px;color:#475569;font-size:12px;background:rgba(255,255,255,.02);}
+.intel-panel .viz-bar-fill.tone-green{background:#16a34a;}
+.intel-panel .viz-bar-fill.tone-amber{background:#d97706;}
+.intel-panel .viz-bar-fill.tone-blue{background:#2563eb;}
+.intel-panel .viz-bar-meta{font-size:9px;color:var(--body-text-color-subdued,#64748b);}
+.intel-panel .viz-list-row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;padding:5px 0;border-bottom:1px solid var(--block-border-color,#e2e8f0);font-size:11px;color:var(--body-text-color,#334155);}
+.intel-panel .viz-list-row strong{white-space:nowrap;color:var(--body-text-color-subdued,#64748b);}
+.intel-panel .viz-list-columns{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+.intel-panel .viz-list-columns ul{margin:3px 0 0;padding-left:12px;font-size:10px;color:var(--body-text-color-subdued,#64748b);}
+.intel-panel .viz-list-columns li{margin-bottom:3px;}
+.intel-panel .viz-empty{border:1px dashed var(--block-border-color,#cbd5e1);border-radius:8px;padding:10px;color:var(--body-text-color-subdued,#64748b);font-size:11px;}
 </style>"""
 
 
