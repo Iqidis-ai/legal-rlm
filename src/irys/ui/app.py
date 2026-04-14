@@ -2432,18 +2432,14 @@ def _fmt_ws_status(msg: str, kind: str = "ok") -> str:
 # ---------------------------------------------------------------------------
 
 
-def create_app(api_key: Optional[str] = None) -> gr.Blocks:
-    state = AppState(api_key=api_key)
-    _s3_mode = _get_storage_mode() == "s3"
-
-    _theme = gr.themes.Soft(
-        primary_hue=gr.themes.colors.blue,
-        secondary_hue=gr.themes.colors.slate,
-        neutral_hue=gr.themes.colors.slate,
-        font=gr.themes.GoogleFont("Inter"),
-        font_mono=gr.themes.GoogleFont("JetBrains Mono"),
-    )
-    _css = """
+_theme = gr.themes.Soft(
+    primary_hue=gr.themes.colors.blue,
+    secondary_hue=gr.themes.colors.slate,
+    neutral_hue=gr.themes.colors.slate,
+    font=gr.themes.GoogleFont("Inter"),
+    font_mono=gr.themes.GoogleFont("JetBrains Mono"),
+)
+_css = """
     .mono textarea { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
     .status-bar textarea { font-weight: 600; font-size: 13px; }
     .compact-id { font-size: 11px !important; }
@@ -2644,6 +2640,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
     .viz-detail-block ul { margin: 6px 0 0 0; padding-left: 18px; }
     .viz-detail-block li { margin-bottom: 6px; }
     """
+
+
+def create_app(api_key: Optional[str] = None) -> gr.Blocks:
+    state = AppState(api_key=api_key)
+    _s3_mode = _get_storage_mode() == "s3"
 
     with gr.Blocks(title="Irys — Legal Intelligence") as demo:
 
