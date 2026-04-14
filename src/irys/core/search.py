@@ -132,11 +132,16 @@ class DocumentSearch:
         all_hits: list[SearchHit] = []
         files_searched = 0
 
+        # Image files (.png/.jpg/.jpeg) require async OCR — they have no extractable
+        # text content for grep-style search and must be excluded here.
+        _ASYNC_ONLY = {".png", ".jpg", ".jpeg"}
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(
                     self._search_file, f, pattern, context_lines
-                ): f for f in files if self.reader.can_read(f)
+                ): f for f in files
+                if self.reader.can_read(f) and f.suffix.lower() not in _ASYNC_ONLY
             }
 
             for future in as_completed(futures):
