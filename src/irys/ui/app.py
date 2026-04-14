@@ -453,7 +453,7 @@ def _bar_row(label: str, value: float, maximum: float, meta: str = "", tone: str
     )
 
 
-_SIDEBAR_STYLE = """<style>
+_DS_CSS = """<style>
 .intel-panel{
   background:var(--background-fill-secondary,#f8fafc);
   border:1px solid var(--block-border-color,#e2e8f0);
@@ -471,7 +471,11 @@ _SIDEBAR_STYLE = """<style>
   margin-bottom:2px;
 }
 .intel-panel .viz-shell{display:flex;flex-direction:column;gap:8px;}
-.intel-panel .viz-card-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+.intel-panel .viz-card-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(90px,1fr));
+  gap:6px;
+}
 .intel-panel .viz-card{
   border:1px solid var(--block-border-color,#e2e8f0);
   border-radius:10px;padding:8px 6px;
@@ -480,6 +484,7 @@ _SIDEBAR_STYLE = """<style>
 }
 .intel-panel .viz-card.tone-amber{border-color:rgba(217,119,6,.4);}
 .intel-panel .viz-card.tone-green{border-color:rgba(21,128,61,.4);}
+.intel-panel .viz-card.tone-red{border-color:rgba(185,28,28,.4);}
 .intel-panel .viz-card-title{
   font-size:9px;letter-spacing:.07em;text-transform:uppercase;
   color:var(--body-text-color-subdued,#64748b);margin-bottom:2px;
@@ -508,27 +513,52 @@ _SIDEBAR_STYLE = """<style>
   color:var(--body-text-color-subdued,#64748b);margin-bottom:3px;
 }
 .intel-panel .viz-footnote{font-size:10px;color:var(--body-text-color-subdued,#64748b);margin-top:4px;}
-.intel-panel .viz-bar-row{display:flex;flex-direction:column;gap:2px;padding:3px 0;border-bottom:1px solid var(--block-border-color,#e2e8f0);}
-.intel-panel .viz-bar-label{font-size:10px;color:var(--body-text-color,#334155);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.intel-panel .viz-bar-track{height:5px;border-radius:999px;background:var(--block-border-color,#e2e8f0);overflow:hidden;margin:2px 0;}
+.intel-panel .viz-bar-row{
+  display:flex;flex-direction:column;gap:2px;
+  padding:3px 0;
+  border-bottom:1px solid var(--block-border-color,#e2e8f0);
+}
+.intel-panel .viz-bar-label{
+  font-size:10px;color:var(--body-text-color,#334155);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.intel-panel .viz-bar-track{
+  height:5px;border-radius:999px;
+  background:var(--block-border-color,#e2e8f0);
+  overflow:hidden;margin:2px 0;
+}
 .intel-panel .viz-bar-fill{height:100%;border-radius:999px;}
 .intel-panel .viz-bar-fill.tone-green{background:#16a34a;}
 .intel-panel .viz-bar-fill.tone-amber{background:#d97706;}
-.intel-panel .viz-bar-fill.tone-blue{background:#2563eb;}
+.intel-panel .viz-bar-fill.tone-blue{background:var(--color-accent,#2563eb);}
 .intel-panel .viz-bar-meta{font-size:9px;color:var(--body-text-color-subdued,#64748b);}
-.intel-panel .viz-list-row{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;padding:5px 0;border-bottom:1px solid var(--block-border-color,#e2e8f0);font-size:11px;color:var(--body-text-color,#334155);}
-.intel-panel .viz-list-row strong{white-space:nowrap;color:var(--body-text-color-subdued,#64748b);}
+.intel-panel .viz-list-row{
+  display:flex;justify-content:space-between;align-items:flex-start;
+  gap:6px;padding:5px 0;
+  border-bottom:1px solid var(--block-border-color,#e2e8f0);
+  font-size:11px;color:var(--body-text-color,#334155);
+}
+.intel-panel .viz-list-row strong{
+  white-space:nowrap;color:var(--body-text-color-subdued,#64748b);
+}
 .intel-panel .viz-list-columns{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
-.intel-panel .viz-list-columns ul{margin:3px 0 0;padding-left:12px;font-size:10px;color:var(--body-text-color-subdued,#64748b);}
+.intel-panel .viz-list-columns ul{
+  margin:3px 0 0;padding-left:12px;
+  font-size:10px;color:var(--body-text-color-subdued,#64748b);
+}
 .intel-panel .viz-list-columns li{margin-bottom:3px;}
-.intel-panel .viz-empty{border:1px dashed var(--block-border-color,#cbd5e1);border-radius:8px;padding:10px;color:var(--body-text-color-subdued,#64748b);font-size:11px;}
+.intel-panel .viz-empty{
+  border:1px dashed var(--block-border-color,#cbd5e1);
+  border-radius:8px;padding:10px;
+  color:var(--body-text-color-subdued,#64748b);font-size:11px;
+}
 </style>"""
 
 
 def _fmt_overview_panel(data: dict) -> str:
     if not data:
         return (
-            _SIDEBAR_STYLE
+            _DS_CSS
             + "<div class='intel-panel'>"
             "<div class='intel-panel-title'>Matter Intelligence</div>"
             "<div class='viz-empty'>"
@@ -630,7 +660,7 @@ def _fmt_overview_panel(data: dict) -> str:
     pricing_source = _escape(llm_totals.get("pricing_source", ""))
 
     return (
-        _SIDEBAR_STYLE
+        _DS_CSS
         + "<div class='intel-panel'>"
         "<div class='intel-panel-title'>Matter Intelligence</div>"
         "<div class='viz-shell'>"
