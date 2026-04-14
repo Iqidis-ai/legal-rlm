@@ -1584,32 +1584,60 @@ def _trust_icon(role: str) -> str:
 
 def _fmt_assertions(assertions: list) -> str:
     if not assertions:
-        return "No assertions."
-    lines = [
-        "| Trust | Proposition | State | Conf | Source | Speech | ID |",
-        "|-------|-------------|-------|------|--------|--------|----|",
-    ]
+        return "<div class='viz-empty'>No assertions recorded yet.</div>"
+    rows_html = ""
     for a in assertions:
-        assertion_id = a.get("id", "?")
-        prop = a.get("proposition_text") or ""
-        state = a.get("belief_state") or "—"
+        assertion_id = _escape(a.get("id", "?"))
+        prop = _escape(a.get("proposition_text") or "")
+        state = _escape(a.get("belief_state") or "—")
         conf = f"{float(a.get('confidence', 0)):.2f}" if a.get("confidence") is not None else "—"
         src_roles = a.get("source_roles", [])
         if len(src_roles) > 1:
-            src = f"MULTI[{','.join(src_roles)}]"
-            # Use highest-trust role for icon
-            best = min(src_roles, key=lambda r: list(_TRUST_ICONS).index(r.upper())
-                       if r.upper() in _TRUST_ICONS else 99)
+            best = min(
+                src_roles,
+                key=lambda r: list(_TRUST_ICONS).index(r.upper())
+                if r.upper() in _TRUST_ICONS else 99,
+            )
             icon = _trust_icon(best)
+            src = _escape(f"MULTI[{','.join(src_roles)}]")
         elif src_roles:
-            src = src_roles[0]
-            icon = _trust_icon(src)
+            icon = _trust_icon(src_roles[0])
+            src = _escape(src_roles[0])
         else:
-            src = a.get("source_role") or a.get("primary_source_role") or "—"
-            icon = _trust_icon(src)
-        speech = a.get("speech_act") or a.get("primary_speech_act") or "—"
-        lines.append(f"| {icon} | {prop} | {state} | {conf} | {src} | {speech} | `{assertion_id}` |")
-    return "\n".join(lines)
+            src_role = a.get("source_role") or a.get("primary_source_role") or "—"
+            icon = _trust_icon(src_role)
+            src = _escape(src_role)
+        speech = _escape(a.get("speech_act") or a.get("primary_speech_act") or "—")
+        rows_html += (
+            "<tr>"
+            f"<td style='text-align:center'>{icon}</td>"
+            f"<td>{prop}</td>"
+            f"<td>{state}</td>"
+            f"<td style='text-align:right'>{conf}</td>"
+            f"<td>{src}</td>"
+            f"<td>{speech}</td>"
+            f"<td><code style='font-size:10px'>{assertion_id}</code></td>"
+            "</tr>"
+        )
+    return (
+        "<div class='matrix-wrap'>"
+        "<table class='analytics-table' style='table-layout:fixed;width:100%'>"
+        "<colgroup>"
+        "<col style='width:36px'>"
+        "<col style='width:40%'>"
+        "<col style='width:10%'>"
+        "<col style='width:8%'>"
+        "<col style='width:12%'>"
+        "<col style='width:12%'>"
+        "<col style='width:18%'>"
+        "</colgroup>"
+        "<thead><tr>"
+        "<th></th><th>Proposition</th><th>State</th>"
+        "<th>Conf</th><th>Source</th><th>Speech</th><th>ID</th>"
+        "</tr></thead>"
+        "<tbody>" + rows_html + "</tbody>"
+        "</table></div>"
+    )
 
 
 _ASSUMPTION_STATUS_ICONS = {
@@ -3035,7 +3063,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "If something is wrong, correct it below — Irys will automatically update any "
                 "conclusions that depended on that fact."
             )
-            assertions_md = gr.Markdown("*Facts will appear here after an investigation.*")
+            assertions_md = gr.HTML("<div class='viz-empty'>Facts will appear here after an investigation.</div>")
             refresh_assertions_btn = gr.Button("Refresh Facts", variant="secondary", size="sm")
 
             with gr.Accordion("Correct a fact", open=False):
