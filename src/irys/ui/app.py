@@ -1623,13 +1623,13 @@ def _fmt_assertions(assertions: list) -> str:
         "<div class='matrix-wrap'>"
         "<table class='analytics-table' style='table-layout:fixed;width:100%'>"
         "<colgroup>"
-        "<col style='width:36px'>"
-        "<col style='width:40%'>"
+        "<col style='width:3%'>"
+        "<col style='width:39%'>"
         "<col style='width:10%'>"
         "<col style='width:8%'>"
+        "<col style='width:13%'>"
         "<col style='width:12%'>"
-        "<col style='width:12%'>"
-        "<col style='width:18%'>"
+        "<col style='width:15%'>"
         "</colgroup>"
         "<thead><tr>"
         "<th></th><th>Proposition</th><th>State</th>"
@@ -2338,7 +2338,7 @@ class AppState:
             assertions = _run_async(self.backend().list_assertions(matter_id, limit=50))
             return _fmt_assertions(assertions)
         except Exception as exc:
-            return f"Error loading assertions: {exc}"
+            return f"<div class='viz-empty'>Error loading assertions: {_escape(str(exc))}</div>"
 
     def load_gaps(self, matter_id: str) -> tuple[str, str]:
         """Return (gaps_and_steering_markdown, top_redirect_issue_id).
