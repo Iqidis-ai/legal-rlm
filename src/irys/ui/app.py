@@ -2592,6 +2592,7 @@ _css = """
     }
     .matter-empty-title { font-size: 15px; font-weight: 600; color: var(--body-text-color-subdued, #64748b); margin-bottom: 6px; }
     .matter-empty-sub { font-size: 13px; color: var(--body-text-color-subdued, #94a3b8); }
+    /* Status badges: intentional semantic colors, not theme variables */
     .ws-status { font-size: 12px; border-radius: 8px; padding: 7px 12px; margin-top: 4px; }
     .ws-ok  { color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; }
     .ws-err { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; }
@@ -2712,7 +2713,7 @@ _css = """
     .proof-partial { background: rgba(217,119,6,0.12); color: #b45309; }
     .proof-weak    { background: rgba(249,115,22,0.12); color: #c2410c; }
     .proof-gap     { background: rgba(185,28,28,0.12); color: #b91c1c; }
-    .proof-none    { background: rgba(148,163,184,0.18); color: var(--body-text-color-subdued,#475569); }
+    .proof-none    { background: rgba(148,163,184,0.18); color: #475569; }
     .issue-title {
         flex: 1; min-width: 0; font-size: 13px; font-weight: 600;
         color: var(--body-text-color, #0f172a); white-space: normal; word-break: break-word;
@@ -2833,10 +2834,8 @@ _css = """
 
     /* ── Global responsive safety net ───────────────────── */
     .gradio-container * { box-sizing: border-box; }
-    .gradio-container .gr-row, .gradio-container .gr-column { min-width: 0; }
-    table { width: 100%; }
-    td, th { overflow-wrap: break-word; word-break: break-word; }
-    img { max-width: 100%; height: auto; }
+    .gradio-container td, .gradio-container th { overflow-wrap: break-word; }
+    .gradio-container img { max-width: 100%; height: auto; }
     """
 
 
