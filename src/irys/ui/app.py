@@ -453,12 +453,43 @@ def _bar_row(label: str, value: float, maximum: float, meta: str = "", tone: str
     )
 
 
+_SIDEBAR_STYLE = """<style>
+.intel-panel{background:#0f172a;border-radius:18px;padding:18px;box-shadow:0 4px 24px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:12px;width:100%;box-sizing:border-box;}
+.intel-panel-title{font-size:13px;font-weight:700;color:#f1f5f9;letter-spacing:.06em;text-transform:uppercase;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:2px;}
+.intel-panel .viz-shell{display:flex;flex-direction:column;gap:10px;}
+.intel-panel .viz-card-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.intel-panel .viz-card{border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px;background:rgba(255,255,255,.06);}
+.intel-panel .viz-card.tone-amber{border-color:rgba(217,119,6,.35);}
+.intel-panel .viz-card.tone-green{border-color:rgba(21,128,61,.35);}
+.intel-panel .viz-card-title{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;margin-bottom:2px;}
+.intel-panel .viz-card-value{font-size:22px;font-weight:700;color:#f8fafc;line-height:1.1;}
+.intel-panel .viz-card-detail{font-size:11px;color:#64748b;margin-top:4px;}
+.intel-panel .viz-two-col{display:grid;grid-template-columns:1fr;gap:8px;}
+.intel-panel .viz-panel{border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:12px;background:rgba(255,255,255,.03);}
+.intel-panel .viz-panel-title{font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:8px;}
+.intel-panel .viz-subtitle{font-size:11px;font-weight:700;color:#94a3b8;margin-bottom:4px;}
+.intel-panel .viz-footnote{font-size:10px;color:#475569;margin-top:6px;}
+.intel-panel .viz-bar-row{display:flex;flex-direction:column;gap:3px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.05);}
+.intel-panel .viz-bar-label{font-size:11px;color:#cbd5e1;}
+.intel-panel .viz-bar-track{height:6px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden;margin:2px 0;}
+.intel-panel .viz-bar-fill{height:100%;border-radius:999px;}
+.intel-panel .viz-bar-meta{font-size:10px;color:#64748b;}
+.intel-panel .viz-list-row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.07);font-size:12px;color:#cbd5e1;}
+.intel-panel .viz-list-row strong{white-space:nowrap;color:#94a3b8;}
+.intel-panel .viz-list-columns{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.intel-panel .viz-list-columns ul{margin:4px 0 0;padding-left:14px;color:#94a3b8;font-size:11px;}
+.intel-panel .viz-list-columns li{margin-bottom:4px;color:#94a3b8;}
+.intel-panel .viz-empty{border:1px dashed rgba(255,255,255,.10);border-radius:10px;padding:12px;color:#475569;font-size:12px;background:rgba(255,255,255,.02);}
+</style>"""
+
+
 def _fmt_overview_panel(data: dict) -> str:
     if not data:
         return (
-            "<div class='intel-panel'>"
+            _SIDEBAR_STYLE
+            + "<div class='intel-panel'>"
             "<div class='intel-panel-title'>Matter Intelligence</div>"
-            "<div class='viz-empty' style='border-color:rgba(255,255,255,0.10);color:#64748b;background:rgba(255,255,255,0.03);'>"
+            "<div class='viz-empty'>"
             "Run your first investigation to see matter intelligence here."
             "</div>"
             "</div>"
@@ -557,7 +588,8 @@ def _fmt_overview_panel(data: dict) -> str:
     pricing_source = _escape(llm_totals.get("pricing_source", ""))
 
     return (
-        "<div class='intel-panel'>"
+        _SIDEBAR_STYLE
+        + "<div class='intel-panel'>"
         "<div class='intel-panel-title'>Matter Intelligence</div>"
         "<div class='viz-shell'>"
         "<div class='viz-card-grid'>"
@@ -2947,14 +2979,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             # ---------- RIGHT: Intelligence sidebar ----------
             with gr.Column(scale=1, min_width=280, elem_classes=["intelligence-sidebar"]):
                 # The dark navy panel is self-contained inside the HTML — no Gradio column styling needed
-                overview_md = gr.HTML(
-                    "<div class='intel-panel'>"
-                    "<div class='intel-panel-title'>Matter Intelligence</div>"
-                    "<div class='viz-empty' style='border-color:rgba(255,255,255,0.10);color:#64748b;background:rgba(255,255,255,0.03);'>"
-                    "Run your first investigation to see matter intelligence here."
-                    "</div>"
-                    "</div>"
-                )
+                overview_md = gr.HTML(_fmt_overview_panel({}))
                 # Hidden components kept for callback compatibility
                 issues_md = gr.HTML(visible=False)
                 gaps_md = gr.Markdown(visible=False)
