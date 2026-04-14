@@ -462,7 +462,7 @@ _DS_CSS = """<style>
   display:flex;flex-direction:column;gap:10px;
   width:100%;box-sizing:border-box;overflow:hidden;
 }
-.intel-panel-title{
+.intel-panel .intel-panel-title{
   font-size:11px;font-weight:700;
   color:var(--body-text-color,#0f172a);
   letter-spacing:.08em;text-transform:uppercase;
@@ -531,6 +531,7 @@ _DS_CSS = """<style>
 .intel-panel .viz-bar-fill.tone-green{background:#16a34a;}
 .intel-panel .viz-bar-fill.tone-amber{background:#d97706;}
 .intel-panel .viz-bar-fill.tone-blue{background:var(--color-accent,#2563eb);}
+.intel-panel .viz-bar-fill.tone-red{background:#b91c1c;}
 .intel-panel .viz-bar-meta{font-size:9px;color:var(--body-text-color-subdued,#64748b);}
 .intel-panel .viz-list-row{
   display:flex;justify-content:space-between;align-items:flex-start;
