@@ -455,7 +455,14 @@ def _bar_row(label: str, value: float, maximum: float, meta: str = "", tone: str
 
 def _fmt_overview_panel(data: dict) -> str:
     if not data:
-        return "<div class='viz-empty'>No matter loaded.</div>"
+        return (
+            "<div class='intel-panel'>"
+            "<div class='intel-panel-title'>Matter Intelligence</div>"
+            "<div class='viz-empty' style='border-color:rgba(255,255,255,0.10);color:#64748b;background:rgba(255,255,255,0.03);'>"
+            "Run your first investigation to see matter intelligence here."
+            "</div>"
+            "</div>"
+        )
 
     stats = data.get("stats", {})
     so = data.get("so_metrics", {})
@@ -550,6 +557,8 @@ def _fmt_overview_panel(data: dict) -> str:
     pricing_source = _escape(llm_totals.get("pricing_source", ""))
 
     return (
+        "<div class='intel-panel'>"
+        "<div class='intel-panel-title'>Matter Intelligence</div>"
         "<div class='viz-shell'>"
         "<div class='viz-card-grid'>"
         + "".join(cards)
@@ -601,6 +610,7 @@ def _fmt_overview_panel(data: dict) -> str:
         + "<div><div class='viz-subtitle'>Clarifications</div><ul>"
         + clarification_items
         + "</ul></div>"
+        + "</div>"
         + "</div>"
         + "</div>"
         + "</div>"
@@ -2639,25 +2649,64 @@ _css = """
     .viz-detail-block { margin-top: 10px; font-size: 12px; color: #334155; }
     .viz-detail-block ul { margin: 6px 0 0 0; padding-left: 18px; }
     .viz-detail-block li { margin-bottom: 6px; }
-    /* Intelligence sidebar — dark navy panel */
+    /* Self-contained dark navy intelligence panel (lives inside gr.HTML, no Gradio column tricks) */
+    .intel-panel {
+        background: #0f172a;
+        border-radius: 18px;
+        padding: 18px;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .intel-panel-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: #f1f5f9;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        padding-bottom: 4px;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+        margin-bottom: 2px;
+    }
+    /* Dark card & panel overrides inside intel-panel */
+    .intel-panel .viz-card {
+        background: rgba(255,255,255,0.06) !important;
+        border-color: rgba(255,255,255,0.10) !important;
+        padding: 10px !important;
+    }
+    .intel-panel .viz-card.tone-amber { border-color: rgba(217,119,6,0.35) !important; }
+    .intel-panel .viz-card.tone-green  { border-color: rgba(21,128,61,0.35) !important; }
+    .intel-panel .viz-card-title { color: #94a3b8 !important; }
+    .intel-panel .viz-card-value { color: #f8fafc !important; }
+    .intel-panel .viz-card-detail { color: #64748b !important; }
+    .intel-panel .viz-panel {
+        background: rgba(255,255,255,0.04) !important;
+        border-color: rgba(255,255,255,0.08) !important;
+    }
+    .intel-panel .viz-panel-title { color: #e2e8f0 !important; }
+    .intel-panel .viz-subtitle { color: #94a3b8 !important; }
+    .intel-panel .viz-footnote { color: #475569 !important; }
+    .intel-panel .viz-bar-label { color: #cbd5e1 !important; }
+    .intel-panel .viz-bar-track { background: rgba(255,255,255,0.10) !important; }
+    .intel-panel .viz-bar-meta { color: #64748b !important; }
+    .intel-panel .viz-list-row { color: #cbd5e1 !important; border-color: rgba(255,255,255,0.07) !important; }
+    .intel-panel .viz-list-columns ul, .intel-panel .viz-list-columns li { color: #94a3b8 !important; }
+    .intel-panel .viz-card-grid { grid-template-columns: repeat(3, 1fr) !important; gap: 8px !important; }
+    .intel-panel .viz-two-col { grid-template-columns: 1fr !important; }
+    /* Keep old .intelligence-sidebar for backwards-compat (column-level class) */
     .intelligence-sidebar {
-        /* Override Gradio CSS variables so ALL child .block wrappers become transparent */
         --block-background-fill: transparent;
         --block-border-color: transparent;
         --block-border-width: 0px;
         --block-shadow: none;
         --block-padding: 0px;
-        --block-radius: 0px;
-        --block-label-background-fill: transparent;
-        --block-label-border-color: transparent;
-        --section-header-text-size: 0px;
         border: none !important;
-        background: #0f172a !important;
-        box-shadow: 0 4px 24px rgba(0,0,0,0.25) !important;
-        padding: 18px !important;
-        border-radius: 18px !important;
+        background: transparent !important;
+        box-shadow: none !important;
     }
-    /* Strip backgrounds from Gradio 6 wrapper divs so dark navy column shows through */
     .intelligence-sidebar > div,
     .intelligence-sidebar > div > div {
         background: transparent !important;
@@ -2897,33 +2946,21 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
             # ---------- RIGHT: Intelligence sidebar ----------
             with gr.Column(scale=1, min_width=280, elem_classes=["intelligence-sidebar"]):
-                gr.Markdown("### Matter Intelligence")
+                # The dark navy panel is self-contained inside the HTML — no Gradio column styling needed
                 overview_md = gr.HTML(
-                    "<div class='viz-empty'>Run your first investigation to see matter intelligence here.</div>"
+                    "<div class='intel-panel'>"
+                    "<div class='intel-panel-title'>Matter Intelligence</div>"
+                    "<div class='viz-empty' style='border-color:rgba(255,255,255,0.10);color:#64748b;background:rgba(255,255,255,0.03);'>"
+                    "Run your first investigation to see matter intelligence here."
+                    "</div>"
+                    "</div>"
                 )
+                # Hidden components kept for callback compatibility
+                issues_md = gr.HTML(visible=False)
+                gaps_md = gr.Markdown(visible=False)
+                assumptions_md = gr.Markdown(visible=False)
 
-                gr.Markdown("---")
-                gr.Markdown("### Issues & Evidence")
-                issues_md = gr.HTML(
-                    "<div class='viz-empty'>Issue coverage and proof state will appear here after investigation.</div>"
-                )
-
-                gr.Markdown("---")
-                gr.Markdown("### What's Missing")
-                gaps_md = gr.Markdown(
-                    "*Irys tracks missing documents, unanswered questions, and weak "
-                    "spots. They'll appear here after your first investigation.*"
-                )
-
-                gr.Markdown("---")
-                gr.Markdown("### Working Assumptions")
-                assumptions_md = gr.Markdown(
-                    "*Irys tracks what it's assuming to be true. If an assumption "
-                    "turns out to be wrong, conclusions that depend on it are flagged.*"
-                )
-
-                with gr.Row():
-                    refresh_sidebar_btn = gr.Button("Refresh All", variant="secondary", size="sm")
+                refresh_sidebar_btn = gr.Button("↻ Refresh", variant="secondary", size="sm")
 
         # ==================================================================
         # DETAIL ACCORDIONS (below main area)
