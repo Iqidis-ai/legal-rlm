@@ -142,7 +142,6 @@ class CourtListenerClient:
         filed_after: Optional[str] = None,
         filed_before: Optional[str] = None,
         max_results: int = 10,
-        highlight: bool = True,
     ) -> list[LegalCase]:
         """Search for legal opinions/case law.
 
@@ -152,7 +151,6 @@ class CourtListenerClient:
             filed_after: Filter cases filed after this date (YYYY-MM-DD)
             filed_before: Filter cases filed before this date (YYYY-MM-DD)
             max_results: Maximum results to return (default 10)
-            highlight: Enable search result highlighting
 
         Returns:
             List of LegalCase objects
@@ -178,8 +176,6 @@ class CourtListenerClient:
             params["filed_after"] = filed_after
         if filed_before:
             params["filed_before"] = filed_before
-        if highlight:
-            params["highlight"] = "on"
 
         try:
             url = f"{self.SEARCH_URL}/?{urlencode(params)}"
@@ -332,7 +328,6 @@ class CourtListenerClient:
         return await self.search_opinions(
             query=query,
             max_results=max_results,
-            highlight=True,
         )
 
 
