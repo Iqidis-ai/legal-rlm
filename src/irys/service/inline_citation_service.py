@@ -1,7 +1,17 @@
 """Inline citation injection post-processing service.
 
-Injects citation ID markers into synthesized answers using Gemini Lite,
-then deterministically renumbers them to [[cite:1]], [[cite:2]], etc.
+Two-pass injection pipeline:
+
+  Pass 1 — Case law (deterministic, regex):
+    Inserts [id] immediately after each case name / citation string in the text.
+    No LLM needed — legal writing uses verbatim case names by convention.
+
+  Pass 2 — Documents + Web (LLM, Gemini Lite):
+    Inserts [id] at the end of the sentence where content matches.
+    The LLM is instructed to leave existing markers from Pass 1 untouched.
+
+Both passes feed into a single _renumber_citations() step that converts
+raw UUID-fragment markers to [[cite:1]], [[cite:2]], … in first-appearance order.
 """
 
 import re
@@ -13,13 +23,15 @@ from dataclasses import dataclass
 logger = logging.getLogger("irys.inline_citation")
 
 
-# Maximum citations to include in prompt (keep prompt compact for Lite model)
-MAX_CITATIONS = 12
+# Maximum document+web citations sent to the LLM in Pass 2
+MAX_DOC_WEB_CITATIONS = 12
 
-# Prompt template for Gemini Lite
+# Prompt for Pass 2 — documents + web, end-of-sentence placement.
+# The LLM must leave any existing [xxxxxxxx] markers (from Pass 1) untouched.
 INLINE_CITATION_PROMPT = """TASK:
 
 Insert inline citation markers into the ANSWER using only the provided CITATIONS.
+The ANSWER may already contain citation markers like [xxxxxxxx] — do NOT remove or move them.
 
 ANSWER:
 {answer}
@@ -27,26 +39,20 @@ ANSWER:
 CITATIONS:
 {citation_block}
 
-OINSTRUCTIONS:
+INSTRUCTIONS:
 
 Read the ANSWER sentence by sentence.
 
 For each sentence:
-
-Insert a citation ID at the end of the sentence only if the sentence shares at least one valid anchor with the citation text.
-
-If multiple citations match, insert all matching IDs separated by a single space:
-[id1] [id2]
-
-If no citation matches, leave the sentence unchanged.
-
-Do not insert citations without anchor overlap.
+- Insert a citation ID at the END of the sentence if the sentence shares at least one valid anchor with the citation text.
+- Valid anchors: exact numbers, exact dates, named entities, distinct multi-word phrases.
+- If multiple citations match, insert all IDs separated by a space: [id1] [id2]
+- If no citation matches, leave the sentence unchanged.
+- Do NOT touch existing citation markers already present in the text.
 
 OUTPUT:
-
 Return the full ANSWER text with citation markers inserted.
-Return only the ANSWER text.
-Do not include explanations."""
+Return only the ANSWER text. No explanations."""
 
 
 @dataclass
@@ -59,7 +65,11 @@ class SanitizedCitation:
 
 
 class InlineCitationService:
-    """Service for injecting inline citations into synthesized answers."""
+    """Two-pass inline citation injection service.
+
+    Pass 1 — case law citations injected right after the case name (deterministic regex).
+    Pass 2 — document + web citations injected at end-of-sentence (Gemini Lite LLM).
+    """
 
     # Regex pattern to extract citation markers like [c89e8135]
     CITATION_MARKER_PATTERN = re.compile(r'\[([a-f0-9]{8})\]')
@@ -71,71 +81,129 @@ class InlineCitationService:
         citations: list,
         config,
     ) -> str:
-        """
-        Inject inline citation markers into the answer.
+        """Inject inline citation markers into the answer via two-pass pipeline.
 
         Args:
-            answer: The synthesized answer text
-            citations: List of Citation objects from state.citations
-            config: IrysConfig with enable_inline_citations flag
+            answer:    The synthesized answer text.
+            citations: List of Citation objects from state.citations.
+            config:    IrysConfig with enable_inline_citations flag.
 
         Returns:
-            Answer with [[cite:1]], [[cite:2]], ... citation markers, or original if injection fails
+            Answer with [[cite:1]], [[cite:2]], … markers, or original on failure.
         """
-        # Step A: Early exits
         if not getattr(config, 'enable_inline_citations', False):
             return answer
-
-        if not citations:
-            logger.debug("No citations provided, skipping injection")
-            return answer
-
-        if not answer or not answer.strip():
-            logger.debug("Empty answer, skipping injection")
+        if not citations or not answer or not answer.strip():
             return answer
 
         try:
-            return cls._inject_with_retry(answer, citations, config)
+            # Split by source_type (default to "document" for backward compat)
+            case_law_cits = [c for c in citations if getattr(c, 'source_type', 'document') == 'case_law']
+            doc_web_cits  = [c for c in citations if getattr(c, 'source_type', 'document') != 'case_law']
+
+            # Pass 1: anchor-based injection for case law (deterministic, no LLM)
+            after_pass1 = cls._inject_case_law_anchors(answer, case_law_cits)
+
+            # Collect all valid IDs (pass 1 markers already placed + pass 2 candidates)
+            all_ids = {getattr(c, 'id', None) for c in citations} - {None}
+
+            # Pass 2: end-of-sentence LLM injection for documents + web
+            final = cls._inject_doc_web_with_retry(after_pass1, doc_web_cits, config, all_ids)
+
+            return cls._renumber_citations(final)
+
         except Exception as e:
             logger.warning(f"Citation injection failed: {e}, returning original answer")
             return answer
 
+    # -------------------------------------------------------------------------
+    # Pass 1: case law — deterministic anchor replacement
+    # -------------------------------------------------------------------------
+
     @classmethod
-    def _inject_with_retry(cls, answer: str, citations: list, config) -> str:
-        """Attempt injection with one retry on validation failure."""
-        # Step B: Sanitize citations
-        sanitized = cls._sanitize_citations(citations)
+    def _inject_case_law_anchors(cls, text: str, case_law_cits: list) -> str:
+        """Insert [id] immediately after each case name or citation string.
+
+        Tries the case name first, then the bare citation string (e.g., '123 F.3d 456').
+        Each anchor is matched once per citation to avoid duplicate markers.
+        Falls through silently if no match — citation simply won't appear inline.
+        """
+        for cit in case_law_cits:
+            cit_id = getattr(cit, 'id', None)
+            if not cit_id:
+                continue
+
+            # Already injected (dedup guard for incremental search rounds)
+            if f"[{cit_id}]" in text:
+                continue
+
+            # Build candidate anchors from the document name and context fields
+            doc = getattr(cit, 'document', '') or ''
+            context = getattr(cit, 'context', '') or ''
+
+            # document is "[Case Law] Smith v. Jones" → strip prefix and any
+            # HTML highlight tags (<mark>…</mark>) injected by CourtListener
+            case_name = doc.replace('[Case Law] ', '').strip()
+            case_name = re.sub(r'</?mark>', '', case_name).strip()
+
+            # context is "Citation: 123 F.3d 456 | Court: ..." → extract citation string
+            # Strip <mark> tags that CourtListener adds for search result highlighting
+            context_clean = re.sub(r'</?mark>', '', context)
+            citation_str = ''
+            if 'Citation:' in context_clean:
+                citation_str = context_clean.split('Citation:')[1].split('|')[0].strip()
+
+            anchors = [a for a in [case_name, citation_str] if len(a) > 3]
+
+            injected = False
+            for anchor in anchors:
+                # Escape for regex; match the anchor not already followed by [id]
+                escaped = re.escape(anchor)
+                pattern = re.compile(rf'({escaped})(?!\s*\[{re.escape(cit_id)}\])')
+                new_text, n = pattern.subn(rf'\1[{cit_id}]', text, count=1)
+                if n:
+                    text = new_text
+                    injected = True
+                    break
+
+            if not injected:
+                logger.debug(f"Case law anchor not found in text for: {case_name!r}")
+
+        return text
+
+    # -------------------------------------------------------------------------
+    # Pass 2: documents + web — LLM end-of-sentence injection
+    # -------------------------------------------------------------------------
+
+    @classmethod
+    def _inject_doc_web_with_retry(
+        cls,
+        answer: str,
+        doc_web_cits: list,
+        config,
+        all_valid_ids: set,
+    ) -> str:
+        """Attempt LLM injection with one retry on validation failure."""
+        sanitized = cls._sanitize_citations(doc_web_cits)
         if not sanitized:
-            logger.debug("No valid citations after sanitization")
             return answer
 
-        # Build citation ID set for validation
-        valid_ids = {c.id for c in sanitized}
-
-        # Step C: Build prompt
         citation_block = cls._build_citation_block(sanitized)
         prompt = INLINE_CITATION_PROMPT.format(
             citation_block=citation_block,
             answer=answer,
         )
 
-        # Step D: Call LLM (attempt 1)
         annotated = cls._call_gemini_lite(prompt, config)
+        if cls._validate_response(annotated, answer, all_valid_ids):
+            return annotated
 
-        # Step E: Validate
-        if cls._validate_response(annotated, answer, valid_ids):
-            # Step F: Renumber and return
-            return cls._renumber_citations(annotated)
-
-        # Retry once
-        logger.info("First injection attempt failed validation, retrying")
+        logger.info("Pass-2 injection attempt 1 failed validation, retrying")
         annotated = cls._call_gemini_lite(prompt, config)
+        if cls._validate_response(annotated, answer, all_valid_ids):
+            return annotated
 
-        if cls._validate_response(annotated, answer, valid_ids):
-            return cls._renumber_citations(annotated)
-
-        # Both attempts failed
-        logger.warning("Citation injection validation failed after retry, using original")
+        logger.warning("Pass-2 citation injection failed after retry, keeping Pass-1 result")
         return answer
 
     @classmethod
@@ -143,15 +211,16 @@ class InlineCitationService:
         """Extract citation data without truncation."""
         sanitized = []
 
-        for c in citations[:MAX_CITATIONS]:
+        for c in citations[:MAX_DOC_WEB_CITATIONS]:
             try:
                 # Extract ID
                 cit_id = getattr(c, 'id', None)
                 if not cit_id:
                     continue
 
-                # Use document path directly
+                # Use document path directly; strip CourtListener highlight tags
                 document = getattr(c, 'document', '') or 'unknown'
+                document = re.sub(r'</?mark>', '', document).strip()
 
                 # Extract page
                 page = getattr(c, 'page', None)

@@ -739,3 +739,32 @@ Synthesize all external research:
     "combined_framework": "How case law + regulations together inform this situation",
     "summary": "Unified external legal context"
 }}"""
+
+
+P_SELECT_EXTERNAL_CITATIONS = """Select which external sources are actually used in this answer.
+
+ANSWER:
+{answer}
+
+CASE LAW SOURCES (0-based index):
+{case_law_list}
+
+WEB SOURCES (0-based index):
+{web_list}
+
+INSTRUCTIONS:
+
+For CASE LAW: select sources whose case name or citation string is explicitly mentioned,
+or whose legal principle is clearly applied in the answer. Be selective — only include
+cases the answer genuinely relies on.
+
+For WEB: select sources whose specific content (a regulation, standard, or requirement)
+is referenced or applied in the answer.
+
+Return JSON only — no explanation:
+{{
+    "case_law_indices": [0, 2],
+    "web_indices": [1]
+}}
+
+If nothing is relevant for a category, return an empty list for that key."""

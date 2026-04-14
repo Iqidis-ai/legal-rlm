@@ -108,8 +108,11 @@ class Citation:
     context: str
     relevance: str
     timestamp: datetime = field(default_factory=datetime.now)
-    url: Optional[str] = None  # Document URL if available
+    url: Optional[str] = None   # Document URL if available
     mime: Optional[str] = None  # Document MIME type if available
+    # Source type: "document" | "case_law" | "web"
+    # Drives separate inline-citation injection passes in InlineCitationService
+    source_type: str = "document"
 
     @classmethod
     def create(
@@ -121,6 +124,7 @@ class Citation:
         relevance: str,
         url: Optional[str] = None,
         mime: Optional[str] = None,
+        source_type: str = "document",
     ) -> "Citation":
         return cls(
             id=str(uuid.uuid4())[:8],
@@ -131,6 +135,7 @@ class Citation:
             relevance=relevance,
             url=url,
             mime=mime,
+            source_type=source_type,
         )
 
 
@@ -423,6 +428,7 @@ class InvestigationState:
         relevance: str,
         url: Optional[str] = None,
         mime: Optional[str] = None,
+        source_type: str = "document",
     ) -> Optional[Citation]:
         """Add a citation if not duplicate."""
         text_normalized = " ".join(text.lower().split())[:100]
@@ -441,6 +447,7 @@ class InvestigationState:
             relevance=relevance,
             url=url,
             mime=mime,
+            source_type=source_type,
         )
         self.citations.append(citation)
         return citation
@@ -946,6 +953,7 @@ class InvestigationState:
                     "timestamp": c.timestamp.isoformat(),
                     "url": c.url,
                     "mime": c.mime,
+                    "source_type": c.source_type,
                 }
                 for c in self.citations
             ],
@@ -1055,6 +1063,7 @@ class InvestigationState:
                 timestamp=datetime.fromisoformat(c["timestamp"]),
                 url=c.get("url"),
                 mime=c.get("mime"),
+                source_type=c.get("source_type", "document"),
             )
             state.citations.append(citation)
 

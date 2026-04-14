@@ -238,6 +238,8 @@ class RLMEngine:
         repo = MatterRepository(repository_path)
         self.repo = repo  # Store for methods that need repo access (e.g., _load_pinned_documents)
         self._external_research = {"case_law": [], "web": [], "analysis": {}}  # Reset with proper structure
+        self._staged_case_law: list[dict] = []   # All case law results; committed after selection
+        self._staged_web: list[dict] = []         # All web results; committed after selection
         self._context = context  # Store context for use in decision functions
         state = InvestigationState.create(query, str(repository_path))
 
@@ -636,20 +638,55 @@ class RLMEngine:
 
         return "\n\n".join(parts) if parts else "No results found."
 
-    def _add_external_citations(self, state: InvestigationState):
-        """Add citations for external research results.
+    def _add_external_citations(self):
+        """Stage all external search results for later selection.
 
-        This is the single canonical method for turning external search results
-        into Citation objects.  It is called from _execute_external_searches()
-        so that both the direct-answer path and the investigation-loop path go
-        through exactly one code path.  state.add_citation() deduplicates, so
-        calling this after each incremental search batch is safe.
+        Stores every case law and web result (no cap) into engine-level staging
+        lists.  The actual commit to state.citations happens in
+        _commit_external_citations() after synthesis, once we know which entries
+        the answer actually references.
+
+        Called from _execute_external_searches() so both the direct-answer path
+        and the investigation-loop path share one code path.
         """
         if not self._external_research:
             return
 
-        # Add citations for case law
-        for case in self._external_research.get("case_law", [])[:5]:
+        # Accumulate into engine-level staging lists (extend so multiple search
+        # rounds are all preserved; dedup by case_name / url key)
+        seen_cases = {c.get("case_name") for c in self._staged_case_law}
+        for case in self._external_research.get("case_law", []):
+            if case.get("case_name") not in seen_cases:
+                self._staged_case_law.append(case)
+                seen_cases.add(case.get("case_name"))
+
+        seen_web = {r.get("url") for r in self._staged_web}
+        for result in self._external_research.get("web", []):
+            if result.get("url") not in seen_web:
+                self._staged_web.append(result)
+                seen_web.add(result.get("url"))
+
+    async def _commit_external_citations(self, state: InvestigationState, answer: str):
+        """Select relevant external citations and commit them to state.citations.
+
+        Runs after synthesis so selection can be grounded in the actual answer text.
+        Uses LITE model for selection; falls back to first N on any failure.
+        Failures are fully isolated — the answer text is never affected.
+        """
+        if not self._staged_case_law and not self._staged_web:
+            return
+
+        # LLM selects which indices to keep
+        cl_indices, web_indices = await decisions.select_external_citations(
+            answer=answer,
+            case_law=self._staged_case_law,
+            web=self._staged_web,
+            client=self.client,
+        )
+
+        # Commit selected case law citations
+        for i in cl_indices:
+            case = self._staged_case_law[i]
             citation = state.add_citation(
                 document=f"[Case Law] {case.get('case_name', 'Unknown Case')}",
                 page=None,
@@ -658,12 +695,14 @@ class RLMEngine:
                 relevance="External case law research",
                 url=case.get('url'),
                 mime=case.get('mime'),
+                source_type="case_law",
             )
             if citation and self.on_citation:
                 self.on_citation(citation)
 
-        # Add citations for web results
-        for result in self._external_research.get("web", [])[:5]:
+        # Commit selected web citations
+        for i in web_indices:
+            result = self._staged_web[i]
             citation = state.add_citation(
                 document=f"[Web] {result.get('title', 'Unknown Source')}",
                 page=None,
@@ -672,6 +711,7 @@ class RLMEngine:
                 relevance="External regulatory research",
                 url=result.get('url'),
                 mime=result.get('mime'),
+                source_type="web",
             )
             if citation and self.on_citation:
                 self.on_citation(citation)
@@ -1160,8 +1200,8 @@ class RLMEngine:
         # Store in state findings for reference
         state.findings["external_research"] = self._external_research
 
-        # Add citations via the canonical helper (deduplication is handled by state.add_citation)
-        self._add_external_citations(state)
+        # Stage external results for post-synthesis selection
+        self._add_external_citations()
 
     async def _investigate_loop(
         self,
@@ -1912,6 +1952,12 @@ class RLMEngine:
             self._telemetry.end_step(t_step_syn)
 
         state.findings["final_output"] = response
+
+        # Commit external citations now that we have the answer text.
+        # Selection is grounded in what was actually written; failures fall back
+        # to first-N and never affect the answer text itself.
+        await self._commit_external_citations(state, response)
+
         output_len = len(response)
         total_citations = len(state.citations)
         total_facts = len(state.findings.get("accumulated_facts", []))
