@@ -2639,8 +2639,68 @@ _css = """
     .viz-detail-block { margin-top: 10px; font-size: 12px; color: #334155; }
     .viz-detail-block ul { margin: 6px 0 0 0; padding-left: 18px; }
     .viz-detail-block li { margin-bottom: 6px; }
-    /* Strip Gradio 6 default border/background from the intelligence sidebar column */
-    .intelligence-sidebar { border: none !important; background: transparent !important; box-shadow: none !important; padding: 0 !important; }
+    /* Intelligence sidebar — dark navy panel */
+    .intelligence-sidebar {
+        border: none !important;
+        background: #0f172a !important;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.25) !important;
+        padding: 18px !important;
+        border-radius: 18px !important;
+    }
+    /* Markdown headers and text inside dark sidebar */
+    .intelligence-sidebar .prose h3,
+    .intelligence-sidebar .prose h4,
+    .intelligence-sidebar .prose p,
+    .intelligence-sidebar .prose strong {
+        color: #f1f5f9 !important;
+    }
+    .intelligence-sidebar .prose hr {
+        border-color: rgba(255,255,255,0.08) !important;
+        margin: 10px 0 !important;
+    }
+    /* Force 3-column stats grid inside sidebar */
+    .intelligence-sidebar .viz-card-grid {
+        grid-template-columns: repeat(3, 1fr) !important;
+        gap: 8px !important;
+    }
+    /* Dark card styling */
+    .intelligence-sidebar .viz-card {
+        background: rgba(255,255,255,0.06) !important;
+        border-color: rgba(255,255,255,0.09) !important;
+        padding: 10px 10px !important;
+    }
+    .intelligence-sidebar .viz-card.tone-amber { border-color: rgba(217,119,6,0.30) !important; }
+    .intelligence-sidebar .viz-card.tone-green  { border-color: rgba(21,128,61,0.30) !important; }
+    .intelligence-sidebar .viz-card-title { color: #94a3b8 !important; }
+    .intelligence-sidebar .viz-card-value { color: #f8fafc !important; }
+    .intelligence-sidebar .viz-card-detail { color: #64748b !important; }
+    /* Dark panel styling */
+    .intelligence-sidebar .viz-panel {
+        background: rgba(255,255,255,0.04) !important;
+        border-color: rgba(255,255,255,0.07) !important;
+    }
+    .intelligence-sidebar .viz-panel-title { color: #e2e8f0 !important; }
+    .intelligence-sidebar .viz-subtitle { color: #94a3b8 !important; }
+    .intelligence-sidebar .viz-footnote { color: #475569 !important; }
+    /* Dark bar rows */
+    .intelligence-sidebar .viz-bar-label { color: #cbd5e1 !important; }
+    .intelligence-sidebar .viz-bar-track { background: rgba(255,255,255,0.10) !important; }
+    .intelligence-sidebar .viz-bar-meta { color: #64748b !important; }
+    /* Dark list rows */
+    .intelligence-sidebar .viz-list-row {
+        color: #cbd5e1 !important;
+        border-color: rgba(255,255,255,0.07) !important;
+    }
+    .intelligence-sidebar .viz-list-columns ul { color: #94a3b8 !important; }
+    .intelligence-sidebar .viz-list-columns li { color: #94a3b8 !important; }
+    /* Dark empty state */
+    .intelligence-sidebar .viz-empty {
+        border-color: rgba(255,255,255,0.08) !important;
+        color: #475569 !important;
+        background: rgba(255,255,255,0.02) !important;
+    }
+    /* Refresh button row inside sidebar */
+    .intelligence-sidebar button { background: rgba(255,255,255,0.07) !important; color: #cbd5e1 !important; border-color: rgba(255,255,255,0.12) !important; }
     """
 
 
@@ -2648,7 +2708,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
     state = AppState(api_key=api_key)
     _s3_mode = _get_storage_mode() == "s3"
 
-    with gr.Blocks(title="Irys — Legal Intelligence", theme=_theme, css=_css) as demo:
+    with gr.Blocks(title="Irys — Legal Intelligence") as demo:
 
         # Hidden matter_id state — auto-populated, never shown prominently
         matter_id_box = gr.Textbox(visible=False)
@@ -3402,7 +3462,7 @@ def main():
         print("No GEMINI_API_KEY set — pass --api-key or set the env var")
 
     demo = create_app(api_key=api_key)
-    demo.launch(server_port=args.port, share=args.share)
+    demo.launch(server_port=args.port, share=args.share, theme=_theme, css=_css)
 
 
 if __name__ == "__main__":
