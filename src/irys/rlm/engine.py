@@ -607,8 +607,7 @@ class RLMEngine:
         elif can_answer_from_docs:
             await self._emit_step_async(state, StepType.THINKING, "Proceeding with documents only (no external search needed)", visible=False)
 
-        # Step 5: Add citations and synthesize
-        self._add_external_citations(state)
+        # Step 5: Synthesize (citations already added inside _execute_external_searches)
         state.findings["mode"] = "direct_answer"
         await self._synthesize(state, is_simple)
 
@@ -638,7 +637,14 @@ class RLMEngine:
         return "\n\n".join(parts) if parts else "No results found."
 
     def _add_external_citations(self, state: InvestigationState):
-        """Add citations for external research results."""
+        """Add citations for external research results.
+
+        This is the single canonical method for turning external search results
+        into Citation objects.  It is called from _execute_external_searches()
+        so that both the direct-answer path and the investigation-loop path go
+        through exactly one code path.  state.add_citation() deduplicates, so
+        calling this after each incremental search batch is safe.
+        """
         if not self._external_research:
             return
 
@@ -647,7 +653,7 @@ class RLMEngine:
             citation = state.add_citation(
                 document=f"[Case Law] {case.get('case_name', 'Unknown Case')}",
                 page=None,
-                text=case.get('snippet', '') or '',
+                text=case.get('snippet', '') or case.get('opinion_text', '') or '',
                 context=f"Citation: {case.get('citation', 'N/A')} | Court: {case.get('court', 'N/A')}",
                 relevance="External case law research",
                 url=case.get('url'),
@@ -1154,34 +1160,8 @@ class RLMEngine:
         # Store in state findings for reference
         state.findings["external_research"] = self._external_research
 
-        # Add citations for external sources (so they appear in Citations tab)
-        if self._external_research.get("case_law"):
-            for case in self._external_research["case_law"][:5]:
-                citation = state.add_citation(
-                    document=f"[Case Law] {case.get('case_name', 'Unknown Case')}",
-                    page=None,
-                    text=case.get('snippet', '') or case.get('opinion_text', '') or '',
-                    context=f"Citation: {case.get('citation', 'N/A')} | Court: {case.get('court', 'N/A')}",
-                    relevance="External case law research",
-                    url=case.get('url'),
-                    mime=case.get('mime'),
-                )
-                if citation and self.on_citation:
-                    self.on_citation(citation)
-
-        if self._external_research.get("web"):
-            for result in self._external_research["web"][:5]:
-                citation = state.add_citation(
-                    document=f"[Web] {result.get('title', 'Unknown Source')}",
-                    page=None,
-                    text=result.get('content', '') or '',
-                    context=f"URL: {result.get('url', 'N/A')}",
-                    relevance="External regulatory research",
-                    url=result.get('url'),
-                    mime=result.get('mime'),
-                )
-                if citation and self.on_citation:
-                    self.on_citation(citation)
+        # Add citations via the canonical helper (deduplication is handled by state.add_citation)
+        self._add_external_citations(state)
 
     async def _investigate_loop(
         self,
