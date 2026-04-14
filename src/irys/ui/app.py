@@ -2641,11 +2641,28 @@ _css = """
     .viz-detail-block li { margin-bottom: 6px; }
     /* Intelligence sidebar — dark navy panel */
     .intelligence-sidebar {
+        /* Override Gradio CSS variables so ALL child .block wrappers become transparent */
+        --block-background-fill: transparent;
+        --block-border-color: transparent;
+        --block-border-width: 0px;
+        --block-shadow: none;
+        --block-padding: 0px;
+        --block-radius: 0px;
+        --block-label-background-fill: transparent;
+        --block-label-border-color: transparent;
+        --section-header-text-size: 0px;
         border: none !important;
         background: #0f172a !important;
         box-shadow: 0 4px 24px rgba(0,0,0,0.25) !important;
         padding: 18px !important;
         border-radius: 18px !important;
+    }
+    /* Strip backgrounds from Gradio 6 wrapper divs so dark navy column shows through */
+    .intelligence-sidebar > div,
+    .intelligence-sidebar > div > div {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
     }
     /* Markdown headers and text inside dark sidebar */
     .intelligence-sidebar .prose h3,
