@@ -2639,6 +2639,8 @@ _css = """
     .viz-detail-block { margin-top: 10px; font-size: 12px; color: #334155; }
     .viz-detail-block ul { margin: 6px 0 0 0; padding-left: 18px; }
     .viz-detail-block li { margin-bottom: 6px; }
+    /* Strip Gradio 6 default border/background from the intelligence sidebar column */
+    .intelligence-sidebar { border: none !important; background: transparent !important; box-shadow: none !important; padding: 0 !important; }
     """
 
 
@@ -2817,7 +2819,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     )
 
             # ---------- RIGHT: Intelligence sidebar ----------
-            with gr.Column(scale=1, min_width=280):
+            with gr.Column(scale=1, min_width=280, elem_classes=["intelligence-sidebar"]):
                 gr.Markdown("### Matter Intelligence")
                 overview_md = gr.HTML(
                     "<div class='viz-empty'>Run your first investigation to see matter intelligence here.</div>"
