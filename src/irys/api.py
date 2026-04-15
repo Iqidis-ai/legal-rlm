@@ -227,9 +227,7 @@ class Irys:
                 citations=state.citations,
                 config=self.config,
             )
-            # Reorder in-place so state.citations[N-1] matches [[cite:N]] in text.
-            # The panel on the frontend indexes citations by position, so this
-            # alignment prevents cite numbers from pointing to the wrong source.
+
             state.citations[:] = reordered_citations
 
             # Attach injection diagnostics to telemetry for DB persistence

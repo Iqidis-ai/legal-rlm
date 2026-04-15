@@ -27,10 +27,10 @@ logger = logging.getLogger("irys.inline_citation")
 # ── Citation budget ──────────────────────────────────────────────────────
 # Hard ceiling across all types.  Per-type soft caps only kick in when the
 # total exceeds MAX_TOTAL.
-MAX_TOTAL_CITATIONS = 100
+MAX_TOTAL_CITATIONS = 120
 SOFT_CAP_DOCUMENT = 35
 SOFT_CAP_WEB = 35
-SOFT_CAP_CASE_LAW = 30
+SOFT_CAP_CASE_LAW = 50
 
 # Per-citation text limit for the injection prompt (chars).  We only need
 # enough for the LLM to identify anchors; the full text lives elsewhere.
@@ -49,14 +49,23 @@ CITATIONS:
 
 INSTRUCTIONS:
 
-Read the ANSWER sentence by sentence.
+CASE LAW citations — place the marker immediately after the mention:
+- Whenever a case name, party name, or reporter citation string (e.g. "168 S.W.3d 802") appears in the text, insert the citation ID directly after that mention.
+- This applies everywhere: body text, markdown headings, parentheticals, and footnotes.
+- Match even when paraphrased (e.g. "the Kroger decision" → Kroger Co. v. Persley [id]).
+- If a line contains the full citation (e.g. "*City of Keller v. Wilson*, 168 S.W.3d 802"), place the ID immediately after the reporter string.
+- If the same case is mentioned multiple times, insert the marker each time.
 
-For each sentence:
-- Insert a citation ID at the END of the sentence if the sentence shares at least one valid anchor with the citation text.
-- Valid anchors: exact numbers, exact dates, named entities, distinct multi-word phrases, case names.
-- For case law: match by case name, party names, or legal citation string even if paraphrased.
-- If multiple citations match, insert all IDs separated by a space: [id1] [id2]
-- If no citation matches, leave the sentence unchanged.
+DOCUMENT and WEB citations — place the marker at the end of the sentence:
+- Read sentence by sentence.
+- Insert the citation ID at the END of the sentence if the sentence contains a valid anchor from the citation text.
+- Valid anchors: exact numbers, exact dates, named entities, distinct multi-word phrases.
+- If multiple citations match a sentence, insert all IDs at the end: [id1] [id2]
+
+GENERAL:
+- Do not add a marker where there is no matching anchor.
+- Do not invent or modify any citation IDs.
+- Leave all text that has no match completely unchanged.
 
 OUTPUT:
 Return the full ANSWER text with citation markers inserted.
@@ -74,6 +83,7 @@ class SanitizedCitation:
     # Case law enrichment (None for non-case-law)
     case_name: Optional[str] = None
     legal_citation: Optional[str] = None
+    court: Optional[str] = None
 
 
 class InlineCitationService:
@@ -152,6 +162,7 @@ class InlineCitationService:
             )
 
             reordered = cls._reorder_by_uuid_appearance(final, citations)
+            reordered = cls._trim_external_citations(reordered, matched_ids)
             return cls._renumber_citations(final), reordered, diag
 
         except Exception as e:
@@ -178,6 +189,37 @@ class InlineCitationService:
         reordered = [cit_by_id[cid] for cid in seen_ids if cid in cit_by_id]
         reordered += [c for c in citations if getattr(c, 'id', None) not in referenced]
         return reordered
+
+    # -------------------------------------------------------------------------
+    # External citation trimming — keep matched + small fill for unmatched
+    # -------------------------------------------------------------------------
+
+    _FILL_TO = 5  # per-type minimum for case law and web
+
+    @classmethod
+    def _trim_external_citations(cls, reordered: list, matched_ids: set) -> list:
+        """Drop excess unmatched external citations after injection.
+
+        Rules:
+        - Document citations: always kept in full.
+        - Case law / web that got an inline marker: always kept.
+        - Case law / web with no marker: kept only to fill up to _FILL_TO per
+          type, to serve as reference items when inline coverage is low.
+        """
+        matched     = [c for c in reordered if getattr(c, 'id', None) in matched_ids]
+        unmatched   = [c for c in reordered if getattr(c, 'id', None) not in matched_ids]
+
+        unmatched_doc = [c for c in unmatched if c.source_type == "document"]
+        unmatched_cl  = [c for c in unmatched if c.source_type == "case_law"]
+        unmatched_web = [c for c in unmatched if c.source_type == "web"]
+
+        matched_cl  = sum(1 for c in matched if c.source_type == "case_law")
+        matched_web = sum(1 for c in matched if c.source_type == "web")
+
+        extra_cl  = unmatched_cl[:max(0, cls._FILL_TO - matched_cl)]
+        extra_web = unmatched_web[:max(0, cls._FILL_TO - matched_web)]
+
+        return matched + unmatched_doc + extra_cl + extra_web
 
     # -------------------------------------------------------------------------
     # Citation selection — soft caps per type, take all if under budget
@@ -319,27 +361,38 @@ class InlineCitationService:
 
                 page = getattr(c, 'page', None)
 
-                # Text excerpt — cap length for prompt budget
                 text = getattr(c, 'text', '') or ''
-                text_excerpt = text.strip()[:MAX_CITATION_TEXT_CHARS]
+                context = getattr(c, 'context', '') or ''
 
-                if not text_excerpt:
-                    continue
-
-                # Case law enrichment
                 case_name = None
                 legal_citation = None
+                court = None
+
                 if source_type == 'case_law':
-                    case_name, legal_citation = cls._extract_case_law_metadata(c)
+                    case_name, legal_citation, court = cls._extract_case_law_metadata(c)
+                    # For case law, snippet (text) is often empty.
+                    # Always include context; append snippet if available.
+                    text_excerpt = context.strip()
+                    snippet = text.strip()[:MAX_CITATION_TEXT_CHARS]
+                    if snippet:
+                        text_excerpt = f"{text_excerpt}\nSnippet: {snippet}" if text_excerpt else snippet
+                    text_excerpt = text_excerpt[:MAX_CITATION_TEXT_CHARS]
+                else:
+                    text_excerpt = text.strip()[:MAX_CITATION_TEXT_CHARS]
+
+                if not text_excerpt and not case_name:
+                    logger.debug("Skipping citation %s (%s): no usable content", cit_id, document)
+                    continue
 
                 sanitized.append(SanitizedCitation(
                     id=cit_id,
                     source_type=source_type,
                     filename=document,
                     page=page,
-                    text_excerpt=text_excerpt,
+                    text_excerpt=text_excerpt or '',
                     case_name=case_name,
                     legal_citation=legal_citation,
+                    court=court,
                 ))
             except Exception as e:
                 logger.debug(f"Failed to sanitize citation: {e}")
@@ -348,24 +401,25 @@ class InlineCitationService:
         return sanitized
 
     @classmethod
-    def _extract_case_law_metadata(cls, cit) -> tuple[Optional[str], Optional[str]]:
-        """Pull case name and legal citation string from a case law Citation."""
+    def _extract_case_law_metadata(cls, cit) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """Pull case name, legal citation string, and court from a case law Citation."""
         doc = getattr(cit, 'document', '') or ''
         context = getattr(cit, 'context', '') or ''
 
-        # document is "[Case Law] Smith v. Jones" → strip prefix + <mark> tags
-        case_name = doc.replace('[Case Law] ', '').strip()
-        case_name = re.sub(r'</?mark>', '', case_name).strip() or None
+        # document is "[Case Law] Smith v. Jones" → strip prefix
+        case_name = doc.replace('[Case Law] ', '').strip() or None
 
-        # context is "Citation: 123 F.3d 456 | Court: ..." → extract citation string
-        context_clean = re.sub(r'</?mark>', '', context)
+        # context is "Citation: 123 F.3d 456 | Court: Tex. 2005"
         legal_citation = None
-        if 'Citation:' in context_clean:
-            raw = context_clean.split('Citation:')[1].split('|')[0].strip()
+        court = None
+        if 'Citation:' in context:
+            raw = context.split('Citation:')[1].split('|')[0].strip()
             if raw and raw.lower() != 'none':
                 legal_citation = raw
+        if 'Court:' in context:
+            court = context.split('Court:')[1].strip() or None
 
-        return case_name, legal_citation
+        return case_name, legal_citation, court
 
     @classmethod
     def _build_citation_block(cls, sanitized: list[SanitizedCitation]) -> str:
@@ -374,17 +428,27 @@ class InlineCitationService:
         for c in sanitized:
             parts = [f"ID={c.id}"]
 
-            if c.source_type == 'case_law' and c.case_name:
-                parts.append(f"CASE_NAME={c.case_name}")
+            if c.source_type == 'case_law':
+                if c.case_name:
+                    parts.append(f"CASE_NAME={c.case_name}")
                 if c.legal_citation:
                     parts.append(f"LEGAL_CITATION={c.legal_citation}")
+                if c.court:
+                    parts.append(f"COURT={c.court}")
+            elif c.source_type == 'web':
+                # Strip the [Web] prefix for cleaner display
+                name = c.filename.replace('[Web] ', '')
+                parts.append(f"SOURCE={name}")
             else:
                 parts.append(f"FILE={c.filename}")
                 if c.page is not None:
                     parts.append(f"PAGE={c.page}")
 
             header = " | ".join(parts)
-            block = f"{header}\nTEXT:\n{c.text_excerpt}"
+            if c.text_excerpt:
+                block = f"{header}\nTEXT:\n{c.text_excerpt}"
+            else:
+                block = header
             blocks.append(block)
 
         return "\n\n".join(blocks)
