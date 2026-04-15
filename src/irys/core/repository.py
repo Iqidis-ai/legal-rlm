@@ -320,7 +320,12 @@ class MatterRepository:
         return self._metadata
 
     def _compute_metadata(self) -> None:
-        """Compute and cache repository metadata."""
+        """Compute and cache repository metadata (sync, fitz-only — no OCR).
+
+        Prefer _compute_metadata_async() in async contexts so that OCR runs
+        and _doc_cache is warmed with real content before anything else reads it.
+        This sync fallback is kept for non-async callers (e.g. add_learning).
+        """
         files = self.list_files()
         total_chars = 0
         for f in files[:50]:  # Sample first 50 files to estimate
@@ -329,6 +334,36 @@ class MatterRepository:
                 if Path(f.path).suffix.lower() in self._ASYNC_ONLY_EXTENSIONS:
                     continue
                 doc = self.read(f.path)
+                total_chars += len(doc.full_text)
+            except Exception:
+                pass
+        # Extrapolate if we sampled
+        if len(files) > 50:
+            total_chars = int(total_chars * len(files) / 50)
+        self._metadata = RepositoryMetadata(
+            total_files=len(files),
+            total_chars=total_chars,
+        )
+
+    async def _compute_metadata_async(self) -> None:
+        """Async version of _compute_metadata — uses read_async() so OCR runs.
+
+        This must be called (and awaited) before any sync access to
+        ``metadata`` or ``is_small_repo``.  It does two things at once:
+
+        1. Populates ``_doc_cache`` with OCR-extracted content for every
+           sampled file, so subsequent ``read_async()`` / ``read()`` calls
+           within the same session are instant cache hits with *real* text.
+
+        2. Sets ``_metadata.total_chars`` from the OCR-accurate char counts,
+           making the ``is_small_repo`` threshold check correct even for
+           repos that consist entirely of scanned PDFs.
+        """
+        files = self.list_files()
+        total_chars = 0
+        for f in files[:50]:  # same 50-file sample limit as the sync version
+            try:
+                doc, _ = await self.read_async(f.path)
                 total_chars += len(doc.full_text)
             except Exception:
                 pass

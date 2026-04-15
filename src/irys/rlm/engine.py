@@ -237,6 +237,13 @@ class RLMEngine:
         """
         repo = MatterRepository(repository_path)
         self.repo = repo  # Store for methods that need repo access (e.g., _load_pinned_documents)
+
+        # Pre-warm _doc_cache with OCR'd content and set _metadata accurately.
+        # Must happen before any access to repo.metadata or repo.is_small_repo so
+        # those properties never fall through to the sync _compute_metadata() path,
+        # which would cache fitz-only (pre-OCR) content and poison the cache.
+        await repo._compute_metadata_async()
+
         self._external_research = {"case_law": [], "web": [], "analysis": {}}  # Reset with proper structure
         self._staged_case_law: list[dict] = []   # All case law results; committed after selection
         self._staged_web: list[dict] = []         # All web results; committed after selection
