@@ -1589,7 +1589,12 @@ def _fmt_assertions(assertions: list) -> str:
     for a in assertions:
         assertion_id = _escape(a.get("id", "?"))
         prop = _escape(a.get("proposition_text") or "")
-        state = _escape(a.get("belief_state") or "—")
+        state_raw = a.get("belief_state") or "—"
+        state_cls = state_raw.lower() if state_raw != "—" else "unknown"
+        state_cell = (
+            f"<span class='belief-pill belief-{state_cls}'>{_escape(state_raw)}</span>"
+            if state_raw != "—" else "—"
+        )
         conf = f"{float(a.get('confidence', 0)):.2f}" if a.get("confidence") is not None else "—"
         src_roles = a.get("source_roles", [])
         if len(src_roles) > 1:
@@ -1609,10 +1614,10 @@ def _fmt_assertions(assertions: list) -> str:
             src = _escape(src_role)
         speech = _escape(a.get("speech_act") or a.get("primary_speech_act") or "—")
         rows_html += (
-            "<tr>"
+            f"<tr class='assertions-row' onclick='irysSelectFact(\"{assertion_id}\")' style='cursor:pointer'>"
             f"<td style='text-align:center'>{icon}</td>"
             f"<td>{prop}</td>"
-            f"<td>{state}</td>"
+            f"<td>{state_cell}</td>"
             f"<td style='text-align:right'>{conf}</td>"
             f"<td>{src}</td>"
             f"<td>{speech}</td>"
@@ -2864,6 +2869,40 @@ _css = """
     .gradio-container * { box-sizing: border-box; }
     .gradio-container td, .gradio-container th { overflow-wrap: break-word; }
     .gradio-container img { max-width: 100%; height: auto; }
+
+    /* ── Assertions: clickable rows ──────────────────────── */
+    .assertions-row:hover { background: var(--background-fill-secondary, #f8fafc); }
+
+    /* ── Belief state pills ──────────────────────────────── */
+    .belief-pill {
+        display: inline-block; border-radius: 999px; padding: 2px 8px;
+        font-size: 10px; font-weight: 700; text-transform: capitalize;
+        letter-spacing: 0.04em;
+    }
+    .belief-alleged    { background: rgba(217,119,6,0.12);  color: #b45309; }
+    .belief-argued     { background: rgba(30,64,175,0.10);  color: #1e40af; }
+    .belief-admitted   { background: rgba(21,128,61,0.12);  color: #166534; }
+    .belief-operative  { background: rgba(6,95,70,0.12);    color: #065f46; }
+    .belief-performed  { background: rgba(15,118,110,0.12); color: #0f766e; }
+    .belief-disputed   { background: rgba(194,65,12,0.12);  color: #c2410c; }
+    .belief-superseded { background: rgba(71,85,105,0.12);  color: #475569; }
+    .belief-withdrawn  { background: rgba(107,114,128,0.12);color: #6b7280; }
+    .belief-inferred   { background: rgba(109,40,217,0.12); color: #6d28d9; }
+    .belief-resolved   { background: rgba(55,48,163,0.12);  color: #3730a3; }
+    .belief-unknown    { background: rgba(148,163,184,0.18);color: #475569; }
+    .belief-legend { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+
+    /* ── Correction result card ──────────────────────────── */
+    .correction-result {
+        display: flex; align-items: flex-start; gap: 10px;
+        padding: 10px 14px; border-radius: 8px; font-size: 13px;
+        border: 1px solid;
+    }
+    .correction-ok  { background: rgba(21,128,61,0.08); border-color: rgba(21,128,61,0.25); color: #166534; }
+    .correction-err { background: rgba(185,28,28,0.08); border-color: rgba(185,28,28,0.25); color: #b91c1c; }
+    .correction-icon { font-size: 18px; line-height: 1; flex-shrink: 0; }
+    .correction-detail { color: var(--body-text-color, #334155); font-size: 12px; }
+    .correction-result-empty { color: var(--body-text-color-subdued, #64748b); font-size: 12px; font-style: italic; }
     """
 
 
@@ -3091,13 +3130,24 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         ],
                         scale=1,
                     )
+                gr.HTML(
+                    "<div class='belief-legend'>"
+                    + "".join(
+                        f"<span class='belief-pill belief-{s}'>{s}</span> "
+                        for s in [
+                            "alleged", "argued", "admitted", "operative", "performed",
+                            "disputed", "superseded", "withdrawn", "inferred", "resolved",
+                        ]
+                    )
+                    + "</div>"
+                )
                 correction_reason = gr.Textbox(
                     label="Why is this correction needed?",
                     placeholder="e.g. This is from the signed contract, not the complaint",
                     lines=2,
                 )
                 correction_btn = gr.Button("Apply Correction", variant="primary")
-                correction_result = gr.Textbox(label="Result", interactive=False)
+                correction_result = gr.HTML("<div class='correction-result-empty'>Apply a correction to see the result here.</div>")
 
         with gr.Accordion("Financials — payments, damages, and numeric disputes", open=False):
             gr.Markdown(
@@ -3519,16 +3569,30 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         )
 
         # --- Correction ---
+        def _fmt_correction_result(result_text: str) -> str:
+            ok = result_text.startswith("✅")
+            body = result_text[2:].strip() if result_text[:2] in ("✅", "❌") else result_text
+            label = "Correction applied" if ok else "Correction failed"
+            icon = "✅" if ok else "❌"
+            css_class = "correction-ok" if ok else "correction-err"
+            return (
+                f"<div class='correction-result {css_class}'>"
+                f"<span class='correction-icon'>{icon}</span>"
+                f"<div><strong>{label}</strong><br>"
+                f"<span class='correction-detail'>{_escape(body)}</span></div>"
+                f"</div>"
+            )
+
         def _correct_and_refresh(mid, aid, new_state_str, reason):
             result_text = state.do_correct_assertion(mid, aid, new_state_str, reason)
             if result_text.startswith("\u2705"):
                 return (
-                    result_text,
+                    _fmt_correction_result(result_text),
                     state.load_assertions(mid),
                     state.load_issues(mid),
                     state.load_overview(mid),
                 )
-            return result_text, gr.update(), gr.update(), gr.update()
+            return _fmt_correction_result(result_text), gr.update(), gr.update(), gr.update()
 
         correction_btn.click(
             fn=_correct_and_refresh,
@@ -3549,6 +3613,30 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box, research_mode],
             outputs=[resume_result],
         )
+
+        # Inject JS: clicking an assertions row fills the Fact ID textbox
+        _fact_select_js = """
+() => {
+    window.irysSelectFact = function(id) {
+        const labels = document.querySelectorAll('label');
+        for (const lbl of labels) {
+            if (lbl.textContent.includes('Fact ID')) {
+                const box = lbl.closest('.block')?.querySelector('textarea, input[type=text]');
+                if (box) {
+                    const desc = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value') ||
+                        Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+                    desc.set.call(box, id);
+                    box.dispatchEvent(new Event('input', { bubbles: true }));
+                    box.dispatchEvent(new Event('change', { bubbles: true }));
+                    break;
+                }
+            }
+        }
+    };
+}
+"""
+        demo.load(fn=None, js=_fact_select_js)
 
         # Inject JS to enable folder selection on the folder-upload inputs
         if _s3_mode:
