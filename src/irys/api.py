@@ -222,15 +222,17 @@ class Irys:
         # Post-processing: inline citation injection (optional)
         if self.config.enable_inline_citations:
             from .service.inline_citation_service import InlineCitationService
-            output, reordered_citations = InlineCitationService.inject(
+            output, reordered_citations, injection_diag = InlineCitationService.inject(
                 answer=output,
                 citations=state.citations,
                 config=self.config,
             )
-            # Reorder in-place so state.citations[N-1] matches [[cite:N]] in text.
-            # The panel on the frontend indexes citations by position, so this
-            # alignment prevents cite numbers from pointing to the wrong source.
+
             state.citations[:] = reordered_citations
+
+            # Attach injection diagnostics to telemetry for DB persistence
+            if injection_diag and state.telemetry_summary is not None:
+                state.telemetry_summary["citation_injection"] = injection_diag
 
         return InvestigationResult(
             state=state,
