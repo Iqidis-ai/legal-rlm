@@ -1515,7 +1515,10 @@ class RLMEngine:
                 cache.add_search(search_term)
 
                 # Perform search (using smart_search for OR fallback)
-                results = repo.smart_search(search_term, context_lines=2)
+                # Run in thread to avoid blocking the asyncio event loop —
+                # large repositories can produce 10k+ hits, and the sync
+                # search/rank work would starve heartbeat delivery.
+                results = await asyncio.to_thread(repo.smart_search, search_term, context_lines=2)
                 state.searches_performed += 1
 
                 if not results.hits:
