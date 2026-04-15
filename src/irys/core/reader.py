@@ -458,7 +458,9 @@ class DocumentReader:
 
         # --- PDF: normal extraction → multimodal check → OCR (if enabled) ---
         if suffix == ".pdf":
-            doc_content, rendered_pages, pdf_info = self._read_pdf_with_meta(path)
+            doc_content, rendered_pages, pdf_info = await asyncio.to_thread(
+                self._read_pdf_with_meta, path
+            )
 
             if _pdf_ocr_enabled():
                 detection = detect_multimodal_content(
@@ -491,7 +493,7 @@ class DocumentReader:
 
         # --- DOCX: normal extraction → multimodal check → OCR (if enabled) ---
         if suffix == ".docx":
-            doc_content = self._read_docx(path)
+            doc_content = await asyncio.to_thread(self._read_docx, path)
 
             if _pdf_ocr_enabled():
                 detection = detect_multimodal_content(
