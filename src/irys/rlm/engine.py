@@ -546,8 +546,8 @@ class RLMEngine:
                 "leads": [{"id": l.id, "type": l.lead_type, "description": l.description} for l in state.leads],
                 "success_criteria": "",
                 "key_issues": [],
-                "strategy": f"{'SIMPLE' if is_simple else 'COMPLEX'} synthesis, "
-                           f"{'docs only' if can_answer_from_docs else f'requires external legal research — gap: {gap}'}",
+                "strategy": f"{'Quick answer' if is_simple else 'In-depth analysis'} — "
+                           f"{'reviewing available documents' if can_answer_from_docs else f'also searching legal databases for: {gap}'}",
                 "iteration": 1,
             },
         )
