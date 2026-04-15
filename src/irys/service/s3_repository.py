@@ -19,6 +19,7 @@ from urllib.parse import unquote_plus, urlparse, unquote as _url_unquote
 
 import boto3
 import httpx
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from .config import ServiceConfig, get_config
@@ -111,12 +112,14 @@ class S3Repository:
         self.prefix = prefix.strip("/")
         self.config = config or get_config()
 
-        # Initialize S3 client
+        # Initialize S3 client with increased connection pool (default is 10,
+        # which saturates quickly when downloading many documents concurrently)
         self._s3 = boto3.client(
             "s3",
             region_name=self.config.s3_region,
             aws_access_key_id=self.config.aws_access_key_id,
             aws_secret_access_key=self.config.aws_secret_access_key,
+            config=Config(max_pool_connections=30),
         )
 
         # Temp storage tracking
