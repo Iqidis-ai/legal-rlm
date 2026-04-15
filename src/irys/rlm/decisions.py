@@ -11,6 +11,7 @@ Each function takes a GeminiClient and returns structured data.
 import json
 import logging
 import time
+from datetime import date
 from typing import Optional, Any, TYPE_CHECKING
 
 from ..core.models import GeminiClient, ModelTier, SYSTEM_PROMPT_PRO
@@ -1123,6 +1124,7 @@ async def synthesize(
         external_research=external_research or "No external research conducted.",
         pinned_content=pinned_content or "No decisive documents identified.",
         output_instructions_section=output_instructions_section,
+        current_date=date.today().strftime("%B %d, %Y"),
     )
 
     _log_llm_call("synthesize", tier, prompt, start_time)

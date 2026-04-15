@@ -414,6 +414,8 @@ The current approach isn't working. Diagnose and redirect:
 
 P_SYNTHESIZE = """Query: {query}
 {output_instructions_section}
+TODAY'S DATE: {current_date}
+
 === DECISIVE DOCUMENTS ===
 {pinned_content}
 
