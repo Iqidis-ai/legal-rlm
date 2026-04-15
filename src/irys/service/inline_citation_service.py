@@ -17,7 +17,8 @@ A _renumber_citations() step converts raw UUID-fragment markers to
 import re
 import logging
 import os
-from typing import Optional
+import time
+from typing import Any, Optional
 from dataclasses import dataclass
 
 logger = logging.getLogger("irys.inline_citation")
@@ -91,7 +92,7 @@ class InlineCitationService:
         answer: str,
         citations: list,
         config,
-    ) -> tuple[str, list]:
+    ) -> tuple[str, list, dict[str, Any]]:
         """Inject inline citation markers into the answer via single LLM pass.
 
         Args:
@@ -100,29 +101,62 @@ class InlineCitationService:
             config:    IrysConfig with enable_inline_citations flag.
 
         Returns:
-            Tuple of (annotated_answer, reordered_citations) where:
+            Tuple of (annotated_answer, reordered_citations, diagnostics) where:
             - annotated_answer has [[cite:1]], [[cite:2]], … markers
             - reordered_citations is citations sorted by first-appearance in text
               (unreferenced citations are appended at the end)
-            On failure returns (original_answer, original_citations).
+            - diagnostics dict with injection metrics for telemetry
+            On failure returns (original_answer, original_citations, diagnostics).
         """
+        empty_diag: dict[str, Any] = {}
         if not getattr(config, 'enable_inline_citations', False):
-            return answer, citations
+            return answer, citations, empty_diag
         if not citations or not answer or not answer.strip():
-            return answer, citations
+            return answer, citations, empty_diag
 
         try:
             selected = cls._select_citations(citations)
             all_ids = {getattr(c, 'id', None) for c in citations} - {None}
 
-            final = cls._inject_with_retry(answer, selected, config, all_ids)
+            final, diag = cls._inject_with_retry(answer, selected, config, all_ids)
+
+            # Compute matched / unmatched from the final text (before renumbering)
+            matched_ids = set(cls.CITATION_MARKER_PATTERN.findall(final))
+            fed_ids = {getattr(c, 'id', None) for c in selected} - {None}
+            unmatched_ids = fed_ids - matched_ids
+
+            diag.update({
+                "total_citations_input": len(citations),
+                "citations_fed_to_llm": len(selected),
+                "budget_capped": len(citations) > MAX_TOTAL_CITATIONS,
+                "by_type_input": {
+                    "document": sum(1 for c in citations if getattr(c, 'source_type', 'document') == 'document'),
+                    "web": sum(1 for c in citations if getattr(c, 'source_type', 'document') == 'web'),
+                    "case_law": sum(1 for c in citations if getattr(c, 'source_type', 'document') == 'case_law'),
+                },
+                "citations_matched_inline": len(matched_ids),
+                "citations_unmatched": len(unmatched_ids),
+                "unmatched_details": [
+                    {"name": getattr(c, 'document', 'unknown'), "source_type": getattr(c, 'source_type', 'document')}
+                    for c in selected if getattr(c, 'id', None) in unmatched_ids
+                ],
+            })
+
+            # Lean log — counts only
+            logger.info(
+                "citation_injection_complete: fed=%d matched=%d unmatched=%d latency_ms=%d",
+                diag["citations_fed_to_llm"],
+                diag["citations_matched_inline"],
+                diag["citations_unmatched"],
+                diag.get("llm_latency_ms", 0),
+            )
 
             reordered = cls._reorder_by_uuid_appearance(final, citations)
-            return cls._renumber_citations(final), reordered
+            return cls._renumber_citations(final), reordered, diag
 
         except Exception as e:
             logger.warning(f"Citation injection failed: {e}, returning original answer")
-            return answer, citations
+            return answer, citations, {"error": str(e)}
 
     @classmethod
     def _reorder_by_uuid_appearance(cls, text_with_uuid_markers: str, citations: list) -> list:
@@ -192,37 +226,79 @@ class InlineCitationService:
         citations: list,
         config,
         all_valid_ids: set,
-    ) -> str:
-        """Sanitize, build prompt, call LLM with one retry on validation failure."""
+    ) -> tuple[str, dict[str, Any]]:
+        """Sanitize, build prompt, call LLM with one retry on validation failure.
+
+        Returns (annotated_text, diagnostics_dict).
+        """
+        diag: dict[str, Any] = {"retries": 0, "validation_passed": False}
+
         sanitized = cls._sanitize_citations(citations)
         if not sanitized:
-            return answer
+            return answer, diag
 
         citation_block = cls._build_citation_block(sanitized)
         prompt = INLINE_CITATION_PROMPT.format(
             citation_block=citation_block,
             answer=answer,
         )
+        diag["prompt_chars"] = len(prompt)
 
-        logger.info(
-            "Citation injection: %d citations fed to LLM (doc=%d, web=%d, case_law=%d)",
-            len(sanitized),
-            sum(1 for s in sanitized if s.source_type == 'document'),
-            sum(1 for s in sanitized if s.source_type == 'web'),
-            sum(1 for s in sanitized if s.source_type == 'case_law'),
-        )
+        # Create a telemetry step to capture LLM cost/tokens
+        try:
+            from ..core.telemetry import InvestigationStep
+            telemetry_step = InvestigationStep(seq=0, step_name="citation_injection", phase="post_processing")
+        except Exception:
+            telemetry_step = None
 
-        annotated = cls._call_gemini_lite(prompt, config)
+        t0 = time.monotonic()
+        annotated = cls._call_gemini_lite(prompt, config, active_step=telemetry_step)
+        diag["llm_latency_ms"] = int((time.monotonic() - t0) * 1000)
+
         if cls._validate_response(annotated, answer, all_valid_ids):
-            return annotated
+            diag["validation_passed"] = True
+            cls._attach_llm_telemetry(diag, telemetry_step)
+            return annotated, diag
 
         logger.info("Citation injection attempt 1 failed validation, retrying")
-        annotated = cls._call_gemini_lite(prompt, config)
+        diag["retries"] = 1
+
+        # Reset step for retry
+        try:
+            from ..core.telemetry import InvestigationStep
+            telemetry_step = InvestigationStep(seq=0, step_name="citation_injection_retry", phase="post_processing")
+        except Exception:
+            telemetry_step = None
+
+        t0 = time.monotonic()
+        annotated = cls._call_gemini_lite(prompt, config, active_step=telemetry_step)
+        diag["llm_latency_ms"] += int((time.monotonic() - t0) * 1000)
+
         if cls._validate_response(annotated, answer, all_valid_ids):
-            return annotated
+            diag["validation_passed"] = True
+            cls._attach_llm_telemetry(diag, telemetry_step)
+            return annotated, diag
 
         logger.warning("Citation injection failed after retry, returning original answer")
-        return answer
+        cls._attach_llm_telemetry(diag, telemetry_step)
+        return answer, diag
+
+    @staticmethod
+    def _attach_llm_telemetry(diag: dict, step) -> None:
+        """Extract cost/token data from telemetry step into diagnostics."""
+        if step is None or not step.operations:
+            return
+        # Sum across operations (in case of retry, each call has its own step)
+        total_cost = 0.0
+        total_prompt_tokens = 0
+        total_output_tokens = 0
+        for op in step.operations:
+            total_cost += getattr(op, 'cost_usd', 0.0)
+            total_prompt_tokens += getattr(op, 'prompt_tokens', 0)
+            total_output_tokens += getattr(op, 'output_tokens', 0)
+        diag["llm_cost_usd"] = round(total_cost, 6)
+        diag["llm_prompt_tokens"] = total_prompt_tokens
+        diag["llm_output_tokens"] = total_output_tokens
 
     @classmethod
     def _sanitize_citations(cls, citations: list) -> list[SanitizedCitation]:
@@ -314,7 +390,7 @@ class InlineCitationService:
         return "\n\n".join(blocks)
 
     @classmethod
-    def _call_gemini_lite(cls, prompt: str, config) -> str:
+    def _call_gemini_lite(cls, prompt: str, config, active_step=None) -> str:
         """Call Gemini Lite model for citation injection."""
         import asyncio
         from ..core.models import GeminiClient, ModelTier
@@ -366,14 +442,14 @@ Do not include explanations or commentary."""
                 tier=ModelTier.LITE,
                 system_prompt=system_prompt,
                 timeout=30.0,
-                use_cache=False,  # Don't cache injection calls
+                use_cache=False,
+                active_step=active_step,
             )
 
         # Run async call
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # We're already in an async context
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     future = pool.submit(asyncio.run, _complete())
@@ -381,7 +457,6 @@ Do not include explanations or commentary."""
             else:
                 return loop.run_until_complete(_complete())
         except RuntimeError:
-            # No event loop, create one
             return asyncio.run(_complete())
 
     # Pattern to detect comma-separated IDs in brackets (invalid format)
