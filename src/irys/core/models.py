@@ -308,7 +308,8 @@ class ModelConfig:
     cost_per_1m_input: float = 0.075  # Default Gemini 2.5 Flash pricing
     cost_per_1m_output: float = 0.30
     cost_per_1m_cached_input: float = 0.01875  # Default: 25% of input price
-    fallback_model_id: str = ""  # Fallback model when primary is unavailable (503)
+    fallback_model_id: str = ""           # Fallback model when primary is unavailable (503)
+    secondary_fallback_model_id: str = "" # Last-resort fallback (e.g. FLASH when all PRO options fail)
 
 
 # Model configurations per tier
@@ -341,7 +342,8 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
         cost_per_1m_input=2.00,
         cost_per_1m_output=12.00,
         cost_per_1m_cached_input=0.50,  # 25% of input
-        fallback_model_id="gemini-2.5-pro",  # Fallback when 503/overloaded
+        fallback_model_id="gemini-2.5-pro",              # Fallback when 503/overloaded
+        secondary_fallback_model_id="gemini-2.5-flash",  # Last resort if all PRO options fail
     ),
 }
 
@@ -502,12 +504,13 @@ class GeminiClient:
         return await asyncio.wait_for(api_call, timeout=timeout)
 
     async def _call_with_fallback(
-        self, primary_model: str, fallback_model: str, contents: list, config: Any, timeout: float, no_timeout: bool
+        self, primary_model: str, fallback_model: str, contents: list, config: Any, timeout: float, no_timeout: bool,
+        secondary_fallback_model: str = "",
     ) -> Any:
         """Execute API call with fallback strategy.
 
-        Timeout: Gemini(primary) → Gemini(fallback) → Vertex(fallback)
-        Other errors: Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback)
+        Timeout: Gemini(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
+        Other errors: Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
         """
         vertex = self._get_vertex_client()
 
@@ -542,8 +545,25 @@ class GeminiClient:
         except Exception as e:
             # Step 4: Try Vertex AI with fallback model
             if vertex:
-                logger.warning(f"Gemini {fallback_model} failed, trying Vertex AI fallback")
-                return await self._try_call(vertex, fallback_model, contents, config, timeout, no_timeout)
+                try:
+                    logger.warning(f"Gemini {fallback_model} failed, trying Vertex AI fallback")
+                    return await self._try_call(vertex, fallback_model, contents, config, timeout, no_timeout)
+                except Exception as vertex_e:
+                    logger.warning(f"Vertex AI {fallback_model} also failed: {str(vertex_e)[:100]}")
+
+            if not secondary_fallback_model:
+                raise
+
+            logger.warning(f"All primary/fallback options exhausted, trying secondary fallback {secondary_fallback_model}")
+
+        # Step 5: Try Gemini API with secondary fallback model (last resort)
+        try:
+            return await self._try_call(self.client, secondary_fallback_model, contents, config, timeout, no_timeout)
+        except Exception as e:
+            # Step 6: Try Vertex AI with secondary fallback model
+            if vertex:
+                logger.warning(f"Gemini {secondary_fallback_model} failed, trying Vertex AI secondary fallback")
+                return await self._try_call(vertex, secondary_fallback_model, contents, config, timeout, no_timeout)
             raise
 
     def _get_config(self, tier: ModelTier, system_prompt: Optional[str] = None) -> types.GenerateContentConfig:
@@ -641,11 +661,12 @@ class GeminiClient:
         await self._rate_limiter.acquire()
 
         # Fallback strategy:
-        # - Timeout: Gemini(primary) → Gemini(fallback) → Vertex(fallback)
-        # - Other errors: Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback)
+        # - Timeout: Gemini(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
+        # - Other errors: Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
         call_start = time.monotonic()
         response = await self._call_with_fallback(
-            mc.model_id, mc.fallback_model_id, contents, config, request_timeout, no_timeout
+            mc.model_id, mc.fallback_model_id, contents, config, request_timeout, no_timeout,
+            secondary_fallback_model=mc.secondary_fallback_model_id,
         )
         call_latency_ms = int((time.monotonic() - call_start) * 1000)
 
