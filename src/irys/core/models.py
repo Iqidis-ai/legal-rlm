@@ -323,6 +323,7 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
         cost_per_1m_input=0.10,
         cost_per_1m_output=0.40,
         cost_per_1m_cached_input=0.025,  # 25% of input
+        fallback_model_id="gemini-3.1-flash-lite-preview",  # Fallback when 2.5-flash-lite is unavailable/503
     ),
     ModelTier.FLASH: ModelConfig(
         model_id="gemini-3-flash-preview",  # Primary model
@@ -510,7 +511,7 @@ class GeminiClient:
         """Execute API call with fallback strategy.
 
         Timeout: Gemini(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
-        Other errors: Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
+        Other errors (including 503): Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
         """
         vertex = self._get_vertex_client()
 
@@ -518,7 +519,7 @@ class GeminiClient:
         try:
             return await self._try_call(self.client, primary_model, contents, config, timeout, no_timeout)
         except (asyncio.TimeoutError, TimeoutError) as e:
-            # Timeout: skip to fallback model directly
+            # Timeout: skip Vertex(primary) and go straight to fallback model
             logger.warning(f"{primary_model} timed out, skipping to fallback model")
             if not fallback_model:
                 raise TimeoutError(f"API call timed out after {timeout}s")
@@ -526,10 +527,14 @@ class GeminiClient:
             error_str = str(e)
             is_unavailable = "503" in error_str or "UNAVAILABLE" in error_str or "overloaded" in error_str.lower()
 
-            # Step 2: For non-timeout errors, try Vertex AI with primary model
-            if vertex and not is_unavailable:
+            # Step 2: Try Vertex AI with primary model (for all non-timeout errors, including 503)
+            # Vertex has independent capacity — worth trying even when Gemini API returns 503
+            if vertex:
                 try:
-                    logger.warning(f"Gemini {primary_model} failed, trying Vertex AI")
+                    logger.warning(
+                        f"Gemini {primary_model} {'unavailable (503)' if is_unavailable else 'failed'}, "
+                        f"trying Vertex AI"
+                    )
                     return await self._try_call(vertex, primary_model, contents, config, timeout, no_timeout)
                 except Exception as vertex_e:
                     logger.warning(f"Vertex AI {primary_model} also failed: {str(vertex_e)[:100]}")
@@ -537,7 +542,7 @@ class GeminiClient:
             if not fallback_model:
                 raise
 
-            logger.warning(f"{primary_model} {'unavailable' if is_unavailable else 'failed'}, trying fallback model")
+            logger.warning(f"{primary_model} exhausted (Gemini + Vertex), trying fallback model")
 
         # Step 3: Try Gemini API with fallback model
         try:
@@ -661,8 +666,8 @@ class GeminiClient:
         await self._rate_limiter.acquire()
 
         # Fallback strategy:
-        # - Timeout: Gemini(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
-        # - Other errors: Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
+        # - Timeout:       Gemini(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
+        # - Other errors (including 503): Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
         call_start = time.monotonic()
         response = await self._call_with_fallback(
             mc.model_id, mc.fallback_model_id, contents, config, request_timeout, no_timeout,
