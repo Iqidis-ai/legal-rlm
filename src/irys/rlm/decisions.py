@@ -1313,7 +1313,11 @@ async def generate_external_queries(
     )
 
     _log_llm_call("generate_external_queries", ModelTier.LITE, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step)
+    try:
+        response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step)
+    except Exception as e:
+        logger.warning(f"   generate_external_queries: LLM call failed ({e}) — skipping external search")
+        return {"case_law_queries": [], "web_queries": [], "reasoning": "LLM unavailable"}
     result = parse_json_safe(response)
 
     if result:
