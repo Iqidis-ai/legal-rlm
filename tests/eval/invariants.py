@@ -156,8 +156,13 @@ def _evidence_edge_backfill_idempotent(
     model.proof_state.compute_and_store(issue_id)
     baseline = model.proof_state.get(issue_id)
 
-    # First backfill.
+    # First backfill must insert exactly the expected number of edges.
     new_edges_first = model.evidence.backfill_from_legacy_links()
+    if new_edges_first != expected:
+        raise InvariantViolation(
+            f"first backfill must insert exactly {expected} new edges for "
+            f"issue {issue_alias!r}; got {new_edges_first}"
+        )
     edges_for_issue = model.evidence.list_edges_for_target("issue", issue_id)
     if len(edges_for_issue) != expected:
         raise InvariantViolation(

@@ -5239,13 +5239,9 @@ class ProofStateStore:
         # the issue has any active edges. Legacy assertion_issue_link is
         # only used as a migration fallback when no edges exist. Proof
         # math is unchanged — only the upstream substrate selection is.
-        has_edges = self.db.execute(
-            """SELECT 1 FROM evidence_edge
-               WHERE matter_id=? AND target_kind='issue' AND target_id=? AND active=1
-               LIMIT 1""",
-            (self.matter_id, issue_id),
-        ).fetchone() is not None
-
+        has_edges = EvidenceStore(self.db, self.matter_id).target_has_edges(
+            "issue", issue_id
+        )
         _linked_rows = self._query_issue_linked_assertions(issue_id, has_edges)
         sup_rows = [r for r in _linked_rows if r["relation_type"] in ("supports", "establishes")]
         atk_rows = [r for r in _linked_rows if r["relation_type"] in ("attacks", "negates")]
