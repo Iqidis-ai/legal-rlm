@@ -1418,6 +1418,35 @@ def test_hydrate_skips_superseded_assertions(model):
 # P0.2: hydration partitions into verified/candidate/stale/excluded buckets
 # ---------------------------------------------------------------------------
 
+def test_hydrate_enforces_200_cap_after_oversample(model):
+    """Codex P0.2 review finding #3 regression: the store oversamples
+    to limit*3 so verified/candidate rows are not starved, but the
+    engine must enforce the real 200-slot cap after classification.
+    Without this, a matter with many stale rows would push 600+
+    facts into accumulated_facts."""
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.rlm.state import InvestigationState
+    from unittest.mock import MagicMock
+
+    run_id = model.start_run("hydration cap")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    # Load >> 200 candidate assertions. Each record_fact hits the
+    # substrate through the production path.
+    for i in range(205):
+        adapter.record_fact(
+            f"Fact number {i} for cap test.", "doc.pdf",
+        )
+    engine = RLMEngine(gemini_client=MagicMock(), config=RLMConfig(), matter_model=model)
+    state = InvestigationState(id="cap-1", query="cap", repository_path="/tmp/cap")
+    engine._hydrate_from_matter_model(state)
+    facts = state.findings.get("accumulated_facts", []) or []
+    # The cap is hard: ≤ 200 eligible facts even though the DB
+    # returned up to 600 rows under the oversample window.
+    assert len(facts) <= 200, (
+        f"hydration cap leaked: accumulated_facts={len(facts)} > 200"
+    )
+
+
 def test_hydrate_partitions_into_trust_buckets(model):
     """P0.2 AC #1: _hydrate_from_matter_model populates
     state.findings["hydrated_assertion_buckets"] with a dict keyed by
@@ -1530,7 +1559,15 @@ def test_cached_search_labels_candidate_hits_as_leads(model):
 def test_coverage_section_renders_verified_and_candidate_lanes():
     """P0.2 commit 4: per-issue coverage lines must render verified
     and candidate lanes separately so the LLM cannot conflate
-    candidate support with verified proof."""
+    candidate support with verified proof.
+
+    Codex P0.2 review finding #1: verified requires BOTH assertion
+    AND edge lanes to be verified. If only the assertion is verified
+    (but the SYSTEM_INFERRED edge stays at candidate), the row stays
+    in the candidate lane, not the verified lane. This test asserts
+    on exact counts ("1 verified, 1 candidate") so a regression to
+    the assertion-only check would fail it.
+    """
     from irys.matter import MatterModel
     from irys.matter.enums import IssueType, VerificationTargetKind
     from irys.rlm.engine import RLMEngine
@@ -1553,16 +1590,145 @@ def test_coverage_section_renders_verified_and_candidate_lanes():
         VerificationTargetKind.ASSERTION, aid_v,
         reviewed_by_kind="user", reviewed_by_id="r1",
     )
+    # Verify the companion edge too — both lanes must be verified for
+    # a row to count as verified under TrustPolicy.
+    edge_v = m.db.execute(
+        """SELECT id FROM evidence_edge
+           WHERE matter_id=? AND source_id=? AND target_id=?""",
+        (m.matter_id, aid_v, iid),
+    ).fetchone()
+    m.verification.verify(
+        VerificationTargetKind.EVIDENCE_EDGE, edge_v["id"],
+        reviewed_by_kind="user", reviewed_by_id="r1",
+    )
     m.proof_state.compute_and_store(iid, policy_audience="internal")
 
     engine = RLMEngine.__new__(RLMEngine)
     engine._matter_model = m
     section = engine._build_capped_issue_coverage_section("breach")
-    # The two-lane rendering: "1 verified, 1 candidate" or similar.
-    assert "verified" in section.lower()
-    assert "candidate" in section.lower()
-    # And the bracket tag must contain both fractions.
+    # Exact per-lane counts — catches regressions to assertion-only
+    # verified-count math.
+    assert "1 verified, 1 candidate" in section
+    # Bracket tag must contain both fractions with the right shape.
     assert "verified / " in section and "advisory]" in section
+
+
+def test_verified_count_requires_both_assertion_and_edge():
+    """Codex P0.2 review finding #1 direct regression: verifying
+    only the assertion — leaving the evidence_edge at candidate —
+    must NOT promote the row to the verified lane."""
+    from irys.matter import MatterModel
+    from irys.matter.enums import IssueType, VerificationTargetKind
+
+    m = MatterModel.open_in_memory()
+    iid, _ = m.issues.upsert_issue("Claim", IssueType.CLAIM, materiality=0.7)
+    run_id = m.start_run("edge lane math")
+    adapter = MatterRuntimeAdapter(m, run_id)
+    aid = adapter.record_fact(
+        "Some fact", "doc.pdf", issue_id=iid, issue_link_type="supports",
+    )
+    # Only the assertion is verified; the system-inferred edge stays
+    # at candidate.
+    m.verification.verify(
+        VerificationTargetKind.ASSERTION, aid,
+        reviewed_by_kind="user", reviewed_by_id="r1",
+    )
+    m.proof_state.compute_and_store(iid, policy_audience="internal")
+    report = m.get_issue_coverage_report(policy_audience="internal")
+    entry = next(r for r in report if r["id"] == iid)
+    assert entry["verified_supporting_count"] == 0, (
+        "edge is still candidate; row must remain in candidate lane"
+    )
+    assert entry["candidate_supporting_count"] == 1
+
+
+def test_trust_abstention_block_warns_on_stale_only_issue():
+    """Codex P0.2 review finding #4: stale-only support must
+    trigger the abstention block's "no eligible support" / unresolved
+    framing, not silently disappear."""
+    from irys.matter import MatterModel
+    from irys.matter.enums import (
+        IssueType, VerificationStatus, VerificationTargetKind,
+    )
+    from irys.rlm.engine import RLMEngine
+
+    m = MatterModel.open_in_memory()
+    iid, _ = m.issues.upsert_issue(
+        "Stale-only claim", IssueType.CLAIM, materiality=0.7,
+    )
+    run_id = m.start_run("stale-only")
+    adapter = MatterRuntimeAdapter(m, run_id)
+    aid = adapter.record_fact(
+        "Once-supporting fact.", "doc.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    m.verification.set_status(
+        VerificationTargetKind.ASSERTION, aid,
+        status=VerificationStatus.STALE, reviewed_by_kind="system",
+    )
+    m.proof_state.compute_and_store(iid, policy_audience="internal")
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = m
+    block = engine._build_trust_abstention_block("claim")
+    assert "Stale-only claim" in block
+    # The issue has 0 verified + 0 candidate (stale is excluded from
+    # both lanes) so the abstention block renders the
+    # "no eligible support" branch.
+    assert "no eligible support" in block.lower() or "unresolved" in block.lower()
+
+
+def test_trust_abstention_block_warns_on_gap_blocked_issue():
+    """Codex P0.2 review finding #4: a proof-gap-blocked issue
+    triggers the per-issue abstention instruction even when some
+    verified support exists."""
+    from irys.matter import MatterModel
+    from irys.matter.enums import IssueType, VerificationTargetKind
+    from irys.rlm.engine import RLMEngine
+
+    m = MatterModel.open_in_memory()
+    iid, _ = m.issues.upsert_issue(
+        "Partially supported claim", IssueType.CLAIM, materiality=0.9,
+    )
+    # Add a predicate so the issue has a proof gap even with one
+    # verified fact (predicate coverage < 1).
+    m.issues.add_predicate(iid, "Predicate not proved")
+    run_id = m.start_run("gap-blocked")
+    adapter = MatterRuntimeAdapter(m, run_id)
+    aid = adapter.record_fact(
+        "Partial fact.", "doc.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    edge = m.db.execute(
+        """SELECT id FROM evidence_edge
+           WHERE matter_id=? AND source_id=? AND target_id=?""",
+        (m.matter_id, aid, iid),
+    ).fetchone()
+    m.verification.verify(
+        VerificationTargetKind.ASSERTION, aid,
+        reviewed_by_kind="user", reviewed_by_id="r1",
+    )
+    m.verification.verify(
+        VerificationTargetKind.EVIDENCE_EDGE, edge["id"],
+        reviewed_by_kind="user", reviewed_by_id="r1",
+    )
+    # Manually write a missing_issue_predicate gap linked to the
+    # issue so has_proof_gap lights up on the coverage report —
+    # the focus of this test is the abstention block's response to
+    # has_proof_gap=True, not the gap-detection sweep.
+    from irys.matter.enums import GapType
+    m.gaps.record(
+        gap_type=GapType.MISSING_ISSUE_PREDICATE,
+        description="Predicate not proved",
+        materiality=0.9,
+        affected_type="issue",
+        affected_id=iid,
+    )
+    m.proof_state.compute_and_store(iid, policy_audience="internal")
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = m
+    block = engine._build_trust_abstention_block("claim")
+    assert "Partially supported claim" in block
+    assert "proof-gap" in block.lower() or "gap" in block.lower()
 
 
 def test_trust_abstention_block_warns_on_candidate_only_issue():
@@ -1614,6 +1780,17 @@ def test_trust_abstention_block_absent_when_fully_verified():
         )
         m.verification.verify(
             VerificationTargetKind.ASSERTION, aid,
+            reviewed_by_kind="user", reviewed_by_id="r1",
+        )
+        # P0.2 review fix #1: verified requires BOTH assertion and
+        # edge lanes to be verified. Promote the evidence_edge too.
+        edge = m.db.execute(
+            """SELECT id FROM evidence_edge
+               WHERE matter_id=? AND source_id=? AND target_id=?""",
+            (m.matter_id, aid, iid),
+        ).fetchone()
+        m.verification.verify(
+            VerificationTargetKind.EVIDENCE_EDGE, edge["id"],
             reviewed_by_kind="user", reviewed_by_id="r1",
         )
     m.proof_state.compute_and_store(iid, policy_audience="internal")

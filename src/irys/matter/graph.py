@@ -2442,8 +2442,9 @@ class IssueStore:
               AND ee.active=1 AND ee.source_kind='assertion'
               AND ee.relation_type IN ('supports','establishes','attacks','negates')
               AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
-              AND COALESCE(vs.status, 'candidate') != 'rejected'
-              AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'
+              -- P0.2: TrustPurpose.PROOF_CANDIDATE — stale drops alongside rejected.
+              AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
+              AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') NOT IN ('rejected','stale')
               {priv_filter}
             GROUP BY ee.target_id, ee.relation_type
         """
@@ -2719,11 +2720,25 @@ class IssueStore:
 
         for issue in subtree:
             iid = issue["id"]
-            # Count supporting/attacking assertions
+            # P0.2 review fix #2: previously this rolled up raw
+            # assertion_issue_link counts, ignoring rejected/stale
+            # verification status, and then injected the inflated
+            # numbers into the canonical coverage report. Apply the
+            # same TrustPurpose.PROOF_CANDIDATE eligibility here so
+            # the rollup matches get_issue_coverage_report's support
+            # counts.
             rows = self.db.execute(
-                "SELECT relation_type, COUNT(*) as cnt"
-                " FROM assertion_issue_link WHERE issue_id=?"
-                " GROUP BY relation_type",
+                """SELECT ail.relation_type, COUNT(*) as cnt
+                   FROM assertion_issue_link ail
+                   JOIN assertion a ON a.id = ail.assertion_id
+                   LEFT JOIN verification_state vs
+                     ON vs.target_kind='assertion'
+                    AND vs.target_id=a.id
+                    AND vs.matter_id=a.matter_id
+                   WHERE ail.issue_id=?
+                     AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+                     AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
+                   GROUP BY ail.relation_type""",
                 (iid,),
             ).fetchall()
             sup = sum(r["cnt"] for r in rows if r["relation_type"] in ("supports", "establishes"))

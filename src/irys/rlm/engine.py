@@ -2155,6 +2155,13 @@ class RLMEngine:
 
         from ..matter.trust import TrustBucket, TrustPolicy
 
+        # P0.2 review fix #3: the store oversamples to limit*3 so
+        # verified/candidate lanes are not starved at the chronological
+        # head. The engine must enforce the real cap after
+        # classification — without this, a matter with many stale rows
+        # pushes 600+ facts into accumulated_facts and blows the prompt
+        # budget. Cap is the same 200-slot budget the old code used.
+        HYDRATION_CAP = 200
         loaded = 0
         _strip_role_prefix = __import__("re").compile(r'^\[[A-Z_]+\]\s*').sub
         # P0.2: bucket partitioning. Engine consumers read the
@@ -2238,6 +2245,11 @@ class RLMEngine:
             if self.on_fact:
                 self.on_fact(_fact_str)
             loaded += 1
+            # P0.2 review fix #3: enforce the real cap after
+            # classification. Stop once HYDRATION_CAP eligible rows
+            # have been loaded even if the oversampled set is larger.
+            if loaded >= HYDRATION_CAP:
+                break
 
         # Expose bucket partitioning so engine consumers and tests can
         # assert on partitioning without re-deriving it from the

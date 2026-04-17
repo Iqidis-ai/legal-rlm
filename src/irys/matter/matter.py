@@ -1494,6 +1494,12 @@ class MatterModel:
             # Belief-state-weighted support sum (mirrors get_issue_coverage_report logic).
             # operative/admitted/resolved = 1.0, alleged/argued/inferred = 0.5,
             # other active states = 0.3; disputed/withdrawn/superseded excluded entirely.
+            # P0.2 review fix #2: previously this weakness query
+            # counted EVERY supporting link regardless of verification
+            # status, so rejected + stale rows made issues look
+            # better-supported than they actually are. Join
+            # verification_state and drop rejected/stale
+            # (TrustPurpose.PROOF_CANDIDATE eligibility).
             support_rows = self.db.execute(
                 """SELECT ail.issue_id,
                           SUM(CASE
@@ -1504,9 +1510,14 @@ class MatterModel:
                    FROM assertion_issue_link ail
                    JOIN issue i ON i.id=ail.issue_id
                    JOIN assertion a ON a.id=ail.assertion_id
+                   LEFT JOIN verification_state vs
+                     ON vs.target_kind='assertion'
+                    AND vs.target_id=a.id
+                    AND vs.matter_id=a.matter_id
                    WHERE i.matter_id=? AND i.status='open'
                      AND ail.relation_type IN ('supports','establishes')
                      AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+                     AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
                    GROUP BY ail.issue_id""",
                 (self.matter_id,),
             ).fetchall()
@@ -1734,6 +1745,18 @@ class MatterModel:
                     "AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale') "
                     + privilege_filter
                 )
+            # P0.2 review fix #1: verified requires BOTH the assertion
+            # AND the edge lane to be verified. On the edge-backed
+            # branch, AND the edge's own verification status into the
+            # verified predicate. On the legacy branch (no edge row),
+            # only the assertion lane matters.
+            if use_edges:
+                verified_pred = (
+                    "COALESCE(vs.status, 'candidate') = 'verified' "
+                    "AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') = 'verified'"
+                )
+            else:
+                verified_pred = "COALESCE(vs.status, 'candidate') = 'verified'"
             return (
                 f"SELECT {link_id} AS issue_id, "
                 "COUNT(*) AS raw_count, "
@@ -1741,8 +1764,8 @@ class MatterModel:
                 "WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0 "
                 "WHEN a.belief_state IN ('alleged','argued','inferred') THEN 0.5 "
                 "ELSE 0.3 END) AS weighted_support, "
-                "SUM(CASE WHEN COALESCE(vs.status, 'candidate') = 'verified' THEN 1 ELSE 0 END) AS verified_count, "
-                "SUM(CASE WHEN COALESCE(vs.status, 'candidate') = 'verified' THEN "
+                f"SUM(CASE WHEN {verified_pred} THEN 1 ELSE 0 END) AS verified_count, "
+                f"SUM(CASE WHEN {verified_pred} THEN "
                 "CASE "
                 "WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0 "
                 "WHEN a.belief_state IN ('alleged','argued','inferred') THEN 0.5 "
