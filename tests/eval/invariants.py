@@ -149,18 +149,28 @@ def resolve_invariant(spec: InvariantSpec) -> Invariant | None:
     return inv
 
 
+# Invariant groups that require an RLMEngine wired with a scripted client.
+# In store mode these skip rather than fail, because store mode deliberately
+# does not construct an engine.
+_ENGINE_ONLY_GROUPS: set[str] = {"context_packet"}
+
+
 def run_invariants(
     fixture_name: str, mode: str, result: HarnessResult
 ) -> list[str]:
     """Run all activatable invariants declared on the fixture.
 
-    Returns a list of invariant names that were skipped because their
-    capability is not yet implemented.
+    Returns a list of invariant names that were skipped because either the
+    capability is not yet implemented or the invariant's group needs an
+    engine that the current mode does not provide.
     """
     skipped: list[str] = []
     for spec in result.fixture.invariants:
         inv = resolve_invariant(spec)
         if inv is None:
+            skipped.append(spec.name)
+            continue
+        if mode == "store" and inv.group in _ENGINE_ONLY_GROUPS:
             skipped.append(spec.name)
             continue
         try:

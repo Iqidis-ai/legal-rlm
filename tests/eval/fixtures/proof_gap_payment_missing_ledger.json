@@ -1,0 +1,90 @@
+{
+  "name": "proof_gap_payment_missing_ledger",
+  "intent": "A payment-breach matter has two high-materiality issues: the obligation exists (supported by the operative MSA clause) but nonpayment has no evidence at all (no ledger, no invoice). _detect_proof_gaps must open a missing_issue_predicate gap against the unsupported nonpayment issue, the supported obligation issue must register nonzero-but-incomplete coverage in the coverage report, and the packet's capped gap section must surface the gap for synthesis.",
+  "sacred_outcomes": ["SO-4", "SO-7"],
+  "documents": [
+    {
+      "alias": "msa",
+      "document_id": "contracts/msa.pdf",
+      "filename": "msa.pdf",
+      "doc_type": "contract",
+      "source_role": "operative",
+      "source_side": "neutral"
+    },
+    {
+      "alias": "complaint",
+      "document_id": "pleadings/complaint.pdf",
+      "filename": "complaint.pdf",
+      "doc_type": "pleading",
+      "source_role": "advocacy",
+      "source_side": "plaintiff"
+    }
+  ],
+  "assertions": [
+    {
+      "alias": "payment_obligation",
+      "document_alias": "msa",
+      "proposition_text": "Defendant shall pay 100,000 USD within thirty days of invoice.",
+      "speech_act": "operative",
+      "source_role": "operative",
+      "model_layer": "record",
+      "assertion_kind": "factual",
+      "origin_kind": "extracted"
+    }
+  ],
+  "issues": [
+    {
+      "alias": "obligation_exists",
+      "title": "Defendant owed payment under the MSA",
+      "issue_type": "claim",
+      "materiality": 0.9,
+      "salience": 0.8,
+      "burden_side": "plaintiff",
+      "predicates": [
+        "Contract establishes the payment obligation",
+        "Obligation was not discharged by performance",
+        "Obligation was not discharged by waiver"
+      ]
+    },
+    {
+      "alias": "nonpayment_occurred",
+      "title": "Defendant failed to make the payment when due",
+      "issue_type": "claim",
+      "materiality": 0.9,
+      "salience": 0.8,
+      "burden_side": "plaintiff",
+      "predicates": ["Payment was invoiced", "Payment was not made"]
+    }
+  ],
+  "issue_links": [
+    {
+      "assertion_alias": "payment_obligation",
+      "issue_alias": "obligation_exists",
+      "relation_type": "supports"
+    }
+  ],
+  "maintenance": [
+    {"step": "proof_state.compute_all"},
+    {"step": "engine._detect_proof_gaps"}
+  ],
+  "invariants": [
+    {
+      "name": "coverage_partial_and_nonzero",
+      "group": "proof_gap",
+      "requires": ["coverage_report"],
+      "params": {"issue_alias": "obligation_exists"}
+    },
+    {
+      "name": "issue_gap_created",
+      "group": "proof_gap",
+      "requires": ["proof_gap_detection"],
+      "params": {"issue_alias": "nonpayment_occurred"}
+    },
+    {
+      "name": "mandatory_gap_section_present",
+      "group": "context_packet",
+      "requires": ["mandatory_context_packet"],
+      "params": {"query": "did defendant fail to pay"}
+    }
+  ]
+}

@@ -196,8 +196,7 @@ def run_engine_stub_mode(fixture: FixtureSpec) -> HarnessResult:
     methods like _assemble_context_packet directly. The engine is constructed
     just enough for those methods to work; full config defaults are fine.
     """
-    from irys.rlm.engine import RLMEngine
-    from irys.rlm.models import RLMConfig
+    from irys.rlm.engine import RLMConfig, RLMEngine
 
     from .stubs import ScriptedGeminiClient
 
