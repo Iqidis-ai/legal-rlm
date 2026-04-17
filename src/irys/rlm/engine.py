@@ -4386,12 +4386,14 @@ Return:
 
             # Surface current coverage state so the strategist/lead-gen LLM sees
             # what is already supported vs. what needs more evidence. The canonical
-            # source is get_issue_coverage_report() — the proof_state table stores
-            # support_score and attack_score as raw weighted sums, but coverage_fraction
-            # and has_proof_gap are not persisted there until MVP.5, so a direct read
-            # from proof_state silently reported 0% support and no gaps. Read from
-            # the report instead; proof_state still contributes advocacy_only because
-            # that flag IS written by ProofStateStore.compute_and_store().
+            # source is get_issue_coverage_report(). The proof_state table declares
+            # support_score, attack_score, coverage_fraction, and has_proof_gap
+            # columns, but ProofStateStore.compute_and_store() writes only
+            # trust_weighted_support, trust_weighted_attack, and proof_status — the
+            # other four columns are a dead substrate pending MVP.5 store repair.
+            # Until then, reading them from proof_state silently reported 0% for
+            # every issue, which is why this block now goes through the coverage
+            # report. proof_state.advocacy_only IS written and is read separately.
             report_row = None
             try:
                 for row in self._matter_model.get_issue_coverage_report():
