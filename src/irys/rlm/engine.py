@@ -3132,6 +3132,19 @@ Document: {_fp.name}
 Content (excerpt):
 {excerpt}
 
+Privilege classification guidance (MVP.4 SO-5):
+- privilege_flag=true when the document appears to be attorney-client
+  privileged or attorney work-product (e.g. internal legal memo,
+  counsel-to-client email, litigation strategy note, settlement memo).
+- privilege_flag=unknown when the document has attributes suggesting
+  privilege but classification cannot be reliably determined (ambiguous
+  internal memo, unsigned legal-looking memo, internal email of
+  unknown participants). Unknown is treated as contained in clean
+  mode until human review.
+- privilege_flag=false only when the document is plainly non-privileged
+  (signed contract, opposing-party pleading, public filing, invoice
+  from a third party, authoritative statute).
+
 Return:
 {{
     "doc_type": "contract|pleading|correspondence|invoice|court_order|memo|report|notice|exhibit|other",
@@ -3146,6 +3159,8 @@ Return:
     "operative_status": "operative|superseded|draft|expired|disputed|unknown",
     "purpose": "one-sentence description (max 80 chars)",
     "rhetorical_posture": "neutral|adversarial|cooperative|protective|informational",
+    "privilege_flag": "true|false|unknown",
+    "privilege_basis": "one sentence explaining why, or null",
     "unresolved_flags": ["any open questions"]
 }}"""
 

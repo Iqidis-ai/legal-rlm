@@ -47,6 +47,35 @@ def _id() -> str:
     return uuid.uuid4().hex
 
 
+def _interpret_privilege_flag(value) -> Optional[bool]:
+    """MVP.4 fail-closed privilege classifier for profile analysis output.
+
+    Maps the prompt's three-valued "true"/"false"/"unknown" string
+    (and legacy bools/ints) onto the DocumentCardStore.upsert contract:
+
+    - None or "unknown" (in any form): treat as contained in clean mode.
+      Return True — privileged until human review.
+    - explicit False/0/"false"/"no"/"clean": return False. This is the
+      only path that can clear a previously-privileged card.
+    - anything else (True, 1, "true", "yes", arbitrary non-empty string):
+      treat as privileged. Return True.
+
+    Returning True for missing/unknown is the MVP.4 AC #2 "clean-mode
+    processing treats unknown as contained until reviewed" semantics.
+    """
+    if value is None:
+        return True  # fail-closed on missing
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    s = str(value).strip().lower()
+    if s in ("false", "0", "no", "not privileged", "not_privileged", "clean", "no_privilege", "no_privilege_detected"):
+        return False
+    # "true", "unknown", "yes", "privileged", "candidate_privileged", etc.
+    return True
+
+
 class MatterModel:
     """
     Central facade providing access to all matter intelligence stores.
@@ -1130,7 +1159,7 @@ class MatterModel:
             rhetorical_posture=analysis.get("rhetorical_posture"),
             reliability_posture=analysis.get("reliability_posture"),
             operative_status=analysis.get("operative_status", "unknown"),
-            privilege_flag=bool(analysis.get("privilege_flag")),
+            privilege_flag=_interpret_privilege_flag(analysis.get("privilege_flag")),
             unresolved_flags=analysis.get("unresolved_flags"),
         )
 
@@ -1181,7 +1210,7 @@ class MatterModel:
             rhetorical_posture=analysis.get("rhetorical_posture"),
             reliability_posture=analysis.get("reliability_posture"),
             operative_status=analysis.get("operative_status", "unknown"),
-            privilege_flag=bool(analysis.get("privilege_flag")),
+            privilege_flag=_interpret_privilege_flag(analysis.get("privilege_flag")),
             unresolved_flags=analysis.get("unresolved_flags"),
         )
 

@@ -134,6 +134,37 @@ def test_detect_proof_gaps_opens_gap_when_support_is_privileged_only(model):
     )
 
 
+def test_privilege_flag_preserved_across_profile_refresh(model):
+    """MVP.4 AC #5: trust overrides (or any profile refresh) cannot clear
+    privilege. DocumentCardStore.upsert without an explicit privilege_flag
+    must leave a previously-privileged card privileged."""
+    inv_id, _ = model.inventory.upsert("internal/memo.docx", "sha".ljust(64, "0"), size_bytes=1)
+    # First upsert marks the card privileged.
+    model.document_cards.upsert(doc_id=inv_id, title="memo", privilege_flag=True)
+    # Second upsert comes from a profile refresh that doesn't know about
+    # privilege (e.g. a source-role reclassification). MVP.4 requires the
+    # existing privilege flag to survive.
+    model.document_cards.upsert(doc_id=inv_id, title="memo (refreshed)", source_role="operative")
+    row = model.db.execute(
+        "SELECT privilege_flag, title, source_role FROM document_card WHERE doc_id=?",
+        (inv_id,),
+    ).fetchone()
+    assert row["privilege_flag"] == 1, (
+        "privilege_flag must not be cleared by a profile refresh that "
+        "omits the privilege_flag kwarg"
+    )
+    assert row["title"] == "memo (refreshed)"
+    assert row["source_role"] == "operative"
+
+    # An explicit privilege_flag=False IS allowed to clear the flag —
+    # that path is a deliberate attorney-level declassification.
+    model.document_cards.upsert(doc_id=inv_id, privilege_flag=False)
+    row = model.db.execute(
+        "SELECT privilege_flag FROM document_card WHERE doc_id=?", (inv_id,),
+    ).fetchone()
+    assert row["privilege_flag"] == 0
+
+
 def test_edge_substrate_respects_privilege_filter(model):
     """The edge-first proof substrate branch must also drop privileged
     edges. Adversarial audit flagged that filters have to land on every

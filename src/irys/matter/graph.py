@@ -3612,13 +3612,32 @@ class DocumentCardStore:
         rhetorical_posture: Optional[str] = None,
         reliability_posture: Optional[str] = None,
         operative_status: str = "unknown",
-        privilege_flag: bool = False,
+        privilege_flag: Optional[bool] = None,
         unresolved_flags: Optional[list] = None,
         source_role: Optional[str] = None,
         signatories_json: Optional[str] = None,
     ) -> str:
-        """Insert or update a document card for the given inventory doc_id."""
+        """Insert or update a document card for the given inventory doc_id.
+
+        MVP.4 SO-5 privilege discipline: privilege_flag is now Optional and
+        defaults to None. A None value means "don't change the existing
+        flag" on conflict, so a profile call that doesn't know about
+        privilege cannot silently clear a previously-privileged card.
+        On insert without an existing row, None is coerced to False.
+        """
         now = _now()
+        # MVP.4: resolve privilege_flag to a concrete int for SQLite.
+        # None means preserve the existing value (fail-closed — a refresh
+        # cannot clear a prior privileged card). Absent an existing row,
+        # None defaults to 0 on initial insert.
+        if privilege_flag is None:
+            existing = self.db.execute(
+                "SELECT privilege_flag FROM document_card WHERE doc_id=?",
+                (doc_id,),
+            ).fetchone()
+            resolved_privilege = int(existing["privilege_flag"]) if existing else 0
+        else:
+            resolved_privilege = int(bool(privilege_flag))
         card_id = str(uuid.uuid4())
         flags_json = _json_mod.dumps(unresolved_flags) if unresolved_flags else None
         self.db.execute(
@@ -3647,6 +3666,9 @@ class DocumentCardStore:
                  rhetorical_posture = COALESCE(excluded.rhetorical_posture, document_card.rhetorical_posture),
                  reliability_posture = COALESCE(excluded.reliability_posture, document_card.reliability_posture),
                  operative_status = excluded.operative_status,
+                 -- MVP.4: privilege_flag is already fail-closed in Python
+                 -- (None callers get the existing row's value via the
+                 -- lookup above), so the ON CONFLICT can just apply.
                  privilege_flag = excluded.privilege_flag,
                  unresolved_flags = COALESCE(excluded.unresolved_flags, document_card.unresolved_flags),
                  source_role = COALESCE(excluded.source_role, document_card.source_role),
@@ -3657,7 +3679,7 @@ class DocumentCardStore:
              author, sender, recipient, creation_date, sent_date,
              effective_date, discovery_date, purpose,
              rhetorical_posture, reliability_posture,
-             operative_status, int(privilege_flag), flags_json,
+             operative_status, resolved_privilege, flags_json,
              source_role, signatories_json,
              now, now),
         )
