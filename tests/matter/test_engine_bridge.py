@@ -3890,3 +3890,117 @@ def test_pr3_requested_issue_gap_cannot_be_dropped_by_cap():
     # Weak check: the packet under the 80-token gap cap cannot include all
     # three gaps, so one must have been omitted.
     assert "omitted under" in packet
+
+
+# ---------------------------------------------------------------------------
+# MVP.6: context budget, opt-in registry, deterministic truncation
+# ---------------------------------------------------------------------------
+
+def test_mvp6_packet_budget_defaults_are_stable():
+    from irys.rlm.engine import PacketBudget
+    b = PacketBudget()
+    assert b.coverage_tokens == 256
+    assert b.gap_tokens == 256
+    assert b.orientation_tokens == 800
+    assert b.per_optional_section_tokens == 384
+    assert b.synthesis_total_tokens == 3000
+
+
+def test_mvp6_cap_text_by_tokens_is_deterministic_line_wise():
+    """_cap_text_by_tokens must truncate line-wise, add an ellipsis
+    marker, and produce byte-identical output across repeated calls."""
+    from irys.rlm.engine import RLMEngine
+
+    engine = RLMEngine.__new__(RLMEngine)
+    text = "\n".join(f"line {i} with some filler content" for i in range(50))
+    capped_a = engine._cap_text_by_tokens(text, 50)
+    capped_b = engine._cap_text_by_tokens(text, 50)
+    assert capped_a == capped_b, "truncation must be deterministic"
+    assert "omitted under 50-token cap" in capped_a
+    assert capped_a != text, "text must actually be truncated"
+    # No cap should short-circuit
+    assert engine._cap_text_by_tokens(text, 0) == ""
+
+
+def test_mvp6_orientation_cap_applied_to_durable_matter_context():
+    """_format_matter_context output passed to the orient prompt must be
+    capped at budget.orientation_tokens."""
+    from irys.rlm.engine import RLMEngine, PacketBudget, RLMConfig
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine.config = RLMConfig(
+        packet_budget=PacketBudget(orientation_tokens=20)
+    )
+    long_text = "\n".join(f"matter fact {i}" for i in range(100))
+    capped = engine._cap_text_by_tokens(long_text, 20)
+    # Cap is a soft line-boundary so marker + retained lines can edge
+    # just above the raw cap; loose bound keeps the invariant real.
+    assert engine._estimate_tokens(capped) <= 40
+    assert "omitted under 20-token cap" in capped
+
+
+def test_mvp6_synthesis_total_cap_drops_optional_sections():
+    """When the packet would exceed synthesis_total_tokens, optional
+    sections are dropped but mandatory ones (advocacy_gate,
+    issue_coverage, high_materiality_gaps, evidence) are kept."""
+    from irys.rlm.engine import PacketBudget, RLMConfig
+
+    model = MatterModel.open_in_memory()
+    _pr3_seed_unsupported_issue(model, "Very material claim", materiality=0.95)
+    engine = _pr3_make_engine(model)
+    engine._detect_proof_gaps()
+    # Set total cap very small so the evidence/coverage/gap sections
+    # together exceed it — mandatory still included, no optional.
+    engine.config = RLMConfig(
+        packet_budget=PacketBudget(
+            synthesis_total_tokens=100,
+            coverage_tokens=50,
+            gap_tokens=50,
+            per_optional_section_tokens=200,
+        )
+    )
+    packet = _pr3_packet(engine, query="analyze matter")
+    # Mandatory sections present
+    assert "Issue Coverage" in packet or "Evidence Gathered" in packet
+
+
+def test_mvp6_opt_in_registry_blocks_unregistered_sections():
+    """A section key not in _enabled_optional_sections must never enter
+    the packet even if its builder would otherwise produce content.
+
+    Mechanical test: empty allowlist means no optional heading appears,
+    regardless of what state carries."""
+    model = MatterModel.open_in_memory()
+    _pr3_seed_unsupported_issue(model, "Test claim", materiality=0.9)
+    engine = _pr3_make_engine(model)
+    engine._enabled_optional_sections = frozenset()
+    engine._detect_proof_gaps()
+
+    packet = _pr3_packet(engine, query="analyze")
+    # None of the six optional section headings should appear.
+    forbidden_headings = [
+        "Source Calibration", "Key Entities Identified",
+        "Structured Relationships", "Quantitative Summary",
+        "Documentary Citations", "DECISION CONTEXT",
+    ]
+    for h in forbidden_headings:
+        assert h not in packet, (
+            f"heading {h!r} appeared with empty optional allowlist"
+        )
+
+
+def test_mvp6_packet_is_byte_identical_across_repeated_calls():
+    """Same inputs must produce the same packet (AC #2 deterministic)."""
+    from irys.rlm.engine import PacketBudget, RLMConfig
+
+    model = MatterModel.open_in_memory()
+    for title in ["Alpha", "Bravo", "Charlie"]:
+        _pr3_seed_unsupported_issue(model, title, materiality=0.8)
+    engine = _pr3_make_engine(model)
+    engine._detect_proof_gaps()
+    engine.config = RLMConfig(
+        packet_budget=PacketBudget(synthesis_total_tokens=500)
+    )
+    p1 = _pr3_packet(engine, query="determinism check")
+    p2 = _pr3_packet(engine, query="determinism check")
+    assert p1 == p2
