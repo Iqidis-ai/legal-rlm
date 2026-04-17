@@ -1613,6 +1613,95 @@ def test_coverage_section_renders_verified_and_candidate_lanes():
     assert "verified / " in section and "advisory]" in section
 
 
+def test_compute_coverage_rollup_drops_edge_stale():
+    """P0.2 re-review fix: compute_coverage_rollup previously read
+    raw assertion_issue_link and then applied assertion-only
+    verification filtering. On edge-backed issues, a stale edge
+    still counted. Rollup must now match get_issue_coverage_report's
+    edge-aware eligibility."""
+    from irys.matter import MatterModel
+    from irys.matter.enums import (
+        IssueType, VerificationStatus, VerificationTargetKind,
+    )
+
+    m = MatterModel.open_in_memory()
+    parent, _ = m.issues.upsert_issue("Parent", IssueType.CLAIM, materiality=0.8)
+    child, _ = m.issues.upsert_issue(
+        "Child", IssueType.CLAIM, materiality=0.8, parent_issue_id=parent,
+    )
+    run_id = m.start_run("rollup edge stale")
+    adapter = MatterRuntimeAdapter(m, run_id)
+    aid = adapter.record_fact(
+        "Edge stale support", "doc.pdf",
+        issue_id=child, issue_link_type="supports",
+    )
+    edge = m.db.execute(
+        """SELECT id FROM evidence_edge
+           WHERE matter_id=? AND source_id=? AND target_id=?""",
+        (m.matter_id, aid, child),
+    ).fetchone()
+    m.verification.set_status(
+        VerificationTargetKind.EVIDENCE_EDGE, edge["id"],
+        status=VerificationStatus.STALE, reviewed_by_kind="system",
+    )
+    rollup = m.issues.compute_coverage_rollup(parent)
+    assert rollup["supporting_count"] == 0, (
+        "edge-stale support must not inflate subtree rollup — "
+        "codex re-review finding"
+    )
+
+
+def test_build_query_context_weakest_ignores_edge_stale():
+    """P0.2 re-review fix: build_query_context's weakest-issue
+    selector must see the canonical coverage lane (which drops
+    edge-stale), not raw link counts. Otherwise the engine is
+    steered toward issues that look weak/strong based on reviewed-
+    out support."""
+    from irys.matter import MatterModel
+    from irys.matter.enums import (
+        IssueType, VerificationStatus, VerificationTargetKind,
+    )
+
+    m = MatterModel.open_in_memory()
+    i_live, _ = m.issues.upsert_issue(
+        "Live issue", IssueType.CLAIM, materiality=0.5, salience=0.5,
+    )
+    i_edge_stale, _ = m.issues.upsert_issue(
+        "Edge-stale issue", IssueType.CLAIM, materiality=0.9, salience=0.9,
+    )
+    run_id = m.start_run("weakest edge stale")
+    adapter = MatterRuntimeAdapter(m, run_id)
+    adapter.record_fact(
+        "Live support", "doc.pdf",
+        issue_id=i_live, issue_link_type="supports",
+    )
+    aid = adapter.record_fact(
+        "Edge-stale support", "doc.pdf",
+        issue_id=i_edge_stale, issue_link_type="supports",
+    )
+    edge = m.db.execute(
+        """SELECT id FROM evidence_edge
+           WHERE matter_id=? AND source_id=? AND target_id=?""",
+        (m.matter_id, aid, i_edge_stale),
+    ).fetchone()
+    m.verification.set_status(
+        VerificationTargetKind.EVIDENCE_EDGE, edge["id"],
+        status=VerificationStatus.STALE, reviewed_by_kind="system",
+    )
+    ctx = m.build_query_context()
+    # edge-stale issue has 0 eligible support, and (materiality=0.9,
+    # salience=0.9) × (1 - 0) = 0.81 priority. Live issue has 1
+    # eligible support, some predicate coverage → lower (1 -
+    # coverage). Both should be considered with correct coverage,
+    # so the weakest_issue_id must be the edge-stale one (higher
+    # priority × uncovered) rather than reflecting the phantom
+    # support from the stale edge.
+    assert ctx.weakest_issue_id == i_edge_stale, (
+        f"expected edge-stale issue to be weakest (no eligible support), "
+        f"got weakest_issue_id={ctx.weakest_issue_id}"
+    )
+
+
 def test_verified_count_requires_both_assertion_and_edge():
     """Codex P0.2 review finding #1 direct regression: verifying
     only the assertion — leaving the evidence_edge at candidate —

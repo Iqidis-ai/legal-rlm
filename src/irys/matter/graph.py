@@ -2718,29 +2718,69 @@ class IssueStore:
         pred_total = 0
         pred_resolved = 0
 
+        # P0.2 review fix #2 (round 2): the previous version only
+        # filtered assertion-lane verification — edge-stale rows
+        # still leaked into the rollup. Use an edge-first / legacy-
+        # fallback pattern that mirrors
+        # ProofStateStore._query_issue_linked_assertions so the
+        # rollup matches canonical coverage. For each issue, prefer
+        # evidence_edge rows (which carry both assertion and edge
+        # verification); fall back to assertion_issue_link with
+        # assertion-only filtering when the issue has no edges yet
+        # (matters pre-MVP.3 migration).
         for issue in subtree:
             iid = issue["id"]
-            # P0.2 review fix #2: previously this rolled up raw
-            # assertion_issue_link counts, ignoring rejected/stale
-            # verification status, and then injected the inflated
-            # numbers into the canonical coverage report. Apply the
-            # same TrustPurpose.PROOF_CANDIDATE eligibility here so
-            # the rollup matches get_issue_coverage_report's support
-            # counts.
-            rows = self.db.execute(
-                """SELECT ail.relation_type, COUNT(*) as cnt
-                   FROM assertion_issue_link ail
-                   JOIN assertion a ON a.id = ail.assertion_id
-                   LEFT JOIN verification_state vs
-                     ON vs.target_kind='assertion'
-                    AND vs.target_id=a.id
-                    AND vs.matter_id=a.matter_id
-                   WHERE ail.issue_id=?
-                     AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
-                     AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
-                   GROUP BY ail.relation_type""",
-                (iid,),
-            ).fetchall()
+            # P0.2 re-review: decide substrate by presence of ANY
+            # evidence_edge for this issue, not by whether the
+            # eligibility-filtered query happened to return rows.
+            # Otherwise a stale-all-edges issue falls through to the
+            # legacy link-table read, which cannot see edge
+            # verification at all and re-inflates support.
+            has_any_edge = bool(self.db.execute(
+                """SELECT 1 FROM evidence_edge
+                   WHERE matter_id=? AND target_kind='issue' AND target_id=?
+                     AND active=1 AND source_kind='assertion' LIMIT 1""",
+                (self.matter_id, iid),
+            ).fetchone())
+            if has_any_edge:
+                rows = self.db.execute(
+                    """SELECT ee.relation_type, COUNT(*) as cnt
+                       FROM evidence_edge ee
+                       JOIN assertion a ON a.id=ee.source_id
+                       LEFT JOIN verification_state vs
+                         ON vs.target_kind='assertion'
+                        AND vs.target_id=a.id
+                        AND vs.matter_id=a.matter_id
+                       LEFT JOIN verification_state vs_edge
+                         ON vs_edge.target_kind='evidence_edge'
+                        AND vs_edge.target_id=ee.id
+                        AND vs_edge.matter_id=ee.matter_id
+                       WHERE ee.matter_id=? AND ee.target_kind='issue'
+                         AND ee.target_id=? AND ee.active=1
+                         AND ee.source_kind='assertion'
+                         AND ee.relation_type IN ('supports','establishes','attacks','negates')
+                         AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+                         AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
+                         AND COALESCE(vs_edge.status, ee.verification_status, 'candidate')
+                             NOT IN ('rejected','stale')
+                       GROUP BY ee.relation_type""",
+                    (self.matter_id, iid),
+                ).fetchall()
+            else:
+                rows = self.db.execute(
+                    """SELECT ail.relation_type, COUNT(*) as cnt
+                       FROM assertion_issue_link ail
+                       JOIN assertion a ON a.id = ail.assertion_id
+                       LEFT JOIN verification_state vs
+                         ON vs.target_kind='assertion'
+                        AND vs.target_id=a.id
+                        AND vs.matter_id=a.matter_id
+                       WHERE ail.issue_id=?
+                         AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+                         AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
+                       GROUP BY ail.relation_type""",
+                    (iid,),
+                ).fetchall()
             sup = sum(r["cnt"] for r in rows if r["relation_type"] in ("supports", "establishes"))
             atk = sum(r["cnt"] for r in rows if r["relation_type"] in ("attacks", "negates"))
             sup_map[iid] = sup
@@ -5345,6 +5385,157 @@ class VerificationStateStore:
                 (self.matter_id, status_val, _verification_kind_value(target_kind)),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def review_queue(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        target_kind: "VerificationTargetKind | str | None" = None,
+    ) -> list[dict]:
+        """P0.3: prioritized review queue of candidate verification
+        targets (SO-3). Attorneys pull this to decide what to promote
+        or reject next.
+
+        Priority order:
+          1. Assertions + edges linked to open issues with a proof
+             gap, ordered by materiality × salience descending.
+          2. Assertions + edges linked to open issues without a
+             proof gap, ordered by materiality × salience descending.
+          3. Quant facts flagged as threshold-triggering (high
+             materiality numeric intelligence).
+          4. Authorities (cited law) — fewer gates but still
+             reviewable.
+          5. Other candidate targets (predicates, document cards,
+             etc.), ordered by recency.
+
+        Each row includes: verification_state fields, target_kind,
+        target_id, plus purpose-dependent context (issue title /
+        materiality for assertions + edges, raw_text for quants,
+        citation for authorities, proposition_text for assertions).
+        """
+        kind_filter_sql = ""
+        params: list = [self.matter_id]
+        if target_kind is not None:
+            kind_filter_sql = " AND vs.target_kind = ?"
+            params.append(_verification_kind_value(target_kind))
+        # Priority uses a CASE on target_kind and joins for the
+        # strongest signal per kind. SQLite can't do FULL OUTER so
+        # each target kind gets its own CTE and the union is sorted
+        # by (priority_bucket ASC, priority_score DESC, created_at DESC).
+        rows = self.db.execute(
+            f"""WITH assertion_issue AS (
+                   SELECT ee.source_id AS target_id,
+                          MAX(i.materiality * i.salience) AS max_priority,
+                          MAX(CASE WHEN g.id IS NOT NULL THEN 1 ELSE 0 END) AS has_gap
+                   FROM evidence_edge ee
+                   JOIN issue i ON i.id = ee.target_id
+                   LEFT JOIN gap_link gl ON gl.affected_type='issue' AND gl.affected_id=ee.target_id
+                   LEFT JOIN gap g ON g.id = gl.gap_id AND g.status='open'
+                                   AND g.gap_type='missing_issue_predicate'
+                   WHERE ee.matter_id=? AND ee.source_kind='assertion'
+                     AND ee.target_kind='issue' AND ee.active=1
+                     AND i.status='open'
+                     AND ee.relation_type IN ('supports','establishes','attacks','negates')
+                   GROUP BY ee.source_id
+               ),
+               edge_issue AS (
+                   SELECT ee.id AS target_id,
+                          i.materiality * i.salience AS priority,
+                          CASE WHEN g.id IS NOT NULL THEN 1 ELSE 0 END AS has_gap
+                   FROM evidence_edge ee
+                   JOIN issue i ON i.id = ee.target_id
+                   LEFT JOIN gap_link gl ON gl.affected_type='issue' AND gl.affected_id=ee.target_id
+                   LEFT JOIN gap g ON g.id = gl.gap_id AND g.status='open'
+                                   AND g.gap_type='missing_issue_predicate'
+                   WHERE ee.matter_id=? AND ee.target_kind='issue' AND ee.active=1
+                     AND i.status='open'
+                     AND ee.relation_type IN ('supports','establishes','attacks','negates')
+               )
+               SELECT vs.id AS verification_id, vs.status, vs.target_kind, vs.target_id,
+                      vs.ai_confidence, vs.created_at, vs.updated_at,
+                      vs.reviewed_by_kind, vs.reviewed_by_id, vs.reviewed_at,
+                      -- Priority: 0 = issue-linked with gap, 1 = issue-linked without gap,
+                      -- 2 = quant_fact, 3 = authority, 4 = everything else.
+                      CASE
+                          WHEN vs.target_kind='assertion' AND ai.has_gap=1 THEN 0
+                          WHEN vs.target_kind='assertion' AND ai.max_priority IS NOT NULL THEN 1
+                          WHEN vs.target_kind='evidence_edge' AND ei.has_gap=1 THEN 0
+                          WHEN vs.target_kind='evidence_edge' AND ei.priority IS NOT NULL THEN 1
+                          WHEN vs.target_kind='quant_fact' THEN 2
+                          WHEN vs.target_kind='authority' THEN 3
+                          ELSE 4
+                      END AS priority_bucket,
+                      COALESCE(ai.max_priority, ei.priority, 0.0) AS priority_score,
+                      -- Target context: one of these will be non-null.
+                      (SELECT a.proposition_text FROM assertion a
+                         WHERE a.id=vs.target_id AND vs.target_kind='assertion') AS proposition_text,
+                      (SELECT q.raw_text FROM quant_fact q
+                         WHERE q.id=vs.target_id AND vs.target_kind='quant_fact') AS quant_raw_text,
+                      (SELECT au.citation FROM authority au
+                         WHERE au.id=vs.target_id AND vs.target_kind='authority') AS authority_citation
+               FROM verification_state vs
+               LEFT JOIN assertion_issue ai ON ai.target_id = vs.target_id
+                                            AND vs.target_kind='assertion'
+               LEFT JOIN edge_issue ei ON ei.target_id = vs.target_id
+                                       AND vs.target_kind='evidence_edge'
+               WHERE vs.matter_id=? AND vs.status='candidate'
+                 {kind_filter_sql}
+               ORDER BY priority_bucket ASC, priority_score DESC, vs.created_at DESC
+               LIMIT ? OFFSET ?""",
+            (self.matter_id, self.matter_id, *params, int(limit), int(offset)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def bulk_set_status(
+        self,
+        specs: list[dict],
+        *,
+        new_status: "VerificationStatus | str",
+        reviewed_by_kind: "ReviewedByKind | str",
+        reviewed_by_id: Optional[str] = None,
+        review_scope: "ReviewScope | str" = ReviewScope.EXTRACTION_CORRECT,
+        review_note: Optional[str] = None,
+        rejection_reason: Optional[str] = None,
+        cause: str = "human_bulk_review",
+        run_id: Optional[str] = None,
+    ) -> list[str]:
+        """P0.3: transition multiple targets to the same status in a
+        single logical operation (SO-3). Each spec is {target_kind,
+        target_id}. verify/reject rules still apply — automation
+        cannot bulk-verify or bulk-reject.
+
+        Returns the list of verification_state ids touched.
+        """
+        status_val = _verification_status_value(new_status)
+        kind_val = _reviewed_by_value(reviewed_by_kind)
+        if status_val in {"verified", "rejected"} and kind_val not in self._HUMAN_REVIEWERS:
+            raise ValueError(
+                f"reviewed_by_kind {kind_val!r} cannot bulk-set status={status_val}; "
+                "only 'user' or 'attorney' may verify or reject"
+            )
+        if status_val == "rejected" and (not rejection_reason or not rejection_reason.strip()):
+            raise ValueError("rejection_reason required for bulk rejection")
+        ids: list[str] = []
+        for spec in specs:
+            vid = self._set_status(
+                target_kind=spec["target_kind"],
+                target_id=spec["target_id"],
+                new_status=status_val,
+                reviewed_by_kind=kind_val,
+                reviewed_by_id=reviewed_by_id,
+                review_scope=_review_scope_value(review_scope),
+                review_scope_json=None,
+                review_note=review_note,
+                rejection_reason=(
+                    rejection_reason.strip() if rejection_reason else None
+                ),
+                stale_reason=None,
+                ai_confidence=None,
+                cause=cause,
+                run_id=run_id,
+            )
+            ids.append(vid)
+        return ids
 
     def list_events(
         self,

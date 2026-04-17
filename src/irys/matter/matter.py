@@ -347,6 +347,187 @@ class MatterModel:
         without reaching into the store directly."""
         return self.provenance.list_for_target(target_kind, target_id, limit=limit)
 
+    # ------------------------------------------------------------------
+    # P0.3: Review Queue and Verification API (SO-3)
+    # ------------------------------------------------------------------
+
+    def get_review_queue(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        target_kind: Optional[str] = None,
+    ) -> list[dict]:
+        """P0.3: prioritized review queue — what a human reviewer
+        should work on next. Thin facade over
+        VerificationStateStore.review_queue so API and UI surfaces
+        don't reach into stores directly."""
+        return self.verification.review_queue(
+            limit=limit, offset=offset, target_kind=target_kind,
+        )
+
+    def _issues_affected_by_target(
+        self, target_kind: str, target_id: str,
+    ) -> list[str]:
+        """Return open issue ids whose support depends on this target,
+        so rejection can trigger proof recomputation. P0.3 AC: rejections
+        trigger proof recomputation or mark proof stale."""
+        if target_kind == "assertion":
+            rows = self.db.execute(
+                """SELECT DISTINCT i.id FROM evidence_edge ee
+                   JOIN issue i ON i.id=ee.target_id
+                   WHERE ee.matter_id=? AND ee.source_kind='assertion'
+                     AND ee.source_id=? AND ee.target_kind='issue'
+                     AND ee.active=1 AND i.status='open'""",
+                (self.matter_id, target_id),
+            ).fetchall()
+            edge_rows = self.db.execute(
+                """SELECT DISTINCT issue_id AS id FROM assertion_issue_link ail
+                   JOIN issue i ON i.id = ail.issue_id
+                   WHERE ail.assertion_id=? AND i.matter_id=? AND i.status='open'""",
+                (target_id, self.matter_id),
+            ).fetchall()
+            ids: set[str] = {r["id"] for r in rows}
+            ids.update(r["id"] for r in edge_rows)
+            return list(ids)
+        if target_kind == "evidence_edge":
+            rows = self.db.execute(
+                """SELECT i.id FROM evidence_edge ee
+                   JOIN issue i ON i.id=ee.target_id
+                   WHERE ee.id=? AND ee.matter_id=? AND i.status='open'""",
+                (target_id, self.matter_id),
+            ).fetchall()
+            return [r["id"] for r in rows]
+        return []
+
+    def verify_target(
+        self,
+        target_kind: str,
+        target_id: str,
+        *,
+        reviewed_by_kind: str,
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> str:
+        """P0.3: promote a target to verified, append ledger audit
+        event, recompute proof state for any open issues it supports.
+        """
+        vid = self.verification.verify(
+            target_kind, target_id,
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+            review_note=review_note,
+            run_id=run_id,
+        )
+        self.ledger.append_event(
+            run_id=run_id,
+            event_type=LedgerEventType.ASSERTION_REVISED,
+            summary=f"Verified {target_kind}:{target_id}",
+            changed_object_type=target_kind,
+            changed_object_id=target_id,
+        )
+        # Promotion to verified changes the verified_supporting_count
+        # lane on any issue this target supports. Recompute affected
+        # proof states so coverage_report reflects the new lane.
+        for iid in self._issues_affected_by_target(target_kind, target_id):
+            try:
+                self.proof_state.compute_and_store(iid, policy_audience="internal")
+            except Exception:
+                pass
+        return vid
+
+    def reject_target(
+        self,
+        target_kind: str,
+        target_id: str,
+        *,
+        reviewed_by_kind: str,
+        rejection_reason: str,
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> str:
+        """P0.3: reject a target, append ledger audit event, and
+        recompute proof state for any open issues it supported so
+        their coverage drops accordingly."""
+        vid = self.verification.reject(
+            target_kind, target_id,
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+            rejection_reason=rejection_reason,
+            review_note=review_note,
+            run_id=run_id,
+        )
+        self.ledger.append_event(
+            run_id=run_id,
+            event_type=LedgerEventType.ASSERTION_REVISED,
+            summary=f"Rejected {target_kind}:{target_id}: {rejection_reason}",
+            changed_object_type=target_kind,
+            changed_object_id=target_id,
+        )
+        for iid in self._issues_affected_by_target(target_kind, target_id):
+            try:
+                self.proof_state.compute_and_store(iid, policy_audience="internal")
+            except Exception:
+                pass
+        return vid
+
+    def bulk_verify_by_document(
+        self,
+        document_ref: str,
+        *,
+        reviewed_by_kind: str,
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> list[str]:
+        """P0.3: bulk-verify every candidate assertion whose
+        occurrence points at the given document. Convenience for
+        reviewers who want to approve everything sourced from a
+        single document at once."""
+        rows = self.db.execute(
+            """SELECT DISTINCT ao.assertion_id AS id
+               FROM assertion_occurrence ao
+               JOIN assertion a ON a.id=ao.assertion_id
+               LEFT JOIN verification_state vs
+                 ON vs.target_kind='assertion'
+                AND vs.target_id=a.id
+                AND vs.matter_id=a.matter_id
+               WHERE a.matter_id=? AND ao.document_id=?
+                 AND COALESCE(vs.status, 'candidate')='candidate'""",
+            (self.matter_id, document_ref),
+        ).fetchall()
+        specs = [{"target_kind": "assertion", "target_id": r["id"]} for r in rows]
+        ids = self.verification.bulk_set_status(
+            specs,
+            new_status="verified",
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+            review_note=review_note,
+            run_id=run_id,
+        )
+        # Audit + proof recompute once per target so ledger events
+        # reflect each promotion and downstream coverage updates.
+        for spec in specs:
+            self.ledger.append_event(
+                run_id=run_id,
+                event_type=LedgerEventType.ASSERTION_REVISED,
+                summary=(
+                    f"Bulk-verified {spec['target_kind']}:{spec['target_id']} "
+                    f"via document={document_ref}"
+                ),
+                changed_object_type=spec["target_kind"],
+                changed_object_id=spec["target_id"],
+            )
+            for iid in self._issues_affected_by_target(
+                spec["target_kind"], spec["target_id"],
+            ):
+                try:
+                    self.proof_state.compute_and_store(iid, policy_audience="internal")
+                except Exception:
+                    pass
+        return ids
+
     def record_llm_call(self, record: LLMCallRecord) -> None:
         """Persist one Gemini API request for later cost and latency analysis.
 
@@ -1494,55 +1675,26 @@ class MatterModel:
             # Belief-state-weighted support sum (mirrors get_issue_coverage_report logic).
             # operative/admitted/resolved = 1.0, alleged/argued/inferred = 0.5,
             # other active states = 0.3; disputed/withdrawn/superseded excluded entirely.
-            # P0.2 review fix #2: previously this weakness query
-            # counted EVERY supporting link regardless of verification
-            # status, so rejected + stale rows made issues look
-            # better-supported than they actually are. Join
-            # verification_state and drop rejected/stale
-            # (TrustPurpose.PROOF_CANDIDATE eligibility).
-            support_rows = self.db.execute(
-                """SELECT ail.issue_id,
-                          SUM(CASE
-                                WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0
-                                WHEN a.belief_state IN ('alleged','argued','inferred') THEN 0.5
-                                ELSE 0.3
-                              END) AS weighted_support
-                   FROM assertion_issue_link ail
-                   JOIN issue i ON i.id=ail.issue_id
-                   JOIN assertion a ON a.id=ail.assertion_id
-                   LEFT JOIN verification_state vs
-                     ON vs.target_kind='assertion'
-                    AND vs.target_id=a.id
-                    AND vs.matter_id=a.matter_id
-                   WHERE i.matter_id=? AND i.status='open'
-                     AND ail.relation_type IN ('supports','establishes')
-                     AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
-                     AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
-                   GROUP BY ail.issue_id""",
-                (self.matter_id,),
-            ).fetchall()
-            support_counts = {
-                r["issue_id"]: float(r["weighted_support"] or 0.0)
-                for r in support_rows
+            # P0.2 review fix #2 (round 2): the weakness query was
+            # originally reading raw assertion_issue_link, so
+            # rejected/stale support inflated weighted coverage. A
+            # first pass added the assertion-lane verification filter
+            # but still couldn't see edge verification — stale edges
+            # on edge-backed issues still counted. Source the
+            # coverage_fraction directly from the canonical coverage
+            # report, which already applies
+            # TrustPurpose.PROOF_CANDIDATE eligibility to both lanes.
+            coverage_rows = self.get_issue_coverage_report(policy_audience="internal")
+            coverage_by_id = {
+                r["id"]: float(r.get("coverage_fraction") or 0.0)
+                for r in coverage_rows
             }
-
-            pred_rows_ctx = self.db.execute(
-                """SELECT ip.issue_id, COUNT(*) AS pred_count
-                   FROM issue_predicate ip
-                   JOIN issue i ON i.id = ip.issue_id
-                   WHERE i.matter_id=? AND i.status='open' AND ip.status='open'
-                   GROUP BY ip.issue_id""",
-                (self.matter_id,),
-            ).fetchall()
-            pred_counts_ctx = {r["issue_id"]: r["pred_count"] for r in pred_rows_ctx}
 
             # Use subtree-aware weakness: for each root issue, find its weakest
             # leaf descendant. The engine should target the most specific weak element,
             # not just the top-level claim (Gap 1: hierarchical issue model).
             def _weakness(issue: dict) -> tuple:
-                w_support = support_counts.get(issue["id"], 0.0)
-                pred_cnt = pred_counts_ctx.get(issue["id"], 0)
-                coverage = self._coverage_fraction(w_support, pred_cnt)
+                coverage = coverage_by_id.get(issue["id"], 0.0)
                 priority = issue["materiality"] * issue["salience"] * (1.0 - coverage)
                 return (-priority, issue["id"])
 
