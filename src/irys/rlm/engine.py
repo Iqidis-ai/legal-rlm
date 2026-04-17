@@ -177,6 +177,20 @@ _ADVOCACY_MARKER_PAT: "_re_engine.Pattern[str]" = _re_engine.compile(
 # ── end SO-5 advocacy gate constants ─────────────────────────────────────────
 
 
+# MVP.6: the default allowlist of optional synthesis sections. New
+# store summaries default OFF — register their keys here only after an
+# explicit decision to inject them into every synthesis prompt. Coverage
+# and gaps bypass this list and are always included (PR.3 contract).
+_DEFAULT_OPTIONAL_SECTIONS: frozenset[str] = frozenset({
+    "source_calibration",
+    "decision_context",
+    "entities",
+    "relationships",
+    "quantitative",
+    "citations",
+})
+
+
 @dataclass(frozen=True)
 class PacketBudget:
     """MVP.6 hard prompt-budget guardrails (SO-1).
@@ -5005,40 +5019,64 @@ Return:
         findings_text can still hydrate from upstream paths that don't
         know about privilege. The post-assembly scrub catches those.
         """
-        # Gather all candidate sections (label → content).
-        # Only sections with real content are candidates.
+        # MVP.6: explicit opt-in registry for optional sections. New
+        # store summaries default off; the baseline optional set below is
+        # the set of sections that shipped before MVP.6. Adding a new
+        # optional section requires registering its key here; silent
+        # prompt inflation is not possible.
+        enabled_optional = getattr(
+            self, "_enabled_optional_sections", None
+        ) or _DEFAULT_OPTIONAL_SECTIONS
+        budget = self._get_packet_budget()
+
+        # Gather all candidate optional sections (label → content).
+        # Only sections with real content, already in the allowlist, and
+        # within the per-section cap survive.
         candidates: dict[str, str] = {}
 
+        def _add_optional(key: str, content: str) -> None:
+            if key not in enabled_optional:
+                return
+            if not content or not content.strip():
+                return
+            capped = self._cap_text_by_tokens(
+                content.rstrip(), budget.per_optional_section_tokens
+            )
+            if capped:
+                candidates[key] = capped
+
         source_cal = self._build_source_calibration(state)
-        if source_cal and source_cal.strip():
-            candidates["source_calibration"] = (
-                "Source Calibration (read before analyzing facts):\n" + source_cal
+        if source_cal:
+            _add_optional(
+                "source_calibration",
+                "Source Calibration (read before analyzing facts):\n" + source_cal,
             )
-
         decision_ctx = self._build_decision_context_block()
-        if decision_ctx and decision_ctx.strip():
-            candidates["decision_context"] = decision_ctx.rstrip()
-
+        if decision_ctx:
+            _add_optional("decision_context", decision_ctx)
         entities_text = state.get_entities_formatted()
-        if entities_text and entities_text.strip():
-            candidates["entities"] = "Key Entities Identified:\n" + entities_text
-
+        if entities_text:
+            _add_optional(
+                "entities", "Key Entities Identified:\n" + entities_text
+            )
         relationships = self._build_structured_relationships()
-        if relationships and relationships.strip():
-            candidates["relationships"] = (
-                "Structured Relationships (subject-predicate-object):\n" + relationships
+        if relationships:
+            _add_optional(
+                "relationships",
+                "Structured Relationships (subject-predicate-object):\n" + relationships,
+            )
+        quant = self._build_quant_summary()
+        if quant:
+            _add_optional("quantitative", "Quantitative Summary:\n" + quant)
+        citations_text = state.get_citations_formatted()
+        if citations_text:
+            _add_optional(
+                "citations", "Documentary Citations:\n" + citations_text
             )
 
-        quant = self._build_quant_summary()
-        if quant and quant.strip():
-            candidates["quantitative"] = "Quantitative Summary:\n" + quant
-
-        citations_text = state.get_citations_formatted()
-        if citations_text and citations_text.strip():
-            candidates["citations"] = "Documentary Citations:\n" + citations_text
-
-        # Use LITE to decide which candidate sections are relevant to the query.
-        selected_keys = list(candidates.keys())  # default: include all
+        # Use LITE to decide which of the capped + allowed optional
+        # sections are relevant to the query.
+        selected_keys = list(candidates.keys())
         if candidates:
             try:
                 selected_keys = await self._select_relevant_sections(
@@ -5047,51 +5085,81 @@ Return:
             except Exception:
                 pass  # on failure, include everything — safe default
 
-        # Assemble the final packet.
-        sections: list[str] = []
+        # Assemble in fixed priority order so the total-cap pass below
+        # cannot crowd out mandatory sections.
+        ordered: list[tuple[str, str, bool]] = []  # (key, text, mandatory)
 
-        # Advocacy gate — always first, non-negotiable SO-5 behavioral gate
         advocacy_gate = self._build_advocacy_gate_block()
         if advocacy_gate.strip():
-            sections.append(advocacy_gate.rstrip())
+            ordered.append(("advocacy_gate", advocacy_gate.rstrip(), True))
 
-        # Selected sections in a stable order
+        query = getattr(state, "query", "") or ""
+        coverage_section = self._build_capped_issue_coverage_section(query)
+        if coverage_section:
+            ordered.append(("issue_coverage", coverage_section, True))
+        requested_id: "Optional[str]" = None
+        try:
+            coverage_rows = (
+                self._matter_model.get_issue_coverage_report()
+                if self._matter_model else []
+            )
+            requested_id = self._resolve_requested_issue_id(query, coverage_rows)
+        except Exception:
+            requested_id = None
+        gap_section = self._build_capped_gap_section(query, requested_id)
+        if gap_section:
+            ordered.append(("high_materiality_gaps", gap_section, True))
+
+        # Evidence is mandatory and comes after mandatory proof framing.
+        # Clean-mode findings scrub runs first.
+        clean_findings = findings_text or "No specific findings accumulated"
+        if policy_audience == "clean" and self._matter_model is not None:
+            clean_findings = self._scrub_privileged_references(clean_findings)
+        ordered.append((
+            "evidence", "Evidence Gathered:\n" + clean_findings, True,
+        ))
+
+        # Optional sections in stable order behind mandatory ones so the
+        # total-cap pass drops them first.
         _ORDER = [
             "source_calibration", "decision_context", "entities",
             "relationships", "quantitative", "citations",
         ]
         for key in _ORDER:
             if key in selected_keys and key in candidates:
-                sections.append(candidates[key])
+                ordered.append((key, candidates[key], False))
 
-        # PR.3: mandatory coverage and missingness sections. These bypass the
-        # LITE section selector because proof shape and material gaps must be
-        # in synthesis context regardless of which optional sections the
-        # selector picks. Both are capped by deterministic token budget.
-        query = getattr(state, "query", "") or ""
-        coverage_section = self._build_capped_issue_coverage_section(query)
-        if coverage_section:
-            sections.append(coverage_section)
-        requested_id: "Optional[str]" = None
-        try:
-            coverage_rows = self._matter_model.get_issue_coverage_report() if self._matter_model else []
-            requested_id = self._resolve_requested_issue_id(query, coverage_rows)
-        except Exception:
-            requested_id = None
-        gap_section = self._build_capped_gap_section(query, requested_id)
-        if gap_section:
-            sections.append(gap_section)
-
-        # Evidence — always included (core input, non-negotiable).
-        # MVP.4: in clean mode, strip any lines in the findings text that
-        # reference a privileged document's path or basename. This is
-        # a defense-in-depth pass for hydrated content that predates the
-        # substrate-level filters (e.g. state.citations, old accumulated
-        # findings). A dropped line is replaced with a withheld marker.
-        clean_findings = findings_text or "No specific findings accumulated"
-        if policy_audience == "clean" and self._matter_model is not None:
-            clean_findings = self._scrub_privileged_references(clean_findings)
-        sections.append("Evidence Gathered:\n" + clean_findings)
+        # Total-cap pass. Mandatory sections always go in. Optional
+        # sections drop (recorded) once the accumulator would exceed
+        # synthesis_total_tokens. If a single mandatory section alone
+        # exceeds the cap, it still goes in — we never drop mandatory.
+        sections: list[str] = []
+        used_tokens = 0
+        omitted: list[str] = []
+        total_cap = budget.synthesis_total_tokens
+        for key, text, mandatory in ordered:
+            cost = self._estimate_tokens(text + "\n\n")
+            if mandatory or used_tokens + cost <= total_cap:
+                sections.append(text)
+                used_tokens += cost
+            else:
+                omitted.append(key)
+        if omitted:
+            # Record omissions in a shape future context_assembly_event
+            # rows can consume directly.
+            try:
+                state.findings.setdefault("_packet_omissions", []).append({
+                    "omitted_sections": list(omitted),
+                    "synthesis_total_tokens": total_cap,
+                    "used_tokens": used_tokens,
+                })
+            except Exception:
+                pass
+            # Also log once so an attentive operator can see drops.
+            logger.info(
+                "MVP.6 packet omitted %d optional section(s) under %d-token cap: %s",
+                len(omitted), total_cap, ",".join(omitted),
+            )
 
         packet = "\n\n".join(sections)
         # Same scrub over the whole packet catches any privileged
