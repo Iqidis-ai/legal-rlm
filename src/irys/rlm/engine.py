@@ -4646,14 +4646,273 @@ Return:
 
         return sorted(facts, key=_rank)
 
+    # ------------------------------------------------------------------
+    # PR.3: mandatory capped coverage and missingness for synthesis context
+    # ------------------------------------------------------------------
+    #
+    # Token estimate uses len(text)//4, matching GeminiClient._parse_usage_metadata.
+    # Caps are intentionally small: synthesis already gets evidence and candidate
+    # sections, so the coverage and gap sections exist to force the LLM to reckon
+    # with proof shape, not to dump the full matter model into the prompt.
+
+    _PACKET_COVERAGE_TOKEN_CAP = 256
+    _PACKET_GAP_TOKEN_CAP = 256
+    _PACKET_ISSUE_TITLE_TRIM = 80
+    _PACKET_GAP_DESC_TRIM = 160
+    _PACKET_GAP_DEPS_PER_GAP = 2
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        return (len(text) + 3) // 4 if text else 0
+
+    def _resolve_requested_issue_id(
+        self, query: str, coverage_rows: "list[dict]"
+    ) -> "Optional[str]":
+        """Deterministically map the user query to an open issue id, or None.
+
+        Reuses the existing semantic attribution gate. When only one open issue
+        exists (below the gate's 2-issue floor), fall back to a conservative
+        token-overlap check so PR.3 AC #5 ("requested issue cannot lose its
+        material proof gap") still fires on single-issue fixtures.
+        """
+        if not query or not coverage_rows:
+            return None
+        open_ids = [row["id"] for row in coverage_rows if row.get("id")]
+        if not open_ids:
+            return None
+        profiles = self._build_issue_profiles(open_ids)
+        match = self._best_semantic_issue(query, profiles)
+        if match:
+            return match
+        # Single-issue fallback: the semantic gate abstains when profile pool
+        # has fewer than 2 entries. Only attach the query to that issue if it
+        # genuinely shares a non-trivial token with the title.
+        if len(open_ids) == 1:
+            only_id = open_ids[0]
+            title = next(
+                (r.get("title") or "" for r in coverage_rows if r.get("id") == only_id),
+                "",
+            )
+            q_tokens = {
+                t.strip(".,;:()\"'").lower()
+                for t in query.split()
+                if len(t.strip(".,;:()\"'")) >= 4
+            }
+            t_tokens = {
+                t.strip(".,;:()\"'").lower()
+                for t in title.split()
+                if len(t.strip(".,;:()\"'")) >= 4
+            }
+            if q_tokens & t_tokens:
+                return only_id
+        return None
+
+    @staticmethod
+    def _trim(text: str, limit: int) -> str:
+        if text is None:
+            return ""
+        text = str(text)
+        return text if len(text) <= limit else text[: max(0, limit - 1)].rstrip() + "…"
+
+    def _build_capped_issue_coverage_section(self, query: str) -> str:
+        """Capped, deterministic coverage section for the synthesis context packet.
+
+        Mandatory for SO-4 — synthesis must see per-issue proof shape, not just
+        supporting assertions. Ordering: requested issue first, then has_proof_gap,
+        then weakest coverage, then highest materiality, then title, then id.
+        """
+        if self._matter_model is None:
+            return ""
+        try:
+            rows = self._matter_model.get_issue_coverage_report()
+        except Exception:
+            return ""
+        if not rows:
+            return ""
+
+        requested_id = self._resolve_requested_issue_id(query or "", rows)
+
+        def _sort_key(item: dict) -> tuple:
+            iid = item.get("id", "")
+            return (
+                0 if iid == requested_id else 1,
+                0 if item.get("has_proof_gap") else 1,
+                float(item.get("coverage_fraction") or 0.0),
+                -float(item.get("materiality") or 0.0),
+                (item.get("title") or "").lower(),
+                iid,
+            )
+
+        ordered = sorted(rows, key=_sort_key)
+        header = "Issue Coverage (proof shape across open issues):"
+        lines = [header]
+        used = self._estimate_tokens(header + "\n")
+        cap = self._PACKET_COVERAGE_TOKEN_CAP
+        shown = 0
+        omitted = 0
+        for item in ordered:
+            title = self._trim(item.get("title") or "Untitled", self._PACKET_ISSUE_TITLE_TRIM)
+            cnt = int(item.get("supporting_count") or 0)
+            frac = float(item.get("coverage_fraction") or 0.0)
+            gap_flag = " ⚠ PROOF GAP" if item.get("has_proof_gap") else ""
+            requested_flag = " (requested)" if item.get("id") == requested_id else ""
+            line = (
+                f"  [{frac:.0%}] {title}{requested_flag}: "
+                f"{cnt} supporting{gap_flag}"
+            )
+            cost = self._estimate_tokens(line + "\n")
+            if used + cost > cap and shown > 0:
+                omitted = len(ordered) - shown
+                break
+            lines.append(line)
+            used += cost
+            shown += 1
+
+        if omitted:
+            lines.append(f"  … {omitted} more omitted under {cap}-token cap")
+        return "\n".join(lines)
+
+    def _build_capped_gap_section(
+        self, query: str, requested_issue_id: "Optional[str]"
+    ) -> str:
+        """Capped, deterministic missingness section for the synthesis context packet.
+
+        Mandatory for SO-7. High-materiality gaps must land in synthesis even
+        when the LITE section selector would drop everything else. Bucketed
+        selection guarantees that a material gap on the requested issue is
+        never lost to a higher-materiality gap on an unrelated issue.
+        """
+        if self._matter_model is None:
+            return ""
+        try:
+            all_gaps = self._matter_model.gaps.open_gaps(min_materiality=0.0)
+        except Exception:
+            return ""
+        if not all_gaps:
+            return ""
+
+        def _affects_requested(gap: dict) -> bool:
+            if not requested_issue_id:
+                return False
+            for dep in gap.get("dependencies") or []:
+                if (
+                    dep.get("affected_type") == "issue"
+                    and dep.get("affected_id") == requested_issue_id
+                ):
+                    return True
+            return False
+
+        def _bucket(gap: dict) -> int:
+            mat = float(gap.get("materiality_score") or 0.0)
+            gtype = gap.get("gap_type") or ""
+            if (
+                gtype == "missing_issue_predicate"
+                and _affects_requested(gap)
+                and mat >= 0.4
+            ):
+                return 1
+            if gtype == "missing_issue_predicate" and mat >= 0.7:
+                return 2
+            if mat >= 0.7:
+                return 3
+            if mat >= 0.4:
+                return 4
+            return 5  # filtered out
+
+        def _sort_key(gap: dict) -> tuple:
+            return (
+                _bucket(gap),
+                -float(gap.get("materiality_score") or 0.0),
+                gap.get("gap_type") or "",
+                (gap.get("description") or "").lower(),
+                gap.get("id") or "",
+            )
+
+        candidates = [g for g in all_gaps if _bucket(g) <= 4]
+        if not candidates:
+            return ""
+        candidates.sort(key=_sort_key)
+
+        header = "Known Gaps (missingness that must be acknowledged):"
+        lines = [header]
+        used = self._estimate_tokens(header + "\n")
+        cap = self._PACKET_GAP_TOKEN_CAP
+        shown = 0
+
+        def _render(gap: dict) -> list[str]:
+            gtype = (gap.get("gap_type") or "unknown").replace("_", " ")
+            desc = self._trim(gap.get("description") or "", self._PACKET_GAP_DESC_TRIM)
+            mat = float(gap.get("materiality_score") or 0.0)
+            label = "HIGH" if mat >= 0.7 else "MED" if mat >= 0.4 else "LOW"
+            out = [f"  [{label}] {gtype}: {desc}"]
+            deps = sorted(
+                gap.get("dependencies") or [],
+                key=lambda d: (
+                    d.get("affected_type") or "",
+                    d.get("affected_id") or "",
+                ),
+            )[: self._PACKET_GAP_DEPS_PER_GAP]
+            if deps:
+                dep_strs = [
+                    f"{d.get('affected_type','?')}:{(d.get('affected_id','') or '')[:8]}"
+                    for d in deps
+                ]
+                out.append(f"         Affects: {', '.join(dep_strs)}")
+            return out
+
+        # Special case: if the requested issue has a qualifying proof gap in
+        # bucket 1, force-include it first and hard-trim until it fits.
+        if requested_issue_id:
+            forced = next(
+                (g for g in candidates if _bucket(g) == 1),
+                None,
+            )
+            if forced is not None:
+                rendered = _render(forced)
+                cost = sum(self._estimate_tokens(l + "\n") for l in rendered)
+                if used + cost > cap:
+                    # Hard-trim the description to fit.
+                    mat = float(forced.get("materiality_score") or 0.0)
+                    label = "HIGH" if mat >= 0.7 else "MED" if mat >= 0.4 else "LOW"
+                    gtype = (forced.get("gap_type") or "unknown").replace("_", " ")
+                    desc = forced.get("description") or ""
+                    budget_chars = max(20, (cap - used) * 4 - len(f"  [{label}] {gtype}: "))
+                    rendered = [f"  [{label}] {gtype}: {self._trim(desc, budget_chars)}"]
+                    cost = sum(self._estimate_tokens(l + "\n") for l in rendered)
+                lines.extend(rendered)
+                used += cost
+                shown += 1
+                candidates = [g for g in candidates if g.get("id") != forced.get("id")]
+
+        for gap in candidates:
+            rendered = _render(gap)
+            cost = sum(self._estimate_tokens(l + "\n") for l in rendered)
+            if used + cost > cap:
+                break
+            lines.extend(rendered)
+            used += cost
+            shown += 1
+
+        total = len([g for g in all_gaps if _bucket(g) <= 4])
+        omitted = total - shown
+        if omitted > 0:
+            lines.append(f"  … {omitted} more omitted under {cap}-token cap")
+        return "\n".join(lines)
+
     async def _assemble_context_packet(
         self, state: InvestigationState, findings_text: str
     ) -> str:
         """Dynamically build the context packet for synthesis.
 
-        Uses a LITE call to decide which sections are relevant to the query.
-        Advocacy gate and evidence are always included (non-negotiable).
-        Everything else is selected by the LLM based on the query.
+        Uses a LITE call to decide which OPTIONAL sections are relevant to
+        the query: source_calibration, decision_context, entities,
+        relationships, quantitative, and citations.
+
+        The advocacy gate (SO-5) and the evidence block are always included.
+        Issue coverage (SO-4) and gap summaries (SO-7) are also mandatory
+        per PR.3: high-materiality proof gaps and per-issue coverage shape
+        must not be selector-gated. Both are capped deterministically by
+        token budget so a large matter cannot blow synthesis context.
         """
         # Gather all candidate sections (label → content).
         # Only sections with real content are candidates.
@@ -4713,6 +4972,24 @@ Return:
         for key in _ORDER:
             if key in selected_keys and key in candidates:
                 sections.append(candidates[key])
+
+        # PR.3: mandatory coverage and missingness sections. These bypass the
+        # LITE section selector because proof shape and material gaps must be
+        # in synthesis context regardless of which optional sections the
+        # selector picks. Both are capped by deterministic token budget.
+        query = getattr(state, "query", "") or ""
+        coverage_section = self._build_capped_issue_coverage_section(query)
+        if coverage_section:
+            sections.append(coverage_section)
+        requested_id: "Optional[str]" = None
+        try:
+            coverage_rows = self._matter_model.get_issue_coverage_report() if self._matter_model else []
+            requested_id = self._resolve_requested_issue_id(query, coverage_rows)
+        except Exception:
+            requested_id = None
+        gap_section = self._build_capped_gap_section(query, requested_id)
+        if gap_section:
+            sections.append(gap_section)
 
         # Evidence — always included (core input, non-negotiable)
         sections.append(
