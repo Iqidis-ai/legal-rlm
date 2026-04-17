@@ -1532,8 +1532,17 @@ class MatterModel:
             return min(weighted_support, float(predicate_count)) / float(predicate_count)
         return weighted_support / (weighted_support + 1.0)
 
-    def get_issue_coverage_report(self) -> list[dict]:
+    def get_issue_coverage_report(self, policy_audience: str = "clean") -> list[dict]:
         """Return per-issue evidence coverage for all open issues (SO-4).
+
+        policy_audience controls privileged-content filtering. MVP.4 ships
+        two audiences:
+        - "clean" (default): privileged assertions are excluded from
+          supporting/attacking counts, weighted_support, and all verified
+          derivatives. This is what UI/API callers, synthesis, and export
+          should use.
+        - "internal": no privilege filter. Used by internal audit/review
+          paths that need to see what was withheld.
 
         Each entry contains:
           - id, title, issue_type, materiality, salience
@@ -1582,6 +1591,23 @@ class MatterModel:
         ).fetchall()
         edge_issue_ids: set[str] = {r["issue_id"] for r in edge_issue_rows}
 
+        # MVP.4: when clean mode is active, exclude assertions that trace
+        # back to a privileged document. Injected as a subquery so large
+        # matters don't hit SQLite's variable-count limit.
+        privilege_filter = ""
+        if policy_audience == "clean":
+            privilege_filter = (
+                "AND a.id NOT IN ("
+                "SELECT DISTINCT ao.assertion_id "
+                "FROM assertion_occurrence ao "
+                "LEFT JOIN document_inventory di "
+                "  ON di.id = ao.document_inventory_id "
+                "  OR di.relative_path = ao.document_id "
+                "JOIN document_card dc ON dc.doc_id = di.id "
+                "WHERE di.matter_id = a.matter_id AND dc.privilege_flag = 1"
+                ")"
+            )
+
         def _support_query(use_edges: bool) -> str:
             if use_edges:
                 link_from = (
@@ -1605,7 +1631,8 @@ class MatterModel:
                     "AND i.status='open' "
                     "AND a.belief_state NOT IN ('disputed','withdrawn','superseded') "
                     "AND COALESCE(vs.status, 'candidate') != 'rejected' "
-                    "AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'"
+                    "AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected' "
+                    + privilege_filter
                 )
             else:
                 link_from = (
@@ -1622,7 +1649,8 @@ class MatterModel:
                     "i.matter_id=? AND i.status='open' "
                     "AND ail.relation_type IN ('supports','establishes') "
                     "AND a.belief_state NOT IN ('disputed','withdrawn','superseded') "
-                    "AND COALESCE(vs.status, 'candidate') != 'rejected'"
+                    "AND COALESCE(vs.status, 'candidate') != 'rejected' "
+                    + privilege_filter
                 )
             return (
                 f"SELECT {link_id} AS issue_id, "
@@ -1668,7 +1696,8 @@ class MatterModel:
         }
 
         # Attacking assertion counts per issue. Same edge-first substrate
-        # selection as supporting_count, same rejected-exclusion rules.
+        # selection as supporting_count, same rejected-exclusion rules,
+        # and the same MVP.4 privilege filter in clean mode.
         def _attack_query(use_edges: bool) -> str:
             if use_edges:
                 return (
@@ -1691,6 +1720,7 @@ class MatterModel:
                     "AND a.belief_state NOT IN ('disputed','withdrawn','superseded') "
                     "AND COALESCE(vs.status, 'candidate') != 'rejected' "
                     "AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected' "
+                    + privilege_filter + " "
                     "GROUP BY ee.target_id"
                 )
             return (
@@ -1706,6 +1736,7 @@ class MatterModel:
                 "AND ail.relation_type IN ('attacks','negates') "
                 "AND a.belief_state NOT IN ('disputed','withdrawn','superseded') "
                 "AND COALESCE(vs.status, 'candidate') != 'rejected' "
+                + privilege_filter + " "
                 "GROUP BY ail.issue_id"
             )
 

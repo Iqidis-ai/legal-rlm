@@ -27,6 +27,7 @@ IMPLEMENTED_CAPABILITIES: set[str] = {
     "proof_gap_detection",  # _detect_proof_gaps opens missing_issue_predicate gaps
     "verification_state",  # MVP.2 VerificationStateStore + candidate/verified columns
     "evidence_edge_backfill",  # MVP.3 EvidenceStore + v53 backfill
+    "privilege_containment",  # MVP.4 document-level privilege filter in clean mode
 }
 
 # Capabilities that are intentionally NOT yet implemented and gate future
@@ -203,6 +204,81 @@ def _evidence_edge_backfill_idempotent(
             )
 
 
+def _no_privileged_doc_in_clean_context(
+    result: HarnessResult, params: dict[str, Any]
+) -> None:
+    """MVP.4: under clean policy, privileged assertions/documents do not
+    contribute to coverage/proof, and the privileged-only support case
+    surfaces as a missing_issue_predicate gap. Also verifies that the
+    privileged document is not visible in the coverage report via any
+    supporting_count attribution."""
+    from irys.rlm.engine import RLMEngine
+
+    issue_alias = params["issue_alias"]
+    issue_id = _require_alias(result, f"issue:{issue_alias}")
+    model = result.model
+
+    # Coverage report in clean mode must report zero supporting_count and
+    # verified_supporting_count for the privileged-only issue.
+    clean_row = next(
+        (r for r in model.get_issue_coverage_report("clean") if r["id"] == issue_id),
+        None,
+    )
+    if clean_row is None:
+        raise InvariantViolation(
+            f"issue alias {issue_alias!r} missing from clean coverage report"
+        )
+    if clean_row["supporting_count"] != 0:
+        raise InvariantViolation(
+            f"clean mode must report zero supporting_count for a "
+            f"privileged-only issue; got {clean_row['supporting_count']}"
+        )
+    if clean_row["verified_supporting_count"] != 0:
+        raise InvariantViolation(
+            f"clean mode must report zero verified_supporting_count; "
+            f"got {clean_row['verified_supporting_count']}"
+        )
+
+    # Internal mode must still see the privileged support.
+    internal_row = next(
+        r for r in model.get_issue_coverage_report("internal") if r["id"] == issue_id
+    )
+    if internal_row["supporting_count"] == 0:
+        raise InvariantViolation(
+            "fixture precondition — internal mode must see at least one "
+            "privileged support for the issue"
+        )
+
+    # Proof-state substrate under clean policy must also see zero support.
+    model.proof_state.compute_and_store(issue_id, policy_audience="clean")
+    ps = model.proof_state.get(issue_id)
+    if ps and ps["supporting_count"] != 0:
+        raise InvariantViolation(
+            f"proof_state in clean mode must report zero supporting_count "
+            f"for a privileged-only issue; got {ps['supporting_count']}"
+        )
+
+    # _detect_proof_gaps must open a missing_issue_predicate gap for the
+    # privileged-only issue because clean support is zero.
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    engine._detect_proof_gaps(policy_audience="clean")
+    gaps = model.gaps.open_gaps(min_materiality=0.0)
+    linked = [
+        g for g in gaps
+        if g.get("gap_type") == "missing_issue_predicate"
+        and any(
+            d.get("affected_type") == "issue" and d.get("affected_id") == issue_id
+            for d in (g.get("dependencies") or [])
+        )
+    ]
+    if not linked:
+        raise InvariantViolation(
+            f"clean-mode gap detection must open a missing_issue_predicate "
+            f"gap for issue {issue_alias!r} when only privileged support exists"
+        )
+
+
 def _planned_capability_placeholder(
     result: HarnessResult, params: dict[str, Any]
 ) -> None:
@@ -301,12 +377,12 @@ _INVARIANTS: dict[str, Invariant] = {
         requires=("verification_state",),
         check=_candidate_support_not_verified,
     ),
-    # MVP.4 — activates once privilege containment lands.
+    # MVP.4 — document-level privilege containment landed.
     "no_privileged_doc_in_clean_context": Invariant(
         name="no_privileged_doc_in_clean_context",
         group="privilege",
         requires=("privilege_containment",),
-        check=_planned_capability_placeholder,
+        check=_no_privileged_doc_in_clean_context,
     ),
 }
 

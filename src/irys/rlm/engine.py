@@ -6197,7 +6197,7 @@ Return:
             logger.warning(f"JSON parse failed: {e}, response preview: {text[:200] if text else 'empty'}")
             return defaults
 
-    def _detect_proof_gaps(self) -> None:
+    def _detect_proof_gaps(self, policy_audience: str = "clean") -> None:
         """Record proof gaps for high-priority issues with no supporting assertions (SO-7).
 
         An issue that exists in the model but has zero supporting-assertion links is
@@ -6209,6 +6209,11 @@ Return:
 
         Also resolves previously-open proof gaps when an issue now has active support:
         a gap that was opened in a prior run is closed once new assertions fill it.
+
+        MVP.4 (SO-5): under policy_audience='clean', assertions sourced from
+        privileged documents don't count as support. Clean support must exist
+        to close a gap, and a clean-support-empty / privileged-support-only
+        issue still gets a missing_issue_predicate gap opened.
 
         Uses a single NOT EXISTS SQL query instead of two Python-level IN-list queries to:
           (a) avoid SQLite variable-count limits on large matters (>999 issues),
@@ -6222,11 +6227,25 @@ Return:
         from datetime import datetime, timezone as _tz
         mid = self._matter_model.matter_id
         _ts = datetime.now(_tz.utc).isoformat()
+        # MVP.4 clean-mode privilege filter. Applied to every assertion join
+        # so privileged-only support cannot close or suppress a proof gap.
+        priv_sql = ""
+        if policy_audience == "clean":
+            priv_sql = (
+                " AND a.id NOT IN ("
+                " SELECT DISTINCT ao.assertion_id FROM assertion_occurrence ao"
+                " LEFT JOIN document_inventory di"
+                "   ON di.id = ao.document_inventory_id"
+                "   OR di.relative_path = ao.document_id"
+                " JOIN document_card dc ON dc.doc_id = di.id"
+                " WHERE di.matter_id = a.matter_id AND dc.privilege_flag = 1"
+                ")"
+            )
 
         # Resolve any proof gaps for issues that NOW have active supporting assertions.
         # This closes gaps that were opened in a prior iteration when the issue lacked support.
         self._matter_model.db.execute(
-            """UPDATE gap SET status='resolved', updated_at=?
+            f"""UPDATE gap SET status='resolved', updated_at=?
                WHERE matter_id=? AND status='open'
                  AND gap_type='missing_issue_predicate'
                  AND EXISTS (
@@ -6243,6 +6262,7 @@ Return:
                              AND ail.relation_type IN ('supports','establishes')
                              AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
                              AND COALESCE(vs.status, 'candidate') != 'rejected'
+                             {priv_sql}
                        )
                        -- MVP.3: an issue with any active edge-backed
                        -- support also closes the legacy gap.
@@ -6264,6 +6284,7 @@ Return:
                              AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
                              AND COALESCE(vs.status, 'candidate') != 'rejected'
                              AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'
+                             {priv_sql}
                        )
                  )""",
             (_ts, mid, mid),
@@ -6273,8 +6294,11 @@ Return:
         # when it has no active support in EITHER substrate. This prevents
         # a missing-predicate gap from opening when the issue is supported
         # entirely through evidence_edge.
+        # MVP.4 clean mode: privileged-only support counts as unsupported
+        # for gap detection, so a privileged memo cannot silently satisfy
+        # a claim.
         rows = self._matter_model.db.execute(
-            """SELECT i.id, i.title, i.materiality
+            f"""SELECT i.id, i.title, i.materiality
                FROM issue i
                WHERE i.matter_id=? AND i.status='open' AND i.materiality >= 0.4
                  AND NOT EXISTS (
@@ -6288,6 +6312,7 @@ Return:
                        AND ail.relation_type IN ('supports','establishes')
                        AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
                        AND COALESCE(vs.status, 'candidate') != 'rejected'
+                       {priv_sql}
                  )
                  AND NOT EXISTS (
                      SELECT 1 FROM evidence_edge ee
@@ -6307,6 +6332,7 @@ Return:
                        AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
                        AND COALESCE(vs.status, 'candidate') != 'rejected'
                        AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'
+                       {priv_sql}
                  )
                  AND NOT EXISTS (
                      SELECT 1 FROM gap g

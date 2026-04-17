@@ -5156,7 +5156,7 @@ class ProofStateStore:
     # ------------------------------------------------------------------
 
     def _query_issue_linked_assertions(
-        self, issue_id: str, use_edges: bool
+        self, issue_id: str, use_edges: bool, policy_audience: str = "clean"
     ) -> list:
         """Return one row per assertion linked to the issue, carrying
         relation_type, best source_role, and primary document id.
@@ -5165,10 +5165,26 @@ class ProofStateStore:
         use_edges=False falls back to assertion_issue_link so matters
         mid-migration or with no edges yet still compute correctly.
 
+        policy_audience="clean" excludes assertions sourced from a
+        privileged document (MVP.4). "internal" lifts the filter.
+
         The two branches return rows with the same shape so downstream
         proof math is identical. Rejected assertions and rejected edges
         are excluded at the substrate level.
         """
+        privilege_filter = ""
+        if policy_audience == "clean":
+            privilege_filter = (
+                "AND a.id NOT IN ("
+                "SELECT DISTINCT ao.assertion_id "
+                "FROM assertion_occurrence ao "
+                "LEFT JOIN document_inventory di "
+                "  ON di.id = ao.document_inventory_id "
+                "  OR di.relative_path = ao.document_id "
+                "JOIN document_card dc ON dc.doc_id = di.id "
+                "WHERE di.matter_id = a.matter_id AND dc.privilege_flag = 1"
+                ")"
+            )
         # Shared occurrence-ranking CTE: one row per assertion with the
         # highest-trust source_role and the primary document_id.
         occ_ranked_cte = """
@@ -5229,6 +5245,7 @@ class ProofStateStore:
                   AND a.belief_state NOT IN ('superseded','withdrawn')
                   AND COALESCE(vs.status, 'candidate') != 'rejected'
                   AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'
+                  """ + privilege_filter + """
                 GROUP BY ee.source_id, ee.relation_type
             """
             rows = self.db.execute(
@@ -5258,6 +5275,7 @@ class ProofStateStore:
                   AND ail.relation_type IN ('supports','establishes','attacks','negates')
                   AND a.belief_state NOT IN ('superseded','withdrawn')
                   AND COALESCE(vs.status, 'candidate') != 'rejected'
+                  """ + privilege_filter + """
                 GROUP BY ail.assertion_id, ail.relation_type
             """
             rows = self.db.execute(query, (issue_id, issue_id)).fetchall()
@@ -5271,6 +5289,7 @@ class ProofStateStore:
         self,
         issue_id: str,
         _preloaded_overrides: "list[tuple[str, str]] | None" = None,
+        policy_audience: str = "clean",
     ) -> dict:
         """Recompute proof state for an issue and persist it.
 
@@ -5325,7 +5344,9 @@ class ProofStateStore:
         has_edges = EvidenceStore(self.db, self.matter_id).target_has_edges(
             "issue", issue_id
         )
-        _linked_rows = self._query_issue_linked_assertions(issue_id, has_edges)
+        _linked_rows = self._query_issue_linked_assertions(
+            issue_id, has_edges, policy_audience=policy_audience
+        )
         sup_rows = [r for r in _linked_rows if r["relation_type"] in ("supports", "establishes")]
         atk_rows = [r for r in _linked_rows if r["relation_type"] in ("attacks", "negates")]
         supporting = len(sup_rows)

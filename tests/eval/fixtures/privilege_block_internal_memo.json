@@ -60,12 +60,6 @@
   ],
   "invariants": [
     {
-      "name": "coverage_partial_and_nonzero",
-      "group": "proof_gap",
-      "requires": ["coverage_report"],
-      "params": {"issue_alias": "breach_claim"}
-    },
-    {
       "name": "no_privileged_doc_in_clean_context",
       "group": "privilege",
       "requires": ["privilege_containment"],
