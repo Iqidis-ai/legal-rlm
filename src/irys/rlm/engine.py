@@ -4906,7 +4906,8 @@ Return:
         return "\n".join(lines)
 
     async def _assemble_context_packet(
-        self, state: InvestigationState, findings_text: str
+        self, state: InvestigationState, findings_text: str,
+        policy_audience: str = "clean",
     ) -> str:
         """Dynamically build the context packet for synthesis.
 
@@ -4919,6 +4920,14 @@ Return:
         per PR.3: high-materiality proof gaps and per-issue coverage shape
         must not be selector-gated. Both are capped deterministically by
         token budget so a large matter cannot blow synthesis context.
+
+        MVP.4 SO-5: under policy_audience='clean' (default), any content
+        that references a privileged document's path or basename is
+        scrubbed from the assembled packet. This is a defense-in-depth
+        filter — substrate queries (coverage, gap, proof) already drop
+        privileged assertions, but state.citations / state.entities and
+        findings_text can still hydrate from upstream paths that don't
+        know about privilege. The post-assembly scrub catches those.
         """
         # Gather all candidate sections (label → content).
         # Only sections with real content are candidates.
@@ -4997,13 +5006,70 @@ Return:
         if gap_section:
             sections.append(gap_section)
 
-        # Evidence — always included (core input, non-negotiable)
-        sections.append(
-            "Evidence Gathered:\n"
-            + (findings_text or "No specific findings accumulated")
-        )
+        # Evidence — always included (core input, non-negotiable).
+        # MVP.4: in clean mode, strip any lines in the findings text that
+        # reference a privileged document's path or basename. This is
+        # a defense-in-depth pass for hydrated content that predates the
+        # substrate-level filters (e.g. state.citations, old accumulated
+        # findings). A dropped line is replaced with a withheld marker.
+        clean_findings = findings_text or "No specific findings accumulated"
+        if policy_audience == "clean" and self._matter_model is not None:
+            clean_findings = self._scrub_privileged_references(clean_findings)
+        sections.append("Evidence Gathered:\n" + clean_findings)
 
-        return "\n\n".join(sections)
+        packet = "\n\n".join(sections)
+        # Same scrub over the whole packet catches any privileged
+        # document paths that leaked into entity/citation/relationship
+        # strings built from state.*.
+        if policy_audience == "clean" and self._matter_model is not None:
+            packet = self._scrub_privileged_references(packet)
+        return packet
+
+    def _scrub_privileged_references(self, text: str) -> str:
+        """Remove lines that mention a privileged document's relative path
+        or basename. Conservative — a line is dropped when any privileged
+        doc reference matches, replaced with a single "[withheld under
+        clean policy]" marker so downstream readers see something was
+        filtered rather than silence.
+        """
+        if not text or self._matter_model is None:
+            return text
+        try:
+            rows = self._matter_model.db.execute(
+                """SELECT di.relative_path
+                   FROM document_card dc
+                   JOIN document_inventory di ON di.id = dc.doc_id
+                   WHERE di.matter_id=? AND dc.privilege_flag=1""",
+                (self._matter_model.matter_id,),
+            ).fetchall()
+        except Exception:
+            return text
+        needles = set()
+        for r in rows:
+            path = (r["relative_path"] or "").strip()
+            if not path:
+                continue
+            needles.add(path)
+            # Add basename (last path segment) as additional needle so
+            # references like "memo.docx" get caught even without the
+            # full relative path.
+            norm = path.replace("\\", "/")
+            base = norm.rsplit("/", 1)[-1]
+            if base and base != path:
+                needles.add(base)
+        if not needles:
+            return text
+        kept_lines = []
+        withheld_emitted = False
+        for line in text.splitlines():
+            line_l = line.lower()
+            if any(n.lower() in line_l for n in needles):
+                if not withheld_emitted:
+                    kept_lines.append("[withheld under clean policy]")
+                    withheld_emitted = True
+                continue
+            kept_lines.append(line)
+        return "\n".join(kept_lines)
 
     async def _select_relevant_sections(
         self, query: str, candidates: dict[str, str]

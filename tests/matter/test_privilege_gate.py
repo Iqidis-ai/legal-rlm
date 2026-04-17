@@ -165,6 +165,47 @@ def test_privilege_flag_preserved_across_profile_refresh(model):
     assert row["privilege_flag"] == 0
 
 
+def test_context_packet_scrubs_privileged_document_references():
+    """MVP.4 AC #3: clean context packet must not surface privileged doc
+    paths or content. _assemble_context_packet under policy_audience
+    'clean' runs a post-assembly scrub over hydrated sections, so
+    findings_text that mentions a privileged doc's path or basename is
+    replaced with a withheld marker."""
+    import asyncio
+
+    from irys.rlm.engine import RLMEngine
+    from irys.rlm.state import InvestigationState
+
+    m = MatterModel.open_in_memory()
+    _seed_doc(m, "internal/attorney_memo.docx", privilege_flag=True)
+    _seed_doc(m, "contracts/msa.pdf", privilege_flag=False)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = m
+
+    # Directly exercise the scrub function — the full _assemble path
+    # requires an async gemini client we don't need here.
+    findings = (
+        "From contracts/msa.pdf: Payment due in thirty days.\n"
+        "From internal/attorney_memo.docx: Counsel views the case favorably.\n"
+        "Plain line unrelated to any doc."
+    )
+    scrubbed = engine._scrub_privileged_references(findings)
+    assert "internal/attorney_memo.docx" not in scrubbed
+    assert "Counsel views the case favorably" not in scrubbed
+    assert "contracts/msa.pdf" in scrubbed
+    assert "Payment due in thirty days" in scrubbed
+    assert "Plain line" in scrubbed
+    assert "[withheld under clean policy]" in scrubbed
+
+    # basename-only reference is also caught
+    ref_by_basename = (
+        "Exhibit A (attorney_memo.docx) was consulted by counsel."
+    )
+    scrubbed_base = engine._scrub_privileged_references(ref_by_basename)
+    assert "attorney_memo.docx" not in scrubbed_base
+
+
 def test_edge_substrate_respects_privilege_filter(model):
     """The edge-first proof substrate branch must also drop privileged
     edges. Adversarial audit flagged that filters have to land on every
