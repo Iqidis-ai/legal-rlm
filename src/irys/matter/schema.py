@@ -1249,10 +1249,9 @@ def _migration_v18(conn) -> None:
     import hashlib
     conn.execute("SAVEPOINT _v18")
     try:
-        try:
-            conn.execute("ALTER TABLE gap ADD COLUMN description_key TEXT")
-        except Exception:
-            pass  # column already exists
+        _execute_allow_duplicate_column(
+            conn, "ALTER TABLE gap ADD COLUMN description_key TEXT"
+        )
 
         # Back-fill existing rows using executemany (avoids N×individual UPDATEs)
         rows = conn.execute("SELECT id, gap_type, description FROM gap WHERE description_key IS NULL").fetchall()
@@ -1295,10 +1294,10 @@ def _migration_v19(conn) -> None:
     import hashlib
     conn.execute("SAVEPOINT _v19")
     try:
-        try:
-            conn.execute("ALTER TABLE quant_fact ADD COLUMN quant_dedup_key TEXT NOT NULL DEFAULT ''")
-        except Exception:
-            pass  # column already exists
+        _execute_allow_duplicate_column(
+            conn,
+            "ALTER TABLE quant_fact ADD COLUMN quant_dedup_key TEXT NOT NULL DEFAULT ''",
+        )
 
         # Back-fill existing rows in chunks of 500 to bound memory use and lock window.
         _CHUNK = 500
@@ -1494,12 +1493,10 @@ def _migration_v27(conn) -> None:
     and extracting the basename in Python (no SQLite BASENAME() function exists).
     """
     import pathlib as _pathlib
-    try:
-        conn.execute(
-            "ALTER TABLE assertion_occurrence ADD COLUMN doc_basename TEXT"
-        )
-    except Exception:
-        pass  # column already exists from DDL
+    _execute_allow_duplicate_column(
+        conn,
+        "ALTER TABLE assertion_occurrence ADD COLUMN doc_basename TEXT",
+    )
     rows = conn.execute(
         "SELECT id, document_id FROM assertion_occurrence WHERE document_id IS NOT NULL"
     ).fetchall()
@@ -1866,10 +1863,7 @@ def _migration_v43(conn) -> None:
         "ALTER TABLE run_session ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'query'",
         "ALTER TABLE run_session ADD COLUMN trigger TEXT NOT NULL DEFAULT 'user'",
     ]:
-        try:
-            conn.execute(stmt)
-        except Exception:
-            pass  # column already exists from DDL
+        _execute_allow_duplicate_column(conn, stmt)
     conn.commit()
 
 
@@ -1902,10 +1896,7 @@ def _migration_v44(conn) -> None:
         "ALTER TABLE assertion ADD COLUMN canonicalization_confidence REAL NOT NULL DEFAULT 0.0",
     ]
     for stmt in assertion_alters:
-        try:
-            conn.execute(stmt)
-        except Exception:
-            pass  # column already exists
+        _execute_allow_duplicate_column(conn, stmt)
 
     # --- Step 2: ALTER TABLE assertion_occurrence ---
     occurrence_alters = [
@@ -1924,10 +1915,7 @@ def _migration_v44(conn) -> None:
         "ALTER TABLE assertion_occurrence ADD COLUMN extraction_confidence REAL NOT NULL DEFAULT 0.0",
     ]
     for stmt in occurrence_alters:
-        try:
-            conn.execute(stmt)
-        except Exception:
-            pass  # column already exists
+        _execute_allow_duplicate_column(conn, stmt)
 
     # --- Step 3: Replace ux_assertion_prop with legacy index + claim_key unique ---
     conn.execute("DROP INDEX IF EXISTS ux_assertion_prop")
@@ -2214,14 +2202,14 @@ def _migration_v45(conn) -> None:
     - coverage_version: tracks which formula version produced the snapshot
       so stale rows can be detected after formula changes.
     """
-    # --- evidence_edge table (DDL already in _DDL_EVIDENCE for fresh DBs) ---
+    # --- evidence_edge table (DDL already in _DDL_EVIDENCE for fresh DBs).
+    # Every statement in _DDL_EVIDENCE already uses CREATE TABLE/INDEX IF NOT
+    # EXISTS, so any error surfaced here is a real migration defect, not a
+    # benign "already exists" case. Broad swallow removed.
     for stmt in _DDL_EVIDENCE.split(";"):
         stmt = stmt.strip()
         if stmt:
-            try:
-                conn.execute(stmt)
-            except Exception:
-                pass  # Already exists on fresh DBs that ran _DDL_EVIDENCE
+            conn.execute(stmt)
 
     # --- proof_state new columns ---
     for alter in (
@@ -2229,10 +2217,7 @@ def _migration_v45(conn) -> None:
         "ALTER TABLE proof_state ADD COLUMN attack_score REAL NOT NULL DEFAULT 0.0",
         "ALTER TABLE proof_state ADD COLUMN coverage_version TEXT NOT NULL DEFAULT 'proof_v2'",
     ):
-        try:
-            conn.execute(alter)
-        except Exception:
-            pass  # Already present on fresh DBs
+        _execute_allow_duplicate_column(conn, alter)
 
     conn.commit()
 
@@ -2277,30 +2262,24 @@ def _migration_v46(conn) -> None:
         "ALTER TABLE run_session ADD COLUMN llm_request_count INTEGER",
         "ALTER TABLE run_session ADD COLUMN llm_estimated_cost_usd REAL",
     ):
-        try:
-            conn.execute(alter)
-        except Exception:
-            pass
+        _execute_allow_duplicate_column(conn, alter)
     conn.commit()
 
 
 def _migration_v47(conn) -> None:
     """Add research_mode to run_session for explicit budget/audit tracking."""
-    try:
-        conn.execute(
-            "ALTER TABLE run_session ADD COLUMN research_mode TEXT NOT NULL DEFAULT 'deep'"
-        )
-    except Exception:
-        pass
+    _execute_allow_duplicate_column(
+        conn,
+        "ALTER TABLE run_session ADD COLUMN research_mode TEXT NOT NULL DEFAULT 'deep'",
+    )
     conn.commit()
 
 
 def _migration_v48(conn) -> None:
     """Add date_precision column to quant_fact for timeline display fidelity."""
-    try:
-        conn.execute("ALTER TABLE quant_fact ADD COLUMN date_precision TEXT")
-    except Exception:
-        pass
+    _execute_allow_duplicate_column(
+        conn, "ALTER TABLE quant_fact ADD COLUMN date_precision TEXT"
+    )
     conn.commit()
 
 
