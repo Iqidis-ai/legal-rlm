@@ -179,6 +179,48 @@ class CorrectAssertionRequest(BaseModel):
     run_id: Optional[str] = Field(None, description="Active run ID for audit attribution; server falls back to latest running run if omitted")
 
 
+# P0.3 Review Queue and Verification API (SO-3)
+
+class VerifyTargetRequest(BaseModel):
+    """Promote or reject a single AI-derived target.
+
+    reviewed_by_kind must be 'user' or 'attorney' — automation cannot
+    promote to verified or reject live intelligence. rejection_reason
+    is required when status='rejected'.
+    """
+    target_kind: str = Field(
+        ...,
+        description="Kind of intelligence object: assertion, evidence_edge, "
+                    "quant_fact, authority, document_card, etc.",
+    )
+    target_id: str = Field(..., description="ID of the target to verify or reject")
+    status: str = Field(
+        "verified",
+        description="Target status: 'verified' (default) or 'rejected'",
+    )
+    reviewed_by_kind: str = Field(
+        "user",
+        description="Reviewer role: 'user' or 'attorney'. 'system'/'import' are rejected.",
+    )
+    reviewed_by_id: Optional[str] = Field(None, description="Reviewer identifier")
+    review_note: Optional[str] = Field(None, description="Optional reviewer note")
+    rejection_reason: Optional[str] = Field(
+        None,
+        description="Required when status='rejected': why the target is being rejected",
+    )
+    run_id: Optional[str] = Field(None, description="Active run ID for audit attribution")
+
+
+class BulkVerifyByDocumentRequest(BaseModel):
+    """Bulk-verify every candidate assertion sourced from a single
+    document in one operation (SO-3 reviewer convenience)."""
+    document_ref: str = Field(..., description="Document path/ref to bulk-verify assertions from")
+    reviewed_by_kind: str = Field("user", description="Reviewer role (human only)")
+    reviewed_by_id: Optional[str] = Field(None, description="Reviewer identifier")
+    review_note: Optional[str] = Field(None, description="Optional reviewer note")
+    run_id: Optional[str] = Field(None, description="Active run ID for audit attribution")
+
+
 class SearchRequest(BaseModel):
     """Request for quick search."""
     query: str = Field(..., description="Search query")

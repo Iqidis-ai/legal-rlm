@@ -62,6 +62,8 @@ from .models import (
     CorrectAssertionRequest,
     TrustOverrideRequest,
     DocumentAnnotationRequest,
+    VerifyTargetRequest,
+    BulkVerifyByDocumentRequest,
 )
 from .s3_repository import S3Repository
 
@@ -2013,6 +2015,138 @@ async def get_assertion_history(matter_id: str, assertion_id: str, limit: int = 
         "truncated": truncated,
         "next_offset": offset + len(history) if truncated else None,
         "history": history,
+    }
+
+
+# ---------------------------------------------------------------------------
+# P0.3: Review Queue and Verification API (SO-3)
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/matter/{matter_id}/review-queue",
+    tags=["Review Queue"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_review_queue(
+    matter_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    target_kind: Optional[str] = None,
+):
+    """Return the prioritized review queue for attorney review (SO-3).
+
+    Order: gap-blocked issue-linked candidates first, then other
+    issue-linked candidates, then quant facts, then authorities,
+    then everything else. Each row carries the verification_state,
+    target kind/id, and purpose-specific context (proposition_text
+    for assertions, raw_text for quants, citation for authorities)
+    so the UI can render a useful review card without N+1 lookups.
+    """
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    model = await _get_matter_model_or_404(matter_id)
+    queue = model.get_review_queue(
+        limit=limit, offset=offset, target_kind=target_kind,
+    )
+    return {
+        "matter_id": matter_id,
+        "count": len(queue),
+        "limit": limit,
+        "offset": offset,
+        "target_kind_filter": target_kind,
+        "queue": queue,
+    }
+
+
+@app.post(
+    "/matter/{matter_id}/verify",
+    tags=["Review Queue"],
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+async def verify_target(matter_id: str, request: VerifyTargetRequest):
+    """Promote or reject a single AI-derived target (SO-3).
+
+    Status must be 'verified' or 'rejected'. For 'verified', only
+    human reviewers (user or attorney) may act. For 'rejected', the
+    same human-only rule applies AND rejection_reason is required.
+
+    Every transition appends a ledger audit event and triggers
+    proof-state recomputation for any open issues the target supports.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    status = request.status.lower()
+    if status not in ("verified", "rejected"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported status {request.status!r}; must be 'verified' or 'rejected'",
+        )
+    try:
+        if status == "verified":
+            vid = model.verify_target(
+                request.target_kind,
+                request.target_id,
+                reviewed_by_kind=request.reviewed_by_kind,
+                reviewed_by_id=request.reviewed_by_id,
+                review_note=request.review_note,
+                run_id=request.run_id,
+            )
+        else:
+            if not request.rejection_reason or not request.rejection_reason.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="rejection_reason is required when status='rejected'",
+                )
+            vid = model.reject_target(
+                request.target_kind,
+                request.target_id,
+                reviewed_by_kind=request.reviewed_by_kind,
+                reviewed_by_id=request.reviewed_by_id,
+                rejection_reason=request.rejection_reason,
+                review_note=request.review_note,
+                run_id=request.run_id,
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "matter_id": matter_id,
+        "verification_id": vid,
+        "target_kind": request.target_kind,
+        "target_id": request.target_id,
+        "status": status,
+    }
+
+
+@app.post(
+    "/matter/{matter_id}/verify/bulk-by-document",
+    tags=["Review Queue"],
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+async def bulk_verify_by_document(
+    matter_id: str, request: BulkVerifyByDocumentRequest,
+):
+    """Promote every candidate assertion sourced from a given
+    document in one operation (SO-3 reviewer convenience).
+
+    Only candidate assertions are affected; already-verified,
+    already-rejected, and stale assertions are left alone.
+    Automation reviewers are blocked (human-only gate).
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    try:
+        ids = model.bulk_verify_by_document(
+            request.document_ref,
+            reviewed_by_kind=request.reviewed_by_kind,
+            reviewed_by_id=request.reviewed_by_id,
+            review_note=request.review_note,
+            run_id=request.run_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "matter_id": matter_id,
+        "document_ref": request.document_ref,
+        "verified_count": len(ids),
+        "verification_ids": ids,
     }
 
 

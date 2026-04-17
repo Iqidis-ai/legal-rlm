@@ -705,3 +705,161 @@ def test_get_matter_assertions_labels_candidate_vs_verified(client, register_mod
     assert by_id[verified_aid]["verification_status"] == "verified"
     assert by_id[verified_aid]["reviewed_by_kind"] == "attorney"
     assert by_id[verified_aid]["reviewed_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# P0.3: GET /matter/{id}/review-queue  |  POST /verify  |  POST /verify/bulk-by-document
+# ---------------------------------------------------------------------------
+
+def test_review_queue_endpoint_returns_candidate_rows(client, register_model):
+    """GET /review-queue returns the prioritized candidate list with
+    target_kind, target_id, status='candidate', and target context
+    (proposition_text for assertions)."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    model = register_model
+    run_id = model.start_run("review-queue endpoint")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid = adapter.record_fact("Candidate claim", "doc.pdf")
+
+    resp = client.get(f"/matter/{MATTER_ID}/review-queue?limit=10")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["matter_id"] == MATTER_ID
+    assert body["count"] >= 1
+    assert any(r["target_id"] == aid for r in body["queue"])
+    assert all(r["status"] == "candidate" for r in body["queue"])
+
+
+def test_review_queue_endpoint_target_kind_filter(client, register_model):
+    """?target_kind=quant_fact narrows the response to only quants."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    model = register_model
+    run_id = model.start_run("review-queue filter")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_fact("An assertion", "doc.pdf")
+    adapter.record_quant(quant_kind="amount", raw_text="$7", amount_value=7.0)
+
+    resp = client.get(
+        f"/matter/{MATTER_ID}/review-queue?target_kind=quant_fact"
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["target_kind_filter"] == "quant_fact"
+    assert all(r["target_kind"] == "quant_fact" for r in body["queue"])
+
+
+def test_verify_endpoint_promotes_and_returns_id(client, register_model):
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    model = register_model
+    run_id = model.start_run("verify endpoint")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid = adapter.record_fact("Claim to verify", "doc.pdf")
+    resp = client.post(
+        f"/matter/{MATTER_ID}/verify",
+        json={
+            "target_kind": "assertion",
+            "target_id": aid,
+            "status": "verified",
+            "reviewed_by_kind": "attorney",
+            "reviewed_by_id": "atty1",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "verified"
+    assert body["verification_id"]
+    vs = model.verification.get("assertion", aid)
+    assert vs["status"] == "verified"
+
+
+def test_verify_endpoint_rejection_requires_reason(client, register_model):
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    model = register_model
+    run_id = model.start_run("reject endpoint")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid = adapter.record_fact("Claim to reject", "doc.pdf")
+    # Missing rejection_reason → 400.
+    resp = client.post(
+        f"/matter/{MATTER_ID}/verify",
+        json={
+            "target_kind": "assertion",
+            "target_id": aid,
+            "status": "rejected",
+            "reviewed_by_kind": "user",
+            "reviewed_by_id": "u1",
+        },
+    )
+    assert resp.status_code == 400
+    assert "rejection_reason" in resp.text.lower()
+    # With reason → 200.
+    resp2 = client.post(
+        f"/matter/{MATTER_ID}/verify",
+        json={
+            "target_kind": "assertion",
+            "target_id": aid,
+            "status": "rejected",
+            "reviewed_by_kind": "user",
+            "reviewed_by_id": "u1",
+            "rejection_reason": "fabricated",
+        },
+    )
+    assert resp2.status_code == 200
+
+
+def test_verify_endpoint_blocks_automation_reviewer(client, register_model):
+    """Human-only gate: reviewed_by_kind='system' cannot promote."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    model = register_model
+    run_id = model.start_run("block automation")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid = adapter.record_fact("Claim", "doc.pdf")
+    resp = client.post(
+        f"/matter/{MATTER_ID}/verify",
+        json={
+            "target_kind": "assertion",
+            "target_id": aid,
+            "status": "verified",
+            "reviewed_by_kind": "system",
+        },
+    )
+    assert resp.status_code == 400
+
+
+def test_bulk_verify_by_document_endpoint(client, register_model):
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    model = register_model
+    run_id = model.start_run("bulk endpoint")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_fact("fact A", "docX.pdf")
+    adapter.record_fact("fact B", "docX.pdf")
+    adapter.record_fact("fact C", "docY.pdf")
+    resp = client.post(
+        f"/matter/{MATTER_ID}/verify/bulk-by-document",
+        json={
+            "document_ref": "docX.pdf",
+            "reviewed_by_kind": "user",
+            "reviewed_by_id": "u1",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["document_ref"] == "docX.pdf"
+    assert body["verified_count"] == 2
+    assert len(body["verification_ids"]) == 2
+
+
+def test_bulk_verify_endpoint_404_for_unknown_matter(client):
+    resp = client.post(
+        "/matter/unknown_matter/verify/bulk-by-document",
+        json={
+            "document_ref": "any.pdf",
+            "reviewed_by_kind": "user",
+        },
+    )
+    assert resp.status_code == 404
