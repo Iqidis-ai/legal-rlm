@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 54
+SCHEMA_VERSION = 55
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -17,6 +17,7 @@ _MIGRATION_NAMES: dict[int, str] = {
     52: "evidence_edge_mvp3_columns",
     53: "backfill_evidence_edge_from_legacy",
     54: "issue_predicate_template_metadata",
+    55: "provenance_event_and_llm_call_hashes",
 }
 
 
@@ -2651,6 +2652,72 @@ def _migration_v54(conn) -> None:
     conn.commit()
 
 
+def _migration_v55(conn) -> None:
+    """P0.1 Provenance Lite: add append-only provenance_event table and
+    extend llm_call with prompt/response SHA256 hashes (SO-2).
+
+    provenance_event captures every AI-derived object write with:
+    - matter_id, target_kind, target_id (polymorphic pointer to the
+      intelligence object being attributed)
+    - event_kind (e.g. 'assertion_extraction', 'edge_write',
+      'quant_record', 'card_profile', 'authority_upsert')
+    - writer_name (e.g. 'AssertionStore.upsert_occurrence')
+    - run_id, model_id, prompt_version, extractor_version,
+      llm_call_id — everything needed to identify WHICH AI call produced
+      the row.
+    - prompt_hash, response_hash — stable digests for reproducibility.
+    - source_document_ref / source_document_inventory_id / source_span_id
+      — the primary source; source_span_status explicitly records
+      'missing' when span identity is unavailable per P0.1 AC #4.
+
+    Schema is append-only: no updates, no deletes. Callers query by
+    (target_kind, target_id) to reconstruct an object's AI provenance.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS provenance_event (
+            id                           TEXT PRIMARY KEY,
+            matter_id                    TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            target_kind                  TEXT NOT NULL,
+            target_id                    TEXT NOT NULL,
+            event_kind                   TEXT NOT NULL,
+            writer_name                  TEXT NOT NULL,
+            run_id                       TEXT REFERENCES run_session(id),
+            model_id                     TEXT,
+            model_tier                   TEXT,
+            prompt_version               TEXT,
+            extractor_version            TEXT,
+            llm_call_id                  TEXT,
+            prompt_hash                  TEXT,
+            response_hash                TEXT,
+            source_document_ref          TEXT,
+            source_document_inventory_id TEXT REFERENCES document_inventory(id),
+            source_span_id               TEXT,
+            source_span_status           TEXT NOT NULL DEFAULT 'unknown'
+                CHECK (source_span_status IN ('present','missing','not_applicable','unknown')),
+            note                         TEXT,
+            created_at                   TEXT NOT NULL DEFAULT (datetime('now'))
+        ) STRICT
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_provenance_target"
+        " ON provenance_event(matter_id, target_kind, target_id, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_provenance_llm_call"
+        " ON provenance_event(llm_call_id)"
+    )
+    # Extend llm_call with prompt/response SHA256 hashes so the client
+    # can persist the digest that provenance_event references.
+    for alter in (
+        "ALTER TABLE llm_call ADD COLUMN prompt_hash TEXT",
+        "ALTER TABLE llm_call ADD COLUMN response_hash TEXT",
+    ):
+        _execute_allow_duplicate_column(conn, alter)
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -2709,6 +2776,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (52, _migration_v52),
     (53, _migration_v53),
     (54, _migration_v54),
+    (55, _migration_v55),
 ]
 
 
