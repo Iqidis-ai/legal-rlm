@@ -33,6 +33,15 @@ logger = logging.getLogger(__name__)
 PRICING_SOURCE_URL = "https://ai.google.dev/gemini-api/docs/pricing"
 PRICING_VERIFIED_AT = "2026-04-10"
 
+# P0.1 provenance bridge: GeminiClient.complete() stamps the active call's
+# identity here so downstream writers (MatterRuntimeAdapter._auto_provenance)
+# can pick up llm_call_id, model_id, model_tier, and prompt_hash without
+# threading them through every call site. Cleared when complete() returns.
+ACTIVE_LLM_CALL: "ContextVar[dict[str, Any] | None]" = ContextVar(
+    "irys_active_llm_call",
+    default=None,
+)
+
 
 class ModelTier(Enum):
     """Model tiers for different task complexities."""
@@ -497,6 +506,18 @@ class GeminiClient:
             _prompt_hash_input.encode("utf-8", errors="replace")
         ).hexdigest()
 
+        # P0.1 provenance bridge: publish call identity so synchronous
+        # writers that run inside the same task (all Matter writes do)
+        # can attribute the LLM call without having to thread the id
+        # through every signature.
+        _active_token = ACTIVE_LLM_CALL.set({
+            "call_id": _call_id,
+            "model_id": mc.model_id,
+            "model_tier": tier.value,
+            "prompt_hash": _prompt_hash,
+            "usage_label": usage_label,
+        })
+
         logger.debug(f"Calling {mc.model_id} with {len(prompt)} chars")
 
         # Acquire rate limit token
@@ -611,6 +632,12 @@ class GeminiClient:
                 response_hash=_response_hash,
             )
         )
+        # P0.1: intentionally do NOT reset ACTIVE_LLM_CALL here — writers
+        # that run after complete() returns (extraction → record_fact)
+        # must still see the originating call identity. Next complete()
+        # call overwrites it. The _active_token is unused; keeping it
+        # for symmetry with the set() call.
+        del _active_token
 
         logger.debug(f"Got response: {len(response.text) if response.text else 0} chars")
         return response.text

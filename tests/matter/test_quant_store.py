@@ -385,6 +385,39 @@ def test_adapter_record_quants_batch_persists_all_records(model):
     assert len(rates) == 1
 
 
+def test_adapter_record_quants_batch_seeds_verification_and_provenance(model):
+    """Adversarial audit #6 regression: the batched path must seed
+    verification_state + provenance_event on every newly-inserted row,
+    matching the single-row record_quant() contract. The engine's real
+    extraction path only uses the batch API, so MVP.2 + P0.1 are broken
+    if this substrate seeding is missing."""
+    run_id = model.start_run("Batch quant substrate")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_quants_batch(
+        [
+            {"quant_kind": "amount", "raw_text": "$1 first",
+             "amount_value": 1.0, "currency": "USD"},
+            {"quant_kind": "amount", "raw_text": "$2 second",
+             "amount_value": 2.0, "currency": "USD"},
+        ],
+        document_id="ledger.pdf",
+    )
+    all_quants = model.db.execute(
+        "SELECT id FROM quant_fact WHERE matter_id=?", (model.matter_id,),
+    ).fetchall()
+    assert len(all_quants) == 2
+    for row in all_quants:
+        qid = row["id"]
+        vs = model.verification.get("quant_fact", qid)
+        assert vs is not None, f"quant_fact {qid} missing verification_state"
+        assert vs["status"] == "candidate"
+        events = model.get_provenance("quant_fact", qid)
+        assert len(events) == 1, f"quant_fact {qid} missing provenance"
+        assert events[0]["event_kind"] == "quant_record_batch"
+        assert events[0]["source_document_ref"] == "ledger.pdf"
+        assert events[0]["run_id"] == run_id
+
+
 # ---------------------------------------------------------------------------
 # SO-6: MatterModel.reconcile() payment reconciliation
 # ---------------------------------------------------------------------------

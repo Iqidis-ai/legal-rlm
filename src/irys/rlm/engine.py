@@ -3233,6 +3233,7 @@ Return:
             _mm.upsert_document_profile(
                 relative_path=_rel_path,
                 analysis=analysis,
+                run_id=getattr(state, "_run_id", None),
             )
 
             # Emit a brief profiling trace
@@ -3652,7 +3653,9 @@ Return:
                             "date_precision": _date_precision,
                         })
                     if _quant_specs:
-                        _adp.record_quants_batch(_quant_specs)
+                        _adp.record_quants_batch(
+                            _quant_specs, document_id=doc.filename
+                        )
 
             # Extract and store entities
             if analysis.get("entities"):
@@ -3743,6 +3746,7 @@ Return:
                         relative_path=_rel_path,
                         analysis=analysis,
                         focus_issue_id=focus_issue_id,
+                        run_id=getattr(state, "_run_id", None),
                     )
                 except Exception as _card_err:
                     logger.debug("Document card persistence failed for %s: %s", _rel_path, _card_err)
@@ -3841,7 +3845,11 @@ Return:
                     )
                     if _quote_text:
                         try:
-                            self._extract_and_store_authorities(_quote_text)
+                            self._extract_and_store_authorities(
+                                _quote_text,
+                                run_id=getattr(state, "_run_id", None),
+                                source_document_ref=_rel_path,
+                            )
                         except Exception:
                             pass
 
@@ -4048,7 +4056,11 @@ Return:
         # Persist legal citations found in synthesis output to authority store (SO-4).
         if self._matter_model is not None:
             try:
-                self._extract_and_store_authorities(response)
+                self._extract_and_store_authorities(
+                    response,
+                    run_id=getattr(state, "_run_id", None),
+                    source_document_ref="synthesis:final",
+                )
             except Exception:
                 pass  # best-effort; never block synthesis output
 
@@ -4317,7 +4329,13 @@ Return:
 
         return synthesis_output + "\n".join(lines)
 
-    def _extract_and_store_authorities(self, text: str) -> None:
+    def _extract_and_store_authorities(
+        self,
+        text: str,
+        *,
+        run_id: Optional[str] = None,
+        source_document_ref: Optional[str] = None,
+    ) -> None:
         """Extract legal citations from synthesis text and persist to AuthorityStore.
 
         Recognises the most common citation forms used in U.S. legal writing:
@@ -4329,8 +4347,35 @@ Return:
 
         Citations are stored with weight='persuasive' by default (binding
         status requires jurisdictional analysis outside the engine).
+
+        P0.1: every upsert carries a ProvenanceContext so an audit can
+        trace each case/statute to the run that extracted it and, when
+        ACTIVE_LLM_CALL is set, to the originating LLM call.
         """
         import re
+
+        # Build a reusable provenance context for every authority
+        # upsert in this extraction pass. The ContextVar bridge pulls
+        # the most recent LLM call id/model/prompt_hash without having
+        # to thread them through every call site.
+        from ..core.models import ACTIVE_LLM_CALL
+        from ..matter.models import ProvenanceContext
+        _active = ACTIVE_LLM_CALL.get() or {}
+        _auth_prov = ProvenanceContext(
+            event_kind="authority_upsert",
+            writer_name="AuthorityStore.upsert",
+            run_id=run_id,
+            model_id=_active.get("model_id"),
+            model_tier=_active.get("model_tier"),
+            prompt_version="SPEC.AUTHORITY_TREATMENT.v1",
+            extractor_version="2026-04-17.p01.v1",
+            llm_call_id=_active.get("call_id"),
+            prompt_hash=_active.get("prompt_hash"),
+            source_document_ref=source_document_ref,
+            source_span_status=(
+                "present" if source_document_ref else "not_applicable"
+            ),
+        )
 
         # Pattern: "Name v. Name, VolNo Reporter PageNo (Court Year)"
         # Captures full citation including optional court/year parenthetical.
@@ -4369,6 +4414,7 @@ Return:
                     citation=citation,
                     authority_type="case",
                     weight="persuasive",
+                    provenance=_auth_prov,
                 )
             except Exception:
                 pass
@@ -4388,6 +4434,7 @@ Return:
                     citation=citation,
                     authority_type=auth_type,
                     weight="binding",  # federal statutes and regulations are binding
+                    provenance=_auth_prov,
                 )
             except Exception:
                 pass
@@ -4405,6 +4452,7 @@ Return:
                     citation=citation,
                     authority_type="statute",
                     weight="persuasive",  # state statutes — jurisdiction-dependent
+                    provenance=_auth_prov,
                 )
             except Exception:
                 pass

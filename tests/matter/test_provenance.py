@@ -308,6 +308,103 @@ def test_matter_runtime_record_fact_auto_attaches_provenance(model):
     model.complete_run(run_id)
 
 
+def test_record_fact_with_issue_link_writes_edge_provenance(model):
+    """Adversarial audit #6 finding #4: link_assertion's implicit
+    evidence_edge write had no provenance. The runtime adapter now
+    builds an edge_write ProvenanceContext when the issue link is
+    created via record_fact, so the resulting edge is attributable."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    run_id = model.start_run("edge provenance")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    iid, _ = model.issues.upsert_issue("Test issue", IssueType.CLAIM)
+    aid = adapter.record_fact(
+        proposition_text="Defendant breached.",
+        document_id="contracts/msa.pdf",
+        span_id="span_1",
+        issue_id=iid,
+        issue_link_type="supports",
+    )
+    edge_row = model.db.execute(
+        """SELECT id FROM evidence_edge
+           WHERE matter_id=? AND source_kind='assertion' AND source_id=?
+             AND target_kind='issue' AND target_id=?""",
+        (model.matter_id, aid, iid),
+    ).fetchone()
+    assert edge_row is not None, "evidence_edge must exist for linked assertion"
+    events = model.get_provenance("evidence_edge", edge_row["id"])
+    assert len(events) == 1
+    assert events[0]["event_kind"] == "edge_write"
+    assert events[0]["writer_name"] == "EvidenceStore.upsert_edge"
+    assert events[0]["run_id"] == run_id
+    model.complete_run(run_id)
+
+
+def test_active_llm_call_bridges_into_provenance(model):
+    """Adversarial audit #6 finding #6: GeminiClient mints a call_id
+    but nothing upstream read it, so every production provenance row
+    had llm_call_id=NULL. The ACTIVE_LLM_CALL ContextVar now bridges
+    the minted identity into MatterRuntimeAdapter._auto_provenance."""
+    from irys.core.models import ACTIVE_LLM_CALL
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    run_id = model.start_run("active call bridge")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    token = ACTIVE_LLM_CALL.set({
+        "call_id": "call_bridge_test",
+        "model_id": "gemini-2.5-flash-lite",
+        "model_tier": "LITE",
+        "prompt_hash": "h" * 64,
+    })
+    try:
+        aid = adapter.record_fact(
+            proposition_text="Bridged claim",
+            document_id="doc.pdf",
+            span_id="span_1",
+        )
+    finally:
+        ACTIVE_LLM_CALL.reset(token)
+    rows = model.get_provenance("assertion", aid)
+    assert rows[0]["llm_call_id"] == "call_bridge_test"
+    assert rows[0]["model_id"] == "gemini-2.5-flash-lite"
+    assert rows[0]["model_tier"] == "LITE"
+    assert rows[0]["prompt_hash"] == "h" * 64
+    model.complete_run(run_id)
+
+
+def test_record_fact_writes_provenance_for_occurrence(model):
+    """Adversarial audit #6: the comment on AssertionStore.upsert_occurrence
+    promised occurrence-level provenance but never wrote it. Regression
+    test to make sure every new occurrence row gets a
+    target_kind='assertion_occurrence' provenance event."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    run_id = model.start_run("provenance occurrence")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact(
+        proposition_text="An occurrence-level claim",
+        document_id="contracts/msa.pdf",
+        span_id="span_occ_1",
+    )
+    # Assertion-level provenance still exists.
+    assert len(model.get_provenance("assertion", aid)) >= 1
+    # Occurrence-level provenance is now written too. We don't know the
+    # occurrence id directly, so fetch it from assertion_occurrence and
+    # verify a provenance row exists for it.
+    occ_rows = model.db.execute(
+        "SELECT id FROM assertion_occurrence WHERE assertion_id=?", (aid,),
+    ).fetchall()
+    assert len(occ_rows) == 1
+    occ_id = occ_rows[0]["id"]
+    occ_events = model.get_provenance("assertion_occurrence", occ_id)
+    assert len(occ_events) == 1, (
+        "occurrence row must have a target_kind='assertion_occurrence' "
+        "provenance event — adversarial audit #6 regression"
+    )
+    assert occ_events[0]["run_id"] == run_id
+    model.complete_run(run_id)
+
+
 def test_matter_runtime_record_fact_records_missing_span_status(model):
     """AC #4 via the production path: when span_id is None, the
     provenance row records 'missing' explicitly."""

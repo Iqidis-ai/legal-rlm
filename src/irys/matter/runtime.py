@@ -239,21 +239,43 @@ class MatterRuntimeAdapter:
         span_id: Optional[str] = None,
         prompt_version: Optional[str] = None,
         llm_call_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        model_tier: Optional[str] = None,
+        prompt_hash: Optional[str] = None,
     ) -> "ProvenanceContext":
         """P0.1: build a ProvenanceContext from the runtime's run_id and
-        default extractor_version. Extraction call sites without
-        specific prompt_version/llm_call_id still get a minimal
-        provenance row so every AI-derived object is attributable."""
+        default extractor_version. Picks up the active LLM call
+        identity (call_id, model_id, tier, prompt_hash) from the
+        GeminiClient ContextVar so every AI-derived object is
+        attributable without threading the ID through every signature.
+        Explicit kwargs win over the ContextVar."""
         from .models import ProvenanceContext
+        try:
+            from ..core.models import ACTIVE_LLM_CALL
+            active = ACTIVE_LLM_CALL.get()
+        except Exception:
+            active = None
+        if active:
+            if llm_call_id is None:
+                llm_call_id = active.get("call_id")
+            if model_id is None:
+                model_id = active.get("model_id")
+            if model_tier is None:
+                model_tier = active.get("model_tier")
+            if prompt_hash is None:
+                prompt_hash = active.get("prompt_hash")
 
         span_status = "present" if span_id else "missing"
         return ProvenanceContext(
             event_kind=event_kind,
             writer_name=writer_name,
             run_id=self.run_id,
+            model_id=model_id,
+            model_tier=model_tier,
             extractor_version=self.DEFAULT_EXTRACTOR_VERSION,
             prompt_version=prompt_version,
             llm_call_id=llm_call_id,
+            prompt_hash=prompt_hash,
             source_document_ref=document_id,
             source_span_id=span_id,
             source_span_status=span_status,
@@ -358,7 +380,19 @@ class MatterRuntimeAdapter:
         # 'neutral' facts are recorded but intentionally not linked — they provide
         # context without claiming to support or attack the issue predicate.
         if issue_id is not None and issue_link_type != "neutral":
-            self.model.issues.link_assertion(assertion_id, issue_id, issue_link_type)
+            # P0.1: propagate provenance into the companion evidence_edge
+            # so the edge substrate is attributable end-to-end. Build a
+            # dedicated edge_write context so the writer_name reflects
+            # the layer that actually wrote the edge (not the assertion).
+            _edge_prov = self._auto_provenance(
+                event_kind="edge_write",
+                writer_name="EvidenceStore.upsert_edge",
+                document_id=document_id,
+                span_id=span_id,
+            )
+            self.model.issues.link_assertion(
+                assertion_id, issue_id, issue_link_type, provenance=_edge_prov,
+            )
 
         return assertion_id
 
@@ -853,15 +887,30 @@ class MatterRuntimeAdapter:
             provenance=provenance,
         )
 
-    def record_quants_batch(self, specs: list[dict]) -> None:
+    def record_quants_batch(
+        self,
+        specs: list[dict],
+        *,
+        document_id: Optional[str] = None,
+    ) -> None:
         """Bulk-insert multiple quant facts in a single transaction.
 
         Each spec is a dict with keys matching record_quant() parameters
         (quant_kind and raw_text required; all others optional). Wraps
         QuantStore.record_many() — uses INSERT OR IGNORE with executemany
         so N numeric facts → 1 outer transaction commit.
+
+        P0.1: auto-builds a ProvenanceContext so every batched numeric
+        fact gets substrate (verification_state + provenance_event)
+        rows on the same code path record_quant() already produces.
         """
-        self.model.quant.record_many(specs)
+        provenance = self._auto_provenance(
+            event_kind="quant_record_batch",
+            writer_name="QuantStore.record_many",
+            document_id=document_id,
+            span_id=None,
+        )
+        self.model.quant.record_many(specs, provenance=provenance)
 
     def set_trust_override(
         self,

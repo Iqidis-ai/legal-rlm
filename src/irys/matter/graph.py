@@ -283,7 +283,9 @@ class AssertionStore:
                 or existing_occurrence["assertion_id"] != assertion_id
             )
 
+            new_occurrence_id: Optional[str] = None
             if existing_occurrence is None:
+                new_occurrence_id = _id()
                 self.db.execute(
                     """INSERT INTO assertion_occurrence
                        (id, assertion_id, document_id, document_inventory_id, doc_basename,
@@ -294,7 +296,7 @@ class AssertionStore:
                         extraction_confidence, created_at)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
-                        _id(),
+                        new_occurrence_id,
                         assertion_id,
                         candidate.document_id,
                         document_inventory_id,
@@ -509,6 +511,16 @@ class AssertionStore:
                         target_id=assertion_id,
                         context=provenance,
                     )
+                    # Adversarial audit #6: the occurrence row was
+                    # claimed attributable but never had a provenance
+                    # event written for it. Record one now so an audit
+                    # can trace each raw utterance back to its call.
+                    if new_occurrence_id is not None:
+                        prov_store.record(
+                            target_kind="assertion_occurrence",
+                            target_id=new_occurrence_id,
+                            context=provenance,
+                        )
 
         return assertion_id, is_new
 
@@ -2219,11 +2231,19 @@ class IssueStore:
         assertion_id: str,
         issue_id: str,
         relation_type: str = "supports",
+        *,
+        provenance: "Optional[ProvenanceContext]" = None,
     ) -> str:
         """
         Link an assertion to an issue. Idempotent.
         relation_type: 'supports', 'attacks', 'establishes', 'negates'
         Returns link_id.
+
+        P0.1: when provenance is supplied, the companion evidence_edge
+        row carries a provenance_event so an audit can trace how the
+        edge was inferred. Adversarial audit #6 regression — the
+        implicit SYSTEM_INFERRED edge was the most common production
+        edge write and previously had no provenance.
         """
         link_id = _id()
         now = _now()
@@ -2253,6 +2273,7 @@ class IssueStore:
                     relation_type=relation_type,
                     proof_weight=0.5,
                     origin_kind=EvidenceOriginKind.SYSTEM_INFERRED,
+                    provenance=provenance,
                 )
         row = self.db.execute(
             "SELECT id FROM assertion_issue_link WHERE assertion_id=? AND issue_id=? AND relation_type=?",
@@ -2917,12 +2938,23 @@ class QuantStore:
                 )
         return qf_id
 
-    def record_many(self, specs: list[dict]) -> list[str]:
+    def record_many(
+        self,
+        specs: list[dict],
+        *,
+        provenance: "Optional[ProvenanceContext]" = None,
+    ) -> list[str]:
         """Bulk-insert multiple quant facts in a single transaction.
 
         Each spec is a dict with the same keys as record() (quant_kind and
         raw_text required; all others optional). Uses executemany + INSERT OR
         IGNORE so duplicate entries (same quant_dedup_key) are silently skipped.
+
+        MVP.2 + P0.1: every newly-inserted quant_fact also seeds a
+        candidate verification_state row and, when a provenance context
+        is supplied, appends a provenance_event row. Adversarial audit
+        #6 reproduced the prior hole: record_quants_batch → record_many
+        skipped both substrates.
 
         Returns list of IDs (newly inserted or existing) in insertion order.
         """
@@ -2966,6 +2998,38 @@ class QuantStore:
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 rows,
             )
+            # MVP.2 + P0.1: look up the actual ids for the rows that were
+            # inserted (not duplicates) by re-querying with dedup_key,
+            # then seed verification_state and provenance_event for each.
+            _ver = VerificationStateStore(self.db, self.matter_id)
+            _prov = ProvenanceStore(self.db, self.matter_id) if provenance else None
+            for candidate_id, spec in zip(ids, specs):
+                dedup_key = self._quant_key(
+                    spec["quant_kind"], spec.get("subject_id"), spec["raw_text"],
+                )
+                row = self.db.execute(
+                    "SELECT id FROM quant_fact WHERE matter_id=? AND quant_dedup_key=?",
+                    (self.matter_id, dedup_key),
+                ).fetchone()
+                if row is None:
+                    continue  # shouldn't happen, but skip defensively
+                actual_id = row["id"]
+                # Only act when the row is genuinely new; candidate_id ==
+                # actual_id means the INSERT succeeded and we should
+                # attach substrate rows.
+                if actual_id != candidate_id:
+                    continue
+                _ver.candidate(
+                    VerificationTargetKind.QUANT_FACT,
+                    actual_id,
+                    cause="quant_record_batch",
+                )
+                if _prov is not None:
+                    _prov.record(
+                        target_kind="quant_fact",
+                        target_id=actual_id,
+                        context=provenance,
+                    )
         # Return candidate IDs; IDs for duplicate rows (IGNORED) are the candidate
         # UUIDs which won't match the stored row — callers that need exact IDs must
         # use record() individually. Engine call sites do not use the return value.
