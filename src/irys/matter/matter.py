@@ -1560,46 +1560,96 @@ class MatterModel:
         # Weights: operative/admitted/resolved = 1.0, alleged/argued/inferred = 0.5,
         # other active states = 0.3; disputed/withdrawn/superseded excluded entirely.
         # This prevents alleged assertions from overstating coverage vs operative ones.
-        # MVP.2: exclude assertions whose verification_state is 'rejected'
-        # and count verified-vs-candidate support separately so downstream
-        # consumers can enforce the candidate-cannot-resolve-verified-proof
-        # invariant. LEFT JOIN keeps assertions without a verification row
-        # (which should not happen post-migration) counted as candidate
-        # rather than silently dropped.
-        support_rows = self.db.execute(
-            """SELECT ail.issue_id,
-                      COUNT(*) AS raw_count,
-                      SUM(CASE
-                            WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0
-                            WHEN a.belief_state IN ('alleged','argued','inferred') THEN 0.5
-                            ELSE 0.3
-                          END) AS weighted_support,
-                      SUM(CASE
-                            WHEN COALESCE(vs.status, 'candidate') = 'verified' THEN 1 ELSE 0
-                          END) AS verified_count,
-                      SUM(CASE
-                            WHEN COALESCE(vs.status, 'candidate') = 'verified' THEN
-                              CASE
-                                WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0
-                                WHEN a.belief_state IN ('alleged','argued','inferred') THEN 0.5
-                                ELSE 0.3
-                              END
-                            ELSE 0
-                          END) AS verified_weighted
-               FROM assertion_issue_link ail
-               JOIN issue i ON i.id = ail.issue_id
-               JOIN assertion a ON a.id = ail.assertion_id
-               LEFT JOIN verification_state vs
-                 ON vs.target_kind = 'assertion'
-                AND vs.target_id = a.id
-                AND vs.matter_id = a.matter_id
-               WHERE i.matter_id=? AND i.status='open'
-                 AND ail.relation_type IN ('supports','establishes')
-                 AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
-                 AND COALESCE(vs.status, 'candidate') != 'rejected'
-               GROUP BY ail.issue_id""",
+        # MVP.3: edge-first substrate selection. For each open issue, if any
+        # active evidence_edge targeting that issue exists, compute coverage
+        # from the edge table; otherwise fall back to assertion_issue_link.
+        # This keeps get_issue_coverage_report in lockstep with
+        # ProofStateStore.compute_and_store, closing the split-brain gap where
+        # the two substrates reported divergent support counts for the same
+        # issue.
+        # MVP.2: exclude rejected assertions and count verified-vs-candidate
+        # support separately. LEFT JOIN keeps assertions without a
+        # verification row counted as candidate rather than silently dropped.
+
+        # Identify which issues have any active edge (edge substrate) vs.
+        # must fall back to the legacy link table.
+        edge_issue_rows = self.db.execute(
+            """SELECT DISTINCT target_id AS issue_id
+               FROM evidence_edge
+               WHERE matter_id=? AND target_kind='issue' AND active=1""",
             (mid,),
         ).fetchall()
+        edge_issue_ids: set[str] = {r["issue_id"] for r in edge_issue_rows}
+
+        def _support_query(use_edges: bool) -> str:
+            if use_edges:
+                link_from = (
+                    "evidence_edge ee "
+                    "JOIN issue i ON i.id = ee.target_id "
+                    "JOIN assertion a ON a.id = ee.source_id "
+                    "LEFT JOIN verification_state vs "
+                    "  ON vs.target_kind = 'assertion' "
+                    " AND vs.target_id = a.id "
+                    " AND vs.matter_id = a.matter_id "
+                    "LEFT JOIN verification_state vs_edge "
+                    "  ON vs_edge.target_kind = 'evidence_edge' "
+                    " AND vs_edge.target_id = ee.id "
+                    " AND vs_edge.matter_id = ee.matter_id "
+                )
+                link_id = "ee.target_id"
+                rel_filter = (
+                    "ee.matter_id=? AND ee.target_kind='issue' AND ee.active=1 "
+                    "AND ee.source_kind='assertion' "
+                    "AND ee.relation_type IN ('supports','establishes') "
+                    "AND i.status='open' "
+                    "AND a.belief_state NOT IN ('disputed','withdrawn','superseded') "
+                    "AND COALESCE(vs.status, 'candidate') != 'rejected' "
+                    "AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'"
+                )
+            else:
+                link_from = (
+                    "assertion_issue_link ail "
+                    "JOIN issue i ON i.id = ail.issue_id "
+                    "JOIN assertion a ON a.id = ail.assertion_id "
+                    "LEFT JOIN verification_state vs "
+                    "  ON vs.target_kind = 'assertion' "
+                    " AND vs.target_id = a.id "
+                    " AND vs.matter_id = a.matter_id "
+                )
+                link_id = "ail.issue_id"
+                rel_filter = (
+                    "i.matter_id=? AND i.status='open' "
+                    "AND ail.relation_type IN ('supports','establishes') "
+                    "AND a.belief_state NOT IN ('disputed','withdrawn','superseded') "
+                    "AND COALESCE(vs.status, 'candidate') != 'rejected'"
+                )
+            return (
+                f"SELECT {link_id} AS issue_id, "
+                "COUNT(*) AS raw_count, "
+                "SUM(CASE "
+                "WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0 "
+                "WHEN a.belief_state IN ('alleged','argued','inferred') THEN 0.5 "
+                "ELSE 0.3 END) AS weighted_support, "
+                "SUM(CASE WHEN COALESCE(vs.status, 'candidate') = 'verified' THEN 1 ELSE 0 END) AS verified_count, "
+                "SUM(CASE WHEN COALESCE(vs.status, 'candidate') = 'verified' THEN "
+                "CASE "
+                "WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0 "
+                "WHEN a.belief_state IN ('alleged','argued','inferred') THEN 0.5 "
+                "ELSE 0.3 END ELSE 0 END) AS verified_weighted "
+                f"FROM {link_from} "
+                f"WHERE {rel_filter} "
+                f"GROUP BY {link_id}"
+            )
+
+        edge_support_rows = self.db.execute(_support_query(True), (mid,)).fetchall() if edge_issue_ids else []
+        legacy_support_rows = self.db.execute(_support_query(False), (mid,)).fetchall()
+
+        # Combine per-issue: edge rows win when the issue has any edge, legacy
+        # rows fill the rest. No union — exactly one substrate per issue.
+        support_rows = [r for r in edge_support_rows if r["issue_id"] in edge_issue_ids]
+        support_rows.extend(
+            r for r in legacy_support_rows if r["issue_id"] not in edge_issue_ids
+        )
         # raw_counts for the supporting_count field (integer, user-visible)
         raw_counts = {r["issue_id"]: int(r["raw_count"]) for r in support_rows}
         # weighted_supports for coverage_fraction computation
@@ -1616,25 +1666,54 @@ class MatterModel:
             for r in support_rows
         }
 
-        # Attacking assertion counts per issue (for UI display — SO-4).
-        # MVP.2: same rejected-exclusion as supporting_count, so a rejected
-        # attack doesn't inflate contested counts on a consumer-facing read.
-        attack_rows = self.db.execute(
-            """SELECT ail.issue_id, COUNT(*) AS atk_count
-               FROM assertion_issue_link ail
-               JOIN issue i ON i.id = ail.issue_id
-               JOIN assertion a ON a.id = ail.assertion_id
-               LEFT JOIN verification_state vs
-                 ON vs.target_kind = 'assertion'
-                AND vs.target_id = a.id
-                AND vs.matter_id = a.matter_id
-               WHERE i.matter_id=? AND i.status='open'
-                 AND ail.relation_type IN ('attacks','negates')
-                 AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
-                 AND COALESCE(vs.status, 'candidate') != 'rejected'
-               GROUP BY ail.issue_id""",
-            (mid,),
-        ).fetchall()
+        # Attacking assertion counts per issue. Same edge-first substrate
+        # selection as supporting_count, same rejected-exclusion rules.
+        def _attack_query(use_edges: bool) -> str:
+            if use_edges:
+                return (
+                    "SELECT ee.target_id AS issue_id, COUNT(*) AS atk_count "
+                    "FROM evidence_edge ee "
+                    "JOIN issue i ON i.id = ee.target_id "
+                    "JOIN assertion a ON a.id = ee.source_id "
+                    "LEFT JOIN verification_state vs "
+                    "  ON vs.target_kind = 'assertion' "
+                    " AND vs.target_id = a.id "
+                    " AND vs.matter_id = a.matter_id "
+                    "LEFT JOIN verification_state vs_edge "
+                    "  ON vs_edge.target_kind = 'evidence_edge' "
+                    " AND vs_edge.target_id = ee.id "
+                    " AND vs_edge.matter_id = ee.matter_id "
+                    "WHERE ee.matter_id=? AND ee.target_kind='issue' "
+                    "AND ee.active=1 AND ee.source_kind='assertion' "
+                    "AND ee.relation_type IN ('attacks','negates') "
+                    "AND i.status='open' "
+                    "AND a.belief_state NOT IN ('disputed','withdrawn','superseded') "
+                    "AND COALESCE(vs.status, 'candidate') != 'rejected' "
+                    "AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected' "
+                    "GROUP BY ee.target_id"
+                )
+            return (
+                "SELECT ail.issue_id, COUNT(*) AS atk_count "
+                "FROM assertion_issue_link ail "
+                "JOIN issue i ON i.id = ail.issue_id "
+                "JOIN assertion a ON a.id = ail.assertion_id "
+                "LEFT JOIN verification_state vs "
+                "  ON vs.target_kind = 'assertion' "
+                " AND vs.target_id = a.id "
+                " AND vs.matter_id = a.matter_id "
+                "WHERE i.matter_id=? AND i.status='open' "
+                "AND ail.relation_type IN ('attacks','negates') "
+                "AND a.belief_state NOT IN ('disputed','withdrawn','superseded') "
+                "AND COALESCE(vs.status, 'candidate') != 'rejected' "
+                "GROUP BY ail.issue_id"
+            )
+
+        edge_attack_rows = self.db.execute(_attack_query(True), (mid,)).fetchall() if edge_issue_ids else []
+        legacy_attack_rows = self.db.execute(_attack_query(False), (mid,)).fetchall()
+        attack_rows = [r for r in edge_attack_rows if r["issue_id"] in edge_issue_ids]
+        attack_rows.extend(
+            r for r in legacy_attack_rows if r["issue_id"] not in edge_issue_ids
+        )
         attack_counts = {r["issue_id"]: int(r["atk_count"]) for r in attack_rows}
 
         # Predicate counts per issue — used for predicate-aware coverage fraction.

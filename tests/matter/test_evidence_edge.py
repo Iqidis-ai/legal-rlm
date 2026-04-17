@@ -161,6 +161,73 @@ def test_proof_state_does_not_double_count_when_both_tables_have_same_relation(m
     )
 
 
+def test_proof_substrate_no_split_brain_between_coverage_and_proof_state(model):
+    """MVP.3 post-audit: adversarial #4 reproduced a split-brain bug where
+    one edge-backed support plus one legacy-only support yielded
+    proof_state.supporting_count=1 while get_issue_coverage_report returned
+    2 for the same issue. Both substrates must now agree: edge-first with
+    legacy fallback, applied identically to proof_state and to
+    get_issue_coverage_report."""
+    aid_edge = _mkassertion(model, "edge-supported fact", "edge.pdf")
+    aid_legacy = _mkassertion(model, "legacy-only fact", "legacy.pdf")
+    iid, _ = model.issues.upsert_issue("Split brain claim", IssueType.CLAIM, materiality=0.7)
+
+    # One assertion linked through link_assertion (creates edge + legacy)
+    model.issues.link_assertion(aid_edge, iid, "supports")
+    # A second assertion linked through legacy-only insert (no edge)
+    _insert_legacy_link(model, aid_legacy, iid, "supports")
+
+    model.proof_state.compute_and_store(iid)
+    ps = model.proof_state.get(iid)
+    report = next(r for r in model.get_issue_coverage_report() if r["id"] == iid)
+
+    # Both substrates must report the same picture. Edge-first wins: since
+    # at least one edge exists, the legacy-only support for this issue
+    # does not count. proof_state and coverage report must AGREE.
+    assert ps["supporting_count"] == report["supporting_count"], (
+        f"split-brain regression: proof_state.supporting_count="
+        f"{ps['supporting_count']} but coverage_report.supporting_count="
+        f"{report['supporting_count']}"
+    )
+
+
+def test_detect_proof_gaps_honors_edge_backed_support(model):
+    """_detect_proof_gaps must not open a gap on an issue that is supported
+    via evidence_edge. Adversarial #4 flagged this as the PR.2 pattern
+    repeating: gap detection read legacy only, so an edge-only support
+    would still trigger a missing_issue_predicate gap."""
+    from irys.rlm.engine import RLMEngine
+
+    aid = _mkassertion(model)
+    iid, _ = model.issues.upsert_issue(
+        "Edge-supported claim", IssueType.CLAIM, materiality=0.9
+    )
+    # Create the edge without the legacy row.
+    model.evidence.upsert_edge(
+        source_kind="assertion", source_id=aid,
+        target_kind="issue", target_id=iid,
+        relation_type=EvidenceRelationType.SUPPORTS,
+    )
+    # Confirm the legacy table is empty for this issue.
+    legacy_count = model.db.execute(
+        "SELECT COUNT(*) FROM assertion_issue_link WHERE issue_id=?", (iid,)
+    ).fetchone()[0]
+    assert legacy_count == 0
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    engine._detect_proof_gaps()
+
+    gaps = model.gaps.open_gaps(min_materiality=0.0)
+    for g in gaps:
+        for d in g.get("dependencies") or []:
+            if d.get("affected_type") == "issue" and d.get("affected_id") == iid:
+                raise AssertionError(
+                    "_detect_proof_gaps must not open a missing_issue_predicate "
+                    "gap on an issue that has edge-backed support"
+                )
+
+
 def test_evidence_edge_verification_status_materializes_from_verification_state(model):
     aid = _mkassertion(model)
     iid, _ = model.issues.upsert_issue("I", IssueType.CLAIM)

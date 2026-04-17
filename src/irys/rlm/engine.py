@@ -6244,10 +6244,35 @@ Return:
                              AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
                              AND COALESCE(vs.status, 'candidate') != 'rejected'
                        )
+                       -- MVP.3: an issue with any active edge-backed
+                       -- support also closes the legacy gap.
+                       OR EXISTS (
+                           SELECT 1 FROM evidence_edge ee
+                           JOIN assertion a ON a.id=ee.source_id
+                           LEFT JOIN verification_state vs
+                             ON vs.target_kind='assertion'
+                            AND vs.target_id=a.id
+                            AND vs.matter_id=a.matter_id
+                           LEFT JOIN verification_state vs_edge
+                             ON vs_edge.target_kind='evidence_edge'
+                            AND vs_edge.target_id=ee.id
+                            AND vs_edge.matter_id=ee.matter_id
+                           WHERE ee.matter_id=? AND ee.target_kind='issue'
+                             AND ee.target_id=gl.affected_id AND ee.active=1
+                             AND ee.source_kind='assertion'
+                             AND ee.relation_type IN ('supports','establishes')
+                             AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+                             AND COALESCE(vs.status, 'candidate') != 'rejected'
+                             AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'
+                       )
                  )""",
-            (_ts, mid),
+            (_ts, mid, mid),
         )
 
+        # MVP.3: an issue is "unsupported" for gap-detection purposes only
+        # when it has no active support in EITHER substrate. This prevents
+        # a missing-predicate gap from opening when the issue is supported
+        # entirely through evidence_edge.
         rows = self._matter_model.db.execute(
             """SELECT i.id, i.title, i.materiality
                FROM issue i
@@ -6265,13 +6290,32 @@ Return:
                        AND COALESCE(vs.status, 'candidate') != 'rejected'
                  )
                  AND NOT EXISTS (
+                     SELECT 1 FROM evidence_edge ee
+                     JOIN assertion a ON a.id=ee.source_id
+                     LEFT JOIN verification_state vs
+                       ON vs.target_kind='assertion'
+                      AND vs.target_id=a.id
+                      AND vs.matter_id=a.matter_id
+                     LEFT JOIN verification_state vs_edge
+                       ON vs_edge.target_kind='evidence_edge'
+                      AND vs_edge.target_id=ee.id
+                      AND vs_edge.matter_id=ee.matter_id
+                     WHERE ee.matter_id=? AND ee.target_kind='issue'
+                       AND ee.target_id=i.id AND ee.active=1
+                       AND ee.source_kind='assertion'
+                       AND ee.relation_type IN ('supports','establishes')
+                       AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+                       AND COALESCE(vs.status, 'candidate') != 'rejected'
+                       AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'
+                 )
+                 AND NOT EXISTS (
                      SELECT 1 FROM gap g
                      JOIN gap_link gl ON gl.gap_id=g.id
                      WHERE g.matter_id=? AND g.status='open'
                        AND g.gap_type='missing_issue_predicate'
                        AND gl.affected_type='issue' AND gl.affected_id=i.id
                  )""",
-            (mid, mid),
+            (mid, mid, mid),
         ).fetchall()
 
         if rows:

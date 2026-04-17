@@ -4932,45 +4932,47 @@ class VerificationStateStore:
         new_version = old_version + 1
         now = _now()
 
-        self.db.execute(
-            """UPDATE verification_state
-               SET status=?, reviewed_by_kind=?, reviewed_by_id=?, reviewed_at=?,
-                   review_scope=?, review_scope_json=?, review_note=?,
-                   rejection_reason=?, stale_reason=?, ai_confidence=COALESCE(?, ai_confidence),
-                   version=?, updated_at=?
-               WHERE id=?""",
-            (
-                new_status, reviewed_by_kind, reviewed_by_id, now,
-                review_scope, review_scope_json, review_note,
-                rejection_reason, stale_reason, ai_confidence,
-                new_version, now, vid,
-            ),
-        )
-        # MVP.3: mirror the canonical verification_state to
-        # evidence_edge.verification_status when the target is an edge.
-        # This keeps the materialized column honest so query paths that
-        # reference it stay in sync.
-        if kind == VerificationTargetKind.EVIDENCE_EDGE.value:
+        # Wrap the three writes (verification_state update, optional
+        # evidence_edge mirror, verification_event append) in one
+        # transaction so a mid-sequence failure cannot leave split state.
+        with self.db.transaction():
             self.db.execute(
-                "UPDATE evidence_edge SET verification_status=?, updated_at=? WHERE id=? AND matter_id=?",
-                (new_status, now, target_id, self.matter_id),
+                """UPDATE verification_state
+                   SET status=?, reviewed_by_kind=?, reviewed_by_id=?, reviewed_at=?,
+                       review_scope=?, review_scope_json=?, review_note=?,
+                       rejection_reason=?, stale_reason=?, ai_confidence=COALESCE(?, ai_confidence),
+                       version=?, updated_at=?
+                   WHERE id=?""",
+                (
+                    new_status, reviewed_by_kind, reviewed_by_id, now,
+                    review_scope, review_scope_json, review_note,
+                    rejection_reason, stale_reason, ai_confidence,
+                    new_version, now, vid,
+                ),
             )
-        self._append_event(
-            verification_id=vid,
-            target_kind=kind,
-            target_id=target_id,
-            old_status=old_status,
-            new_status=new_status,
-            reviewed_by_kind=reviewed_by_kind,
-            reviewed_by_id=reviewed_by_id,
-            review_scope=review_scope,
-            rejection_reason=rejection_reason,
-            run_id=run_id,
-            cause=cause,
-            note=review_note,
-            old_version=old_version,
-            new_version=new_version,
-        )
+            # MVP.3: mirror the canonical verification_state to
+            # evidence_edge.verification_status when the target is an edge.
+            if kind == VerificationTargetKind.EVIDENCE_EDGE.value:
+                self.db.execute(
+                    "UPDATE evidence_edge SET verification_status=?, updated_at=? WHERE id=? AND matter_id=?",
+                    (new_status, now, target_id, self.matter_id),
+                )
+            self._append_event(
+                verification_id=vid,
+                target_kind=kind,
+                target_id=target_id,
+                old_status=old_status,
+                new_status=new_status,
+                reviewed_by_kind=reviewed_by_kind,
+                reviewed_by_id=reviewed_by_id,
+                review_scope=review_scope,
+                rejection_reason=rejection_reason,
+                run_id=run_id,
+                cause=cause,
+                note=review_note,
+                old_version=old_version,
+                new_version=new_version,
+            )
         return vid
 
     def _append_event(
