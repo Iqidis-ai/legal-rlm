@@ -4953,13 +4953,19 @@ Return:
         omitted = 0
         for item in ordered:
             title = self._trim(item.get("title") or "Untitled", self._PACKET_ISSUE_TITLE_TRIM)
-            cnt = int(item.get("supporting_count") or 0)
+            verified = int(item.get("verified_supporting_count") or 0)
+            candidate = int(item.get("candidate_supporting_count") or 0)
+            cnt = verified + candidate
             frac = float(item.get("coverage_fraction") or 0.0)
+            v_frac = float(item.get("verified_coverage_fraction") or 0.0)
             gap_flag = " ⚠ PROOF GAP" if item.get("has_proof_gap") else ""
             requested_flag = " (requested)" if item.get("id") == requested_id else ""
+            # P0.2: render verified and candidate lanes distinctly so
+            # synthesis cannot conflate candidate support with verified
+            # proof. Shape: [verified% / advisory%] title: V verified, C candidate
             line = (
-                f"  [{frac:.0%}] {title}{requested_flag}: "
-                f"{cnt} supporting{gap_flag}"
+                f"  [{v_frac:.0%} verified / {frac:.0%} advisory] {title}{requested_flag}: "
+                f"{verified} verified, {candidate} candidate{gap_flag}"
             )
             cost = self._estimate_tokens(line + "\n")
             if used + cost > cap and shown > 0:
@@ -5100,6 +5106,71 @@ Return:
             lines.append(f"  … {omitted} more omitted under {cap}-token cap")
         return "\n".join(lines)
 
+    def _build_trust_abstention_block(self, query: str) -> str:
+        """P0.2 AC #4: mandatory synthesis instruction that refuses
+        definitive claims when support is candidate-only, stale-only,
+        rejected-only, advocacy-only, or gap-blocked.
+
+        The block is always present when the matter has any open
+        issues so the LLM sees the abstention rule unconditionally,
+        but the body lists per-issue constraints only for issues that
+        fail the verified-support test (so a fully-verified matter
+        does not get a pile of irrelevant warnings)."""
+        if self._matter_model is None:
+            return ""
+        try:
+            rows = self._matter_model.get_issue_coverage_report()
+        except Exception:
+            return ""
+        if not rows:
+            return ""
+        lines = [
+            "Trust and Abstention Rules (MANDATORY — do not override):",
+            "  - Definitive claims require VERIFIED support. If an",
+            "    issue's verified support is zero, frame findings as",
+            "    provisional or unresolved — never as proven.",
+            "  - Candidate support must be described as provisional,",
+            "    e.g. \"candidate evidence suggests…\" — never as",
+            "    established fact.",
+            "  - Stale or rejected intelligence has been reviewed-out",
+            "    by a human; do not resurrect it even if it appears",
+            "    in the background.",
+            "  - Advocacy-only support (complaints, briefs, demand",
+            "    letters) must stay hedged; it is allegation, not",
+            "    proof.",
+        ]
+        per_issue: list[str] = []
+        for item in rows:
+            title = self._trim(
+                item.get("title") or "Untitled",
+                self._PACKET_ISSUE_TITLE_TRIM,
+            )
+            v_cnt = int(item.get("verified_supporting_count") or 0)
+            c_cnt = int(item.get("candidate_supporting_count") or 0)
+            has_gap = bool(item.get("has_proof_gap"))
+            if v_cnt > 0 and not has_gap:
+                continue  # verified support — no per-issue warning needed
+            if v_cnt == 0 and c_cnt > 0:
+                per_issue.append(
+                    f"    * {title}: candidate-only support "
+                    f"({c_cnt}) — treat as provisional."
+                )
+            elif v_cnt == 0 and c_cnt == 0:
+                per_issue.append(
+                    f"    * {title}: no eligible support — treat as "
+                    "unresolved proof gap."
+                )
+            elif has_gap:
+                per_issue.append(
+                    f"    * {title}: proof-gap blocked ({v_cnt} "
+                    f"verified + {c_cnt} candidate) — call out the "
+                    "gap explicitly."
+                )
+        if per_issue:
+            lines.append("  Issue-specific abstention instructions:")
+            lines.extend(per_issue)
+        return "\n".join(lines)
+
     async def _assemble_context_packet(
         self, state: InvestigationState, findings_text: str,
         policy_audience: str = "clean",
@@ -5203,6 +5274,10 @@ Return:
             ordered.append(("advocacy_gate", advocacy_gate.rstrip(), True))
 
         query = getattr(state, "query", "") or ""
+        abstention = self._build_trust_abstention_block(query)
+        if abstention.strip():
+            ordered.append(("trust_abstention_gate", abstention.rstrip(), True))
+
         coverage_section = self._build_capped_issue_coverage_section(query)
         if coverage_section:
             ordered.append(("issue_coverage", coverage_section, True))

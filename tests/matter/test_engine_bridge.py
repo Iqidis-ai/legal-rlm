@@ -1527,6 +1527,106 @@ def test_cached_search_labels_candidate_hits_as_leads(model):
     assert sr._trust_bucket_counts["candidate"] >= 1
 
 
+def test_coverage_section_renders_verified_and_candidate_lanes():
+    """P0.2 commit 4: per-issue coverage lines must render verified
+    and candidate lanes separately so the LLM cannot conflate
+    candidate support with verified proof."""
+    from irys.matter import MatterModel
+    from irys.matter.enums import IssueType, VerificationTargetKind
+    from irys.rlm.engine import RLMEngine
+
+    m = MatterModel.open_in_memory()
+    iid, _ = m.issues.upsert_issue(
+        "Breach of contract claim", IssueType.CLAIM, materiality=0.7,
+    )
+    run_id = m.start_run("coverage lanes")
+    adapter = MatterRuntimeAdapter(m, run_id)
+    aid_v = adapter.record_fact(
+        "Defendant admitted non-payment.", "email.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    aid_c = adapter.record_fact(
+        "Plaintiff alleges late delivery.", "complaint.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    m.verification.verify(
+        VerificationTargetKind.ASSERTION, aid_v,
+        reviewed_by_kind="user", reviewed_by_id="r1",
+    )
+    m.proof_state.compute_and_store(iid, policy_audience="internal")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = m
+    section = engine._build_capped_issue_coverage_section("breach")
+    # The two-lane rendering: "1 verified, 1 candidate" or similar.
+    assert "verified" in section.lower()
+    assert "candidate" in section.lower()
+    # And the bracket tag must contain both fractions.
+    assert "verified / " in section and "advisory]" in section
+
+
+def test_trust_abstention_block_warns_on_candidate_only_issue():
+    """P0.2 AC #4: when an issue has candidate-only support, the
+    abstention block must tell the LLM to frame findings as
+    provisional."""
+    from irys.matter import MatterModel
+    from irys.matter.enums import IssueType
+    from irys.rlm.engine import RLMEngine
+
+    m = MatterModel.open_in_memory()
+    iid, _ = m.issues.upsert_issue(
+        "Untested breach claim", IssueType.CLAIM, materiality=0.7,
+    )
+    run_id = m.start_run("abstention candidate")
+    adapter = MatterRuntimeAdapter(m, run_id)
+    adapter.record_fact(
+        "Candidate only support fact.", "contract.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    m.proof_state.compute_and_store(iid, policy_audience="internal")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = m
+    block = engine._build_trust_abstention_block("breach")
+    assert "MANDATORY" in block
+    assert "candidate-only" in block.lower()
+    assert "Untested breach claim" in block
+    assert "provisional" in block.lower()
+
+
+def test_trust_abstention_block_absent_when_fully_verified():
+    """A fully-verified matter still gets the abstention rules
+    header but no per-issue warnings."""
+    from irys.matter import MatterModel
+    from irys.matter.enums import IssueType, VerificationTargetKind
+    from irys.rlm.engine import RLMEngine
+
+    m = MatterModel.open_in_memory()
+    iid, _ = m.issues.upsert_issue(
+        "Fully-supported claim", IssueType.CLAIM, materiality=0.7,
+    )
+    run_id = m.start_run("abstention verified")
+    adapter = MatterRuntimeAdapter(m, run_id)
+    for i in range(3):
+        aid = adapter.record_fact(
+            f"Verified supporting fact {i}.", "contract.pdf",
+            issue_id=iid, issue_link_type="supports",
+        )
+        m.verification.verify(
+            VerificationTargetKind.ASSERTION, aid,
+            reviewed_by_kind="user", reviewed_by_id="r1",
+        )
+    m.proof_state.compute_and_store(iid, policy_audience="internal")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = m
+    block = engine._build_trust_abstention_block("claim")
+    assert "MANDATORY" in block
+    # Per-issue instructions section should not appear when every
+    # issue has verified support and no proof gap.
+    assert "Issue-specific abstention instructions" not in block
+
+
 def test_proof_state_drops_stale_assertions_from_support(model):
     """P0.2 commit 3: stale assertions must no longer count as
     supporting evidence in proof_state or coverage report. Rejected
