@@ -1616,14 +1616,21 @@ class MatterModel:
         }
 
         # Attacking assertion counts per issue (for UI display — SO-4).
+        # MVP.2: same rejected-exclusion as supporting_count, so a rejected
+        # attack doesn't inflate contested counts on a consumer-facing read.
         attack_rows = self.db.execute(
             """SELECT ail.issue_id, COUNT(*) AS atk_count
                FROM assertion_issue_link ail
                JOIN issue i ON i.id = ail.issue_id
                JOIN assertion a ON a.id = ail.assertion_id
+               LEFT JOIN verification_state vs
+                 ON vs.target_kind = 'assertion'
+                AND vs.target_id = a.id
+                AND vs.matter_id = a.matter_id
                WHERE i.matter_id=? AND i.status='open'
                  AND ail.relation_type IN ('attacks','negates')
                  AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+                 AND COALESCE(vs.status, 'candidate') != 'rejected'
                GROUP BY ail.issue_id""",
             (mid,),
         ).fetchall()

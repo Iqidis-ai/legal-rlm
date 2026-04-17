@@ -675,3 +675,33 @@ def test_stop_run_404_cross_matter(client, register_model):
             model.fail_run(run_id)
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# MVP.2: assertions list carries verification_status
+# ---------------------------------------------------------------------------
+
+def test_get_matter_assertions_labels_candidate_vs_verified(client, register_model):
+    """MVP.2 AC #5: the read model must surface verification status so clients
+    can label candidate facts as candidate rather than established truth."""
+    from irys.matter.enums import ReviewedByKind, VerificationTargetKind
+
+    model = register_model
+    candidate_aid = _add_assertion(model, text="Candidate proposition", doc="c.pdf")
+    verified_aid = _add_assertion(model, text="Verified proposition", doc="v.pdf")
+    model.verification.verify(
+        VerificationTargetKind.ASSERTION, verified_aid,
+        reviewed_by_kind=ReviewedByKind.ATTORNEY,
+    )
+
+    resp = client.get(f"/matter/{MATTER_ID}/assertions?limit=50")
+    assert resp.status_code == 200
+    body = resp.json()
+    by_id = {a["id"]: a for a in body["assertions"]}
+
+    # Every assertion row must carry verification_status.
+    assert "verification_status" in by_id[candidate_aid]
+    assert by_id[candidate_aid]["verification_status"] == "candidate"
+    assert by_id[verified_aid]["verification_status"] == "verified"
+    assert by_id[verified_aid]["reviewed_by_kind"] == "attorney"
+    assert by_id[verified_aid]["reviewed_at"] is not None

@@ -1884,13 +1884,50 @@ async def get_matter_assertions(matter_id: str, limit: int = 50, offset: int = 0
 
     Each assertion includes belief_state, source_role, speech_act, and the
     document it came from — enabling clients to audit the evidence layer.
+
+    MVP.2: each row also carries verification_status (candidate/verified/
+    rejected/stale) and reviewed_by_kind so UI/API-facing read models
+    label AI-derived intelligence as candidate rather than established
+    matter truth.
     """
+    from irys.matter.enums import VerificationTargetKind
+
     model = await _get_matter_model_or_404(matter_id)
+    assertions = model.assertions.list_recent(limit=limit, offset=offset)
+    # Single query joins verification rows for the page — avoids N+1.
+    ids = [a.get("id") for a in assertions if a.get("id")]
+    verification_by_id: dict[str, dict] = {}
+    if ids:
+        placeholders = ",".join("?" * len(ids))
+        rows = model.db.execute(
+            f"""SELECT target_id, status, reviewed_by_kind, reviewed_at,
+                       rejection_reason
+                FROM verification_state
+                WHERE matter_id=? AND target_kind=?
+                  AND target_id IN ({placeholders})""",
+            [model.matter_id, VerificationTargetKind.ASSERTION.value, *ids],
+        ).fetchall()
+        verification_by_id = {r["target_id"]: dict(r) for r in rows}
+    for a in assertions:
+        vs = verification_by_id.get(a.get("id"))
+        # Default to candidate for any row missing a verification record —
+        # this matches the MVP.2 guarantee that AI-derived intelligence is
+        # never silently surfaced as verified.
+        if vs is None:
+            a["verification_status"] = "candidate"
+            a["reviewed_by_kind"] = None
+            a["reviewed_at"] = None
+            a["rejection_reason"] = None
+        else:
+            a["verification_status"] = vs.get("status")
+            a["reviewed_by_kind"] = vs.get("reviewed_by_kind")
+            a["reviewed_at"] = vs.get("reviewed_at")
+            a["rejection_reason"] = vs.get("rejection_reason")
     return {
         "total": model.assertions.count(),
         "limit": limit,
         "offset": offset,
-        "assertions": model.assertions.list_recent(limit=limit, offset=offset),
+        "assertions": assertions,
     }
 
 

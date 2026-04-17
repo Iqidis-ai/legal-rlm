@@ -1939,17 +1939,28 @@ class IssueStore:
         pred_id = _id()
         now = _now()
         with self.db.transaction():
-            self.db.execute(
+            cur = self.db.execute(
                 """INSERT OR IGNORE INTO issue_predicate
                    (id, issue_id, description, burden_side, status, created_at)
                    VALUES (?,?,?,?,?,?)""",
                 (pred_id, issue_id, description, burden_side, "open", now),
             )
+            is_new = cur.rowcount > 0
         row = self.db.execute(
             "SELECT id FROM issue_predicate WHERE issue_id=? AND description=?",
             (issue_id, description),
         ).fetchone()
-        return row["id"] if row else pred_id
+        resolved_id = row["id"] if row else pred_id
+        # MVP.2: predicates are AI-derived until reviewed. candidate() is
+        # idempotent, so batch/legacy callers that already hold a row are
+        # safe too.
+        if is_new:
+            VerificationStateStore(self.db, self.matter_id).candidate(
+                VerificationTargetKind.ISSUE_PREDICATE,
+                resolved_id,
+                cause="predicate_add",
+            )
+        return resolved_id
 
     def add_predicates_batch(
         self,
@@ -2551,6 +2562,13 @@ class QuantStore:
                     (self.matter_id, dedup_key),
                 ).fetchone()
                 return row["id"]
+            # MVP.2: AI-extracted numeric facts enter verification as
+            # candidates inside the same transaction.
+            VerificationStateStore(self.db, self.matter_id).candidate(
+                VerificationTargetKind.QUANT_FACT,
+                qf_id,
+                cause="quant_record",
+            )
         return qf_id
 
     def record_many(self, specs: list[dict]) -> list[str]:
@@ -3545,7 +3563,15 @@ class DocumentCardStore:
         row = self.db.execute(
             "SELECT id FROM document_card WHERE doc_id = ?", (doc_id,)
         ).fetchone()
-        return row["id"] if row else card_id
+        actual_id = row["id"] if row else card_id
+        # MVP.2: document cards are AI-profiled until reviewed. candidate()
+        # is idempotent so the ON CONFLICT update path is safe too.
+        VerificationStateStore(self.db, self.matter_id).candidate(
+            VerificationTargetKind.DOCUMENT_CARD,
+            actual_id,
+            cause="document_card_upsert",
+        )
+        return actual_id
 
     def get_by_doc_id(self, doc_id: str) -> Optional[dict]:
         """Return card dict for an inventory doc_id, or None."""
@@ -4237,6 +4263,14 @@ class AuthorityStore:
                 (auth_id, self.matter_id, authority_type, citation, name,
                  jurisdiction, decided_at, holdings_json, key_rules_json,
                  weight, applicability, source_doc_id, source_span_id, now, now),
+            )
+            # MVP.2: new authority insertions are AI-identified until human
+            # review. Updates to an existing authority don't re-seed the
+            # candidate row (it already exists).
+            VerificationStateStore(self.db, self.matter_id).candidate(
+                VerificationTargetKind.AUTHORITY,
+                auth_id,
+                cause="authority_upsert",
             )
         return auth_id, True
 

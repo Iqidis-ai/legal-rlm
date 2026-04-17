@@ -233,3 +233,65 @@ def test_rejected_assertions_excluded_from_proof_substrate():
         )
         for g in gaps
     ), "_detect_proof_gaps must open a missing_issue_predicate gap once the only support is rejected"
+
+
+def test_predicate_add_creates_candidate_verification(model):
+    """MVP.2 AC #2: issue_predicate additions create candidate verification rows."""
+    from irys.matter.enums import IssueType
+
+    iid, _ = model.issues.upsert_issue("Test claim", IssueType.CLAIM)
+    pid = model.issues.add_predicate(iid, "Defendant owed a duty")
+    row = model.verification.get(VerificationTargetKind.ISSUE_PREDICATE, pid)
+    assert row is not None
+    assert row["status"] == "candidate"
+
+
+def test_quant_record_creates_candidate_verification(model):
+    """MVP.2 AC #2: quant_fact additions create candidate verification rows."""
+    qid = model.quant.record(quant_kind="amount", raw_text="Invoice $100", amount_value=100.0, currency="USD")
+    row = model.verification.get(VerificationTargetKind.QUANT_FACT, qid)
+    assert row is not None
+    assert row["status"] == "candidate"
+
+
+def test_authority_upsert_creates_candidate_verification(model):
+    """MVP.2 AC #2: authority inserts create candidate verification rows."""
+    auth_id, is_new = model.authority.upsert("Smith v. Jones, 1 F.3d 100 (9th Cir. 2020)")
+    assert is_new
+    row = model.verification.get(VerificationTargetKind.AUTHORITY, auth_id)
+    assert row is not None
+    assert row["status"] == "candidate"
+
+
+def test_attacking_count_excludes_rejected_assertions(model):
+    """get_issue_coverage_report's attacking_count must filter rejected too."""
+    from irys.matter.enums import IssueType, OriginKind
+    from irys.matter.models import AssertionCandidate
+    from irys.matter import SpeechAct, SourceRole, ModelLayer, AssertionKind
+
+    iid, _ = model.issues.upsert_issue("Claim", IssueType.CLAIM, materiality=0.9)
+    cand = AssertionCandidate(
+        proposition_text="Attacks the claim",
+        speech_act=SpeechAct.OPERATIVE,
+        source_role=SourceRole.OPERATIVE,
+        assertion_kind=AssertionKind.FACTUAL,
+        model_layer=ModelLayer.RECORD,
+        document_id="doc.pdf",
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    aid, _ = model.assertions.upsert_occurrence(cand)
+    model.issues.link_assertion(aid, iid, relation_type="attacks")
+
+    report = next(r for r in model.get_issue_coverage_report() if r["id"] == iid)
+    assert report["attacking_count"] == 1
+
+    # Reject the attacker — attacking_count must drop.
+    model.verification.reject(
+        VerificationTargetKind.ASSERTION, aid,
+        reviewed_by_kind=ReviewedByKind.ATTORNEY,
+        rejection_reason="incorrect attribution",
+    )
+    report = next(r for r in model.get_issue_coverage_report() if r["id"] == iid)
+    assert report["attacking_count"] == 0, (
+        "rejected attacking assertion must not inflate attacking_count"
+    )
