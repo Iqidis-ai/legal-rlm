@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 53
+SCHEMA_VERSION = 54
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -16,6 +16,7 @@ _MIGRATION_NAMES: dict[int, str] = {
     51: "seed_verification_state",
     52: "evidence_edge_mvp3_columns",
     53: "backfill_evidence_edge_from_legacy",
+    54: "issue_predicate_template_metadata",
 }
 
 
@@ -2619,6 +2620,37 @@ def _migration_v53(conn) -> None:
     conn.commit()
 
 
+def _migration_v54(conn) -> None:
+    """MVP.5: add template/element metadata to issue_predicate.
+
+    Each predicate can trace back to an IssueTemplate + element key so
+    the proof substrate can compute per-element sufficiency and surface
+    missing elements as gaps. Columns:
+    - template_id: reference string to a TemplateRegistry entry
+    - template_version: semantic version of the template applied
+    - element_key: canonical identifier within the template (e.g.
+      'formation', 'damages')
+    - element_order: display ordering within the issue
+    """
+    for alter in (
+        "ALTER TABLE issue_predicate ADD COLUMN template_id TEXT",
+        "ALTER TABLE issue_predicate ADD COLUMN template_version TEXT",
+        "ALTER TABLE issue_predicate ADD COLUMN element_key TEXT",
+        "ALTER TABLE issue_predicate ADD COLUMN element_order INTEGER NOT NULL DEFAULT 0",
+    ):
+        _execute_allow_duplicate_column(conn, alter)
+    # Unique index keeps (issue_id, template_id, element_key) idempotent
+    # so apply_template() can safely re-run without duplicating predicates.
+    # WHERE clause excludes manually-added predicates (template_id is NULL)
+    # because they have no template to uniquify against.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_issue_predicate_template "
+        "ON issue_predicate(issue_id, template_id, element_key) "
+        "WHERE template_id IS NOT NULL AND element_key IS NOT NULL"
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -2676,6 +2708,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (51, _migration_v51),
     (52, _migration_v52),
     (53, _migration_v53),
+    (54, _migration_v54),
 ]
 
 
