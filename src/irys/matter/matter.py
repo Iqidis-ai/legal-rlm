@@ -339,15 +339,24 @@ class MatterModel:
         self.ledger.interrupt_run(run_id)
 
     def record_llm_call(self, record: LLMCallRecord) -> None:
-        """Persist one Gemini API request for later cost and latency analysis."""
+        """Persist one Gemini API request for later cost and latency analysis.
+
+        P0.1 provenance: call_id, prompt_hash, and response_hash are
+        stored here so provenance_event rows can reference the call that
+        produced them. call_id is preferred as the primary key; if the
+        client minted one, we use it, otherwise fall back to a matter-
+        local uuid (legacy callers).
+        """
+        row_id = record.call_id or _id()
         self.db.execute(
             """INSERT INTO llm_call
                (id, matter_id, run_id, model_tier, model_id, usage_label,
                 input_tokens, cache_read_tokens, output_tokens, total_prompt_tokens,
-                estimated_cost_usd, latency_ms, success, error_kind, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                estimated_cost_usd, latency_ms, success, error_kind, created_at,
+                prompt_hash, response_hash)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                _id(),
+                row_id,
                 self.matter_id,
                 record.run_id,
                 record.model_tier,
@@ -362,6 +371,8 @@ class MatterModel:
                 1 if record.success else 0,
                 record.error_kind,
                 _now(),
+                record.prompt_hash,
+                record.response_hash,
             ),
         )
 

@@ -136,7 +136,14 @@ def estimate_usage_cost(
 
 @dataclass
 class LLMCallRecord:
-    """One Gemini API request for audit and UI rollups."""
+    """One Gemini API request for audit and UI rollups.
+
+    P0.1 Provenance Lite (SO-2): call_id is a stable UUID minted before
+    the request, so downstream provenance_event rows can reference the
+    call that produced them. prompt_hash/response_hash are SHA-256
+    digests of the effective request payload and response text so a
+    future audit can verify reproducibility.
+    """
     model_tier: str
     model_id: str
     input_tokens: int
@@ -150,6 +157,9 @@ class LLMCallRecord:
     usage_label: Optional[str] = None
     matter_id: Optional[str] = None
     run_id: Optional[str] = None
+    call_id: Optional[str] = None
+    prompt_hash: Optional[str] = None
+    response_hash: Optional[str] = None
 
 
 @dataclass
@@ -473,6 +483,20 @@ class GeminiClient:
 
         request_text = prompt
 
+        # P0.1 provenance: mint a stable call_id and hash the effective
+        # request payload before dispatch so both failure and success
+        # paths share the same identity.
+        import hashlib
+        import uuid as _uuid
+
+        _call_id = _uuid.uuid4().hex
+        _prompt_hash_input = request_text
+        if system_prompt:
+            _prompt_hash_input = f"{system_prompt}\n---\n{request_text}"
+        _prompt_hash = hashlib.sha256(
+            _prompt_hash_input.encode("utf-8", errors="replace")
+        ).hexdigest()
+
         logger.debug(f"Calling {mc.model_id} with {len(prompt)} chars")
 
         # Acquire rate limit token
@@ -525,6 +549,8 @@ class GeminiClient:
                     latency_ms=latency_ms,
                     success=False,
                     error_kind="TimeoutError",
+                    call_id=_call_id,
+                    prompt_hash=_prompt_hash,
                 )
             )
             logger.error(f"API call to {mc.model_id} timed out after {request_timeout}s")
@@ -544,6 +570,8 @@ class GeminiClient:
                     latency_ms=latency_ms,
                     success=False,
                     error_kind=type(exc).__name__,
+                    call_id=_call_id,
+                    prompt_hash=_prompt_hash,
                 )
             )
             raise
@@ -562,6 +590,10 @@ class GeminiClient:
             estimated_cost_usd=call_cost,
         )
         latency_ms = int((time.perf_counter() - started_at) * 1000)
+        _response_text = response.text or ""
+        _response_hash = hashlib.sha256(
+            _response_text.encode("utf-8", errors="replace")
+        ).hexdigest()
         self._record_call(
             LLMCallRecord(
                 model_tier=tier.value,
@@ -574,6 +606,9 @@ class GeminiClient:
                 estimated_cost_usd=call_cost,
                 latency_ms=latency_ms,
                 success=True,
+                call_id=_call_id,
+                prompt_hash=_prompt_hash,
+                response_hash=_response_hash,
             )
         )
 
