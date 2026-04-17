@@ -3498,6 +3498,87 @@ class DocumentInventoryStore:
         return created
 
 
+class PrivilegeGate:
+    """MVP.4 document-level privilege helper (SO-5).
+
+    Read-only gate over document_card.privilege_flag that lets downstream
+    consumers filter privileged material out of clean-mode proof,
+    coverage, gaps, and context packets. This is deliberately minimal:
+    no span-level taint, no privilege_classification enum, no
+    review_task — those land in later phases.
+
+    Privileged docs are identified by document_card.privilege_flag=1
+    joined to document_inventory. Assertions, evidence_edges, and
+    quant_facts are considered "privileged-sourced" if ANY occurrence
+    they reference traces back to a privileged doc inventory id. This is
+    fail-closed by design: partial privilege is treated as full
+    privilege for clean output.
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def privileged_doc_inventory_ids(self) -> set[str]:
+        """Return the set of document_inventory.id values flagged as
+        privileged on their document_card row for this matter. Fetched
+        once per call; callers that need to test many targets should
+        cache the result."""
+        rows = self.db.execute(
+            """SELECT di.id
+               FROM document_card dc
+               JOIN document_inventory di ON di.id = dc.doc_id
+               WHERE di.matter_id=? AND dc.privilege_flag=1""",
+            (self.matter_id,),
+        ).fetchall()
+        return {r["id"] for r in rows}
+
+    def is_document_privileged(self, doc_ref: str) -> bool:
+        """Accepts either a document_inventory.id or a relative_path."""
+        row = self.db.execute(
+            """SELECT dc.privilege_flag
+               FROM document_card dc
+               JOIN document_inventory di ON di.id = dc.doc_id
+               WHERE di.matter_id=? AND (di.id=? OR di.relative_path=?)
+               LIMIT 1""",
+            (self.matter_id, doc_ref, doc_ref),
+        ).fetchone()
+        return bool(row and row["privilege_flag"])
+
+    def is_assertion_from_privileged_source(self, assertion_id: str) -> bool:
+        """An assertion is considered privileged if any of its occurrences
+        resolve to a privileged document inventory row. assertion_occurrence
+        rows carry both document_inventory_id (newer) and document_id
+        (relative path, legacy); we check both."""
+        row = self.db.execute(
+            """SELECT 1 FROM assertion_occurrence ao
+               LEFT JOIN document_inventory di
+                 ON di.id = ao.document_inventory_id
+                 OR di.relative_path = ao.document_id
+               JOIN document_card dc ON dc.doc_id = di.id
+               WHERE ao.assertion_id=? AND di.matter_id=? AND dc.privilege_flag=1
+               LIMIT 1""",
+            (assertion_id, self.matter_id),
+        ).fetchone()
+        return row is not None
+
+    def privileged_assertion_ids(self) -> set[str]:
+        """Return every assertion id in this matter whose source is
+        privileged. Single set-based query so proof consumers can
+        filter in bulk without a per-assertion round-trip."""
+        rows = self.db.execute(
+            """SELECT DISTINCT ao.assertion_id
+               FROM assertion_occurrence ao
+               LEFT JOIN document_inventory di
+                 ON di.id = ao.document_inventory_id
+                 OR di.relative_path = ao.document_id
+               JOIN document_card dc ON dc.doc_id = di.id
+               WHERE di.matter_id=? AND dc.privilege_flag=1""",
+            (self.matter_id,),
+        ).fetchall()
+        return {r["assertion_id"] for r in rows}
+
+
 class DocumentCardStore:
     """Per-document intelligence card store.
 
