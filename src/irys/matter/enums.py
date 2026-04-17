@@ -170,3 +170,69 @@ class LedgerEventType(str, Enum):
     RUN_FAILED = "run_failed"
     SYSTEM_WARNING = "system_warning"
     PROGRESS_NOTE = "progress_note"
+
+
+class VerificationStatus(str, Enum):
+    """Human-review state of a matter intelligence object (MVP.2, SO-2).
+
+    Truth is not belief: this enum tracks whether a human has reviewed an
+    AI-derived object. Proof-state and assertion belief_state are separate.
+    """
+
+    CANDIDATE = "candidate"
+    VERIFIED = "verified"
+    REJECTED = "rejected"
+    STALE = "stale"
+
+
+class VerificationTargetKind(str, Enum):
+    """The kinds of intelligence objects that carry a verification state."""
+
+    ASSERTION = "assertion"
+    ASSERTION_OCCURRENCE = "assertion_occurrence"
+    ISSUE_PREDICATE = "issue_predicate"
+    EVIDENCE_EDGE = "evidence_edge"
+    QUANT_FACT = "quant_fact"
+    AUTHORITY = "authority"
+    DOCUMENT_CARD = "document_card"
+    PRIVILEGE_CLASSIFICATION = "privilege_classification"
+    GAP = "gap"
+    DISPUTE = "dispute"
+    DISPUTE_POSITION = "dispute_position"
+    TIMELINE_EVENT = "timeline_event"
+    DEADLINE = "deadline"
+    AUTHORITY_TREATMENT = "authority_treatment"
+    ACTOR_RELATIONSHIP = "actor_relationship"
+    DEFINED_TERM = "defined_term"
+    CAUSATION_EDGE = "causation_edge"
+    THEORY = "theory"
+    ARTIFACT = "artifact"
+    ARTIFACT_MANIFEST_ITEM = "artifact_manifest_item"
+
+
+class ReviewScope(str, Enum):
+    """What aspect a human review has validated."""
+
+    EXTRACTION_CORRECT = "extraction_correct"
+    RECORD_TRUTH = "record_truth"
+    INFERENCE = "inference"
+    LEGAL_CONCLUSION = "legal_conclusion"
+    TRUTH_OVERRIDE = "truth_override"
+    INTERNAL_PRIVILEGED = "internal_privileged"
+    CLEAN_OUTPUT = "clean_output"
+    PRIVILEGE_CLASSIFICATION = "privilege_classification"
+    DISPUTE_RESOLUTION = "dispute_resolution"
+    ARTIFACT_POLICY = "artifact_policy"
+
+
+class ReviewedByKind(str, Enum):
+    """Who performed the review.
+
+    Only 'user' and 'attorney' may promote status to 'verified'. 'system'
+    and 'import' are automation markers and must never reach verified.
+    """
+
+    USER = "user"
+    ATTORNEY = "attorney"
+    SYSTEM = "system"
+    IMPORT = "import"

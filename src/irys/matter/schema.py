@@ -6,7 +6,15 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 49
+SCHEMA_VERSION = 51
+
+# Human-readable names for the schema_migration ledger, keyed by version.
+# Versions not listed here record as legacy_v<N>.
+_MIGRATION_NAMES: dict[int, str] = {
+    49: "schema_discipline",
+    50: "verification_state",
+    51: "seed_verification_state",
+}
 
 
 class SchemaVersionTooNewError(RuntimeError):
@@ -2374,6 +2382,150 @@ def _migration_v49(conn) -> None:
     conn.commit()
 
 
+def _migration_v50(conn) -> None:
+    """MVP.2: add verification_state + verification_event tables (SO-2).
+
+    Canonical human-review substrate for all AI-derived matter intelligence.
+    target_kind is the frozen VerificationTargetKind vocabulary; status is
+    the minimal candidate/verified/rejected/stale state machine.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS verification_state (
+            id                TEXT PRIMARY KEY,
+            matter_id         TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            target_kind       TEXT NOT NULL CHECK (target_kind IN (
+                'assertion','assertion_occurrence','issue_predicate','evidence_edge',
+                'quant_fact','authority','document_card','privilege_classification',
+                'gap','dispute','dispute_position','timeline_event','deadline',
+                'authority_treatment','actor_relationship','defined_term',
+                'causation_edge','theory','artifact','artifact_manifest_item'
+            )),
+            target_id         TEXT NOT NULL,
+            status            TEXT NOT NULL DEFAULT 'candidate'
+                CHECK (status IN ('candidate','verified','rejected','stale')),
+            ai_confidence     REAL CHECK (ai_confidence IS NULL OR (ai_confidence >= 0.0 AND ai_confidence <= 1.0)),
+            reviewed_by_kind  TEXT CHECK (reviewed_by_kind IS NULL OR reviewed_by_kind IN ('user','attorney','system','import')),
+            reviewed_by_id    TEXT,
+            reviewed_at       TEXT,
+            review_scope      TEXT NOT NULL DEFAULT 'extraction_correct'
+                CHECK (review_scope IN (
+                    'extraction_correct','record_truth','inference','legal_conclusion',
+                    'truth_override','internal_privileged','clean_output',
+                    'privilege_classification','dispute_resolution','artifact_policy'
+                )),
+            review_scope_json TEXT,
+            review_note       TEXT,
+            rejection_reason  TEXT,
+            stale_reason      TEXT,
+            version           INTEGER NOT NULL DEFAULT 1,
+            created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(matter_id, target_kind, target_id)
+        ) STRICT
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_verification_status"
+        " ON verification_state(matter_id, status, target_kind, updated_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_verification_target"
+        " ON verification_state(target_kind, target_id)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS verification_event (
+            id               TEXT PRIMARY KEY,
+            matter_id        TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            verification_id  TEXT REFERENCES verification_state(id) ON DELETE SET NULL,
+            target_kind      TEXT NOT NULL,
+            target_id        TEXT NOT NULL,
+            old_status       TEXT,
+            new_status       TEXT NOT NULL CHECK (new_status IN ('candidate','verified','rejected','stale')),
+            reviewed_by_kind TEXT NOT NULL CHECK (reviewed_by_kind IN ('user','attorney','system','import')),
+            reviewed_by_id   TEXT,
+            review_scope     TEXT NOT NULL,
+            rejection_reason TEXT,
+            run_id           TEXT REFERENCES run_session(id),
+            cause            TEXT NOT NULL,
+            note             TEXT,
+            old_version      INTEGER,
+            new_version      INTEGER,
+            created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        ) STRICT
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_verification_event_target"
+        " ON verification_event(matter_id, target_kind, target_id, created_at DESC)"
+    )
+    conn.commit()
+
+
+def _migration_v51(conn) -> None:
+    """MVP.2: seed candidate verification rows for pre-existing intelligence.
+
+    Every existing assertion, assertion_occurrence, issue_predicate,
+    quant_fact, authority, and document_card gets a candidate row so
+    the unique constraint on (matter_id, target_kind, target_id) is
+    populated without auto-upgrading any row to verified.
+    """
+    conn.execute(
+        """INSERT OR IGNORE INTO verification_state
+            (id, matter_id, target_kind, target_id, status, ai_confidence,
+             created_at, updated_at)
+           SELECT lower(hex(randomblob(16))), matter_id, 'assertion', id,
+                  'candidate', confidence, datetime('now'), datetime('now')
+           FROM assertion"""
+    )
+    conn.execute(
+        """INSERT OR IGNORE INTO verification_state
+            (id, matter_id, target_kind, target_id, status, ai_confidence,
+             created_at, updated_at)
+           SELECT lower(hex(randomblob(16))), a.matter_id, 'assertion_occurrence',
+                  ao.id, 'candidate', ao.extraction_confidence,
+                  datetime('now'), datetime('now')
+           FROM assertion_occurrence ao
+           JOIN assertion a ON a.id = ao.assertion_id"""
+    )
+    conn.execute(
+        """INSERT OR IGNORE INTO verification_state
+            (id, matter_id, target_kind, target_id, status,
+             created_at, updated_at)
+           SELECT lower(hex(randomblob(16))), i.matter_id, 'issue_predicate',
+                  ip.id, 'candidate', datetime('now'), datetime('now')
+           FROM issue_predicate ip
+           JOIN issue i ON i.id = ip.issue_id"""
+    )
+    conn.execute(
+        """INSERT OR IGNORE INTO verification_state
+            (id, matter_id, target_kind, target_id, status,
+             created_at, updated_at)
+           SELECT lower(hex(randomblob(16))), matter_id, 'quant_fact', id,
+                  'candidate', datetime('now'), datetime('now')
+           FROM quant_fact"""
+    )
+    conn.execute(
+        """INSERT OR IGNORE INTO verification_state
+            (id, matter_id, target_kind, target_id, status,
+             created_at, updated_at)
+           SELECT lower(hex(randomblob(16))), matter_id, 'authority', id,
+                  'candidate', datetime('now'), datetime('now')
+           FROM authority"""
+    )
+    conn.execute(
+        """INSERT OR IGNORE INTO verification_state
+            (id, matter_id, target_kind, target_id, status,
+             created_at, updated_at)
+           SELECT lower(hex(randomblob(16))), di.matter_id, 'document_card',
+                  dc.id, 'candidate', datetime('now'), datetime('now')
+           FROM document_card dc
+           JOIN document_inventory di ON di.id = dc.doc_id"""
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -2427,6 +2579,8 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (47, _migration_v47),
     (48, _migration_v48),
     (49, _migration_v49),
+    (50, _migration_v50),
+    (51, _migration_v51),
 ]
 
 
@@ -2469,7 +2623,7 @@ def apply_schema(conn) -> None:
                 conn,
                 to_version,
                 applied_at,
-                "schema_discipline" if to_version == 49 else f"legacy_v{to_version}",
+                _MIGRATION_NAMES.get(to_version, f"legacy_v{to_version}"),
             )
             conn.execute(f"PRAGMA user_version = {int(to_version)}")
             conn.commit()

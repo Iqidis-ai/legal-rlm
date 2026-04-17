@@ -133,4 +133,18 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
             "surface until the multi-matter migration CLI is built"
         ),
     ),
+    "verification_state": TableCoverageSpec(
+        deferred_until="MVP.2_store",
+        reason=(
+            "Table introduced by migration v50; VerificationStateStore lands "
+            "in the next commit of MVP.2"
+        ),
+    ),
+    "verification_event": TableCoverageSpec(
+        deferred_until="MVP.2_store",
+        reason=(
+            "Append-only audit table paired with verification_state; writer "
+            "lands with the store in the next commit"
+        ),
+    ),
 }
