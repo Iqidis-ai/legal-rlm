@@ -5790,9 +5790,11 @@ class ProofStateStore:
                   AND ee.active = 1
                   AND ee.source_kind = 'assertion'
                   AND ee.relation_type IN ('supports','establishes','attacks','negates')
-                  AND a.belief_state NOT IN ('superseded','withdrawn')
-                  AND COALESCE(vs.status, 'candidate') != 'rejected'
-                  AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'
+                  AND a.belief_state NOT IN ('superseded','withdrawn','disputed')
+                  -- P0.2: TrustPurpose.PROOF_CANDIDATE drops stale and
+                  -- rejected on both assertion and edge lanes.
+                  AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
+                  AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') NOT IN ('rejected','stale')
                   """ + privilege_filter + """
                 GROUP BY ee.source_id, ee.relation_type
             """
@@ -5821,8 +5823,9 @@ class ProofStateStore:
                  AND vs.matter_id = a.matter_id
                 WHERE ail.issue_id = ?
                   AND ail.relation_type IN ('supports','establishes','attacks','negates')
-                  AND a.belief_state NOT IN ('superseded','withdrawn')
-                  AND COALESCE(vs.status, 'candidate') != 'rejected'
+                  AND a.belief_state NOT IN ('superseded','withdrawn','disputed')
+                  -- P0.2: stale drops out alongside rejected.
+                  AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
                   """ + privilege_filter + """
                 GROUP BY ail.assertion_id, ail.relation_type
             """

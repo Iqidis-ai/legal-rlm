@@ -6595,7 +6595,7 @@ Return:
                            WHERE ail.issue_id=gl.affected_id
                              AND ail.relation_type IN ('supports','establishes')
                              AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
-                             AND COALESCE(vs.status, 'candidate') != 'rejected'
+                             AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
                              {priv_sql}
                        )
                        -- MVP.3: an issue with any active edge-backed
@@ -6616,8 +6616,8 @@ Return:
                              AND ee.source_kind='assertion'
                              AND ee.relation_type IN ('supports','establishes')
                              AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
-                             AND COALESCE(vs.status, 'candidate') != 'rejected'
-                             AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'
+                             AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
+                             AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') NOT IN ('rejected','stale')
                              {priv_sql}
                        )
                  )""",
@@ -6645,7 +6645,7 @@ Return:
                      WHERE ail.issue_id=i.id
                        AND ail.relation_type IN ('supports','establishes')
                        AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
-                       AND COALESCE(vs.status, 'candidate') != 'rejected'
+                       AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
                        {priv_sql}
                  )
                  AND NOT EXISTS (
@@ -6664,8 +6664,8 @@ Return:
                        AND ee.source_kind='assertion'
                        AND ee.relation_type IN ('supports','establishes')
                        AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
-                       AND COALESCE(vs.status, 'candidate') != 'rejected'
-                       AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'
+                       AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
+                       AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') NOT IN ('rejected','stale')
                        {priv_sql}
                  )
                  AND NOT EXISTS (

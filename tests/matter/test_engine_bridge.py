@@ -1527,6 +1527,70 @@ def test_cached_search_labels_candidate_hits_as_leads(model):
     assert sr._trust_bucket_counts["candidate"] >= 1
 
 
+def test_proof_state_drops_stale_assertions_from_support(model):
+    """P0.2 commit 3: stale assertions must no longer count as
+    supporting evidence in proof_state or coverage report. Rejected
+    already dropped; stale now drops too because a human has
+    effectively said the assertion is no longer current."""
+    from irys.matter.enums import (
+        IssueType, VerificationStatus, VerificationTargetKind,
+    )
+
+    iid, _ = model.issues.upsert_issue("Claim", IssueType.CLAIM, materiality=0.7)
+    run_id = model.start_run("stale support")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid_candidate = adapter.record_fact(
+        "Candidate support fact.", "contract.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    aid_stale = adapter.record_fact(
+        "Stale support fact.", "contract.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    model.verification.set_status(
+        VerificationTargetKind.ASSERTION, aid_stale,
+        status=VerificationStatus.STALE, reviewed_by_kind="system",
+    )
+    model.proof_state.compute_and_store(iid, policy_audience="internal")
+    report = model.get_issue_coverage_report(policy_audience="internal")
+    entry = next(r for r in report if r["id"] == iid)
+    assert entry["supporting_count"] == 1, (
+        f"stale support must not count; got supporting_count="
+        f"{entry['supporting_count']}"
+    )
+
+
+def test_proof_state_drops_stale_edge_from_support(model):
+    """P0.2: stale on the edge lane drops too (TrustPurpose.PROOF_CANDIDATE
+    rejects stale on either lane)."""
+    from irys.matter.enums import (
+        EvidenceRelationType, IssueType,
+        VerificationStatus, VerificationTargetKind,
+    )
+
+    iid, _ = model.issues.upsert_issue("Claim", IssueType.CLAIM, materiality=0.7)
+    run_id = model.start_run("stale edge")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid = adapter.record_fact(
+        "Fact with stale edge.", "contract.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    edge_row = model.db.execute(
+        """SELECT id FROM evidence_edge
+           WHERE matter_id=? AND source_id=? AND target_id=?""",
+        (model.matter_id, aid, iid),
+    ).fetchone()
+    assert edge_row is not None
+    model.verification.set_status(
+        VerificationTargetKind.EVIDENCE_EDGE, edge_row["id"],
+        status=VerificationStatus.STALE, reviewed_by_kind="system",
+    )
+    model.proof_state.compute_and_store(iid, policy_audience="internal")
+    report = model.get_issue_coverage_report(policy_audience="internal")
+    entry = next(r for r in report if r["id"] == iid)
+    assert entry["supporting_count"] == 0
+
+
 def test_cached_search_drops_stale_and_rejected(model):
     """P0.2: stale/rejected rows drop out at the DB layer under
     TrustPurpose.CACHED_SEARCH — they must not appear in cached

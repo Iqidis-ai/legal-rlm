@@ -1712,8 +1712,8 @@ class MatterModel:
                     "AND ee.relation_type IN ('supports','establishes') "
                     "AND i.status='open' "
                     "AND a.belief_state NOT IN ('disputed','withdrawn','superseded') "
-                    "AND COALESCE(vs.status, 'candidate') != 'rejected' "
-                    "AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected' "
+                    "AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale') "
+                    "AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') NOT IN ('rejected','stale') "
                     + privilege_filter
                 )
             else:
@@ -1731,7 +1731,7 @@ class MatterModel:
                     "i.matter_id=? AND i.status='open' "
                     "AND ail.relation_type IN ('supports','establishes') "
                     "AND a.belief_state NOT IN ('disputed','withdrawn','superseded') "
-                    "AND COALESCE(vs.status, 'candidate') != 'rejected' "
+                    "AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale') "
                     + privilege_filter
                 )
             return (
@@ -1800,8 +1800,8 @@ class MatterModel:
                     "AND ee.relation_type IN ('attacks','negates') "
                     "AND i.status='open' "
                     "AND a.belief_state NOT IN ('disputed','withdrawn','superseded') "
-                    "AND COALESCE(vs.status, 'candidate') != 'rejected' "
-                    "AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected' "
+                    "AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale') "
+                    "AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') NOT IN ('rejected','stale') "
                     + privilege_filter + " "
                     "GROUP BY ee.target_id"
                 )
@@ -1817,7 +1817,7 @@ class MatterModel:
                 "WHERE i.matter_id=? AND i.status='open' "
                 "AND ail.relation_type IN ('attacks','negates') "
                 "AND a.belief_state NOT IN ('disputed','withdrawn','superseded') "
-                "AND COALESCE(vs.status, 'candidate') != 'rejected' "
+                "AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale') "
                 + privilege_filter + " "
                 "GROUP BY ail.issue_id"
             )
