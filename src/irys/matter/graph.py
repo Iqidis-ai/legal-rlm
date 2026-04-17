@@ -2250,6 +2250,117 @@ class IssueStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_predicates_with_proof(
+        self,
+        issue_id: str,
+        *,
+        policy_audience: str = "clean",
+    ) -> list[dict]:
+        """MVP.5: return template predicates with per-element proof lanes.
+
+        Each row includes template_id, element_key, element_order, plus:
+        - supporting_count / verified_supporting_count
+        - attacking_count / verified_attacking_count
+        - candidate_sufficiency / verified_sufficiency (ratio in [0,1])
+        - resolvable: True only when verified sufficiency passes the
+          threshold — this is the gate that prevents MVP.5 AC #5
+          (unverified mapping cannot fully resolve a predicate).
+
+        Sufficiency formula (MVP.5): verified_supporting_count /
+        (verified_supporting_count + verified_attacking_count + 1).
+        Candidate lane uses the non-rejected remainder. Sources are
+        evidence_edge rows with target_kind='issue_predicate'.
+        """
+        priv_filter = ""
+        if policy_audience == "clean":
+            priv_filter = (
+                " AND a.id NOT IN ("
+                " SELECT DISTINCT ao.assertion_id FROM assertion_occurrence ao"
+                " LEFT JOIN document_inventory di"
+                "   ON di.id = ao.document_inventory_id"
+                "   OR di.relative_path = ao.document_id"
+                " JOIN document_card dc ON dc.doc_id = di.id"
+                " WHERE di.matter_id = a.matter_id AND dc.privilege_flag = 1"
+                ")"
+            )
+
+        pred_rows = self.db.execute(
+            """SELECT id, issue_id, description, burden_side, status,
+                      template_id, template_version, element_key, element_order
+               FROM issue_predicate
+               WHERE issue_id=? AND status='open'
+               ORDER BY element_order, created_at""",
+            (issue_id,),
+        ).fetchall()
+        if not pred_rows:
+            return []
+
+        # One bulk query gathers edge stats per predicate so we avoid N+1.
+        edge_query = f"""
+            SELECT ee.target_id AS predicate_id,
+                   ee.relation_type,
+                   COUNT(*) AS raw_count,
+                   SUM(CASE WHEN COALESCE(vs.status, 'candidate') = 'verified'
+                        AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') = 'verified'
+                        THEN 1 ELSE 0 END) AS verified_count
+            FROM evidence_edge ee
+            JOIN assertion a ON a.id = ee.source_id
+            LEFT JOIN verification_state vs
+              ON vs.target_kind = 'assertion'
+             AND vs.target_id = a.id
+             AND vs.matter_id = a.matter_id
+            LEFT JOIN verification_state vs_edge
+              ON vs_edge.target_kind = 'evidence_edge'
+             AND vs_edge.target_id = ee.id
+             AND vs_edge.matter_id = ee.matter_id
+            WHERE ee.matter_id=? AND ee.target_kind='issue_predicate'
+              AND ee.active=1 AND ee.source_kind='assertion'
+              AND ee.relation_type IN ('supports','establishes','attacks','negates')
+              AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+              AND COALESCE(vs.status, 'candidate') != 'rejected'
+              AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'
+              {priv_filter}
+            GROUP BY ee.target_id, ee.relation_type
+        """
+        edge_rows = self.db.execute(edge_query, (self.matter_id,)).fetchall()
+        support: dict[str, dict] = {}
+        attack: dict[str, dict] = {}
+        for r in edge_rows:
+            bucket = support if r["relation_type"] in ("supports", "establishes") else attack
+            prev = bucket.setdefault(r["predicate_id"], {"raw": 0, "verified": 0})
+            prev["raw"] += int(r["raw_count"])
+            prev["verified"] += int(r["verified_count"] or 0)
+
+        result: list[dict] = []
+        for p in pred_rows:
+            pid = p["id"]
+            sup = support.get(pid, {"raw": 0, "verified": 0})
+            atk = attack.get(pid, {"raw": 0, "verified": 0})
+            verified_suff = (
+                sup["verified"] / (sup["verified"] + atk["verified"] + 1)
+                if sup["verified"] or atk["verified"]
+                else 0.0
+            )
+            candidate_suff = (
+                sup["raw"] / (sup["raw"] + atk["raw"] + 1)
+                if sup["raw"] or atk["raw"]
+                else 0.0
+            )
+            result.append({
+                **dict(p),
+                "supporting_count": sup["raw"],
+                "verified_supporting_count": sup["verified"],
+                "attacking_count": atk["raw"],
+                "verified_attacking_count": atk["verified"],
+                "candidate_sufficiency": round(candidate_suff, 4),
+                "verified_sufficiency": round(verified_suff, 4),
+                # Only verified sufficiency can resolve; candidate is advisory
+                # (MVP.5 AC #5). Threshold 0.5 matches the existing proof_state
+                # sufficient/partial threshold.
+                "resolvable": verified_suff >= 0.5,
+            })
+        return result
+
     def resolve_predicate(self, predicate_id: str) -> bool:
         """Mark an issue predicate as resolved (SO-4 predicate-aware coverage).
 
