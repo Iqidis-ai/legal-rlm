@@ -2115,10 +2115,11 @@ def test_expand_query_splits_boolean_terms_and_keeps_context_terms_separate():
 
 
 def test_orientation_cache_version_bumped():
-    """_ORIENTATION_CACHE_VERSION must be '7' after literal-query prompt guidance update."""
+    """_ORIENTATION_CACHE_VERSION must be '8' after the MVP.6 orientation
+    durable-context cap changed the prompt-visible matter_context shape."""
     from irys.rlm.engine import _ORIENTATION_CACHE_VERSION
-    assert _ORIENTATION_CACHE_VERSION == "7", (
-        "_ORIENTATION_CACHE_VERSION must be bumped to '7' after updating ORIENTATION_PROMPT "
+    assert _ORIENTATION_CACHE_VERSION == "8", (
+        "_ORIENTATION_CACHE_VERSION must be bumped to '8' after updating ORIENTATION_PROMPT "
         "to require literal grep-compatible search terms"
     )
 
@@ -3840,12 +3841,15 @@ def test_pr3_context_packet_deterministic_cap_and_ordering():
         model.issues.upsert_issue(t, IssueType.CLAIM, materiality=0.5)
 
     engine = _pr3_make_engine(model)
-    try:
-        RLMEngine._PACKET_COVERAGE_TOKEN_CAP = 25  # leaves room for ~1 line
-        packet1 = _pr3_packet(engine, query="generic analysis")
-        packet2 = _pr3_packet(engine, query="generic analysis")
-    finally:
-        RLMEngine._PACKET_COVERAGE_TOKEN_CAP = 256
+    # MVP.6: packet caps now live on RLMConfig.packet_budget. Assign a
+    # tight budget directly rather than mutating class constants so
+    # tests are isolated from each other.
+    from irys.rlm.engine import PacketBudget, RLMConfig
+    engine.config = RLMConfig(
+        packet_budget=PacketBudget(coverage_tokens=25, gap_tokens=256)
+    )
+    packet1 = _pr3_packet(engine, query="generic analysis")
+    packet2 = _pr3_packet(engine, query="generic analysis")
 
     assert packet1 == packet2, "same-input packets must be byte-identical"
     assert "omitted under" in packet1, "omission footer must appear"
@@ -3867,11 +3871,12 @@ def test_pr3_requested_issue_gap_cannot_be_dropped_by_cap():
     engine = _pr3_make_engine(model)
     engine._detect_proof_gaps()
 
-    try:
-        RLMEngine._PACKET_GAP_TOKEN_CAP = 80  # room for at most 1 gap
-        packet = _pr3_packet(engine, query="analyze damages exposure")
-    finally:
-        RLMEngine._PACKET_GAP_TOKEN_CAP = 256
+    # MVP.6: tight gap cap via packet_budget on the engine's config.
+    from irys.rlm.engine import PacketBudget, RLMConfig
+    engine.config = RLMConfig(
+        packet_budget=PacketBudget(gap_tokens=80, coverage_tokens=256)
+    )
+    packet = _pr3_packet(engine, query="analyze damages exposure")
 
     assert "Damages exposure analysis" in packet, (
         "requested issue must appear in coverage section"

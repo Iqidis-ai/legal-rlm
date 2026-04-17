@@ -7,7 +7,7 @@ This is the core of the system. It implements:
 4. Tiered model usage (Lite -> Flash -> Pro)
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Callable, Any, AsyncIterator
 from pathlib import Path
 import asyncio
@@ -177,6 +177,33 @@ _ADVOCACY_MARKER_PAT: "_re_engine.Pattern[str]" = _re_engine.compile(
 # ── end SO-5 advocacy gate constants ─────────────────────────────────────────
 
 
+@dataclass(frozen=True)
+class PacketBudget:
+    """MVP.6 hard prompt-budget guardrails (SO-1).
+
+    Every expensive prompt section has an explicit cap so new durable
+    stores cannot silently inflate every call the engine makes. Caps are
+    in estimated tokens (len(text)//4), matching GeminiClient.
+
+    Defaults are intentionally conservative for the first rollout:
+    - coverage_tokens / gap_tokens: preserved from PR.3 so existing
+      synthesis behavior does not regress
+    - orientation_tokens: caps the durable matter_context block inside
+      the orient prompt; repo file listing stays uncapped
+    - per_optional_section_tokens: per-section cap for source
+      calibration, entities, relationships, quantitative, citations,
+      decision_context
+    - synthesis_total_tokens: whole-packet cap enforced after per-section
+      caps so mandatory sections cannot be crowded out
+    """
+
+    coverage_tokens: int = 256
+    gap_tokens: int = 256
+    orientation_tokens: int = 800
+    per_optional_section_tokens: int = 384
+    synthesis_total_tokens: int = 3000
+
+
 @dataclass
 class RLMConfig:
     """Configuration for RLM engine."""
@@ -193,6 +220,9 @@ class RLMConfig:
     depth_citation_threshold: int = 15  # Stop early if enough citations
     max_iterations: int = 20  # Maximum investigation loop iterations
     enable_matter_model: bool = True  # When True, persist facts to SQLite matter model
+    # MVP.6: prompt-budget guardrails. Immutable so tests that swap it
+    # via dataclasses.replace get fresh caps without side effects.
+    packet_budget: PacketBudget = field(default_factory=PacketBudget)
 
 
 @dataclass(frozen=True)
@@ -301,7 +331,7 @@ Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "7"
+_ORIENTATION_CACHE_VERSION = "8"
 
 
 def _format_matter_context(ctx) -> str:
@@ -1492,12 +1522,21 @@ class RLMEngine:
         if matter_ctx is not None and matter_ctx.existing_assertion_count > 0:
             self._hydrate_from_matter_model(state)
 
+        # MVP.6: cap the durable matter_context block so new stores
+        # can't silently inflate the orientation prompt. The repo file
+        # listing stays uncapped — it's a direct structural signal the
+        # orient prompt needs.
+        _budget = self._get_packet_budget()
+        _matter_ctx_str = _format_matter_context(matter_ctx)
+        _matter_ctx_capped = self._cap_text_by_tokens(
+            _matter_ctx_str, _budget.orientation_tokens
+        )
         prompt = ORIENTATION_PROMPT.format(
             structure=structure_str,
             file_listing=file_listing_str,
             total_files=stats.total_files,
             query=state.query,
-            matter_context=_format_matter_context(matter_ctx),
+            matter_context=_matter_ctx_capped,
             research_alignment_guidance=RESEARCH_ALIGNMENT_GUIDANCE,
         )
 
@@ -4661,8 +4700,9 @@ Return:
     # sections, so the coverage and gap sections exist to force the LLM to reckon
     # with proof shape, not to dump the full matter model into the prompt.
 
-    _PACKET_COVERAGE_TOKEN_CAP = 256
-    _PACKET_GAP_TOKEN_CAP = 256
+    # MVP.6: coverage/gap caps moved onto RLMConfig.packet_budget.
+    # The trim/count shape constants stay here because they govern
+    # per-line rendering, not prompt-budget policy.
     _PACKET_ISSUE_TITLE_TRIM = 80
     _PACKET_GAP_DESC_TRIM = 160
     _PACKET_GAP_DEPS_PER_GAP = 2
@@ -4670,6 +4710,42 @@ Return:
     @staticmethod
     def _estimate_tokens(text: str) -> int:
         return (len(text) + 3) // 4 if text else 0
+
+    def _get_packet_budget(self) -> "PacketBudget":
+        """MVP.6: return the prompt budget object, with a fail-safe default
+        for RLMEngine.__new__ test paths that skip __init__."""
+        cfg = getattr(self, "config", None)
+        if cfg is None:
+            return PacketBudget()
+        budget = getattr(cfg, "packet_budget", None)
+        return budget if budget is not None else PacketBudget()
+
+    def _cap_text_by_tokens(self, text: str, cap_tokens: int) -> str:
+        """Deterministic line-wise truncation to a token cap.
+
+        Line-wise preserves structural integrity of blocks with bullets
+        or key:value lines; char-trim only kicks in when a single line
+        does not fit. An ellipsis marker records omitted content.
+        """
+        if not text or cap_tokens <= 0:
+            return ""
+        if self._estimate_tokens(text) <= cap_tokens:
+            return text
+        kept: list[str] = []
+        used = 0
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            cost = self._estimate_tokens(line + "\n")
+            if used + cost > cap_tokens:
+                remaining = len(lines) - i
+                kept.append(
+                    f"… {remaining} more line(s) omitted under "
+                    f"{cap_tokens}-token cap"
+                )
+                break
+            kept.append(line)
+            used += cost
+        return "\n".join(kept)
 
     def _resolve_requested_issue_id(
         self, query: str, coverage_rows: "list[dict]"
@@ -4753,7 +4829,7 @@ Return:
         header = "Issue Coverage (proof shape across open issues):"
         lines = [header]
         used = self._estimate_tokens(header + "\n")
-        cap = self._PACKET_COVERAGE_TOKEN_CAP
+        cap = self._get_packet_budget().coverage_tokens
         shown = 0
         omitted = 0
         for item in ordered:
@@ -4842,7 +4918,7 @@ Return:
         header = "Known Gaps (missingness that must be acknowledged):"
         lines = [header]
         used = self._estimate_tokens(header + "\n")
-        cap = self._PACKET_GAP_TOKEN_CAP
+        cap = self._get_packet_budget().gap_tokens
         shown = 0
 
         def _render(gap: dict) -> list[str]:
