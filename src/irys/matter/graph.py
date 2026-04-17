@@ -5069,6 +5069,118 @@ class ProofStateStore:
         self.matter_id = matter_id
 
     # ------------------------------------------------------------------
+    # Substrate selection
+    # ------------------------------------------------------------------
+
+    def _query_issue_linked_assertions(
+        self, issue_id: str, use_edges: bool
+    ) -> list:
+        """Return one row per assertion linked to the issue, carrying
+        relation_type, best source_role, and primary document id.
+
+        use_edges=True reads from evidence_edge (MVP.3 canonical substrate).
+        use_edges=False falls back to assertion_issue_link so matters
+        mid-migration or with no edges yet still compute correctly.
+
+        The two branches return rows with the same shape so downstream
+        proof math is identical. Rejected assertions and rejected edges
+        are excluded at the substrate level.
+        """
+        # Shared occurrence-ranking CTE: one row per assertion with the
+        # highest-trust source_role and the primary document_id.
+        occ_ranked_cte = """
+            WITH occ_ranked AS (
+                SELECT ao.assertion_id,
+                       ao.source_role,
+                       ao.document_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY ao.assertion_id
+                           ORDER BY CASE ao.source_role
+                               WHEN 'authoritative' THEN 6
+                               WHEN 'operative'     THEN 5
+                               WHEN 'procedural'    THEN 4
+                               WHEN 'post_hoc'      THEN 3
+                               WHEN 'informal'      THEN 2
+                               WHEN 'draft'         THEN 1
+                               WHEN 'unknown'       THEN 1
+                               WHEN 'advocacy'      THEN 0
+                               ELSE 1 END DESC
+                       ) AS role_rn,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY ao.assertion_id
+                           ORDER BY ao.created_at ASC, ao.id ASC
+                       ) AS doc_rn
+                FROM assertion_occurrence ao
+                WHERE ao.assertion_id IN ({inner_ids})
+            )
+        """
+        if use_edges:
+            inner_ids_sql = (
+                "SELECT source_id FROM evidence_edge "
+                "WHERE matter_id=? AND target_kind='issue' AND target_id=? "
+                "AND active=1 AND source_kind='assertion' "
+                "AND relation_type IN ('supports','establishes','attacks','negates')"
+            )
+            query = occ_ranked_cte.format(inner_ids=inner_ids_sql) + """
+                SELECT ee.relation_type,
+                       COALESCE(MAX(CASE WHEN o.role_rn = 1 THEN o.source_role END), 'unknown')
+                           AS source_role,
+                       MAX(CASE WHEN o.doc_rn = 1 THEN o.document_id END)
+                           AS primary_doc_id
+                FROM evidence_edge ee
+                JOIN assertion a ON a.id = ee.source_id
+                LEFT JOIN occ_ranked o ON o.assertion_id = ee.source_id
+                LEFT JOIN verification_state vs
+                  ON vs.target_kind = 'assertion'
+                 AND vs.target_id = a.id
+                 AND vs.matter_id = a.matter_id
+                LEFT JOIN verification_state vs_edge
+                  ON vs_edge.target_kind = 'evidence_edge'
+                 AND vs_edge.target_id = ee.id
+                 AND vs_edge.matter_id = ee.matter_id
+                WHERE ee.matter_id = ?
+                  AND ee.target_kind = 'issue' AND ee.target_id = ?
+                  AND ee.active = 1
+                  AND ee.source_kind = 'assertion'
+                  AND ee.relation_type IN ('supports','establishes','attacks','negates')
+                  AND a.belief_state NOT IN ('superseded','withdrawn')
+                  AND COALESCE(vs.status, 'candidate') != 'rejected'
+                  AND COALESCE(vs_edge.status, ee.verification_status, 'candidate') != 'rejected'
+                GROUP BY ee.source_id, ee.relation_type
+            """
+            rows = self.db.execute(
+                query,
+                (self.matter_id, issue_id, self.matter_id, issue_id),
+            ).fetchall()
+        else:
+            inner_ids_sql = (
+                "SELECT assertion_id FROM assertion_issue_link "
+                "WHERE issue_id = ? "
+                "AND relation_type IN ('supports','establishes','attacks','negates')"
+            )
+            query = occ_ranked_cte.format(inner_ids=inner_ids_sql) + """
+                SELECT ail.relation_type,
+                       COALESCE(MAX(CASE WHEN o.role_rn = 1 THEN o.source_role END), 'unknown')
+                           AS source_role,
+                       MAX(CASE WHEN o.doc_rn = 1 THEN o.document_id END)
+                           AS primary_doc_id
+                FROM assertion_issue_link ail
+                JOIN assertion a ON a.id = ail.assertion_id
+                LEFT JOIN occ_ranked o ON o.assertion_id = ail.assertion_id
+                LEFT JOIN verification_state vs
+                  ON vs.target_kind = 'assertion'
+                 AND vs.target_id = a.id
+                 AND vs.matter_id = a.matter_id
+                WHERE ail.issue_id = ?
+                  AND ail.relation_type IN ('supports','establishes','attacks','negates')
+                  AND a.belief_state NOT IN ('superseded','withdrawn')
+                  AND COALESCE(vs.status, 'candidate') != 'rejected'
+                GROUP BY ail.assertion_id, ail.relation_type
+            """
+            rows = self.db.execute(query, (issue_id, issue_id)).fetchall()
+        return list(rows)
+
+    # ------------------------------------------------------------------
     # Compute + store
     # ------------------------------------------------------------------
 
@@ -5123,60 +5235,18 @@ class ProofStateStore:
                         )
             return self.SOURCE_TRUST.get(source_role, 0.5)
 
-        # Single CTE pass: precompute best source_role and primary_document_id for
-        # every assertion linked to this issue, then split into sup/atk buckets.
-        # Replaces 2 queries × N correlated subqueries with one set-based scan (SO-5).
-        _linked_rows = self.db.execute(
-            """WITH occ_ranked AS (
-                   SELECT ao.assertion_id,
-                          ao.source_role,
-                          ao.document_id,
-                          ROW_NUMBER() OVER (
-                              PARTITION BY ao.assertion_id
-                              ORDER BY CASE ao.source_role
-                                  WHEN 'authoritative' THEN 6
-                                  WHEN 'operative'     THEN 5
-                                  WHEN 'procedural'    THEN 4
-                                  WHEN 'post_hoc'      THEN 3
-                                  WHEN 'informal'      THEN 2
-                                  WHEN 'draft'         THEN 1
-                                  WHEN 'unknown'       THEN 1
-                                  WHEN 'advocacy'      THEN 0
-                                  ELSE 1 END DESC
-                          ) AS role_rn,
-                          ROW_NUMBER() OVER (
-                              PARTITION BY ao.assertion_id
-                              ORDER BY ao.created_at ASC, ao.id ASC
-                          ) AS doc_rn
-                   FROM assertion_occurrence ao
-                   WHERE ao.assertion_id IN (
-                       SELECT assertion_id FROM assertion_issue_link
-                       WHERE issue_id = ?
-                       AND relation_type IN ('supports','establishes','attacks','negates')
-                   )
-               )
-               SELECT ail.relation_type,
-                      COALESCE(MAX(CASE WHEN o.role_rn = 1 THEN o.source_role END), 'unknown')
-                          AS source_role,
-                      MAX(CASE WHEN o.doc_rn = 1 THEN o.document_id END)
-                          AS primary_doc_id
-               FROM assertion_issue_link ail
-               JOIN assertion a ON a.id = ail.assertion_id
-               LEFT JOIN occ_ranked o ON o.assertion_id = ail.assertion_id
-               -- MVP.2: exclude rejected assertions so a human-rejected
-               -- target cannot contribute to proof math; candidate support
-               -- still contributes here pending MVP.5's verified-only lane.
-               LEFT JOIN verification_state vs
-                 ON vs.target_kind = 'assertion'
-                AND vs.target_id = a.id
-                AND vs.matter_id = a.matter_id
-               WHERE ail.issue_id = ?
-                 AND ail.relation_type IN ('supports','establishes','attacks','negates')
-                 AND a.belief_state NOT IN ('superseded','withdrawn')
-                 AND COALESCE(vs.status, 'candidate') != 'rejected'
-               GROUP BY ail.assertion_id, ail.relation_type""",
-            (issue_id, issue_id),
-        ).fetchall()
+        # MVP.3: prefer evidence_edge as the canonical proof substrate when
+        # the issue has any active edges. Legacy assertion_issue_link is
+        # only used as a migration fallback when no edges exist. Proof
+        # math is unchanged — only the upstream substrate selection is.
+        has_edges = self.db.execute(
+            """SELECT 1 FROM evidence_edge
+               WHERE matter_id=? AND target_kind='issue' AND target_id=? AND active=1
+               LIMIT 1""",
+            (self.matter_id, issue_id),
+        ).fetchone() is not None
+
+        _linked_rows = self._query_issue_linked_assertions(issue_id, has_edges)
         sup_rows = [r for r in _linked_rows if r["relation_type"] in ("supports", "establishes")]
         atk_rows = [r for r in _linked_rows if r["relation_type"] in ("attacks", "negates")]
         supporting = len(sup_rows)
