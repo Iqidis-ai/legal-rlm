@@ -2134,6 +2134,14 @@ class RLMEngine:
 
         Only loads facts into accumulated_facts; the dedup gate in state.add_facts()
         prevents duplicates if the engine independently re-extracts the same text.
+
+        P0.2: partitions hydrated rows into verified/candidate/
+        stale/excluded buckets via TrustPolicy. Only verified +
+        candidate enter accumulated_facts (with [VERIFIED]/[CANDIDATE]
+        labels); stale/excluded live only in
+        state.findings["hydrated_assertion_buckets"] so the engine can
+        surface bucket counts without letting reviewed-out facts
+        contaminate the synthesis prompt.
         """
         if self._matter_model is None:
             return
@@ -2145,18 +2153,39 @@ class RLMEngine:
         if not recent:
             return
 
-        _inactive_states = {"disputed", "withdrawn", "superseded"}
+        from ..matter.trust import TrustBucket, TrustPolicy
+
         loaded = 0
         _strip_role_prefix = __import__("re").compile(r'^\[[A-Z_]+\]\s*').sub
+        # P0.2: bucket partitioning. Engine consumers read the
+        # buckets to surface counts; only verified/candidate enter
+        # accumulated_facts.
+        _buckets: dict[str, list[dict]] = {
+            "verified": [], "candidate": [], "stale": [], "excluded": [],
+        }
+        _label_by_bucket = {
+            "verified": "VERIFIED",
+            "candidate": "CANDIDATE",
+        }
         for row in recent:
             prop = row.get("proposition_text", "")
             if not prop:
                 continue
-            # Skip assertions that have been revised to an inactive belief state (SO-2).
-            # If a user corrected an assertion after a prior run, it must not re-enter
-            # accumulated_facts and appear in the synthesis prompt as if still valid.
-            belief_state = row.get("belief_state") or "active"
-            if belief_state in _inactive_states:
+            classification = TrustPolicy.classify(
+                assertion_verification_status=row.get("verification_status"),
+                belief_state=row.get("belief_state"),
+            )
+            bucket_key = classification.bucket.value
+            _buckets[bucket_key].append({
+                "id": row.get("id"),
+                "proposition_text": prop,
+                "belief_state": row.get("belief_state"),
+                "verification_status": row.get("verification_status"),
+                "reason": classification.reason,
+            })
+            # Stale/excluded never enter accumulated_facts — the user
+            # has already expressed an opinion on them.
+            if not classification.eligible:
                 continue
             source_role = row.get("primary_source_role") or row.get("source_role") or "unknown"
             # Surface multi-source ambiguity (SO-5): when the same proposition appears in
@@ -2200,17 +2229,31 @@ class RLMEngine:
                 if _obj_present:
                     _spo_parts.append(f"OBJ:{str(_obj)[:60]}")
                 prop_clean = f"[{' | '.join(_spo_parts)}] {prop_clean}"
-            _fact_str = f"[{label}] {prop_clean}"
+            # P0.2: annotate with trust bucket so downstream consumers
+            # (synthesis, UI) know whether to treat this as verified
+            # matter-model support or a candidate lead awaiting review.
+            _bucket_tag = _label_by_bucket.get(bucket_key, "CANDIDATE")
+            _fact_str = f"[{label}][{_bucket_tag}] {prop_clean}"
             state.add_facts([_fact_str])
             if self.on_fact:
                 self.on_fact(_fact_str)
             loaded += 1
 
+        # Expose bucket partitioning so engine consumers and tests can
+        # assert on partitioning without re-deriving it from the
+        # labeled fact strings.
+        state.findings["hydrated_assertion_buckets"] = _buckets
+
         if loaded:
+            _ver_n = len(_buckets["verified"])
+            _cand_n = len(_buckets["candidate"])
+            _stale_n = len(_buckets["stale"])
+            _excl_n = len(_buckets["excluded"])
             self._emit_step(
                 state,
                 StepType.THINKING,
-                f"Hydrated {loaded} facts from prior matter model run (SO-1 reuse)",
+                f"Hydrated {loaded} facts ({_ver_n} verified, {_cand_n} candidate; "
+                f"{_stale_n} stale + {_excl_n} excluded held back) from prior matter model run (SO-1 reuse)",
             )
 
     def _search_cached_assertions(
@@ -2236,10 +2279,20 @@ class RLMEngine:
         if not rows:
             return None
         hits: list[SearchHit] = []
+        _verified_count = 0
+        _candidate_count = 0
         for r in rows:
             _fp = r.get("primary_document_id") or "assertion"
             _text = r.get("primary_raw_text") or r.get("proposition_text") or ""
             _score = float(r.get("term_matches", 1)) + (0.5 if r.get("issue_match") else 0)
+            # P0.2: label candidate matches as leads so callers
+            # cannot mistake them for source-text equivalents.
+            _bucket = r.get("trust_bucket") or "candidate"
+            if _bucket == "verified":
+                _verified_count += 1
+            else:
+                _candidate_count += 1
+                _text = f"[CANDIDATE LEAD — needs source confirmation] {_text}"
             hits.append(SearchHit(
                 file_path=_fp,
                 filename=Path(_fp).name,
@@ -2257,6 +2310,10 @@ class RLMEngine:
             total_matches=len(hits),
         )
         sr._from_assertion_store = True  # type: ignore[attr-defined]
+        sr._trust_bucket_counts = {  # type: ignore[attr-defined]
+            "verified": _verified_count,
+            "candidate": _candidate_count,
+        }
         return sr
 
     def _build_lead_queries(

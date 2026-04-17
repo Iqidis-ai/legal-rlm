@@ -1415,6 +1415,154 @@ def test_hydrate_skips_superseded_assertions(model):
 
 
 # ---------------------------------------------------------------------------
+# P0.2: hydration partitions into verified/candidate/stale/excluded buckets
+# ---------------------------------------------------------------------------
+
+def test_hydrate_partitions_into_trust_buckets(model):
+    """P0.2 AC #1: _hydrate_from_matter_model populates
+    state.findings["hydrated_assertion_buckets"] with a dict keyed by
+    bucket name, and only verified + candidate facts enter
+    accumulated_facts. Stale and excluded rows are held back."""
+    from irys.matter.enums import (
+        BeliefState, VerificationStatus, VerificationTargetKind,
+    )
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.rlm.state import InvestigationState
+    from unittest.mock import MagicMock
+
+    run_id = model.start_run("bucket hydration")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid_verified = adapter.record_fact("Verified fact A", "contract.pdf")
+    aid_candidate = adapter.record_fact("Candidate fact B", "contract.pdf")
+    aid_stale = adapter.record_fact("Stale fact C", "contract.pdf")
+    aid_excluded = adapter.record_fact("Rejected fact D", "contract.pdf")
+
+    # Promote one to verified (via user)
+    model.verification.verify(
+        VerificationTargetKind.ASSERTION, aid_verified,
+        reviewed_by_kind="user", reviewed_by_id="reviewer_1",
+    )
+    # Mark one stale and one rejected
+    model.verification.set_status(
+        VerificationTargetKind.ASSERTION, aid_stale,
+        status=VerificationStatus.STALE, reviewed_by_kind="system",
+    )
+    model.verification.reject(
+        VerificationTargetKind.ASSERTION, aid_excluded,
+        reviewed_by_kind="user", reviewed_by_id="reviewer_1",
+        rejection_reason="incorrect",
+    )
+
+    engine = RLMEngine(gemini_client=MagicMock(), config=RLMConfig(), matter_model=model)
+    state = InvestigationState(id="p02-1", query="test", repository_path="/tmp/p02")
+    engine._hydrate_from_matter_model(state)
+
+    buckets = state.findings.get("hydrated_assertion_buckets") or {}
+    assert set(buckets.keys()) == {"verified", "candidate", "stale", "excluded"}
+
+    def _ids(bucket_key):
+        return {row["id"] for row in buckets.get(bucket_key, [])}
+
+    assert aid_verified in _ids("verified")
+    assert aid_candidate in _ids("candidate")
+    assert aid_stale in _ids("stale")
+    assert aid_excluded in _ids("excluded")
+
+    facts = state.findings.get("accumulated_facts", []) or []
+    # Verified + candidate enter accumulated_facts; stale + rejected do not.
+    assert any("Verified fact A" in f for f in facts)
+    assert any("Candidate fact B" in f for f in facts)
+    assert not any("Stale fact C" in f for f in facts)
+    assert not any("Rejected fact D" in f for f in facts)
+
+    # Labels carry the bucket tag so synthesis prompts can distinguish
+    # verified matter-model support from candidate leads.
+    assert any("[VERIFIED]" in f and "Verified fact A" in f for f in facts)
+    assert any("[CANDIDATE]" in f and "Candidate fact B" in f for f in facts)
+
+
+def test_cached_search_labels_candidate_hits_as_leads(model):
+    """P0.2 AC #2: cached assertion search returns trust_bucket on
+    each row, and _search_cached_assertions annotates candidate hits
+    as leads that require source confirmation."""
+    from irys.matter.enums import VerificationTargetKind
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from unittest.mock import MagicMock
+
+    run_id = model.start_run("cached search")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid_verified = adapter.record_fact(
+        "Verified: defendant signed the contract.",
+        "contract.pdf",
+    )
+    aid_candidate = adapter.record_fact(
+        "Candidate: defendant may have agreed verbally.",
+        "notes.pdf",
+    )
+    model.verification.verify(
+        VerificationTargetKind.ASSERTION, aid_verified,
+        reviewed_by_kind="user", reviewed_by_id="r1",
+    )
+    # Raw search returns trust_bucket labels.
+    raw = model.assertions.search(["defendant"], limit=10)
+    bucket_map = {r["id"]: r["trust_bucket"] for r in raw}
+    assert bucket_map[aid_verified] == "verified"
+    assert bucket_map[aid_candidate] == "candidate"
+
+    # Engine wrapper labels candidate hits as leads in the SearchHit text.
+    engine = RLMEngine(gemini_client=MagicMock(), config=RLMConfig(), matter_model=model)
+    sr = engine._search_cached_assertions(["defendant"], limit=10)
+    assert sr is not None
+    candidate_hits = [
+        h for h in sr.hits
+        if "CANDIDATE LEAD" in h.match_text
+    ]
+    verified_hits = [
+        h for h in sr.hits
+        if "CANDIDATE LEAD" not in h.match_text
+    ]
+    assert len(candidate_hits) >= 1, "candidate match must be labeled as lead"
+    assert len(verified_hits) >= 1, "verified match must not get the lead warning"
+    assert sr._trust_bucket_counts["verified"] >= 1
+    assert sr._trust_bucket_counts["candidate"] >= 1
+
+
+def test_cached_search_drops_stale_and_rejected(model):
+    """P0.2: stale/rejected rows drop out at the DB layer under
+    TrustPurpose.CACHED_SEARCH — they must not appear in cached
+    search results, since the human has already expressed a negative
+    opinion."""
+    from irys.matter.enums import (
+        VerificationStatus, VerificationTargetKind,
+    )
+
+    run_id = model.start_run("cached search filter")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid_stale = adapter.record_fact(
+        "Stale: defendant shipped the goods.", "shipping.pdf",
+    )
+    aid_rejected = adapter.record_fact(
+        "Rejected: defendant returned the goods.", "returns.pdf",
+    )
+    adapter.record_fact(
+        "Live: defendant disputes the amount.", "defense.pdf",
+    )
+    model.verification.set_status(
+        VerificationTargetKind.ASSERTION, aid_stale,
+        status=VerificationStatus.STALE, reviewed_by_kind="system",
+    )
+    model.verification.reject(
+        VerificationTargetKind.ASSERTION, aid_rejected,
+        reviewed_by_kind="user", reviewed_by_id="r1",
+        rejection_reason="bad data",
+    )
+    results = model.assertions.search(["defendant"], limit=20)
+    ids = {r["id"] for r in results}
+    assert aid_stale not in ids
+    assert aid_rejected not in ids
+
+
+# ---------------------------------------------------------------------------
 # SO-3: Stopped lead stays pending — not marked investigated after stop
 # ---------------------------------------------------------------------------
 

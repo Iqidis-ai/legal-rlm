@@ -938,12 +938,26 @@ class AssertionStore:
         during hydration. This ensures the 200-slot window contains only active facts
         even after many user corrections. (SO-2 budget efficiency)
 
-        Returns: [{id, proposition_text, belief_state, source_role}]
+        P0.2: also returns verification_status so callers can classify
+        each row through TrustPolicy and partition into
+        verified/candidate/stale/excluded buckets. The hydration read
+        is the one place that deliberately wants to SEE stale and
+        rejected rows — the engine renders them in separate buckets
+        rather than dropping them silently — so this method returns
+        them and lets TrustPolicy decide eligibility downstream.
+
+        Returns: [{id, proposition_text, belief_state, source_role,
+                   verification_status}]
         """
         # Pre-aggregate source roles for the filtered set in a single CTE pass
         # instead of two correlated subqueries per row (resolves Tier 1 perf MEDIUM).
         # filtered_ids: the LIMIT-200 candidate set.
         # src_agg: GROUP_CONCAT and best-rank computation done once over those IDs.
+        # P0.2: oversample so verified/candidate rows are not starved
+        # by a flood of stale/rejected rows that share the head of the
+        # chronological window. Caller's limit is enforced by
+        # _hydrate_from_matter_model after TrustPolicy classification.
+        oversample = max(limit, limit * 3)
         rows = self.db.execute(
             """WITH filtered_ids AS (
                    SELECT id FROM assertion
@@ -975,12 +989,17 @@ class AssertionStore:
                SELECT a.id, a.proposition_text, a.belief_state,
                       a.subject_ref_type, a.subject_ref_id,
                       a.predicate_key, a.object_json,
-                      sa.source_role, sa.source_roles_csv
+                      sa.source_role, sa.source_roles_csv,
+                      vs.status AS verification_status
                FROM filtered_ids fi
                JOIN assertion a ON a.id = fi.id
                LEFT JOIN src_agg sa ON sa.assertion_id = a.id
+               LEFT JOIN verification_state vs
+                      ON vs.matter_id = a.matter_id
+                     AND vs.target_kind = 'assertion'
+                     AND vs.target_id = a.id
                ORDER BY a.created_at DESC""",
-            (self.matter_id, limit),
+            (self.matter_id, oversample),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -995,6 +1014,11 @@ class AssertionStore:
         Matches against canonical proposition text plus occurrence raw_text and
         document identifiers so filename-targeted leads can still resolve to the
         already-ingested evidence they point to.
+
+        P0.2: drops stale/rejected rows at the DB layer (not eligible
+        under TrustPurpose.CACHED_SEARCH) and returns trust_bucket on
+        every row so callers can label candidate hits as leads rather
+        than source-text equivalents.
         """
         terms: list[str] = []
         seen: set[str] = set()
@@ -1043,6 +1067,7 @@ class AssertionStore:
                           a.created_at,
                           {term_matches_sql} AS term_matches,
                           {issue_match_sql} AS issue_match,
+                          vs.status AS verification_status,
                           (SELECT ao2.document_id FROM assertion_occurrence ao2
                            WHERE ao2.assertion_id = a.id
                            ORDER BY ao2.created_at ASC, ao2.id ASC
@@ -1072,6 +1097,10 @@ class AssertionStore:
                    FROM assertion a
                    LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
                    LEFT JOIN assertion_issue_link ail ON ail.assertion_id = a.id
+                   LEFT JOIN verification_state vs
+                          ON vs.matter_id = a.matter_id
+                         AND vs.target_kind = 'assertion'
+                         AND vs.target_id = a.id
                    WHERE a.matter_id=?
                      AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
                    GROUP BY a.id
@@ -1079,11 +1108,26 @@ class AssertionStore:
                SELECT *
                FROM matched
                WHERE term_matches > 0
+                 -- P0.2: TrustPurpose.CACHED_SEARCH only accepts
+                 -- verified and candidate. Stale/rejected drop here.
+                 AND (verification_status IS NULL
+                      OR verification_status IN ('verified','candidate'))
                ORDER BY issue_match DESC, term_matches DESC, created_at DESC
                LIMIT ?""",
             params,
         ).fetchall()
-        return [dict(r) for r in rows]
+        # P0.2: classify each row into a trust_bucket label so
+        # consumers can tag candidate hits as leads rather than
+        # source-text equivalents.
+        out: list[dict] = []
+        for r in rows:
+            d = dict(r)
+            d["trust_bucket"] = (
+                "verified" if d.get("verification_status") == "verified"
+                else "candidate"
+            )
+            out.append(d)
+        return out
 
     def get_by_proposition(
         self,
