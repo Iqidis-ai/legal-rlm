@@ -3262,6 +3262,96 @@ def test_build_issue_focus_block_no_model_returns_empty():
     assert pred_descs == []
 
 
+def test_build_issue_focus_block_uses_issue_coverage_report_even_with_proof_state_row():
+    """PR.2: the focus block must read coverage from get_issue_coverage_report(),
+    not from proof_state.coverage_fraction / has_proof_gap (those fields are not
+    persisted on the proof_state table until MVP.5). Previously the block
+    silently reported 0% coverage even with supporting assertions linked."""
+    from irys.rlm.engine import RLMEngine
+    from irys.matter.enums import IssueType
+    from irys.matter.models import AssertionCandidate
+    from irys.matter import SpeechAct, SourceRole, AssertionKind
+
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue(
+        "Plaintiff proved breach of payment obligation", IssueType.CLAIM
+    )
+    # Two supporting assertions on the issue — coverage must be nonzero.
+    for i in range(2):
+        cand = AssertionCandidate(
+            proposition_text=f"Supporting fact {i}",
+            speech_act=SpeechAct.OPERATIVE,
+            source_role=SourceRole.OPERATIVE,
+            assertion_kind=AssertionKind.FACTUAL,
+            document_id="contract.pdf",
+        )
+        aid, _ = model.assertions.upsert_occurrence(cand)
+        model.issues.link_assertion(aid, iid, relation_type="supports")
+
+    # Create a proof_state row with zero support_score. This is the regression:
+    # the old code read proof_state fields directly, so this row would have
+    # caused the focus block to report 0% coverage. The report is the source
+    # of truth.
+    model.proof_state.compute_and_store(iid)
+
+    report_row = next(
+        r for r in model.get_issue_coverage_report() if r["id"] == iid
+    )
+    assert report_row["coverage_fraction"] > 0, (
+        "fixture precondition — report must show nonzero coverage"
+    )
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    block, _ = engine._build_issue_focus_block(iid)
+
+    expected_coverage = f"Coverage: {report_row['coverage_fraction']:.0%}"
+    assert expected_coverage in block, (
+        f"Focus block must render coverage from the report. "
+        f"Expected {expected_coverage!r} in block:\n{block}"
+    )
+    supporting = report_row["supporting_count"]
+    assert f"{supporting} supporting" in block, (
+        f"Focus block must render supporting_count from the report. "
+        f"Expected '{supporting} supporting' in block:\n{block}"
+    )
+
+
+def test_build_issue_focus_block_shows_open_proof_gap_from_issue_coverage_report():
+    """PR.2: an open missing_issue_predicate gap on a material issue must
+    surface as PROOF GAP in the focus block, driven by has_proof_gap in the
+    coverage report — not by a proof_state.has_proof_gap field that is never
+    written."""
+    from irys.rlm.engine import RLMEngine
+    from irys.matter.enums import IssueType
+
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue(
+        "High-materiality claim without evidence", IssueType.CLAIM, materiality=0.9
+    )
+    model.proof_state.compute_and_store(iid)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    # _detect_proof_gaps opens missing_issue_predicate gaps for material
+    # issues that lack evidence, which is what the report surfaces as
+    # has_proof_gap.
+    engine._detect_proof_gaps()
+
+    report_row = next(
+        r for r in model.get_issue_coverage_report() if r["id"] == iid
+    )
+    assert report_row["has_proof_gap"] is True, (
+        "fixture precondition — report must flag proof gap after _detect_proof_gaps"
+    )
+
+    block, _ = engine._build_issue_focus_block(iid)
+    assert "PROOF GAP" in block, (
+        f"Focus block must surface proof gap when report has_proof_gap is True; "
+        f"block:\n{block}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # SO-6: _enforce_quant_threshold_gate() — hard behavioral gate
 # ---------------------------------------------------------------------------

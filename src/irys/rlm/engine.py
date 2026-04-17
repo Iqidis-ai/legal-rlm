@@ -4384,20 +4384,45 @@ Return:
             lines = [f"Issue Focus (SO-4 — prioritize facts addressing these elements):"]
             lines.append(f"  Issue: \"{title}\"")
 
-            # Surface current coverage state so the strategist/lead-gen LLM
-            # sees what's already supported vs. what needs more evidence.
+            # Surface current coverage state so the strategist/lead-gen LLM sees
+            # what is already supported vs. what needs more evidence. The canonical
+            # source is get_issue_coverage_report() — the proof_state table stores
+            # support_score and attack_score as raw weighted sums, but coverage_fraction
+            # and has_proof_gap are not persisted there until MVP.5, so a direct read
+            # from proof_state silently reported 0% support and no gaps. Read from
+            # the report instead; proof_state still contributes advocacy_only because
+            # that flag IS written by ProofStateStore.compute_and_store().
+            report_row = None
+            try:
+                for row in self._matter_model.get_issue_coverage_report():
+                    if row.get("id") == focus_issue_id:
+                        report_row = row
+                        break
+            except Exception:
+                report_row = None
+
+            if report_row is not None:
+                supporting = int(report_row.get("supporting_count") or 0)
+                coverage = float(report_row.get("coverage_fraction") or 0.0)
+                noun = "assertion" if supporting == 1 else "assertions"
+                lines.append(
+                    f"  Current support: {supporting} supporting {noun} | "
+                    f"Coverage: {coverage:.0%}"
+                )
+                if report_row.get("has_proof_gap"):
+                    lines.append(
+                        "  ⚠ PROOF GAP: at least one required element has no evidence"
+                    )
+            # advocacy_only IS persisted on proof_state — surface it independently
+            # even when the issue is absent from the coverage report (e.g. closed).
             try:
                 ps = self._matter_model.proof_state.get(focus_issue_id)
-                if ps:
-                    support = ps.get("support_score") or 0
-                    coverage = ps.get("coverage_fraction") or 0
-                    lines.append(f"  Current support: {support:.0%} | Coverage: {coverage:.0%}")
-                    if ps.get("has_proof_gap"):
-                        lines.append("  ⚠ PROOF GAP: at least one required element has no evidence")
-                    if ps.get("advocacy_only"):
-                        lines.append("  ⚠ ADVOCACY-ONLY: all supporting evidence is from advocacy sources")
+                if ps and ps.get("advocacy_only"):
+                    lines.append(
+                        "  ⚠ ADVOCACY-ONLY: all supporting evidence is from advocacy sources"
+                    )
             except Exception:
-                pass  # proof state unavailable; continue without it
+                pass  # proof state unavailable; advocacy flag simply not shown
 
             for desc in pred_descs:
                 lines.append(f"  Element to prove: \"{desc}\"")
@@ -5007,9 +5032,12 @@ Return:
 
         Called once per investigation iteration to drive dynamic lead reweighting (SO-4).
 
-        When ProofStateStore has computed states, uses the richer sufficiency score
-        instead of the assertion-count ratio.  Contested issues (attacking >= supporting)
-        are flagged as having a proof gap so they attract investigation budget.
+        get_issue_coverage_report() is canonical for both coverage_fraction and
+        the base has_proof_gap flag. ProofStateStore rows only enrich the gap
+        flag: contested, insufficient, or advocacy-only issues are elevated to
+        has_proof_gap=True so they attract investigation budget. The weighted
+        coverage_fraction from the report is preserved; ProofStateStore's raw
+        assertion-count sufficiency is never substituted in (SO-4 audit #021).
 
         Returns empty dict when no matter model is available or the call fails.
         """
