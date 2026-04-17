@@ -1,0 +1,161 @@
+"""Unit tests for VerificationStateStore (MVP.2, SO-2).
+
+Covers the invariants MVP.2 acceptance criteria require: candidate default
+for AI-derived targets, human-only promotion to verified, rejection with
+reason, non-downgrade on re-candidate, version/event trail.
+"""
+
+import pytest
+
+from irys.matter import MatterModel
+from irys.matter.enums import (
+    ReviewScope,
+    ReviewedByKind,
+    VerificationStatus,
+    VerificationTargetKind,
+)
+
+
+@pytest.fixture
+def model():
+    return MatterModel.open_in_memory()
+
+
+def test_candidate_idempotent_does_not_create_duplicates(model):
+    vid1 = model.verification.candidate(
+        VerificationTargetKind.ASSERTION, "a1", ai_confidence=0.7
+    )
+    vid2 = model.verification.candidate(
+        VerificationTargetKind.ASSERTION, "a1", ai_confidence=0.9
+    )
+    assert vid1 == vid2
+    rows = model.db.execute(
+        "SELECT COUNT(*) FROM verification_state WHERE target_id=?", ("a1",)
+    ).fetchone()[0]
+    assert rows == 1
+
+
+def test_candidate_does_not_downgrade_verified_or_rejected(model):
+    model.verification.candidate(VerificationTargetKind.ASSERTION, "a1")
+    model.verification.verify(
+        VerificationTargetKind.ASSERTION, "a1",
+        reviewed_by_kind=ReviewedByKind.ATTORNEY,
+    )
+    # Re-calling candidate must not revert status to candidate.
+    model.verification.candidate(VerificationTargetKind.ASSERTION, "a1")
+    row = model.verification.get(VerificationTargetKind.ASSERTION, "a1")
+    assert row["status"] == "verified"
+
+    model.verification.reject(
+        VerificationTargetKind.ASSERTION, "a2",
+        reviewed_by_kind=ReviewedByKind.USER,
+        rejection_reason="no source support",
+    )
+    model.verification.candidate(VerificationTargetKind.ASSERTION, "a2")
+    row = model.verification.get(VerificationTargetKind.ASSERTION, "a2")
+    assert row["status"] == "rejected"
+
+
+def test_verify_rejects_non_human_reviewers(model):
+    with pytest.raises(ValueError, match="system"):
+        model.verification.verify(
+            VerificationTargetKind.ASSERTION, "a1",
+            reviewed_by_kind=ReviewedByKind.SYSTEM,
+        )
+    with pytest.raises(ValueError, match="import"):
+        model.verification.verify(
+            VerificationTargetKind.ASSERTION, "a1",
+            reviewed_by_kind=ReviewedByKind.IMPORT,
+        )
+
+
+def test_reject_requires_non_empty_reason(model):
+    with pytest.raises(ValueError, match="rejection_reason"):
+        model.verification.reject(
+            VerificationTargetKind.ASSERTION, "a1",
+            reviewed_by_kind=ReviewedByKind.USER,
+            rejection_reason="",
+        )
+    with pytest.raises(ValueError, match="rejection_reason"):
+        model.verification.reject(
+            VerificationTargetKind.ASSERTION, "a1",
+            reviewed_by_kind=ReviewedByKind.USER,
+            rejection_reason="   ",
+        )
+
+
+def test_verify_increments_version_and_appends_event(model):
+    model.verification.candidate(VerificationTargetKind.ASSERTION, "a1")
+    model.verification.verify(
+        VerificationTargetKind.ASSERTION, "a1",
+        reviewed_by_kind=ReviewedByKind.ATTORNEY,
+        review_scope=ReviewScope.RECORD_TRUTH,
+        review_note="clause is unambiguous",
+    )
+    row = model.verification.get(VerificationTargetKind.ASSERTION, "a1")
+    assert row["version"] == 2
+    assert row["review_scope"] == "record_truth"
+    assert row["review_note"] == "clause is unambiguous"
+    events = model.verification.list_events(
+        VerificationTargetKind.ASSERTION, "a1"
+    )
+    assert len(events) == 2  # initial candidate + verify
+    # events are ordered newest-first
+    assert events[0]["new_status"] == "verified"
+    assert events[0]["old_status"] == "candidate"
+    assert events[1]["new_status"] == "candidate"
+
+
+def test_rejection_reason_persists(model):
+    model.verification.reject(
+        VerificationTargetKind.ASSERTION, "a1",
+        reviewed_by_kind=ReviewedByKind.USER,
+        rejection_reason="contradicted by operative contract",
+    )
+    row = model.verification.get(VerificationTargetKind.ASSERTION, "a1")
+    assert row["status"] == "rejected"
+    assert row["rejection_reason"] == "contradicted by operative contract"
+
+
+def test_list_by_status_filters_correctly(model):
+    model.verification.candidate(VerificationTargetKind.ASSERTION, "cand1")
+    model.verification.candidate(VerificationTargetKind.ASSERTION, "cand2")
+    model.verification.verify(
+        VerificationTargetKind.ASSERTION, "ver1",
+        reviewed_by_kind=ReviewedByKind.ATTORNEY,
+    )
+
+    candidates = model.verification.list_by_status(VerificationStatus.CANDIDATE)
+    verifieds = model.verification.list_by_status(VerificationStatus.VERIFIED)
+    assert {r["target_id"] for r in candidates} == {"cand1", "cand2"}
+    assert {r["target_id"] for r in verifieds} == {"ver1"}
+
+    # target_kind filter narrows further
+    cand_issue = model.verification.list_by_status(
+        VerificationStatus.CANDIDATE, target_kind=VerificationTargetKind.ISSUE_PREDICATE
+    )
+    assert cand_issue == []
+
+
+def test_assertion_upsert_creates_candidate_row():
+    """MVP.2 AC #2: AI extraction paths create verification rows as candidate."""
+    from irys.matter.models import AssertionCandidate
+    from irys.matter import SpeechAct, SourceRole, ModelLayer, AssertionKind
+    from irys.matter.enums import OriginKind
+
+    m = MatterModel.open_in_memory()
+    cand = AssertionCandidate(
+        proposition_text="Test proposition",
+        speech_act=SpeechAct.EXTRACTED,
+        source_role=SourceRole.UNKNOWN,
+        assertion_kind=AssertionKind.FACTUAL,
+        model_layer=ModelLayer.RECORD,
+        document_id="contract.pdf",
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    aid, is_new = m.assertions.upsert_occurrence(cand)
+    assert is_new
+    row = m.verification.get(VerificationTargetKind.ASSERTION, aid)
+    assert row is not None
+    assert row["status"] == "candidate"
+    assert row["ai_confidence"] is not None  # populated from initial belief confidence

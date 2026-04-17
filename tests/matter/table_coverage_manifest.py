@@ -134,17 +134,17 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
         ),
     ),
     "verification_state": TableCoverageSpec(
-        deferred_until="MVP.2_store",
-        reason=(
-            "Table introduced by migration v50; VerificationStateStore lands "
-            "in the next commit of MVP.2"
+        writers=(
+            "irys.matter.graph:VerificationStateStore.candidate",
+            "irys.matter.graph:VerificationStateStore._set_status",
+        ),
+        readers=(
+            "irys.matter.graph:VerificationStateStore.get",
+            "irys.matter.graph:VerificationStateStore.list_by_status",
         ),
     ),
     "verification_event": TableCoverageSpec(
-        deferred_until="MVP.2_store",
-        reason=(
-            "Append-only audit table paired with verification_state; writer "
-            "lands with the store in the next commit"
-        ),
+        writers=("irys.matter.graph:VerificationStateStore._append_event",),
+        readers=("irys.matter.graph:VerificationStateStore.list_events",),
     ),
 }
