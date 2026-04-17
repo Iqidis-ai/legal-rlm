@@ -22,6 +22,7 @@ from .enums import (
     BeliefState, SpeechAct, SourceRole, ModelLayer, AssertionKind,
     AssertionLinkType, OriginKind, GapType, IssueType, SOURCE_TRUST_WEIGHTS,
     VerificationStatus, VerificationTargetKind, ReviewScope, ReviewedByKind,
+    EvidenceRelationType, EvidenceOriginKind,
 )
 from .models import AssertionCandidate, AssertionRecord, RevisionResult, ClaimIdentity
 
@@ -2027,6 +2028,26 @@ class IssueStore:
                    VALUES (?,?,?,?,?)""",
                 (link_id, assertion_id, issue_id, relation_type, now),
             )
+            # MVP.3: every assertion→issue link gets a companion
+            # evidence_edge row so the proof-edge substrate stays in sync
+            # with the legacy link table. upsert_edge is idempotent on the
+            # same natural key the link uses, so re-linking the same
+            # assertion+issue+relation does not inflate edge counts.
+            if relation_type in (
+                EvidenceRelationType.SUPPORTS.value,
+                EvidenceRelationType.ESTABLISHES.value,
+                EvidenceRelationType.ATTACKS.value,
+                EvidenceRelationType.NEGATES.value,
+            ):
+                EvidenceStore(self.db, self.matter_id).upsert_edge(
+                    source_kind="assertion",
+                    source_id=assertion_id,
+                    target_kind="issue",
+                    target_id=issue_id,
+                    relation_type=relation_type,
+                    proof_weight=0.5,
+                    origin_kind=EvidenceOriginKind.SYSTEM_INFERRED,
+                )
         row = self.db.execute(
             "SELECT id FROM assertion_issue_link WHERE assertion_id=? AND issue_id=? AND relation_type=?",
             (assertion_id, issue_id, relation_type),
@@ -4402,6 +4423,221 @@ class AuthorityStore:
         return d
 
 
+class EvidenceStore:
+    """MVP.3: canonical evidence_edge substrate (SO-4).
+
+    Proof edges connect a source (assertion, work_product, authority) to
+    a target (issue, issue_predicate, other_assertion). MVP.3 writes
+    assertion→issue edges synchronously when IssueStore.link_assertion
+    fires, backfills existing assertion_issue_link rows at migration v53,
+    and exposes a read path for ProofStateStore to prefer evidence_edge
+    over the legacy link table.
+
+    Occurrence/span identity is deliberately deferred: the current link
+    APIs do not preserve it, so backfilled rows carry
+    source_identity_status='missing_occurrence_span'.
+    """
+
+    _NATURAL_KEY_COLUMNS = (
+        "matter_id", "source_kind", "source_id",
+        "target_kind", "target_id", "relation_type",
+    )
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    # ----- Read ---------------------------------------------------------
+
+    def get(self, edge_id: str) -> Optional[dict]:
+        row = self.db.execute(
+            "SELECT * FROM evidence_edge WHERE id=? AND matter_id=?",
+            (edge_id, self.matter_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_edges_for_target(
+        self,
+        target_kind: str,
+        target_id: str,
+    ) -> list[dict]:
+        """Return active evidence edges whose target matches. Ordered by
+        relation_type, then effective_weight DESC for deterministic
+        consumer iteration."""
+        rows = self.db.execute(
+            """SELECT * FROM evidence_edge
+               WHERE matter_id=? AND target_kind=? AND target_id=? AND active=1
+               ORDER BY relation_type, effective_weight DESC, id""",
+            (self.matter_id, target_kind, target_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def target_has_edges(self, target_kind: str, target_id: str) -> bool:
+        row = self.db.execute(
+            """SELECT 1 FROM evidence_edge
+               WHERE matter_id=? AND target_kind=? AND target_id=? AND active=1
+               LIMIT 1""",
+            (self.matter_id, target_kind, target_id),
+        ).fetchone()
+        return row is not None
+
+    # ----- Write --------------------------------------------------------
+
+    def upsert_edge(
+        self,
+        *,
+        source_kind: str,
+        source_id: str,
+        target_kind: str,
+        target_id: str,
+        relation_type: "EvidenceRelationType | str",
+        proof_weight: float = 0.5,
+        origin_kind: "EvidenceOriginKind | str" = EvidenceOriginKind.SYSTEM_INFERRED,
+        backfill_source: Optional[str] = None,
+        source_document_inventory_id: Optional[str] = None,
+        source_span_id: Optional[str] = None,
+        source_occurrence_id: Optional[str] = None,
+        source_confidence: float = 1.0,
+        independence_factor: float = 1.0,
+    ) -> tuple[str, bool]:
+        """Insert or return the existing edge matching the natural key.
+
+        Returns (edge_id, is_new). When the edge already exists, origin_kind
+        and backfill_source are preserved, verification_status is not
+        downgraded, and proof_weight/effective_weight are refreshed only for
+        unreviewed system-inferred edges.
+        """
+        rel_val = _evidence_relation_value(relation_type)
+        origin_val = _evidence_origin_value(origin_kind)
+        # MVP.3 issue-level writes do not carry occurrence/span identity.
+        identity_status = (
+            "present" if (source_occurrence_id or source_span_id)
+            else "missing_occurrence_span"
+        )
+        now = _now()
+        effective_weight = proof_weight
+
+        existing = self.db.execute(
+            """SELECT id, verification_status, origin_kind FROM evidence_edge
+               WHERE matter_id=? AND source_kind=? AND source_id=?
+                 AND target_kind=? AND target_id=? AND relation_type=?""",
+            (self.matter_id, source_kind, source_id, target_kind, target_id, rel_val),
+        ).fetchone()
+        if existing is not None:
+            edge_id = existing["id"]
+            # Only refresh weights for unreviewed system-inferred edges.
+            if (
+                existing["verification_status"] == "candidate"
+                and existing["origin_kind"] in ("system_inferred", "ai_extracted")
+            ):
+                self.db.execute(
+                    """UPDATE evidence_edge
+                       SET proof_weight=?, effective_weight=?, updated_at=?
+                       WHERE id=?""",
+                    (proof_weight, effective_weight, now, edge_id),
+                )
+            return edge_id, False
+
+        edge_id = _id()
+        self.db.execute(
+            """INSERT INTO evidence_edge
+                (id, matter_id,
+                 source_kind, source_id,
+                 source_document_inventory_id, source_span_id, source_occurrence_id,
+                 target_kind, target_id, relation_type,
+                 proof_weight, source_confidence, admissibility_status,
+                 vulnerability_json, note,
+                 verification_status, independence_factor, backfill_source,
+                 source_identity_status, origin_kind, active,
+                 effective_weight, independence_cluster_id,
+                 created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL,
+                       'candidate', ?, ?, ?, ?, 1, ?, NULL, ?, ?)""",
+            (
+                edge_id, self.matter_id,
+                source_kind, source_id,
+                source_document_inventory_id, source_span_id, source_occurrence_id,
+                target_kind, target_id, rel_val,
+                proof_weight, source_confidence,
+                independence_factor, backfill_source, identity_status, origin_val,
+                effective_weight, now, now,
+            ),
+        )
+        # MVP.2 substrate: seed a candidate verification row for the edge.
+        VerificationStateStore(self.db, self.matter_id).candidate(
+            VerificationTargetKind.EVIDENCE_EDGE,
+            edge_id,
+            cause="evidence_edge_upsert",
+        )
+        return edge_id, True
+
+    def backfill_from_legacy_links(self) -> int:
+        """Idempotent backfill helper. Mirrors _migration_v53 for this
+        matter only and returns the number of newly inserted edges.
+
+        Used by tests and by any future runtime re-sync path. Idempotence
+        is guaranteed by the natural-key unique index on evidence_edge.
+        """
+        before = self.db.execute(
+            "SELECT COUNT(*) FROM evidence_edge WHERE matter_id=?",
+            (self.matter_id,),
+        ).fetchone()[0]
+        self.db.execute(
+            """INSERT OR IGNORE INTO evidence_edge
+                (id, matter_id,
+                 source_kind, source_id,
+                 source_document_inventory_id, source_span_id, source_occurrence_id,
+                 target_kind, target_id, relation_type,
+                 proof_weight, source_confidence, admissibility_status,
+                 vulnerability_json, note,
+                 verification_status, independence_factor, backfill_source,
+                 source_identity_status, origin_kind, active,
+                 effective_weight, independence_cluster_id,
+                 created_at, updated_at)
+               SELECT
+                   lower(hex(randomblob(16))), i.matter_id,
+                   'assertion', ail.assertion_id,
+                   NULL, NULL, NULL,
+                   'issue', ail.issue_id, ail.relation_type,
+                   0.5, COALESCE(a.confidence, 0.5), NULL,
+                   NULL,
+                   'Backfilled from assertion_issue_link; occurrence/span identity unavailable in legacy link.',
+                   'candidate', 1.0, 'assertion_issue_link',
+                   'missing_occurrence_span', 'legacy_backfill', 1,
+                   0.5, NULL,
+                   COALESCE(ail.created_at, datetime('now')), datetime('now')
+               FROM assertion_issue_link ail
+               JOIN assertion a ON a.id = ail.assertion_id
+               JOIN issue i ON i.id = ail.issue_id
+               WHERE i.matter_id=?
+                 AND ail.relation_type IN ('supports','establishes','attacks','negates')""",
+            (self.matter_id,),
+        )
+        # Seed verification_state candidate rows for all edges in this matter.
+        self.db.execute(
+            """INSERT OR IGNORE INTO verification_state
+                (id, matter_id, target_kind, target_id, status,
+                 review_scope, version, created_at, updated_at)
+               SELECT lower(hex(randomblob(16))), matter_id, 'evidence_edge', id,
+                      'candidate', 'inference', 1, datetime('now'), datetime('now')
+               FROM evidence_edge WHERE matter_id=?""",
+            (self.matter_id,),
+        )
+        after = self.db.execute(
+            "SELECT COUNT(*) FROM evidence_edge WHERE matter_id=?",
+            (self.matter_id,),
+        ).fetchone()[0]
+        return int(after) - int(before)
+
+
+def _evidence_relation_value(rel: "EvidenceRelationType | str") -> str:
+    return rel.value if isinstance(rel, EvidenceRelationType) else str(rel)
+
+
+def _evidence_origin_value(origin: "EvidenceOriginKind | str") -> str:
+    return origin.value if isinstance(origin, EvidenceOriginKind) else str(origin)
+
+
 class VerificationStateStore:
     """MVP.2: canonical verification state for AI-derived intelligence (SO-2).
 
@@ -4710,6 +4946,15 @@ class VerificationStateStore:
                 new_version, now, vid,
             ),
         )
+        # MVP.3: mirror the canonical verification_state to
+        # evidence_edge.verification_status when the target is an edge.
+        # This keeps the materialized column honest so query paths that
+        # reference it stay in sync.
+        if kind == VerificationTargetKind.EVIDENCE_EDGE.value:
+            self.db.execute(
+                "UPDATE evidence_edge SET verification_status=?, updated_at=? WHERE id=? AND matter_id=?",
+                (new_status, now, target_id, self.matter_id),
+            )
         self._append_event(
             verification_id=vid,
             target_kind=kind,
