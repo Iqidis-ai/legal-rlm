@@ -3966,18 +3966,33 @@ def test_mvp6_synthesis_total_cap_drops_optional_sections():
 
 def test_mvp6_opt_in_registry_blocks_unregistered_sections():
     """A section key not in _enabled_optional_sections must never enter
-    the packet even if its builder would otherwise produce content.
+    the packet even if its builder would otherwise produce content AND
+    even if the LITE selector would have picked it.
 
-    Mechanical test: empty allowlist means no optional heading appears,
-    regardless of what state carries."""
+    Real opt-in test: force the selector to return ALL candidate keys
+    so the registry is the only thing that can gate the section. If
+    the allowlist is empty, no optional heading should appear.
+    """
+    import asyncio
+    from irys.rlm.state import InvestigationState
+
     model = MatterModel.open_in_memory()
     _pr3_seed_unsupported_issue(model, "Test claim", materiality=0.9)
     engine = _pr3_make_engine(model)
     engine._enabled_optional_sections = frozenset()
     engine._detect_proof_gaps()
 
-    packet = _pr3_packet(engine, query="analyze")
-    # None of the six optional section headings should appear.
+    # Permissive selector — returns whatever candidates it sees. With an
+    # empty allowlist the candidates dict is empty, so this function
+    # receives an empty dict and echoes it back. With a populated
+    # allowlist in a sibling test, it would return every key.
+    async def _permissive_selector(_query, candidates):
+        return list(candidates.keys())
+    engine._select_relevant_sections = _permissive_selector
+
+    state = InvestigationState.create("analyze", "/repo")
+    packet = asyncio.run(engine._assemble_context_packet(state, findings_text=""))
+
     forbidden_headings = [
         "Source Calibration", "Key Entities Identified",
         "Structured Relationships", "Quantitative Summary",
@@ -3986,6 +4001,49 @@ def test_mvp6_opt_in_registry_blocks_unregistered_sections():
     for h in forbidden_headings:
         assert h not in packet, (
             f"heading {h!r} appeared with empty optional allowlist"
+        )
+
+
+def test_mvp6_oversized_citations_are_capped():
+    """MVP.5 citations surface in Documentary Citations section. With a
+    tight per_optional_section_tokens cap, the citation block must be
+    truncated — mandatory sections stay intact."""
+    import asyncio
+    from irys.rlm.engine import PacketBudget, RLMConfig
+    from irys.rlm.state import InvestigationState, Citation
+
+    model = MatterModel.open_in_memory()
+    _pr3_seed_unsupported_issue(model, "Big claim", materiality=0.9)
+    engine = _pr3_make_engine(model)
+    engine._detect_proof_gaps()
+    engine.config = RLMConfig(
+        packet_budget=PacketBudget(
+            per_optional_section_tokens=20,  # extremely tight
+            synthesis_total_tokens=5000,
+        )
+    )
+
+    async def _permissive(_q, candidates):
+        return list(candidates.keys())
+    engine._select_relevant_sections = _permissive
+
+    state = InvestigationState.create("analyze", "/repo")
+    # Stuff citations until the section would blow any reasonable cap.
+    state.citations = [
+        Citation.create(
+            document=f"doc_{i}.pdf",
+            page=1,
+            text="Lorem ipsum " * 30,
+            context=f"Citation {i} context",
+            relevance="supporting",
+        )
+        for i in range(30)
+    ]
+    packet = asyncio.run(engine._assemble_context_packet(state, findings_text=""))
+    # If citations block appears at all, it must be truncated.
+    if "Documentary Citations" in packet:
+        assert "omitted under" in packet, (
+            "citations section must be truncated under a tight per-section cap"
         )
 
 

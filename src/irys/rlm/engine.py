@@ -5024,9 +5024,13 @@ Return:
         # the set of sections that shipped before MVP.6. Adding a new
         # optional section requires registering its key here; silent
         # prompt inflation is not possible.
-        enabled_optional = getattr(
-            self, "_enabled_optional_sections", None
-        ) or _DEFAULT_OPTIONAL_SECTIONS
+        # `is None` (not `or`) so an explicitly empty override means "no
+        # optional sections", not "use the default". Empty frozenset is
+        # falsy in Python; the bare `or` would silently fall through.
+        _override = getattr(self, "_enabled_optional_sections", None)
+        enabled_optional = (
+            _override if _override is not None else _DEFAULT_OPTIONAL_SECTIONS
+        )
         budget = self._get_packet_budget()
 
         # Gather all candidate optional sections (label → content).
