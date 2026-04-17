@@ -2041,6 +2041,23 @@ class IssueStore:
             raise ValueError(
                 f"issue {issue_id!r} does not exist in matter {self.matter_id!r}"
             )
+        # MVP.5: single-template issues. Applying two different templates
+        # to the same issue creates silent contamination because
+        # propose_element_mappings reads only the first template it
+        # finds. Reject the second apply explicitly; callers that need
+        # a different template should remove the old predicates first.
+        existing = self.db.execute(
+            """SELECT DISTINCT template_id FROM issue_predicate
+               WHERE issue_id=? AND template_id IS NOT NULL
+                 AND template_id != ?""",
+            (issue_id, template.id),
+        ).fetchone()
+        if existing is not None:
+            raise ValueError(
+                f"issue {issue_id!r} already carries template "
+                f"{existing['template_id']!r}; refuse to apply a second "
+                f"template ({template.id!r}) on the same issue"
+            )
 
         predicate_ids: list[str] = []
         with self.db.transaction():
@@ -2085,21 +2102,44 @@ class IssueStore:
         predicate_id: str,
         relation_type: str = "supports",
     ) -> str:
-        """MVP.5: write a predicate-granularity evidence_edge row.
+        """MVP.5: write a predicate-granularity evidence_edge row and
+        mirror the support up to the issue level so the canonical
+        substrate surfaces (get_issue_coverage_report,
+        ProofStateStore.compute_and_store, _detect_proof_gaps) cannot
+        disagree with the predicate-level view.
 
-        Goes through EvidenceStore.upsert_edge so MVP.3 edge-first
-        substrate accounting applies to element-level proof too. Returns
-        the edge id. Idempotent on the natural key.
+        Adversarial audit #5 reproduced a split-brain where verified
+        predicate proof read True from get_predicates_with_proof while
+        the issue-level substrate still reported supporting_count=0 and
+        opened a missing_issue_predicate gap. The mirror closes that
+        gap: every element-level mapping also becomes an issue-level
+        evidence_edge via link_assertion (which idempotently writes the
+        legacy assertion_issue_link AND the issue-level evidence_edge).
+
+        Returns the predicate-level edge id. Idempotent across both
+        surfaces via the natural key.
         """
-        edge_id, _ = EvidenceStore(self.db, self.matter_id).upsert_edge(
-            source_kind="assertion",
-            source_id=assertion_id,
-            target_kind="issue_predicate",
-            target_id=predicate_id,
-            relation_type=relation_type,
-            proof_weight=0.5,
-            origin_kind=EvidenceOriginKind.SYSTEM_INFERRED,
-        )
+        with self.db.transaction():
+            edge_id, _ = EvidenceStore(self.db, self.matter_id).upsert_edge(
+                source_kind="assertion",
+                source_id=assertion_id,
+                target_kind="issue_predicate",
+                target_id=predicate_id,
+                relation_type=relation_type,
+                proof_weight=0.5,
+                origin_kind=EvidenceOriginKind.SYSTEM_INFERRED,
+            )
+            # Mirror up to the issue. Resolve the issue id from the
+            # predicate row; both writes end up inside this one
+            # transaction so a mid-sequence failure cannot split state.
+            pred_row = self.db.execute(
+                "SELECT issue_id FROM issue_predicate WHERE id=?",
+                (predicate_id,),
+            ).fetchone()
+            if pred_row is not None and pred_row["issue_id"]:
+                self.link_assertion(
+                    assertion_id, pred_row["issue_id"], relation_type
+                )
         return edge_id
 
     def propose_element_mappings(

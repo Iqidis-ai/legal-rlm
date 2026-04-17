@@ -221,6 +221,85 @@ def test_verified_mapping_can_resolve_predicate(model):
     assert breach_p["resolvable"] is True
 
 
+def test_predicate_support_mirrors_to_issue_substrate(model):
+    """Adversarial audit #5: predicate-level link must also register at
+    issue level so get_issue_coverage_report, ProofStateStore, and
+    _detect_proof_gaps don't contradict get_predicates_with_proof.
+
+    Reproduces the exact split-brain case the audit flagged: add a
+    verified supporting assertion linked ONLY through
+    link_assertion_to_predicate, then verify that the issue-level
+    coverage report sees nonzero support, proof_state is no longer
+    insufficient, and _detect_proof_gaps does not open a gap.
+    """
+    from irys.rlm.engine import RLMEngine
+
+    iid, _ = model.issues.upsert_issue(
+        "Breach claim", IssueType.CLAIM, materiality=0.9,
+    )
+    pred_ids = model.issues.apply_template(iid, "contract_breach")
+    breach_pid = pred_ids[2]
+    aid = _add(model, "Defendant failed to pay invoice when due")
+    model.issues.link_assertion_to_predicate(aid, breach_pid, "supports")
+    # Verify the assertion and the predicate-level edge.
+    model.verification.verify(
+        VerificationTargetKind.ASSERTION, aid,
+        reviewed_by_kind=ReviewedByKind.ATTORNEY,
+    )
+    edges = model.evidence.list_edges_for_target("issue_predicate", breach_pid)
+    model.verification.verify(
+        VerificationTargetKind.EVIDENCE_EDGE, edges[0]["id"],
+        reviewed_by_kind=ReviewedByKind.ATTORNEY,
+    )
+
+    # Predicate view says the element is resolvable.
+    preds = model.issues.get_predicates_with_proof(iid)
+    breach_p = next(p for p in preds if p["element_key"] == "breach")
+    assert breach_p["resolvable"] is True
+
+    # Issue-level coverage MUST see the support too — the mirror in
+    # link_assertion_to_predicate propagates to assertion_issue_link
+    # and target_kind='issue' edges.
+    report = next(r for r in model.get_issue_coverage_report() if r["id"] == iid)
+    assert report["supporting_count"] >= 1, (
+        "split-brain: predicate-level support did not mirror to issue-level "
+        "coverage report"
+    )
+
+    # ProofStateStore must agree.
+    model.proof_state.compute_and_store(iid)
+    ps = model.proof_state.get(iid)
+    assert ps["supporting_count"] >= 1, (
+        "split-brain: proof_state does not see predicate-level support"
+    )
+
+    # _detect_proof_gaps must not open a missing_issue_predicate gap
+    # because the issue now has support via its element.
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    engine._detect_proof_gaps()
+    open_gaps = model.gaps.open_gaps(min_materiality=0.0)
+    for g in open_gaps:
+        if g.get("gap_type") == "missing_issue_predicate":
+            for d in g.get("dependencies") or []:
+                if d.get("affected_type") == "issue" and d.get("affected_id") == iid:
+                    raise AssertionError(
+                        "_detect_proof_gaps opened a missing_issue_predicate "
+                        "gap despite predicate-level support being present"
+                    )
+
+
+def test_apply_template_rejects_second_template_on_same_issue(model):
+    """Adversarial audit #5: multi-template contamination. Applying
+    two different templates to the same issue silently breaks
+    propose_element_mappings because it picks only the first template
+    it finds. Explicit refusal is safer."""
+    iid, _ = model.issues.upsert_issue("Ambiguous claim", IssueType.CLAIM)
+    model.issues.apply_template(iid, "contract_breach")
+    with pytest.raises(ValueError, match="already carries template"):
+        model.issues.apply_template(iid, "negligence")
+
+
 def test_verified_assertion_candidate_edge_does_not_resolve(model):
     """Both the assertion AND the mapping edge must be verified. A
     verified assertion attached via a still-candidate mapping edge must
