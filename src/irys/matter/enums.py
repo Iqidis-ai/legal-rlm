@@ -236,3 +236,32 @@ class ReviewedByKind(str, Enum):
     ATTORNEY = "attorney"
     SYSTEM = "system"
     IMPORT = "import"
+
+
+class EvidenceRelationType(str, Enum):
+    """Relation type persisted on evidence_edge rows (MVP.3, SO-4).
+
+    Intentionally matches the assertion_issue_link vocabulary so MVP.3
+    can swap the proof substrate without also rewriting the relation
+    vocabulary. ASPIC+-style rebut/undercut come in a later phase.
+    """
+
+    SUPPORTS = "supports"
+    ESTABLISHES = "establishes"
+    ATTACKS = "attacks"
+    NEGATES = "negates"
+
+
+class EvidenceOriginKind(str, Enum):
+    """How an evidence_edge row came into existence (MVP.3).
+
+    Separate from the assertion-oriented OriginKind because the
+    evidence-edge lifecycle has distinct values — legacy_backfill and
+    attorney_annotated do not apply to assertion occurrences.
+    """
+
+    AI_EXTRACTED = "ai_extracted"
+    ATTORNEY_ANNOTATED = "attorney_annotated"
+    SYSTEM_INFERRED = "system_inferred"
+    IMPORTED = "imported"
+    LEGACY_BACKFILL = "legacy_backfill"

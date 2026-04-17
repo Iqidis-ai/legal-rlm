@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 51
+SCHEMA_VERSION = 53
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -14,6 +14,8 @@ _MIGRATION_NAMES: dict[int, str] = {
     49: "schema_discipline",
     50: "verification_state",
     51: "seed_verification_state",
+    52: "evidence_edge_mvp3_columns",
+    53: "backfill_evidence_edge_from_legacy",
 }
 
 
@@ -691,6 +693,16 @@ CREATE TABLE IF NOT EXISTS evidence_edge (
     admissibility_status        TEXT,
     vulnerability_json          TEXT,
     note                        TEXT,
+    verification_status         TEXT NOT NULL DEFAULT 'candidate'
+        CHECK (verification_status IN ('candidate','verified','rejected','stale')),
+    independence_factor         REAL NOT NULL DEFAULT 1.0,
+    backfill_source             TEXT,
+    source_identity_status      TEXT NOT NULL DEFAULT 'unknown',
+    origin_kind                 TEXT NOT NULL DEFAULT 'legacy_backfill'
+        CHECK (origin_kind IN ('ai_extracted','attorney_annotated','system_inferred','imported','legacy_backfill')),
+    active                      INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+    effective_weight            REAL,
+    independence_cluster_id     TEXT,
     created_at                  TEXT NOT NULL,
     updated_at                  TEXT NOT NULL
 ) STRICT;
@@ -2526,6 +2538,87 @@ def _migration_v51(conn) -> None:
     conn.commit()
 
 
+def _migration_v52(conn) -> None:
+    """MVP.3: add evidence-edge columns needed for the proof substrate switch.
+
+    The base evidence_edge table exists since v45 but only carries the
+    shape needed for legacy evidence_link parity. MVP.3 adds the columns
+    the proof-edge-first substrate requires. All ALTER TABLE ADD COLUMN
+    calls go through _execute_allow_duplicate_column so reapplying is safe.
+    """
+    for alter in (
+        "ALTER TABLE evidence_edge ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'candidate'",
+        "ALTER TABLE evidence_edge ADD COLUMN independence_factor REAL NOT NULL DEFAULT 1.0",
+        "ALTER TABLE evidence_edge ADD COLUMN backfill_source TEXT",
+        "ALTER TABLE evidence_edge ADD COLUMN source_identity_status TEXT NOT NULL DEFAULT 'unknown'",
+        "ALTER TABLE evidence_edge ADD COLUMN origin_kind TEXT NOT NULL DEFAULT 'legacy_backfill'",
+        "ALTER TABLE evidence_edge ADD COLUMN active INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE evidence_edge ADD COLUMN effective_weight REAL",
+        "ALTER TABLE evidence_edge ADD COLUMN independence_cluster_id TEXT",
+    ):
+        _execute_allow_duplicate_column(conn, alter)
+    # Fill effective_weight for any pre-existing rows so the MVP.3 proof
+    # substrate can read effective_weight without a NULL check.
+    conn.execute(
+        "UPDATE evidence_edge SET effective_weight = COALESCE(effective_weight, proof_weight)"
+    )
+    conn.commit()
+
+
+def _migration_v53(conn) -> None:
+    """MVP.3: backfill one evidence_edge per legacy assertion_issue_link row.
+
+    Uses the existing unique key (matter_id, source_kind, source_id,
+    target_kind, target_id, relation_type) for idempotent INSERT OR IGNORE.
+    Occurrence/span identity is deliberately NULL — current link APIs do
+    not preserve it, and MVP.3 AC explicitly flags this as a documented
+    limitation.
+
+    Also seeds verification_state candidate rows for every inserted edge,
+    matching the MVP.2 substrate contract.
+    """
+    conn.execute(
+        """INSERT OR IGNORE INTO evidence_edge
+            (id, matter_id,
+             source_kind, source_id,
+             source_document_inventory_id, source_span_id, source_occurrence_id,
+             target_kind, target_id, relation_type,
+             proof_weight, source_confidence, admissibility_status,
+             vulnerability_json, note,
+             verification_status, independence_factor, backfill_source,
+             source_identity_status, origin_kind, active,
+             effective_weight, independence_cluster_id,
+             created_at, updated_at)
+           SELECT
+               lower(hex(randomblob(16))), i.matter_id,
+               'assertion', ail.assertion_id,
+               NULL, NULL, NULL,
+               'issue', ail.issue_id, ail.relation_type,
+               0.5, COALESCE(a.confidence, 0.5), NULL,
+               NULL,
+               'Backfilled from assertion_issue_link; occurrence/span identity unavailable in legacy link.',
+               'candidate', 1.0, 'assertion_issue_link',
+               'missing_occurrence_span', 'legacy_backfill', 1,
+               0.5, NULL,
+               COALESCE(ail.created_at, datetime('now')), datetime('now')
+           FROM assertion_issue_link ail
+           JOIN assertion a ON a.id = ail.assertion_id
+           JOIN issue i ON i.id = ail.issue_id
+           WHERE ail.relation_type IN ('supports','establishes','attacks','negates')"""
+    )
+    # Seed verification_state candidate rows for every edge that now exists
+    # on target_kind='evidence_edge'. INSERT OR IGNORE keeps reruns safe.
+    conn.execute(
+        """INSERT OR IGNORE INTO verification_state
+            (id, matter_id, target_kind, target_id, status,
+             review_scope, version, created_at, updated_at)
+           SELECT lower(hex(randomblob(16))), matter_id, 'evidence_edge', id,
+                  'candidate', 'inference', 1, datetime('now'), datetime('now')
+           FROM evidence_edge"""
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -2581,6 +2674,8 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (49, _migration_v49),
     (50, _migration_v50),
     (51, _migration_v51),
+    (52, _migration_v52),
+    (53, _migration_v53),
 ]
 
 
