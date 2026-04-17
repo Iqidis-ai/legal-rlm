@@ -27,6 +27,8 @@ def test_in_memory_db_creates_schema():
         "document_actor_role",
         # MVP.2: verification substrate
         "verification_state", "verification_event",
+        # P0.1: provenance substrate
+        "provenance_event",
     ]:
         assert required in tables, f"Missing table: {required}"
 
