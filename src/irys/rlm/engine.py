@@ -6235,9 +6235,14 @@ Return:
                        AND EXISTS (
                            SELECT 1 FROM assertion_issue_link ail
                            JOIN assertion a ON a.id=ail.assertion_id
+                           LEFT JOIN verification_state vs
+                             ON vs.target_kind='assertion'
+                            AND vs.target_id=a.id
+                            AND vs.matter_id=a.matter_id
                            WHERE ail.issue_id=gl.affected_id
                              AND ail.relation_type IN ('supports','establishes')
                              AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+                             AND COALESCE(vs.status, 'candidate') != 'rejected'
                        )
                  )""",
             (_ts, mid),
@@ -6250,9 +6255,14 @@ Return:
                  AND NOT EXISTS (
                      SELECT 1 FROM assertion_issue_link ail
                      JOIN assertion a ON a.id=ail.assertion_id
+                     LEFT JOIN verification_state vs
+                       ON vs.target_kind='assertion'
+                      AND vs.target_id=a.id
+                      AND vs.matter_id=a.matter_id
                      WHERE ail.issue_id=i.id
                        AND ail.relation_type IN ('supports','establishes')
                        AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+                       AND COALESCE(vs.status, 'candidate') != 'rejected'
                  )
                  AND NOT EXISTS (
                      SELECT 1 FROM gap g

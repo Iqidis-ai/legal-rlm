@@ -159,3 +159,77 @@ def test_assertion_upsert_creates_candidate_row():
     assert row is not None
     assert row["status"] == "candidate"
     assert row["ai_confidence"] is not None  # populated from initial belief confidence
+
+
+def test_rejected_assertions_excluded_from_proof_substrate():
+    """MVP.2 AC #4: rejected targets are excluded from proof and clean synthesis.
+
+    This is the substrate-level test the second adversarial audit flagged as
+    missing — MVP.2 must change what ProofStateStore.compute_and_store,
+    get_issue_coverage_report, and _detect_proof_gaps actually read, not
+    just patch consumers. Seeds one supporting assertion, rejects it, and
+    asserts all three substrate consumers treat the issue as unsupported.
+    """
+    from irys.matter.enums import IssueType, OriginKind
+    from irys.matter.models import AssertionCandidate
+    from irys.matter import SpeechAct, SourceRole, ModelLayer, AssertionKind
+    from irys.rlm.engine import RLMEngine
+
+    m = MatterModel.open_in_memory()
+    iid, _ = m.issues.upsert_issue(
+        "High-materiality claim", IssueType.CLAIM, materiality=0.9
+    )
+    cand = AssertionCandidate(
+        proposition_text="Defendant performed obligation",
+        speech_act=SpeechAct.OPERATIVE,
+        source_role=SourceRole.OPERATIVE,
+        assertion_kind=AssertionKind.FACTUAL,
+        model_layer=ModelLayer.RECORD,
+        document_id="contract.pdf",
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    aid, _ = m.assertions.upsert_occurrence(cand)
+    m.issues.link_assertion(aid, iid, relation_type="supports")
+
+    # Baseline: before rejection, the support shows up everywhere.
+    m.proof_state.compute_and_store(iid)
+    ps_before = m.proof_state.get(iid)
+    report_before = next(r for r in m.get_issue_coverage_report() if r["id"] == iid)
+    assert ps_before["supporting_count"] == 1
+    assert report_before["supporting_count"] == 1
+
+    # Reject the assertion.
+    m.verification.reject(
+        VerificationTargetKind.ASSERTION, aid,
+        reviewed_by_kind=ReviewedByKind.ATTORNEY,
+        rejection_reason="contradicted by operative MSA",
+    )
+
+    # After rejection: proof_state must see zero supports.
+    m.proof_state.compute_and_store(iid)
+    ps_after = m.proof_state.get(iid)
+    assert ps_after["supporting_count"] == 0, (
+        "ProofStateStore.compute_and_store must exclude rejected assertions"
+    )
+
+    # Coverage report must see zero supports.
+    report_after = next(r for r in m.get_issue_coverage_report() if r["id"] == iid)
+    assert report_after["supporting_count"] == 0, (
+        "get_issue_coverage_report must exclude rejected assertions"
+    )
+    assert report_after["verified_supporting_count"] == 0
+    assert report_after["candidate_supporting_count"] == 0
+
+    # _detect_proof_gaps must now treat the issue as unsupported.
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = m
+    engine._detect_proof_gaps()
+    gaps = m.gaps.open_gaps(min_materiality=0.0)
+    assert any(
+        g.get("gap_type") == "missing_issue_predicate"
+        and any(
+            d.get("affected_type") == "issue" and d.get("affected_id") == iid
+            for d in (g.get("dependencies") or [])
+        )
+        for g in gaps
+    ), "_detect_proof_gaps must open a missing_issue_predicate gap once the only support is rejected"

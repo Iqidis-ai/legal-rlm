@@ -4884,9 +4884,17 @@ class ProofStateStore:
                FROM assertion_issue_link ail
                JOIN assertion a ON a.id = ail.assertion_id
                LEFT JOIN occ_ranked o ON o.assertion_id = ail.assertion_id
+               -- MVP.2: exclude rejected assertions so a human-rejected
+               -- target cannot contribute to proof math; candidate support
+               -- still contributes here pending MVP.5's verified-only lane.
+               LEFT JOIN verification_state vs
+                 ON vs.target_kind = 'assertion'
+                AND vs.target_id = a.id
+                AND vs.matter_id = a.matter_id
                WHERE ail.issue_id = ?
                  AND ail.relation_type IN ('supports','establishes','attacks','negates')
                  AND a.belief_state NOT IN ('superseded','withdrawn')
+                 AND COALESCE(vs.status, 'candidate') != 'rejected'
                GROUP BY ail.assertion_id, ail.relation_type""",
             (issue_id, issue_id),
         ).fetchall()
