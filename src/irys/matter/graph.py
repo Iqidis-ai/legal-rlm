@@ -21,6 +21,7 @@ import pathlib
 from .enums import (
     BeliefState, SpeechAct, SourceRole, ModelLayer, AssertionKind,
     AssertionLinkType, OriginKind, GapType, IssueType, SOURCE_TRUST_WEIGHTS,
+    VerificationStatus, VerificationTargetKind, ReviewScope, ReviewedByKind,
 )
 from .models import AssertionCandidate, AssertionRecord, RevisionResult, ClaimIdentity
 
@@ -4351,6 +4352,382 @@ class AuthorityStore:
             else:
                 d[field] = []
         return d
+
+
+class VerificationStateStore:
+    """MVP.2: canonical verification state for AI-derived intelligence (SO-2).
+
+    Tracks whether a human has reviewed an AI-derived object. Candidate is
+    the default for every AI extraction path. Only 'user' and 'attorney'
+    reviewers may promote to 'verified'; 'system' and 'import' are
+    automation markers that raise ValueError if passed to verify().
+
+    Verification is independent of belief_state: a verified assertion can
+    still be disputed, and a candidate assertion can still be useful as a
+    lead. Rejected targets are excluded from proof and clean synthesis by
+    downstream consumers (PR/MVP downstream of MVP.2).
+    """
+
+    # Human reviewers who may promote to verified.
+    _HUMAN_REVIEWERS: frozenset[str] = frozenset({"user", "attorney"})
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    # ----- Read API -----------------------------------------------------
+
+    def get(
+        self,
+        target_kind: "VerificationTargetKind | str",
+        target_id: str,
+    ) -> Optional[dict]:
+        """Return the verification_state row for a target, or None if none exists."""
+        kind = _verification_kind_value(target_kind)
+        row = self.db.execute(
+            """SELECT * FROM verification_state
+               WHERE matter_id=? AND target_kind=? AND target_id=?""",
+            (self.matter_id, kind, target_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_by_status(
+        self,
+        status: "VerificationStatus | str",
+        target_kind: "VerificationTargetKind | str | None" = None,
+    ) -> list[dict]:
+        """Return verification rows filtered by status and optional target_kind.
+
+        Ordered by updated_at DESC so the review queue surfaces the newest
+        candidates first.
+        """
+        status_val = _verification_status_value(status)
+        if target_kind is None:
+            rows = self.db.execute(
+                """SELECT * FROM verification_state
+                   WHERE matter_id=? AND status=?
+                   ORDER BY updated_at DESC""",
+                (self.matter_id, status_val),
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                """SELECT * FROM verification_state
+                   WHERE matter_id=? AND status=? AND target_kind=?
+                   ORDER BY updated_at DESC""",
+                (self.matter_id, status_val, _verification_kind_value(target_kind)),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_events(
+        self,
+        target_kind: "VerificationTargetKind | str | None" = None,
+        target_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Return verification_event rows for audit surfaces.
+
+        Unfiltered call returns the newest N events across the matter.
+        target_kind + target_id narrow to one object's history.
+        """
+        if target_kind is not None and target_id is not None:
+            rows = self.db.execute(
+                """SELECT * FROM verification_event
+                   WHERE matter_id=? AND target_kind=? AND target_id=?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (self.matter_id, _verification_kind_value(target_kind), target_id, int(limit)),
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                """SELECT * FROM verification_event
+                   WHERE matter_id=? ORDER BY created_at DESC LIMIT ?""",
+                (self.matter_id, int(limit)),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ----- Write API ----------------------------------------------------
+
+    def candidate(
+        self,
+        target_kind: "VerificationTargetKind | str",
+        target_id: str,
+        *,
+        ai_confidence: Optional[float] = None,
+        cause: str = "ai_extraction",
+        run_id: Optional[str] = None,
+    ) -> str:
+        """Idempotently ensure a candidate row exists for a target.
+
+        Never downgrades an already-verified or rejected row. Returns the
+        verification_state.id.
+        """
+        existing = self.get(target_kind, target_id)
+        if existing is not None:
+            return existing["id"]
+        kind = _verification_kind_value(target_kind)
+        vid = uuid.uuid4().hex
+        now = _now()
+        self.db.execute(
+            """INSERT INTO verification_state
+                (id, matter_id, target_kind, target_id, status, ai_confidence,
+                 review_scope, version, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'candidate', ?, 'extraction_correct', 1, ?, ?)""",
+            (vid, self.matter_id, kind, target_id, ai_confidence, now, now),
+        )
+        self._append_event(
+            verification_id=vid,
+            target_kind=kind,
+            target_id=target_id,
+            old_status=None,
+            new_status="candidate",
+            reviewed_by_kind="system",
+            reviewed_by_id=None,
+            review_scope="extraction_correct",
+            rejection_reason=None,
+            run_id=run_id,
+            cause=cause,
+            note=None,
+            old_version=None,
+            new_version=1,
+        )
+        return vid
+
+    def verify(
+        self,
+        target_kind: "VerificationTargetKind | str",
+        target_id: str,
+        *,
+        reviewed_by_kind: "ReviewedByKind | str",
+        reviewed_by_id: Optional[str] = None,
+        review_scope: "ReviewScope | str" = ReviewScope.EXTRACTION_CORRECT,
+        review_scope_json: Optional[str] = None,
+        review_note: Optional[str] = None,
+        ai_confidence: Optional[float] = None,
+        cause: str = "human_verification",
+        run_id: Optional[str] = None,
+    ) -> str:
+        """Promote a target to verified. Raises ValueError if the reviewer
+        is automation (system/import) — only humans can verify.
+        """
+        kind_val = _reviewed_by_value(reviewed_by_kind)
+        if kind_val not in self._HUMAN_REVIEWERS:
+            raise ValueError(
+                f"reviewed_by_kind {kind_val!r} cannot set status=verified; "
+                "only 'user' or 'attorney' may promote to verified"
+            )
+        return self._set_status(
+            target_kind=target_kind,
+            target_id=target_id,
+            new_status="verified",
+            reviewed_by_kind=kind_val,
+            reviewed_by_id=reviewed_by_id,
+            review_scope=_review_scope_value(review_scope),
+            review_scope_json=review_scope_json,
+            review_note=review_note,
+            rejection_reason=None,
+            stale_reason=None,
+            ai_confidence=ai_confidence,
+            cause=cause,
+            run_id=run_id,
+        )
+
+    def reject(
+        self,
+        target_kind: "VerificationTargetKind | str",
+        target_id: str,
+        *,
+        reviewed_by_kind: "ReviewedByKind | str",
+        rejection_reason: str,
+        reviewed_by_id: Optional[str] = None,
+        review_scope: "ReviewScope | str" = ReviewScope.EXTRACTION_CORRECT,
+        review_note: Optional[str] = None,
+        cause: str = "human_rejection",
+        run_id: Optional[str] = None,
+    ) -> str:
+        """Promote a target to rejected. Rejection also requires a human
+        reviewer — automation cannot implicitly reject live intelligence.
+        """
+        kind_val = _reviewed_by_value(reviewed_by_kind)
+        if kind_val not in self._HUMAN_REVIEWERS:
+            raise ValueError(
+                f"reviewed_by_kind {kind_val!r} cannot set status=rejected; "
+                "only 'user' or 'attorney' may reject"
+            )
+        if not rejection_reason or not rejection_reason.strip():
+            raise ValueError("rejection_reason is required when rejecting a target")
+        return self._set_status(
+            target_kind=target_kind,
+            target_id=target_id,
+            new_status="rejected",
+            reviewed_by_kind=kind_val,
+            reviewed_by_id=reviewed_by_id,
+            review_scope=_review_scope_value(review_scope),
+            review_scope_json=None,
+            review_note=review_note,
+            rejection_reason=rejection_reason.strip(),
+            stale_reason=None,
+            ai_confidence=None,
+            cause=cause,
+            run_id=run_id,
+        )
+
+    def set_status(
+        self,
+        target_kind: "VerificationTargetKind | str",
+        target_id: str,
+        status: "VerificationStatus | str",
+        *,
+        reviewed_by_kind: "ReviewedByKind | str",
+        reviewed_by_id: Optional[str] = None,
+        review_scope: "ReviewScope | str" = ReviewScope.EXTRACTION_CORRECT,
+        review_scope_json: Optional[str] = None,
+        review_note: Optional[str] = None,
+        rejection_reason: Optional[str] = None,
+        stale_reason: Optional[str] = None,
+        ai_confidence: Optional[float] = None,
+        cause: str = "manual_set_status",
+        run_id: Optional[str] = None,
+    ) -> str:
+        """Generic status setter. verify() and reject() are the preferred APIs;
+        set_status exists for stale transitions that automation may emit.
+        """
+        status_val = _verification_status_value(status)
+        kind_val = _reviewed_by_value(reviewed_by_kind)
+        if status_val in {"verified", "rejected"} and kind_val not in self._HUMAN_REVIEWERS:
+            raise ValueError(
+                f"reviewed_by_kind {kind_val!r} cannot set status={status_val}; "
+                "only 'user' or 'attorney' may verify or reject"
+            )
+        return self._set_status(
+            target_kind=target_kind,
+            target_id=target_id,
+            new_status=status_val,
+            reviewed_by_kind=kind_val,
+            reviewed_by_id=reviewed_by_id,
+            review_scope=_review_scope_value(review_scope),
+            review_scope_json=review_scope_json,
+            review_note=review_note,
+            rejection_reason=rejection_reason,
+            stale_reason=stale_reason,
+            ai_confidence=ai_confidence,
+            cause=cause,
+            run_id=run_id,
+        )
+
+    # ----- Internals ----------------------------------------------------
+
+    def _set_status(
+        self,
+        *,
+        target_kind: "VerificationTargetKind | str",
+        target_id: str,
+        new_status: str,
+        reviewed_by_kind: str,
+        reviewed_by_id: Optional[str],
+        review_scope: str,
+        review_scope_json: Optional[str],
+        review_note: Optional[str],
+        rejection_reason: Optional[str],
+        stale_reason: Optional[str],
+        ai_confidence: Optional[float],
+        cause: str,
+        run_id: Optional[str],
+    ) -> str:
+        """Upsert-and-transition. Ensures the row exists as candidate if it
+        doesn't yet, then transitions to new_status and appends the event.
+        """
+        kind = _verification_kind_value(target_kind)
+        existing = self.get(kind, target_id)
+        if existing is None:
+            # Seed as candidate before applying the intended transition.
+            self.candidate(kind, target_id, ai_confidence=ai_confidence, run_id=run_id)
+            existing = self.get(kind, target_id)
+
+        vid = existing["id"]
+        old_status = existing["status"]
+        old_version = int(existing["version"])
+        new_version = old_version + 1
+        now = _now()
+
+        self.db.execute(
+            """UPDATE verification_state
+               SET status=?, reviewed_by_kind=?, reviewed_by_id=?, reviewed_at=?,
+                   review_scope=?, review_scope_json=?, review_note=?,
+                   rejection_reason=?, stale_reason=?, ai_confidence=COALESCE(?, ai_confidence),
+                   version=?, updated_at=?
+               WHERE id=?""",
+            (
+                new_status, reviewed_by_kind, reviewed_by_id, now,
+                review_scope, review_scope_json, review_note,
+                rejection_reason, stale_reason, ai_confidence,
+                new_version, now, vid,
+            ),
+        )
+        self._append_event(
+            verification_id=vid,
+            target_kind=kind,
+            target_id=target_id,
+            old_status=old_status,
+            new_status=new_status,
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+            review_scope=review_scope,
+            rejection_reason=rejection_reason,
+            run_id=run_id,
+            cause=cause,
+            note=review_note,
+            old_version=old_version,
+            new_version=new_version,
+        )
+        return vid
+
+    def _append_event(
+        self,
+        *,
+        verification_id: str,
+        target_kind: str,
+        target_id: str,
+        old_status: Optional[str],
+        new_status: str,
+        reviewed_by_kind: str,
+        reviewed_by_id: Optional[str],
+        review_scope: str,
+        rejection_reason: Optional[str],
+        run_id: Optional[str],
+        cause: str,
+        note: Optional[str],
+        old_version: Optional[int],
+        new_version: int,
+    ) -> None:
+        self.db.execute(
+            """INSERT INTO verification_event
+                (id, matter_id, verification_id, target_kind, target_id,
+                 old_status, new_status, reviewed_by_kind, reviewed_by_id,
+                 review_scope, rejection_reason, run_id, cause, note,
+                 old_version, new_version, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                uuid.uuid4().hex, self.matter_id, verification_id, target_kind, target_id,
+                old_status, new_status, reviewed_by_kind, reviewed_by_id,
+                review_scope, rejection_reason, run_id, cause, note,
+                old_version, new_version, _now(),
+            ),
+        )
+
+
+def _verification_kind_value(kind: "VerificationTargetKind | str") -> str:
+    return kind.value if isinstance(kind, VerificationTargetKind) else str(kind)
+
+
+def _verification_status_value(status: "VerificationStatus | str") -> str:
+    return status.value if isinstance(status, VerificationStatus) else str(status)
+
+
+def _review_scope_value(scope: "ReviewScope | str") -> str:
+    return scope.value if isinstance(scope, ReviewScope) else str(scope)
+
+
+def _reviewed_by_value(kind: "ReviewedByKind | str") -> str:
+    return kind.value if isinstance(kind, ReviewedByKind) else str(kind)
 
 
 class ProofStateStore:

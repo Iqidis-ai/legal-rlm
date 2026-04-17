@@ -25,6 +25,7 @@ from .graph import (
     DocumentInventoryStore, DocumentCardStore, SpanStore, DocumentActorRoleStore,
     ReasoningCacheStore, TrustOverrideStore, DocumentAnnotationStore,
     DecisionContextStore, AuthorityStore, ProofStateStore, AssumptionStore,
+    VerificationStateStore,
 )
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
@@ -80,6 +81,7 @@ class MatterModel:
         self.authority = AuthorityStore(db, matter_id)
         self.proof_state = ProofStateStore(db, matter_id)
         self.assumptions = AssumptionStore(db, matter_id)
+        self.verification = VerificationStateStore(db, matter_id)
         # In-memory snapshot of assertion counts captured at run start.
         # Keyed by run_id.  Allows complete_run() to compute reuse_rate without
         # an extra SELECT round-trip (DB is the authoritative fallback).
