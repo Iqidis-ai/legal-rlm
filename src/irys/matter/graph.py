@@ -2008,6 +2008,152 @@ class IssueStore:
         ).fetchall()
         return [r["id"] for r in rows]
 
+    def apply_template(
+        self,
+        issue_id: str,
+        template_id: str,
+        *,
+        registry=None,
+    ) -> list[str]:
+        """MVP.5: materialize template elements as issue_predicate rows.
+
+        Idempotent on (issue_id, template_id, element_key) via the
+        unique index added in migration v54, so re-applying the same
+        template twice does not duplicate predicates.
+
+        Returns the list of issue_predicate.id values for the template's
+        elements, in element_order. Every newly-inserted predicate seeds
+        a candidate verification_state row per MVP.2 contract so the
+        LLM-cannot-resolve-elements invariant holds from inception.
+        """
+        from .templates import default_registry
+
+        reg = registry if registry is not None else default_registry()
+        template = reg.require(template_id)
+
+        # Validate that the issue belongs to this matter (matter-scoped
+        # writes are a project-wide discipline).
+        issue_row = self.db.execute(
+            "SELECT id FROM issue WHERE id=? AND matter_id=?",
+            (issue_id, self.matter_id),
+        ).fetchone()
+        if issue_row is None:
+            raise ValueError(
+                f"issue {issue_id!r} does not exist in matter {self.matter_id!r}"
+            )
+
+        predicate_ids: list[str] = []
+        with self.db.transaction():
+            for el in template.elements:
+                pred_id = _id()
+                now = _now()
+                # Insert via the natural unique index (issue_id,
+                # template_id, element_key). If a row already exists for
+                # this template element, INSERT OR IGNORE leaves it alone.
+                cur = self.db.execute(
+                    """INSERT OR IGNORE INTO issue_predicate
+                        (id, issue_id, description, burden_side, status,
+                         created_at, template_id, template_version,
+                         element_key, element_order)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        pred_id, issue_id, el.description, el.burden_side,
+                        "open", now, template.id, template.version,
+                        el.key, el.order,
+                    ),
+                )
+                is_new = cur.rowcount > 0
+                # Resolve the actual id: on conflict the row already exists.
+                row = self.db.execute(
+                    """SELECT id FROM issue_predicate
+                       WHERE issue_id=? AND template_id=? AND element_key=?""",
+                    (issue_id, template.id, el.key),
+                ).fetchone()
+                resolved_id = row["id"] if row else pred_id
+                predicate_ids.append(resolved_id)
+                if is_new:
+                    VerificationStateStore(self.db, self.matter_id).candidate(
+                        VerificationTargetKind.ISSUE_PREDICATE,
+                        resolved_id,
+                        cause="template_apply",
+                    )
+        return predicate_ids
+
+    def link_assertion_to_predicate(
+        self,
+        assertion_id: str,
+        predicate_id: str,
+        relation_type: str = "supports",
+    ) -> str:
+        """MVP.5: write a predicate-granularity evidence_edge row.
+
+        Goes through EvidenceStore.upsert_edge so MVP.3 edge-first
+        substrate accounting applies to element-level proof too. Returns
+        the edge id. Idempotent on the natural key.
+        """
+        edge_id, _ = EvidenceStore(self.db, self.matter_id).upsert_edge(
+            source_kind="assertion",
+            source_id=assertion_id,
+            target_kind="issue_predicate",
+            target_id=predicate_id,
+            relation_type=relation_type,
+            proof_weight=0.5,
+            origin_kind=EvidenceOriginKind.SYSTEM_INFERRED,
+        )
+        return edge_id
+
+    def propose_element_mappings(
+        self,
+        assertion_id: str,
+        issue_id: str,
+        *,
+        min_score: float = 0.1,
+    ) -> list[tuple[str, float]]:
+        """MVP.5: for an assertion linked to a template-driven issue,
+        return [(predicate_id, score)] ranked by text overlap against
+        each template element's mapping hints. Does NOT write edges —
+        callers decide whether to materialize via
+        link_assertion_to_predicate. Returns empty list when the issue
+        has no template or the assertion has no resolvable text.
+        """
+        from .templates import default_registry
+
+        # Find the template on this issue by inspecting any predicate
+        # that carries template metadata. MVP.5 issues are single-template.
+        pred_rows = self.db.execute(
+            """SELECT id, template_id, element_key FROM issue_predicate
+               WHERE issue_id=? AND template_id IS NOT NULL
+               ORDER BY element_order""",
+            (issue_id,),
+        ).fetchall()
+        if not pred_rows:
+            return []
+        template_id = pred_rows[0]["template_id"]
+        reg = default_registry()
+        template = reg.get(template_id)
+        if template is None:
+            return []
+
+        # Resolve assertion text.
+        a_row = self.db.execute(
+            "SELECT proposition_text FROM assertion WHERE id=? AND matter_id=?",
+            (assertion_id, self.matter_id),
+        ).fetchone()
+        if a_row is None:
+            return []
+        scored = reg.score_assertion_to_elements(a_row["proposition_text"], template)
+        # Map element_key -> predicate_id for this specific issue
+        key_to_pid = {r["element_key"]: r["id"] for r in pred_rows}
+        result: list[tuple[str, float]] = []
+        for key, score in scored:
+            if score < min_score:
+                continue
+            pid = key_to_pid.get(key)
+            if pid is None:
+                continue
+            result.append((pid, score))
+        return result
+
     def link_assertion(
         self,
         assertion_id: str,
