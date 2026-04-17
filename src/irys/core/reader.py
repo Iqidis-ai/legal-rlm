@@ -1,13 +1,16 @@
-"""Document reader for PDF, DOCX, MHT, Markdown, and image files.
+"""Document reader for PDF, DOCX, DOC, MHT, Markdown, and image files.
 
 Extracts text with page/section preservation for citation tracking.
 Image files and scanned PDFs/DOCX files are processed via Mistral OCR.
+DOC (legacy binary) files are extracted via antiword when available.
 """
 
 import asyncio
 import base64
 import logging
 import os
+import shutil
+import subprocess
 import time
 from pathlib import Path
 from dataclasses import dataclass
@@ -137,17 +140,20 @@ class OcrCallMetadata:
 
 
 class DocumentReader:
-    """Read and extract text from PDF, DOCX, TXT, MHT, and image files.
+    """Read and extract text from PDF, DOCX, DOC, TXT, MHT, and image files.
 
     Image files (PNG, JPEG) go straight to Mistral OCR.
     PDF/DOCX files are read normally first; if multimodal detection
     determines OCR is needed, Mistral OCR is called as a fallback.
+    DOC (legacy binary) files are extracted via antiword (must be installed
+    on the system).  If antiword is not available, .doc files are skipped
+    with a clear error message.
 
-    Note: Old .doc (binary) and .rtf formats are NOT supported.
+    Note: .rtf format is NOT supported.
     Convert to .docx or .pdf before processing.
     """
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
 
     @staticmethod
     def _detect_type_from_magic(path: Path) -> str:
@@ -209,6 +215,8 @@ class DocumentReader:
             return self._read_pdf(path)
         elif suffix == ".docx":
             return self._read_docx(path)
+        elif suffix == ".doc":
+            return self._read_doc(path)
         elif suffix == ".txt":
             return self._read_txt(path)
         elif suffix == ".md":
@@ -220,7 +228,7 @@ class DocumentReader:
                 f"Image files must be read via read_async(): {path.name}. "
                 f"Use DocumentReader.read_async() or MatterRepository.read_async()."
             )
-        elif suffix in {".doc", ".rtf"}:
+        elif suffix == ".rtf":
             raise ValueError(
                 f"Unsupported legacy format: {suffix}. "
                 f"Please convert to .docx or .pdf first."
@@ -275,6 +283,109 @@ class DocumentReader:
             path=str(path),
             filename=path.name,
             file_type="docx",
+            page_count=1,
+            pages=pages,
+            total_chars=len(text),
+        )
+
+    # ------------------------------------------------------------------
+    # Legacy .doc support via antiword
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_antiword() -> Optional[str]:
+        """Locate the antiword binary on the system.
+
+        Checks:
+        1. PATH via shutil.which (works on Linux, macOS, Windows)
+        2. Common Linux package paths
+        3. ANTIWORD_PATH environment variable (user override)
+
+        Returns the full path to the binary, or None if not found.
+        """
+        # User override
+        env_path = os.environ.get("ANTIWORD_PATH")
+        if env_path and os.path.isfile(env_path):
+            return env_path
+
+        # Standard PATH lookup
+        found = shutil.which("antiword")
+        if found:
+            return found
+
+        # Common Linux install locations
+        for candidate in ["/usr/bin/antiword", "/usr/local/bin/antiword"]:
+            if os.path.isfile(candidate):
+                return candidate
+
+        return None
+
+    def _read_doc(self, path: Path) -> DocumentContent:
+        """Extract text from legacy .doc (binary Word) files via antiword.
+
+        antiword is a well-tested C utility that reliably extracts text
+        from Microsoft Word binary (.doc) files.  It must be installed
+        on the system (e.g. ``apt install antiword`` on Debian/Ubuntu).
+
+        If antiword is not available, raises ValueError with install
+        instructions so the application can still run — .doc files are
+        simply skipped.
+        """
+        # User-friendly message for all .doc read failures
+        _user_msg = f"Could not read {path.name} — file may be corrupted or unsupported. Continuing with other documents."
+
+        antiword_cmd = self._find_antiword()
+        if antiword_cmd is None:
+            logger.warning(
+                "antiword is not installed — cannot read .doc files. "
+                "Install with: sudo apt install antiword (Linux) / brew install antiword (macOS), "
+                "or set ANTIWORD_PATH env var."
+            )
+            raise ValueError(_user_msg)
+
+        try:
+            result = subprocess.run(
+                [antiword_cmd, "-w", "0", str(path)],  # -w 0 = no line wrapping
+                capture_output=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("antiword timed out (30s) reading %s", path.name)
+            raise ValueError(_user_msg)
+        except OSError as exc:
+            logger.warning("Failed to run antiword for %s: %s", path.name, exc)
+            raise ValueError(_user_msg)
+
+        if result.returncode != 0:
+            stderr_msg = result.stderr.decode("utf-8", errors="replace").strip()
+            logger.warning(
+                "antiword failed on %s (exit code %d): %s",
+                path.name, result.returncode, stderr_msg or "unknown error",
+            )
+            raise ValueError(_user_msg)
+
+        # antiword outputs UTF-8 text by default
+        try:
+            text = result.stdout.decode("utf-8")
+        except UnicodeDecodeError:
+            # Fallback: try latin-1 which never fails
+            text = result.stdout.decode("latin-1")
+
+        text = self._clean_text(text)
+
+        if not text.strip():
+            logger.warning(
+                "antiword returned empty text for %s — file may be "
+                "image-only or password-protected",
+                path.name,
+            )
+
+        pages = [PageContent(page_num=1, text=text)]
+
+        return DocumentContent(
+            path=str(path),
+            filename=path.name,
+            file_type="doc",
             page_count=1,
             pages=pages,
             total_chars=len(text),

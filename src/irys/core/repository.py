@@ -59,7 +59,7 @@ class RepositoryStats:
     total_size_bytes: int
     files_by_type: dict[str, int]
     folders: list[str]
-    skipped_legacy_files: int = 0  # Count of .doc/.rtf files that can't be processed
+    skipped_legacy_files: int = 0  # Count of .rtf files that can't be processed
 
     @property
     def size_mb(self) -> float:
@@ -85,15 +85,15 @@ class MatterRepository:
 
     Provides:
     - File listing and navigation
-    - Document reading (PDF, DOCX, TXT, MHT)
+    - Document reading (PDF, DOCX, DOC, TXT, MHT)
     - Grep-style search across all documents
     - Parallel operations
 
-    Note: Old .doc (binary) and .rtf formats are NOT supported.
-    Convert to .docx or .pdf before adding to repository.
+    Note: .doc files require antiword to be installed on the system.
+    .rtf format is NOT supported — convert to .docx or .pdf.
     """
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
     # Extensions that require async read (OCR path) — sync read() will raise for these
     _ASYNC_ONLY_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
@@ -503,7 +503,7 @@ class MatterRepository:
     def get_stats(self) -> RepositoryStats:
         """Get repository statistics.
 
-        Also detects and counts legacy files (.doc, .rtf) that exist
+        Also detects and counts legacy files (.rtf) that exist
         but cannot be processed. Logs a single summary warning if any
         legacy files are found.
         """
@@ -513,7 +513,7 @@ class MatterRepository:
         total_files = 0
 
         # Legacy file tracking
-        legacy_extensions = {".doc", ".rtf"}
+        legacy_extensions = {".rtf"}
         skipped_legacy = 0
         legacy_samples: list[str] = []  # Track a few for the warning
 
@@ -545,7 +545,7 @@ class MatterRepository:
                 samples_str += f", ... ({skipped_legacy - 3} more)"
             logger.warning(
                 f"Repository contains {skipped_legacy} unsupported legacy file(s) "
-                f"(.doc/.rtf): {samples_str}. Convert to .docx or .pdf for processing."
+                f"(.rtf): {samples_str}. Convert to .docx or .pdf for processing."
             )
 
         return RepositoryStats(
