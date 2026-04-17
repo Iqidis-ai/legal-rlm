@@ -2717,19 +2717,18 @@ class RLMEngine:
                             _rt,
                         )
 
-        # Resolve issue predicates when LLM identifies them as satisfied (SO-4).
-        # Guard rails:
-        # - Only resolve predicates that were in the Issue Focus block shown to the LLM
-        #   (_pred_allowlist); prevents resolving predicates the LLM never saw evidence for.
-        # - Gate on facts_to_add: do not mark elements satisfied if no supporting facts
-        #   were persisted from this analysis pass.
-        # - Case-insensitive + quote-strip comparison handles minor LLM formatting drift.
+        # MVP.2 SO-2: LLM-only paths cannot set issue_predicate.status='resolved'.
+        # The prior implementation called IssueStore.resolve_predicate_by_description
+        # on every predicate the LLM claimed to be satisfied, which let an
+        # unverified AI output promote an element to resolved. That path is
+        # removed. Assumption-gated blocking of the predicate is still
+        # defensive (blocked is a narrowing transition, not an upgrade) and
+        # stays in place until the human review queue lands in P0.3.
         _preds_satisfied = analysis.get("predicates_satisfied") or []
         if (isinstance(_preds_satisfied, list) and _focus_issue_id
                 and self._matter_model is not None
-                and any(_search_assertion_ids)  # gate: facts must have actually persisted
+                and any(_search_assertion_ids)
                 and _pred_allowlist):
-            # Build lowercase lookup → original description for exact SQL match.
             _allowed = {
                 d.strip('"').strip("'").strip().lower(): d
                 for d in _pred_allowlist
@@ -2738,35 +2737,25 @@ class RLMEngine:
                 if not isinstance(_ps, str):
                     continue
                 _ps_key = _ps.strip().strip('"').strip("'").strip().lower()
-                _orig = _allowed.get(_ps_key)
-                if _orig:
-                    try:
-                        # Gap 3: check assumption gates before resolving.
-                        # Find the predicate row to get its ID for assumption checks.
-                        _pred_rows = self._matter_model.issues.get_predicates(
-                            _focus_issue_id, limit=20
+                if _ps_key not in _allowed:
+                    continue
+                try:
+                    _pred_rows = self._matter_model.issues.get_predicates(
+                        _focus_issue_id, limit=20
+                    )
+                    _pred_match = next(
+                        (p for p in _pred_rows
+                         if (p.get("description") or "").strip().lower() == _ps_key),
+                        None,
+                    )
+                    if _pred_match and self._matter_model.assumptions.has_blocking_assumptions(
+                        "predicate", _pred_match["id"]
+                    ):
+                        self._matter_model.issues.set_predicate_status(
+                            _pred_match["id"], "blocked"
                         )
-                        _pred_match = next(
-                            (p for p in _pred_rows
-                             if (p.get("description") or "").strip().lower() == _ps_key),
-                            None
-                        )
-                        if _pred_match:
-                            pid = _pred_match["id"]
-                            # If any linked assumption is invalidated → block the predicate
-                            if self._matter_model.assumptions.has_blocking_assumptions(
-                                "predicate", pid
-                            ):
-                                self._matter_model.issues.set_predicate_status(
-                                    pid, "blocked"
-                                )
-                                continue
-                        # No blocking assumptions → resolve normally
-                        self._matter_model.issues.resolve_predicate_by_description(
-                            _focus_issue_id, _orig
-                        )
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
 
         # Gap 3: handle contested predicates — LLM signals that evidence
         # supports both sides of an element.

@@ -25,6 +25,7 @@ IMPLEMENTED_CAPABILITIES: set[str] = {
     "coverage_report",  # get_issue_coverage_report is canonical
     "mandatory_context_packet",  # PR.3 capped coverage + gap sections
     "proof_gap_detection",  # _detect_proof_gaps opens missing_issue_predicate gaps
+    "verification_state",  # MVP.2 VerificationStateStore + candidate/verified columns
 }
 
 # Capabilities that are intentionally NOT yet implemented and gate future
@@ -138,6 +139,55 @@ def _planned_capability_placeholder(
     )
 
 
+def _candidate_support_not_verified(
+    result: HarnessResult, params: dict[str, Any]
+) -> None:
+    """MVP.2 SO-2: candidate-only support cannot resolve an issue to verified
+    proof. Fixture declares one verified and one candidate assertion both
+    linked as 'supports' to the same issue. The coverage report must expose
+    the verified/candidate split, and verified coverage must be strictly
+    less than total coverage — otherwise the candidate support is being
+    treated as verified.
+    """
+    issue_alias = params["issue_alias"]
+    candidate_alias = params["candidate_assertion_alias"]
+    issue_id = _require_alias(result, f"issue:{issue_alias}")
+    candidate_aid = _require_alias(result, f"assertion:{candidate_alias}")
+
+    report = result.model.get_issue_coverage_report()
+    row = next((r for r in report if r["id"] == issue_id), None)
+    if row is None:
+        raise InvariantViolation(
+            f"issue alias {issue_alias!r} missing from coverage report"
+        )
+
+    verified_count = int(row.get("verified_supporting_count") or 0)
+    candidate_count = int(row.get("candidate_supporting_count") or 0)
+    verified_cov = float(row.get("verified_coverage_fraction") or 0.0)
+    total_cov = float(row.get("coverage_fraction") or 0.0)
+
+    if candidate_count <= 0:
+        raise InvariantViolation(
+            f"issue {issue_alias!r} must report at least one candidate "
+            f"supporting assertion; got candidate_supporting_count={candidate_count}"
+        )
+    if verified_cov >= total_cov:
+        raise InvariantViolation(
+            f"verified_coverage_fraction ({verified_cov}) must be strictly "
+            f"less than coverage_fraction ({total_cov}) when candidate "
+            f"support exists on issue {issue_alias!r}"
+        )
+    # Candidate assertion must have status='candidate' in verification_state.
+    from irys.matter.enums import VerificationTargetKind
+    vs = result.model.verification.get(VerificationTargetKind.ASSERTION, candidate_aid)
+    if vs is None or vs.get("status") != "candidate":
+        raise InvariantViolation(
+            f"candidate assertion alias {candidate_alias!r} must have "
+            f"verification_state.status='candidate'; got "
+            f"{(vs or {}).get('status')!r}"
+        )
+
+
 # Registry: invariant name -> definition.
 _INVARIANTS: dict[str, Invariant] = {
     "issue_gap_created": Invariant(
@@ -165,12 +215,12 @@ _INVARIANTS: dict[str, Invariant] = {
         requires=("evidence_edge_backfill",),
         check=_planned_capability_placeholder,
     ),
-    # MVP.2 — activates once verification_state substrate lands.
+    # MVP.2 — verification_state substrate landed.
     "candidate_support_not_verified": Invariant(
         name="candidate_support_not_verified",
         group="verification",
         requires=("verification_state",),
-        check=_planned_capability_placeholder,
+        check=_candidate_support_not_verified,
     ),
     # MVP.4 — activates once privilege containment lands.
     "no_privileged_doc_in_clean_context": Invariant(

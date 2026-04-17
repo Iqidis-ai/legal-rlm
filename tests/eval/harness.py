@@ -22,7 +22,14 @@ from irys.matter import (
     SourceRole,
     SpeechAct,
 )
-from irys.matter.enums import GapType, IssueType, OriginKind
+from irys.matter.enums import (
+    GapType,
+    IssueType,
+    OriginKind,
+    ReviewScope,
+    ReviewedByKind,
+    VerificationTargetKind,
+)
 from irys.matter.models import AssertionCandidate
 
 from .schema import FixtureSpec
@@ -106,6 +113,18 @@ def _seed_model(fixture: FixtureSpec) -> HarnessResult:
         )
         aid, _ = model.assertions.upsert_occurrence(cand)
         result.alias_to_id[f"assertion:{a.alias}"] = aid
+        # MVP.2: fixtures can mark an assertion as pre-verified by an
+        # attorney by setting "verified": true. upsert_occurrence already
+        # created a candidate row; promote it here so fixtures that drive
+        # verification-gate behavior have a real verified baseline.
+        if a.verified:
+            model.verification.verify(
+                VerificationTargetKind.ASSERTION,
+                aid,
+                reviewed_by_kind=ReviewedByKind.ATTORNEY,
+                review_scope=ReviewScope.EXTRACTION_CORRECT,
+                cause="fixture_seed",
+            )
 
     # Issues + predicates.
     for issue in fixture.issues:

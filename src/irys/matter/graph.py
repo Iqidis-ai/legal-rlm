@@ -475,6 +475,20 @@ class AssertionStore:
                     ),
                 )
 
+            # MVP.2: new assertions are AI-derived until a human reviews
+            # them. Create the verification_state row at 'candidate' inside
+            # the same transaction so the assertion and its review state
+            # can never drift out of sync. Existing assertions (is_new=False)
+            # keep whatever verification state they already have.
+            if is_new:
+                VerificationStateStore(self.db, self.matter_id).candidate(
+                    VerificationTargetKind.ASSERTION,
+                    assertion_id,
+                    ai_confidence=_init_conf,
+                    cause="assertion_upsert",
+                    run_id=run_id,
+                )
+
         return assertion_id, is_new
 
     def link(

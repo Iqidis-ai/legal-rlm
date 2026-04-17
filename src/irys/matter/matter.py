@@ -1559,6 +1559,12 @@ class MatterModel:
         # Weights: operative/admitted/resolved = 1.0, alleged/argued/inferred = 0.5,
         # other active states = 0.3; disputed/withdrawn/superseded excluded entirely.
         # This prevents alleged assertions from overstating coverage vs operative ones.
+        # MVP.2: exclude assertions whose verification_state is 'rejected'
+        # and count verified-vs-candidate support separately so downstream
+        # consumers can enforce the candidate-cannot-resolve-verified-proof
+        # invariant. LEFT JOIN keeps assertions without a verification row
+        # (which should not happen post-migration) counted as candidate
+        # rather than silently dropped.
         support_rows = self.db.execute(
             """SELECT ail.issue_id,
                       COUNT(*) AS raw_count,
@@ -1566,13 +1572,30 @@ class MatterModel:
                             WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0
                             WHEN a.belief_state IN ('alleged','argued','inferred') THEN 0.5
                             ELSE 0.3
-                          END) AS weighted_support
+                          END) AS weighted_support,
+                      SUM(CASE
+                            WHEN COALESCE(vs.status, 'candidate') = 'verified' THEN 1 ELSE 0
+                          END) AS verified_count,
+                      SUM(CASE
+                            WHEN COALESCE(vs.status, 'candidate') = 'verified' THEN
+                              CASE
+                                WHEN a.belief_state IN ('operative','admitted','resolved') THEN 1.0
+                                WHEN a.belief_state IN ('alleged','argued','inferred') THEN 0.5
+                                ELSE 0.3
+                              END
+                            ELSE 0
+                          END) AS verified_weighted
                FROM assertion_issue_link ail
                JOIN issue i ON i.id = ail.issue_id
                JOIN assertion a ON a.id = ail.assertion_id
+               LEFT JOIN verification_state vs
+                 ON vs.target_kind = 'assertion'
+                AND vs.target_id = a.id
+                AND vs.matter_id = a.matter_id
                WHERE i.matter_id=? AND i.status='open'
                  AND ail.relation_type IN ('supports','establishes')
                  AND a.belief_state NOT IN ('disputed','withdrawn','superseded')
+                 AND COALESCE(vs.status, 'candidate') != 'rejected'
                GROUP BY ail.issue_id""",
             (mid,),
         ).fetchall()
@@ -1581,6 +1604,14 @@ class MatterModel:
         # weighted_supports for coverage_fraction computation
         support_counts = {
             r["issue_id"]: float(r["weighted_support"] or 0.0)
+            for r in support_rows
+        }
+        verified_counts = {
+            r["issue_id"]: int(r["verified_count"] or 0)
+            for r in support_rows
+        }
+        verified_weighted = {
+            r["issue_id"]: float(r["verified_weighted"] or 0.0)
             for r in support_rows
         }
 
@@ -1669,6 +1700,9 @@ class MatterModel:
             if child_ids:
                 subtree_rollup = self.issues.compute_coverage_rollup(iid)
 
+            verified_cnt = verified_counts.get(iid, 0)
+            verified_w = verified_weighted.get(iid, 0.0)
+            verified_cov = self._coverage_fraction(verified_w, pred_cnt)
             entry = {
                 "id": iid,
                 "title": issue.get("title", ""),
@@ -1683,6 +1717,12 @@ class MatterModel:
                 "attacking_count": atk_cnt,
                 "predicate_count": pred_cnt,
                 "coverage_fraction": round(coverage, 4),
+                # MVP.2: verified-vs-candidate breakdown lets downstream
+                # consumers enforce that candidate-only support cannot
+                # resolve an issue to verified proof (SO-2).
+                "verified_supporting_count": verified_cnt,
+                "candidate_supporting_count": raw_cnt - verified_cnt,
+                "verified_coverage_fraction": round(verified_cov, 4),
                 "proof_status": proof_status,
                 "has_proof_gap": has_gap,
                 "gap_id": proof_gaps.get(iid),
