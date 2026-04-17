@@ -79,6 +79,12 @@
       "group": "proof_gap",
       "requires": ["coverage_report"],
       "params": {"issue_alias": "nonpayment_claim"}
+    },
+    {
+      "name": "evidence_edge_backfill_idempotent",
+      "group": "evidence_edge",
+      "requires": ["evidence_edge_backfill"],
+      "params": {"expected_edge_count": 2}
     }
   ]
 }

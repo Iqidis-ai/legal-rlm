@@ -16,12 +16,24 @@ from .schema import InvariantSpec
 
 
 # Capabilities implemented as of MVP.1 (PR.1 + PR.2 + PR.3 landed).
+# Invariants that require a capability NOT in this set skip with a clear
+# reason instead of failing. When a future MVP step ships the missing
+# capability, add the tag here and every gated invariant activates.
 IMPLEMENTED_CAPABILITIES: set[str] = {
-    "schema_v49",
-    "proof_state_partial",  # compute_and_store writes trust_weighted_*, proof_status
+    "schema_v49",  # PR.1 schema discipline gate
+    "proof_state_partial",  # ProofStateStore writes trust_weighted_* and proof_status
     "coverage_report",  # get_issue_coverage_report is canonical
     "mandatory_context_packet",  # PR.3 capped coverage + gap sections
-    "proof_gap_detection",  # _detect_proof_gaps maps to missing_issue_predicate
+    "proof_gap_detection",  # _detect_proof_gaps opens missing_issue_predicate gaps
+}
+
+# Capabilities that are intentionally NOT yet implemented and gate future
+# fixture invariants. Documenting them here keeps the capability map honest
+# and lets fixtures reference stable tags before the production work lands.
+PLANNED_CAPABILITIES: set[str] = {
+    "evidence_edge_backfill",  # MVP.3 EvidenceEdgeStore + legacy-link backfill
+    "verification_state",  # MVP.2 candidate/verified separation
+    "privilege_containment",  # MVP.4 clean-output gating on privileged support
 }
 
 
@@ -111,6 +123,21 @@ def _mandatory_gap_section_present(result: HarnessResult, params: dict[str, Any]
         )
 
 
+def _planned_capability_placeholder(
+    result: HarnessResult, params: dict[str, Any]
+) -> None:
+    """Placeholder for invariants whose capability has not shipped.
+
+    Never actually runs because its capability tag is not in
+    IMPLEMENTED_CAPABILITIES. If somehow it did run, raise so the failure
+    is impossible to miss during future MVP work.
+    """
+    raise InvariantViolation(
+        "planned-capability invariant executed but capability is not marked "
+        "implemented; either activate the capability or remove this check"
+    )
+
+
 # Registry: invariant name -> definition.
 _INVARIANTS: dict[str, Invariant] = {
     "issue_gap_created": Invariant(
@@ -130,6 +157,27 @@ _INVARIANTS: dict[str, Invariant] = {
         group="context_packet",
         requires=("mandatory_context_packet",),
         check=_mandatory_gap_section_present,
+    ),
+    # MVP.3 — activates once EvidenceEdgeStore lands.
+    "evidence_edge_backfill_idempotent": Invariant(
+        name="evidence_edge_backfill_idempotent",
+        group="evidence_edge",
+        requires=("evidence_edge_backfill",),
+        check=_planned_capability_placeholder,
+    ),
+    # MVP.2 — activates once verification_state substrate lands.
+    "candidate_support_not_verified": Invariant(
+        name="candidate_support_not_verified",
+        group="verification",
+        requires=("verification_state",),
+        check=_planned_capability_placeholder,
+    ),
+    # MVP.4 — activates once privilege containment lands.
+    "no_privileged_doc_in_clean_context": Invariant(
+        name="no_privileged_doc_in_clean_context",
+        group="privilege",
+        requires=("privilege_containment",),
+        check=_planned_capability_placeholder,
     ),
 }
 
@@ -157,21 +205,32 @@ _ENGINE_ONLY_GROUPS: set[str] = {"context_packet"}
 
 def run_invariants(
     fixture_name: str, mode: str, result: HarnessResult
-) -> list[str]:
+) -> list[tuple[str, str]]:
     """Run all activatable invariants declared on the fixture.
 
-    Returns a list of invariant names that were skipped because either the
-    capability is not yet implemented or the invariant's group needs an
-    engine that the current mode does not provide.
+    Returns a list of (invariant_name, reason) tuples for every skipped
+    invariant, where reason names the missing capability or the mode
+    mismatch that caused the skip. Violated invariants raise
+    InvariantViolation with fixture + mode + invariant name + message.
     """
-    skipped: list[str] = []
+    skipped: list[tuple[str, str]] = []
     for spec in result.fixture.invariants:
-        inv = resolve_invariant(spec)
-        if inv is None:
-            skipped.append(spec.name)
+        if spec.name not in _INVARIANTS:
+            raise InvariantViolation(
+                f"fixture references unknown invariant {spec.name!r}; "
+                f"register it in tests/eval/invariants.py"
+            )
+        inv = _INVARIANTS[spec.name]
+        if not inv.is_activatable():
+            missing = sorted(set(inv.requires) - IMPLEMENTED_CAPABILITIES)
+            skipped.append(
+                (spec.name, f"capability not implemented: {', '.join(missing)}")
+            )
             continue
         if mode == "store" and inv.group in _ENGINE_ONLY_GROUPS:
-            skipped.append(spec.name)
+            skipped.append(
+                (spec.name, f"group {inv.group!r} requires engine-stub mode")
+            )
             continue
         try:
             inv.check(result, spec.params)

@@ -68,6 +68,15 @@
       "group": "proof_gap",
       "requires": ["coverage_report"],
       "params": {"issue_alias": "breach_payment"}
+    },
+    {
+      "name": "candidate_support_not_verified",
+      "group": "verification",
+      "requires": ["verification_state"],
+      "params": {
+        "issue_alias": "breach_payment",
+        "candidate_assertion_alias": "candidate_allegation"
+      }
     }
   ]
 }
