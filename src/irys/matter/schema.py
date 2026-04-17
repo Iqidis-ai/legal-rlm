@@ -4,7 +4,103 @@ One DB per repository at repository/.irys/matter.sqlite3.
 WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 """
 
-SCHEMA_VERSION = 47
+import sqlite3
+
+SCHEMA_VERSION = 49
+
+
+class SchemaVersionTooNewError(RuntimeError):
+    """Raised when a database was written by a newer build of the code."""
+
+    def __init__(self, db_version: int, supported_version: int):
+        self.db_version = db_version
+        self.supported_version = supported_version
+        super().__init__(
+            f"Database schema version {db_version} is newer than supported "
+            f"version {supported_version}. Upgrade the application or open "
+            f"with a newer build. Refusing to proceed."
+        )
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def get_schema_ledger_versions(conn: sqlite3.Connection) -> dict[str, int]:
+    """Return the highest version recorded in each schema ledger.
+
+    Reads from schema_version, schema_migration (if present), and
+    PRAGMA user_version. Missing ledgers report 0. No writes.
+    """
+    sv_max = 0
+    if _table_exists(conn, "schema_version"):
+        row = conn.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version"
+        ).fetchone()
+        sv_max = int(row[0] or 0)
+
+    sm_max = 0
+    if _table_exists(conn, "schema_migration"):
+        row = conn.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migration"
+        ).fetchone()
+        sm_max = int(row[0] or 0)
+
+    uv_row = conn.execute("PRAGMA user_version").fetchone()
+    uv = int(uv_row[0] or 0) if uv_row else 0
+
+    return {
+        "schema_version": sv_max,
+        "schema_migration": sm_max,
+        "user_version": uv,
+    }
+
+
+def get_recorded_schema_version(conn: sqlite3.Connection) -> int:
+    """Return the highest version recorded across all ledgers."""
+    ledgers = get_schema_ledger_versions(conn)
+    return max(ledgers.values()) if ledgers else 0
+
+
+def _record_schema_version(
+    conn: sqlite3.Connection, version: int, applied_at: str
+) -> None:
+    conn.execute(
+        "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+        (version, applied_at),
+    )
+
+
+def _record_schema_migration(
+    conn: sqlite3.Connection, version: int, applied_at: str, name: str
+) -> None:
+    """Record a migration in the schema_migration ledger if the table exists."""
+    if not _table_exists(conn, "schema_migration"):
+        return
+    conn.execute(
+        """INSERT OR IGNORE INTO schema_migration
+           (version, name, checksum, applied_at, app_schema_version, app_build, duration_ms)
+           VALUES (?, ?, '', ?, ?, 'python_runner', 0)""",
+        (version, name, applied_at, SCHEMA_VERSION),
+    )
+
+
+def _execute_allow_duplicate_column(conn: sqlite3.Connection, sql: str) -> None:
+    """Execute DDL that may add a column already present. Re-raise any other error.
+
+    SQLite raises OperationalError('duplicate column name: ...') when ALTER TABLE
+    ADD COLUMN targets a column that already exists. Every other OperationalError
+    is a real migration defect and must surface.
+    """
+    try:
+        conn.execute(sql)
+    except sqlite3.OperationalError as exc:
+        if "duplicate column name" not in str(exc).lower():
+            raise
 
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
@@ -2208,6 +2304,71 @@ def _migration_v48(conn) -> None:
     conn.commit()
 
 
+def _migration_v49(conn) -> None:
+    """Introduce schema_migration ledger and migration_backfill_job queue.
+
+    The schema_migration table is the canonical migration ledger going forward;
+    the older schema_version table is preserved as a compatibility ledger. Any
+    rows in schema_version are backfilled into schema_migration as legacy_v<N>.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migration (
+            version            INTEGER PRIMARY KEY,
+            name               TEXT NOT NULL,
+            checksum           TEXT NOT NULL DEFAULT '',
+            applied_at         TEXT NOT NULL,
+            app_schema_version INTEGER NOT NULL,
+            app_build          TEXT,
+            duration_ms        INTEGER NOT NULL DEFAULT 0
+        ) STRICT
+        """
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO schema_migration
+            (version, name, checksum, applied_at, app_schema_version, app_build, duration_ms)
+        SELECT
+            version,
+            'legacy_v' || version,
+            'legacy',
+            applied_at,
+            version,
+            'legacy_python_runner',
+            0
+        FROM schema_version
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS migration_backfill_job (
+            id                  TEXT PRIMARY KEY,
+            matter_id           TEXT REFERENCES matter(id) ON DELETE CASCADE,
+            job_name            TEXT NOT NULL,
+            status              TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'running', 'complete', 'failed', 'skipped')),
+            priority            INTEGER NOT NULL DEFAULT 100,
+            total_items         INTEGER NOT NULL DEFAULT 0,
+            completed_items     INTEGER NOT NULL DEFAULT 0,
+            estimated_tokens    INTEGER NOT NULL DEFAULT 0,
+            estimated_cost_usd  REAL NOT NULL DEFAULT 0.0,
+            error               TEXT,
+            created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+            started_at          TEXT,
+            completed_at        TEXT,
+            UNIQUE(matter_id, job_name)
+        ) STRICT
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_backfill_job_status
+            ON migration_backfill_job(status, priority, created_at)
+        """
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -2260,6 +2421,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (46, _migration_v46),
     (47, _migration_v47),
     (48, _migration_v48),
+    (49, _migration_v49),
 ]
 
 
@@ -2268,10 +2430,19 @@ def apply_schema(conn) -> None:
 
     Safe to call on both fresh DBs (runs all migrations) and existing DBs
     (skips already-applied migrations). Idempotent.
+
+    Refuses to proceed if the database records any version higher than the
+    declared SCHEMA_VERSION — the code would not know how to read a future
+    schema, and silently downgrading is worse than failing loudly.
     """
     from datetime import datetime, timezone
 
-    # Ensure schema_version table exists before reading it.
+    # Step 1: read-only version check. No writes until the guard passes.
+    db_version = get_recorded_schema_version(conn)
+    if db_version > SCHEMA_VERSION:
+        raise SchemaVersionTooNewError(db_version, SCHEMA_VERSION)
+
+    # Step 2: ensure schema_version ledger table exists before any writes.
     for stmt in _DDL_SCHEMA_VERSION.split(";"):
         stmt = stmt.strip()
         if stmt:
@@ -2281,12 +2452,24 @@ def apply_schema(conn) -> None:
     row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
     current_version: int = row[0] if row and row[0] is not None else 0
 
+    # Step 3: apply migrations up to but never past SCHEMA_VERSION.
     for to_version, migration_fn in _MIGRATIONS:
+        if to_version > SCHEMA_VERSION:
+            break
         if current_version < to_version:
             migration_fn(conn)  # type: ignore[operator]
-            conn.execute(
-                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
-                (to_version, datetime.now(timezone.utc).isoformat()),
+            applied_at = datetime.now(timezone.utc).isoformat()
+            _record_schema_version(conn, to_version, applied_at)
+            _record_schema_migration(
+                conn,
+                to_version,
+                applied_at,
+                "schema_discipline" if to_version == 49 else f"legacy_v{to_version}",
             )
+            conn.execute(f"PRAGMA user_version = {int(to_version)}")
             conn.commit()
             current_version = to_version
+
+    # Ensure user_version is aligned even on already-current DBs.
+    conn.execute(f"PRAGMA user_version = {int(current_version)}")
+    conn.commit()

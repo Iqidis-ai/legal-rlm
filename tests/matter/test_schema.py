@@ -396,3 +396,116 @@ def test_migration_v33_adds_ail_covering_index():
     assert idx is not None, (
         "ix_ail_issue_rel_assertion must be created by migration v33"
     )
+
+
+# ---------------------------------------------------------------------------
+# PR.1 Schema Discipline Gate
+# ---------------------------------------------------------------------------
+
+def test_fresh_db_records_current_schema_in_all_ledgers():
+    """Fresh DB must record SCHEMA_VERSION in schema_version, schema_migration,
+    and PRAGMA user_version — the three ledgers must agree."""
+    from irys.matter.schema import get_schema_ledger_versions
+
+    db = SQLiteMatterDB.in_memory()
+    ledgers = get_schema_ledger_versions(db.conn)
+    assert ledgers["schema_version"] == SCHEMA_VERSION
+    assert ledgers["schema_migration"] == SCHEMA_VERSION
+    assert ledgers["user_version"] == SCHEMA_VERSION
+
+
+def test_open_refuses_database_newer_than_supported_user_version(tmp_path):
+    """A DB whose PRAGMA user_version is above SCHEMA_VERSION must fail closed,
+    and must not create any schema tables in the process."""
+    import sqlite3
+    from irys.matter.schema import SchemaVersionTooNewError
+
+    path = tmp_path / "newer.sqlite3"
+    conn = sqlite3.connect(str(path))
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(SchemaVersionTooNewError):
+        SQLiteMatterDB(path)
+
+    # The guard runs before any DDL — schema_version table must not exist yet.
+    check = sqlite3.connect(str(path))
+    row = check.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
+    ).fetchone()
+    check.close()
+    assert row is None, "schema_version table must not be created after a guard failure"
+
+
+def test_open_refuses_database_newer_than_supported_schema_migration(tmp_path):
+    """A DB whose schema_migration ledger has a version above SCHEMA_VERSION
+    must fail closed."""
+    import sqlite3
+    from irys.matter.schema import SchemaVersionTooNewError
+
+    path = tmp_path / "newer_ledger.sqlite3"
+    # Build a valid fresh DB first.
+    SQLiteMatterDB(path).close()
+
+    # Manually insert a future schema_migration row.
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        """INSERT INTO schema_migration
+           (version, name, checksum, applied_at, app_schema_version, app_build, duration_ms)
+           VALUES (?, ?, '', ?, ?, 'test_build', 0)""",
+        (SCHEMA_VERSION + 1, "future_v", "2026-04-17T00:00:00", SCHEMA_VERSION + 1),
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(SchemaVersionTooNewError):
+        SQLiteMatterDB(path)
+
+
+def test_apply_schema_does_not_run_future_migrations(monkeypatch):
+    """Migrations whose target exceeds SCHEMA_VERSION must not run, even if
+    they were registered in _MIGRATIONS."""
+    import sqlite3
+    from irys.matter import schema as schema_mod
+
+    future_ran = {"count": 0}
+
+    def _fake_future_migration(conn):
+        future_ran["count"] += 1
+
+    patched = list(schema_mod._MIGRATIONS) + [
+        (SCHEMA_VERSION + 1, _fake_future_migration)
+    ]
+    monkeypatch.setattr(schema_mod, "_MIGRATIONS", patched)
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    schema_mod.apply_schema(conn)
+
+    assert future_ran["count"] == 0, "Future migration must not execute"
+    row = conn.execute(
+        "SELECT COALESCE(MAX(version), 0) FROM schema_version"
+    ).fetchone()
+    assert row[0] == SCHEMA_VERSION, "schema_version must not record a future version"
+
+
+def test_duplicate_column_guard_reraises_nonduplicate_operational_error():
+    """_execute_allow_duplicate_column must swallow only duplicate-column errors."""
+    import sqlite3
+    from irys.matter.schema import _execute_allow_duplicate_column
+
+    db = SQLiteMatterDB.in_memory()
+    conn = db.conn
+
+    # Duplicate-column: must be swallowed.
+    _execute_allow_duplicate_column(
+        conn, "ALTER TABLE matter ADD COLUMN name TEXT"
+    )
+
+    # Any other OperationalError must re-raise (unknown table name here).
+    with pytest.raises(sqlite3.OperationalError):
+        _execute_allow_duplicate_column(
+            conn, "ALTER TABLE nonexistent_table ADD COLUMN foo TEXT"
+        )

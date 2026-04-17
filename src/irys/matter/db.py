@@ -36,12 +36,22 @@ class SQLiteMatterDB:
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA temp_store=MEMORY")
             self._shared_conn = conn
-            apply_schema(conn)
+            try:
+                apply_schema(conn)
+            except Exception:
+                conn.close()
+                self._shared_conn = None
+                raise
         else:
             # Ensure parent directory exists and apply schema via thread-local conn
             db_path.parent.mkdir(parents=True, exist_ok=True)
             conn = self._conn()
-            apply_schema(conn)
+            try:
+                apply_schema(conn)
+            except Exception:
+                conn.close()
+                self._local.conn = None
+                raise
 
     def _conn(self) -> sqlite3.Connection:
         """Get the active connection (shared for in-memory, thread-local for file)."""
