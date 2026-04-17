@@ -1,0 +1,73 @@
+{
+  "name": "verification_gate_candidate_only_support",
+  "intent": "Candidate-only AI support should not resolve an issue. Verified attorney support should. MVP.2 verification_state substrate must separate the two so that candidate-only support cannot contribute to verified proof sufficiency. Until MVP.2 lands, the fixture only exercises coverage-report shape; verification invariants declare capability verification_state and skip with a reason.",
+  "sacred_outcomes": ["SO-2", "SO-4"],
+  "documents": [
+    {
+      "alias": "complaint",
+      "document_id": "pleadings/complaint.pdf",
+      "filename": "complaint.pdf",
+      "doc_type": "pleading",
+      "source_role": "advocacy",
+      "source_side": "plaintiff"
+    },
+    {
+      "alias": "msa",
+      "document_id": "contracts/msa.pdf",
+      "filename": "msa.pdf",
+      "doc_type": "contract",
+      "source_role": "operative",
+      "source_side": "neutral"
+    }
+  ],
+  "assertions": [
+    {
+      "alias": "verified_clause",
+      "document_alias": "msa",
+      "proposition_text": "The MSA requires payment within thirty days of invoice.",
+      "speech_act": "operative",
+      "source_role": "operative",
+      "model_layer": "record",
+      "assertion_kind": "factual",
+      "origin_kind": "extracted",
+      "verified": true
+    },
+    {
+      "alias": "candidate_allegation",
+      "document_alias": "complaint",
+      "proposition_text": "Defendant never paid the outstanding balance.",
+      "speech_act": "alleged",
+      "source_role": "advocacy",
+      "model_layer": "record",
+      "assertion_kind": "factual",
+      "origin_kind": "extracted",
+      "verified": false
+    }
+  ],
+  "issues": [
+    {
+      "alias": "breach_payment",
+      "title": "Defendant breached the payment obligation",
+      "issue_type": "claim",
+      "materiality": 0.9,
+      "salience": 0.8,
+      "burden_side": "plaintiff",
+      "predicates": ["Obligation exists", "Payment not made"]
+    }
+  ],
+  "issue_links": [
+    {"assertion_alias": "verified_clause", "issue_alias": "breach_payment", "relation_type": "supports"},
+    {"assertion_alias": "candidate_allegation", "issue_alias": "breach_payment", "relation_type": "supports"}
+  ],
+  "maintenance": [
+    {"step": "proof_state.compute_all"}
+  ],
+  "invariants": [
+    {
+      "name": "coverage_partial_and_nonzero",
+      "group": "proof_gap",
+      "requires": ["coverage_report"],
+      "params": {"issue_alias": "breach_payment"}
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "name": "privilege_block_internal_memo",
+  "intent": "An internal attorney memo marked privileged supports a high-materiality issue. Under MVP.4 privilege containment, privileged-only support must not contribute to clean proof or clean synthesis output; a review gap or task must open. Until MVP.4 lands, the fixture only exercises proof-gap detection on the clean-evidence-absent path.",
+  "sacred_outcomes": ["SO-5", "SO-7"],
+  "documents": [
+    {
+      "alias": "msa",
+      "document_id": "contracts/msa.pdf",
+      "filename": "msa.pdf",
+      "doc_type": "contract",
+      "source_role": "operative",
+      "source_side": "neutral"
+    },
+    {
+      "alias": "complaint",
+      "document_id": "pleadings/complaint.pdf",
+      "filename": "complaint.pdf",
+      "doc_type": "pleading",
+      "source_role": "advocacy",
+      "source_side": "plaintiff"
+    },
+    {
+      "alias": "internal_memo",
+      "document_id": "internal/attorney_memo.docx",
+      "filename": "attorney_memo.docx",
+      "doc_type": "memo",
+      "source_role": "informal",
+      "source_side": "plaintiff",
+      "privilege_status": "privileged"
+    }
+  ],
+  "assertions": [
+    {
+      "alias": "privileged_analysis",
+      "document_alias": "internal_memo",
+      "proposition_text": "Counsel's internal view is that defendant's breach is clear on the face of the MSA.",
+      "speech_act": "argued",
+      "source_role": "informal",
+      "model_layer": "record",
+      "assertion_kind": "factual",
+      "origin_kind": "extracted"
+    }
+  ],
+  "issues": [
+    {
+      "alias": "breach_claim",
+      "title": "Defendant breached the MSA",
+      "issue_type": "claim",
+      "materiality": 0.9,
+      "salience": 0.8,
+      "burden_side": "plaintiff",
+      "predicates": ["Obligation exists", "Obligation was breached"]
+    }
+  ],
+  "issue_links": [
+    {"assertion_alias": "privileged_analysis", "issue_alias": "breach_claim", "relation_type": "supports"}
+  ],
+  "maintenance": [
+    {"step": "proof_state.compute_all"}
+  ],
+  "invariants": [
+    {
+      "name": "coverage_partial_and_nonzero",
+      "group": "proof_gap",
+      "requires": ["coverage_report"],
+      "params": {"issue_alias": "breach_claim"}
+    }
+  ]
+}

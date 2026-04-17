@@ -1,0 +1,84 @@
+{
+  "name": "evidence_edge_backfill_nonpayment",
+  "intent": "Legacy assertion_issue_link rows exist for nonpayment evidence, but the evidence_edge store is empty. MVP.3 evidence-edge backfill must create exactly one edge per legacy link, remain idempotent across reruns, and preserve proof-state counts. Until MVP.3 lands, only the baseline proof_gap invariants activate — everything else skips with an explicit reason.",
+  "sacred_outcomes": ["SO-4"],
+  "documents": [
+    {
+      "alias": "msa",
+      "document_id": "contracts/msa.pdf",
+      "filename": "msa.pdf",
+      "doc_type": "contract",
+      "source_role": "operative",
+      "source_side": "neutral"
+    },
+    {
+      "alias": "invoice",
+      "document_id": "billing/invoice_1001.pdf",
+      "filename": "invoice_1001.pdf",
+      "doc_type": "invoice",
+      "source_role": "operative",
+      "source_side": "plaintiff"
+    },
+    {
+      "alias": "aging_report",
+      "document_id": "billing/aging_report.xlsx",
+      "filename": "aging_report.xlsx",
+      "doc_type": "spreadsheet",
+      "source_role": "operative",
+      "source_side": "plaintiff"
+    }
+  ],
+  "assertions": [
+    {
+      "alias": "invoice_issued",
+      "document_alias": "invoice",
+      "proposition_text": "Invoice 1001 for 100,000 USD was issued with thirty-day net terms.",
+      "speech_act": "operative",
+      "source_role": "operative",
+      "model_layer": "record",
+      "assertion_kind": "factual",
+      "origin_kind": "extracted"
+    },
+    {
+      "alias": "aging_unpaid",
+      "document_alias": "aging_report",
+      "proposition_text": "Aging report lists invoice 1001 as past-due at day sixty with no payments applied.",
+      "speech_act": "operative",
+      "source_role": "operative",
+      "model_layer": "record",
+      "assertion_kind": "factual",
+      "origin_kind": "extracted"
+    }
+  ],
+  "issues": [
+    {
+      "alias": "nonpayment_claim",
+      "title": "Defendant failed to pay invoice 1001 when due",
+      "issue_type": "claim",
+      "materiality": 0.9,
+      "salience": 0.8,
+      "burden_side": "plaintiff",
+      "predicates": [
+        "Invoice was issued",
+        "Payment was not made within terms",
+        "Notice of default was not timely cured"
+      ]
+    }
+  ],
+  "issue_links": [
+    {"assertion_alias": "invoice_issued", "issue_alias": "nonpayment_claim", "relation_type": "supports"},
+    {"assertion_alias": "aging_unpaid", "issue_alias": "nonpayment_claim", "relation_type": "supports"}
+  ],
+  "maintenance": [
+    {"step": "proof_state.compute_all"},
+    {"step": "engine._detect_proof_gaps"}
+  ],
+  "invariants": [
+    {
+      "name": "coverage_partial_and_nonzero",
+      "group": "proof_gap",
+      "requires": ["coverage_report"],
+      "params": {"issue_alias": "nonpayment_claim"}
+    }
+  ]
+}
