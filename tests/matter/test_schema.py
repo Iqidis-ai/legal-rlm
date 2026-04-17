@@ -509,3 +509,79 @@ def test_duplicate_column_guard_reraises_nonduplicate_operational_error():
         _execute_allow_duplicate_column(
             conn, "ALTER TABLE nonexistent_table ADD COLUMN foo TEXT"
         )
+
+
+def _resolve_qualname(ref: str):
+    """Resolve a module:qualname reference to a live callable."""
+    import importlib
+
+    module_name, _, qualname = ref.partition(":")
+    assert qualname, f"Manifest ref {ref!r} must be module:qualname form"
+    module = importlib.import_module(module_name)
+    obj = module
+    for part in qualname.split("."):
+        obj = getattr(obj, part)
+    return obj
+
+
+def test_non_legacy_tables_have_writer_reader_or_explicit_deferral():
+    """Every non-legacy table must appear in the coverage manifest with
+    either named writers+readers or an explicit deferred status. Covered
+    refs must resolve to real callables and the source of each callable
+    must mention the table it covers (sanity check only)."""
+    import inspect
+    from tests.matter.table_coverage_manifest import (
+        LEGACY_TABLES,
+        TABLE_COVERAGE_MANIFEST,
+    )
+
+    db = SQLiteMatterDB.in_memory()
+    live_tables = {
+        row[0]
+        for row in db.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+
+    # Every table must be accounted for.
+    uncovered = []
+    for table in sorted(live_tables):
+        if table in LEGACY_TABLES:
+            continue
+        if table in TABLE_COVERAGE_MANIFEST:
+            continue
+        uncovered.append(table)
+    assert not uncovered, (
+        f"Non-legacy tables missing from coverage manifest: {uncovered}. "
+        "Add writers/readers or mark as deferred in "
+        "tests/matter/table_coverage_manifest.py."
+    )
+
+    # Every covered entry must name real callables; every deferred entry
+    # must supply a milestone and a reason and must not claim writers/readers.
+    for table, spec in TABLE_COVERAGE_MANIFEST.items():
+        if spec.deferred_until is not None:
+            assert spec.deferred_until, (
+                f"{table}: deferred_until must be a non-empty string"
+            )
+            assert spec.reason, (
+                f"{table}: deferred table must include a reason"
+            )
+            assert not spec.writers and not spec.readers, (
+                f"{table}: deferred table must not declare writers/readers; "
+                "use a covered entry instead"
+            )
+            continue
+
+        assert spec.writers, f"{table}: covered entry needs at least one writer"
+        assert spec.readers, f"{table}: covered entry needs at least one reader"
+
+        for ref in (*spec.writers, *spec.readers):
+            fn = _resolve_qualname(ref)
+            assert callable(fn), f"{table}: {ref!r} is not callable"
+            src = inspect.getsource(fn)
+            assert table in src, (
+                f"{table}: source of {ref!r} does not mention table name — "
+                "sanity check failed, is this really the writer/reader?"
+            )
