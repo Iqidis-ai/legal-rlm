@@ -162,6 +162,11 @@ class MatterRuntimeAdapter:
     no-ops and the engine behaves exactly as before.
     """
 
+    # P0.1: default extractor_version stamped on every provenance row
+    # when the adapter auto-builds a ProvenanceContext. Bump this when
+    # the extraction pipeline's semantics materially change.
+    DEFAULT_EXTRACTOR_VERSION = "2026-04-17.p01.v1"
+
     def __init__(
         self,
         matter_model: MatterModel,
@@ -225,6 +230,35 @@ class MatterRuntimeAdapter:
             return ModelLayer.REALITY
         return ModelLayer.RECORD
 
+    def _auto_provenance(
+        self,
+        *,
+        event_kind: str,
+        writer_name: str,
+        document_id: Optional[str] = None,
+        span_id: Optional[str] = None,
+        prompt_version: Optional[str] = None,
+        llm_call_id: Optional[str] = None,
+    ) -> "ProvenanceContext":
+        """P0.1: build a ProvenanceContext from the runtime's run_id and
+        default extractor_version. Extraction call sites without
+        specific prompt_version/llm_call_id still get a minimal
+        provenance row so every AI-derived object is attributable."""
+        from .models import ProvenanceContext
+
+        span_status = "present" if span_id else "missing"
+        return ProvenanceContext(
+            event_kind=event_kind,
+            writer_name=writer_name,
+            run_id=self.run_id,
+            extractor_version=self.DEFAULT_EXTRACTOR_VERSION,
+            prompt_version=prompt_version,
+            llm_call_id=llm_call_id,
+            source_document_ref=document_id,
+            source_span_id=span_id,
+            source_span_status=span_status,
+        )
+
     def record_fact(
         self,
         proposition_text: str,
@@ -243,6 +277,7 @@ class MatterRuntimeAdapter:
         predicate_key: Optional[str] = None,
         object_json: Optional[str] = None,
         temporal_scope_end: Optional[str] = None,
+        provenance: "Optional[ProvenanceContext]" = None,
     ) -> str:
         """
         Convert an extracted fact string into a typed assertion.
@@ -296,7 +331,18 @@ class MatterRuntimeAdapter:
             object_json=object_json,
             temporal_scope_end=temporal_scope_end,
         )
-        assertion_id, is_new = self.model.record_assertion(candidate, run_id=self.run_id)
+        # P0.1: auto-build a ProvenanceContext when the caller didn't
+        # supply one so every AI-derived assertion is attributable.
+        if provenance is None:
+            provenance = self._auto_provenance(
+                event_kind="assertion_extraction",
+                writer_name="AssertionStore.upsert_occurrence",
+                document_id=document_id,
+                span_id=span_id,
+            )
+        assertion_id, is_new = self.model.record_assertion(
+            candidate, run_id=self.run_id, provenance=provenance,
+        )
         self._pending_assertion_ids.append(assertion_id)
 
         if is_new:
@@ -772,6 +818,8 @@ class MatterRuntimeAdapter:
         subject_id: Optional[str] = None,
         assertion_id: Optional[str] = None,
         span_id: Optional[str] = None,
+        document_id: Optional[str] = None,
+        provenance: "Optional[ProvenanceContext]" = None,
     ) -> str:
         """
         Persist a structured numeric fact to the quant store (SO-6).
@@ -779,7 +827,17 @@ class MatterRuntimeAdapter:
                     reconciliation — prevents two distinct invoices from appearing
                     as a conflict just because they share the same subject_type.
         Returns quant_fact_id.
+
+        P0.1: auto-builds a ProvenanceContext when the caller doesn't
+        supply one so every AI-extracted numeric fact is attributable.
         """
+        if provenance is None:
+            provenance = self._auto_provenance(
+                event_kind="quant_record",
+                writer_name="QuantStore.record",
+                document_id=document_id,
+                span_id=span_id,
+            )
         return self.model.quant.record(
             quant_kind=quant_kind,
             raw_text=raw_text,
@@ -792,6 +850,7 @@ class MatterRuntimeAdapter:
             subject_id=subject_id,
             assertion_id=assertion_id,
             span_id=span_id,
+            provenance=provenance,
         )
 
     def record_quants_batch(self, specs: list[dict]) -> None:

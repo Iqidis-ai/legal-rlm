@@ -276,3 +276,51 @@ def test_get_provenance_orders_by_created_at_desc(model):
 
 def test_get_provenance_empty_for_unknown_target(model):
     assert model.get_provenance("assertion", "does_not_exist") == []
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: production wire-up through MatterRuntimeAdapter.record_fact
+# ---------------------------------------------------------------------------
+
+def test_matter_runtime_record_fact_auto_attaches_provenance(model):
+    """MatterRuntimeAdapter.record_fact must auto-build provenance when
+    callers don't supply one. This exercises the production extraction
+    path end-to-end: engine → runtime.record_fact → MatterModel.record_assertion
+    → AssertionStore.upsert_occurrence → ProvenanceStore.record."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    run_id = model.start_run("provenance smoke")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact(
+        proposition_text="Defendant owed payment",
+        document_id="contracts/msa.pdf",
+        span_id="span_42",
+    )
+    rows = model.get_provenance("assertion", aid)
+    assert len(rows) >= 1
+    row = rows[0]
+    assert row["run_id"] == run_id
+    assert row["extractor_version"] == adapter.DEFAULT_EXTRACTOR_VERSION
+    assert row["source_document_ref"] == "contracts/msa.pdf"
+    assert row["source_span_id"] == "span_42"
+    assert row["source_span_status"] == "present"
+    assert row["writer_name"] == "AssertionStore.upsert_occurrence"
+    model.complete_run(run_id)
+
+
+def test_matter_runtime_record_fact_records_missing_span_status(model):
+    """AC #4 via the production path: when span_id is None, the
+    provenance row records 'missing' explicitly."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    run_id = model.start_run("provenance span-missing")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact(
+        proposition_text="Claim without a known span",
+        document_id="contracts/msa.pdf",
+        span_id=None,
+    )
+    rows = model.get_provenance("assertion", aid)
+    assert rows[0]["source_span_id"] is None
+    assert rows[0]["source_span_status"] == "missing"
+    model.complete_run(run_id)

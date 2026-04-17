@@ -35,7 +35,7 @@ from .enums import (
 )
 from .models import (
     AssertionCandidate, AssertionRecord, RevisionResult,
-    QueryMatterContext, RunSessionRecord,
+    QueryMatterContext, RunSessionRecord, ProvenanceContext,
 )
 
 
@@ -533,14 +533,21 @@ class MatterModel:
     # ------------------------------------------------------------------
 
     def record_assertion(
-        self, candidate: AssertionCandidate, run_id: Optional[str] = None
+        self,
+        candidate: AssertionCandidate,
+        run_id: Optional[str] = None,
+        *,
+        provenance: "Optional[ProvenanceContext]" = None,
     ) -> tuple[str, bool]:
         """
         Upsert a canonical assertion and record an occurrence.
 
-        Returns (assertion_id, is_new_assertion).
+        Returns (assertion_id, is_new_assertion). P0.1: optional
+        ProvenanceContext forwards to AssertionStore.upsert_occurrence.
         """
-        return self.assertions.upsert_occurrence(candidate, run_id=run_id)
+        return self.assertions.upsert_occurrence(
+            candidate, run_id=run_id, provenance=provenance,
+        )
 
     def link_assertions(
         self,
@@ -1143,6 +1150,7 @@ class MatterModel:
         analysis: dict,
         focus_issue_id: Optional[str] = None,
         file_type: Optional[str] = None,
+        run_id: Optional[str] = None,
     ) -> Optional[str]:
         """Map LLM deep-read output into a document card + salience update.
 
@@ -1181,6 +1189,19 @@ class MatterModel:
             operative_status=analysis.get("operative_status", "unknown"),
             privilege_flag=_interpret_privilege_flag(analysis.get("privilege_flag")),
             unresolved_flags=analysis.get("unresolved_flags"),
+            # P0.1: every AI profile write records a provenance_event
+            # row. source_span_status='not_applicable' because document
+            # cards summarize the whole document, not a span.
+            provenance=ProvenanceContext(
+                event_kind="card_profile",
+                writer_name="DocumentCardStore.upsert",
+                run_id=run_id,
+                extractor_version="2026-04-17.p01.v1",
+                prompt_version="DI.DOC_TYPE.v1",
+                source_document_ref=relative_path,
+                source_document_inventory_id=doc_id,
+                source_span_status="not_applicable",
+            ),
         )
 
         # Update salience based on document type + whether it's linked to issues
@@ -1196,6 +1217,7 @@ class MatterModel:
         analysis: dict,
         *,
         file_type: Optional[str] = None,
+        run_id: Optional[str] = None,
     ) -> Optional[dict]:
         """Query-agnostic document profiling: write card + mark profiled.
 
@@ -1232,6 +1254,17 @@ class MatterModel:
             operative_status=analysis.get("operative_status", "unknown"),
             privilege_flag=_interpret_privilege_flag(analysis.get("privilege_flag")),
             unresolved_flags=analysis.get("unresolved_flags"),
+            # P0.1: profile refresh provenance.
+            provenance=ProvenanceContext(
+                event_kind="card_profile",
+                writer_name="DocumentCardStore.upsert",
+                run_id=run_id,
+                extractor_version="2026-04-17.p01.v1",
+                prompt_version="DI.DOC_TYPE.v1",
+                source_document_ref=relative_path,
+                source_document_inventory_id=doc_id,
+                source_span_status="not_applicable",
+            ),
         )
 
         # Update salience
