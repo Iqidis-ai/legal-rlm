@@ -102,6 +102,29 @@ def _execute_allow_duplicate_column(conn: sqlite3.Connection, sql: str) -> None:
         if "duplicate column name" not in str(exc).lower():
             raise
 
+
+def assert_file_db_version_compatible(db_path) -> None:
+    """Probe a file-backed database for schema version compatibility before
+    any writable connection is opened against it.
+
+    Opening a writable connection and setting PRAGMA journal_mode=WAL is a
+    persistent file mutation, so the version guard must run against a plain
+    probe connection before that happens. Non-existent files are treated as
+    a fresh-create case and skipped. In-memory DBs do not call this.
+    """
+    from pathlib import Path
+
+    path = Path(db_path)
+    if not path.exists():
+        return
+    probe = sqlite3.connect(str(path))
+    try:
+        db_version = get_recorded_schema_version(probe)
+    finally:
+        probe.close()
+    if db_version > SCHEMA_VERSION:
+        raise SchemaVersionTooNewError(db_version, SCHEMA_VERSION)
+
 # Core tables built first (the "2-hour task" subset per Codex design gate)
 _DDL_CORE = """
 CREATE TABLE IF NOT EXISTS matter (
@@ -2010,48 +2033,51 @@ def _migration_v44(conn) -> None:
         JOIN assertion a ON a.id = ao.assertion_id
     """).fetchall()
 
-    # Resolve claim identity for each occurrence
+    # Resolve claim identity for each occurrence.
+    # The previous implementation wrapped this loop in a broad
+    # except-Exception-as-log-warn block and continued past failures. Per PR.1
+    # schema discipline, migration failures must surface and abort so the
+    # schema_migration ledger cannot record a partial backfill as applied.
+    # If a single occurrence row is malformed, the entire migration aborts and
+    # can be fixed by data repair before re-running.
     occ_identities = {}  # occ_id -> ClaimIdentity
     for r in rows:
-        try:
-            cand = AssertionCandidate(
-                proposition_text=r["proposition_text"],
-                model_layer=ModelLayer(r["model_layer"]),
-                assertion_kind=AssertionKind(r["assertion_kind"]),
-                document_id=r["document_id"] or "",
-                raw_text=r["raw_text"],
-                speaker_actor_id=r["speaker_actor_id"],
-                source_role=SourceRole(r["source_role"]) if r["source_role"] else SourceRole.UNKNOWN,
-                source_side=r["source_side"],
-                speech_act=SpeechAct(r["speech_act"]) if r["speech_act"] else SpeechAct.EXTRACTED,
-                origin_kind=OriginKind(r["origin_kind"]) if r["origin_kind"] else OriginKind.EXTRACTED,
-                subject_ref_type=r["subject_ref_type"],
-                subject_ref_id=r["subject_ref_id"],
-                predicate_key=r["predicate_key"],
-                object_json=r["object_json"],
-                temporal_scope_start=r["temporal_scope_start"],
-                temporal_scope_end=r["temporal_scope_end"],
-            )
-            identity = cand.resolve_claim_identity()
-            occ_identities[r["occ_id"]] = identity
+        cand = AssertionCandidate(
+            proposition_text=r["proposition_text"],
+            model_layer=ModelLayer(r["model_layer"]),
+            assertion_kind=AssertionKind(r["assertion_kind"]),
+            document_id=r["document_id"] or "",
+            raw_text=r["raw_text"],
+            speaker_actor_id=r["speaker_actor_id"],
+            source_role=SourceRole(r["source_role"]) if r["source_role"] else SourceRole.UNKNOWN,
+            source_side=r["source_side"],
+            speech_act=SpeechAct(r["speech_act"]) if r["speech_act"] else SpeechAct.EXTRACTED,
+            origin_kind=OriginKind(r["origin_kind"]) if r["origin_kind"] else OriginKind.EXTRACTED,
+            subject_ref_type=r["subject_ref_type"],
+            subject_ref_id=r["subject_ref_id"],
+            predicate_key=r["predicate_key"],
+            object_json=r["object_json"],
+            temporal_scope_start=r["temporal_scope_start"],
+            temporal_scope_end=r["temporal_scope_end"],
+        )
+        identity = cand.resolve_claim_identity()
+        occ_identities[r["occ_id"]] = identity
 
-            # Update occurrence with resolved identity
-            conn.execute(
-                """UPDATE assertion_occurrence
-                   SET claim_key_candidate=?, resolution_strategy=?,
-                       speaker_scope_key=COALESCE(speaker_scope_key, ?),
-                       extraction_confidence=?
-                   WHERE id=?""",
-                (
-                    identity.claim_key,
-                    identity.resolution_strategy,
-                    identity.speaker_scope_key,
-                    identity.canonicalization_confidence,
-                    r["occ_id"],
-                ),
-            )
-        except Exception as exc:
-            _log.warning("v44 backfill skip occ=%s: %s", r["occ_id"], exc)
+        # Update occurrence with resolved identity
+        conn.execute(
+            """UPDATE assertion_occurrence
+               SET claim_key_candidate=?, resolution_strategy=?,
+                   speaker_scope_key=COALESCE(speaker_scope_key, ?),
+                   extraction_confidence=?
+               WHERE id=?""",
+            (
+                identity.claim_key,
+                identity.resolution_strategy,
+                identity.speaker_scope_key,
+                identity.canonicalization_confidence,
+                r["occ_id"],
+            ),
+        )
 
     conn.commit()
 

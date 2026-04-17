@@ -415,14 +415,17 @@ def test_fresh_db_records_current_schema_in_all_ledgers():
 
 
 def test_open_refuses_database_newer_than_supported_user_version(tmp_path):
-    """A DB whose PRAGMA user_version is above SCHEMA_VERSION must fail closed,
-    and must not create any schema tables in the process."""
+    """A DB whose PRAGMA user_version is above SCHEMA_VERSION must fail closed
+    BEFORE any persistent write to the file. That means no new tables and no
+    change to journal_mode (WAL would be a persistent file mutation)."""
     import sqlite3
     from irys.matter.schema import SchemaVersionTooNewError
 
     path = tmp_path / "newer.sqlite3"
     conn = sqlite3.connect(str(path))
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    # Baseline: rollback journal mode, explicitly not WAL.
+    conn.execute("PRAGMA journal_mode = delete")
     conn.commit()
     conn.close()
 
@@ -434,8 +437,15 @@ def test_open_refuses_database_newer_than_supported_user_version(tmp_path):
     row = check.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
     ).fetchone()
+    # journal_mode must not have been upgraded to WAL, since WAL is a persistent
+    # file mutation that happens inside _conn() before apply_schema's guard runs.
+    mode_row = check.execute("PRAGMA journal_mode").fetchone()
     check.close()
     assert row is None, "schema_version table must not be created after a guard failure"
+    assert mode_row[0].lower() != "wal", (
+        f"file-backed DB journal_mode must not be mutated by a rejected open "
+        f"(got journal_mode={mode_row[0]!r})"
+    )
 
 
 def test_open_refuses_database_newer_than_supported_schema_migration(tmp_path):

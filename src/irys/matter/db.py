@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from .schema import apply_schema
+from .schema import apply_schema, assert_file_db_version_compatible
 
 
 class SQLiteMatterDB:
@@ -39,18 +39,27 @@ class SQLiteMatterDB:
             try:
                 apply_schema(conn)
             except Exception:
-                conn.close()
-                self._shared_conn = None
+                try:
+                    conn.close()
+                finally:
+                    self._shared_conn = None
                 raise
         else:
-            # Ensure parent directory exists and apply schema via thread-local conn
+            # Ensure parent directory exists, then probe the on-disk version
+            # BEFORE any writable connection is opened. _conn() sets
+            # PRAGMA journal_mode=WAL, which is a persistent file mutation,
+            # so the version guard must reject future-versioned DBs before
+            # that runs.
             db_path.parent.mkdir(parents=True, exist_ok=True)
+            assert_file_db_version_compatible(db_path)
             conn = self._conn()
             try:
                 apply_schema(conn)
             except Exception:
-                conn.close()
-                self._local.conn = None
+                try:
+                    conn.close()
+                finally:
+                    self._local.conn = None
                 raise
 
     def _conn(self) -> sqlite3.Connection:
