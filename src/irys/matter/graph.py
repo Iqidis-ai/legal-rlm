@@ -24,7 +24,7 @@ from .enums import (
     VerificationStatus, VerificationTargetKind, ReviewScope, ReviewedByKind,
     EvidenceRelationType, EvidenceOriginKind,
 )
-from .models import AssertionCandidate, AssertionRecord, RevisionResult, ClaimIdentity
+from .models import AssertionCandidate, AssertionRecord, RevisionResult, ClaimIdentity, ProvenanceContext
 
 
 def _now() -> str:
@@ -157,7 +157,13 @@ class AssertionStore:
 
         return None
 
-    def upsert_occurrence(self, candidate: AssertionCandidate, run_id: Optional[str] = None) -> tuple[str, bool]:
+    def upsert_occurrence(
+        self,
+        candidate: AssertionCandidate,
+        run_id: Optional[str] = None,
+        *,
+        provenance: "Optional[ProvenanceContext]" = None,
+    ) -> tuple[str, bool]:
         """
         Upsert a canonical assertion keyed by claim_key and record one occurrence.
 
@@ -489,6 +495,20 @@ class AssertionStore:
                     cause="assertion_upsert",
                     run_id=run_id,
                 )
+                # P0.1 provenance: emit rows for both the canonical
+                # assertion and the occurrence that produced it so an
+                # audit can trace either back to the originating AI
+                # call. Occurrence rows can later be looked up by
+                # target_kind='assertion_occurrence'. We only record
+                # these on NEW assertions — subsequent occurrences of
+                # the same assertion go through a different path.
+                if provenance is not None:
+                    prov_store = ProvenanceStore(self.db, self.matter_id)
+                    prov_store.record(
+                        target_kind="assertion",
+                        target_id=assertion_id,
+                        context=provenance,
+                    )
 
         return assertion_id, is_new
 
@@ -2850,6 +2870,7 @@ class QuantStore:
         assertion_id: Optional[str] = None,
         span_id: Optional[str] = None,
         date_precision: Optional[str] = None,
+        provenance: "Optional[ProvenanceContext]" = None,
     ) -> str:
         """Persist a structured numeric fact. Returns quant_fact_id.
 
@@ -2887,6 +2908,13 @@ class QuantStore:
                 qf_id,
                 cause="quant_record",
             )
+            # P0.1 provenance (new inserts only).
+            if provenance is not None:
+                ProvenanceStore(self.db, self.matter_id).record(
+                    target_kind="quant_fact",
+                    target_id=qf_id,
+                    context=provenance,
+                )
         return qf_id
 
     def record_many(self, specs: list[dict]) -> list[str]:
@@ -3913,6 +3941,7 @@ class DocumentCardStore:
         unresolved_flags: Optional[list] = None,
         source_role: Optional[str] = None,
         signatories_json: Optional[str] = None,
+        provenance: "Optional[ProvenanceContext]" = None,
     ) -> str:
         """Insert or update a document card for the given inventory doc_id.
 
@@ -3992,6 +4021,15 @@ class DocumentCardStore:
             actual_id,
             cause="document_card_upsert",
         )
+        # P0.1 provenance: every profile write gets an event even on
+        # update — the profile is a continuously-refreshed AI output, so
+        # the history matters.
+        if provenance is not None:
+            ProvenanceStore(self.db, self.matter_id).record(
+                target_kind="document_card",
+                target_id=actual_id,
+                context=provenance,
+            )
         return actual_id
 
     def get_by_doc_id(self, doc_id: str) -> Optional[dict]:
@@ -4634,6 +4672,7 @@ class AuthorityStore:
         applicability: Optional[str] = None,
         source_doc_id: Optional[str] = None,
         source_span_id: Optional[str] = None,
+        provenance: "Optional[ProvenanceContext]" = None,
     ) -> tuple[str, bool]:
         """Create or update an authority by citation.
 
@@ -4693,6 +4732,13 @@ class AuthorityStore:
                 auth_id,
                 cause="authority_upsert",
             )
+            # P0.1 provenance (new inserts only).
+            if provenance is not None:
+                ProvenanceStore(self.db, self.matter_id).record(
+                    target_kind="authority",
+                    target_id=auth_id,
+                    context=provenance,
+                )
         return auth_id, True
 
     def link_to_issue(
@@ -4899,6 +4945,7 @@ class EvidenceStore:
         source_occurrence_id: Optional[str] = None,
         source_confidence: float = 1.0,
         independence_factor: float = 1.0,
+        provenance: "Optional[ProvenanceContext]" = None,
     ) -> tuple[str, bool]:
         """Insert or return the existing edge matching the natural key.
 
@@ -4969,6 +5016,13 @@ class EvidenceStore:
             edge_id,
             cause="evidence_edge_upsert",
         )
+        # P0.1: record provenance if the caller supplied context.
+        if provenance is not None:
+            ProvenanceStore(self.db, self.matter_id).record(
+                target_kind="evidence_edge",
+                target_id=edge_id,
+                context=provenance,
+            )
         return edge_id, True
 
     def backfill_from_legacy_links(self) -> int:
@@ -5036,6 +5090,73 @@ def _evidence_relation_value(rel: "EvidenceRelationType | str") -> str:
 
 def _evidence_origin_value(origin: "EvidenceOriginKind | str") -> str:
     return origin.value if isinstance(origin, EvidenceOriginKind) else str(origin)
+
+
+class ProvenanceStore:
+    """P0.1 append-only provenance event store (SO-2).
+
+    Writers do not call this directly. Instead they receive an
+    Optional[ProvenanceContext], and when present, call
+    ProvenanceStore.record(target_kind, target_id, context) to append
+    an audit row. The table is query-only via list_for_target.
+    """
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def record(
+        self,
+        *,
+        target_kind: str,
+        target_id: str,
+        context: "ProvenanceContext",
+    ) -> str:
+        """Append one provenance_event row. Returns event id."""
+        event_id = _id()
+        self.db.execute(
+            """INSERT INTO provenance_event
+                (id, matter_id, target_kind, target_id, event_kind,
+                 writer_name, run_id, model_id, model_tier,
+                 prompt_version, extractor_version, llm_call_id,
+                 prompt_hash, response_hash,
+                 source_document_ref, source_document_inventory_id,
+                 source_span_id, source_span_status, note, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                event_id, self.matter_id, target_kind, target_id,
+                context.event_kind, context.writer_name,
+                context.run_id, context.model_id, context.model_tier,
+                context.prompt_version, context.extractor_version,
+                context.llm_call_id,
+                context.prompt_hash, context.response_hash,
+                context.source_document_ref,
+                context.source_document_inventory_id,
+                context.source_span_id, context.source_span_status,
+                context.note, _now(),
+            ),
+        )
+        return event_id
+
+    def list_for_target(
+        self, target_kind: str, target_id: str, limit: int = 50,
+    ) -> list[dict]:
+        rows = self.db.execute(
+            """SELECT * FROM provenance_event
+               WHERE matter_id=? AND target_kind=? AND target_id=?
+               ORDER BY created_at DESC LIMIT ?""",
+            (self.matter_id, target_kind, target_id, int(limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_for_llm_call(self, llm_call_id: str) -> list[dict]:
+        rows = self.db.execute(
+            """SELECT * FROM provenance_event
+               WHERE matter_id=? AND llm_call_id=?
+               ORDER BY created_at DESC""",
+            (self.matter_id, llm_call_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 class VerificationStateStore:

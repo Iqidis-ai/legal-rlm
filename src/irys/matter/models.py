@@ -13,6 +13,50 @@ from .enums import (
 )
 
 
+@dataclass(frozen=True)
+class ProvenanceContext:
+    """P0.1 Provenance Lite: AI-derived object write context (SO-2).
+
+    Extraction call sites build one of these and pass it through to the
+    matter writer (AssertionStore.upsert_occurrence, QuantStore.record,
+    AuthorityStore.upsert, DocumentCardStore.upsert,
+    EvidenceStore.upsert_edge). The writer forwards it to
+    ProvenanceStore.record, which appends a provenance_event row.
+
+    Fields:
+    - event_kind: which extraction produced the row (e.g.
+      'assertion_extraction', 'edge_write', 'quant_record').
+    - writer_name: the fully-qualified writer method, e.g.
+      'AssertionStore.upsert_occurrence'.
+    - run_id / model_id / model_tier / prompt_version /
+      extractor_version / llm_call_id: AI call identity.
+    - source_document_ref: relative-path of the source document.
+    - source_document_inventory_id: FK into document_inventory.
+    - source_span_id / source_span_status: span identity if available.
+      P0.1 AC #4 requires absence to be explicit — use 'missing' when
+      span is unavailable, 'present' when it is, 'not_applicable' for
+      targets that have no natural span (e.g. document_card itself),
+      and 'unknown' only for pre-P0.1 imports.
+    - note: optional free-form context.
+    """
+
+    event_kind: str
+    writer_name: str
+    run_id: Optional[str] = None
+    model_id: Optional[str] = None
+    model_tier: Optional[str] = None
+    prompt_version: Optional[str] = None
+    extractor_version: Optional[str] = None
+    llm_call_id: Optional[str] = None
+    prompt_hash: Optional[str] = None
+    response_hash: Optional[str] = None
+    source_document_ref: Optional[str] = None
+    source_document_inventory_id: Optional[str] = None
+    source_span_id: Optional[str] = None
+    source_span_status: str = "unknown"
+    note: Optional[str] = None
+
+
 def _normalize_text(value: Optional[str]) -> str:
     return " ".join((value or "").lower().split())
 

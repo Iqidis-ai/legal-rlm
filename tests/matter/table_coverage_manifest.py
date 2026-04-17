@@ -149,10 +149,10 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
         readers=("irys.matter.graph:VerificationStateStore.list_events",),
     ),
     "provenance_event": TableCoverageSpec(
-        deferred_until="P0.1_store",
-        reason=(
-            "table introduced by migration v55; ProvenanceStore writer + "
-            "MatterModel.get_provenance reader land in the next commit"
+        writers=("irys.matter.graph:ProvenanceStore.record",),
+        readers=(
+            "irys.matter.graph:ProvenanceStore.list_for_target",
+            "irys.matter.graph:ProvenanceStore.list_for_llm_call",
         ),
     ),
 }

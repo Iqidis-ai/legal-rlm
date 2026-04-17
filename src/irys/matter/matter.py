@@ -25,7 +25,7 @@ from .graph import (
     DocumentInventoryStore, DocumentCardStore, SpanStore, DocumentActorRoleStore,
     ReasoningCacheStore, TrustOverrideStore, DocumentAnnotationStore,
     DecisionContextStore, AuthorityStore, ProofStateStore, AssumptionStore,
-    VerificationStateStore, EvidenceStore, PrivilegeGate,
+    VerificationStateStore, EvidenceStore, PrivilegeGate, ProvenanceStore,
 )
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
@@ -113,6 +113,7 @@ class MatterModel:
         self.verification = VerificationStateStore(db, matter_id)
         self.evidence = EvidenceStore(db, matter_id)
         self.privilege = PrivilegeGate(db, matter_id)
+        self.provenance = ProvenanceStore(db, matter_id)
         # In-memory snapshot of assertion counts captured at run start.
         # Keyed by run_id.  Allows complete_run() to compute reuse_rate without
         # an extra SELECT round-trip (DB is the authoritative fallback).
@@ -337,6 +338,14 @@ class MatterModel:
     def interrupt_run(self, run_id: str) -> None:
         self._run_snapshots.pop(run_id, None)  # prevent unbounded growth on non-completion paths
         self.ledger.interrupt_run(run_id)
+
+    def get_provenance(
+        self, target_kind: str, target_id: str, limit: int = 50,
+    ) -> list[dict]:
+        """P0.1: thin wrapper over ProvenanceStore.list_for_target so
+        callers can read an AI-derived object's provenance trail
+        without reaching into the store directly."""
+        return self.provenance.list_for_target(target_kind, target_id, limit=limit)
 
     def record_llm_call(self, record: LLMCallRecord) -> None:
         """Persist one Gemini API request for later cost and latency analysis.
