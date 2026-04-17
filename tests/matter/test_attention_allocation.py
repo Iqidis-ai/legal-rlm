@@ -1,13 +1,18 @@
-"""Tests for proof-state-driven attention allocation in _get_issue_coverage_map().
+"""Tests for proof-state-enriched attention allocation in _get_issue_coverage_map().
 
 Verifies:
-1. Coverage map uses assertion-count ratio when no proof state is computed
-2. Coverage map overlays ProofStateStore sufficiency when available
-3. Contested issues are flagged as has_gap=True in coverage map
-4. Insufficient issues are flagged as has_gap=True in coverage map
-5. Sufficient issues are NOT flagged as has_gap
-6. _build_issue_coverage_summary() includes proof status and sufficiency pct
-7. Synthesis prompt block shows CONTESTED annotation when proof_status=contested
+1. Coverage map reports nonzero coverage_fraction from get_issue_coverage_report()
+   when no proof_state row exists.
+2. Coverage map preserves the report's weighted coverage_fraction even when a
+   proof_state row has a divergent raw sufficiency score (PR.2 contract:
+   report is canonical for coverage_fraction; proof_state only enriches
+   has_proof_gap).
+3. Contested issues (proof_status=contested on proof_state) are elevated to
+   has_gap=True in the map.
+4. Insufficient issues are elevated to has_gap=True in the map.
+5. Sufficient issues are NOT flagged as has_gap.
+6. _build_issue_coverage_summary() includes proof status and sufficiency pct.
+7. Synthesis prompt block shows CONTESTED annotation when proof_status=contested.
 """
 
 import pytest
@@ -83,20 +88,39 @@ def test_coverage_map_without_proof_state(model):
     assert cnt == 3
 
 
-def test_coverage_map_overlays_proof_state_sufficiency(model):
-    """When ProofStateStore has a row, sufficiency replaces assertion-count ratio."""
+def test_coverage_map_preserves_report_fraction_when_proof_state_exists(model):
+    """PR.2: the weighted coverage_fraction from get_issue_coverage_report() is
+    canonical. proof_state's raw-count sufficiency must NOT replace it — only
+    the has_proof_gap flag is enriched from proof_state. Two default
+    record_fact-style supports with no predicates produce a known divergence:
+    the report's weighted fallback is 2/3 = 0.667 while proof_state's raw
+    sufficiency is 2/3 ≈ 0.667 as well, so we use a materiality/attacker shape
+    where the two diverge — one supporting, one attacking produces
+    proof_state.proof_status=contested with sufficiency=0 but the report still
+    shows weighted coverage > 0."""
     iid, _ = model.issues.upsert_issue("Breach", IssueType.CLAIM)
-    for _ in range(9):
-        _add_supporting(model, iid)
-    # Compute proof state → sufficiency will be high
+    _add_supporting(model, iid)
+    _add_attacking(model, iid)
     model.proof_state.compute_and_store(iid)
+
+    # Confirm the fixture actually produces divergent report vs proof_state:
+    # report.coverage_fraction > 0 from weighted support, proof_state is contested.
+    report_row = next(r for r in model.get_issue_coverage_report() if r["id"] == iid)
+    assert report_row["coverage_fraction"] > 0, (
+        "fixture precondition — report must compute nonzero weighted coverage"
+    )
 
     engine = _make_engine(model)
     cov = engine._get_issue_coverage_map()
 
     frac, has_gap, cnt = cov[iid]
-    # ProofStateStore sufficiency for 9 supporting, no attacks = 9/10 = 0.9
-    assert frac >= 0.85
+    # Map must preserve the report's weighted coverage_fraction unchanged.
+    assert frac == pytest.approx(report_row["coverage_fraction"]), (
+        f"Coverage map must preserve report fraction {report_row['coverage_fraction']}, "
+        f"got {frac}"
+    )
+    # proof_state.proof_status='contested' must elevate has_gap.
+    assert has_gap is True
 
 
 # ---------------------------------------------------------------------------
