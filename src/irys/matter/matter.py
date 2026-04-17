@@ -419,13 +419,19 @@ class MatterModel:
             review_note=review_note,
             run_id=run_id,
         )
-        self.ledger.append_event(
-            run_id=run_id,
-            event_type=LedgerEventType.ASSERTION_REVISED,
-            summary=f"Verified {target_kind}:{target_id}",
-            changed_object_type=target_kind,
-            changed_object_id=target_id,
-        )
+        # verification_event (written by VerificationStateStore) is the
+        # canonical audit row. Mirror to the reasoning ledger only when
+        # a run_id is available — the schema enforces NOT NULL run_id
+        # on ledger_event, and human reviews often happen outside any
+        # run.
+        if run_id is not None:
+            self.ledger.append_event(
+                run_id=run_id,
+                event_type=LedgerEventType.ASSERTION_REVISED,
+                summary=f"Verified {target_kind}:{target_id}",
+                changed_object_type=target_kind,
+                changed_object_id=target_id,
+            )
         # Promotion to verified changes the verified_supporting_count
         # lane on any issue this target supports. Recompute affected
         # proof states so coverage_report reflects the new lane.
@@ -458,13 +464,14 @@ class MatterModel:
             review_note=review_note,
             run_id=run_id,
         )
-        self.ledger.append_event(
-            run_id=run_id,
-            event_type=LedgerEventType.ASSERTION_REVISED,
-            summary=f"Rejected {target_kind}:{target_id}: {rejection_reason}",
-            changed_object_type=target_kind,
-            changed_object_id=target_id,
-        )
+        if run_id is not None:
+            self.ledger.append_event(
+                run_id=run_id,
+                event_type=LedgerEventType.ASSERTION_REVISED,
+                summary=f"Rejected {target_kind}:{target_id}: {rejection_reason}",
+                changed_object_type=target_kind,
+                changed_object_id=target_id,
+            )
         for iid in self._issues_affected_by_target(target_kind, target_id):
             try:
                 self.proof_state.compute_and_store(iid, policy_audience="internal")
@@ -509,16 +516,17 @@ class MatterModel:
         # Audit + proof recompute once per target so ledger events
         # reflect each promotion and downstream coverage updates.
         for spec in specs:
-            self.ledger.append_event(
-                run_id=run_id,
-                event_type=LedgerEventType.ASSERTION_REVISED,
-                summary=(
-                    f"Bulk-verified {spec['target_kind']}:{spec['target_id']} "
-                    f"via document={document_ref}"
-                ),
-                changed_object_type=spec["target_kind"],
-                changed_object_id=spec["target_id"],
-            )
+            if run_id is not None:
+                self.ledger.append_event(
+                    run_id=run_id,
+                    event_type=LedgerEventType.ASSERTION_REVISED,
+                    summary=(
+                        f"Bulk-verified {spec['target_kind']}:{spec['target_id']} "
+                        f"via document={document_ref}"
+                    ),
+                    changed_object_type=spec["target_kind"],
+                    changed_object_id=spec["target_id"],
+                )
             for iid in self._issues_affected_by_target(
                 spec["target_kind"], spec["target_id"],
             ):
