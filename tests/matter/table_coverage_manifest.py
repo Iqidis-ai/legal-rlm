@@ -113,17 +113,18 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
         readers=("irys.matter.schema:get_schema_ledger_versions",),
     ),
     "evidence_edge": TableCoverageSpec(
-        deferred_until="MVP.3",
-        reason=(
-            "writer/reader lands with EvidenceStore.upsert_edge and the "
-            "proof maintenance switch in MVP.3"
+        writers=("irys.matter.graph:EvidenceStore.upsert_edge",),
+        readers=(
+            "irys.matter.graph:EvidenceStore.list_edges_for_target",
+            "irys.matter.graph:ProofStateStore._query_issue_linked_assertions",
         ),
     ),
     "evidence_link": TableCoverageSpec(
         deferred_until="remove_or_replace",
         reason=(
-            "legacy proof table superseded by evidence_edge; no runtime store "
-            "and slated for removal or replacement"
+            "legacy proof table superseded by evidence_edge (MVP.3); no "
+            "runtime writer/reader and slated for removal. Must not gain "
+            "new runtime surfaces."
         ),
     ),
     "migration_backfill_job": TableCoverageSpec(

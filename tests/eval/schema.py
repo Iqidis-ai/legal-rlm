@@ -52,6 +52,11 @@ class FixtureIssueLink:
     assertion_alias: str
     issue_alias: str
     relation_type: str = "supports"
+    # MVP.3: default path runs through MatterModel.issues.link_assertion,
+    # which now auto-creates a companion evidence_edge. Fixtures that test
+    # the backfill path need legacy-only inserts that do not create edges
+    # — set this flag on those rows.
+    legacy_only: bool = False
 
 
 @dataclass(frozen=True)

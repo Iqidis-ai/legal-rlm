@@ -148,7 +148,21 @@ def _seed_model(fixture: FixtureSpec) -> HarnessResult:
                 f"issue_link references unknown alias(es): "
                 f"assertion={link.assertion_alias} issue={link.issue_alias}"
             )
-        model.issues.link_assertion(aid, iid, relation_type=link.relation_type)
+        if link.legacy_only:
+            # MVP.3 backfill fixture path: insert only the legacy row so
+            # the evidence_edge store starts empty for the backfill
+            # invariant to exercise.
+            import uuid as _uuid
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).isoformat()
+            model.db.execute(
+                """INSERT OR IGNORE INTO assertion_issue_link
+                   (id, assertion_id, issue_id, relation_type, created_at)
+                   VALUES (?,?,?,?,?)""",
+                (_uuid.uuid4().hex, aid, iid, link.relation_type, now),
+            )
+        else:
+            model.issues.link_assertion(aid, iid, relation_type=link.relation_type)
 
     # Gap seeding — direct gap store is preferred over engine-triggered so
     # fixtures can assert the invariant independently of maintenance behavior.

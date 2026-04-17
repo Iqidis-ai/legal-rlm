@@ -26,6 +26,7 @@ IMPLEMENTED_CAPABILITIES: set[str] = {
     "mandatory_context_packet",  # PR.3 capped coverage + gap sections
     "proof_gap_detection",  # _detect_proof_gaps opens missing_issue_predicate gaps
     "verification_state",  # MVP.2 VerificationStateStore + candidate/verified columns
+    "evidence_edge_backfill",  # MVP.3 EvidenceStore + v53 backfill
 }
 
 # Capabilities that are intentionally NOT yet implemented and gate future
@@ -124,6 +125,79 @@ def _mandatory_gap_section_present(result: HarnessResult, params: dict[str, Any]
         )
 
 
+def _evidence_edge_backfill_idempotent(
+    result: HarnessResult, params: dict[str, Any]
+) -> None:
+    """MVP.3: EvidenceStore.backfill_from_legacy_links must create exactly
+    one evidence_edge per legacy assertion_issue_link, preserve proof-state
+    counts, and remain idempotent on rerun. Backfilled rows carry
+    source_identity_status='missing_occurrence_span' because current link
+    APIs don't preserve occurrence/span identity.
+    """
+    issue_alias = params["issue_alias"]
+    expected = int(params.get("expected_edge_count", 0))
+    issue_id = _require_alias(result, f"issue:{issue_alias}")
+    model = result.model
+
+    # Legacy link count for the issue.
+    legacy_count = model.db.execute(
+        """SELECT COUNT(*) FROM assertion_issue_link
+           WHERE issue_id=?
+             AND relation_type IN ('supports','establishes','attacks','negates')""",
+        (issue_id,),
+    ).fetchone()[0]
+    if legacy_count != expected:
+        raise InvariantViolation(
+            f"fixture precondition — expected {expected} legacy links for issue "
+            f"{issue_alias!r}; found {legacy_count}"
+        )
+
+    # Baseline: proof state as computed from the legacy substrate.
+    model.proof_state.compute_and_store(issue_id)
+    baseline = model.proof_state.get(issue_id)
+
+    # First backfill.
+    new_edges_first = model.evidence.backfill_from_legacy_links()
+    edges_for_issue = model.evidence.list_edges_for_target("issue", issue_id)
+    if len(edges_for_issue) != expected:
+        raise InvariantViolation(
+            f"expected {expected} evidence_edge rows after first backfill for "
+            f"issue {issue_alias!r}; got {len(edges_for_issue)}"
+        )
+
+    # All backfilled rows must carry missing-identity markers.
+    for e in edges_for_issue:
+        if (
+            e.get("source_occurrence_id") is not None
+            or e.get("source_span_id") is not None
+            or e.get("source_identity_status") != "missing_occurrence_span"
+        ):
+            raise InvariantViolation(
+                "backfilled edge must have null occurrence/span identity "
+                "and source_identity_status='missing_occurrence_span'; got "
+                f"{e!r}"
+            )
+
+    # Second backfill must be idempotent — zero new edges.
+    new_edges_second = model.evidence.backfill_from_legacy_links()
+    edges_for_issue_2 = model.evidence.list_edges_for_target("issue", issue_id)
+    if new_edges_second != 0 or len(edges_for_issue_2) != expected:
+        raise InvariantViolation(
+            f"backfill must be idempotent — second call produced "
+            f"{new_edges_second} new edges, total {len(edges_for_issue_2)}"
+        )
+
+    # Proof counts must not shift — the substrate switch preserves math.
+    model.proof_state.compute_and_store(issue_id)
+    after = model.proof_state.get(issue_id)
+    for field in ("supporting_count", "attacking_count"):
+        if baseline.get(field) != after.get(field):
+            raise InvariantViolation(
+                f"proof_state.{field} diverged after backfill: "
+                f"before={baseline.get(field)} after={after.get(field)}"
+            )
+
+
 def _planned_capability_placeholder(
     result: HarnessResult, params: dict[str, Any]
 ) -> None:
@@ -208,12 +282,12 @@ _INVARIANTS: dict[str, Invariant] = {
         requires=("mandatory_context_packet",),
         check=_mandatory_gap_section_present,
     ),
-    # MVP.3 — activates once EvidenceEdgeStore lands.
+    # MVP.3 — EvidenceEdgeStore + v53 backfill landed.
     "evidence_edge_backfill_idempotent": Invariant(
         name="evidence_edge_backfill_idempotent",
         group="evidence_edge",
         requires=("evidence_edge_backfill",),
-        check=_planned_capability_placeholder,
+        check=_evidence_edge_backfill_idempotent,
     ),
     # MVP.2 — verification_state substrate landed.
     "candidate_support_not_verified": Invariant(

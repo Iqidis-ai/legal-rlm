@@ -66,8 +66,8 @@
     }
   ],
   "issue_links": [
-    {"assertion_alias": "invoice_issued", "issue_alias": "nonpayment_claim", "relation_type": "supports"},
-    {"assertion_alias": "aging_unpaid", "issue_alias": "nonpayment_claim", "relation_type": "supports"}
+    {"assertion_alias": "invoice_issued", "issue_alias": "nonpayment_claim", "relation_type": "supports", "legacy_only": true},
+    {"assertion_alias": "aging_unpaid", "issue_alias": "nonpayment_claim", "relation_type": "supports", "legacy_only": true}
   ],
   "maintenance": [
     {"step": "proof_state.compute_all"},
@@ -84,7 +84,7 @@
       "name": "evidence_edge_backfill_idempotent",
       "group": "evidence_edge",
       "requires": ["evidence_edge_backfill"],
-      "params": {"expected_edge_count": 2}
+      "params": {"issue_alias": "nonpayment_claim", "expected_edge_count": 2}
     }
   ]
 }
