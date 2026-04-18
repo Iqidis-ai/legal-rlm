@@ -4473,19 +4473,60 @@ class ReasoningCacheStore:
         self.db = db
         self.matter_id = matter_id
 
+    # ----- P0.4 trust revision helpers --------------------------------
+    def current_trust_revision(self) -> int:
+        """Return matter.trust_revision, the invalidation fingerprint
+        every cache key is prefixed with. Legacy matters default to 0
+        via the schema default."""
+        try:
+            row = self.db.execute(
+                "SELECT trust_revision FROM matter WHERE id=?",
+                (self.matter_id,),
+            ).fetchone()
+            if row is None:
+                return 0
+            return int(row["trust_revision"] or 0)
+        except Exception:
+            return 0
+
+    def bump_trust_revision(self) -> int:
+        """Increment matter.trust_revision by 1, returning the new value.
+        P0.4 invalidation triggers call this after any write that
+        marks downstream targets stale so cached reasoning plans keyed
+        on the old revision become unreachable."""
+        try:
+            now = _now()
+            self.db.execute(
+                "UPDATE matter SET trust_revision=trust_revision+1, updated_at=? WHERE id=?",
+                (now, self.matter_id),
+            )
+        except Exception:
+            return 0
+        return self.current_trust_revision()
+
+    def _scoped_key(self, cache_key: str) -> str:
+        """Prefix the caller's cache_key with the current trust
+        revision so a revision bump invalidates every prior entry."""
+        return f"tr{self.current_trust_revision()}:{cache_key}"
+
     def get(self, stage: str, cache_key: str) -> Optional[dict]:
         """Return cached plan dict or None on cache miss or DB error.
 
         Wraps all DB access in try/except so a corrupt or missing cache table
         never prevents the calling code (engine._orient) from falling through
         to the LLM call.
+
+        P0.4: cache_key is prefixed with the current matter.trust_revision
+        so a bump after an invalidation trigger silently misses every
+        prior cache row without deleting anything.
         """
         import json
+        scoped = self._scoped_key(cache_key)
         try:
             row = self.db.execute(
                 "SELECT id, plan_json FROM reasoning_cache"
                 " WHERE matter_id=? AND stage=? AND cache_key=?",
-                (self.matter_id, stage, cache_key),
+                (self.matter_id, stage, scoped),
             ).fetchone()
             if row is None:
                 return None
@@ -4506,6 +4547,7 @@ class ReasoningCacheStore:
         Silently ignores errors — cache failures must never break the calling path.
         """
         import json
+        scoped = self._scoped_key(cache_key)
         try:
             now = _now()
             self.db.execute(
@@ -4515,7 +4557,7 @@ class ReasoningCacheStore:
                    ON CONFLICT(matter_id, stage, cache_key)
                    DO UPDATE SET plan_json=excluded.plan_json,
                                  last_hit_at=excluded.last_hit_at""",
-                (_id(), self.matter_id, stage, cache_key, json.dumps(plan), now, now),
+                (_id(), self.matter_id, stage, scoped, json.dumps(plan), now, now),
             )
         except Exception:
             pass  # non-critical; next run will populate from LLM

@@ -556,6 +556,15 @@ class MatterModel:
                 self.proof_state.compute_and_store(iid, policy_audience="internal")
             except Exception:
                 pass
+        # P0.4: human rejection is a trust-invalidation trigger.
+        # Bump the matter's trust_revision so downstream reasoning
+        # caches keyed on the old revision silently miss. Subsequent
+        # cached plans that referenced the now-rejected target are
+        # unreachable, forcing a fresh LLM call.
+        try:
+            self.cache.bump_trust_revision()
+        except Exception:
+            pass
         return vid
 
     def bulk_verify_by_document(

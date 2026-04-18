@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 55
+SCHEMA_VERSION = 56
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -18,6 +18,7 @@ _MIGRATION_NAMES: dict[int, str] = {
     53: "backfill_evidence_edge_from_legacy",
     54: "issue_predicate_template_metadata",
     55: "provenance_event_and_llm_call_hashes",
+    56: "matter_trust_revision",
 }
 
 
@@ -147,6 +148,13 @@ CREATE TABLE IF NOT EXISTS matter (
     posture     TEXT,
     governing_law TEXT,
     maturity    TEXT NOT NULL DEFAULT 'initial',
+    -- P0.4 Trust Invalidation Lite: monotonically-increasing
+    -- revision counter. Bumped every time a trigger fires
+    -- (document hash change, human rejection, span replacement,
+    -- privilege reclassification). Downstream caches include this
+    -- in their key so a stale cache hit cannot reappear after
+    -- upstream support was invalidated.
+    trust_revision INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 ) STRICT;
@@ -2718,6 +2726,23 @@ def _migration_v55(conn) -> None:
     conn.commit()
 
 
+def _migration_v56(conn) -> None:
+    """P0.4 Trust Invalidation Lite: add matter.trust_revision so
+    downstream caches can include it in their key. Any invalidation
+    trigger (document hash change, human rejection, span replacement,
+    privilege reclassification) bumps this counter; a stale cache
+    hit cannot reappear because its key no longer matches.
+
+    Legacy rows default to 0. Callers never read trust_revision
+    before bumping — the cache bypass is keyed on the bumped value.
+    """
+    _execute_allow_duplicate_column(
+        conn,
+        "ALTER TABLE matter ADD COLUMN trust_revision INTEGER NOT NULL DEFAULT 0",
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -2777,6 +2802,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (53, _migration_v53),
     (54, _migration_v54),
     (55, _migration_v55),
+    (56, _migration_v56),
 ]
 
 
