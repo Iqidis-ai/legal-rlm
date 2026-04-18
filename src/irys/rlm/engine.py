@@ -431,71 +431,98 @@ def _conversation_history_digest(conversation_history: list[dict[str, str]] | No
             parts.append(f"A:{a}")
     return "\n".join(parts)
 
-ANALYZE_FINDINGS_PROMPT = """You are a senior legal analyst extracting evidence from search results.
+# Two-stage search analysis (hot-loop cost cut). Stage 1 is pure
+# extraction over the big search_results input — cheap LITE call that
+# always fires. Stage 2 is reasoning over Stage 1's compact output —
+# FLASH call that only fires when Stage 1 actually found signal.
+# Combined output matches the legacy ANALYZE_FINDINGS_PROMPT shape so
+# downstream code is unchanged.
 
-Query: {query}
-Current Hypothesis: {hypothesis}
-{issue_focus}
+EXTRACT_FINDINGS_PROMPT = """You extract verifiable facts from search results. Pure extraction — do not judge relevance or issue alignment.
+
 Search Results for "{search_term}":
 {search_results}
 
-{research_alignment_guidance}
+1. KEY_FACTS (max 10): the most concrete, specific facts. Prefer facts with dates, amounts, party names.
+   Format each fact as: {{"fact": "under-100-char text", "source_file": "filename_if_determinable", "subject": "entity", "predicate": "snake_case_verb", "object": "value_or_target"}}
+   - source_file: file identifier exactly as it appears in the results (may be "filename.pdf" or "folder/filename.pdf")
+   - subject / predicate / object: REQUIRED except for purely procedural facts with no entity relationship (omit all three then)
+   - subject examples: "plaintiff", "defendant", "Acme_Corp"
+   - predicate examples: "agreed_to_pay", "breached_contract", "filed_motion"
+   - object examples: "50000 USD", "March 15 2023", "the services agreement"
+   - Include dates, amounts, party names when present
 
-ANALYZE THESE RESULTS CAREFULLY:
+2. MENTIONED_LEADS: referenced documents, named individuals, dates, or cross-references that look worth investigating next. List only what's mentioned; no priority.
+   Format: [{{"desc": "under-120-char description of what to investigate"}}]
 
-1. KEY FACTS: Extract ONLY the 10 most important specific facts (STRICT LIMIT: 10 maximum):
-   - Format each fact as: {{"fact": "...", "source_file": "filename_if_determinable", "issue_relation": "supports|attacks|neutral", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD by March 2023"}}
-   - source_file: the file identifier exactly as shown in the search results (may be "filename.pdf" or "folder/filename.pdf" when multiple files share the same name)
-   - issue_relation: whether this fact SUPPORTS the current hypothesis, ATTACKS/undermines it, or is NEUTRAL
-   - subject: entity performing the action (person, company) — REQUIRED; provide best-effort even if uncertain (e.g. "plaintiff", "defendant", "contracting_party")
-   - predicate: verb/action in snake_case — REQUIRED; describe the relationship (e.g. "agreed_to_pay", "was_employed_by", "executed_contract", "disputes_claim")
-   - object: what the predicate applies to (amount, party, date, condition) — REQUIRED; include the key value or description
-   - Omit subject/predicate/object ONLY when the fact is purely procedural with no entity relationship
-   - Directly relevant to the query
-   - Supported by the document text
-   - Include dates, amounts, party names where found
-   - Keep each fact text under 100 characters
+3. MENTIONED_SEARCHES: follow-up search terms that naturally appear. Simple literal phrases — no boolean operators, no quoted sub-expressions.
+   Format: ["term1", "term2"]
 
-2. NEW LEADS: Identify specific avenues to investigate:
-   - Referenced documents that should be examined
-   - Named individuals who should be researched
-   - Dates/events mentioned that need context
-   - Cross-references to other documents
-   - Potential contradictions to verify
-
-3. HYPOTHESIS EVALUATION:
-   - Does this evidence SUPPORT or CONTRADICT our hypothesis?
-   - What gaps remain in our understanding?
-
-4. NEXT SEARCHES: Suggest simple literal phrases that will:
-   - Corroborate findings from multiple sources
-   - Fill gaps in the evidence
-   - Find contradictory evidence (for completeness)
-   Each term must be a plain phrase (no AND/OR/NOT operators, no quoted sub-expressions).
-
-5. PREDICATES SATISFIED (SO-4 — only if "Issue Focus" section appears above):
-   - List the exact text of any "Element to prove" from the Issue Focus that is
-     CLEARLY and DIRECTLY established by the extracted key_facts
-   - Only include elements with direct evidence in these search results
-   - Empty array if no Issue Focus above or no elements are clearly established
-
-Respond in COMPACT JSON (keep under 3000 chars):
+Respond in COMPACT JSON (under 2500 chars):
 {{
-    "key_facts": [{{"fact": "fact text", "source_file": "filename.pdf", "issue_relation": "supports", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD"}}, ...],
-    "fact_relationships": [{{"from_idx": 0, "to_idx": 1, "relation": "corroborates|contradicts|supersedes|supports"}}],
-    "new_leads": [{{"desc": "...", "priority": 0.8}}],
-    "hypothesis_update": "string or null",
-    "next_searches": ["term1", "term2"],
-    "predicates_satisfied": ["verbatim element text from Issue Focus, or empty array"],
-    "predicates_contested": ["verbatim element text where evidence supports BOTH sides, or empty array"]
+  "key_facts": [...],
+  "mentioned_leads": [...],
+  "mentioned_searches": [...]
 }}
 """
 
-# Pre-computed template hash for search-analysis cache versioning.
-# Including this in the cache key ensures that changing ANALYZE_FINDINGS_PROMPT
-# automatically invalidates all cached analysis from the old template version.
+REASON_FINDINGS_PROMPT = """You are a senior legal analyst reasoning over pre-extracted facts. You do not re-read source documents — everything you need is below.
+
+Investigation query: {query}
+Current hypothesis: {hypothesis}
+{issue_focus}
+{research_alignment_guidance}
+
+Pre-extracted facts (index → fact):
+{facts_block}
+
+Pre-extracted leads (index → description):
+{leads_block}
+
+Pre-extracted candidate searches:
+{searches_block}
+
+REASON:
+
+1. For each fact, classify its relation to the current hypothesis: "supports" / "attacks" / "neutral".
+   Format: "fact_issue_relations": [{{"fact_idx": 0, "relation": "supports"}}, ...]
+
+2. Relationships between facts in this batch (optional — only clear ones):
+   Format: "fact_relationships": [{{"from_idx": 0, "to_idx": 1, "relation": "corroborates|contradicts|supersedes|supports"}}]
+
+3. Update the working hypothesis ONLY if these facts meaningfully change it, otherwise null.
+   Format: "hypothesis_update": "one-sentence update, or null"
+
+4. PREDICATES (only when an Issue Focus block appears above):
+   "predicates_satisfied": list the VERBATIM "Element to prove" text that the extracted facts CLEARLY and DIRECTLY establish.
+   "predicates_contested": list the VERBATIM element text where the extracted facts support BOTH sides (evidence of conflict).
+   Empty arrays if no Issue Focus or no elements are clearly established/contested.
+
+5. Rank the leads by investigation priority (0.0–1.0):
+   Format: "lead_priorities": [{{"lead_idx": 0, "priority": 0.8}}]
+
+6. Rank the candidate searches (0.0–1.0). You may drop duds or add up to 2 new terms you think would help fill evidence gaps:
+   Format: "next_search_priorities": [{{"term": "phrase", "priority": 0.9}}]
+
+Respond in COMPACT JSON only (under 2000 chars):
+{{
+  "fact_issue_relations": [...],
+  "fact_relationships": [...],
+  "hypothesis_update": null,
+  "predicates_satisfied": [],
+  "predicates_contested": [],
+  "lead_priorities": [...],
+  "next_search_priorities": [...]
+}}
+"""
+
+# Pre-computed template hashes for search-analysis cache versioning.
+# _ANALYZE_PROMPT_VER covers the merged two-stage contract — any edit
+# to either prompt invalidates all cached analyses from the old shape.
 import hashlib as _hashlib
-_ANALYZE_PROMPT_VER = _hashlib.sha256(ANALYZE_FINDINGS_PROMPT.encode()).hexdigest()[:12]
+_ANALYZE_PROMPT_VER = _hashlib.sha256(
+    (EXTRACT_FINDINGS_PROMPT + "\n--stage2--\n" + REASON_FINDINGS_PROMPT).encode()
+).hexdigest()[:12]
 del _hashlib  # avoid polluting module namespace
 
 DEEP_READ_PROMPT = """You are an expert legal analyst performing detailed document review.
@@ -2677,35 +2704,152 @@ class RLMEngine:
             analysis = _cached_analysis
         else:
             state.llm_calls_required += 1  # SO-1 telemetry: search-analysis cache miss
-            # Re-check stop before the FLASH LLM call (SO-3 cooperative stop).
-            # If the user stopped the run while we were formatting results, skip the call.
+            # Re-check stop before the LLM call (SO-3 cooperative stop).
             _adp_pre = getattr(state, "_matter_adapter", None)
             if _adp_pre is not None and _adp_pre.is_stop_requested():
                 return
-            prompt = ANALYZE_FINDINGS_PROMPT.format(
-                query=state.query,
-                hypothesis=state.hypothesis or "No hypothesis yet",
-                issue_focus=_issue_focus,
+
+            # Stage 1 — LITE extraction. Always fires. Reads the big
+            # search_results input, emits compact structured output.
+            stage1_prompt = EXTRACT_FINDINGS_PROMPT.format(
                 search_term=results.query,
                 search_results=results_text,
-                research_alignment_guidance=RESEARCH_ALIGNMENT_GUIDANCE,
             )
-            # Use FLASH for analysis
-            response = await self.client.complete(
-                prompt,
-                tier=ModelTier.FLASH,
+            stage1_response = await self.client.complete(
+                stage1_prompt,
+                tier=ModelTier.LITE,
                 json_mode=True,
-                usage_label="search_analysis",
+                usage_label="search_extract",
             )
-            analysis = self._parse_json_safe(response, {
+            stage1 = self._parse_json_safe(stage1_response, {
                 "key_facts": [],
-                "new_leads": [],
-                "hypothesis_update": None,
-                "next_searches": [],
-                "predicates_satisfied": [],
-                "predicates_contested": [],
+                "mentioned_leads": [],
+                "mentioned_searches": [],
             })
-            # Cache for warm runs
+            raw_facts = stage1.get("key_facts") or []
+            raw_leads = stage1.get("mentioned_leads") or []
+            raw_searches = stage1.get("mentioned_searches") or []
+
+            # Short-circuit: if extraction found nothing worth reasoning
+            # about, skip Stage 2 entirely. Saves the FLASH call on
+            # low-signal searches (grep matches in boilerplate, etc.).
+            has_signal = bool(raw_facts) or bool(raw_leads)
+            if not has_signal:
+                analysis = {
+                    "key_facts": [],
+                    "fact_relationships": [],
+                    "new_leads": [],
+                    "hypothesis_update": None,
+                    "next_searches": raw_searches,
+                    "predicates_satisfied": [],
+                    "predicates_contested": [],
+                }
+            else:
+                # Re-check stop between stages.
+                if _adp_pre is not None and _adp_pre.is_stop_requested():
+                    return
+
+                # Stage 2 — FLASH reasoning. Compact input (Stage 1
+                # output + matter context), no re-read of search_results.
+                def _fmt_indexed(items, key=None):
+                    if not items:
+                        return "(none)"
+                    lines = []
+                    for i, item in enumerate(items):
+                        if key is None:
+                            lines.append(f"{i}: {item}")
+                        else:
+                            lines.append(f"{i}: {item.get(key, '')}")
+                    return "\n".join(lines)
+
+                facts_block = _fmt_indexed(
+                    [f.get("fact", "") if isinstance(f, dict) else str(f) for f in raw_facts],
+                )
+                leads_block = _fmt_indexed(raw_leads, key="desc")
+                searches_block = (
+                    "\n".join(f"- {s}" for s in raw_searches) if raw_searches else "(none)"
+                )
+                stage2_prompt = REASON_FINDINGS_PROMPT.format(
+                    query=state.query,
+                    hypothesis=state.hypothesis or "No hypothesis yet",
+                    issue_focus=_issue_focus,
+                    research_alignment_guidance=RESEARCH_ALIGNMENT_GUIDANCE,
+                    facts_block=facts_block,
+                    leads_block=leads_block,
+                    searches_block=searches_block,
+                )
+                stage2_response = await self.client.complete(
+                    stage2_prompt,
+                    tier=ModelTier.FLASH,
+                    json_mode=True,
+                    usage_label="search_reason",
+                )
+                stage2 = self._parse_json_safe(stage2_response, {
+                    "fact_issue_relations": [],
+                    "fact_relationships": [],
+                    "hypothesis_update": None,
+                    "predicates_satisfied": [],
+                    "predicates_contested": [],
+                    "lead_priorities": [],
+                    "next_search_priorities": [],
+                })
+
+                # Merge Stage 1 extraction with Stage 2 reasoning into
+                # the legacy `analysis` dict shape so downstream code is
+                # unchanged.
+                relation_by_idx = {
+                    int(r.get("fact_idx", -1)): r.get("relation", "neutral")
+                    for r in (stage2.get("fact_issue_relations") or [])
+                    if isinstance(r, dict)
+                }
+                merged_facts = []
+                for i, fact in enumerate(raw_facts):
+                    fact_dict = fact if isinstance(fact, dict) else {"fact": str(fact)}
+                    merged_facts.append({
+                        **fact_dict,
+                        "issue_relation": relation_by_idx.get(i, "neutral"),
+                    })
+
+                priority_by_lead = {
+                    int(p.get("lead_idx", -1)): p.get("priority", 0.5)
+                    for p in (stage2.get("lead_priorities") or [])
+                    if isinstance(p, dict)
+                }
+                merged_leads = []
+                for i, lead_item in enumerate(raw_leads):
+                    lead_dict = (
+                        lead_item if isinstance(lead_item, dict)
+                        else {"desc": str(lead_item)}
+                    )
+                    merged_leads.append({
+                        **lead_dict,
+                        "priority": float(priority_by_lead.get(i, 0.5)),
+                    })
+
+                # next_searches: prefer Stage 2's ranked list; fall back
+                # to Stage 1 extraction if Stage 2 didn't rank any.
+                ranked = sorted(
+                    (stage2.get("next_search_priorities") or []),
+                    key=lambda x: -float(
+                        x.get("priority", 0.0) if isinstance(x, dict) else 0.0,
+                    ),
+                )
+                next_searches = [
+                    x.get("term") for x in ranked
+                    if isinstance(x, dict) and x.get("term")
+                ] or list(raw_searches)
+
+                analysis = {
+                    "key_facts": merged_facts,
+                    "fact_relationships": stage2.get("fact_relationships") or [],
+                    "new_leads": merged_leads,
+                    "hypothesis_update": stage2.get("hypothesis_update"),
+                    "next_searches": next_searches,
+                    "predicates_satisfied": stage2.get("predicates_satisfied") or [],
+                    "predicates_contested": stage2.get("predicates_contested") or [],
+                }
+
+            # Cache the merged analysis for warm runs.
             if self._matter_model is not None:
                 try:
                     self._matter_model.cache.put("search_analysis", _analysis_key, analysis)
