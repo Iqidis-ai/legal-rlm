@@ -1946,42 +1946,55 @@ class DeliverableFamilyHandler:
             )
 
         header = (
-            "| # | Date | Author | Recipient | Type | Basis | Description |\n"
-            "|---|------|--------|-----------|------|-------|-------------|"
+            "| # | Doc ID | Date | Author | Recipient | Type | Basis | Description |\n"
+            "|---|--------|------|--------|-----------|------|-------|-------------|"
         )
         body_lines = []
-        unknown_count = 0
+        tbd_count = 0
+        # Adversarial #10 Fix A — NEVER render `purpose` or `title` as
+        # the description. Those are free-form LLM-authored fields and
+        # can (and in real demos DO) contain privileged substance.
+        # Rule 26(b)(5)(A)(ii) requires a description sufficient to
+        # assess the claim without revealing protected information —
+        # which means we need a separately-reviewed description field.
+        # Until that field exists on document_card (scheduled as part
+        # of the MVI-7 hardening pass), every row renders a locked-
+        # down placeholder and carries a TBD basis so no one serves
+        # this log as-is. That is the fail-closed posture legal work
+        # requires. Codex adversarial #10 finding #1 / demo-breaker #10.
         for i, r in enumerate(rows, start=1):
-            # unresolved_flags is a JSON-encoded list; non-empty signals
-            # the MVP.4 "unknown" fail-closed bucket — flag as TBD.
-            flags_raw = (r["unresolved_flags"] or "").strip()
-            is_tbd = False
-            if flags_raw and flags_raw not in ("[]", "null"):
-                flags_lower = flags_raw.lower()
-                if "privilege" in flags_lower or "unknown" in flags_lower:
-                    is_tbd = True
-                    unknown_count += 1
             date = r["creation_date"] or r["effective_date"] or "—"
             author = r["author"] or r["sender"] or "—"
             recipient = r["recipient"] or "—"
             doc_type = r["doc_subtype"] or r["doc_type"] or "—"
-            purpose = (r["purpose"] or r["title"] or "").strip() or "—"
-            basis_label = "TBD" if is_tbd else "Privileged"
+            doc_id = (r["path"] or r["doc_id"] or "—")
+            # Every row is TBD until a reviewed description field
+            # exists. Counts are honest about that.
+            tbd_count += 1
+            basis_label = "TBD — attorney review required"
+            description = (
+                "[withheld — awaiting reviewed privilege description]"
+            )
             body_lines.append(
-                f"| {i} | {_md_cell(date)} | {_md_cell(author)} "
-                f"| {_md_cell(recipient)} | {_md_cell(doc_type)} "
-                f"| {basis_label} | {_md_cell(purpose)} |"
+                f"| {i} | {_md_cell(doc_id)} | {_md_cell(date)} "
+                f"| {_md_cell(author)} | {_md_cell(recipient)} "
+                f"| {_md_cell(doc_type)} | {basis_label} "
+                f"| {description} |"
             )
         footer_lines = [
             "",
             f"**Total entries:** {len(rows)} "
-            f"(privileged: {len(rows) - unknown_count}, "
-            f"TBD / needs review: {unknown_count})",
+            f"(all marked TBD — attorney review required before "
+            f"service).",
             "",
-            "_This log is auto-generated from matter state — review "
-            "every TBD row before serving. Privileged entries show "
-            "no privileged content; descriptions are limited to "
-            "one-sentence purpose summaries._",
+            "> **⚠️ Do not serve this log without attorney review of "
+            "every row.** Descriptions are intentionally withheld "
+            "because the underlying `document_card.purpose` and "
+            "`title` fields are LLM-authored and can contain "
+            "privileged substance. A reviewed, privileged-content-"
+            "free description field is on the roadmap; until it "
+            "lands, every entry must be manually described before "
+            "the log is served under Fed. R. Civ. P. 26(b)(5)(A)(ii).",
         ]
         rendered = (
             "## Privilege log\n\n"

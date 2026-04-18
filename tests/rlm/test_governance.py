@@ -540,12 +540,43 @@ def test_deliverable_handler_privilege_log_no_rows(warm_matter):
     assert "No documents currently classified as privileged" in result.rendered_answer
 
 
-def test_deliverable_handler_privilege_log_renders(warm_matter):
-    """Seeded privileged + tbd rows render in the log with correct
-    TBD handling and a footer summary."""
-    _seed_privileged_doc(warm_matter, "memo1.pdf", flag=1)
-    _seed_privileged_doc(warm_matter, "memo2.pdf", flag=1, is_tbd=True)
-    _seed_privileged_doc(warm_matter, "memo3.pdf", flag=1)
+def test_deliverable_handler_privilege_log_never_leaks_descriptions(warm_matter):
+    """Adversarial #10 regression: every row in the privilege log
+    must render a fail-closed description placeholder, NEVER the raw
+    `purpose` or `title` field. Both fields are LLM-authored and can
+    contain privileged substance. Every row must also be marked TBD
+    so no one serves the log without attorney review."""
+    # Seed a doc whose `purpose` and `title` contain sensitive phrases
+    # that would be demo-breaking if they leaked into the description
+    # column. The renderer must NOT print them.
+    import uuid as _uuid
+    import time as _time
+    inv_id = _uuid.uuid4().hex
+    now = _time.strftime("%Y-%m-%dT%H:%M:%S")
+    warm_matter.db.execute(
+        """INSERT INTO document_inventory
+             (id, matter_id, relative_path, size_bytes, sha256,
+              salience_score, discovered_at)
+           VALUES (?, ?, ?, 0, '', 0.5, ?)""",
+        (inv_id, warm_matter.matter_id, "sensitive.pdf", now),
+    )
+    sensitive_purpose = (
+        "Email requesting legal advice on whether to terminate the "
+        "CFO before the SEC interview"
+    )
+    sensitive_title = "SEC strategy re revenue recognition"
+    warm_matter.db.execute(
+        """INSERT INTO document_card
+             (id, doc_id, doc_type, title, author, sender, recipient,
+              creation_date, privilege_flag, purpose, operative_status,
+              rhetorical_posture, created_at, updated_at)
+           VALUES (?, ?, 'memo', ?, 'AttnA', 'AttnA', 'Client',
+                   '2026-03-15', 1, ?, 'operative', 'neutral', ?, ?)""",
+        (
+            _uuid.uuid4().hex, inv_id,
+            sensitive_title, sensitive_purpose, now, now,
+        ),
+    )
     client = _FakeClient({
         "deliverable_sub_intent": '{"intent": "privilege_log"}',
     })
@@ -556,13 +587,18 @@ def test_deliverable_handler_privilege_log_renders(warm_matter):
         query="generate a privilege log",
         contract=CascadeGovernor._contract_for("deliverable"),
     ))
-    assert result.row_count == 3
-    assert "Privilege log" in result.rendered_answer
-    assert "Attorney A" in result.rendered_answer
-    # One TBD row seeded via unresolved_flags.
-    assert "TBD" in result.rendered_answer
-    assert "privileged: 2" in result.rendered_answer
-    assert "TBD / needs review: 1" in result.rendered_answer
+    assert result.row_count == 1
+    rendered = result.rendered_answer
+    # The sensitive substance must NOT appear anywhere in the log.
+    assert "terminate the CFO" not in rendered
+    assert "SEC interview" not in rendered
+    assert "revenue recognition" not in rendered
+    # The locked-down placeholder MUST appear.
+    assert "[withheld — awaiting reviewed privilege description]" in rendered
+    # Every row must be marked TBD.
+    assert "TBD — attorney review required" in rendered
+    # Attorney-review warning banner must be present.
+    assert "Do not serve this log without attorney review" in rendered
 
 
 def test_deliverable_handler_unsupported_intent_escalates(warm_matter):
