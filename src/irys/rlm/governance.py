@@ -141,15 +141,17 @@ class CascadeDecision:
 
 # Bump whenever the prompt or schema changes — included in the
 # classifier_version so old cached decisions miss cleanly.
-CLASSIFIER_SCHEMA_VERSION = "mvi2.0"
+CLASSIFIER_SCHEMA_VERSION = "mvi4.0"
 
 
-VALID_FAMILIES = {"investigate", "read", "query", "trace", "clarify"}
+VALID_FAMILIES = {
+    "investigate", "read", "query", "trace", "steer", "clarify",
+}
 
 
 INTENT_CLASSIFIER_PROMPT = """You are a routing classifier for a legal intelligence platform. For each user query you pick ONE route that matches how much work the system should actually do.
 
-Five routes are available:
+Six routes are available:
 
 1. `investigate` — the user is asking a novel question about this legal matter that probably needs new evidence extraction, document search, or synthesis of findings the matter model does not yet contain. Examples: "What's our damages exposure?", "Did the opposing party breach the agreement?", "Find me evidence of intent to deceive." Route here if the matter is fresh (no facts yet), OR if the question targets material that probably hasn't been extracted, OR if the user explicitly asks for an investigation.
 
@@ -159,12 +161,14 @@ Five routes are available:
 
 4. `trace` — the user is asking where a specific prior conclusion came from: "why did you say X", "show me the source for claim Y", "what's the provenance of the damages figure", "how did you derive that timeline". Route here when the request targets the reasoning ledger / provenance of an existing finding.
 
-5. `clarify` — the user's referent is ambiguous or the query is so vague that proceeding would produce a wrong cheap answer. Examples: "Tell me about Smith" when there are two Smiths. Route here SPARINGLY — only when a specific ambiguity makes routing unsafe.
+5. `steer` — the user is CORRECTING a prior fact, OVERRIDING a belief, annotating, editing assumptions, or otherwise mutating matter state. Examples: "Actually the date was April, not March", "That assertion is wrong", "Mark the MSA as the operative contract", "Change the damages figure to 50000", "Ignore the email from March 3rd — it's drafts". The user is not asking a question; they're correcting or directing the matter model. Route here even when the phrasing is indirect ("no, the payment was 30 days after").
+
+6. `clarify` — the user's referent is ambiguous or the query is so vague that proceeding would produce a wrong cheap answer. Examples: "Tell me about Smith" when there are two Smiths. Route here SPARINGLY — only when a specific ambiguity makes routing unsafe.
 
 Guidance:
 - Default to `investigate` on a fresh matter (has_any_facts=False).
-- On a warm matter: `query` for "list X" / "show X" / "which X", `read` for "summarize" / "draft" / "explain" / "what does X mean", `trace` for "why" / "how did you" / "show the source".
-- Never route to `read`, `query`, or `trace` if has_any_facts=False — there's nothing to read.
+- On a warm matter: `query` for "list X" / "show X" / "which X", `read` for "summarize" / "draft" / "explain" / "what does X mean", `trace` for "why" / "how did you" / "show the source", `steer` for "correct" / "actually X" / "no, it was Y" / "change" / "ignore".
+- Never route to `read`, `query`, `trace`, or `steer` if has_any_facts=False — there's nothing to read or correct.
 - Your job is cost governance, not content judgment. Keep the decision fast.
 
 Matter state snapshot:
@@ -177,7 +181,7 @@ User query: {query}
 
 Respond ONLY with a single JSON object:
 {{
-  "family": "investigate" | "read" | "query" | "trace" | "clarify",
+  "family": "investigate" | "read" | "query" | "trace" | "steer" | "clarify",
   "confidence": 0.0-1.0,
   "rationale": "one short sentence — why this route"
 }}
@@ -394,6 +398,17 @@ class CascadeGovernor:
             # NANO fallback only if the user phrasing is ambiguous.
             return ExecutionContract(
                 family="trace",
+                min_iter=0,
+                max_iter=1,
+                citation_floor=0,
+                answer_confidence_floor=0.0,
+                escalation_allowed=True,
+            )
+        if family == "steer":
+            # MVI-4: NANO parse + best-match target, no auto-apply.
+            # Returns a preview the user confirms via existing UI.
+            return ExecutionContract(
+                family="steer",
                 min_iter=0,
                 max_iter=1,
                 citation_floor=0,
@@ -1134,7 +1149,7 @@ class TraceFamilyHandler:
         run_id = row["id"]
         events = self._fetch_ledger(run_id)
         provenance = self._fetch_run_provenance(run_id)
-        rendered = self._render(dict(row), events, provenance)
+        rendered = self._render_trace(dict(row), events, provenance)
         return TraceFamilyResult(
             target_kind="run",
             target_id=run_id,
@@ -1176,7 +1191,7 @@ class TraceFamilyHandler:
             return []
 
     @staticmethod
-    def _render(run_row: dict, events: list[dict], provenance: list[dict]) -> str:
+    def _render_trace(run_row: dict, events: list[dict], provenance: list[dict]) -> str:
         lines = [
             f"## Trace — run {run_row.get('id','?')}",
             "",
@@ -1209,4 +1224,228 @@ class TraceFamilyHandler:
                 )
         else:
             lines.append("- (no provenance events recorded)")
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Steer-family handler (MVI-4) — preview-only correction parser
+# ---------------------------------------------------------------------------
+
+
+STEER_PARSE_PROMPT = """You are parsing a user's matter-mutation intent from a short utterance. The user is NOT asking a question — they're correcting, overriding, or annotating something in the matter model.
+
+Classify exactly one action:
+- `correct_assertion` — a specific fact is wrong and needs a different value. E.g. "the date was April, not March", "no, the payment was 30 days, not 15".
+- `reject_target` — a specific finding should be marked as rejected/withdrawn. E.g. "that assertion is wrong", "ignore that email".
+- `set_source_role` — reclassify how a document should be weighted. E.g. "treat the MSA as operative", "mark the complaint as advocacy".
+- `add_assumption` — add or change a working assumption. E.g. "assume the contract is valid", "for now treat jurisdiction as California".
+- `other` — the intent doesn't map to a clear mutation pattern.
+
+Extract a concise `target_hint` from the utterance (1–80 chars) that lets a matching step find the referenced fact/document/target. Examples: "payment date", "MSA", "the email from March 3".
+
+If the action is `correct_assertion`, extract `old_value` and `new_value` verbatim when the user stated them. Otherwise leave them null.
+
+User utterance: {query}
+
+Respond ONLY in JSON:
+{{
+  "action": "correct_assertion" | "reject_target" | "set_source_role" | "add_assumption" | "other",
+  "target_hint": "short phrase",
+  "old_value": "string or null",
+  "new_value": "string or null",
+  "rationale": "one-line explanation"
+}}
+"""
+
+
+@dataclass
+class SteerFamilyResult:
+    """Outcome of a steer-family parse. MVI-4 never auto-applies — it
+    returns a preview the user confirms via the existing UI correction
+    / annotation surfaces. Legal state must not mutate silently."""
+    action: str                       # correct_assertion | reject_target | set_source_role | add_assumption | other
+    target_hint: str
+    old_value: Optional[str]
+    new_value: Optional[str]
+    candidates: list[dict]            # best-match assertions/documents for the hint
+    rendered_answer: str              # markdown preview shown to the user
+    escalation_needed: bool
+    escalation_reason: Optional[str] = None
+
+
+class SteerFamilyHandler:
+    """Parses a correction/mutation utterance and returns a preview of
+    the proposed change — never applies it. The user confirms via the
+    existing UI (correction form, rejection control, etc.).
+
+    This is deliberate: auto-applying mutations on ambiguous natural-
+    language parses is the kind of failure that blows up legal work.
+    MVI-4 does the heavy lifting of INTENT PARSING + TARGET MATCHING;
+    the human does the final click.
+    """
+
+    def __init__(
+        self,
+        matter_model: Any,
+        client: Optional[GeminiClient] = None,
+    ) -> None:
+        self.matter_model = matter_model
+        self.client = client
+
+    async def run(
+        self,
+        query: str,
+        contract: ExecutionContract,
+    ) -> SteerFamilyResult:
+        if self.matter_model is None:
+            return SteerFamilyResult(
+                action="other",
+                target_hint="",
+                old_value=None, new_value=None,
+                candidates=[],
+                rendered_answer="",
+                escalation_needed=True,
+                escalation_reason="no matter model available",
+            )
+        parsed = await self._parse(query)
+        action = parsed.get("action") or "other"
+        target_hint = (parsed.get("target_hint") or "").strip()
+        old_value = parsed.get("old_value")
+        new_value = parsed.get("new_value")
+
+        if action == "other" or not target_hint:
+            return SteerFamilyResult(
+                action=action,
+                target_hint=target_hint,
+                old_value=old_value, new_value=new_value,
+                candidates=[],
+                rendered_answer="",
+                escalation_needed=True,
+                escalation_reason="parse failed or ambiguous mutation intent",
+            )
+
+        candidates = self._find_candidates(action, target_hint)
+        rendered = self._render_preview(
+            action=action,
+            target_hint=target_hint,
+            old_value=old_value,
+            new_value=new_value,
+            candidates=candidates,
+        )
+        return SteerFamilyResult(
+            action=action,
+            target_hint=target_hint,
+            old_value=old_value,
+            new_value=new_value,
+            candidates=candidates,
+            rendered_answer=rendered,
+            escalation_needed=False,
+        )
+
+    async def _parse(self, query: str) -> dict:
+        if self.client is None:
+            return {"action": "other"}
+        try:
+            response = await self.client.complete(
+                STEER_PARSE_PROMPT.format(query=query),
+                tier=ModelTier.NANO,
+                json_mode=True,
+                usage_label="steer_parse",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("steer_parse NANO failed: %s", exc)
+            return {"action": "other"}
+        try:
+            parsed = json.loads(response or "{}")
+        except (TypeError, ValueError):
+            return {"action": "other"}
+        return parsed if isinstance(parsed, dict) else {"action": "other"}
+
+    def _find_candidates(self, action: str, target_hint: str) -> list[dict]:
+        """Find up to 5 best-match rows to preview for the user.
+        Different actions search different stores."""
+        if not target_hint:
+            return []
+        needle = target_hint.lower()
+        try:
+            if action in {"correct_assertion", "reject_target"}:
+                # Match against recent assertions by substring.
+                rows = self.matter_model.assertions.list_recent(limit=120)
+                scored = [
+                    (self._score(r.get("proposition_text", ""), needle), r)
+                    for r in rows
+                ]
+                scored = [s for s in scored if s[0] > 0]
+                scored.sort(key=lambda t: -t[0])
+                return [r for _, r in scored[:5]]
+            if action == "set_source_role":
+                rows = self.matter_model.list_reviewable_documents()
+                scored = [
+                    (self._score(r.get("path", ""), needle), r)
+                    for r in rows
+                ]
+                scored = [s for s in scored if s[0] > 0]
+                scored.sort(key=lambda t: -t[0])
+                return [r for _, r in scored[:5]]
+            # add_assumption has no pre-existing target to match; leave
+            # candidates empty so the UI just echoes the hint + values.
+            return []
+        except Exception:
+            return []
+
+    @staticmethod
+    def _score(text: str, needle: str) -> int:
+        """Dumb substring scorer — count occurrences of needle words
+        in text. Good enough for the preview; not a retrieval layer."""
+        if not text or not needle:
+            return 0
+        text_l = text.lower()
+        return sum(
+            1 for word in needle.split()
+            if len(word) > 2 and word in text_l
+        )
+
+    @staticmethod
+    def _render_preview(
+        action: str,
+        target_hint: str,
+        old_value: Optional[str],
+        new_value: Optional[str],
+        candidates: list[dict],
+    ) -> str:
+        """Deterministic markdown preview. The user confirms via UI."""
+        lines = [f"## Proposed change — `{action}`", ""]
+        lines.append(f"**Target hint:** {target_hint}")
+        if old_value or new_value:
+            lines.append(f"**Old value:** {old_value or '—'}")
+            lines.append(f"**New value:** {new_value or '—'}")
+        lines.append("")
+        if not candidates:
+            lines.append(
+                "_No matching target found in the matter. Confirm or "
+                "narrow the phrasing, or use the UI correction form "
+                "to target a specific item._"
+            )
+            return "\n".join(lines)
+        lines.append("**Candidates (pick one in the UI to apply):**")
+        lines.append("")
+        for i, c in enumerate(candidates, start=1):
+            if action in {"correct_assertion", "reject_target"}:
+                aid = c.get("id", "?")
+                prop = (c.get("proposition_text") or "").strip()[:180]
+                lines.append(f"{i}. `{aid}` — {prop}")
+            elif action == "set_source_role":
+                path = c.get("path", "?")
+                pending = c.get("pending", 0)
+                verified = c.get("verified", 0)
+                lines.append(
+                    f"{i}. `{path}`  ({pending} pending / {verified} reviewed)"
+                )
+            else:
+                lines.append(f"{i}. {c}")
+        lines.append("")
+        lines.append(
+            "_Irys will not auto-apply this mutation — confirm the "
+            "target and value in the correction / annotation UI._"
+        )
         return "\n".join(lines)

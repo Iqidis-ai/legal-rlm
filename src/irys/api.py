@@ -21,6 +21,8 @@ from .rlm.governance import (
     QueryFamilyResult,
     ReadFamilyHandler,
     ReadFamilyResult,
+    SteerFamilyHandler,
+    SteerFamilyResult,
     TraceFamilyHandler,
     TraceFamilyResult,
     decision_cache_key,
@@ -215,6 +217,39 @@ class Irys:
             decision.escalation_reason = query_result.escalation_reason
             # Fall through to read — which may itself escalate to
             # investigate if matter coverage is thin.
+            decision.family = "read"
+            decision.contract = CascadeGovernor._contract_for("read")
+
+        if decision.family == "steer":
+            # MVI-4: NANO-parsed correction / mutation. Returns a
+            # preview the user confirms via existing UI — no
+            # auto-apply. Escalates to read when the intent can't be
+            # parsed clearly.
+            steer_result = await SteerFamilyHandler(
+                matter_model, client=self._client,
+            ).run(query=query, contract=decision.contract)
+            if not steer_result.escalation_needed:
+                self._persist_route_decision(
+                    matter_model=matter_model,
+                    query=query,
+                    decision=decision,
+                    research_mode=research_mode,
+                    terminal_family="steer",
+                )
+                state = self._make_steer_state(
+                    query=query,
+                    repository=repository,
+                    research_mode=research_mode,
+                    conversation_history=conversation_history,
+                    steer_result=steer_result,
+                    decision=decision,
+                )
+                return InvestigationResult(
+                    state=state,
+                    output=steer_result.rendered_answer,
+                    format=self.config.output_format,
+                )
+            decision.escalation_reason = steer_result.escalation_reason
             decision.family = "read"
             decision.contract = CascadeGovernor._contract_for("read")
 
@@ -432,6 +467,28 @@ class Irys:
         state.findings["route"] = decision.to_audit_dict()
         state.findings["query_intent"] = query_result.intent
         state.findings["query_row_count"] = len(query_result.rows)
+        return state
+
+    def _make_steer_state(
+        self,
+        query: str,
+        repository: "str | Path",
+        research_mode: Optional[str],
+        conversation_history: Optional[list[dict[str, str]]],
+        steer_result: SteerFamilyResult,
+        decision: CascadeDecision,
+    ) -> InvestigationState:
+        state = InvestigationState.create(
+            query,
+            str(Path(repository).resolve()),
+            research_mode=research_mode,
+            conversation_history=conversation_history,
+        )
+        state.findings["final_output"] = steer_result.rendered_answer
+        state.findings["route"] = decision.to_audit_dict()
+        state.findings["steer_action"] = steer_result.action
+        state.findings["steer_target_hint"] = steer_result.target_hint
+        state.findings["steer_candidates"] = steer_result.candidates
         return state
 
     def _make_trace_state(

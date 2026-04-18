@@ -26,6 +26,7 @@ from irys.rlm.governance import (
     ExecutionContract,
     QueryFamilyHandler,
     ReadFamilyHandler,
+    SteerFamilyHandler,
     TraceFamilyHandler,
     decision_cache_key,
 )
@@ -362,3 +363,76 @@ def test_trace_handler_points_at_most_recent_run(warm_matter):
     assert result.target_kind == "run"
     assert result.target_id is not None
     assert "Trace" in result.rendered_answer
+
+
+# ---------------------------------------------------------------------------
+# SteerFamilyHandler
+# ---------------------------------------------------------------------------
+
+
+def test_steer_handler_correct_assertion_preview(warm_matter):
+    """NANO parses the correction; handler finds candidate assertions
+    matching the target_hint; renders a preview but does NOT apply."""
+    client = _FakeClient({
+        "steer_parse": (
+            '{"action": "correct_assertion", "target_hint": "Fact 1", '
+            '"old_value": "March", "new_value": "April", '
+            '"rationale": "date correction"}'
+        ),
+    })
+    handler = SteerFamilyHandler(matter_model=warm_matter, client=client)
+    result = asyncio.run(handler.run(
+        query="Actually the date was April, not March",
+        contract=CascadeGovernor._contract_for("steer"),
+    ))
+    assert result.action == "correct_assertion"
+    assert result.new_value == "April"
+    assert "Proposed change" in result.rendered_answer
+    assert result.escalation_needed is False
+    # Crucially — this is a PREVIEW, not an application. The matter
+    # model's assertion count should be unchanged.
+    assert warm_matter.assertions.count() == 3
+
+
+def test_steer_handler_parse_other_escalates(warm_matter):
+    """When NANO returns 'other' (intent unclear), escalate rather
+    than silently proposing something."""
+    client = _FakeClient({
+        "steer_parse": '{"action": "other", "target_hint": "", "rationale": "unclear"}',
+    })
+    handler = SteerFamilyHandler(matter_model=warm_matter, client=client)
+    result = asyncio.run(handler.run(
+        query="huh?",
+        contract=CascadeGovernor._contract_for("steer"),
+    ))
+    assert result.action == "other"
+    assert result.escalation_needed is True
+
+
+def test_steer_handler_no_matter_model_escalates():
+    client = _FakeClient({})
+    handler = SteerFamilyHandler(matter_model=None, client=client)
+    result = asyncio.run(handler.run(
+        query="correct that",
+        contract=CascadeGovernor._contract_for("steer"),
+    ))
+    assert result.escalation_needed is True
+
+
+def test_steer_handler_reject_target_with_candidates(warm_matter):
+    """`reject_target` action looks up assertions by substring."""
+    client = _FakeClient({
+        "steer_parse": (
+            '{"action": "reject_target", "target_hint": "Fact 2", '
+            '"old_value": null, "new_value": null, '
+            '"rationale": "should be ignored"}'
+        ),
+    })
+    handler = SteerFamilyHandler(matter_model=warm_matter, client=client)
+    result = asyncio.run(handler.run(
+        query="ignore fact 2, it's wrong",
+        contract=CascadeGovernor._contract_for("steer"),
+    ))
+    assert result.action == "reject_target"
+    # warm_matter seeded Fact 0/1/2 so Fact 2 should match.
+    assert any("Fact 2" in str(c.get("proposition_text", "")) for c in result.candidates)
