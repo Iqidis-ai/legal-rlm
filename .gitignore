@@ -127,24 +127,43 @@ docker-compose.override.yml
 .venv/
 
 
-# Codex review artifacts (consumed, not version-controlled)
-codex_tier1_*.txt
-codex_tier2_*.txt
-codex_adversarial_audit_*.txt
-codex_adversarial_*.txt
-codex_tl_*.txt
-codex_design_gate_*.txt
-codex_design_*.txt
-codex_ping.txt
+# Codex review artifacts (consumed, never version-controlled).
+# Catch-all patterns so future autonomous passes can't accidentally
+# commit scratch. Keep local only.
+codex_*.txt
+codex_*.md
+codex_*/
+.codex_*.txt
+.codex_*.md
+.codex_*/
+.codex-*/
+REVIEW_FINDINGS.md
 .audit_tmp/
 .benchmarks/
+.pytest-tmp/
+.tmp_pytest/
+tmp[0-9a-z]*/
 .claude/scheduled_tasks.lock
 experiments/
 workspace/
 
-# Agentic / internal process docs (not for public repos)
+# Agentic / internal process docs — live planning artifacts that stay
+# local so the tracked repo is a clean minimum-entropy surface for
+# future agents. Extend this list whenever a new DESIGN / SPEC is
+# created by an agent session.
 .claude/
 IDEAL_PRODUCT_SPEC.md
 SYSTEM_STATE.md
 DECISIONS.md
 ASSUMPTIONS.md
+enhancements.txt
+ENHANCEMENT_DESIGN.md
+CONSOLIDATED_IMPLEMENTATION_SPEC.md
+CONTRACT_SYNC_ADDENDUM.md
+ATTORNEY_WORKFLOW_UX_SPEC.md
+BACKGROUND_MAINTENANCE_DESIGN.md
+CORE_ALGORITHMS_DESIGN.md
+ERROR_HANDLING_RESILIENCE_SAFETY_DESIGN.md
+MIGRATION_BACKFILL_DESIGN.md
+PROMPT_ENGINEERING_SUBSTRATE.md
+TRUST_PRIVILEGE_DISPUTE_INTERACTIONS.md
