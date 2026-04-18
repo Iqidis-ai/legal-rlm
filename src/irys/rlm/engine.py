@@ -704,7 +704,7 @@ class RLMEngine:
         case_law = self._external_research.get("case_law", [])
         if case_law:
             case_lines = []
-            for c in case_law[:5]:
+            for c in case_law[:100]:
                 snippet = c.get('snippet') or c.get('opinion_text') or 'No snippet available'
                 case_lines.append(
                     f"- **{c.get('case_name', 'Unknown')}** ({c.get('citation') or 'No citation'})\n"
@@ -724,7 +724,7 @@ class RLMEngine:
         web = self._external_research.get("web", [])
         if web:
             web_lines = []
-            for r in web[:5]:
+            for r in web[:30]:
                 web_lines.append(
                     f"- **{r.get('title', 'Untitled')}**\n"
                     f"  URL: {r.get('url', '')}\n"
@@ -1119,7 +1119,7 @@ class RLMEngine:
                     f"**{c.get('case_name', 'Unknown')}** ({c.get('citation') or 'No citation'})\n"
                     f"Court: {c.get('court', 'Unknown')}\nDate: {c.get('date_filed', 'Unknown')}\n"
                     f"Snippet: {(c.get('snippet') or c.get('opinion_text', ''))[:500] if c.get('snippet') or c.get('opinion_text') else 'No summary'}"
-                    for c in self._external_research["case_law"][:5]
+                    for c in self._external_research["case_law"][:100]
                 ])
 
             # Format web results
@@ -1128,7 +1128,7 @@ class RLMEngine:
                 web_text = "\n\n".join([
                     f"**{r.get('title', 'Untitled')}**\nURL: {r.get('url', '')}\n"
                     f"Content: {r.get('content', 'No content')[:500]}"
-                    for r in self._external_research["web"][:5]
+                    for r in self._external_research["web"][:30]
                 ])
 
             # Single consolidated call replaces analyze_case_law_results + analyze_web_results
