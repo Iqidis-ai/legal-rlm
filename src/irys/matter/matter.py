@@ -551,6 +551,14 @@ class MatterModel:
                 changed_object_type=target_kind,
                 changed_object_id=target_id,
             )
+        # Adversarial #7 fix (SO-2 truth maintenance): rejection of a
+        # supporting target must stale its direct dependents so
+        # downstream reasoning re-evaluates. Previously we recomputed
+        # proof only; dependent edges and quants stayed candidate
+        # and silently re-entered consumers that don't read the
+        # assertion's verification row. This is a bounded fan-out —
+        # direct dependents only, no transitive walk.
+        self._stale_rejection_dependents(target_kind, target_id)
         for iid in self._issues_affected_by_target(target_kind, target_id):
             try:
                 self.proof_state.compute_and_store(iid, policy_audience="internal")
@@ -566,6 +574,48 @@ class MatterModel:
         except Exception:
             pass
         return vid
+
+    def _stale_rejection_dependents(
+        self, target_kind: str, target_id: str,
+    ) -> None:
+        """Adversarial #7 fix: when a human rejects a supporting
+        target, fan out stale to its direct dependents so the whole
+        support chain reflects the rejection.
+
+        Rules:
+        - Rejecting an assertion: stale its evidence_edges and
+          quant_facts sourced from it (occurrences preserved for
+          audit but not staled — they're just raw utterance records).
+        - Rejecting an evidence_edge: stale the edge alone; the
+          assertion may still be valid in other contexts.
+        - Rejecting an authority / predicate / quant_fact: no
+          downstream fan-out (these are leaves).
+        """
+        if target_kind == "assertion":
+            edge_rows = self.db.execute(
+                """SELECT id FROM evidence_edge
+                   WHERE matter_id=? AND source_kind='assertion' AND source_id=?
+                     AND active=1""",
+                (self.matter_id, target_id),
+            ).fetchall()
+            quant_rows = self.db.execute(
+                "SELECT id FROM quant_fact WHERE matter_id=? AND assertion_id=?",
+                (self.matter_id, target_id),
+            ).fetchall()
+            specs: list[dict] = []
+            specs.extend(
+                {"target_kind": "evidence_edge", "target_id": r["id"]}
+                for r in edge_rows
+            )
+            specs.extend(
+                {"target_kind": "quant_fact", "target_id": r["id"]}
+                for r in quant_rows
+            )
+            if specs:
+                self.verification.bulk_mark_stale(
+                    specs,
+                    stale_reason=f"upstream_rejected:assertion:{target_id}",
+                )
 
     def bulk_verify_by_document(
         self,
@@ -1814,6 +1864,38 @@ class MatterModel:
     # Document intelligence (cards + spans)
     # ------------------------------------------------------------------
 
+    def _card_provenance(
+        self,
+        *,
+        run_id: Optional[str],
+        relative_path: str,
+        doc_id: str,
+    ) -> "ProvenanceContext":
+        """Build a ProvenanceContext for document card writes that
+        bridges ACTIVE_LLM_CALL — so card provenance rows carry
+        llm_call_id + model_id + model_tier + prompt_hash when the
+        card was written inside a live LLM call (adversarial #7
+        finding #2)."""
+        try:
+            from ..core.models import ACTIVE_LLM_CALL
+            active = ACTIVE_LLM_CALL.get() or {}
+        except Exception:
+            active = {}
+        return ProvenanceContext(
+            event_kind="card_profile",
+            writer_name="DocumentCardStore.upsert",
+            run_id=run_id,
+            model_id=active.get("model_id"),
+            model_tier=active.get("model_tier"),
+            extractor_version="2026-04-17.p01.v1",
+            prompt_version="DI.DOC_TYPE.v1",
+            llm_call_id=active.get("call_id"),
+            prompt_hash=active.get("prompt_hash"),
+            source_document_ref=relative_path,
+            source_document_inventory_id=doc_id,
+            source_span_status="not_applicable",
+        )
+
     def upsert_document_intelligence(
         self,
         relative_path: str,
@@ -1862,15 +1944,14 @@ class MatterModel:
             # P0.1: every AI profile write records a provenance_event
             # row. source_span_status='not_applicable' because document
             # cards summarize the whole document, not a span.
-            provenance=ProvenanceContext(
-                event_kind="card_profile",
-                writer_name="DocumentCardStore.upsert",
+            # Adversarial #7 fix: pull llm_call_id + model_id +
+            # model_tier + prompt_hash from the ACTIVE_LLM_CALL
+            # ContextVar so card provenance rows carry the same LLM
+            # attribution as assertion/edge/quant rows.
+            provenance=self._card_provenance(
                 run_id=run_id,
-                extractor_version="2026-04-17.p01.v1",
-                prompt_version="DI.DOC_TYPE.v1",
-                source_document_ref=relative_path,
-                source_document_inventory_id=doc_id,
-                source_span_status="not_applicable",
+                relative_path=relative_path,
+                doc_id=doc_id,
             ),
         )
 
@@ -1924,16 +2005,11 @@ class MatterModel:
             operative_status=analysis.get("operative_status", "unknown"),
             privilege_flag=_interpret_privilege_flag(analysis.get("privilege_flag")),
             unresolved_flags=analysis.get("unresolved_flags"),
-            # P0.1: profile refresh provenance.
-            provenance=ProvenanceContext(
-                event_kind="card_profile",
-                writer_name="DocumentCardStore.upsert",
+            # P0.1 + adversarial #7 fix: bridge ACTIVE_LLM_CALL.
+            provenance=self._card_provenance(
                 run_id=run_id,
-                extractor_version="2026-04-17.p01.v1",
-                prompt_version="DI.DOC_TYPE.v1",
-                source_document_ref=relative_path,
-                source_document_inventory_id=doc_id,
-                source_span_status="not_applicable",
+                relative_path=relative_path,
+                doc_id=doc_id,
             ),
         )
 

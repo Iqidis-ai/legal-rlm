@@ -402,6 +402,76 @@ def test_mark_document_stale_catches_bare_span_quants(model):
     )
 
 
+def test_reject_assertion_stales_its_edges_and_quants(model):
+    """Adversarial #7 finding #4 (SO-2 killer): rejecting a
+    supporting assertion must stale its dependent edges and quants.
+    Previously proof was recomputed but the companion edge stayed
+    candidate and silently re-entered consumers that read from the
+    edge substrate without checking the assertion's verification."""
+    from irys.matter.enums import IssueType, VerificationTargetKind
+
+    iid, _ = model.issues.upsert_issue("Claim", IssueType.CLAIM, materiality=0.7)
+    run_id = model.start_run("reject fanout")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact(
+        "Support fact", "doc.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    qid = adapter.record_quant(
+        quant_kind="amount", raw_text="$100",
+        amount_value=100.0, assertion_id=aid,
+    )
+    edge = model.db.execute(
+        "SELECT id FROM evidence_edge WHERE source_id=? AND target_id=?",
+        (aid, iid),
+    ).fetchone()
+    model.reject_target(
+        "assertion", aid,
+        reviewed_by_kind="user", reviewed_by_id="r1",
+        rejection_reason="fabricated",
+        run_id=run_id,
+    )
+    # Dependent edge and quant must now be stale.
+    assert model.verification.get("evidence_edge", edge["id"])["status"] == "stale"
+    assert model.verification.get("quant_fact", qid)["status"] == "stale"
+
+
+def test_card_provenance_carries_llm_fields_via_active_context(model):
+    """Adversarial #7 finding #2: document_card provenance rows must
+    carry llm_call_id + model_id + prompt_hash when ACTIVE_LLM_CALL
+    is set, matching what assertion/edge/quant/authority rows already
+    do."""
+    from irys.core.models import ACTIVE_LLM_CALL
+
+    inv_id, _ = model.inventory.upsert(
+        "doc.pdf", "a" * 64, size_bytes=1,
+    )
+    token = ACTIVE_LLM_CALL.set({
+        "call_id": "call_card",
+        "model_id": "gemini-flash",
+        "model_tier": "FLASH",
+        "prompt_hash": "h" * 64,
+    })
+    try:
+        run_id = model.start_run("card provenance")
+        model.upsert_document_profile(
+            "doc.pdf",
+            analysis={"doc_type": "contract", "doc_source_role": "operative"},
+            run_id=run_id,
+        )
+    finally:
+        ACTIVE_LLM_CALL.reset(token)
+    card_row = model.db.execute(
+        "SELECT id FROM document_card WHERE doc_id=?", (inv_id,),
+    ).fetchone()
+    events = model.get_provenance("document_card", card_row["id"])
+    assert events, "card must have at least one provenance event"
+    ev = events[0]
+    assert ev["llm_call_id"] == "call_card"
+    assert ev["model_id"] == "gemini-flash"
+    assert ev["prompt_hash"] == "h" * 64
+
+
 def test_reject_target_bumps_trust_revision(model):
     """P0.4 invalidation trigger: human rejection must bump the
     revision so any cached reasoning that referenced the
