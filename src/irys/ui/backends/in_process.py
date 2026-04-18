@@ -349,8 +349,36 @@ class InProcessBackend(UIBackend):
     async def list_assertions(
         self, matter_id: str, limit: int = 50, offset: int = 0
     ) -> list[dict]:
+        """Returns recent assertions with verification metadata joined
+        per-row. UI surfaces render trust pills from this payload."""
         model = self._get_matter_model(matter_id)
-        return model.assertions.list_recent(limit=limit, offset=offset)
+        assertions = model.assertions.list_recent(limit=limit, offset=offset)
+        ids = [a.get("id") for a in assertions if a.get("id")]
+        if not ids:
+            return assertions
+        placeholders = ",".join("?" * len(ids))
+        rows = model.db.execute(
+            f"""SELECT target_id, status, reviewed_by_kind, reviewed_at,
+                       rejection_reason
+                FROM verification_state
+                WHERE matter_id=? AND target_kind='assertion'
+                  AND target_id IN ({placeholders})""",
+            [model.matter_id, *ids],
+        ).fetchall()
+        by_id = {r["target_id"]: dict(r) for r in rows}
+        for a in assertions:
+            vs = by_id.get(a.get("id"))
+            if vs is None:
+                a["verification_status"] = "candidate"
+                a["reviewed_by_kind"] = None
+                a["reviewed_at"] = None
+                a["rejection_reason"] = None
+            else:
+                a["verification_status"] = vs.get("status")
+                a["reviewed_by_kind"] = vs.get("reviewed_by_kind")
+                a["reviewed_at"] = vs.get("reviewed_at")
+                a["rejection_reason"] = vs.get("rejection_reason")
+        return assertions
 
     async def list_gaps(self, matter_id: str, limit: int = 50) -> list[dict]:
         model = self._get_matter_model(matter_id)

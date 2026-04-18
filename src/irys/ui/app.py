@@ -619,29 +619,75 @@ def _fmt_issues_panel(issues: list) -> str:
     ):
         depth = max(0, _safe_int(issue.get("depth", 0)))
         coverage = max(0.0, min(1.0, _safe_float(issue.get("coverage_fraction", 0.0))))
+        # P0.2 two-lane coverage: verified is the attorney-signed-off
+        # lane; advisory is candidate+verified combined. Show both so
+        # the attorney sees how much is actually proved vs. just
+        # extracted.
+        verified_cov = max(0.0, min(1.0, _safe_float(issue.get("verified_coverage_fraction", 0.0))))
+        verified_cnt = _safe_int(issue.get("verified_supporting_count", 0))
+        candidate_cnt = _safe_int(issue.get("candidate_supporting_count", 0))
         title = _escape(issue.get("title") or issue.get("id") or "Issue")
         proof = _escape(issue.get("proof_status", "none"))
-        support = _safe_int(issue.get("supporting_count", 0))
         attack = _safe_int(issue.get("attacking_count", 0))
         contested = _safe_int(issue.get("contested_predicates", 0))
         blocked = _safe_int(issue.get("blocked_predicates", 0))
-        details = [f"{support} support", f"{attack} attack"]
+        details = [
+            f"{verified_cnt} verified",
+            f"{candidate_cnt} candidate",
+            f"{attack} attack" if attack else "",
+        ]
         if contested:
             details.append(f"{contested} disputed")
         if blocked:
             details.append(f"{blocked} blocked")
+        details_str = " | ".join(d for d in details if d)
+        gap_marker = ""
+        if issue.get("has_proof_gap"):
+            gap_marker = (
+                "<span style='margin-left:8px;padding:1px 6px;border-radius:8px;"
+                "background:#fee2e2;color:#991b1b;font-size:10px;font-weight:700;"
+                "text-transform:uppercase;letter-spacing:0.05em;'>proof gap</span>"
+            )
+        # Two overlaid bars: thin dark verified bar inside a wider
+        # light candidate-advisory bar. Legend below the track.
+        verified_pct = max(0.0, verified_cov * 100)
+        advisory_pct = max(0.0, coverage * 100)
         rows.append(
-            "<div class='issue-row' style='--issue-indent:"
-            f"{depth * 18}px'>"
-            f"<div class='issue-head'><span class='proof-pill proof-{proof}'>{proof}</span>"
-            f"<span class='issue-title'>{title}</span>"
-            f"<span class='issue-pct'>{coverage:.0%}</span></div>"
-            "<div class='issue-track'><div class='issue-fill' "
-            f"style='width:{max(6.0, coverage * 100):.1f}%'></div></div>"
-            f"<div class='issue-meta'>{_escape(' | '.join(details))}</div>"
+            f"<div class='issue-row' style='--issue-indent:{depth * 18}px'>"
+            f"<div class='issue-head'>"
+            f"<span class='proof-pill proof-{proof}'>{proof}</span>"
+            f"<span class='issue-title'>{title}</span>{gap_marker}"
+            f"<span class='issue-pct' title='Verified / Advisory'>"
+            f"{verified_cov:.0%} / {coverage:.0%}</span>"
+            f"</div>"
+            f"<div class='issue-track' style='position:relative;background:#f3f4f6;"
+            f"height:8px;border-radius:4px;overflow:hidden;'>"
+            f"<div style='position:absolute;inset:0 auto 0 0;width:{advisory_pct:.1f}%;"
+            f"background:#bfdbfe;'></div>"
+            f"<div style='position:absolute;inset:0 auto 0 0;width:{verified_pct:.1f}%;"
+            f"background:#1d4ed8;'></div>"
+            f"</div>"
+            f"<div class='issue-meta'>{_escape(details_str)}</div>"
             "</div>"
         )
-    return "<div class='viz-shell'><div class='issues-stack'>" + "".join(rows) + "</div></div>"
+    # Tiny legend row at the top so the reader knows what the two
+    # shades mean.
+    legend = (
+        "<div style='display:flex;gap:16px;font-size:11px;color:#6b7280;"
+        "margin-bottom:8px;padding:0 4px;'>"
+        "<span><span style='display:inline-block;width:10px;height:8px;"
+        "background:#1d4ed8;border-radius:2px;vertical-align:middle;'></span>"
+        " Verified coverage</span>"
+        "<span><span style='display:inline-block;width:10px;height:8px;"
+        "background:#bfdbfe;border-radius:2px;vertical-align:middle;'></span>"
+        " Advisory (candidate + verified)</span>"
+        "</div>"
+    )
+    return (
+        "<div class='viz-shell'>"
+        + legend
+        + "<div class='issues-stack'>" + "".join(rows) + "</div></div>"
+    )
 
 
 _MONTH_NAMES = [
@@ -1467,22 +1513,42 @@ def _trust_icon(role: str) -> str:
     """Return a colored dot indicating source trust level."""
     return _TRUST_ICONS.get(role.upper(), "⚪") if role else "⚪"
 
+
+_VERIFICATION_PILL = {
+    "verified":  ("✓ Verified",   "#15803d", "#dcfce7"),
+    "candidate": ("Needs review", "#92400e", "#fef3c7"),
+    "stale":     ("Pulled back",  "#475569", "#e2e8f0"),
+    "rejected":  ("Rejected",     "#991b1b", "#fee2e2"),
+}
+
+
+def _verification_pill(status: str | None) -> str:
+    """Attorney-readable pill for verification_status."""
+    label, fg, bg = _VERIFICATION_PILL.get(
+        (status or "candidate").lower(),
+        ("Needs review", "#92400e", "#fef3c7"),
+    )
+    return (
+        f"<span style='display:inline-block;padding:1px 8px;border-radius:10px;"
+        f"background:{bg};color:{fg};font-size:11px;font-weight:600;"
+        f"letter-spacing:0.02em;'>{label}</span>"
+    )
+
+
 def _fmt_assertions(assertions: list) -> str:
     if not assertions:
-        return "No assertions."
-    lines = [
-        "| Trust | Proposition | State | Conf | Source | Speech | ID |",
-        "|-------|-------------|-------|------|--------|--------|----|",
-    ]
+        return "No facts yet."
+    # Markdown tables don't render HTML pills reliably across Gradio
+    # versions; use an HTML table so the pill colors land.
+    rows = []
     for a in assertions:
         assertion_id = a.get("id", "?")
-        prop = a.get("proposition_text") or ""
+        prop = _escape(a.get("proposition_text") or "")
         state = a.get("belief_state") or "—"
         conf = f"{float(a.get('confidence', 0)):.2f}" if a.get("confidence") is not None else "—"
         src_roles = a.get("source_roles", [])
         if len(src_roles) > 1:
             src = f"MULTI[{','.join(src_roles)}]"
-            # Use highest-trust role for icon
             best = min(src_roles, key=lambda r: list(_TRUST_ICONS).index(r.upper())
                        if r.upper() in _TRUST_ICONS else 99)
             icon = _trust_icon(best)
@@ -1493,8 +1559,48 @@ def _fmt_assertions(assertions: list) -> str:
             src = a.get("source_role") or a.get("primary_source_role") or "—"
             icon = _trust_icon(src)
         speech = a.get("speech_act") or a.get("primary_speech_act") or "—"
-        lines.append(f"| {icon} | {prop} | {state} | {conf} | {src} | {speech} | `{assertion_id}` |")
-    return "\n".join(lines)
+        vpill = _verification_pill(a.get("verification_status"))
+        # Include who reviewed + why rejected when applicable.
+        review_meta_html = ""
+        reviewer = a.get("reviewed_by_kind")
+        if reviewer and a.get("verification_status") in ("verified", "rejected"):
+            review_meta_html = (
+                f"<div style='font-size:11px;color:#6b7280;margin-top:2px;'>"
+                f"by {_escape(reviewer)}"
+                + (f" — {_escape(a.get('rejection_reason') or '')}"
+                   if a.get("rejection_reason") else "")
+                + "</div>"
+            )
+        rows.append(
+            f"<tr>"
+            f"<td style='padding:6px 8px;vertical-align:top;'>{vpill}{review_meta_html}</td>"
+            f"<td style='padding:6px 8px;vertical-align:top;'>{icon}</td>"
+            f"<td style='padding:6px 8px;vertical-align:top;'>{prop}</td>"
+            f"<td style='padding:6px 8px;vertical-align:top;font-size:12px;color:#6b7280;'>{_escape(state)}</td>"
+            f"<td style='padding:6px 8px;vertical-align:top;font-size:12px;color:#6b7280;'>{conf}</td>"
+            f"<td style='padding:6px 8px;vertical-align:top;font-size:12px;color:#6b7280;'>{_escape(src)}</td>"
+            f"<td style='padding:6px 8px;vertical-align:top;font-size:12px;color:#6b7280;'>{_escape(speech)}</td>"
+            f"<td style='padding:6px 8px;vertical-align:top;font-family:ui-monospace,monospace;font-size:10px;color:#9ca3af;'>{_escape(assertion_id)}</td>"
+            f"</tr>"
+        )
+    header = (
+        "<tr style='background:#f9fafb;text-align:left;'>"
+        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Review</th>"
+        "<th style='padding:6px 8px;'></th>"
+        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Proposition</th>"
+        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>State</th>"
+        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Conf</th>"
+        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Source</th>"
+        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Speech</th>"
+        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>ID</th>"
+        "</tr>"
+    )
+    return (
+        "<div style='overflow-x:auto;'>"
+        "<table style='border-collapse:collapse;width:100%;font-size:13px;'>"
+        f"{header}{''.join(rows)}"
+        "</table></div>"
+    )
 
 
 _ASSUMPTION_STATUS_ICONS = {
