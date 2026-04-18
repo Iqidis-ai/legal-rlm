@@ -228,6 +228,42 @@ def test_pre_spend_ev_gate_filters_low_ev_high_priority_leads(engine):
     assert viable == []
 
 
+def test_bootstrap_lead_enriched_and_gated(engine):
+    """Adv#11 Fix 2 (round 2): the SO-4 Leak-6 bootstrap lead used to
+    append directly to leads_to_process without EV enrichment, and the
+    EV gate ran BEFORE bootstrap — so a raw bootstrap lead with
+    ev_score=0 would dispatch under a contract that should have
+    rejected it. Fix moves bootstrap before the gate and enriches the
+    injected lead first.
+
+    Test covers both pieces:
+    1. _enrich_lead_ev stamps an EV score on a freshly-added bootstrap
+       lead, matching the focus_issue_id's weakness.
+    2. _viable_leads then filters it against the contract floor like
+       any other lead.
+    """
+    boot_lead = Lead.create(
+        description="Gap bootstrap: notice period clause",
+        source="coverage_bootstrap",
+        priority=engine.config.min_lead_priority + 0.01,
+        search_term="notice period clause",
+        focus_issue_id="issue-1",
+    )
+    assert boot_lead.expected_cost_usd == 0.0
+    assert boot_lead.expected_coverage_gain == 0.0
+
+    cov_map = {"issue-1": (0.1, True, 2)}
+    engine._enrich_lead_ev([boot_lead], cov_map)
+    assert boot_lead.expected_cost_usd > 0
+    assert boot_lead.expected_coverage_gain > 0.01
+
+    hard_contract = ExecutionContract(family="investigate", lead_ev_floor=1000.0)
+    assert engine._viable_leads([boot_lead], contract=hard_contract) == []
+
+    soft_contract = ExecutionContract(family="investigate", lead_ev_floor=0.5)
+    assert engine._viable_leads([boot_lead], contract=soft_contract) == [boot_lead]
+
+
 def test_min_iter_from_contract_gates_termination(engine):
     """Contract min_iter=0 allows termination at iteration 1 if target
     is sufficient; min_iter=2 forces a second iteration."""

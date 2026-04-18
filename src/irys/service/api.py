@@ -249,6 +249,13 @@ def _extract_cascade_surface(result) -> tuple[Optional[dict], Optional[dict]]:
         "deliverable_intent",
         "deliverable_row_count",
         "read_infra_failure",
+        # Adv#11 Fix 3 (round 2): compare / scenario payload fields
+        # also need to flow through, otherwise the diff/counterfactual
+        # preview is invisible to clients.
+        "compare_baseline_run_id",
+        "compare_assertion_delta",
+        "scenario_assumption",
+        "scenario_confidence",
     ):
         if _key in findings and findings.get(_key) is not None:
             payload[_key] = findings[_key]
@@ -876,6 +883,8 @@ async def _run_upload_investigation(
         else:
             job.analysis = result.output
             job.citations, job.entities = _serialize_result(result)
+            # Adv#11 Fix 3 (round 2): thread cascade surface on upload path.
+            job.route, job.family_payload = _extract_cascade_surface(result)
             job.status = JobStatus.COMPLETED
 
         if job.matter_id and job.matter_id in _active_matter_models:
@@ -1353,6 +1362,8 @@ async def _run_urls_investigation(
         else:
             job.analysis = result.output
             job.citations, job.entities = _serialize_result(result)
+            # Adv#11 Fix 3 (round 2): thread cascade surface on URLs path.
+            job.route, job.family_payload = _extract_cascade_surface(result)
             job.status = JobStatus.COMPLETED
 
         if job.matter_id and job.matter_id in _active_matter_models:
@@ -1518,6 +1529,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
         # Use exact state._run_id set by engine; reasoning_trail[0] is best-effort only (r40 fix).
         _urls_run_id = (getattr(result.state, "_run_id", None)
                         or (((getattr(result.state, "reasoning_trail", None) or []) or [{}])[0].get("run_id")))
+        _urls_route, _urls_payload = _extract_cascade_surface(result)
         return SyncInvestigateResponse(
             query=request.query,
             analysis=result.output,
@@ -1530,6 +1542,8 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             pending_clarifications=getattr(result.state, "pending_clarifications", []),
             open_gaps=_urls_open_gaps,
             llm_usage=getattr(result.state, "llm_usage", {}),
+            route=_urls_route,
+            family_payload=_urls_payload,
         )
 
     except HTTPException:
