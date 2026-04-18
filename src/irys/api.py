@@ -192,13 +192,23 @@ class Irys:
             conversation_history=conversation_history,
         )
 
-        if decision.family == "query":
+        # Adversarial #10 Fix C: never mutate decision.family in
+        # place — it's the classifier's original call and must be
+        # preserved for audit. `active_family` is what dispatch
+        # switches on; when a handler escalates, we reassign
+        # active_family (not decision.family). The ledger writer
+        # records both.
+        classifier_family = decision.family
+        active_family = classifier_family
+        active_contract = decision.contract
+
+        if active_family == "query":
             # MVI-2: NANO sub-intent resolution then zero-LLM data
             # fetch. Escalates to read (one synth) when the query
             # doesn't map to any enumeration intent.
             query_result = await QueryFamilyHandler(
                 matter_model, client=self._client,
-            ).run(query=query, contract=decision.contract)
+            ).run(query=query, contract=active_contract)
             if not query_result.escalation_needed:
                 self._persist_route_decision(
                     matter_model=matter_model,
@@ -223,16 +233,16 @@ class Irys:
             decision.escalation_reason = query_result.escalation_reason
             # Fall through to read — which may itself escalate to
             # investigate if matter coverage is thin.
-            decision.family = "read"
-            decision.contract = CascadeGovernor._contract_for("read")
+            active_family = "read"
+            active_contract = CascadeGovernor._contract_for("read")
 
-        if decision.family == "deliverable":
+        if active_family == "deliverable":
             # MVI-7: named work-product renderer. MVI-7 ships only the
             # privilege-log renderer; other sub-intents escalate to
             # read for a narrative response.
             deliverable_result = await DeliverableFamilyHandler(
                 matter_model, client=self._client,
-            ).run(query=query, contract=decision.contract)
+            ).run(query=query, contract=active_contract)
             if not deliverable_result.escalation_needed:
                 self._persist_route_decision(
                     matter_model=matter_model,
@@ -259,13 +269,13 @@ class Irys:
                     format=self.config.output_format,
                 )
             decision.escalation_reason = deliverable_result.escalation_reason
-            decision.family = "read"
-            decision.contract = CascadeGovernor._contract_for("read")
+            active_family = "read"
+            active_contract = CascadeGovernor._contract_for("read")
 
-        if decision.family == "compare":
+        if active_family == "compare":
             # MVI-6: diff current state vs last completed run.
             compare_result = CompareFamilyHandler(matter_model).run(
-                query=query, contract=decision.contract,
+                query=query, contract=active_contract,
             )
             self._persist_route_decision(
                 matter_model=matter_model,
@@ -295,7 +305,7 @@ class Irys:
                 format=self.config.output_format,
             )
 
-        if decision.family == "scenario":
+        if active_family == "scenario":
             # MVI-6: NANO-parsed assumption, then read-family answer
             # with the assumption injected as a temporary override.
             # No state mutation.
@@ -303,7 +313,7 @@ class Irys:
                 client=self._client, matter_model=matter_model,
             ).run(
                 query=query,
-                contract=decision.contract,
+                contract=active_contract,
                 conversation_history=conversation_history,
             )
             if not scenario_result.escalation_needed:
@@ -332,17 +342,17 @@ class Irys:
                     format=self.config.output_format,
                 )
             decision.escalation_reason = scenario_result.escalation_reason
-            decision.family = "read"
-            decision.contract = CascadeGovernor._contract_for("read")
+            active_family = "read"
+            active_contract = CascadeGovernor._contract_for("read")
 
-        if decision.family == "steer":
+        if active_family == "steer":
             # MVI-4: NANO-parsed correction / mutation. Returns a
             # preview the user confirms via existing UI — no
             # auto-apply. Escalates to read when the intent can't be
             # parsed clearly.
             steer_result = await SteerFamilyHandler(
                 matter_model, client=self._client,
-            ).run(query=query, contract=decision.contract)
+            ).run(query=query, contract=active_contract)
             if not steer_result.escalation_needed:
                 self._persist_route_decision(
                     matter_model=matter_model,
@@ -365,13 +375,13 @@ class Irys:
                     format=self.config.output_format,
                 )
             decision.escalation_reason = steer_result.escalation_reason
-            decision.family = "read"
-            decision.contract = CascadeGovernor._contract_for("read")
+            active_family = "read"
+            active_contract = CascadeGovernor._contract_for("read")
 
-        if decision.family == "trace":
+        if active_family == "trace":
             # MVI-2: provenance + reasoning-ledger lookup, zero LLM.
             trace_result = TraceFamilyHandler(matter_model).run(
-                query=query, contract=decision.contract,
+                query=query, contract=active_contract,
             )
             self._persist_route_decision(
                 matter_model=matter_model,
@@ -394,11 +404,12 @@ class Irys:
                 format=self.config.output_format,
             )
 
-        if decision.family == "read":
+        if active_family == "read":
             read_result = await self._run_read_family(
                 query=query,
                 decision=decision,
                 conversation_history=conversation_history,
+                contract=active_contract,
             )
             # Adversarial #10 finding #6: distinguish "state
             # insufficient" (escalate to investigate) from infra
@@ -465,7 +476,7 @@ class Irys:
                 read_result.escalation_reason,
             )
 
-        if decision.family == "clarify":
+        if active_family == "clarify":
             # MVI-1: clarify returns the question back to the user as
             # the answer text. No investigation, no read, no further
             # LLM spend. Later MVIs can generate a structured
@@ -506,7 +517,7 @@ class Irys:
                 repository,
                 research_mode=research_mode,
                 conversation_history=conversation_history,
-                execution_contract=decision.contract,
+                execution_contract=active_contract,
             )
         finally:
             self._telemetry.end_operation(
@@ -541,8 +552,11 @@ class Irys:
         query: str,
         decision: CascadeDecision,
         conversation_history: Optional[list[dict[str, str]]],
+        contract: Any = None,
     ) -> ReadFamilyResult:
-        """One synth call over existing matter state. MVI-1."""
+        """One synth call over existing matter state. MVI-1.
+        `contract` is the active contract at call time — may differ
+        from `decision.contract` when an earlier handler escalated."""
         handler = ReadFamilyHandler(
             client=self._client,
             matter_model=self._engine._matter_model,
@@ -551,7 +565,7 @@ class Irys:
         try:
             return await handler.run(
                 query=query,
-                contract=decision.contract,
+                contract=contract or decision.contract,
                 conversation_history=conversation_history,
             )
         finally:
@@ -733,20 +747,27 @@ class Irys:
                     matter_model.complete_run(run_id)
                 except Exception:
                     pass
-            # Write a structured ledger event capturing the decision.
+            # Adversarial #10 Fix C: write BOTH the classifier's
+            # original family AND the terminal family that actually
+            # handled the request. `decision.family` is pristine
+            # (never mutated since the governor returned it), so the
+            # audit snapshot carries the classifier's real call.
             try:
                 import json as _json
                 from .matter.enums import LedgerEventType
+                audit_payload = decision.to_audit_dict()
+                audit_payload["terminal_family"] = terminal_family
+                audit_payload["classifier_family"] = decision.family
                 matter_model.ledger.append_event(
                     run_id=run_id,
                     event_type=LedgerEventType.ROUTE_DECISION,
                     summary=(
-                        f"Route: {terminal_family} "
-                        f"(classifier family={decision.family}, "
-                        f"conf={decision.confidence:.2f})"
+                        f"Route: classifier={decision.family} "
+                        f"terminal={terminal_family} "
+                        f"conf={decision.confidence:.2f}"
                     ),
                     why=decision.rationale,
-                    snapshot_json=_json.dumps(decision.to_audit_dict()),
+                    snapshot_json=_json.dumps(audit_payload),
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Route ledger write failed: %s", exc)

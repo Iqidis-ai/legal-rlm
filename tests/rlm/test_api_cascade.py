@@ -157,6 +157,57 @@ def test_api_read_zero_citations_forces_escalation(repo_path):
     irys._engine.investigate.assert_called_once()
 
 
+def test_api_route_audit_preserves_classifier_and_terminal_family(repo_path):
+    """Adversarial #10 Fix C acceptance: when classifier routes to
+    `deliverable` but the handler escalates to `read` (MVI-7 ships
+    only privilege_log), the persisted audit record must show BOTH
+    the classifier's original call AND the terminal family — the
+    old code mutated decision.family in place and destroyed that
+    signal."""
+    import json
+    fake = _FakeClient({
+        "intent_classifier": (
+            '{"family": "deliverable", "confidence": 0.8, '
+            '"rationale": "deposition outline asked"}'
+        ),
+        # dep_outline escalates in MVI-7.
+        "deliverable_sub_intent": '{"intent": "dep_outline"}',
+        # Then read synth answers (no citations, zero confidence) so
+        # the path reaches a terminal family that differs from the
+        # classifier family.
+        "read_synth": (
+            '{"answer": "placeholder", "answer_confidence": "medium", '
+            '"citations": ["x.pdf"], "used_existing_state_only": true, '
+            '"escalation_hint": ""}'
+        ),
+    })
+    mm = _warm_in_memory_matter()
+    # Use a real on-matter path so ledger writes land; the
+    # helper keeps everything in-memory.
+    irys = _make_irys(fake, mm)
+
+    asyncio.run(irys.investigate(
+        query="draft a dep outline for smith",
+        repository=repo_path,
+    ))
+
+    # Look up the most recent ledger event and parse the audit JSON.
+    rows = mm.db.execute(
+        """SELECT snapshot_json FROM ledger_event
+           WHERE event_type='route_decision'
+           ORDER BY created_at DESC LIMIT 1"""
+    ).fetchall()
+    assert rows, "expected a ROUTE_DECISION ledger event"
+    payload = json.loads(rows[0]["snapshot_json"])
+    # Classifier family stays the original call.
+    assert payload["classifier_family"] == "deliverable"
+    # Terminal family reflects the escalation target.
+    assert payload["terminal_family"] == "read"
+    # The `family` audit field from decision.to_audit_dict is ALSO
+    # the classifier's original call — verifying no in-place mutation.
+    assert payload["family"] == "deliverable"
+
+
 def test_api_read_ships_when_contract_met(repo_path):
     """Sanity: high-confidence read WITH citations ships without
     escalation. Guards against over-correction in Fix B."""
