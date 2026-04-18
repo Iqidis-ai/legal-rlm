@@ -529,11 +529,18 @@ class MatterModel:
         # Promotion to verified changes the verified_supporting_count
         # lane on any issue this target supports. Recompute affected
         # proof states so coverage_report reflects the new lane.
+        # Narrow the fallback: sqlite errors during recompute are
+        # survivable (the next recompute will pick it up); every
+        # other exception is a real bug and should propagate.
+        import sqlite3 as _sqlite3
         for iid in self._issues_affected_by_target(target_kind, target_id):
             try:
                 self.proof_state.compute_and_store(iid, policy_audience="internal")
-            except Exception:
-                pass
+            except _sqlite3.Error as _exc:
+                _log.warning(
+                    "verify_target: proof recompute failed for issue %s: %s",
+                    iid, _exc,
+                )
         return vid
 
     def _verify_companion_edges(

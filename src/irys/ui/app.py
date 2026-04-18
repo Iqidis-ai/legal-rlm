@@ -2745,6 +2745,16 @@ class AppState:
         if not target_handle or ":" not in target_handle:
             return "⚠️ Select an item from the review queue first."
         kind, tid = target_handle.split(":", 1)
+        # Snapshot queue size before the write so the success copy
+        # can be honest about how many items a single verify actually
+        # clears — adversarial #9 finding #4 regression. One assertion
+        # verify often clears the assertion + its system-inferred edge
+        # + its occurrence, so the queue drops by >1.
+        try:
+            before = _run_async(self.backend().get_review_queue(matter_id, limit=500))
+            before_count = len(before)
+        except Exception:
+            before_count = None
         try:
             _run_async(self.backend().verify_target(
                 matter_id, kind, tid,
@@ -2753,12 +2763,23 @@ class AppState:
                 review_note=(review_note or "").strip() or None,
             ))
         except ValueError as exc:
-            # Value errors come from the human-reviewer gate and
-            # similar contract violations — safe to surface.
             return f"⚠️ {exc}"
         except Exception as exc:
             logger.warning("Verify failed for %s:%s — %s", kind, tid, exc)
             return "⚠️ Verify didn't go through. Please try again."
+        if before_count is not None:
+            try:
+                after = _run_async(self.backend().get_review_queue(matter_id, limit=500))
+                after_count = len(after)
+                cleared = max(0, before_count - after_count)
+                if cleared > 1 and kind == "assertion":
+                    return (
+                        f"✅ Verified — also promoted {cleared - 1} related "
+                        f"item(s) (the fact's supporting evidence link) so the "
+                        "verified-coverage bar moves up cleanly."
+                    )
+            except Exception:
+                pass
         return "✅ Verified — the verified-coverage bar moves up and the queue shrinks."
 
     def do_reject_target(
