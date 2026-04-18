@@ -921,6 +921,62 @@ class MatterModel:
         scope = self._collect_span_invalidation_scope(span_id)
         return self._apply_invalidation(scope, reason=reason)
 
+    def reclassify_privilege(
+        self,
+        doc_id: str,
+        new_flag: bool,
+        *,
+        reviewed_by_kind: str,
+        reviewed_by_id: Optional[str] = None,
+    ) -> int:
+        """P0.4: an attorney flips a document's privilege classification.
+        The card itself is verified under the privilege_classification
+        review scope; downstream direct dependents (assertions, quants,
+        authorities, edges) are staled so clean-audience synthesis
+        re-evaluates with the new flag. Returns count of staled
+        targets.
+
+        Rejected targets are preserved (stronger opinion than stale).
+        If the flag hasn't actually changed, this is a no-op (no stale,
+        no trust_revision bump).
+        """
+        inv = self.db.execute(
+            """SELECT id FROM document_inventory
+               WHERE matter_id=? AND (id=? OR relative_path=?)""",
+            (self.matter_id, doc_id, doc_id),
+        ).fetchone()
+        if inv is None:
+            return 0
+        inv_id = inv["id"]
+        card = self.document_cards.get_by_doc_id(inv_id)
+        old_flag = card.get("privilege_flag") if card else None
+        if old_flag == (1 if new_flag else 0):
+            return 0  # no change
+        # Upsert the card with the new flag.
+        card_id = self.document_cards.upsert(
+            doc_id=inv_id,
+            privilege_flag=new_flag,
+        )
+        # Verify the card itself under the privilege_classification
+        # scope so the reviewer's decision is audited.
+        try:
+            self.verify_target(
+                "document_card", card_id,
+                reviewed_by_kind=reviewed_by_kind,
+                reviewed_by_id=reviewed_by_id,
+                review_scope="privilege_classification",
+            )
+        except Exception:
+            pass  # best effort; don't block the stale sweep
+        # Collect the document's direct dependents but exclude the
+        # card itself (we just verified it).
+        scope = self._collect_document_invalidation_scope(inv_id)
+        scope["document_card_ids"] = set()
+        return self._apply_invalidation(
+            scope,
+            reason=f"privilege_reclassified:{old_flag}->{1 if new_flag else 0}",
+        )
+
     def get_verification_events(
         self,
         target_kind: Optional[str] = None,

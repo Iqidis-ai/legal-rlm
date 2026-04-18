@@ -210,6 +210,74 @@ def test_mark_span_stale_only_span_local(model):
     assert model.verification.get("assertion", aid_out)["status"] == "candidate"
 
 
+def test_update_hash_detects_real_change(model):
+    """P0.4: update_hash returns (True, old_sha) when an actual
+    content hash replaces a prior real hash — the signal engine
+    code uses to trigger mark_document_stale."""
+    inv_id, _ = model.inventory.upsert("doc.pdf", "a" * 64, size_bytes=100)
+    changed, old = model.inventory.update_hash(inv_id, "b" * 64, size_bytes=200)
+    assert changed is True
+    assert old == "a" * 64
+
+
+def test_update_hash_does_not_clobber_real_with_pending(model):
+    """Guard: a real hash must never be overwritten with the
+    'pending' placeholder. Returns (False, real_old)."""
+    inv_id, _ = model.inventory.upsert("doc.pdf", "a" * 64, size_bytes=100)
+    changed, old = model.inventory.update_hash(inv_id, "pending", size_bytes=0)
+    assert changed is False
+    assert old == "a" * 64
+
+
+def test_update_hash_first_real_hash_after_pending_is_not_a_change(model):
+    """Replacing 'pending' with a first real hash is just placeholder
+    replacement, not a content change."""
+    inv_id, _ = model.inventory.upsert("doc.pdf", "pending", size_bytes=0)
+    changed, old = model.inventory.update_hash(inv_id, "a" * 64, size_bytes=100)
+    assert changed is False
+    assert old == "pending"
+
+
+def test_reclassify_privilege_stales_downstream_on_flag_flip(model):
+    """Attorney flips privilege — downstream direct dependents are
+    staled and trust_revision bumps so clean synthesis re-evaluates."""
+    run_id = model.start_run("priv flip")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    inv_id, _ = model.inventory.upsert("internal.docx", "a" * 64, size_bytes=1)
+    model.document_cards.upsert(
+        doc_id=inv_id, title="memo", doc_type="internal", privilege_flag=False,
+    )
+    aid = adapter.record_fact("Internal fact", "internal.docx")
+    before_rev = model.cache.current_trust_revision()
+    touched = model.reclassify_privilege(
+        "internal.docx", new_flag=True,
+        reviewed_by_kind="attorney", reviewed_by_id="a1",
+    )
+    assert touched >= 1
+    assert model.verification.get("assertion", aid)["status"] == "stale"
+    assert model.cache.current_trust_revision() == before_rev + 1
+
+
+def test_reclassify_privilege_no_op_when_flag_unchanged(model):
+    """Re-asserting the same classification must not stale downstream
+    or bump trust_revision."""
+    run_id = model.start_run("priv no-op")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    inv_id, _ = model.inventory.upsert("d.pdf", "a" * 64, size_bytes=1)
+    model.document_cards.upsert(
+        doc_id=inv_id, title="doc", doc_type="contract", privilege_flag=False,
+    )
+    aid = adapter.record_fact("A fact", "d.pdf")
+    before_rev = model.cache.current_trust_revision()
+    touched = model.reclassify_privilege(
+        "d.pdf", new_flag=False,
+        reviewed_by_kind="attorney", reviewed_by_id="a1",
+    )
+    assert touched == 0
+    assert model.verification.get("assertion", aid)["status"] == "candidate"
+    assert model.cache.current_trust_revision() == before_rev
+
+
 def test_reject_target_bumps_trust_revision(model):
     """P0.4 invalidation trigger: human rejection must bump the
     revision so any cached reasoning that referenced the

@@ -3634,6 +3634,42 @@ class DocumentInventoryStore:
         is_new = actual_id == doc_id  # True only if INSERT succeeded (no prior row for this path)
         return actual_id, is_new
 
+    def update_hash(
+        self, doc_id: str, sha256: str, size_bytes: int = 0,
+    ) -> tuple[bool, Optional[str]]:
+        """P0.4: record a content hash for a known inventory row
+        after the real bytes have been read. Returns
+        (hash_changed, old_sha256).
+
+        Guards against clobbering a real hash with the "pending"
+        placeholder: if the caller passes sha256="pending" and a
+        real hash already exists, we leave the row alone and report
+        hash_changed=False. hash_changed is True only when both the
+        old and new hashes are real and different.
+        """
+        row = self.db.execute(
+            "SELECT sha256 FROM document_inventory WHERE id=? AND matter_id=?",
+            (doc_id, self.matter_id),
+        ).fetchone()
+        if row is None:
+            return (False, None)
+        old_sha = row["sha256"]
+        # Never downgrade a real hash with the placeholder.
+        if sha256 == "pending" and old_sha and old_sha != "pending":
+            return (False, old_sha)
+        if old_sha == sha256:
+            return (False, old_sha)
+        now = _now()
+        self.db.execute(
+            "UPDATE document_inventory SET sha256=?, size_bytes=?, last_read_at=? WHERE id=?",
+            (sha256, size_bytes, now, doc_id),
+        )
+        # Only flag a change when the OLD value was also a real hash.
+        # First real hash after "pending" is not an invalidation —
+        # it's just the placeholder being replaced.
+        changed = bool(old_sha and old_sha != "pending" and sha256 != "pending")
+        return (changed, old_sha)
+
     def mark_ingested(self, doc_id: str) -> None:
         """Set ingest_status='complete' and record last_read_at."""
         now = _now()
