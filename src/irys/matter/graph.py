@@ -894,10 +894,12 @@ class AssertionStore:
         first-seen source role.
         """
         # primary_* fields come from the earliest occurrence (chronological, not lexicographic).
-        # We use a correlated subquery per field to avoid MIN() on non-sortable text columns.
-        # Use a CTE to select the bounded ID set first, then aggregate occurrences
-        # only for those rows.  Without the CTE, GROUP BY would aggregate ALL
-        # assertion+occurrence rows for this matter before the LIMIT is applied.
+        # OPT-4: the three correlated subqueries that pulled
+        # primary_document_id/primary_source_role/primary_speech_act per
+        # row are replaced with a single ROW_NUMBER()-windowed CTE over
+        # assertion_occurrence so only the first occurrence per
+        # assertion materialises. For the aggregates we still GROUP BY
+        # on the bounded id set.
         rows = self.db.execute(
             """WITH recent_ids AS (
                    SELECT id, proposition_text, model_layer, assertion_kind,
@@ -906,6 +908,18 @@ class AssertionStore:
                    WHERE matter_id=?
                    ORDER BY created_at DESC
                    LIMIT ? OFFSET ?
+               ),
+               first_occurrence AS (
+                   SELECT ao.assertion_id,
+                          ao.document_id  AS primary_document_id,
+                          ao.source_role  AS primary_source_role,
+                          ao.speech_act   AS primary_speech_act,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY ao.assertion_id
+                              ORDER BY ao.created_at ASC, ao.id ASC
+                          ) AS rn
+                   FROM assertion_occurrence ao
+                   WHERE ao.assertion_id IN (SELECT id FROM recent_ids)
                )
                SELECT a.id, a.proposition_text, a.model_layer, a.assertion_kind,
                       a.belief_state, a.confidence, a.created_at,
@@ -913,17 +927,12 @@ class AssertionStore:
                       GROUP_CONCAT(DISTINCT ao.source_role) AS source_roles_csv,
                       GROUP_CONCAT(DISTINCT ao.speech_act) AS speech_acts_csv,
                       GROUP_CONCAT(DISTINCT ao.document_id) AS documents_csv,
-                      (SELECT ao2.document_id FROM assertion_occurrence ao2
-                       WHERE ao2.assertion_id = a.id
-                       ORDER BY ao2.created_at ASC, ao2.id ASC LIMIT 1) AS primary_document_id,
-                      (SELECT ao2.source_role FROM assertion_occurrence ao2
-                       WHERE ao2.assertion_id = a.id
-                       ORDER BY ao2.created_at ASC, ao2.id ASC LIMIT 1) AS primary_source_role,
-                      (SELECT ao2.speech_act FROM assertion_occurrence ao2
-                       WHERE ao2.assertion_id = a.id
-                       ORDER BY ao2.created_at ASC, ao2.id ASC LIMIT 1) AS primary_speech_act
+                      fo.primary_document_id,
+                      fo.primary_source_role,
+                      fo.primary_speech_act
                FROM recent_ids a
                LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
+               LEFT JOIN first_occurrence fo ON fo.assertion_id = a.id AND fo.rn = 1
                GROUP BY a.id
                ORDER BY a.created_at DESC""",
             (self.matter_id, limit, offset),
@@ -5756,16 +5765,15 @@ class VerificationStateStore:
                           ELSE 6
                       END AS priority_bucket,
                       COALESCE(ai.max_priority, ei.priority, pi.priority, 0.0) AS priority_score,
-                      -- Target context: one of these will be non-null.
-                      (SELECT a.proposition_text FROM assertion a
-                         WHERE a.id=vs.target_id AND vs.target_kind='assertion') AS proposition_text,
-                      (SELECT q.raw_text FROM quant_fact q
-                         WHERE q.id=vs.target_id AND vs.target_kind='quant_fact') AS quant_raw_text,
-                      (SELECT au.citation FROM authority au
-                         WHERE au.id=vs.target_id AND vs.target_kind='authority') AS authority_citation,
-                      (SELECT ip.description FROM issue_predicate ip
-                         WHERE ip.id=vs.target_id
-                           AND vs.target_kind='issue_predicate') AS predicate_description
+                      -- Target context columns: at most one of these
+                      -- is non-null per row thanks to the target_kind
+                      -- guards on each join. Replaces four correlated
+                      -- subqueries with four indexed LEFT JOINs on
+                      -- primary keys (OPT-4).
+                      a.proposition_text  AS proposition_text,
+                      q.raw_text          AS quant_raw_text,
+                      au.citation         AS authority_citation,
+                      ipd.description     AS predicate_description
                FROM verification_state vs
                LEFT JOIN assertion_issue ai ON ai.target_id = vs.target_id
                                             AND vs.target_kind='assertion'
@@ -5775,6 +5783,14 @@ class VerificationStateStore:
                                          AND vs.target_kind='assertion'
                LEFT JOIN predicate_issue pi ON pi.target_id = vs.target_id
                                             AND vs.target_kind='issue_predicate'
+               LEFT JOIN assertion a       ON vs.target_kind='assertion'
+                                           AND a.id = vs.target_id
+               LEFT JOIN quant_fact q      ON vs.target_kind='quant_fact'
+                                           AND q.id = vs.target_id
+               LEFT JOIN authority au      ON vs.target_kind='authority'
+                                           AND au.id = vs.target_id
+               LEFT JOIN issue_predicate ipd ON vs.target_kind='issue_predicate'
+                                             AND ipd.id = vs.target_id
                WHERE vs.matter_id=? AND vs.status='candidate'
                  {kind_filter_sql}
                ORDER BY priority_bucket ASC, priority_score DESC, vs.created_at DESC
