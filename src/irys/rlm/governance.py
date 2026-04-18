@@ -1,0 +1,717 @@
+"""Answerability-Governed Cost Cascade — front-door governance.
+
+MVI-1 of the cascade design (see `codex_master_plan.txt` and the
+project CLAUDE.md). Decides whether a user query should:
+
+  - enter the full recursive investigate loop (expensive, minutes)
+  - be answered from existing matter state + conversation (cheap,
+    one synth call)
+  - be bounced back to the user as a clarification question (no
+    LLM spend on the answer)
+
+The core primitive is an `ExecutionContract` — the classifier emits
+one, and every downstream gate (termination, per-lead EV, family
+handlers) reads from it. Mode selection and stopping rules are the
+same decision at different levels of the cascade.
+
+Later MVIs will add more families (query, trace, steer, compare,
+scenario, deliverable). MVI-1 ships only the three routes required
+to stop wasting the full loop on questions the matter can already
+answer: investigate | read | clarify.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from dataclasses import asdict, dataclass, field
+from typing import Any, Optional
+
+from ..core.models import GeminiClient, ModelTier
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Contract shapes
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ExecutionContract:
+    """What a mode handler promises about its spend and stopping rules.
+
+    Emitted by the classifier and carried through the cascade so every
+    downstream gate reads from one source of truth. Later MVIs extend
+    this with coverage_goal, freshness_floor, lead_ev_floor, etc.
+    """
+    family: str                    # investigate | read | clarify (MVI-1 only)
+    min_iter: int = 0              # 0 for read/clarify, floor for investigate
+    max_iter: int = 20             # cap even on investigate
+    citation_floor: int = 0        # minimum citations before a read can answer
+    answer_confidence_floor: float = 0.5  # read escalates below this
+    escalation_allowed: bool = True       # can a handler escalate to investigate?
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class AnswerabilitySnapshot:
+    """Compact state signal fed to the classifier.
+
+    Deliberately small — the classifier is NANO and its input budget
+    matters. Fields here are the ones Codex called out as actually
+    relevant to routing (entity resolution confidence, coverage,
+    verification status, freshness, policy/audience). Global counts
+    like `assertion_count` are kept as coarse hints but the classifier
+    is instructed to weigh slice-relevant signals more heavily.
+    """
+    matter_id: Optional[str]
+    assertion_count: int
+    verified_assertion_count: int
+    open_issue_count: int
+    open_gap_count: int
+    actor_count: int
+    has_any_facts: bool
+    has_any_verified: bool
+    trust_revision: int
+    policy_audience: str = "clean"
+    # Last-turn hints so deixis ("that contract", "the prior point")
+    # can resolve without re-sending the full conversation.
+    recent_turn_count: int = 0
+    last_turn_summary: Optional[str] = None
+
+    def to_prompt_block(self) -> str:
+        """Render as compact key:value lines for the classifier prompt."""
+        lines = [
+            f"- has_any_facts: {self.has_any_facts}",
+            f"- has_any_verified: {self.has_any_verified}",
+            f"- assertion_count: {self.assertion_count}",
+            f"- verified_assertion_count: {self.verified_assertion_count}",
+            f"- open_issue_count: {self.open_issue_count}",
+            f"- open_gap_count: {self.open_gap_count}",
+            f"- actor_count: {self.actor_count}",
+            f"- trust_revision: {self.trust_revision}",
+            f"- policy_audience: {self.policy_audience}",
+            f"- recent_turn_count: {self.recent_turn_count}",
+        ]
+        if self.last_turn_summary:
+            lines.append(f"- last_turn_summary: {self.last_turn_summary[:160]}")
+        return "\n".join(lines)
+
+
+@dataclass
+class CascadeDecision:
+    """One routing decision, persisted on run_session for auditability.
+
+    `escalation_reason` is set when a read-family handler bounces to
+    investigate because coverage was insufficient — we need that to
+    tune the classifier later.
+    """
+    family: str
+    confidence: float
+    rationale: str
+    contract: ExecutionContract
+    classifier_version: str
+    snapshot: AnswerabilitySnapshot
+    escalation_reason: Optional[str] = None
+
+    def to_audit_dict(self) -> dict[str, Any]:
+        return {
+            "family": self.family,
+            "confidence": self.confidence,
+            "rationale": self.rationale,
+            "classifier_version": self.classifier_version,
+            "contract": self.contract.to_dict(),
+            "escalation_reason": self.escalation_reason,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Classifier prompt (NANO tier)
+# ---------------------------------------------------------------------------
+
+
+# Bump whenever the prompt or schema changes — included in the
+# classifier_version so old cached decisions miss cleanly.
+CLASSIFIER_SCHEMA_VERSION = "mvi1.0"
+
+
+INTENT_CLASSIFIER_PROMPT = """You are a routing classifier for a legal intelligence platform. For each user query you pick ONE route that matches how much work the system should actually do.
+
+Three routes are available (MVI-1 — more routes will be added later):
+
+1. `investigate` — the user is asking a novel question about this legal matter that probably needs new evidence extraction, document search, or synthesis of findings the matter model does not yet contain. Examples: "What's our damages exposure?", "Did the opposing party breach the agreement?", "Find me evidence of intent to deceive." Route here if the matter is fresh (no facts yet), OR if the question targets material that probably hasn't been extracted, OR if the user explicitly asks for an investigation.
+
+2. `read` — the user is asking for a summary, recap, restatement, reformat, or answer from facts the matter model already contains. Examples: "Summarize our session for my team", "Give me that analysis as bullet points", "What's the timeline so far?", "Draft a client email explaining our conclusions", "What have we found about the MSA?". Route here if the matter has content AND the query asks about existing findings, not new investigation.
+
+3. `clarify` — the user's referent is ambiguous or the query is so vague that proceeding would produce a wrong cheap answer. Examples: "Tell me about Smith" when there are two Smiths. Route here SPARINGLY — only when a specific ambiguity makes routing unsafe.
+
+Guidance:
+- Default to `investigate` on a fresh matter (has_any_facts=False).
+- Default to `read` on a warm matter when the query asks about existing findings, conversation context, or deliverable-shaped output ("summarize", "rewrite", "list", "recap", "draft a memo").
+- Never route to `read` if has_any_facts=False — there's nothing to read.
+- Your job is cost governance, not content judgment. Keep the decision fast.
+
+Matter state snapshot:
+{snapshot_block}
+
+Recent conversation turns (for deixis only — do not rely on them as a knowledge source):
+{conversation_block}
+
+User query: {query}
+
+Respond ONLY with a single JSON object:
+{{
+  "family": "investigate" | "read" | "clarify",
+  "confidence": 0.0-1.0,
+  "rationale": "one short sentence — why this route"
+}}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Governor
+# ---------------------------------------------------------------------------
+
+
+class CascadeGovernor:
+    """Produces a `CascadeDecision` for a user query.
+
+    Thin wrapper around a NANO LLM call plus a compact snapshot build.
+    State-aware — the snapshot is the mechanism that keeps the router
+    out of the prompt-as-memory anti-pattern Codex flagged.
+    """
+
+    def __init__(
+        self,
+        client: GeminiClient,
+        matter_model: Any = None,  # MatterModel or None for fresh matters
+    ) -> None:
+        self.client = client
+        self.matter_model = matter_model
+
+    async def decide(
+        self,
+        query: str,
+        conversation_history: Optional[list[dict[str, str]]] = None,
+    ) -> CascadeDecision:
+        """Classify and derive a contract. Falls back to `investigate`
+        on any classifier error — we'd rather over-spend than answer
+        a question we can't route. This matches Codex's directive
+        that silent cheap-wrong answers are worse than latency."""
+        snapshot = self._build_snapshot(conversation_history)
+
+        # Cold-start shortcut: if there are literally no facts in the
+        # matter, `read` is impossible by definition. Skip the NANO
+        # call and hard-route to investigate. Saves a round trip on
+        # every fresh-matter query.
+        if not snapshot.has_any_facts:
+            return CascadeDecision(
+                family="investigate",
+                confidence=1.0,
+                rationale="cold-start: matter has no facts yet",
+                contract=self._contract_for("investigate"),
+                classifier_version=CLASSIFIER_SCHEMA_VERSION,
+                snapshot=snapshot,
+            )
+
+        family, confidence, rationale = await self._classify(
+            query, snapshot, conversation_history,
+        )
+        return CascadeDecision(
+            family=family,
+            confidence=confidence,
+            rationale=rationale,
+            contract=self._contract_for(family),
+            classifier_version=CLASSIFIER_SCHEMA_VERSION,
+            snapshot=snapshot,
+        )
+
+    def _build_snapshot(
+        self,
+        conversation_history: Optional[list[dict[str, str]]],
+    ) -> AnswerabilitySnapshot:
+        """Read a compact answerability snapshot from the matter model."""
+        mm = self.matter_model
+        if mm is None:
+            return AnswerabilitySnapshot(
+                matter_id=None,
+                assertion_count=0,
+                verified_assertion_count=0,
+                open_issue_count=0,
+                open_gap_count=0,
+                actor_count=0,
+                has_any_facts=False,
+                has_any_verified=False,
+                trust_revision=0,
+                recent_turn_count=len(conversation_history or []),
+                last_turn_summary=_tail_turn_summary(conversation_history),
+            )
+        try:
+            assertion_count = mm.assertions.count()
+            verified_count = self._count_verified_assertions(mm)
+            open_issues = mm.issues.count_open()
+            open_gaps = mm.gaps.count_open()
+            actor_count = mm.actors.count()
+            trust_rev = mm.cache.current_trust_revision()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("snapshot build failed, defaulting to empty: %s", exc)
+            return AnswerabilitySnapshot(
+                matter_id=getattr(mm, "matter_id", None),
+                assertion_count=0,
+                verified_assertion_count=0,
+                open_issue_count=0,
+                open_gap_count=0,
+                actor_count=0,
+                has_any_facts=False,
+                has_any_verified=False,
+                trust_revision=0,
+                recent_turn_count=len(conversation_history or []),
+                last_turn_summary=_tail_turn_summary(conversation_history),
+            )
+        return AnswerabilitySnapshot(
+            matter_id=mm.matter_id,
+            assertion_count=assertion_count,
+            verified_assertion_count=verified_count,
+            open_issue_count=open_issues,
+            open_gap_count=open_gaps,
+            actor_count=actor_count,
+            has_any_facts=assertion_count > 0,
+            has_any_verified=verified_count > 0,
+            trust_revision=trust_rev,
+            recent_turn_count=len(conversation_history or []),
+            last_turn_summary=_tail_turn_summary(conversation_history),
+        )
+
+    @staticmethod
+    def _count_verified_assertions(mm: Any) -> int:
+        """Counts assertions with verification_state.status = verified.
+        Tolerates schemas where that table is empty or missing."""
+        try:
+            row = mm.db.execute(
+                """SELECT COUNT(*) AS n FROM verification_state
+                   WHERE matter_id=? AND status='verified'
+                     AND target_kind='assertion'""",
+                (mm.matter_id,),
+            ).fetchone()
+            return int(row["n"] or 0) if row else 0
+        except Exception:
+            return 0
+
+    async def _classify(
+        self,
+        query: str,
+        snapshot: AnswerabilitySnapshot,
+        conversation_history: Optional[list[dict[str, str]]],
+    ) -> tuple[str, float, str]:
+        """Single NANO call. Returns (family, confidence, rationale).
+        Defaults to ('investigate', 0.0, 'classifier error: <msg>') on
+        any failure — fail safe, not fail silent."""
+        prompt = INTENT_CLASSIFIER_PROMPT.format(
+            snapshot_block=snapshot.to_prompt_block(),
+            conversation_block=_render_conversation(conversation_history),
+            query=query,
+        )
+        try:
+            response = await self.client.complete(
+                prompt,
+                tier=ModelTier.NANO,
+                json_mode=True,
+                usage_label="intent_classifier",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("classifier NANO call failed: %s", exc)
+            return ("investigate", 0.0, f"classifier error: {exc}")
+        try:
+            parsed = json.loads(response or "{}")
+        except (TypeError, ValueError) as exc:
+            logger.warning("classifier response not JSON: %s", exc)
+            return ("investigate", 0.0, f"parse error: {exc}")
+        family = str(parsed.get("family") or "").strip().lower()
+        if family not in {"investigate", "read", "clarify"}:
+            return (
+                "investigate", 0.0,
+                f"unknown family '{family}', defaulting to investigate",
+            )
+        if family == "read" and not snapshot.has_any_facts:
+            # Belt-and-suspenders: if the classifier routes to read but
+            # the matter is empty, override. Can't read what isn't there.
+            return (
+                "investigate", 0.0,
+                "read requested but matter has no facts",
+            )
+        try:
+            confidence = float(parsed.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        rationale = str(parsed.get("rationale") or "").strip()[:240]
+        return (family, confidence, rationale)
+
+    @staticmethod
+    def _contract_for(family: str) -> ExecutionContract:
+        """Family → contract mapping. Per Codex: mode selection and
+        stopping rules are the same decision at different levels."""
+        if family == "read":
+            return ExecutionContract(
+                family="read",
+                min_iter=0,
+                max_iter=1,
+                citation_floor=1,
+                answer_confidence_floor=0.5,
+                escalation_allowed=True,
+            )
+        if family == "clarify":
+            return ExecutionContract(
+                family="clarify",
+                min_iter=0,
+                max_iter=0,
+                citation_floor=0,
+                answer_confidence_floor=0.0,
+                escalation_allowed=False,
+            )
+        # investigate — existing loop contract
+        return ExecutionContract(
+            family="investigate",
+            min_iter=1,
+            max_iter=20,
+            citation_floor=1,
+            answer_confidence_floor=0.6,
+            escalation_allowed=False,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _render_conversation(
+    conversation_history: Optional[list[dict[str, str]]],
+    tail: int = 3,
+) -> str:
+    if not conversation_history:
+        return "(no prior turns)"
+    turns = conversation_history[-tail:]
+    lines = []
+    for i, t in enumerate(turns, start=1):
+        q = str(t.get("query") or "").strip()[:200]
+        a = str(t.get("answer") or "").strip()[:200]
+        if q:
+            lines.append(f"Turn {i} user: {q}")
+        if a:
+            lines.append(f"Turn {i} system: {a}")
+    return "\n".join(lines) or "(no prior turns)"
+
+
+def _tail_turn_summary(
+    conversation_history: Optional[list[dict[str, str]]],
+) -> Optional[str]:
+    if not conversation_history:
+        return None
+    last = conversation_history[-1]
+    q = str(last.get("query") or "").strip()
+    a = str(last.get("answer") or "").strip()
+    if not (q or a):
+        return None
+    return f"Q: {q[:100]} A: {a[:100]}"
+
+
+def decision_cache_key(
+    query: str,
+    snapshot: AnswerabilitySnapshot,
+    classifier_version: str = CLASSIFIER_SCHEMA_VERSION,
+) -> str:
+    """Stable key for caching route decisions. Per Codex master plan:
+    key on normalized query signature + snapshot fingerprint + policy
+    + classifier schema version. Do NOT include raw conversation turns
+    — that crushes hit rate."""
+    payload = {
+        "q": query.strip().lower(),
+        "snap": {
+            "m": snapshot.matter_id,
+            "h": snapshot.has_any_facts,
+            "v": snapshot.has_any_verified,
+            "tr": snapshot.trust_revision,
+            "oi": snapshot.open_issue_count,
+            "og": snapshot.open_gap_count,
+            "p": snapshot.policy_audience,
+        },
+        "ver": classifier_version,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode()
+    ).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Read-family handler (MVI-1)
+# ---------------------------------------------------------------------------
+
+
+READ_FAMILY_PROMPT = """You are answering a follow-up question about a legal matter that has already been investigated. You may ONLY use the facts, issues, conversation, and other context below — you have NOT searched any documents on this turn. Do not invent findings, do not claim a new investigation, and do not speculate beyond what the matter model contains.
+
+If the existing state contains a direct answer, give it concisely and cite source documents from the facts below.
+
+If the existing state does NOT contain a sufficient answer, say so plainly and set answer_confidence to "low". The caller may escalate to a fresh investigation.
+
+Matter snapshot:
+{matter_summary}
+
+Verified facts (these have been human-reviewed — weight highest):
+{verified_block}
+
+Candidate facts (extracted but unreviewed — weight lower, flag if material):
+{candidate_block}
+
+Open issues:
+{issues_block}
+
+Known gaps:
+{gaps_block}
+
+Recent conversation (for context; do not treat as authoritative knowledge):
+{conversation_block}
+
+User question: {query}
+
+Respond in JSON ONLY, no prose outside the JSON:
+{{
+  "answer": "your concise answer, or a short explanation of why the matter model can't answer",
+  "answer_confidence": "low" | "medium" | "high",
+  "citations": ["doc1.pdf", "doc2.pdf"],
+  "used_existing_state_only": true,
+  "escalation_hint": "if confidence is low, what a fresh investigation would need to look for; otherwise empty"
+}}
+"""
+
+
+@dataclass
+class ReadFamilyResult:
+    """Outcome of one read-family call."""
+    answer: str
+    confidence_label: str         # "low" | "medium" | "high"
+    confidence_score: float       # 0.0-1.0 numeric mapping
+    citations: list[str]
+    escalation_needed: bool
+    escalation_reason: Optional[str]
+    raw_response: str
+
+
+class ReadFamilyHandler:
+    """Answers queries from existing matter state with one synth call.
+    No loop, no search, no extraction. If the matter state doesn't
+    contain enough to answer at the contract's floor, escalates to
+    investigate via the caller."""
+
+    # Mapping from the LLM's coarse label to a numeric score so the
+    # contract's `answer_confidence_floor` can gate escalation.
+    _CONFIDENCE_MAP = {"low": 0.25, "medium": 0.65, "high": 0.9}
+
+    def __init__(
+        self,
+        client: GeminiClient,
+        matter_model: Any,
+    ) -> None:
+        self.client = client
+        self.matter_model = matter_model
+
+    async def run(
+        self,
+        query: str,
+        contract: ExecutionContract,
+        conversation_history: Optional[list[dict[str, str]]] = None,
+    ) -> ReadFamilyResult:
+        if self.matter_model is None:
+            return ReadFamilyResult(
+                answer="",
+                confidence_label="low",
+                confidence_score=0.0,
+                citations=[],
+                escalation_needed=True,
+                escalation_reason="no matter model available",
+                raw_response="",
+            )
+
+        context = self._assemble_read_context()
+        prompt = READ_FAMILY_PROMPT.format(
+            matter_summary=context["matter_summary"],
+            verified_block=context["verified_block"],
+            candidate_block=context["candidate_block"],
+            issues_block=context["issues_block"],
+            gaps_block=context["gaps_block"],
+            conversation_block=_render_conversation(
+                conversation_history, tail=5,
+            ),
+            query=query,
+        )
+
+        # FLASH for the synth call — quality matters more than cost on
+        # the single answer turn. If this proves too expensive we can
+        # drop to LITE once the eval harness (P0.8) lands and the
+        # quality gap is measured rather than guessed.
+        try:
+            response = await self.client.complete(
+                prompt,
+                tier=ModelTier.FLASH,
+                json_mode=True,
+                usage_label="read_synth",
+                conversation_history=conversation_history,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("read_synth call failed: %s", exc)
+            return ReadFamilyResult(
+                answer="",
+                confidence_label="low",
+                confidence_score=0.0,
+                citations=[],
+                escalation_needed=True,
+                escalation_reason=f"read call failed: {exc}",
+                raw_response="",
+            )
+
+        parsed = self._parse_read_json(response)
+        label = str(parsed.get("answer_confidence") or "low").lower()
+        if label not in self._CONFIDENCE_MAP:
+            label = "low"
+        score = self._CONFIDENCE_MAP[label]
+
+        answer = str(parsed.get("answer") or "").strip()
+        citations = [
+            str(c) for c in (parsed.get("citations") or [])
+            if isinstance(c, (str, int, float))
+        ]
+        escalation_hint = str(parsed.get("escalation_hint") or "").strip()
+
+        escalation_needed = (
+            contract.escalation_allowed
+            and score < contract.answer_confidence_floor
+        )
+        escalation_reason = (
+            escalation_hint or
+            f"read confidence {label} below floor {contract.answer_confidence_floor}"
+        ) if escalation_needed else None
+
+        return ReadFamilyResult(
+            answer=answer,
+            confidence_label=label,
+            confidence_score=score,
+            citations=citations,
+            escalation_needed=escalation_needed,
+            escalation_reason=escalation_reason,
+            raw_response=response or "",
+        )
+
+    def _assemble_read_context(self) -> dict[str, str]:
+        mm = self.matter_model
+        stats = mm.stats() if hasattr(mm, "stats") else {}
+        matter_summary = (
+            f"matter_id: {mm.matter_id}\n"
+            f"assertion_count: {stats.get('assertion_count', 0)}\n"
+            f"open_issue_count: {stats.get('open_issue_count', 0)}\n"
+            f"open_gap_count: {stats.get('open_gap_count', 0)}\n"
+            f"actor_count: {stats.get('actor_count', 0)}\n"
+            f"quant_fact_count: {stats.get('quant_fact_count', 0)}"
+        )
+
+        verified_block, candidate_block = self._render_assertions(mm)
+        issues_block = self._render_issues(mm)
+        gaps_block = self._render_gaps(mm)
+
+        return {
+            "matter_summary": matter_summary,
+            "verified_block": verified_block or "(no verified facts yet)",
+            "candidate_block": candidate_block or "(no candidate facts yet)",
+            "issues_block": issues_block or "(no open issues)",
+            "gaps_block": gaps_block or "(no known gaps)",
+        }
+
+    def _render_assertions(self, mm: Any) -> tuple[str, str]:
+        """Render up to ~40 recent assertions split into verified /
+        candidate lanes. Trust-aware so privileged/rejected content
+        never leaks into the read prompt (content policy stays
+        enforced even here)."""
+        try:
+            rows = mm.assertions.list_recent(limit=60)
+        except Exception:
+            return "", ""
+        verified_lines: list[str] = []
+        candidate_lines: list[str] = []
+        for r in rows:
+            prop = str(r.get("proposition_text") or "").strip()
+            if not prop:
+                continue
+            belief = str(r.get("belief_state") or "").lower()
+            if belief in {"withdrawn", "superseded", "rejected"}:
+                continue
+            role = str(r.get("primary_source_role") or "unknown").upper()
+            doc = str(r.get("primary_document_id") or "").strip() or "unknown"
+            line = f"- [{role}] {prop[:200]}  (doc: {doc})"
+            if self._assertion_is_verified(mm, str(r.get("id"))):
+                if len(verified_lines) < 25:
+                    verified_lines.append(line)
+            else:
+                if len(candidate_lines) < 15:
+                    candidate_lines.append(line)
+        return "\n".join(verified_lines), "\n".join(candidate_lines)
+
+    @staticmethod
+    def _assertion_is_verified(mm: Any, assertion_id: str) -> bool:
+        if not assertion_id:
+            return False
+        try:
+            row = mm.db.execute(
+                """SELECT status FROM verification_state
+                   WHERE matter_id=? AND target_kind='assertion'
+                     AND target_id=?""",
+                (mm.matter_id, assertion_id),
+            ).fetchone()
+        except Exception:
+            return False
+        return bool(row and row["status"] == "verified")
+
+    @staticmethod
+    def _render_issues(mm: Any) -> str:
+        try:
+            issues = mm.issues.get_open_issues()[:20]
+        except Exception:
+            return ""
+        lines: list[str] = []
+        for i in issues:
+            title = str(i.get("title") or "").strip()
+            mat = i.get("materiality", 0) or 0
+            status = i.get("status", "open")
+            if title:
+                lines.append(f"- {title} (materiality={mat}, status={status})")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_gaps(mm: Any) -> str:
+        try:
+            gaps = mm.gaps.open_gaps(limit=10)
+        except Exception:
+            return ""
+        lines: list[str] = []
+        for g in gaps:
+            desc = str(g.get("description") or "").strip()
+            gtype = g.get("gap_type", "unknown")
+            if desc:
+                lines.append(f"- [{gtype}] {desc[:180]}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _parse_read_json(response: str) -> dict[str, Any]:
+        if not response:
+            return {}
+        text = response.strip()
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.startswith("json"):
+                text = text[4:]
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}

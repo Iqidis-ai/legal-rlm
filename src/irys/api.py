@@ -14,6 +14,12 @@ from .core.utils import (
     validate_file_path,
 )
 from .rlm.engine import RLMEngine, RLMConfig
+from .rlm.governance import (
+    CascadeGovernor,
+    CascadeDecision,
+    ReadFamilyHandler,
+    ReadFamilyResult,
+)
 from .rlm.state import InvestigationState, normalize_research_mode
 from .output import get_formatter
 
@@ -160,7 +166,87 @@ class Irys:
                 self._matter_models[repo_key] = MatterModel.open(repo_key)
             self._engine._matter_model = self._matter_models[repo_key]
 
-        # Run investigation
+        # MVI-1 Answerability-Governed Cost Cascade — front door.
+        # Decide whether to run the full recursive loop at all, answer
+        # from existing matter state (`read`), or bounce back a
+        # clarification (`clarify`). See src/irys/rlm/governance.py
+        # for the cascade design and codex_master_plan.txt for the
+        # founder-approved architecture.
+        matter_model = self._engine._matter_model
+        governor = CascadeGovernor(client=self._client, matter_model=matter_model)
+        decision = await governor.decide(
+            query=query,
+            conversation_history=conversation_history,
+        )
+
+        if decision.family == "read":
+            read_result = await self._run_read_family(
+                query=query,
+                decision=decision,
+                conversation_history=conversation_history,
+            )
+            if not read_result.escalation_needed:
+                # Read handler answered. Persist the route for audit.
+                self._persist_route_decision(
+                    matter_model=matter_model,
+                    query=query,
+                    decision=decision,
+                    research_mode=research_mode,
+                    terminal_family="read",
+                )
+                state = self._make_read_state(
+                    query=query,
+                    repository=repository,
+                    research_mode=research_mode,
+                    conversation_history=conversation_history,
+                    read_result=read_result,
+                    decision=decision,
+                )
+                formatter = get_formatter(self.config.output_format)
+                return InvestigationResult(
+                    state=state,
+                    output=read_result.answer or formatter.format(state),
+                    format=self.config.output_format,
+                )
+            # Coverage insufficient — fall through to investigate,
+            # recording the escalation reason so the classifier can be
+            # tuned against real escalation data.
+            decision.escalation_reason = read_result.escalation_reason
+            logger.info(
+                "Read family escalated to investigate: %s",
+                read_result.escalation_reason,
+            )
+
+        if decision.family == "clarify":
+            # MVI-1: clarify returns the question back to the user as
+            # the answer text. No investigation, no read, no further
+            # LLM spend. Later MVIs can generate a structured
+            # clarification prompt; for now the rationale is the
+            # question.
+            self._persist_route_decision(
+                matter_model=matter_model,
+                query=query,
+                decision=decision,
+                research_mode=research_mode,
+                terminal_family="clarify",
+            )
+            state = self._make_clarify_state(
+                query=query,
+                repository=repository,
+                research_mode=research_mode,
+                conversation_history=conversation_history,
+                decision=decision,
+            )
+            clarification_text = (
+                f"Need clarification before we can answer: {decision.rationale}"
+            )
+            return InvestigationResult(
+                state=state,
+                output=clarification_text,
+                format=self.config.output_format,
+            )
+
+        # Full investigate path — unchanged from the pre-cascade flow.
         self._telemetry.start_operation("investigation")
         usage_before = self._client.snapshot_usage()
         try:
@@ -178,6 +264,16 @@ class Irys:
             )
         self._attach_usage_summary(state, usage_before)
 
+        # Persist the decision AFTER the run so we have the run_id.
+        self._persist_route_decision(
+            matter_model=matter_model,
+            query=query,
+            decision=decision,
+            research_mode=research_mode,
+            terminal_family="investigate",
+            run_id=getattr(state, "_run_id", None),
+        )
+
         # Format output
         formatter = get_formatter(self.config.output_format)
         output = formatter.format(state)
@@ -187,6 +283,135 @@ class Irys:
             output=output,
             format=self.config.output_format,
         )
+
+    async def _run_read_family(
+        self,
+        query: str,
+        decision: CascadeDecision,
+        conversation_history: Optional[list[dict[str, str]]],
+    ) -> ReadFamilyResult:
+        """One synth call over existing matter state. MVI-1."""
+        handler = ReadFamilyHandler(
+            client=self._client,
+            matter_model=self._engine._matter_model,
+        )
+        self._telemetry.start_operation("read_family")
+        try:
+            return await handler.run(
+                query=query,
+                contract=decision.contract,
+                conversation_history=conversation_history,
+            )
+        finally:
+            self._telemetry.end_operation(
+                "read_family",
+                "read_complete",
+                {"query_length": len(query)},
+            )
+
+    def _make_read_state(
+        self,
+        query: str,
+        repository: "str | Path",
+        research_mode: Optional[str],
+        conversation_history: Optional[list[dict[str, str]]],
+        read_result: ReadFamilyResult,
+        decision: CascadeDecision,
+    ) -> InvestigationState:
+        """Build a minimal InvestigationState for a read-family answer
+        so downstream formatters / telemetry can treat it uniformly."""
+        state = InvestigationState.create(
+            query,
+            str(Path(repository).resolve()),
+            research_mode=research_mode,
+            conversation_history=conversation_history,
+        )
+        state.findings["final_output"] = read_result.answer
+        state.findings["route"] = decision.to_audit_dict()
+        state.findings["read_confidence"] = read_result.confidence_label
+        # Attach citations as document-anchored entries so existing
+        # citation consumers have something to render.
+        for doc in read_result.citations:
+            try:
+                state.add_citation(
+                    document=doc,
+                    page=None,
+                    text="",
+                    context="Cited by read handler from existing matter state",
+                    relevance="supporting",
+                )
+            except Exception:
+                pass
+        return state
+
+    def _make_clarify_state(
+        self,
+        query: str,
+        repository: "str | Path",
+        research_mode: Optional[str],
+        conversation_history: Optional[list[dict[str, str]]],
+        decision: CascadeDecision,
+    ) -> InvestigationState:
+        state = InvestigationState.create(
+            query,
+            str(Path(repository).resolve()),
+            research_mode=research_mode,
+            conversation_history=conversation_history,
+        )
+        state.findings["final_output"] = (
+            f"Need clarification before we can answer: {decision.rationale}"
+        )
+        state.findings["route"] = decision.to_audit_dict()
+        return state
+
+    def _persist_route_decision(
+        self,
+        matter_model: Any,
+        query: str,
+        decision: CascadeDecision,
+        research_mode: Optional[str],
+        terminal_family: str,
+        run_id: Optional[str] = None,
+    ) -> None:
+        """Write the route decision to run_session + ledger_event so
+        the front door is auditable. Per Codex master plan acceptance
+        criteria: if it's not queryable, it's not tunable."""
+        if matter_model is None:
+            return
+        try:
+            if run_id is None:
+                # For non-investigate terminal families we still open a
+                # run so there's a record of the decision.
+                run_id = matter_model.start_run(
+                    query=query,
+                    objective=f"cascade:{terminal_family}",
+                    operation_type=terminal_family,
+                    trigger="user",
+                    research_mode=research_mode or "deep",
+                )
+                try:
+                    matter_model.complete_run(run_id)
+                except Exception:
+                    pass
+            # Write a structured ledger event capturing the decision.
+            try:
+                import json as _json
+                from .matter.enums import LedgerEventType
+                matter_model.ledger.append_event(
+                    run_id=run_id,
+                    event_type=LedgerEventType.ROUTE_DECISION,
+                    summary=(
+                        f"Route: {terminal_family} "
+                        f"(classifier family={decision.family}, "
+                        f"conf={decision.confidence:.2f})"
+                    ),
+                    why=decision.rationale,
+                    snapshot_json=_json.dumps(decision.to_audit_dict()),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Route ledger write failed: %s", exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Route persistence failed: %s", exc)
 
     async def resume_investigation(
         self,

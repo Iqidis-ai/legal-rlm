@@ -170,6 +170,7 @@ class LedgerEventType(str, Enum):
     RUN_FAILED = "run_failed"
     SYSTEM_WARNING = "system_warning"
     PROGRESS_NOTE = "progress_note"
+    ROUTE_DECISION = "route_decision"  # MVI-1 cascade front-door gate
 
 
 class VerificationStatus(str, Enum):
