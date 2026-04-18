@@ -1204,19 +1204,33 @@ def _fmt_communication_map_panel(graph: dict) -> str:
     )
 
 
-def _fmt_llm_analytics_panel(summary: dict, calls: list[dict]) -> str:
-    if not summary and not calls:
+def _fmt_llm_analytics_panel(
+    summary: dict,
+    calls: list[dict],
+    breakdown: Optional[dict] = None,
+    anomalies: Optional[list[dict]] = None,
+) -> str:
+    if not summary and not calls and not breakdown:
         return "<div class='viz-empty'>No LLM analytics available yet.</div>"
 
-    request_count = _safe_int(summary.get("request_count", 0))
-    avg_latency = 0.0
+    b_totals = (breakdown or {}).get("totals") or {}
+    request_count = _safe_int(
+        b_totals.get("request_count") or summary.get("request_count", 0)
+    )
+    total_cost = _safe_float(
+        b_totals.get("estimated_cost_usd"),
+        _safe_float(summary.get("estimated_cost_usd", 0.0)),
+    )
+    cache_hit_rate = b_totals.get("cache_hit_rate")
+    success_rate = b_totals.get("success_rate")
+    p95_latency = b_totals.get("p95_latency_ms")
+    avg_latency_b = b_totals.get("avg_latency_ms")
+    monthly_burn = _safe_float((breakdown or {}).get("estimated_monthly_burn_usd", 0.0))
+
+    # Fall back to per-call computation when breakdown is absent.
     fail_count = 0
-    stage_costs: dict[str, float] = defaultdict(float)
-    stage_calls: dict[str, int] = defaultdict(int)
-    model_costs: dict[str, float] = defaultdict(float)
     total_latency = 0.0
     latency_count = 0
-
     for call in calls:
         latency = _safe_float(call.get("latency_ms"), 0.0)
         if latency > 0:
@@ -1224,46 +1238,153 @@ def _fmt_llm_analytics_panel(summary: dict, calls: list[dict]) -> str:
             latency_count += 1
         if not call.get("success", True):
             fail_count += 1
-        label = call.get("usage_label") or "unknown"
-        stage_costs[label] += _safe_float(call.get("estimated_cost_usd", 0.0))
-        stage_calls[label] += 1
-        model_costs[call.get("model_tier") or "unknown"] += _safe_float(
-            call.get("estimated_cost_usd", 0.0)
-        )
-
-    if latency_count:
-        avg_latency = total_latency / latency_count
+    avg_latency = (
+        float(avg_latency_b) if avg_latency_b is not None
+        else (total_latency / latency_count if latency_count else 0.0)
+    )
 
     cards = [
         _metric_card("Calls", f"{request_count:,}", detail=f"{len(calls):,} recent rows"),
-        _metric_card("Spend", _fmt_money(summary.get("estimated_cost_usd", 0.0)), tone="amber"),
-        _metric_card("Avg latency", f"{avg_latency:,.0f} ms", tone="blue"),
-        _metric_card("Failures", f"{fail_count:,}", tone="red"),
+        _metric_card("Spend", _fmt_money(total_cost), tone="amber"),
+        _metric_card(
+            "Monthly burn",
+            _fmt_money(monthly_burn),
+            tone="amber",
+            detail="Projected from last 7 days",
+        ),
+        _metric_card(
+            "Cache hit rate",
+            (f"{cache_hit_rate * 100:.1f}%" if cache_hit_rate is not None else "—"),
+            tone="blue",
+            detail="Cached input / prompt tokens",
+        ),
+        _metric_card(
+            "P95 latency",
+            (f"{int(p95_latency):,} ms" if p95_latency else f"{avg_latency:,.0f} ms avg"),
+            tone="blue",
+        ),
+        _metric_card(
+            "Failures",
+            f"{fail_count:,}",
+            tone="red",
+            detail=(
+                f"{(1 - success_rate) * 100:.1f}% of matter"
+                if success_rate is not None else None
+            ),
+        ),
     ]
 
-    stage_max = max(stage_costs.values(), default=0.0)
-    stage_rows = "".join(
-        _bar_row(
-            stage,
-            cost,
-            stage_max or 1.0,
-            meta=f"{_fmt_money(cost)} | {stage_calls[stage]} calls",
-            tone="amber",
+    # Per-stage panel: prefer richer breakdown data when present.
+    by_stage = (breakdown or {}).get("by_stage") or []
+    if by_stage:
+        stage_max = max((s.get("estimated_cost_usd") or 0) for s in by_stage)
+        stage_rows = "".join(
+            _bar_row(
+                s.get("stage") or "unknown",
+                _safe_float(s.get("estimated_cost_usd")),
+                stage_max or 1.0,
+                meta=(
+                    f"{_fmt_money(s.get('estimated_cost_usd'))} · "
+                    f"{_safe_int(s.get('request_count')):,} calls · "
+                    + (
+                        f"cache {int((s.get('cache_hit_rate') or 0) * 100)}% · "
+                        if s.get("cache_hit_rate") is not None else ""
+                    )
+                    + (
+                        f"{_safe_int(s.get('avg_latency_ms')):,} ms avg"
+                        if s.get("avg_latency_ms") else "no latency"
+                    )
+                ),
+                tone="amber",
+            )
+            for s in by_stage
         )
-        for stage, cost in sorted(stage_costs.items(), key=lambda item: item[1], reverse=True)
-    ) or "<div class='viz-empty'>No per-stage cost data yet.</div>"
+    else:
+        stage_costs: dict[str, float] = defaultdict(float)
+        stage_calls: dict[str, int] = defaultdict(int)
+        for call in calls:
+            label = call.get("usage_label") or "unknown"
+            stage_costs[label] += _safe_float(call.get("estimated_cost_usd", 0.0))
+            stage_calls[label] += 1
+        stage_max = max(stage_costs.values(), default=0.0)
+        stage_rows = "".join(
+            _bar_row(
+                stage, cost, stage_max or 1.0,
+                meta=f"{_fmt_money(cost)} · {stage_calls[stage]} calls",
+                tone="amber",
+            )
+            for stage, cost in sorted(
+                stage_costs.items(), key=lambda item: item[1], reverse=True,
+            )
+        ) or "<div class='viz-empty'>No per-stage cost data yet.</div>"
 
-    model_max = max(model_costs.values(), default=0.0)
-    model_rows = "".join(
-        _bar_row(
-            str(model).upper(),
-            cost,
-            model_max or 1.0,
-            meta=_fmt_money(cost),
-            tone="blue",
+    # Per-tier panel.
+    by_tier = (breakdown or {}).get("by_tier") or []
+    if by_tier:
+        tier_max = max((t.get("estimated_cost_usd") or 0) for t in by_tier)
+        model_rows = "".join(
+            _bar_row(
+                str(t.get("model_tier") or "unknown").upper(),
+                _safe_float(t.get("estimated_cost_usd")),
+                tier_max or 1.0,
+                meta=(
+                    f"{_fmt_money(t.get('estimated_cost_usd'))} · "
+                    f"{_safe_int(t.get('request_count')):,} calls · "
+                    + (
+                        f"cache {int((t.get('cache_hit_rate') or 0) * 100)}%"
+                        if t.get("cache_hit_rate") is not None else "no cache data"
+                    )
+                ),
+                tone="blue",
+            )
+            for t in by_tier
         )
-        for model, cost in sorted(model_costs.items(), key=lambda item: item[1], reverse=True)
-    ) or "<div class='viz-empty'>No model usage yet.</div>"
+    else:
+        model_costs: dict[str, float] = defaultdict(float)
+        for call in calls:
+            model_costs[call.get("model_tier") or "unknown"] += _safe_float(
+                call.get("estimated_cost_usd", 0.0)
+            )
+        model_max = max(model_costs.values(), default=0.0)
+        model_rows = "".join(
+            _bar_row(
+                str(model).upper(), cost, model_max or 1.0,
+                meta=_fmt_money(cost), tone="blue",
+            )
+            for model, cost in sorted(
+                model_costs.items(), key=lambda item: item[1], reverse=True,
+            )
+        ) or "<div class='viz-empty'>No model usage yet.</div>"
+
+    # Anomalies section.
+    anomalies_block = ""
+    if anomalies:
+        def _z_cell(val: Any) -> str:
+            return f"{val}σ" if val is not None else "—"
+        anomaly_rows = "".join(
+            "<tr>"
+            f"<td>{_escape(a.get('created_at') or '')}</td>"
+            f"<td>{_escape(a.get('usage_label') or 'unknown')}</td>"
+            f"<td>{_escape((a.get('model_tier') or 'unknown').upper())}</td>"
+            f"<td>{_fmt_money(a.get('estimated_cost_usd', 0.0))}</td>"
+            f"<td>{_escape(_z_cell(a.get('cost_z')))}</td>"
+            f"<td>{_safe_int(a.get('latency_ms', 0)):,} ms</td>"
+            f"<td>{_escape(_z_cell(a.get('latency_z')))}</td>"
+            f"<td>{_fmt_money(a.get('baseline_cost', 0.0))}</td>"
+            "</tr>"
+            for a in anomalies
+        )
+        anomalies_block = (
+            "<div class='viz-panel'>"
+            "<div class='viz-panel-title'>Cost &amp; latency anomalies</div>"
+            "<div class='viz-panel-sub'>Calls more than 2σ above their tier mean — investigation targets.</div>"
+            "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
+            "<th>Time</th><th>Stage</th><th>Tier</th><th>Cost</th><th>Cost z</th>"
+            "<th>Latency</th><th>Lat z</th><th>Tier avg cost</th>"
+            "</tr></thead><tbody>"
+            + anomaly_rows
+            + "</tbody></table></div></div>"
+        )
 
     table_rows = "".join(
         "<tr>"
@@ -1283,7 +1404,10 @@ def _fmt_llm_analytics_panel(summary: dict, calls: list[dict]) -> str:
         for call in calls
     )
 
-    pricing_source = _escape(summary.get("pricing_source", ""))
+    pricing_source = _escape(
+        (breakdown or {}).get("pricing_source")
+        or summary.get("pricing_source", "")
+    )
 
     return (
         "<div class='viz-shell'>"
@@ -1298,6 +1422,7 @@ def _fmt_llm_analytics_panel(summary: dict, calls: list[dict]) -> str:
         + model_rows
         + "</div>"
         + "</div>"
+        + anomalies_block
         + "<div class='viz-panel'><div class='viz-panel-title'>Recent calls</div>"
         + "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
         + "<th>Time</th><th>Stage</th><th>Tier</th><th>Model</th><th>In</th><th>Cache</th>"
@@ -3003,7 +3128,17 @@ class AppState:
             llm = stats.get("llm", {}) if isinstance(stats.get("llm"), dict) else {}
             summary = llm.get("totals", {}) if isinstance(llm, dict) else {}
             calls = _run_async(self.backend().list_llm_calls(matter_id, limit=250))
-            return _fmt_llm_analytics_panel(summary, calls)
+            try:
+                breakdown = _run_async(self.backend().get_cost_breakdown(matter_id))
+            except Exception:
+                breakdown = None
+            try:
+                anomalies = _run_async(
+                    self.backend().get_cost_anomalies(matter_id, limit=10)
+                )
+            except Exception:
+                anomalies = None
+            return _fmt_llm_analytics_panel(summary, calls, breakdown, anomalies)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading LLM analytics: {_escape(exc)}</div>"
 
