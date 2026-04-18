@@ -484,19 +484,28 @@ class AssertionStore:
                     ),
                 )
 
-            # MVP.2: new assertions are AI-derived until a human reviews
-            # them. Create the verification_state row at 'candidate' inside
-            # the same transaction so the assertion and its review state
-            # can never drift out of sync. Existing assertions (is_new=False)
-            # keep whatever verification state they already have.
-            if is_new:
-                VerificationStateStore(self.db, self.matter_id).candidate(
-                    VerificationTargetKind.ASSERTION,
-                    assertion_id,
+            # MVP.2 + P0.4: every AI write touches verification_state.
+            # touch_ai_target() seeds candidate on first write, revives
+            # stale → candidate on re-extraction (so a re-ingested
+            # document doesn't leave targets stale forever), and leaves
+            # candidate/verified/rejected alone.
+            _vs_store = VerificationStateStore(self.db, self.matter_id)
+            _vs_store.touch_ai_target(
+                VerificationTargetKind.ASSERTION,
+                assertion_id,
+                ai_confidence=_init_conf,
+                cause="assertion_upsert",
+                run_id=run_id,
+            )
+            if new_occurrence_id is not None:
+                _vs_store.touch_ai_target(
+                    VerificationTargetKind.ASSERTION_OCCURRENCE,
+                    new_occurrence_id,
                     ai_confidence=_init_conf,
                     cause="assertion_upsert",
                     run_id=run_id,
                 )
+            if is_new:
                 # P0.1 provenance: emit rows for both the canonical
                 # assertion and the occurrence that produced it so an
                 # audit can trace either back to the originating AI
@@ -3021,9 +3030,9 @@ class QuantStore:
                     (self.matter_id, dedup_key),
                 ).fetchone()
                 return row["id"]
-            # MVP.2: AI-extracted numeric facts enter verification as
-            # candidates inside the same transaction.
-            VerificationStateStore(self.db, self.matter_id).candidate(
+            # MVP.2 + P0.4: touch_ai_target seeds on first insert and
+            # revives stale on re-extraction (document re-ingest).
+            VerificationStateStore(self.db, self.matter_id).touch_ai_target(
                 VerificationTargetKind.QUANT_FACT,
                 qf_id,
                 cause="quant_record",
@@ -3118,7 +3127,8 @@ class QuantStore:
                 # attach substrate rows.
                 if actual_id != candidate_id:
                     continue
-                _ver.candidate(
+                # P0.4: touch_ai_target seeds + revives.
+                _ver.touch_ai_target(
                     VerificationTargetKind.QUANT_FACT,
                     actual_id,
                     cause="quant_record_batch",
@@ -4177,9 +4187,9 @@ class DocumentCardStore:
             "SELECT id FROM document_card WHERE doc_id = ?", (doc_id,)
         ).fetchone()
         actual_id = row["id"] if row else card_id
-        # MVP.2: document cards are AI-profiled until reviewed. candidate()
-        # is idempotent so the ON CONFLICT update path is safe too.
-        VerificationStateStore(self.db, self.matter_id).candidate(
+        # MVP.2 + P0.4: touch_ai_target seeds + revives stale cards on
+        # re-profile (document re-ingest).
+        VerificationStateStore(self.db, self.matter_id).touch_ai_target(
             VerificationTargetKind.DOCUMENT_CARD,
             actual_id,
             cause="document_card_upsert",
@@ -4929,10 +4939,9 @@ class AuthorityStore:
                  jurisdiction, decided_at, holdings_json, key_rules_json,
                  weight, applicability, source_doc_id, source_span_id, now, now),
             )
-            # MVP.2: new authority insertions are AI-identified until human
-            # review. Updates to an existing authority don't re-seed the
-            # candidate row (it already exists).
-            VerificationStateStore(self.db, self.matter_id).candidate(
+            # MVP.2 + P0.4: touch_ai_target seeds on new insert and
+            # revives stale on re-citation.
+            VerificationStateStore(self.db, self.matter_id).touch_ai_target(
                 VerificationTargetKind.AUTHORITY,
                 auth_id,
                 cause="authority_upsert",
@@ -5215,8 +5224,9 @@ class EvidenceStore:
                 effective_weight, now, now,
             ),
         )
-        # MVP.2 substrate: seed a candidate verification row for the edge.
-        VerificationStateStore(self.db, self.matter_id).candidate(
+        # MVP.2 + P0.4: seed candidate on first write, revive stale on
+        # re-extraction via touch_ai_target.
+        VerificationStateStore(self.db, self.matter_id).touch_ai_target(
             VerificationTargetKind.EVIDENCE_EDGE,
             edge_id,
             cause="evidence_edge_upsert",
@@ -5771,6 +5781,113 @@ class VerificationStateStore:
             cause=cause,
             run_id=run_id,
         )
+
+    def mark_stale(
+        self,
+        target_kind: "VerificationTargetKind | str",
+        target_id: str,
+        *,
+        stale_reason: str,
+        cause: str = "trust_invalidation",
+        run_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """P0.4: mark a target stale because upstream support changed
+        (document hash flip, span replacement, privilege flip). Never
+        downgrades a rejected row — rejection is a stronger human
+        opinion than stale. Verified and candidate rows move to stale.
+
+        Returns the verification_state id touched, or None if the row
+        was rejected and left alone.
+        """
+        kind = _verification_kind_value(target_kind)
+        existing = self.get(kind, target_id)
+        if existing is not None and existing["status"] == "rejected":
+            # Rejection outranks stale — a human has already removed
+            # this target from all consumers.
+            return None
+        # Use review_note to carry the stale_reason since the generic
+        # set_status path doesn't pass stale_reason through otherwise.
+        return self._set_status(
+            target_kind=kind,
+            target_id=target_id,
+            new_status="stale",
+            reviewed_by_kind="system",
+            reviewed_by_id=None,
+            review_scope="extraction_correct",
+            review_scope_json=None,
+            review_note=stale_reason,
+            rejection_reason=None,
+            stale_reason=stale_reason,
+            ai_confidence=None,
+            cause=cause,
+            run_id=run_id,
+        )
+
+    def bulk_mark_stale(
+        self,
+        specs: list[dict],
+        *,
+        stale_reason: str,
+        cause: str = "trust_invalidation",
+        run_id: Optional[str] = None,
+    ) -> list[str]:
+        """P0.4: mark multiple targets stale in one sweep. Each spec
+        is {target_kind, target_id}. Skips rejected rows (never
+        downgraded). Returns the list of ids actually touched."""
+        touched: list[str] = []
+        for spec in specs:
+            vid = self.mark_stale(
+                spec["target_kind"], spec["target_id"],
+                stale_reason=stale_reason, cause=cause, run_id=run_id,
+            )
+            if vid:
+                touched.append(vid)
+        return touched
+
+    def touch_ai_target(
+        self,
+        target_kind: "VerificationTargetKind | str",
+        target_id: str,
+        *,
+        ai_confidence: Optional[float] = None,
+        cause: str = "ai_rewrite",
+        run_id: Optional[str] = None,
+    ) -> str:
+        """P0.4: called from every AI writer path so a fresh write
+        revives a stale target back to candidate. Rules:
+          - missing row → seed as candidate
+          - stale row → promote back to candidate
+          - candidate/verified/rejected → leave unchanged
+
+        This closes the "stale forever" trap that would otherwise
+        occur after a document is re-ingested: mark_document_stale
+        marks downstream targets stale, then the next extraction pass
+        rewrites the same targets, and touch_ai_target revives them.
+        """
+        kind = _verification_kind_value(target_kind)
+        existing = self.get(kind, target_id)
+        if existing is None:
+            return self.candidate(
+                kind, target_id, ai_confidence=ai_confidence,
+                cause=cause, run_id=run_id,
+            )
+        if existing["status"] == "stale":
+            return self._set_status(
+                target_kind=kind,
+                target_id=target_id,
+                new_status="candidate",
+                reviewed_by_kind="system",
+                reviewed_by_id=None,
+                review_scope="extraction_correct",
+                review_scope_json=None,
+                review_note="ai_rewrite_revival",
+                rejection_reason=None,
+                stale_reason=None,
+                ai_confidence=ai_confidence,
+                cause=cause,
+                run_id=run_id,
+            )
+        return existing["id"]
 
     def set_status(
         self,

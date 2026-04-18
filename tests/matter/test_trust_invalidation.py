@@ -53,6 +53,86 @@ def test_cache_hit_lost_after_trust_revision_bump(model):
     assert model.cache.get("orient", "key_a") is None
 
 
+def test_mark_stale_stores_reason(model):
+    """mark_stale persists stale_reason on the verification_state row
+    so audit can tell a document-hash-change stale from a
+    span-replacement stale."""
+    run_id = model.start_run("stale reason")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact("fact to stale", "doc.pdf")
+    from irys.matter.enums import VerificationTargetKind
+    model.verification.mark_stale(
+        VerificationTargetKind.ASSERTION, aid,
+        stale_reason="document_hash_changed:old→new",
+    )
+    vs = model.verification.get("assertion", aid)
+    assert vs["status"] == "stale"
+    assert "document_hash_changed" in (vs["stale_reason"] or "")
+
+
+def test_mark_stale_does_not_overwrite_rejected(model):
+    """Rejection is a stronger human opinion than stale. A subsequent
+    mark_stale must not downgrade a rejected target."""
+    from irys.matter.enums import VerificationTargetKind
+    run_id = model.start_run("stale vs reject")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact("rejected fact", "doc.pdf")
+    model.verification.reject(
+        VerificationTargetKind.ASSERTION, aid,
+        reviewed_by_kind="user", reviewed_by_id="r1",
+        rejection_reason="fabricated",
+    )
+    vid = model.verification.mark_stale(
+        VerificationTargetKind.ASSERTION, aid,
+        stale_reason="doc_hash_change",
+    )
+    assert vid is None  # signals "left alone"
+    vs = model.verification.get("assertion", aid)
+    assert vs["status"] == "rejected"
+
+
+def test_touch_ai_target_revives_stale_to_candidate(model):
+    """P0.4: re-extracting a target whose verification_state is stale
+    must revive it to candidate. Without revival, a re-ingested
+    document would leave every extracted target stale forever."""
+    from irys.matter.enums import VerificationTargetKind
+    run_id = model.start_run("revival")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact("fact for revival", "doc.pdf")
+    model.verification.mark_stale(
+        VerificationTargetKind.ASSERTION, aid,
+        stale_reason="test",
+    )
+    assert model.verification.get("assertion", aid)["status"] == "stale"
+    # Simulate re-extraction — same document, same text. The
+    # production AssertionStore.upsert_occurrence path already calls
+    # touch_ai_target on every write.
+    aid2 = adapter.record_fact("fact for revival", "doc.pdf")
+    assert aid2 == aid
+    vs = model.verification.get("assertion", aid)
+    assert vs["status"] == "candidate", (
+        "stale must revive to candidate on re-extraction"
+    )
+
+
+def test_touch_ai_target_leaves_verified_alone(model):
+    """A verified target is an attorney opinion; a fresh AI write
+    must not downgrade it back to candidate."""
+    from irys.matter.enums import VerificationTargetKind
+    run_id = model.start_run("verified preserved")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact("verified fact", "doc.pdf")
+    model.verification.verify(
+        VerificationTargetKind.ASSERTION, aid,
+        reviewed_by_kind="attorney", reviewed_by_id="a1",
+    )
+    # Re-extract — assertion already verified; touch must not
+    # downgrade it.
+    adapter.record_fact("verified fact", "doc.pdf")
+    vs = model.verification.get("assertion", aid)
+    assert vs["status"] == "verified"
+
+
 def test_reject_target_bumps_trust_revision(model):
     """P0.4 invalidation trigger: human rejection must bump the
     revision so any cached reasoning that referenced the
