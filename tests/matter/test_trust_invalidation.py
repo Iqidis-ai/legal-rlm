@@ -133,6 +133,72 @@ def test_touch_ai_target_leaves_verified_alone(model):
     assert vs["status"] == "verified"
 
 
+def test_all_known_mutation_surfaces_bump_trust_revision(model):
+    """SO-2 safety net: every authoritative belief-state / trust-
+    posture mutation must bump matter.trust_revision so cached
+    reasoning plans keyed on the pre-mutation state become
+    unreachable. Adv#11 and adv#12 each caught a missing bump in this
+    exact surface set (trust_override set/delete, correct_assertion).
+
+    This test enumerates the five known mutation surfaces and asserts
+    each bumps exactly once. If a NEW mutation surface is added
+    without a bump, add it to this list — or decide explicitly that
+    the mutation should NOT invalidate cache and document why.
+    """
+    from irys.matter.enums import BeliefState, VerificationTargetKind
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    run_id = model.start_run("meta bump audit")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    seed_aid = adapter.record_fact("seed assertion for bump audit", "seed_doc.pdf")
+
+    rev = model.cache.current_trust_revision()
+
+    # 1. set_trust_override
+    model.set_trust_override("seed_doc.pdf", "low", note="bump meta-test")
+    assert model.cache.current_trust_revision() == rev + 1, "set_trust_override"
+    rev = model.cache.current_trust_revision()
+
+    # 2. delete_trust_override (must actually delete to bump)
+    model.delete_trust_override("seed_doc.pdf")
+    assert model.cache.current_trust_revision() == rev + 1, "delete_trust_override"
+    rev = model.cache.current_trust_revision()
+
+    # 3. correct_assertion
+    model.correct_assertion(
+        seed_aid, BeliefState.DISPUTED, run_id=run_id,
+        note="meta bump",
+    )
+    assert model.cache.current_trust_revision() == rev + 1, "correct_assertion"
+    rev = model.cache.current_trust_revision()
+
+    # 4. reject_target (human rejection from review queue)
+    model.verification.reject(
+        VerificationTargetKind.ASSERTION, seed_aid,
+        reviewed_by_kind="user", reviewed_by_id="reviewer1",
+        rejection_reason="meta bump",
+    )
+    # Rejection propagation fires in MatterModel.reject_target, not
+    # VerificationStateStore.reject. Use the MatterModel path:
+    # (create another assertion so we have a fresh candidate to reject)
+    another_aid = adapter.record_fact("another fact for reject path", "other.pdf")
+    model.reject_target(
+        VerificationTargetKind.ASSERTION, another_aid,
+        reviewed_by_kind="user", reviewed_by_id="reviewer1",
+        rejection_reason="meta bump",
+    )
+    assert model.cache.current_trust_revision() == rev + 1, "reject_target"
+    rev = model.cache.current_trust_revision()
+
+    # 5. mark_document_stale (doc hash change) — seed an inventory
+    # row first; record_fact does not create one.
+    inv_id, _ = model.inventory.upsert(
+        "seed_doc.pdf", "a" * 64, size_bytes=100, file_type="pdf",
+    )
+    model.mark_document_stale(inv_id, reason="meta bump doc change")
+    assert model.cache.current_trust_revision() == rev + 1, "mark_document_stale"
+
+
 def test_correct_assertion_bumps_trust_revision(model):
     """adv#12 Finding #1: user corrections are authoritative truth-
     maintenance events and must bump trust_revision so any cached
