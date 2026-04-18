@@ -5469,9 +5469,30 @@ Return:
             return text
         kept_lines = []
         withheld_emitted = False
+        # P0.5 commit 3: audit the scrub decisions through the guard
+        # so the content_policy_audit log records every
+        # synthesis_context withhold event.
+        _guard = getattr(self._matter_model, "content_policy", None)
         for line in text.splitlines():
             line_l = line.lower()
-            if any(n.lower() in line_l for n in needles):
+            matched = [n for n in needles if n.lower() in line_l]
+            if matched:
+                if _guard is not None:
+                    # Use the first matched needle as the subject id
+                    # so audit rows are keyed to the document, not
+                    # to arbitrary line numbers.
+                    try:
+                        from ..matter.trust import ContentPurpose
+                        _guard.decide(
+                            purpose=ContentPurpose.SYNTHESIS_CONTEXT,
+                            subject_kind="document",
+                            subject_id=matched[0],
+                            policy_audience="clean",
+                            privilege_flag=True,
+                            note="synthesis_packet_line_scrub",
+                        )
+                    except Exception:
+                        pass
                 if not withheld_emitted:
                     kept_lines.append("[withheld under clean policy]")
                     withheld_emitted = True

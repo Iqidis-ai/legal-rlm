@@ -213,6 +213,42 @@ def test_hydration_writes_content_policy_audit_rows(model):
     assert rows[0]["action"] == "allow"  # candidate is eligible for hydration
 
 
+def test_synthesis_scrub_writes_audit_on_withhold(model):
+    """P0.5 commit 3 second surface: when _scrub_privileged_references
+    drops a line that mentions a privileged document, it writes one
+    audit row per scrubbed document reference so the audit log shows
+    the clean-mode synthesis decision."""
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from unittest.mock import MagicMock
+
+    # Register a privileged document.
+    inv_id, _ = model.inventory.upsert(
+        "internal/memo.docx", "a" * 64, size_bytes=1,
+    )
+    model.document_cards.upsert(
+        doc_id=inv_id, title="Privileged Memo",
+        doc_type="internal", privilege_flag=True,
+    )
+    engine = RLMEngine(gemini_client=MagicMock(), config=RLMConfig(), matter_model=model)
+    findings = (
+        "Line about public contract.\n"
+        "From internal/memo.docx: attorney strategy note.\n"
+        "Another public line."
+    )
+    scrubbed = engine._scrub_privileged_references(findings)
+    assert "[withheld under clean policy]" in scrubbed
+    assert "strategy note" not in scrubbed
+    # Audit shows the scrub decision under synthesis_context.
+    rows = model.content_policy.list_decisions(
+        purpose="synthesis_context",
+    )
+    assert len(rows) >= 1
+    row = rows[0]
+    assert row["action"] == "withhold"
+    assert row["policy_audience"] == "clean"
+    assert row["privilege_flag"] == 1
+
+
 def test_audit_write_failure_doesnt_break_decision(model):
     """The guard's audit append is best-effort — a failing audit
     must not propagate to the caller and break the read."""
