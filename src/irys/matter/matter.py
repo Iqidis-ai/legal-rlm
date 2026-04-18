@@ -3840,11 +3840,64 @@ class MatterModel:
             round(sum(_reuse_vals) / len(_reuse_vals), 4) if _reuse_vals else None
         )
 
+        # SO-6: numeric_extraction_rate — percentage of quant_facts that
+        # carry a source span_id. Before P0.1 provenance this was never
+        # measured; now every quant the engine records threads span_id
+        # through record_quants_batch and record_quant. A dropping rate
+        # indicates an extraction pipeline losing source grounding.
+        numeric_extraction_rate: "float | None" = None
+        if quant_fact_count > 0:
+            _spans_row = self.db.execute(
+                "SELECT COUNT(*) AS n FROM quant_fact"
+                " WHERE matter_id=? AND span_id IS NOT NULL AND span_id != ''",
+                (self.matter_id,),
+            ).fetchone()
+            _with_span = int(_spans_row["n"]) if _spans_row else 0
+            numeric_extraction_rate = round(_with_span / quant_fact_count, 4)
+
+        # SO-2: provenance_attribution_rate — percentage of AI-derived
+        # assertions that have at least one provenance_event row.
+        # Before P0.1 this was 0; after P0.1 + the adversarial-#6
+        # closeout every production write path threads ProvenanceContext,
+        # so a healthy matter should sit near 1.0. A drop indicates a
+        # writer path regressed to pre-P0.1 behavior.
+        provenance_attribution_rate: "float | None" = None
+        if assertion_count > 0:
+            _attributed_row = self.db.execute(
+                "SELECT COUNT(DISTINCT a.id) AS n"
+                " FROM assertion a"
+                " JOIN provenance_event pe"
+                "   ON pe.target_kind='assertion' AND pe.target_id=a.id"
+                " WHERE a.matter_id=?",
+                (self.matter_id,),
+            ).fetchone()
+            _attributed = int(_attributed_row["n"]) if _attributed_row else 0
+            provenance_attribution_rate = round(_attributed / assertion_count, 4)
+
+        # SO-7: gap_detection_recall — no ground truth available, so
+        # instead report a measurable proxy: gap_surface_ratio = ratio
+        # of open gaps tagged as proof-critical (missing_issue_predicate
+        # or missing_authority) to total open issues. A matter with
+        # many open issues and zero proof-critical gaps is suspicious;
+        # a healthy matter has >0 when issues are underdeveloped.
+        gap_surface_ratio: "float | None" = None
+        if issue_count > 0:
+            _critical_gap_row = self.db.execute(
+                "SELECT COUNT(*) AS n FROM gap"
+                " WHERE matter_id=? AND status='open'"
+                " AND gap_type IN ('missing_issue_predicate','missing_authority')",
+                (self.matter_id,),
+            ).fetchone()
+            _critical_gaps = int(_critical_gap_row["n"]) if _critical_gap_row else 0
+            gap_surface_ratio = round(_critical_gaps / issue_count, 4)
+
         targets = {
             "assertion_structure_rate": 1.0,
             "source_role_known_rate": 0.9,
             "issue_coverage_avg": 0.8,
             "reuse_rate": 0.7,
+            "numeric_extraction_rate": 0.9,
+            "provenance_attribution_rate": 0.9,
             "steerability": True,
             "belief_revision": True,
         }
@@ -3862,8 +3915,16 @@ class MatterModel:
             "steerability": steerability,
             # SO-2: True if belief_revision_event records exist (revisions have occurred)
             "belief_revision": belief_revision,
-            "gap_detection_recall": None,
-            "numeric_extraction_rate": None,
+            # SO-7: proof-critical gap surface ratio (open gaps flagged
+            # missing_issue_predicate or missing_authority over open
+            # issues). Replaces the prior `gap_detection_recall: None`
+            # theater metric — we don't have ground truth, but we do
+            # have a real signal on whether proof gaps are surfacing.
+            "gap_surface_ratio": gap_surface_ratio,
+            # SO-6: % of numeric facts with source span identity
+            "numeric_extraction_rate": numeric_extraction_rate,
+            # SO-2: % of assertions with at least one provenance event
+            "provenance_attribution_rate": provenance_attribution_rate,
             # Raw counts
             "counts": {
                 "assertions": assertion_count,
@@ -3881,6 +3942,12 @@ class MatterModel:
                 "source_role_known_rate": _pass("source_role_known_rate", source_role_known_rate),
                 "issue_coverage_avg": _pass("issue_coverage_avg", issue_coverage_avg),
                 "reuse_rate": _pass("reuse_rate", reuse_rate_avg),
+                "numeric_extraction_rate": _pass(
+                    "numeric_extraction_rate", numeric_extraction_rate,
+                ),
+                "provenance_attribution_rate": _pass(
+                    "provenance_attribution_rate", provenance_attribution_rate,
+                ),
                 "steerability": _pass("steerability", steerability),
                 "belief_revision": _pass("belief_revision", belief_revision),
             },

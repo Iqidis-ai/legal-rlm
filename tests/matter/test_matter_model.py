@@ -707,6 +707,64 @@ def test_get_so_metrics_targets_met(model):
     assert tm["belief_revision"] is False  # no revision events yet → does not pass target
 
 
+def test_get_so_metrics_numeric_extraction_rate(model):
+    """Task #7: real numeric_extraction_rate instead of theater None.
+    Counts quant_fact rows with a source span_id over total quant_facts."""
+    # Two quants with span_id (SO-6 grounded), one without.
+    model.quant.record(
+        quant_kind="amount", raw_text="$100 invoice",
+        amount_value=100.0, span_id="page:3",
+    )
+    model.quant.record(
+        quant_kind="amount", raw_text="$50 payment",
+        amount_value=50.0, span_id="page:7",
+    )
+    model.quant.record(
+        quant_kind="amount", raw_text="$25 tip",
+        amount_value=25.0,  # no span_id
+    )
+    m = model.get_so_metrics()
+    # 2 of 3 quants carry span identity → 0.6667 rounded
+    assert m["numeric_extraction_rate"] == 0.6667
+    assert m["targets_met"]["numeric_extraction_rate"] is False  # target 0.9
+
+
+def test_get_so_metrics_provenance_attribution_rate(model):
+    """Task #7: real provenance_attribution_rate instead of theater None.
+    Counts distinct assertions with at least one provenance_event row."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+    # Runtime adapter auto-attaches ProvenanceContext to every
+    # record_fact call, so both assertions should have provenance.
+    run_id = model.start_run("prov attribution")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    adapter.record_fact("Attributed fact one", "doc.pdf")
+    adapter.record_fact("Attributed fact two", "doc.pdf")
+    m = model.get_so_metrics()
+    assert m["provenance_attribution_rate"] == 1.0
+    assert m["targets_met"]["provenance_attribution_rate"] is True
+
+
+def test_get_so_metrics_gap_surface_ratio(model):
+    """Task #7: proof-critical gap surface ratio replaces the
+    gap_detection_recall=None theater. Measures how many
+    missing_issue_predicate/missing_authority gaps are open per
+    open issue."""
+    from irys.matter.enums import IssueType, GapType
+    model.issues.upsert_issue("Claim A", IssueType.CLAIM, materiality=0.7)
+    model.issues.upsert_issue("Claim B", IssueType.CLAIM, materiality=0.7)
+    # No gaps yet → ratio 0.
+    m = model.get_so_metrics()
+    assert m["gap_surface_ratio"] == 0.0
+    # Add a proof-critical gap — ratio becomes 0.5 (1 of 2 issues).
+    model.gaps.record(
+        gap_type=GapType.MISSING_ISSUE_PREDICATE,
+        description="Missing an element of proof",
+        materiality=0.9,
+    )
+    m2 = model.get_so_metrics()
+    assert m2["gap_surface_ratio"] == 0.5
+
+
 def test_get_so_metrics_api_endpoint(model):
     """GET /matter/{id}/metrics returns SO metrics dict (SO success criteria API)."""
     from fastapi.testclient import TestClient
