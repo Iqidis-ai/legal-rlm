@@ -322,6 +322,20 @@ def _clean_context_packet_redacts_privileged_refs(
                 f"scrubbed={scrubbed!r}"
             )
 
+    # P0.8.1 Codex review follow-up: also verify
+    # _assemble_context_packet is WIRED to invoke the scrubber under
+    # clean policy. A future refactor could leave _scrub working but
+    # stop calling it from the packet path; catch that regression with
+    # a source-level wiring check rather than a full async run.
+    import inspect as _inspect
+    src = _inspect.getsource(type(engine)._assemble_context_packet)
+    if "_scrub_privileged_references" not in src:
+        raise InvariantViolation(
+            "_assemble_context_packet no longer invokes "
+            "_scrub_privileged_references; packet-path redaction wiring "
+            "regressed"
+        )
+
 
 def _source_role_multisource_not_collapsed(
     result: HarnessResult, params: dict[str, Any]
@@ -368,6 +382,29 @@ def _source_role_multisource_not_collapsed(
         raise InvariantViolation(
             f"issue {issue_alias!r} marked advocacy_only=True even though "
             f"an operative occurrence exists on the canonical assertion"
+        )
+
+    # P0.8.1 Codex review follow-up: verify the HIGHEST-trust
+    # source_role among supporting occurrences is the expected one
+    # (defaults to 'operative'). Catches a regression where
+    # occurrence ranking picks earliest-created or alphabetical
+    # instead of trust-weighted, even if advocacy_only stays False.
+    expected_best = (params.get("expected_best_role") or "operative").lower()
+    best_row = model.db.execute(
+        """SELECT ao.source_role AS role
+           FROM assertion a
+           JOIN assertion_occurrence ao ON ao.assertion_id = a.id
+           JOIN assertion_issue_link ail ON ail.assertion_id = a.id
+           WHERE a.matter_id = ? AND ail.issue_id = ?
+             AND ao.source_role = ?
+           LIMIT 1""",
+        (model.matter_id, issue_id, expected_best),
+    ).fetchone()
+    if best_row is None:
+        raise InvariantViolation(
+            f"issue {issue_alias!r} has no supporting occurrence with "
+            f"source_role={expected_best!r}; highest-trust role was "
+            f"collapsed away"
         )
 
 

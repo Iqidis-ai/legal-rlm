@@ -68,7 +68,8 @@
       "requires": ["source_role_multisource_precision"],
       "params": {
         "issue_alias": "payment_obligation",
-        "expected_roles": ["advocacy", "operative"]
+        "expected_roles": ["advocacy", "operative"],
+        "expected_best_role": "operative"
       }
     }
   ]
