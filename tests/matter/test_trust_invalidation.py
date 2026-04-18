@@ -472,6 +472,73 @@ def test_card_provenance_carries_llm_fields_via_active_context(model):
     assert ev["prompt_hash"] == "h" * 64
 
 
+def test_verify_assertion_also_verifies_companion_edges(model):
+    """Adversarial #8 fix: the attorney clicks Verify on a fact in
+    the Review Inbox. For the verified-coverage bar to move, the
+    companion evidence_edge(s) must also promote. Previously only
+    the assertion lane moved, TrustPolicy required both, and the
+    UI appeared to lie about success."""
+    from irys.matter.enums import IssueType, VerificationTargetKind
+
+    iid, _ = model.issues.upsert_issue("Claim", IssueType.CLAIM, materiality=0.7)
+    run_id = model.start_run("verify fan-out to edge")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact(
+        "Support fact", "doc.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    edge = model.db.execute(
+        "SELECT id FROM evidence_edge WHERE source_id=? AND target_id=?",
+        (aid, iid),
+    ).fetchone()
+    model.verify_target(
+        "assertion", aid,
+        reviewed_by_kind="user", reviewed_by_id="r1",
+    )
+    # BOTH lanes must be verified after a single Verify click on the
+    # assertion target.
+    assert model.verification.get("assertion", aid)["status"] == "verified"
+    assert model.verification.get("evidence_edge", edge["id"])["status"] == "verified"
+    # And the coverage report reflects the change: verified lane > 0.
+    report = model.get_issue_coverage_report(policy_audience="internal")
+    entry = next(r for r in report if r["id"] == iid)
+    assert entry["verified_supporting_count"] == 1
+
+
+def test_verify_assertion_does_not_promote_user_rejected_edge(model):
+    """A user who explicitly rejected a system-inferred edge should
+    not have that rejection quietly reversed when they later verify
+    the parent assertion."""
+    from irys.matter.enums import (
+        IssueType, VerificationTargetKind,
+    )
+
+    iid, _ = model.issues.upsert_issue("Claim", IssueType.CLAIM, materiality=0.7)
+    run_id = model.start_run("respect rejected edge")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact(
+        "Support fact", "doc.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    edge = model.db.execute(
+        "SELECT id FROM evidence_edge WHERE source_id=? AND target_id=?",
+        (aid, iid),
+    ).fetchone()
+    # User rejects the edge first.
+    model.verification.reject(
+        VerificationTargetKind.EVIDENCE_EDGE, edge["id"],
+        reviewed_by_kind="user", reviewed_by_id="r1",
+        rejection_reason="edge misinterprets the fact",
+    )
+    # Then verifies the parent assertion.
+    model.verify_target(
+        "assertion", aid,
+        reviewed_by_kind="user", reviewed_by_id="r1",
+    )
+    # The rejected edge must stay rejected.
+    assert model.verification.get("evidence_edge", edge["id"])["status"] == "rejected"
+
+
 def test_reject_target_bumps_trust_revision(model):
     """P0.4 invalidation trigger: human rejection must bump the
     revision so any cached reasoning that referenced the

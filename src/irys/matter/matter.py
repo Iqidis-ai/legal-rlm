@@ -498,6 +498,21 @@ class MatterModel:
             review_scope=review_scope,
             run_id=run_id,
         )
+        # Adversarial #8 fix: verifying an assertion must also promote
+        # its companion evidence_edge(s) to verified — otherwise the
+        # two-lane verified_coverage_fraction stays at 0 because
+        # TrustPolicy requires BOTH lanes to be verified, and the UI
+        # looks like it lied. We fan-out only on assertion + evidence_edge
+        # promotions; other kinds are leaves.
+        if target_kind == "assertion":
+            self._verify_companion_edges(
+                assertion_id=target_id,
+                reviewed_by_kind=reviewed_by_kind,
+                reviewed_by_id=reviewed_by_id,
+                review_note=review_note,
+                review_scope=review_scope,
+                run_id=run_id,
+            )
         # verification_event (written by VerificationStateStore) is the
         # canonical audit row. Mirror to the reasoning ledger only when
         # a run_id is available — the schema enforces NOT NULL run_id
@@ -520,6 +535,56 @@ class MatterModel:
             except Exception:
                 pass
         return vid
+
+    def _verify_companion_edges(
+        self,
+        *,
+        assertion_id: str,
+        reviewed_by_kind: str,
+        reviewed_by_id: Optional[str],
+        review_note: Optional[str],
+        review_scope: str,
+        run_id: Optional[str],
+    ) -> None:
+        """Adversarial #8 fix: when the attorney verifies an
+        assertion, also promote its system-inferred evidence_edges
+        so the two-lane coverage actually moves. We only auto-verify
+        edges whose origin_kind is 'system_inferred' — that's the
+        class of edges Irys creates automatically when link_assertion
+        fires. Edges a reviewer created by hand, or edges the
+        reviewer has previously rejected, are left untouched.
+        """
+        rows = self.db.execute(
+            """SELECT ee.id
+               FROM evidence_edge ee
+               LEFT JOIN verification_state vs
+                 ON vs.target_kind='evidence_edge'
+                AND vs.target_id=ee.id
+                AND vs.matter_id=ee.matter_id
+               WHERE ee.matter_id=? AND ee.source_kind='assertion'
+                 AND ee.source_id=? AND ee.active=1
+                 AND ee.origin_kind='system_inferred'
+                 AND (vs.status IS NULL OR vs.status='candidate')""",
+            (self.matter_id, assertion_id),
+        ).fetchall()
+        for row in rows:
+            try:
+                self.verification.verify(
+                    "evidence_edge", row["id"],
+                    reviewed_by_kind=reviewed_by_kind,
+                    reviewed_by_id=reviewed_by_id,
+                    review_note=(
+                        review_note if review_note
+                        else "promoted with parent assertion"
+                    ),
+                    review_scope=review_scope,
+                    run_id=run_id,
+                )
+            except ValueError:
+                # Human-gate rejected (e.g. automation trying to
+                # promote) — skip rather than fail the whole
+                # verify_target.
+                continue
 
     def reject_target(
         self,

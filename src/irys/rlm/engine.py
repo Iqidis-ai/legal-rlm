@@ -3405,6 +3405,21 @@ Return:
                     _abs_fp = (Path(repo.base_path) / file_path) if not _fp.is_absolute() else _fp
                     _raw = _abs_fp.read_bytes()
                     _sha = _hl.sha256(_raw).hexdigest()
+                    # Adversarial #8 fix: capture the OLD hash BEFORE
+                    # inventory.upsert() overwrites it. Previously we
+                    # called update_hash() after upsert and
+                    # update_hash saw old==new and reported no change
+                    # — so mark_document_stale never fired and the
+                    # whole P0.4 invalidation chain was dead on the
+                    # production path.
+                    _pre_upsert_row = _mm.db.execute(
+                        "SELECT id, sha256 FROM document_inventory "
+                        "WHERE matter_id=? AND relative_path=?",
+                        (_mm.matter_id, _rel_path),
+                    ).fetchone()
+                    _pre_upsert_sha: Optional[str] = (
+                        _pre_upsert_row["sha256"] if _pre_upsert_row else None
+                    )
                     _inv_id, _ = _mm.inventory.upsert(
                         relative_path=_rel_path,
                         sha256=_sha,
@@ -3412,27 +3427,26 @@ Return:
                         file_type=_fp.suffix.lstrip(".") or None,
                     )
                     _inventory_doc_id = _inv_id
-                    # P0.4 review fix: the inventory.upsert() above
-                    # will reset ingest_status to pending on hash
-                    # change, but it does NOT invalidate downstream
-                    # AI-derived intelligence. Use update_hash to
-                    # detect the change authoritatively (guards
-                    # against pending-placeholder clobber), and on a
-                    # real old→new flip fan out mark_document_stale
-                    # so every direct dependent assertion/occurrence/
-                    # edge/quant/authority/card moves to stale and
-                    # synthesis/review caches invalidate via the
-                    # trust_revision bump.
+                    # Hash-change invalidation: compare pre-upsert to
+                    # new hash. A flip between two real hashes fans
+                    # out to mark_document_stale. The "pending"
+                    # placeholder case (first real hash after
+                    # pending) is not a content change.
                     try:
-                        _hash_changed, _old_sha = _mm.inventory.update_hash(
-                            _inv_id, _sha, size_bytes=len(_raw),
+                        _had_real_old = bool(
+                            _pre_upsert_sha and _pre_upsert_sha != "pending"
                         )
-                        if _hash_changed:
+                        _hash_really_changed = (
+                            _had_real_old
+                            and _sha != "pending"
+                            and _pre_upsert_sha != _sha
+                        )
+                        if _hash_really_changed:
                             _mm.mark_document_stale(
                                 _inv_id,
                                 reason=(
                                     f"document_hash_changed:"
-                                    f"{(_old_sha or '')[:12]}->{_sha[:12]}"
+                                    f"{(_pre_upsert_sha or '')[:12]}->{_sha[:12]}"
                                 ),
                             )
                     except Exception as _hash_err:
