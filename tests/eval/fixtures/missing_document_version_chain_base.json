@@ -1,0 +1,46 @@
+{
+  "name": "missing_document_version_chain_base",
+  "intent": "SO-7: detecting a document version chain (service_agreement_v1.pdf → v2.pdf) without an unversioned base must open a missing_document gap. Downstream synthesis must then surface that gap in the context-packet gap section so it can't silently answer over an incomplete record.",
+  "sacred_outcomes": ["SO-7"],
+  "documents": [
+    {
+      "alias": "msa_v1",
+      "document_id": "contracts/service_agreement_v1.pdf",
+      "filename": "service_agreement_v1.pdf",
+      "doc_type": "contract",
+      "source_role": "operative",
+      "source_side": "neutral"
+    },
+    {
+      "alias": "msa_v2",
+      "document_id": "contracts/service_agreement_v2.pdf",
+      "filename": "service_agreement_v2.pdf",
+      "doc_type": "contract",
+      "source_role": "operative",
+      "source_side": "neutral"
+    }
+  ],
+  "maintenance": [
+    {"step": "matter.detect_document_version_chains"}
+  ],
+  "invariants": [
+    {
+      "name": "missing_document_gap_detected",
+      "group": "missingness",
+      "requires": ["document_version_missingness"],
+      "params": {
+        "gap_type": "missing_document",
+        "description_contains": "service_agreement"
+      }
+    },
+    {
+      "name": "missing_document_gap_surfaces_in_packet",
+      "group": "context_packet",
+      "requires": ["missing_document_packet_surface"],
+      "params": {
+        "query": "what agreement controls payment",
+        "description_contains": "service_agreement"
+      }
+    }
+  ]
+}

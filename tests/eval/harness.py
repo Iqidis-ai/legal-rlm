@@ -212,6 +212,12 @@ def _run_maintenance(result: HarnessResult) -> None:
             engine = RLMEngine.__new__(RLMEngine)
             engine._matter_model = model
             engine._detect_proof_gaps()
+        elif name == "matter.detect_document_version_chains":
+            # P0.8.1: version-chain detection opens MISSING_DOCUMENT gaps
+            # when a chain has no unversioned base. Fixture drives this
+            # directly so the missingness invariant exercises the real
+            # production code path.
+            model.detect_document_version_chains()
         else:
             raise ValueError(f"Unknown maintenance step: {name!r}")
 

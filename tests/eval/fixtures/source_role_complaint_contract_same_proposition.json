@@ -1,0 +1,75 @@
+{
+  "name": "source_role_complaint_contract_same_proposition",
+  "intent": "SO-5: a complaint allegation and a signed contract clause asserting the same proposition must not collapse into a single-role fact. The canonical assertion row must expose both occurrences, and proof_state must not mark the issue advocacy_only when an operative occurrence exists.",
+  "sacred_outcomes": ["SO-5"],
+  "documents": [
+    {
+      "alias": "complaint",
+      "document_id": "pleadings/complaint.pdf",
+      "filename": "complaint.pdf",
+      "doc_type": "pleading",
+      "source_role": "advocacy",
+      "source_side": "plaintiff"
+    },
+    {
+      "alias": "msa",
+      "document_id": "contracts/msa.pdf",
+      "filename": "msa.pdf",
+      "doc_type": "contract",
+      "source_role": "operative",
+      "source_side": "neutral"
+    }
+  ],
+  "assertions": [
+    {
+      "alias": "complaint_due",
+      "document_alias": "complaint",
+      "proposition_text": "Defendant was required to pay within thirty days of invoice.",
+      "speech_act": "alleged",
+      "source_role": "advocacy",
+      "model_layer": "record",
+      "assertion_kind": "factual",
+      "origin_kind": "extracted"
+    },
+    {
+      "alias": "msa_due",
+      "document_alias": "msa",
+      "proposition_text": "Defendant was required to pay within thirty days of invoice.",
+      "speech_act": "operative",
+      "source_role": "operative",
+      "model_layer": "record",
+      "assertion_kind": "factual",
+      "origin_kind": "extracted",
+      "verified": true
+    }
+  ],
+  "issues": [
+    {
+      "alias": "payment_obligation",
+      "title": "Defendant owed payment within thirty days",
+      "issue_type": "claim",
+      "materiality": 0.9,
+      "salience": 0.8,
+      "burden_side": "plaintiff",
+      "predicates": ["Payment obligation exists"]
+    }
+  ],
+  "issue_links": [
+    {"assertion_alias": "complaint_due", "issue_alias": "payment_obligation", "relation_type": "supports"},
+    {"assertion_alias": "msa_due", "issue_alias": "payment_obligation", "relation_type": "supports"}
+  ],
+  "maintenance": [
+    {"step": "proof_state.compute_all"}
+  ],
+  "invariants": [
+    {
+      "name": "source_role_multisource_not_collapsed",
+      "group": "source_role",
+      "requires": ["source_role_multisource_precision"],
+      "params": {
+        "issue_alias": "payment_obligation",
+        "expected_roles": ["advocacy", "operative"]
+      }
+    }
+  ]
+}

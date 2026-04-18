@@ -28,6 +28,11 @@ IMPLEMENTED_CAPABILITIES: set[str] = {
     "verification_state",  # MVP.2 VerificationStateStore + candidate/verified columns
     "evidence_edge_backfill",  # MVP.3 EvidenceStore + v53 backfill
     "privilege_containment",  # MVP.4 document-level privilege filter in clean mode
+    # P0.8.1 (per Codex design):
+    "privilege_clean_packet_redaction",  # _scrub_privileged_references redacts paths + basenames
+    "source_role_multisource_precision",  # same claim_key from advocacy + operative preserves both roles
+    "document_version_missingness",  # matter.detect_document_version_chains opens missing_document gap
+    "missing_document_packet_surface",  # missing_document gaps render in the context-packet gap section
 }
 
 # Capabilities that are intentionally NOT yet implemented and gate future
@@ -279,6 +284,147 @@ def _no_privileged_doc_in_clean_context(
         )
 
 
+def _clean_context_packet_redacts_privileged_refs(
+    result: HarnessResult, params: dict[str, Any]
+) -> None:
+    """P0.8.1 (per Codex design): the engine's privileged-reference scrubber
+    must drop lines that mention a privileged document's relative path OR
+    basename, and insert the single '[withheld under clean policy]' marker
+    in their place. Lines about non-privileged documents must pass through.
+
+    Mutation proof: change RLMEngine._scrub_privileged_references to
+    `return text` and this invariant fails on the first must_not_contain
+    assertion.
+    """
+    from irys.rlm.engine import RLMConfig, RLMEngine
+    from tests.eval.stubs import ScriptedGeminiClient
+
+    engine = result.engine
+    if engine is None:
+        engine = RLMEngine(
+            gemini_client=ScriptedGeminiClient(responses={}),
+            config=RLMConfig(),
+            matter_model=result.model,
+        )
+    findings_text = params["findings_text"]
+    scrubbed = engine._scrub_privileged_references(findings_text)
+
+    for needle in params.get("must_not_contain", []):
+        if needle.lower() in scrubbed.lower():
+            raise InvariantViolation(
+                f"scrubbed context still mentions privileged needle "
+                f"{needle!r}; scrubbed={scrubbed!r}"
+            )
+    for needle in params.get("must_contain", []):
+        if needle.lower() not in scrubbed.lower():
+            raise InvariantViolation(
+                f"scrubbed context lost required needle {needle!r}; "
+                f"scrubbed={scrubbed!r}"
+            )
+
+
+def _source_role_multisource_not_collapsed(
+    result: HarnessResult, params: dict[str, Any]
+) -> None:
+    """P0.8.1 (per Codex design): a complaint allegation and a signed
+    contract clause asserting the same proposition must NOT collapse
+    into a single-role fact. The canonical assertion row must have
+    occurrences that expose both source roles, and proof_state must
+    not mark the issue advocacy_only when an operative occurrence
+    exists.
+
+    Mutation proof: change proof_state occurrence ranking to prefer
+    earliest-created occurrence instead of highest-trust role; this
+    invariant fails because advocacy_only becomes True.
+    """
+    issue_alias = params["issue_alias"]
+    issue_id = _require_alias(result, f"issue:{issue_alias}")
+    model = result.model
+
+    # Identify canonical assertion(s) and their occurrence source_roles.
+    # Both fixture candidates should resolve to one assertion row via
+    # claim_key identity; verify the occurrences still carry each role.
+    rows = model.db.execute(
+        """SELECT ao.source_role AS occ_role
+           FROM assertion a
+           JOIN assertion_occurrence ao ON ao.assertion_id = a.id
+           JOIN assertion_issue_link ail ON ail.assertion_id = a.id
+           WHERE a.matter_id = ? AND ail.issue_id = ?""",
+        (model.matter_id, issue_id),
+    ).fetchall()
+    observed_roles = {(r["occ_role"] or "").lower() for r in rows if r["occ_role"]}
+    expected = {r.lower() for r in params.get("expected_roles", [])}
+    if not expected <= observed_roles:
+        raise InvariantViolation(
+            f"issue {issue_alias!r} occurrences missing required "
+            f"source_roles {sorted(expected - observed_roles)}; "
+            f"observed {sorted(observed_roles)}"
+        )
+
+    # Proof state must NOT declare advocacy_only when operative exists.
+    model.proof_state.compute_and_store(issue_id)
+    ps = model.proof_state.get(issue_id)
+    if ps and bool(ps.get("advocacy_only")):
+        raise InvariantViolation(
+            f"issue {issue_alias!r} marked advocacy_only=True even though "
+            f"an operative occurrence exists on the canonical assertion"
+        )
+
+
+def _missing_document_gap_detected(
+    result: HarnessResult, params: dict[str, Any]
+) -> None:
+    """P0.8.1 (per Codex design): matter.detect_document_version_chains
+    must open a missing_document gap when the chain has no unversioned
+    base. The description must reference the chain basename so review
+    callers can render it cleanly.
+
+    Mutation proof: remove the GapType.MISSING_DOCUMENT record call
+    inside detect_version_chains and this invariant fails in store mode
+    before any context-packet assertion runs.
+    """
+    expected_type = params.get("gap_type", "missing_document")
+    needle = (params.get("description_contains") or "").lower()
+    gaps = result.model.gaps.open_gaps(min_materiality=0.0)
+    hits = [
+        g for g in gaps
+        if g.get("gap_type") == expected_type
+        and (not needle or needle in (g.get("description") or "").lower())
+    ]
+    if not hits:
+        raise InvariantViolation(
+            f"expected at least one open {expected_type!r} gap whose "
+            f"description contains {needle!r}; got gap types "
+            f"{sorted({g.get('gap_type') for g in gaps})}"
+        )
+
+
+def _missing_document_gap_surfaces_in_packet(
+    result: HarnessResult, params: dict[str, Any]
+) -> None:
+    """P0.8.1 (per Codex design, context_packet group — engine-stub only):
+    the capped gap section in the context packet must surface the
+    missing_document gap so synthesis sees it rather than producing a
+    confident answer over an incomplete record.
+    """
+    engine = result.engine
+    if engine is None:
+        raise InvariantViolation(
+            "missing_document_gap_surfaces_in_packet requires engine-stub mode"
+        )
+    needle = (params.get("description_contains") or "").lower()
+    query = params.get("query") or ""
+    section = engine._build_capped_gap_section(query, None)
+    if not needle:
+        return
+    if needle not in (section or "").lower():
+        raise InvariantViolation(
+            f"context-packet gap section did not surface missing_document "
+            f"with needle {needle!r}; section snippet: "
+            f"{(section or '')[:300]!r}"
+        )
+
+
 def _planned_capability_placeholder(
     result: HarnessResult, params: dict[str, Any]
 ) -> None:
@@ -383,6 +529,31 @@ _INVARIANTS: dict[str, Invariant] = {
         group="privilege",
         requires=("privilege_containment",),
         check=_no_privileged_doc_in_clean_context,
+    ),
+    # P0.8.1 — per Codex design gate, 3 new invariants.
+    "clean_context_packet_redacts_privileged_refs": Invariant(
+        name="clean_context_packet_redacts_privileged_refs",
+        group="context_packet",
+        requires=("privilege_clean_packet_redaction",),
+        check=_clean_context_packet_redacts_privileged_refs,
+    ),
+    "source_role_multisource_not_collapsed": Invariant(
+        name="source_role_multisource_not_collapsed",
+        group="source_role",
+        requires=("source_role_multisource_precision",),
+        check=_source_role_multisource_not_collapsed,
+    ),
+    "missing_document_gap_detected": Invariant(
+        name="missing_document_gap_detected",
+        group="missingness",
+        requires=("document_version_missingness",),
+        check=_missing_document_gap_detected,
+    ),
+    "missing_document_gap_surfaces_in_packet": Invariant(
+        name="missing_document_gap_surfaces_in_packet",
+        group="context_packet",
+        requires=("missing_document_packet_surface",),
+        check=_missing_document_gap_surfaces_in_packet,
     ),
 }
 

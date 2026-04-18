@@ -67,6 +67,17 @@
         "issue_alias": "breach_claim",
         "privileged_document_alias": "internal_memo"
       }
+    },
+    {
+      "name": "clean_context_packet_redacts_privileged_refs",
+      "group": "context_packet",
+      "requires": ["privilege_clean_packet_redaction"],
+      "params": {
+        "query": "is there evidence of breach",
+        "findings_text": "From contracts/msa.pdf: payment was due.\nFrom internal/attorney_memo.docx: Counsel says breach is clear.",
+        "must_not_contain": ["internal/attorney_memo.docx", "attorney_memo.docx", "Counsel says breach is clear"],
+        "must_contain": ["contracts/msa.pdf", "payment was due", "[withheld under clean policy]"]
+      }
     }
   ]
 }
