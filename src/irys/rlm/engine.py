@@ -1968,8 +1968,17 @@ class RLMEngine:
             # issue-targeted leads to keep investigation moving. The
             # planner reads coverage map once here; we reuse it below
             # to avoid a second SQL pass.
+            # adv#11 review fix (#4 note): gate the early _cov_map
+            # computation on the same investigate-family check as the
+            # planner — don't pay the SQL round trip for a non-
+            # investigate contract accidentally entering this loop.
             _cov_map: "dict[str, tuple[float, bool, int]]" = {}
-            if self._matter_model is not None:
+            _contract = getattr(state, "execution_contract", None)
+            _is_investigate = (
+                _contract is None
+                or getattr(_contract, "family", None) == "investigate"
+            )
+            if self._matter_model is not None and _is_investigate:
                 try:
                     _cov_map = self._get_issue_coverage_map()
                 except Exception as _exc:
@@ -7107,24 +7116,48 @@ Return:
             return 0
         # Index gapped-issue links for the has_gap boost. Only material
         # gaps (>= 0.4) feed the planner; low-materiality noise stays
-        # in the clarification end-of-run pass.
+        # in the clarification end-of-run pass. adv#11 review fix #2:
+        # filter to search-resolvable gap types — missing_user_context,
+        # missing_authority, and missing_quantitative_input are NOT
+        # resolvable by document search and shouldn't boost search
+        # pressure. That's what P0.7.2's clarification-action path and
+        # quant-specialization will handle.
+        _SEARCHABLE_GAP_TYPES = {"missing_issue_predicate", "missing_document"}
         gapped_issue_ids: set[str] = set()
         try:
             for g in self._matter_model.gaps.open_gaps(min_materiality=0.4, limit=20):
+                if g.get("gap_type") not in _SEARCHABLE_GAP_TYPES:
+                    continue
                 for dep in (g.get("dependencies") or []):
                     if dep.get("affected_type") == "issue" and dep.get("affected_id"):
                         gapped_issue_ids.add(dep["affected_id"])
         except Exception:
             pass
-        # Score candidate issues. Skip low-materiality, already-strong,
-        # or already-lead-covered issues.
-        existing_issue_focus: set[str] = {
-            l.focus_issue_id for l in state.leads if l.focus_issue_id
+        # adv#11 review fix #1: dedup scope.
+        #  - PENDING issue-focused leads (any source) block planner for
+        #    that issue this iteration — the queue already has it.
+        #  - Historical coverage_planner leads block same-issue re-
+        #    planning only when the normalized search term matches.
+        #    Prevents duplicate planner work while allowing a new angle.
+        #  - Historical reactive/user leads do NOT permanently block
+        #    planner — if a prior attempt didn't close the gap,
+        #    another lead (with a different predicate) is worth
+        #    trying.
+        pending_issue_focus: set[str] = {
+            l.focus_issue_id for l in state.get_pending_leads() if l.focus_issue_id
+        }
+        planner_issue_terms: set[tuple[str, str]] = {
+            (l.focus_issue_id, " ".join((l.search_term or "").lower().split()))
+            for l in state.leads
+            if l.source == "coverage_planner" and l.focus_issue_id
         }
         candidates: list[tuple[float, str, str, str]] = []
         for row in rows:
             iid = row.get("id")
-            if not iid or iid in existing_issue_focus:
+            if not iid:
+                continue
+            # Pending issue-focused lead (any source) — planner waits.
+            if iid in pending_issue_focus:
                 continue
             materiality = float(row.get("materiality") or 0.0)
             if materiality < 0.4:
@@ -7143,6 +7176,12 @@ Return:
                 pred_text = (preds[0].get("description") or "").strip()
             term = (pred_text or (row.get("title") or "")).strip()
             if not term:
+                continue
+            # adv#11 review fix #1b: term-level dedup against prior
+            # planner leads for this issue — don't burn budget on the
+            # same (issue, normalized_term) twice.
+            norm_term = " ".join(term.lower().split())
+            if (iid, norm_term) in planner_issue_terms:
                 continue
             weakness = max(0.0, 1.0 - float(frac))
             score = weakness * 0.55 + (0.25 if has_any_gap else 0.0) + materiality * 0.20

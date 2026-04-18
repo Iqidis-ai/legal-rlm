@@ -1893,6 +1893,10 @@ class InvestigationState:
             "research_mode": self.research_mode,
             "query_classification": self.query_classification,
             "facts_per_iteration": self.facts_per_iteration,
+            # P0.7 (adv#11 review fix #3): persist planner_leads_added so a
+            # checkpoint/resume doesn't reset the per-run cap and allow
+            # another 6 planner leads in the same logical run.
+            "planner_leads_added": self.planner_leads_added,
             "documents_read": self.documents_read,
             "documents_from_cache": self.documents_from_cache,
             "searches_performed": self.searches_performed,
@@ -2014,6 +2018,8 @@ class InvestigationState:
         state.research_mode = normalize_research_mode(data.get("research_mode"))
         state.query_classification = data.get("query_classification")
         state.facts_per_iteration = data.get("facts_per_iteration", [])
+        # Restore planner counter; absent in pre-P0.7 checkpoints.
+        state.planner_leads_added = int(data.get("planner_leads_added", 0) or 0)
         state.documents_read = data.get("documents_read", 0)
         state.documents_from_cache = data.get("documents_from_cache", 0)
         state.searches_performed = data.get("searches_performed", 0)

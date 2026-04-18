@@ -159,6 +159,67 @@ def test_planner_no_ops_when_family_is_not_investigate(engine, model):
     assert added == 0
 
 
+def test_historical_reactive_lead_does_not_permanently_block_planner(engine, model):
+    """adv#11 P0.7.1 review fix #1: the planner used to dedup against
+    EVERY issue-focused lead in state.leads — so a reactive lead that
+    was already investigated but didn't move coverage would block the
+    planner forever on that issue. Now dedup scope is:
+      - pending issue-focused leads (any source) block THIS iter
+      - historical reactive leads do NOT block planner
+      - historical coverage_planner leads block only same (iid, term)
+    """
+    iid = _seed_weak_issue(model, "Notice timing dispute")
+    s = _state()
+    # A prior reactive lead for this issue, already consumed.
+    prior = s.add_lead(
+        description="Search for notice correspondence",
+        source="recursive",
+        priority=0.6,
+        focus_issue_id=iid,
+    )
+    s.mark_lead_investigated(prior.id, "consumed last iter")
+
+    # Coverage unchanged — still weak. Planner must now fill the gap.
+    cov_map = engine._get_issue_coverage_map()
+    added = engine._coverage_planner(s, cov_map)
+    assert added == 1
+    planner_lead = next(l for l in s.leads if l.source == "coverage_planner")
+    assert planner_lead.focus_issue_id == iid
+
+
+def test_same_issue_same_term_planner_dedup(engine, model):
+    """adv#11 P0.7.1 review fix #1b: two planner runs on the same
+    (issue_id, normalized_term) must dedup — don't burn budget on the
+    identical planner lead twice. The first call adds it; the second
+    (after consuming it to reopen deficit) sees the historical term
+    and skips."""
+    iid = _seed_weak_issue(model, "Exclusivity clause")
+    s = _state()
+    cov_map = engine._get_issue_coverage_map()
+    assert engine._coverage_planner(s, cov_map) == 1
+    # Consume it so deficit reopens, but the historical lead stays.
+    for l in s.get_pending_leads():
+        s.mark_lead_investigated(l.id, "consumed")
+    # Second pass: same issue, same predicate → dedup.
+    assert engine._coverage_planner(s, cov_map) == 0
+
+
+def test_planner_leads_added_survives_checkpoint(engine, model):
+    """adv#11 P0.7.1 review fix #3: the per-run cap counter must
+    survive to_dict/from_dict so a checkpoint/resume doesn't reset
+    the cap and allow a fresh 6 planner leads."""
+    _seed_weak_issue(model, "Breach")
+    s = _state()
+    cov_map = engine._get_issue_coverage_map()
+    engine._coverage_planner(s, cov_map)
+    assert s.planner_leads_added > 0
+
+    dumped = s.to_dict()
+    from irys.rlm.state import InvestigationState
+    restored = InvestigationState.from_dict(dumped)
+    assert restored.planner_leads_added == s.planner_leads_added
+
+
 def test_planner_lead_passes_ev_gate(engine, model):
     """The planner lead must be enriched AND viable under a normal
     lead_ev_floor. Weak material issues produce enough coverage gain
