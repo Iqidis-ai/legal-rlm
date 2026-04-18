@@ -608,6 +608,69 @@ def _fmt_overview_panel(data: dict) -> str:
     )
 
 
+def _fmt_trust_notice(issues: list) -> str:
+    """P0.2 + P0.5 visibility banner: tell the attorney up front
+    which issues the synthesis memo is hedging on. Mirrors the
+    logic of engine._build_trust_abstention_block — if verified
+    support is zero or a proof gap exists, the memo refuses a
+    definitive claim, and the attorney should see that in-app
+    rather than only inside the memo prose.
+    """
+    if not issues:
+        return ""
+    total = len(issues)
+    fully_verified = 0
+    candidate_only = 0
+    gap_blocked = 0
+    no_support = 0
+    issue_names: list[str] = []
+    for issue in issues:
+        v = _safe_int(issue.get("verified_supporting_count", 0))
+        c = _safe_int(issue.get("candidate_supporting_count", 0))
+        has_gap = bool(issue.get("has_proof_gap"))
+        title = issue.get("title") or "Untitled"
+        if v > 0 and not has_gap:
+            fully_verified += 1
+            continue
+        if has_gap:
+            gap_blocked += 1
+            issue_names.append(f"{title} (proof gap)")
+        elif v == 0 and c > 0:
+            candidate_only += 1
+            issue_names.append(f"{title} (candidate-only)")
+        else:
+            no_support += 1
+            issue_names.append(f"{title} (unsupported)")
+    hedged = candidate_only + gap_blocked + no_support
+    if hedged == 0:
+        # Everything proved — quiet green banner.
+        return (
+            "<div style='padding:10px 14px;border-radius:8px;"
+            "background:#dcfce7;color:#14532d;border-left:4px solid #15803d;"
+            "margin-bottom:12px;font-size:13px;'>"
+            f"<strong>All {total} issue(s) have verified support.</strong> "
+            "The memo makes definitive claims only where the attorney has "
+            "signed off. No hedging needed."
+            "</div>"
+        )
+    # Hedging banner. List up to 4 issue names; summarize the rest.
+    shown = issue_names[:4]
+    remainder = len(issue_names) - len(shown)
+    detail = "; ".join(_escape(n) for n in shown)
+    if remainder > 0:
+        detail += f"; and {remainder} more"
+    return (
+        "<div style='padding:10px 14px;border-radius:8px;"
+        "background:#fef3c7;color:#78350f;border-left:4px solid #b45309;"
+        "margin-bottom:12px;font-size:13px;'>"
+        f"<strong>⚠ Hedging on {hedged} of {total} issue(s).</strong> "
+        f"The memo frames findings as <em>provisional</em> or <em>unresolved</em> "
+        f"on: {detail}. Verify supporting facts in the Review Inbox to promote "
+        f"these to definitive claims."
+        "</div>"
+    )
+
+
 def _fmt_issues_panel(issues: list) -> str:
     if not issues:
         return "<div class='viz-empty'>No open issues.</div>"
@@ -683,8 +746,10 @@ def _fmt_issues_panel(issues: list) -> str:
         " Advisory (candidate + verified)</span>"
         "</div>"
     )
+    notice = _fmt_trust_notice(issues)
     return (
         "<div class='viz-shell'>"
+        + notice
         + legend
         + "<div class='issues-stack'>" + "".join(rows) + "</div></div>"
     )
