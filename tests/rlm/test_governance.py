@@ -24,7 +24,9 @@ from irys.rlm.governance import (
     CascadeDecision,
     CascadeGovernor,
     ExecutionContract,
+    QueryFamilyHandler,
     ReadFamilyHandler,
+    TraceFamilyHandler,
     decision_cache_key,
 )
 
@@ -285,3 +287,78 @@ def test_read_handler_malformed_json_escalates(warm_matter):
     ))
     assert result.escalation_needed is True
     assert result.confidence_label == "low"
+
+
+# ---------------------------------------------------------------------------
+# QueryFamilyHandler
+# ---------------------------------------------------------------------------
+
+
+def test_query_handler_keyword_fastpath(warm_matter):
+    """Unambiguous keyword match resolves sub-intent without NANO."""
+    # Client not used on fast path — pass an empty fake.
+    handler = QueryFamilyHandler(matter_model=warm_matter, client=_FakeClient({}))
+    result = asyncio.run(handler.run(
+        query="show me all the actors",
+        contract=CascadeGovernor._contract_for("query"),
+    ))
+    assert result.intent == "list_actors"
+    assert result.escalation_needed is False
+
+
+def test_query_handler_falls_back_to_nano(warm_matter):
+    """Ambiguous / no-keyword query routes through NANO sub-intent."""
+    client = _FakeClient({"query_sub_intent": '{"intent": "list_gaps"}'})
+    handler = QueryFamilyHandler(matter_model=warm_matter, client=client)
+    # "What's still unaddressed" doesn't match any fast-path keyword.
+    result = asyncio.run(handler.run(
+        query="what's still unaddressed in this matter",
+        contract=CascadeGovernor._contract_for("query"),
+    ))
+    assert result.intent == "list_gaps"
+    # Confirm NANO was consulted.
+    assert any(
+        c.get("usage_label") == "query_sub_intent"
+        for c in client.calls
+    )
+
+
+def test_query_handler_nano_says_none_escalates(warm_matter):
+    """When NANO returns 'none', handler escalates."""
+    client = _FakeClient({"query_sub_intent": '{"intent": "none"}'})
+    handler = QueryFamilyHandler(matter_model=warm_matter, client=client)
+    result = asyncio.run(handler.run(
+        query="give me a narrative analysis of the matter",
+        contract=CascadeGovernor._contract_for("query"),
+    ))
+    assert result.intent == ""
+    assert result.escalation_needed is True
+
+
+# ---------------------------------------------------------------------------
+# TraceFamilyHandler
+# ---------------------------------------------------------------------------
+
+
+def test_trace_handler_no_prior_runs(empty_matter):
+    """A matter with no runs renders a clean empty response, not
+    an error."""
+    handler = TraceFamilyHandler(matter_model=empty_matter)
+    result = handler.run(
+        query="why did you say that",
+        contract=CascadeGovernor._contract_for("trace"),
+    )
+    assert result.escalation_needed is False
+    assert "No prior runs" in result.rendered_answer
+
+
+def test_trace_handler_points_at_most_recent_run(warm_matter):
+    """Trace defaults to the most recent completed run."""
+    handler = TraceFamilyHandler(matter_model=warm_matter)
+    result = handler.run(
+        query="why did you say that",
+        contract=CascadeGovernor._contract_for("trace"),
+    )
+    assert result.target_kind == "run"
+    assert result.target_id is not None
+    assert "Trace" in result.rendered_answer

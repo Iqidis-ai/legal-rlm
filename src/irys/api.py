@@ -17,8 +17,13 @@ from .rlm.engine import RLMEngine, RLMConfig
 from .rlm.governance import (
     CascadeGovernor,
     CascadeDecision,
+    QueryFamilyHandler,
+    QueryFamilyResult,
     ReadFamilyHandler,
     ReadFamilyResult,
+    TraceFamilyHandler,
+    TraceFamilyResult,
+    decision_cache_key,
 )
 from .rlm.state import InvestigationState, normalize_research_mode
 from .output import get_formatter
@@ -178,6 +183,66 @@ class Irys:
             query=query,
             conversation_history=conversation_history,
         )
+
+        if decision.family == "query":
+            # MVI-2: NANO sub-intent resolution then zero-LLM data
+            # fetch. Escalates to read (one synth) when the query
+            # doesn't map to any enumeration intent.
+            query_result = await QueryFamilyHandler(
+                matter_model, client=self._client,
+            ).run(query=query, contract=decision.contract)
+            if not query_result.escalation_needed:
+                self._persist_route_decision(
+                    matter_model=matter_model,
+                    query=query,
+                    decision=decision,
+                    research_mode=research_mode,
+                    terminal_family="query",
+                )
+                state = self._make_query_state(
+                    query=query,
+                    repository=repository,
+                    research_mode=research_mode,
+                    conversation_history=conversation_history,
+                    query_result=query_result,
+                    decision=decision,
+                )
+                return InvestigationResult(
+                    state=state,
+                    output=query_result.rendered_answer,
+                    format=self.config.output_format,
+                )
+            decision.escalation_reason = query_result.escalation_reason
+            # Fall through to read — which may itself escalate to
+            # investigate if matter coverage is thin.
+            decision.family = "read"
+            decision.contract = CascadeGovernor._contract_for("read")
+
+        if decision.family == "trace":
+            # MVI-2: provenance + reasoning-ledger lookup, zero LLM.
+            trace_result = TraceFamilyHandler(matter_model).run(
+                query=query, contract=decision.contract,
+            )
+            self._persist_route_decision(
+                matter_model=matter_model,
+                query=query,
+                decision=decision,
+                research_mode=research_mode,
+                terminal_family="trace",
+            )
+            state = self._make_trace_state(
+                query=query,
+                repository=repository,
+                research_mode=research_mode,
+                conversation_history=conversation_history,
+                trace_result=trace_result,
+                decision=decision,
+            )
+            return InvestigationResult(
+                state=state,
+                output=trace_result.rendered_answer,
+                format=self.config.output_format,
+            )
 
         if decision.family == "read":
             read_result = await self._run_read_family(
@@ -342,6 +407,48 @@ class Irys:
                 )
             except Exception:
                 pass
+        return state
+
+    def _make_query_state(
+        self,
+        query: str,
+        repository: "str | Path",
+        research_mode: Optional[str],
+        conversation_history: Optional[list[dict[str, str]]],
+        query_result: QueryFamilyResult,
+        decision: CascadeDecision,
+    ) -> InvestigationState:
+        state = InvestigationState.create(
+            query,
+            str(Path(repository).resolve()),
+            research_mode=research_mode,
+            conversation_history=conversation_history,
+        )
+        state.findings["final_output"] = query_result.rendered_answer
+        state.findings["route"] = decision.to_audit_dict()
+        state.findings["query_intent"] = query_result.intent
+        state.findings["query_row_count"] = len(query_result.rows)
+        return state
+
+    def _make_trace_state(
+        self,
+        query: str,
+        repository: "str | Path",
+        research_mode: Optional[str],
+        conversation_history: Optional[list[dict[str, str]]],
+        trace_result: TraceFamilyResult,
+        decision: CascadeDecision,
+    ) -> InvestigationState:
+        state = InvestigationState.create(
+            query,
+            str(Path(repository).resolve()),
+            research_mode=research_mode,
+            conversation_history=conversation_history,
+        )
+        state.findings["final_output"] = trace_result.rendered_answer
+        state.findings["route"] = decision.to_audit_dict()
+        state.findings["trace_target_kind"] = trace_result.target_kind
+        state.findings["trace_target_id"] = trace_result.target_id
         return state
 
     def _make_clarify_state(

@@ -136,23 +136,30 @@ class CascadeDecision:
 
 # Bump whenever the prompt or schema changes — included in the
 # classifier_version so old cached decisions miss cleanly.
-CLASSIFIER_SCHEMA_VERSION = "mvi1.0"
+CLASSIFIER_SCHEMA_VERSION = "mvi2.0"
+
+
+VALID_FAMILIES = {"investigate", "read", "query", "trace", "clarify"}
 
 
 INTENT_CLASSIFIER_PROMPT = """You are a routing classifier for a legal intelligence platform. For each user query you pick ONE route that matches how much work the system should actually do.
 
-Three routes are available (MVI-1 — more routes will be added later):
+Five routes are available:
 
 1. `investigate` — the user is asking a novel question about this legal matter that probably needs new evidence extraction, document search, or synthesis of findings the matter model does not yet contain. Examples: "What's our damages exposure?", "Did the opposing party breach the agreement?", "Find me evidence of intent to deceive." Route here if the matter is fresh (no facts yet), OR if the question targets material that probably hasn't been extracted, OR if the user explicitly asks for an investigation.
 
-2. `read` — the user is asking for a summary, recap, restatement, reformat, or answer from facts the matter model already contains. Examples: "Summarize our session for my team", "Give me that analysis as bullet points", "What's the timeline so far?", "Draft a client email explaining our conclusions", "What have we found about the MSA?". Route here if the matter has content AND the query asks about existing findings, not new investigation.
+2. `read` — the user is asking for a summary, recap, restatement, reformat, or substantive answer synthesized from facts the matter model already contains. Examples: "Summarize our session for my team", "Give me that analysis as bullet points", "Draft a client email explaining our conclusions", "What have we found about the MSA?". Route here if the matter has content AND the query asks about existing findings as a narrative answer, not a plain enumeration.
 
-3. `clarify` — the user's referent is ambiguous or the query is so vague that proceeding would produce a wrong cheap answer. Examples: "Tell me about Smith" when there are two Smiths. Route here SPARINGLY — only when a specific ambiguity makes routing unsafe.
+3. `query` — the user is asking for a plain enumeration or lookup from matter model tables: "list all quants", "show me every actor", "what gaps are open", "give me the full timeline", "list every contradiction". These are DB reads — no synthesis or reasoning needed. Route here when the request is structurally "give me the list of X" or "show me the data in store Y".
+
+4. `trace` — the user is asking where a specific prior conclusion came from: "why did you say X", "show me the source for claim Y", "what's the provenance of the damages figure", "how did you derive that timeline". Route here when the request targets the reasoning ledger / provenance of an existing finding.
+
+5. `clarify` — the user's referent is ambiguous or the query is so vague that proceeding would produce a wrong cheap answer. Examples: "Tell me about Smith" when there are two Smiths. Route here SPARINGLY — only when a specific ambiguity makes routing unsafe.
 
 Guidance:
 - Default to `investigate` on a fresh matter (has_any_facts=False).
-- Default to `read` on a warm matter when the query asks about existing findings, conversation context, or deliverable-shaped output ("summarize", "rewrite", "list", "recap", "draft a memo").
-- Never route to `read` if has_any_facts=False — there's nothing to read.
+- On a warm matter: `query` for "list X" / "show X" / "which X", `read` for "summarize" / "draft" / "explain" / "what does X mean", `trace` for "why" / "how did you" / "show the source".
+- Never route to `read`, `query`, or `trace` if has_any_facts=False — there's nothing to read.
 - Your job is cost governance, not content judgment. Keep the decision fast.
 
 Matter state snapshot:
@@ -165,7 +172,7 @@ User query: {query}
 
 Respond ONLY with a single JSON object:
 {{
-  "family": "investigate" | "read" | "clarify",
+  "family": "investigate" | "read" | "query" | "trace" | "clarify",
   "confidence": 0.0-1.0,
   "rationale": "one short sentence — why this route"
 }}
@@ -331,17 +338,21 @@ class CascadeGovernor:
             logger.warning("classifier response not JSON: %s", exc)
             return ("investigate", 0.0, f"parse error: {exc}")
         family = str(parsed.get("family") or "").strip().lower()
-        if family not in {"investigate", "read", "clarify"}:
+        if family not in VALID_FAMILIES:
             return (
                 "investigate", 0.0,
                 f"unknown family '{family}', defaulting to investigate",
             )
-        if family == "read" and not snapshot.has_any_facts:
-            # Belt-and-suspenders: if the classifier routes to read but
-            # the matter is empty, override. Can't read what isn't there.
+        if (
+            family in {"read", "query", "trace"}
+            and not snapshot.has_any_facts
+        ):
+            # Belt-and-suspenders: if the classifier routes to a warm-
+            # matter family but the matter is empty, override. Can't
+            # read / query / trace what isn't there.
             return (
                 "investigate", 0.0,
-                "read requested but matter has no facts",
+                f"{family} requested but matter has no facts",
             )
         try:
             confidence = float(parsed.get("confidence") or 0.0)
@@ -361,6 +372,27 @@ class CascadeGovernor:
                 max_iter=1,
                 citation_floor=1,
                 answer_confidence_floor=0.5,
+                escalation_allowed=True,
+            )
+        if family == "query":
+            # MVI-2: zero-iteration, zero-LLM plain enumeration
+            return ExecutionContract(
+                family="query",
+                min_iter=0,
+                max_iter=0,
+                citation_floor=0,
+                answer_confidence_floor=0.0,
+                escalation_allowed=True,
+            )
+        if family == "trace":
+            # MVI-2: DB-read against provenance + reasoning ledger.
+            # NANO fallback only if the user phrasing is ambiguous.
+            return ExecutionContract(
+                family="trace",
+                min_iter=0,
+                max_iter=1,
+                citation_floor=0,
+                answer_confidence_floor=0.0,
                 escalation_allowed=True,
             )
         if family == "clarify":
@@ -715,3 +747,461 @@ class ReadFamilyHandler:
         except (TypeError, ValueError):
             return {}
         return parsed if isinstance(parsed, dict) else {}
+
+
+# ---------------------------------------------------------------------------
+# Query-family handler (MVI-2) — zero-LLM plain enumeration
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class QueryFamilyResult:
+    """Outcome of one query-family request. Zero LLM spend."""
+    intent: str                    # which canned intent fired
+    rows: list[dict]               # raw rows returned
+    rendered_answer: str           # markdown-ish rendering for display
+    escalation_needed: bool        # True if the query didn't match any intent
+    escalation_reason: Optional[str] = None
+
+
+QUERY_INTENTS = [
+    ("list_quants", "enumerate quantitative facts — amounts, payments, damages, dollar figures"),
+    ("list_actors", "enumerate actors — parties, counsel, witnesses, people, companies"),
+    ("list_documents", "enumerate documents in the matter — files, contracts, pleadings, their review status"),
+    ("list_gaps", "enumerate open gaps — missing docs, unresolved questions, unknowns"),
+    ("list_issues", "enumerate open legal issues — claims, defenses, damages components"),
+    ("list_contradictions", "enumerate contradictions — conflicting assertions, disputed facts"),
+    ("list_recent_facts", "enumerate recent facts/assertions in the matter model"),
+    ("list_authorities", "enumerate legal authorities cited in the matter — cases, statutes"),
+]
+
+
+SUB_INTENT_PROMPT = """Classify which enumeration the user wants from a matter's stored data. Pick EXACTLY one intent from the list, or return "none" if the query doesn't fit any enumeration.
+
+Available intents:
+{intent_list}
+
+Rules:
+- Match the user's intent, even if they phrase it unusually. "Break down the money" → list_quants. "Who's on the other side" → list_actors. "What's still missing" → list_gaps.
+- Return "none" ONLY when the query truly doesn't map — e.g. they want a synthesis ("summarize") or a specific fact lookup. Don't stretch to fit.
+
+User query: {query}
+
+Respond ONLY with JSON: {{"intent": "name_from_list_or_none"}}
+"""
+
+
+class QueryFamilyHandler:
+    """Answers plain enumeration queries (list, show, count, who, what)
+    directly from matter-model tables. One cheap NANO call to resolve
+    the sub-intent, then zero LLM work on the actual data fetch.
+    Returns rows + a pre-rendered markdown answer.
+
+    MVI-2 scope: a hand-curated set of canned intents with NANO-driven
+    resolution for robustness. A keyword pre-filter lets unambiguous
+    queries skip the NANO round-trip entirely.
+    """
+
+    # Fast-path keyword pre-filter. If a query unambiguously matches
+    # exactly one intent, skip NANO. Otherwise NANO decides.
+    _KEYWORD_HINTS: list[tuple[str, set[str]]] = [
+        ("list_quants", {"quant", "dollar", "money"}),
+        ("list_actors", {"actor", "counsel", "witness", "opposing"}),
+        ("list_documents", {"document", "files", "pdfs"}),
+        ("list_gaps", {"gap", "missing"}),
+        ("list_issues", {"issues", "claims"}),
+        ("list_contradictions", {"contradict", "conflict", "dispute"}),
+        ("list_recent_facts", {"fact list", "all facts"}),
+        ("list_authorities", {"citation", "case law", "statute"}),
+    ]
+
+    def __init__(
+        self,
+        matter_model: Any,
+        client: Optional[GeminiClient] = None,
+    ) -> None:
+        self.matter_model = matter_model
+        self.client = client
+
+    async def run(
+        self,
+        query: str,
+        contract: ExecutionContract,
+    ) -> QueryFamilyResult:
+        if self.matter_model is None:
+            return QueryFamilyResult(
+                intent="",
+                rows=[],
+                rendered_answer="",
+                escalation_needed=True,
+                escalation_reason="no matter model available",
+            )
+        intent = await self._resolve_intent(query)
+        if intent is None:
+            return QueryFamilyResult(
+                intent="",
+                rows=[],
+                rendered_answer="",
+                escalation_needed=contract.escalation_allowed,
+                escalation_reason="no enumeration intent matched",
+            )
+        handler = getattr(self, f"_intent_{intent}", None)
+        if handler is None:
+            return QueryFamilyResult(
+                intent=intent,
+                rows=[],
+                rendered_answer="",
+                escalation_needed=True,
+                escalation_reason=f"missing handler for intent '{intent}'",
+            )
+        try:
+            rows = handler()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("query intent %s failed: %s", intent, exc)
+            return QueryFamilyResult(
+                intent=intent,
+                rows=[],
+                rendered_answer="",
+                escalation_needed=True,
+                escalation_reason=f"intent '{intent}' raised: {exc}",
+            )
+        rendered = self._render(intent, rows)
+        return QueryFamilyResult(
+            intent=intent,
+            rows=rows,
+            rendered_answer=rendered,
+            escalation_needed=False,
+        )
+
+    async def _resolve_intent(self, query: str) -> Optional[str]:
+        # Fast path: unambiguous keyword match skips NANO.
+        q = query.lower()
+        matches = {
+            intent for intent, keywords in self._KEYWORD_HINTS
+            if any(k in q for k in keywords)
+        }
+        if len(matches) == 1:
+            return matches.pop()
+
+        # Ambiguous / no-match / client unavailable → NANO.
+        if self.client is None:
+            # Degrade gracefully — return the single keyword match if
+            # one exists, otherwise None.
+            if len(matches) == 1:
+                return matches.pop()
+            return None
+
+        intent_list = "\n".join(
+            f"- {name}: {desc}" for name, desc in QUERY_INTENTS
+        )
+        prompt = SUB_INTENT_PROMPT.format(
+            intent_list=intent_list, query=query,
+        )
+        try:
+            response = await self.client.complete(
+                prompt,
+                tier=ModelTier.NANO,
+                json_mode=True,
+                usage_label="query_sub_intent",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("sub-intent NANO failed: %s", exc)
+            return None
+        try:
+            parsed = json.loads(response or "{}")
+        except (TypeError, ValueError):
+            return None
+        intent = str(parsed.get("intent") or "").strip()
+        if intent == "none" or not intent:
+            return None
+        valid = {name for name, _ in QUERY_INTENTS}
+        if intent not in valid:
+            return None
+        return intent
+
+    # ---- canned intents (zero-LLM) -----------------------------------------
+
+    def _intent_list_quants(self) -> list[dict]:
+        try:
+            return list(self.matter_model.quant.list_all())[:50]
+        except Exception:
+            return []
+
+    def _intent_list_actors(self) -> list[dict]:
+        try:
+            return list(self.matter_model.actors.list_actors(limit=100))
+        except Exception:
+            return []
+
+    def _intent_list_documents(self) -> list[dict]:
+        try:
+            return list(self.matter_model.list_reviewable_documents())[:100]
+        except Exception:
+            return []
+
+    def _intent_list_gaps(self) -> list[dict]:
+        try:
+            return list(self.matter_model.gaps.open_gaps(limit=50))
+        except Exception:
+            return []
+
+    def _intent_list_issues(self) -> list[dict]:
+        try:
+            return list(self.matter_model.issues.get_open_issues())[:50]
+        except Exception:
+            return []
+
+    def _intent_list_contradictions(self) -> list[dict]:
+        """Surface assertion-link rows of type attacks/contradicts."""
+        try:
+            rows = self.matter_model.db.execute(
+                """SELECT al.src_assertion_id, al.dst_assertion_id,
+                          al.link_type,
+                          s.proposition_text AS src_text,
+                          d.proposition_text AS dst_text
+                   FROM assertion_link al
+                   JOIN assertion s ON s.id=al.src_assertion_id
+                   JOIN assertion d ON d.id=al.dst_assertion_id
+                   WHERE s.matter_id=?
+                     AND al.link_type IN ('attacks','contradicts')
+                   LIMIT 50""",
+                (self.matter_model.matter_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def _intent_list_recent_facts(self) -> list[dict]:
+        try:
+            return list(self.matter_model.assertions.list_recent(limit=50))
+        except Exception:
+            return []
+
+    def _intent_list_authorities(self) -> list[dict]:
+        try:
+            rows = self.matter_model.db.execute(
+                """SELECT id, citation, authority_type, COALESCE(weight, 0.0) AS weight
+                   FROM authority WHERE matter_id=?
+                   ORDER BY weight DESC, citation
+                   LIMIT 50""",
+                (self.matter_model.matter_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def _render(self, intent: str, rows: list[dict]) -> str:
+        """Deterministic markdown rendering per intent. No LLM."""
+        if not rows:
+            return f"No results for `{intent}`."
+        title = intent.replace("_", " ").title()
+        lines = [f"## {title}", ""]
+        if intent == "list_quants":
+            for r in rows:
+                lines.append(
+                    f"- {r.get('raw_text') or r.get('quant_kind','quant')}  "
+                    f"(amount={r.get('amount_value')} "
+                    f"{r.get('currency') or ''})"
+                )
+        elif intent == "list_actors":
+            for r in rows:
+                lines.append(
+                    f"- {r.get('canonical_name', 'actor')}  "
+                    f"(role={r.get('role') or 'unknown'})"
+                )
+        elif intent == "list_documents":
+            for r in rows:
+                pending = r.get("pending", 0)
+                verified = r.get("verified", 0)
+                tag = (
+                    f"{pending} pending" if pending
+                    else f"{verified} reviewed ✓" if verified
+                    else "—"
+                )
+                lines.append(f"- {r.get('path')}  ({tag})")
+        elif intent == "list_gaps":
+            for r in rows:
+                lines.append(
+                    f"- [{r.get('gap_type')}] {r.get('description','')[:200]}"
+                )
+        elif intent == "list_issues":
+            for r in rows:
+                lines.append(
+                    f"- **{r.get('title','')}**  "
+                    f"(materiality={r.get('materiality')})"
+                )
+        elif intent == "list_contradictions":
+            for r in rows:
+                lines.append(
+                    f"- {r.get('link_type').upper()}: "
+                    f"_{(r.get('src_text') or '')[:120]}_  vs  "
+                    f"_{(r.get('dst_text') or '')[:120]}_"
+                )
+        elif intent == "list_recent_facts":
+            for r in rows:
+                lines.append(
+                    f"- {(r.get('proposition_text') or '')[:200]}"
+                )
+        elif intent == "list_authorities":
+            for r in rows:
+                lines.append(
+                    f"- {r.get('citation')} "
+                    f"({r.get('authority_type','')}, weight={r.get('weight',0):.2f})"
+                )
+        else:
+            for r in rows:
+                lines.append(f"- {r}")
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Trace-family handler (MVI-2) — provenance + ledger lookup
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TraceFamilyResult:
+    """Outcome of one trace-family request."""
+    target_kind: Optional[str]
+    target_id: Optional[str]
+    events: list[dict]
+    provenance: list[dict]
+    rendered_answer: str
+    escalation_needed: bool
+    escalation_reason: Optional[str] = None
+
+
+class TraceFamilyHandler:
+    """Answers provenance / "why did you say X" queries by reading
+    the reasoning ledger and provenance_event tables. No LLM in the
+    common path — MVI-2 surfaces the raw chain of events, which is
+    what attorneys actually want for audit.
+
+    For MVI-2, the default target is the most recent completed run —
+    "why did you say X" usually means "explain the last answer." A
+    future MVI can resolve target_kind/target_id from text when the
+    user names a specific assertion.
+    """
+
+    def __init__(self, matter_model: Any) -> None:
+        self.matter_model = matter_model
+
+    def run(
+        self,
+        query: str,
+        contract: ExecutionContract,
+    ) -> TraceFamilyResult:
+        if self.matter_model is None:
+            return TraceFamilyResult(
+                target_kind=None, target_id=None,
+                events=[], provenance=[],
+                rendered_answer="",
+                escalation_needed=True,
+                escalation_reason="no matter model available",
+            )
+        # Find the most recent completed/running run — "most recent
+        # answer" is the implicit referent for MVI-2 trace queries.
+        try:
+            row = self.matter_model.db.execute(
+                """SELECT id, query, status, operation_type, started_at
+                   FROM run_session
+                   WHERE matter_id=?
+                     AND (operation_type IS NULL
+                          OR operation_type NOT IN ('manual_flush','background_flush'))
+                   ORDER BY started_at DESC LIMIT 1""",
+                (self.matter_model.matter_id,),
+            ).fetchone()
+        except Exception as exc:  # noqa: BLE001
+            return TraceFamilyResult(
+                target_kind=None, target_id=None,
+                events=[], provenance=[],
+                rendered_answer="",
+                escalation_needed=True,
+                escalation_reason=f"run lookup failed: {exc}",
+            )
+        if not row:
+            return TraceFamilyResult(
+                target_kind=None, target_id=None,
+                events=[], provenance=[],
+                rendered_answer="No prior runs to trace.",
+                escalation_needed=False,
+            )
+        run_id = row["id"]
+        events = self._fetch_ledger(run_id)
+        provenance = self._fetch_run_provenance(run_id)
+        rendered = self._render(dict(row), events, provenance)
+        return TraceFamilyResult(
+            target_kind="run",
+            target_id=run_id,
+            events=events,
+            provenance=provenance,
+            rendered_answer=rendered,
+            escalation_needed=False,
+        )
+
+    def _fetch_ledger(self, run_id: str) -> list[dict]:
+        try:
+            rows = self.matter_model.db.execute(
+                """SELECT event_type, summary, why, created_at
+                   FROM ledger_event
+                   WHERE run_id=?
+                   ORDER BY seq_no ASC
+                   LIMIT 120""",
+                (run_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def _fetch_run_provenance(self, run_id: str) -> list[dict]:
+        """Read provenance_event rows tied to this run (P0.1 table).
+        Best-effort — tolerates missing table on older schemas."""
+        try:
+            rows = self.matter_model.db.execute(
+                """SELECT target_kind, target_id, event_kind, model_tier,
+                          usage_label, created_at
+                   FROM provenance_event
+                   WHERE run_id=?
+                   ORDER BY created_at ASC
+                   LIMIT 80""",
+                (run_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _render(run_row: dict, events: list[dict], provenance: list[dict]) -> str:
+        lines = [
+            f"## Trace — run {run_row.get('id','?')}",
+            "",
+            f"**Query:** {run_row.get('query','(unknown)')[:240]}",
+            f"**Status:** {run_row.get('status','unknown')}",
+            f"**Type:** {run_row.get('operation_type') or 'query'}",
+            f"**Started:** {run_row.get('started_at','?')}",
+            "",
+            "### Reasoning ledger",
+            "",
+        ]
+        if events:
+            for e in events:
+                lines.append(
+                    f"- **{e.get('event_type')}** — {(e.get('summary') or '')[:180]}"
+                )
+                if e.get("why"):
+                    lines.append(f"  _why:_ {str(e['why'])[:180]}")
+        else:
+            lines.append("- (no ledger events recorded for this run)")
+        lines.append("")
+        lines.append("### LLM provenance")
+        lines.append("")
+        if provenance:
+            for p in provenance[:40]:
+                lines.append(
+                    f"- {p.get('event_kind','?')} · tier={p.get('model_tier','?')} "
+                    f"· stage={p.get('usage_label','?')} · "
+                    f"target={p.get('target_kind','?')}:{p.get('target_id','?')}"
+                )
+        else:
+            lines.append("- (no provenance events recorded)")
+        return "\n".join(lines)
