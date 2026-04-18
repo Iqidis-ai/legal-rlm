@@ -278,6 +278,130 @@ def test_reclassify_privilege_no_op_when_flag_unchanged(model):
     assert model.cache.current_trust_revision() == before_rev
 
 
+def test_re_extraction_revives_stale_occurrence(model):
+    """P0.4 review fix #1: re-extracting an existing (doc, span)
+    occurrence slot must revive its stale verification to candidate.
+    Without this, a document re-ingest leaves every occurrence stale
+    forever even though the same text is extracted again."""
+    from irys.matter.enums import VerificationTargetKind
+
+    run_id = model.start_run("occurrence revival")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact(
+        "Same fact text", "doc.pdf", span_id="para-1",
+    )
+    occ = model.db.execute(
+        "SELECT id FROM assertion_occurrence WHERE assertion_id=? LIMIT 1",
+        (aid,),
+    ).fetchone()
+    # Mark the occurrence stale.
+    model.verification.mark_stale(
+        VerificationTargetKind.ASSERTION_OCCURRENCE, occ["id"],
+        stale_reason="test",
+    )
+    assert model.verification.get("assertion_occurrence", occ["id"])["status"] == "stale"
+    # Re-extract: same doc + same span + same text → UPDATE path.
+    adapter.record_fact("Same fact text", "doc.pdf", span_id="para-1")
+    assert model.verification.get("assertion_occurrence", occ["id"])["status"] == "candidate", (
+        "existing-occurrence UPDATE path must revive stale to candidate"
+    )
+
+
+def test_re_extraction_revives_stale_edge(model):
+    """P0.4 review fix #1: re-extracting the same assertion→issue
+    link must revive a stale edge to candidate."""
+    from irys.matter.enums import IssueType, VerificationTargetKind
+
+    iid, _ = model.issues.upsert_issue("Claim", IssueType.CLAIM, materiality=0.7)
+    run_id = model.start_run("edge revival")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact(
+        "supporting fact", "doc.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    edge = model.db.execute(
+        "SELECT id FROM evidence_edge WHERE source_id=? AND target_id=?",
+        (aid, iid),
+    ).fetchone()
+    # Stale the edge.
+    model.verification.mark_stale(
+        VerificationTargetKind.EVIDENCE_EDGE, edge["id"],
+        stale_reason="test",
+    )
+    assert model.verification.get("evidence_edge", edge["id"])["status"] == "stale"
+    # Re-extract: same assertion, same issue, same relation → existing-edge path.
+    adapter.record_fact(
+        "supporting fact", "doc.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    assert model.verification.get("evidence_edge", edge["id"])["status"] == "candidate", (
+        "existing-edge path must revive stale to candidate"
+    )
+
+
+def test_re_extraction_revives_stale_quant(model):
+    """P0.4 review fix #1: re-recording the same numeric fact must
+    revive its stale verification to candidate."""
+    from irys.matter.enums import VerificationTargetKind
+
+    run_id = model.start_run("quant revival")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    qid = adapter.record_quant(
+        quant_kind="amount", raw_text="$500", amount_value=500.0,
+    )
+    model.verification.mark_stale(
+        VerificationTargetKind.QUANT_FACT, qid, stale_reason="test",
+    )
+    assert model.verification.get("quant_fact", qid)["status"] == "stale"
+    # Same quant — dedup hits existing row.
+    qid2 = adapter.record_quant(
+        quant_kind="amount", raw_text="$500", amount_value=500.0,
+    )
+    assert qid2 == qid  # same row
+    assert model.verification.get("quant_fact", qid)["status"] == "candidate"
+
+
+def test_re_upsert_revives_stale_authority(model):
+    """P0.4 review fix #1: re-citing the same case must revive a
+    stale authority to candidate."""
+    from irys.matter.enums import VerificationTargetKind
+
+    aid, is_new = model.authority.upsert("Smith v. Jones, 1 F.3d 100")
+    assert is_new
+    model.verification.mark_stale(
+        VerificationTargetKind.AUTHORITY, aid, stale_reason="test",
+    )
+    assert model.verification.get("authority", aid)["status"] == "stale"
+    # Same citation → UPDATE path.
+    aid2, is_new2 = model.authority.upsert("Smith v. Jones, 1 F.3d 100")
+    assert aid2 == aid and not is_new2
+    assert model.verification.get("authority", aid)["status"] == "candidate"
+
+
+def test_mark_document_stale_catches_bare_span_quants(model):
+    """P0.4 review fix #2: quants pinned to a bare span_id string
+    (no `span` table row) must still be staled by
+    mark_document_stale when the span belongs to a doc occurrence."""
+    run_id = model.start_run("bare span quant")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    model.inventory.upsert("contract.pdf", "a" * 64, size_bytes=1)
+    aid = adapter.record_fact(
+        "fact with span", "contract.pdf", span_id="para-3",
+    )
+    # Runtime records a quant pinned to the same bare span_id but
+    # never writes a `span` table row — only assertion_occurrence
+    # knows that span_id exists.
+    qid = model.quant.record(
+        quant_kind="amount", raw_text="$500",
+        amount_value=500.0, span_id="para-3",
+    )
+    model.mark_document_stale("contract.pdf", reason="hash_change")
+    assert model.verification.get("assertion", aid)["status"] == "stale"
+    assert model.verification.get("quant_fact", qid)["status"] == "stale", (
+        "bare-span quant must be swept by document invalidation"
+    )
+
+
 def test_reject_target_bumps_trust_revision(model):
     """P0.4 invalidation trigger: human rejection must bump the
     revision so any cached reasoning that referenced the

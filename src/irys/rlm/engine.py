@@ -3412,6 +3412,34 @@ Return:
                         file_type=_fp.suffix.lstrip(".") or None,
                     )
                     _inventory_doc_id = _inv_id
+                    # P0.4 review fix: the inventory.upsert() above
+                    # will reset ingest_status to pending on hash
+                    # change, but it does NOT invalidate downstream
+                    # AI-derived intelligence. Use update_hash to
+                    # detect the change authoritatively (guards
+                    # against pending-placeholder clobber), and on a
+                    # real old→new flip fan out mark_document_stale
+                    # so every direct dependent assertion/occurrence/
+                    # edge/quant/authority/card moves to stale and
+                    # synthesis/review caches invalidate via the
+                    # trust_revision bump.
+                    try:
+                        _hash_changed, _old_sha = _mm.inventory.update_hash(
+                            _inv_id, _sha, size_bytes=len(_raw),
+                        )
+                        if _hash_changed:
+                            _mm.mark_document_stale(
+                                _inv_id,
+                                reason=(
+                                    f"document_hash_changed:"
+                                    f"{(_old_sha or '')[:12]}->{_sha[:12]}"
+                                ),
+                            )
+                    except Exception as _hash_err:
+                        logger.debug(
+                            "P0.4 hash-change invalidation failed for %s: %s",
+                            _rel_path, _hash_err,
+                        )
 
                     # SO-1: Operative version enforcement.
                     # If this document is superseded by a newer version that is

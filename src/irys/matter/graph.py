@@ -497,10 +497,19 @@ class AssertionStore:
                 cause="assertion_upsert",
                 run_id=run_id,
             )
-            if new_occurrence_id is not None:
+            # P0.4 review fix: revive both NEW (INSERT) and EXISTING
+            # (UPDATE) occurrence rows. The UPDATE branch runs when
+            # the same (doc, span, speech_act) slot gets a re-written
+            # occurrence — without this, a stale occurrence stays
+            # stale forever after re-extraction.
+            _occ_revive_id = (
+                new_occurrence_id if new_occurrence_id is not None
+                else (existing_occurrence["id"] if existing_occurrence else None)
+            )
+            if _occ_revive_id is not None:
                 _vs_store.touch_ai_target(
                     VerificationTargetKind.ASSERTION_OCCURRENCE,
-                    new_occurrence_id,
+                    _occ_revive_id,
                     ai_confidence=_init_conf,
                     cause="assertion_upsert",
                     run_id=run_id,
@@ -3024,11 +3033,18 @@ class QuantStore:
                  span_id, assertion_id, date_precision, dedup_key, now),
             )
             if cur.rowcount == 0:
-                # Already exists — return the existing ID
+                # Already exists — return the existing ID. P0.4 review
+                # fix: still touch verification_state so a stale
+                # quant revives to candidate on re-extraction.
                 row = self.db.execute(
                     "SELECT id FROM quant_fact WHERE matter_id=? AND quant_dedup_key=?",
                     (self.matter_id, dedup_key),
                 ).fetchone()
+                VerificationStateStore(self.db, self.matter_id).touch_ai_target(
+                    VerificationTargetKind.QUANT_FACT,
+                    row["id"],
+                    cause="quant_record_reextraction",
+                )
                 return row["id"]
             # MVP.2 + P0.4: touch_ai_target seeds on first insert and
             # revives stale on re-extraction (document re-ingest).
@@ -3122,17 +3138,19 @@ class QuantStore:
                 if row is None:
                     continue  # shouldn't happen, but skip defensively
                 actual_id = row["id"]
-                # Only act when the row is genuinely new; candidate_id ==
-                # actual_id means the INSERT succeeded and we should
-                # attach substrate rows.
-                if actual_id != candidate_id:
-                    continue
-                # P0.4: touch_ai_target seeds + revives.
+                # P0.4 review fix: touch ALWAYS — seed on first insert
+                # AND revive stale on re-extraction. The previous
+                # `continue` when actual_id != candidate_id silently
+                # left stale batched quants stale after re-ingest.
                 _ver.touch_ai_target(
                     VerificationTargetKind.QUANT_FACT,
                     actual_id,
                     cause="quant_record_batch",
                 )
+                # Only new-insert rows get provenance (one attribution
+                # event per real AI call, not per duplicate touch).
+                if actual_id != candidate_id:
+                    continue
                 if _prov is not None:
                     _prov.record(
                         target_kind="quant_fact",
@@ -4962,6 +4980,14 @@ class AuthorityStore:
                      holdings_json, key_rules_json, weight, applicability,
                      source_doc_id, source_span_id, now, auth_id),
                 )
+                # P0.4 review fix: revive stale authorities on
+                # re-citation so the re-ingest of a doc that cites
+                # the same case doesn't leave authority stale forever.
+                VerificationStateStore(self.db, self.matter_id).touch_ai_target(
+                    VerificationTargetKind.AUTHORITY,
+                    auth_id,
+                    cause="authority_reupsert",
+                )
                 return auth_id, False
 
             auth_id = _id()
@@ -5233,6 +5259,16 @@ class EvidenceStore:
                        WHERE id=?""",
                     (proof_weight, effective_weight, now, edge_id),
                 )
+            # P0.4 review fix: revive a stale edge to candidate when
+            # the same assertion→issue relation is re-extracted.
+            # Previously this path returned without touching
+            # verification, leaving stale edges stale forever after
+            # a re-ingest.
+            VerificationStateStore(self.db, self.matter_id).touch_ai_target(
+                VerificationTargetKind.EVIDENCE_EDGE,
+                edge_id,
+                cause="evidence_edge_reextraction",
+            )
             return edge_id, False
 
         edge_id = _id()

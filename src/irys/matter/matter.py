@@ -755,7 +755,11 @@ class MatterModel:
         ).fetchall() if self._table_exists("span") else []
         doc_span_ids = {r["id"] for r in span_rows}
         # Quants: attached to assertions we already collected OR via
-        # span_id when a quant was pinned to a doc span.
+        # span_id when a quant was pinned to a doc span OR pinned to
+        # an occurrence's span_id even when no `span` row exists.
+        # P0.4 review fix: runtime writers accept bare span_id strings
+        # without creating a span row; those quants were missed by
+        # the doc_span_ids-only lookup.
         quant_rows = []
         if assertion_ids:
             placeholders = ",".join("?" * len(assertion_ids))
@@ -771,20 +775,42 @@ class MatterModel:
                     WHERE matter_id=? AND span_id IN ({placeholders})""",
                 (self.matter_id, *doc_span_ids),
             ).fetchall()
+        # Also sweep quants whose span_id matches an occurrence_span_id
+        # for this document — bare-string span refs without `span` rows.
+        occ_span_rows = self.db.execute(
+            """SELECT DISTINCT ao.span_id FROM assertion_occurrence ao
+               JOIN assertion a ON a.id=ao.assertion_id
+               WHERE a.matter_id=? AND ao.span_id IS NOT NULL
+                 AND (ao.document_inventory_id=? OR ao.document_id=?)""",
+            (self.matter_id, inv_id, rel_path),
+        ).fetchall()
+        bare_span_ids = {r["span_id"] for r in occ_span_rows if r["span_id"]}
+        bare_span_ids -= doc_span_ids  # don't double-query
+        if bare_span_ids:
+            placeholders = ",".join("?" * len(bare_span_ids))
+            quant_rows += self.db.execute(
+                f"""SELECT id FROM quant_fact
+                    WHERE matter_id=? AND span_id IN ({placeholders})""",
+                (self.matter_id, *bare_span_ids),
+            ).fetchall()
         quant_ids = {r["id"] for r in quant_rows}
         # Authorities linked via source_doc_id or source_span_id.
+        # P0.4 review fix: same bare-span sweep as quants — pick up
+        # authorities pinned to an occurrence's span_id even when no
+        # `span` row exists.
         auth_rows = []
         auth_rows += self.db.execute(
             """SELECT id FROM authority
                WHERE matter_id=? AND source_doc_id=?""",
             (self.matter_id, inv_id),
         ).fetchall()
-        if doc_span_ids:
-            placeholders = ",".join("?" * len(doc_span_ids))
+        all_span_ids = doc_span_ids | bare_span_ids
+        if all_span_ids:
+            placeholders = ",".join("?" * len(all_span_ids))
             auth_rows += self.db.execute(
                 f"""SELECT id FROM authority
                     WHERE matter_id=? AND source_span_id IN ({placeholders})""",
-                (self.matter_id, *doc_span_ids),
+                (self.matter_id, *all_span_ids),
             ).fetchall()
         authority_ids = {r["id"] for r in auth_rows}
         # Document card.
