@@ -1690,17 +1690,25 @@ class SteerFamilyHandler:
             # calendar-validation pass via datetime.date.
             consumed_spans: list[tuple[int, int]] = []
             # ISO YYYY-MM-DD is _DATE_PATTERNS[0]
-            # Codex fallout R5: consume every ISO-shaped span FIRST,
-            # NO word boundaries. The broad regex now catches both
-            # standalone and embedded cases ("x2026-13-45y" leaks
-            # fragments without a word boundary because x and 2 are
-            # both word chars so \b doesn't fire). The regex
-            # deliberately requires YYYY-DD-DD shape, no more — so
-            # it doesn't accidentally consume other ambiguous
-            # numeric runs like "1234-5-6".
-            iso_shaped = r"\d{4}-\d{1,2}-\d{1,2}"
+            # Codex fallout R6: two guards, not one.
+            # (a) Digit-boundary lookaround so we don't over-consume
+            #     shifted-digit identifiers like "x20260-13-45y".
+            # (b) Plausible-year check so arbitrary 4-2-2 digit runs
+            #     in identifier names ("abc1234-5-6xyz") don't get
+            #     treated as dates — their fragments should flow
+            #     through normally for identifier-matching.
+            iso_shaped = r"(?<!\d)(\d{4})-\d{1,2}-\d{1,2}(?!\d)"
             for m in _re.finditer(iso_shaped, text):
-                consumed_spans.append(m.span())
+                try:
+                    yr = int(m.group(1))
+                except (TypeError, ValueError):
+                    continue
+                # 1900-2099 is the realistic legal-document year
+                # range. Narrow enough that random 4-digit runs
+                # in identifiers don't accidentally activate the
+                # date interpretation.
+                if 1900 <= yr <= 2099:
+                    consumed_spans.append(m.span())
             iso_pat = cls._DATE_PATTERNS[0]
             for m in _re.finditer(iso_pat, text, flags=_re.IGNORECASE):
                 tok = m.group().strip()

@@ -559,6 +559,52 @@ def test_read_handler_rejects_numeric_and_bool_citations(warm_matter):
     assert result.failure_kind == "state_insufficient"
 
 
+def test_specific_tokens_date_boundary_matrix():
+    """Round 6 regression matrix — the date-consumption regex must
+    distinguish four cases correctly:
+
+      1. `abc1234-5-6xyz` — identifier, not a date. Year 1234 is
+         outside the plausible legal-document range (1900-2099), so
+         DON'T consume; the '1234' fragment should pass through as
+         a normal number token.
+      2. `x20260-13-45y` — shifted digit adjacency; the year is 5
+         digits long which the digit-boundary lookbehind rejects,
+         so fragments pass through.
+      3. `x2026-13-45y` — letter-adjacent embedding with a real-
+         range year but invalid month/day; CONSUME the span
+         (suppress fragments) but don't output a valid date token.
+      4. `2026-04-15` — real, valid, standalone date; CONSUME the
+         span and output the full date token.
+    """
+    s = SteerFamilyHandler._specific_tokens
+
+    # Case 1: identifier with year outside plausible range.
+    tokens_id = s("abc1234-5-6xyz")
+    assert "1234" in tokens_id  # fragment flows through
+    assert "1234-5-6" not in tokens_id  # not a date
+
+    # Case 2: shifted digit — year has 5 digits, fails boundary.
+    tokens_shifted = s("x20260-13-45y")
+    # '20260' is 5 digits and matches the plain number pattern
+    # (which accepts len>=2). Ensure fragments flow and no spurious
+    # date token.
+    assert "20260" in tokens_shifted
+
+    # Case 3: valid year, nonsense date — consume, no fragments.
+    tokens_nonsense = s("x2026-13-45y")
+    assert tokens_nonsense == set()
+
+    # Case 4: real valid date.
+    tokens_valid = s("2026-04-15")
+    assert "2026-04-15" in tokens_valid
+    assert "2026" not in tokens_valid  # year fragment suppressed
+    assert "15" not in tokens_valid  # day fragment suppressed
+
+    # Case 4b: embedded valid date still works.
+    tokens_embedded = s("ref=2026-04-15/paper")
+    assert "2026-04-15" in tokens_embedded
+
+
 def test_specific_tokens_rejects_embedded_iso_fragment_leak():
     """Round 5: the R4 broad-regex consumer used word boundaries,
     which fail when the ISO-shape appears inside a larger token
