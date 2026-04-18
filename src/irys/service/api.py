@@ -227,6 +227,34 @@ async def root_redirect():
     return RedirectResponse(url="/ui")
 
 
+def _extract_cascade_surface(result) -> tuple[Optional[dict], Optional[dict]]:
+    """Adv#11 Fix 3: pull cascade route audit + family-specific payload
+    off InvestigationResult so FastAPI responses expose them.
+
+    Returns (route, family_payload). Both may be None when the caller
+    went through a non-cascade path (legacy / direct engine).
+    """
+    findings = getattr(getattr(result, "state", None), "findings", {}) or {}
+    route = findings.get("route") if isinstance(findings, dict) else None
+    payload: dict = {}
+    # Family-specific fields set by the _make_*_state helpers in api.py.
+    for _key in (
+        "query_intent",
+        "query_row_count",
+        "steer_action",
+        "steer_target_hint",
+        "steer_candidates",
+        "trace_target_kind",
+        "trace_target_id",
+        "deliverable_intent",
+        "deliverable_row_count",
+        "read_infra_failure",
+    ):
+        if _key in findings and findings.get(_key) is not None:
+            payload[_key] = findings[_key]
+    return route, (payload or None)
+
+
 def _serialize_result(result) -> tuple[list, dict]:
     """Convert InvestigationResult citations and entities to serializable dicts."""
     # Convert citations (list of Citation dataclasses)
@@ -537,6 +565,8 @@ async def _run_investigation(
         else:
             job.analysis = result.output
             job.citations, job.entities = _serialize_result(result)
+            # Adv#11 Fix 3: expose cascade route + family payload.
+            job.route, job.family_payload = _extract_cascade_surface(result)
             job.status = JobStatus.COMPLETED
 
         # Record open_gaps from the matter model (SO-7).
@@ -1161,6 +1191,7 @@ async def upload_investigate_sync(
         # Use exact state._run_id set by engine; reasoning_trail[0] is best-effort only (r40 fix).
         _sync_run_id = (getattr(result.state, "_run_id", None)
                         or (((getattr(result.state, "reasoning_trail", None) or []) or [{}])[0].get("run_id")))
+        _sync_route, _sync_payload = _extract_cascade_surface(result)
         response = SyncInvestigateResponse(
             query=query,
             analysis=result.output,
@@ -1173,6 +1204,8 @@ async def upload_investigate_sync(
             pending_clarifications=getattr(result.state, "pending_clarifications", []),
             open_gaps=_sync_open_gaps,
             llm_usage=getattr(result.state, "llm_usage", {}),
+            route=_sync_route,
+            family_payload=_sync_payload,
         )
 
         # Add S3 prefix to response if files kept (s3 mode only)

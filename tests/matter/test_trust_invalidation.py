@@ -133,6 +133,31 @@ def test_touch_ai_target_leaves_verified_alone(model):
     assert vs["status"] == "verified"
 
 
+def test_set_trust_override_bumps_trust_revision(model):
+    """Adv#11 Fix 1: setting a trust override must bump trust_revision
+    so reasoning_cache / cascade-decision entries keyed on the prior
+    revision become unreachable. Without this, the governance router
+    could serve a stale route decision after a source was downgraded."""
+    before = model.cache.current_trust_revision()
+    model.set_trust_override("example.pdf", "low", note="audit")
+    assert model.cache.current_trust_revision() == before + 1
+
+
+def test_delete_trust_override_bumps_trust_revision(model):
+    """Adv#11 Fix 1: deleting an existing trust override also bumps
+    trust_revision so the posture reversal invalidates cached plans
+    made while the override was in force. A delete of a missing
+    override stays a no-op — no spurious bump."""
+    model.set_trust_override("example.pdf", "low", note="audit")
+    after_set = model.cache.current_trust_revision()
+    model.delete_trust_override("example.pdf")
+    assert model.cache.current_trust_revision() == after_set + 1
+    # Deleting a missing override must not bump.
+    before_noop = model.cache.current_trust_revision()
+    model.delete_trust_override("not_an_override.pdf")
+    assert model.cache.current_trust_revision() == before_noop
+
+
 def test_mark_document_stale_stales_direct_dependents(model):
     """P0.4 AC #1: changed document hash must stale every direct
     dependent — assertions, occurrences, edges, quants, authorities,

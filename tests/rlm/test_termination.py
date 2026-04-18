@@ -202,6 +202,32 @@ def test_viable_leads_ev_mode(engine):
 # ---------------------------------------------------------------------------
 
 
+def test_pre_spend_ev_gate_filters_low_ev_high_priority_leads(engine):
+    """Adv#11 Fix 2 regression: a lead with high priority (passes
+    min_lead_priority) but below-floor EV must be filtered BEFORE task
+    dispatch. Previously _viable_leads only ran inside
+    _should_continue_investigation — termination — which means the
+    low-EV batch dispatched once before the loop exited.
+
+    Reproduces the Codex repro: priority=0.9, cost=1.0, gain=0.1
+    (ev=0.1) against lead_ev_floor=0.5 must return an empty viable
+    list even though the lead clears the legacy priority threshold.
+    """
+    lead = Lead.create(
+        description="low EV but high priority",
+        source="test",
+        priority=0.9,
+    )
+    lead.expected_cost_usd = 1.0
+    lead.expected_coverage_gain = 0.1
+    contract = ExecutionContract(family="investigate", lead_ev_floor=0.5)
+    # EV = 0.1 < floor 0.5 → not viable, even though priority >= 0.3.
+    assert lead.ev_score == 0.1
+    assert lead.priority >= engine.config.min_lead_priority
+    viable = engine._viable_leads([lead], contract=contract)
+    assert viable == []
+
+
 def test_min_iter_from_contract_gates_termination(engine):
     """Contract min_iter=0 allows termination at iteration 1 if target
     is sufficient; min_iter=2 forces a second iteration."""

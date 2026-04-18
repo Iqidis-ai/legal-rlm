@@ -2330,6 +2330,16 @@ class MatterModel:
 
         override_id = self.trust_overrides.set(document_pattern, trust_level, note)
 
+        # Adv#11 Fix 1: trust posture changed — bump trust_revision so any
+        # cascade decision / reasoning cache keyed on the prior revision
+        # silently misses. Belief revision below only touches existing
+        # assertion rows; the revision bump invalidates cached plans that
+        # *would have* routed around the newly re-scored source.
+        try:
+            self.cache.bump_trust_revision()
+        except sqlite3.Error as _exc:
+            _log.warning("set_trust_override: trust_revision bump failed: %s", _exc)
+
         # Trigger belief revision on all assertions from the affected document.
         # Uses indexed doc_basename column (schema v27) for exact basename lookup —
         # replaces leading-wildcard LIKE ('%/basename') which was not sargable.
@@ -2419,6 +2429,14 @@ class MatterModel:
         deleted = self.trust_overrides.delete(document_pattern)
         if not deleted:
             return  # nothing to propagate — no override existed
+
+        # Adv#11 Fix 1: trust posture reverted — bump trust_revision so
+        # cached cascade decisions made while the override was in force
+        # become unreachable. Mirrors the bump in set_trust_override.
+        try:
+            self.cache.bump_trust_revision()
+        except sqlite3.Error as _exc:
+            _log.warning("delete_trust_override: trust_revision bump failed: %s", _exc)
 
         affected_ids: list[str] = []
         _trust_unvisited: list[str] = []

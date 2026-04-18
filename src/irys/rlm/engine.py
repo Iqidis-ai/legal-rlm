@@ -2020,6 +2020,28 @@ class RLMEngine:
                 if _l.priority < self.config.min_lead_priority:
                     state.mark_lead_investigated(_l.id, "Skipped - low priority")
 
+            # Adv#11 Fix 2: MVI-5 EV gate was post-spend only (read
+            # inside _should_continue_investigation). A below-floor lead
+            # would still dispatch once before termination kicked in.
+            # Apply _viable_leads here — before task dispatch — so a
+            # cold-start batch with no EV coverage can't burn tokens.
+            # When the caller doesn't supply a contract (legacy path),
+            # _viable_leads falls back to priority-only viability, which
+            # matches the previous behavior.
+            _contract = getattr(state, "execution_contract", None)
+            if _contract is not None and leads_to_process:
+                _viable = self._viable_leads(leads_to_process, _contract)
+                _viable_ids = {_l.id for _l in _viable}
+                for _l in leads_to_process:
+                    if _l.id not in _viable_ids:
+                        state.mark_lead_investigated(
+                            _l.id,
+                            f"Skipped — below lead_ev_floor "
+                            f"(ev={getattr(_l, 'ev_score', 0.0):.3f}, "
+                            f"floor={getattr(_contract, 'lead_ev_floor', 0.5):.3f})",
+                        )
+                leads_to_process = _viable
+
             # SO-4 Leak-6 emergency bootstrap: when a proof gap or weak issue exists
             # but no issue-targeted lead cleared the priority threshold, inject one
             # predicate-derived lead so coverage can advance even on neutral-heavy queues.

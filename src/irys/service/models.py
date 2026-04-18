@@ -90,6 +90,16 @@ class JobResult(BaseModel):
     pending_clarifications: list[dict[str, Any]] = []
     open_gaps: list[dict[str, Any]] = []
 
+    # Adv#11 Fix 3: cascade-family audit surface. `route` holds the
+    # CascadeDecision audit dict (classifier_family, terminal_family,
+    # rationale, escalation_reason); `family_payload` holds the
+    # terminal-family-specific structured output (steer candidates,
+    # query intent + row_count, deliverable intent, trace target,
+    # compare diff). UI clients use these to render previews and
+    # differentiate family behavior without parsing prose.
+    route: Optional[dict[str, Any]] = None
+    family_payload: Optional[dict[str, Any]] = None
+
 
 # === Matter Model API Models ===
 
@@ -325,6 +335,27 @@ class SyncInvestigateResponse(BaseModel):
     llm_usage: dict[str, Any] = Field(
         default_factory=dict,
         description="Gemini token and estimated cost totals for this run",
+    )
+    # Adv#11 Fix 3: cascade-family audit surface. `route` holds the
+    # CascadeDecision audit dict (classifier_family, terminal_family,
+    # rationale, escalation_reason). `family_payload` holds terminal-
+    # family-specific structured output — steer candidates, query
+    # intent + row_count, deliverable intent/row_count, trace target,
+    # etc. UI clients render previews off these fields without having
+    # to parse the free-text `analysis` blob.
+    route: Optional[dict[str, Any]] = Field(
+        None,
+        description=(
+            "Cascade decision audit dict with classifier_family, "
+            "terminal_family, rationale, escalation_reason"
+        ),
+    )
+    family_payload: Optional[dict[str, Any]] = Field(
+        None,
+        description=(
+            "Terminal-family structured output (steer candidates, "
+            "query intent + rows, deliverable intent, trace target)"
+        ),
     )
 
 

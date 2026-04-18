@@ -2,15 +2,17 @@
 
 Status: **design contract / aspirational roadmap**. The `/api/v1/*` paths
 specified later in this document are a target shape, not the runtime.
-`src/irys/service/api.py` ships **67 endpoints at un-prefixed paths** such as
+`src/irys/service/api.py` ships **70 endpoints at un-prefixed paths** such as
 `/matter/{matter_id}/...`. Those are the real production surface — read
 section "Current Implementation Status" below for what clients can actually
 call today.
-Date: 2026-04-15. Updated 2026-04-18 (task #6 reconciliation pass).
+Date: 2026-04-15. Updated 2026-04-18 (adv#11 Fix 3 reconciliation — +3
+endpoints: review-queue/count, cost-breakdown, cost-anomalies; +route and
+family_payload fields on investigate responses).
 
 ## Current Implementation Status
 
-The live FastAPI app exposes these 67 endpoints. No `/api/v1` prefix today;
+The live FastAPI app exposes these 70 endpoints. No `/api/v1` prefix today;
 no `api_version` response wrapper; no `Idempotency-Key` or `If-Match` on
 mutations; no OIDC/OAuth2 auth gate; no permission strings; no cursor
 pagination (list endpoints use `limit`/`offset`). Span-level privilege
@@ -38,10 +40,18 @@ spec row below so the two stay in sync.
 
 **P0.3 Review Queue (shipped)**
 - `GET /matter/{matter_id}/review-queue`
+- `GET /matter/{matter_id}/review-queue/count` — cheap unread count for
+  the sidebar badge (OPT-2a)
 - `POST /matter/{matter_id}/verify`
 - `POST /matter/{matter_id}/verify/bulk-by-document`
 - `POST /matter/{matter_id}/verify/bulk-by-span`
 - `GET /matter/{matter_id}/verification-events`
+
+**Cost visibility (shipped)**
+- `GET /matter/{matter_id}/cost-breakdown` — per-model / per-run cost
+  rollup
+- `GET /matter/{matter_id}/cost-anomalies` — runs whose spend-per-fact
+  flags outside the rolling median band
 
 **SO-3 steering (shipped)**
 - `POST /matter/{matter_id}/stop`
@@ -82,6 +92,27 @@ spec row below so the two stay in sync.
 
 **Maintenance**
 - `POST /matter/{matter_id}/flush-pending`
+
+### Cascade response surface (adv#11 Fix 3)
+
+`POST /upload/investigate/sync` (and async `GET /investigate/{job_id}`
+polling) now expose two new fields so clients can render family-
+specific UI without parsing prose:
+
+- `route` — audit dict with `classifier_family` (NANO's initial read),
+  `terminal_family` (what actually ran after any escalation; one of
+  `read`, `query`, `trace`, `steer`, `compare`, `scenario`,
+  `deliverable`, `clarify`, `investigate`, `read_infra_failure`),
+  plus `rationale` and `escalation_reason`.
+- `family_payload` — family-specific structured fields. Present keys
+  depend on `terminal_family`:
+  - `query`: `query_intent`, `query_row_count`
+  - `steer`: `steer_action`, `steer_target_hint`, `steer_candidates`
+  - `trace`: `trace_target_kind`, `trace_target_id`
+  - `deliverable`: `deliverable_intent`, `deliverable_row_count`
+  - `read_infra_failure`: `read_infra_failure: true`
+
+Both fields are `null` for legacy/non-cascade callers.
 
 Everything below this line uses `/api/v1/*` and describes the **target**
 shape. Treat it as the post-Phase-0 design reference. For what actually
