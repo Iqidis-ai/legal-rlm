@@ -232,3 +232,89 @@ def test_display_date_tolerates_null_date_parts():
 
     assert _display_date("2024-null-15", "day") == "2024-null-15"
     assert _display_date("null", "day") == "Undated"
+
+
+def test_llm_token_breakdown_keeps_input_and_output_separate():
+    from irys.ui.app import _llm_token_breakdown
+
+    text = _llm_token_breakdown({
+        "input_tokens": 1200,
+        "cache_read_tokens": 300,
+        "tool_use_prompt_tokens": 25,
+        "thinking_tokens": 80,
+        "output_tokens": 400,
+        "total_processed_tokens": 2005,
+    })
+
+    assert text == "1,200 input / 300 cache / 25 tool / 80 thinking / 400 output"
+
+
+def test_llm_analytics_panel_drops_aggregate_prompt_and_total_columns():
+    from irys.ui.app import _fmt_llm_analytics_panel
+
+    summary = {
+        "request_count": 4,
+        "input_tokens": 1200,
+        "cache_read_tokens": 300,
+        "tool_use_prompt_tokens": 25,
+        "thinking_tokens": 80,
+        "output_tokens": 400,
+        "total_processed_tokens": 2005,
+        "estimated_cost_usd": 0.00166,
+    }
+
+    html = _fmt_llm_analytics_panel(summary, calls=[], breakdown=None, anomalies=None)
+
+    assert "Total work" not in html
+    assert "<th>Prompt</th>" not in html
+    assert "<th>Total</th>" not in html
+    assert "<th>Model</th>" not in html
+    assert ">Input<" in html
+    assert ">Output<" in html
+
+
+def test_source_drawer_uses_tier_not_model_name():
+    from irys.ui.app import _fmt_source_drawer
+
+    html = _fmt_source_drawer(
+        "assertion",
+        "a1",
+        [{
+            "source_document_ref": "complaint.pdf",
+            "source_span_id": "section:4.2",
+            "source_span_status": "present",
+            "created_at": "2026-04-18T12:00:00Z",
+            "model_id": "gemini-2.5-flash-lite",
+            "model_tier": "LITE",
+        }],
+        [],
+    )
+
+    assert "gemini-2.5-flash-lite" not in html
+    assert "LITE tier" in html
+
+
+def test_in_process_backend_provenance_redacts_model_id():
+    import asyncio
+    from irys.ui.backends.in_process import InProcessBackend
+
+    class _FakeModel:
+        def get_provenance(self, target_kind, target_id, limit=50):
+            assert target_kind == "assertion"
+            assert target_id == "a1"
+            assert limit == 50
+            return [{
+                "model_id": "gemini-2.5-flash-lite",
+                "model_tier": "LITE",
+                "source_document_ref": "complaint.pdf",
+            }]
+
+    backend = InProcessBackend(api_key="test")
+    backend._get_matter_model = lambda _matter_id: _FakeModel()  # type: ignore[method-assign]
+
+    rows = asyncio.run(backend.get_provenance("m1", "assertion", "a1"))
+
+    assert rows == [{
+        "model_tier": "LITE",
+        "source_document_ref": "complaint.pdf",
+    }]

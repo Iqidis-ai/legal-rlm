@@ -410,32 +410,19 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def _total_processed_tokens(metrics: dict[str, Any]) -> int:
-    total = _safe_int(metrics.get("total_processed_tokens"))
-    if total:
-        return total
-    return (
-        _safe_int(metrics.get("total_prompt_tokens"))
-        + _safe_int(metrics.get("tool_use_prompt_tokens"))
-        + _safe_int(metrics.get("thinking_tokens"))
-        + _safe_int(metrics.get("output_tokens"))
-    )
-
-
 def _llm_token_breakdown(metrics: dict[str, Any]) -> str:
-    parts = [f"{_safe_int(metrics.get('input_tokens')):,} in"]
+    parts = [f"{_safe_int(metrics.get('input_tokens')):,} input"]
     cache_tokens = _safe_int(metrics.get("cache_read_tokens"))
     tool_use_tokens = _safe_int(metrics.get("tool_use_prompt_tokens"))
     thinking_tokens = _safe_int(metrics.get("thinking_tokens"))
     output_tokens = _safe_int(metrics.get("output_tokens"))
-    total_tokens = _total_processed_tokens(metrics)
     if cache_tokens:
         parts.append(f"{cache_tokens:,} cache")
     if tool_use_tokens:
         parts.append(f"{tool_use_tokens:,} tool")
-    parts.append(f"{thinking_tokens:,} think")
-    parts.append(f"{output_tokens:,} out")
-    parts.append(f"{total_tokens:,} total")
+    if thinking_tokens:
+        parts.append(f"{thinking_tokens:,} thinking")
+    parts.append(f"{output_tokens:,} output")
     return " / ".join(parts)
 
 
@@ -876,6 +863,13 @@ def _friendly_source_label(raw: Optional[str]) -> str:
     return s if len(s) <= 80 else s[:77] + "…"
 
 
+def _provenance_tier_label(event: dict[str, Any]) -> str:
+    tier = str(event.get("model_tier") or "").strip()
+    if tier:
+        return f"{tier.upper()} tier"
+    return "Irys"
+
+
 def _fmt_timeline_panel(events: list[dict]) -> str:
     if not events:
         return "<div class='viz-empty'>No timeline events available.</div>"
@@ -1266,16 +1260,24 @@ def _fmt_llm_analytics_panel(
     p95_latency = b_totals.get("p95_latency_ms")
     avg_latency_b = b_totals.get("avg_latency_ms")
     monthly_burn = _safe_float((breakdown or {}).get("estimated_monthly_burn_usd", 0.0))
-    thinking_tokens = _safe_int(
-        b_totals.get("thinking_tokens") or summary.get("thinking_tokens", 0)
-    )
-    total_work_tokens = _total_processed_tokens(b_totals or summary)
-    if not thinking_tokens and calls:
-        thinking_tokens = sum(_safe_int(call.get("thinking_tokens", 0)) for call in calls)
-    if not total_work_tokens and calls:
-        total_work_tokens = sum(
-            _safe_int(call.get("total_processed_tokens", 0)) for call in calls
-        )
+
+    def _token_total(key: str) -> int:
+        total = _safe_int(b_totals.get(key) or summary.get(key, 0))
+        if total or not calls:
+            return total
+        return sum(_safe_int(call.get(key, 0)) for call in calls)
+
+    input_tokens = _token_total("input_tokens")
+    cache_tokens = _token_total("cache_read_tokens")
+    tool_use_tokens = _token_total("tool_use_prompt_tokens")
+    thinking_tokens = _token_total("thinking_tokens")
+    output_tokens = _token_total("output_tokens")
+    input_detail_parts: list[str] = []
+    if cache_tokens:
+        input_detail_parts.append(f"{cache_tokens:,} cached")
+    if tool_use_tokens:
+        input_detail_parts.append(f"{tool_use_tokens:,} tool")
+    input_detail = " / ".join(input_detail_parts) if input_detail_parts else "Non-cached prompt tokens"
 
     # Fall back to per-call computation when breakdown is absent.
     total_latency = 0.0
@@ -1305,10 +1307,16 @@ def _fmt_llm_analytics_panel(
         _metric_card("Calls", f"{request_count:,}", detail=f"{len(calls):,} recent rows"),
         _metric_card("Spend", _fmt_money(total_cost), tone="amber"),
         _metric_card(
-            "Total work",
-            f"{total_work_tokens:,}",
+            "Input",
+            f"{input_tokens:,}",
             tone="blue",
-            detail="Prompt + tool + thinking + output tokens",
+            detail=input_detail,
+        ),
+        _metric_card(
+            "Output",
+            f"{output_tokens:,}",
+            tone="blue",
+            detail="Generated tokens",
         ),
         _metric_card(
             "Thinking",
@@ -1461,14 +1469,11 @@ def _fmt_llm_analytics_panel(
         f"<td>{_escape(call.get('created_at') or '')}</td>"
         f"<td>{_escape(call.get('usage_label') or 'unknown')}</td>"
         f"<td>{_escape((call.get('model_tier') or 'unknown').upper())}</td>"
-        f"<td>{_escape(call.get('model_id') or '')}</td>"
         f"<td>{_safe_int(call.get('input_tokens', 0)):,}</td>"
         f"<td>{_safe_int(call.get('cache_read_tokens', 0)):,}</td>"
-        f"<td>{_safe_int(call.get('total_prompt_tokens', 0)):,}</td>"
         f"<td>{_safe_int(call.get('tool_use_prompt_tokens', 0)):,}</td>"
         f"<td>{_safe_int(call.get('thinking_tokens', 0)):,}</td>"
         f"<td>{_safe_int(call.get('output_tokens', 0)):,}</td>"
-        f"<td>{_safe_int(call.get('total_processed_tokens', 0)):,}</td>"
         f"<td>{_safe_int(call.get('latency_ms', 0)):,} ms</td>"
         f"<td>{_fmt_money(call.get('estimated_cost_usd', 0.0))}</td>"
         f"<td>{_escape(call.get('run_id') or '')}</td>"
@@ -1498,9 +1503,9 @@ def _fmt_llm_analytics_panel(
         + anomalies_block
         + "<div class='viz-panel'><div class='viz-panel-title'>Recent calls</div>"
         + "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
-        + "<th>Time</th><th>Stage</th><th>Tier</th><th>Model</th><th>In</th><th>Cache</th>"
-        + "<th>Prompt</th><th>Tool</th><th>Think</th><th>Out</th><th>Total</th><th>Latency</th><th>Cost</th><th>Run</th><th>Status</th></tr></thead><tbody>"
-        + (table_rows or "<tr><td colspan='15'>No recent calls.</td></tr>")
+        + "<th>Time</th><th>Stage</th><th>Tier</th><th>Input</th><th>Cache</th>"
+        + "<th>Tool</th><th>Think</th><th>Output</th><th>Latency</th><th>Cost</th><th>Run</th><th>Status</th></tr></thead><tbody>"
+        + (table_rows or "<tr><td colspan='12'>No recent calls.</td></tr>")
         + "</tbody></table></div>"
         + (
             f"<div class='viz-footnote'>Pricing source: <a href='{pricing_source}' target='_blank'>Google Gemini API pricing</a></div>"
@@ -1737,7 +1742,7 @@ def _fmt_overview(data: dict) -> str:
     if llm_totals.get("request_count", 0):
         lines.append(
             f"**LLM Calls:** {llm_totals.get('request_count', 0)}  |  "
-            f"**Tokens:** {_llm_token_breakdown(llm_totals)}  |  "
+            f"**Tokens by type:** {_llm_token_breakdown(llm_totals)}  |  "
             f"**Est. Cost:** ${float(llm_totals.get('estimated_cost_usd', 0.0) or 0.0):.4f}"
         )
         by_tier = llm_totals.get("by_tier", {})
@@ -2009,6 +2014,29 @@ _REVIEW_BUCKET_LABELS = {
 }
 
 
+def _fmt_privilege_banner(audience: str) -> str:
+    """Visible indicator of the active privilege mode (UI-6). Rendered
+    at the top of the sidebar so a reviewer cannot forget they've opted
+    into internal mode before sharing a screen / exporting."""
+    if audience == "internal":
+        return (
+            "<div style='padding:8px 12px;border-radius:6px;"
+            "background:#fee2e2;color:#991b1b;font-size:12px;"
+            "margin-bottom:8px;border-left:3px solid #b91c1c;font-weight:600;'>"
+            "Internal mode — privileged content is unredacted. "
+            "Do not share this view with external parties."
+            "</div>"
+        )
+    return (
+        "<div style='padding:8px 12px;border-radius:6px;"
+        "background:#ecfdf5;color:#065f46;font-size:12px;"
+        "margin-bottom:8px;border-left:3px solid #059669;'>"
+        "Clean mode — privileged content shows as [withheld]. "
+        "Safe for external review."
+        "</div>"
+    )
+
+
 def _fmt_review_count_badge(total: int, bucket_counts: dict[int, int]) -> str:
     """Render the sidebar review-queue badge from precomputed counts.
     Shared by load_review_count_badge and load_post_review_snapshot so
@@ -2161,7 +2189,7 @@ def _fmt_source_drawer(
             span_raw = ev.get("source_span_id")
             span_status = ev.get("source_span_status") or "unknown"
             when = (ev.get("created_at") or "")[:10]  # YYYY-MM-DD, date only
-            model_id = ev.get("model_id") or "Irys"
+            tier_label = _provenance_tier_label(ev)
             span_html = ""
             if span_raw:
                 span_html = (
@@ -2180,7 +2208,7 @@ def _fmt_source_drawer(
                 f"<div style='color:#1f2937;font-weight:500;'>"
                 f"{_escape(doc)}{span_html}</div>"
                 f"<div style='color:#6b7280;font-size:12px;margin-top:2px;'>"
-                f"Extracted by <strong>{_escape(model_id)}</strong>"
+                f"Captured via <strong>{_escape(tier_label)}</strong>"
                 f" on {_escape(when)}</div>"
                 "</div>"
             )
@@ -2366,6 +2394,11 @@ class AppState:
         self.current_run_id: Optional[str] = None
         self.current_repo_path: Optional[str] = None
         self.current_research_mode: str = "deep"
+        # UI-6: privilege mode. "clean" redacts privileged content in
+        # timeline / evidence matrix / etc. (safe default). "internal"
+        # bypasses the gate for attorney-only workspaces. Changed via
+        # the sidebar toggle; a visual banner surfaces the active mode.
+        self.policy_audience: str = "clean"
         self.session_turns: list[dict[str, str]] = []
         self._last_resume_error: Optional[str] = None  # set by do_resume() on failure
         self._irys_ref = None  # weak ref to active Irys instance for stop
@@ -3304,7 +3337,9 @@ class AppState:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
-            events = _run_async(self.backend().get_timeline(matter_id, limit=200))
+            events = _run_async(self.backend().get_timeline(
+                matter_id, limit=200, policy_audience=self.policy_audience,
+            ))
             return _fmt_timeline_panel(events)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading timeline: {_escape(exc)}</div>"
@@ -3313,10 +3348,48 @@ class AppState:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
-            matrix = _run_async(self.backend().get_evidence_matrix(matter_id))
+            matrix = _run_async(self.backend().get_evidence_matrix(
+                matter_id, policy_audience=self.policy_audience,
+            ))
             return _fmt_evidence_matrix_panel(matrix)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading evidence matrix: {_escape(exc)}</div>"
+
+    def set_policy_audience(self, label: str) -> str:
+        """Called when the sidebar privilege-mode toggle flips. Returns
+        a visible banner HTML so the reviewer always knows which mode
+        is active — silent switching would be a disclosure risk."""
+        audience = "internal" if str(label).strip().startswith("Internal") else "clean"
+        self.policy_audience = audience
+        return _fmt_privilege_banner(audience)
+
+    def load_document_picker_choices(self, matter_id: str) -> list:
+        """Return labelled choices for the bulk-verify Dropdown, newest
+        pending first. Labels include pending/verified counts so
+        reviewers can triage without opening the doc list."""
+        if not matter_id or matter_id == "—":
+            return []
+        try:
+            rows = _run_async(
+                self.backend().list_reviewable_documents(matter_id)
+            )
+        except Exception:
+            return []
+        choices = []
+        for row in rows:
+            path = row.get("path") or ""
+            if not path:
+                continue
+            pending = int(row.get("pending") or 0)
+            verified = int(row.get("verified") or 0)
+            if pending > 0:
+                label = f"{path}  ({pending} pending)"
+            elif verified > 0:
+                label = f"{path}  ({verified} reviewed ✓)"
+            else:
+                label = path
+            choices.append((label, path))
+        return choices
 
     def load_communication_map(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
@@ -3877,6 +3950,26 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
             # ---------- RIGHT: Intelligence sidebar ----------
             with gr.Column(scale=1, min_width=280):
+                # UI-6 privilege mode toggle. Clean is the safe default
+                # (privileged content redacted to "[withheld]"); Internal
+                # unredacts for attorney-only workspaces. The banner
+                # below surfaces the active mode so a reviewer can't
+                # forget which state they're in before sharing a view.
+                privilege_banner_md = gr.HTML(_fmt_privilege_banner("clean"))
+                privilege_toggle = gr.Radio(
+                    choices=[
+                        "Clean mode (hide privileged)",
+                        "Internal mode (show all)",
+                    ],
+                    value="Clean mode (hide privileged)",
+                    label="Privilege mode",
+                    info=(
+                        "Clean redacts privileged material in the timeline "
+                        "and evidence matrix. Flip to Internal only in a "
+                        "private attorney workspace."
+                    ),
+                )
+
                 # P0.3 visibility: review queue count chip at the top
                 # of the sidebar. Quiet green when empty; amber with
                 # bucket counts when pending.
@@ -4025,17 +4118,31 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             gr.Markdown("#### Bulk verify a whole document")
             gr.Markdown(
                 "When you've reviewed an entire contract or pleading, "
-                "approve every candidate fact from it in one action."
+                "approve every candidate fact from it in one action. "
+                "Pick a document from the list — docs with the most "
+                "pending facts are at the top."
             )
             with gr.Row():
-                bulk_doc_ref = gr.Textbox(
-                    label="Document name or path",
-                    placeholder="e.g. contracts/msa.pdf  or  msa.pdf",
+                # UI-6: searchable dropdown fed by
+                # list_reviewable_documents. Labels include pending /
+                # reviewed counts so attorneys can triage the queue by
+                # document without opening every one. allow_custom_value
+                # so typing a path that isn't listed still works.
+                bulk_doc_ref = gr.Dropdown(
+                    label="Document",
+                    choices=[],
+                    value=None,
+                    allow_custom_value=True,
+                    filterable=True,
                     scale=4,
                 )
                 bulk_verify_btn = gr.Button(
                     "Verify all from document", variant="primary",
                     scale=1, min_width=180,
+                )
+                refresh_doc_picker_btn = gr.Button(
+                    "↻", variant="secondary", scale=0, min_width=40,
+                    size="sm",
                 )
             bulk_verify_result = gr.Markdown("")
 
@@ -4073,7 +4180,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
         with gr.Accordion("LLM Analytics — cost, latency, and stage mix", open=False):
             gr.Markdown(
-                "Shows recent model calls, spend by stage, and the current tier mix."
+                "Shows recent LLM calls, spend by stage, and the current tier mix."
             )
             llm_analytics_html = gr.HTML("<div class='viz-empty'>LLM analytics will appear here after an investigation.</div>")
             refresh_llm_btn = gr.Button("Refresh LLM Analytics", variant="secondary", size="sm")
@@ -4329,6 +4436,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             communication = state.load_communication_map(mid)
             llm_analytics = state.load_llm_analytics(mid)
             review_badge = state.load_review_count_badge(mid)
+            doc_choices = state.load_document_picker_choices(mid)
             return (
                 review_badge,
                 overview,
@@ -4342,6 +4450,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 communication,
                 llm_analytics,
                 top_issue,
+                gr.update(choices=doc_choices),
             )
 
         # --- Investigation stream ---
@@ -4385,6 +4494,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     communication_html,
                     llm_analytics_html,
                     redirect_issue_id,
+                    bulk_doc_ref,
                 ],
             )
         else:
@@ -4410,6 +4520,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     communication_html,
                     llm_analytics_html,
                     redirect_issue_id,
+                    bulk_doc_ref,
                 ],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
@@ -4430,6 +4541,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 communication_html,
                 llm_analytics_html,
                 redirect_issue_id,
+                bulk_doc_ref,
             ],
         )
 
@@ -4463,6 +4575,34 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_llm_analytics(mid),
             inputs=[matter_id_box],
             outputs=[llm_analytics_html],
+        )
+
+        # --- UI-6 privilege mode toggle + document picker ---
+        def _on_privilege_toggle(label, mid):
+            # Flip AppState.policy_audience, re-render the banner, and
+            # re-load the two panels that actually honour the audience
+            # flag (timeline + evidence matrix). Other panels don't
+            # depend on audience so we leave them alone to keep the
+            # refresh tight.
+            banner = state.set_policy_audience(label)
+            return (
+                banner,
+                state.load_timeline(mid),
+                state.load_evidence_matrix(mid),
+            )
+
+        privilege_toggle.change(
+            fn=_on_privilege_toggle,
+            inputs=[privilege_toggle, matter_id_box],
+            outputs=[privilege_banner_md, timeline_html, evidence_matrix_html],
+        )
+
+        refresh_doc_picker_btn.click(
+            fn=lambda mid: gr.update(
+                choices=state.load_document_picker_choices(mid),
+            ),
+            inputs=[matter_id_box],
+            outputs=[bulk_doc_ref],
         )
 
         # --- Correction ---
@@ -4516,6 +4656,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             prior_target = target
             result = state.do_verify_target(mid, target, note)
             snap = state.load_post_review_snapshot(mid, prior_target)
+            doc_choices = state.load_document_picker_choices(mid)
             return (
                 result,
                 snap["queue_html"],
@@ -4526,6 +4667,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 snap["issues_html"],
                 snap["overview_html"],
                 "",  # clear the note field
+                gr.update(choices=doc_choices),
             )
 
         verify_btn.click(
@@ -4535,6 +4677,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 review_action_result, review_queue_html, review_target,
                 source_drawer_html, review_badge_md,
                 assertions_md, issues_md, overview_md, verify_note,
+                bulk_doc_ref,
             ],
         )
 
@@ -4542,6 +4685,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             prior_target = target
             result = state.do_reject_target(mid, target, reason)
             snap = state.load_post_review_snapshot(mid, prior_target)
+            doc_choices = state.load_document_picker_choices(mid)
             return (
                 result,
                 snap["queue_html"],
@@ -4552,6 +4696,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 snap["issues_html"],
                 snap["overview_html"],
                 "",  # clear the reason field
+                gr.update(choices=doc_choices),
             )
 
         reject_btn.click(
@@ -4561,6 +4706,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 review_action_result, review_queue_html, review_target,
                 source_drawer_html, review_badge_md,
                 assertions_md, issues_md, overview_md, reject_reason,
+                bulk_doc_ref,
             ],
         )
 

@@ -518,6 +518,13 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_timeline(limit=limit, policy_audience=policy_audience)
 
+    async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
+        """Document picker feed for the bulk-verify dropdown — every
+        doc in the matter with pending/verified counts so reviewers
+        can triage at a glance."""
+        model = self._get_matter_model(matter_id)
+        return model.list_reviewable_documents()
+
     async def get_evidence_matrix(
         self,
         matter_id: str,
@@ -634,11 +641,12 @@ class InProcessBackend(UIBackend):
     ) -> list[dict]:
         """P0.1: return the provenance_event trail for one target.
 
-        Each row attributes the AI write: run, model, prompt version,
+        Each row attributes the AI write: run, tier, prompt version,
         source document + span, llm_call_id — everything the attorney
         needs to answer "where did this come from?"."""
         model = self._get_matter_model(matter_id)
-        return model.get_provenance(target_kind, target_id, limit=limit)
+        rows = model.get_provenance(target_kind, target_id, limit=limit)
+        return [{k: v for k, v in row.items() if k != "model_id"} for row in rows]
 
     # ------------------------------------------------------------------ #
     # Streaming investigation (InProcessBackend-specific)                 #

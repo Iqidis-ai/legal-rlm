@@ -1452,7 +1452,6 @@ class MatterModel:
             ).fetchone()
             tier_rows = self.db.execute(
                 f"""SELECT model_tier,
-                           MIN(model_id) AS model_id,
                            COUNT(*) AS request_count,
                            COALESCE(SUM(input_tokens), 0) AS input_tokens,
                            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
@@ -1472,7 +1471,6 @@ class MatterModel:
 
         by_tier = {
             row["model_tier"]: {
-                "model_id": row["model_id"],
                 "requests": int(row["request_count"] or 0),
                 "input_tokens": int(row["input_tokens"] or 0),
                 "cache_read_tokens": int(row["cache_read_tokens"] or 0),
@@ -1685,7 +1683,6 @@ class MatterModel:
 
             tier_rows = self.db.execute(
                 f"""SELECT model_tier,
-                           MIN(model_id) AS model_id,
                            COUNT(*) AS n,
                            COALESCE(SUM(estimated_cost_usd), 0) AS cost,
                            COALESCE(SUM(input_tokens), 0) AS input_tokens,
@@ -1710,7 +1707,6 @@ class MatterModel:
                 t_n = int(row["n"] or 0)
                 by_tier.append({
                     "model_tier": row["model_tier"],
-                    "model_id": row["model_id"],
                     "request_count": t_n,
                     "estimated_cost_usd": round(float(row["cost"] or 0), 6),
                     "input_tokens": t_inp,
@@ -1887,7 +1883,7 @@ class MatterModel:
         params.append(int(limit))
         try:
             rows = self.db.execute(
-                f"""SELECT run_id, model_tier, model_id, usage_label,
+                f"""SELECT run_id, model_tier, usage_label,
                            input_tokens, cache_read_tokens, tool_use_prompt_tokens,
                            thinking_tokens, output_tokens,
                            total_prompt_tokens, estimated_cost_usd, latency_ms,
@@ -1904,7 +1900,6 @@ class MatterModel:
             {
                 "run_id": row["run_id"],
                 "model_tier": row["model_tier"],
-                "model_id": row["model_id"],
                 "usage_label": row["usage_label"],
                 "input_tokens": int(row["input_tokens"] or 0),
                 "cache_read_tokens": int(row["cache_read_tokens"] or 0),
@@ -2730,6 +2725,51 @@ class MatterModel:
             "source_role": analysis.get("doc_source_role"),
             "operative_status": analysis.get("operative_status", "unknown"),
         }
+
+    def list_reviewable_documents(self, limit: int = 500) -> list[dict]:
+        """Return every document in the matter with its pending/verified
+        candidate-assertion counts so the UI can label a picker with
+        at-a-glance review status.
+
+        Returns rows shaped like:
+          {path, doc_type, pending, verified, total}
+        ordered by pending DESC (most-work-to-do first), then path.
+        """
+        rows = self.db.execute(
+            """WITH doc_pending AS (
+                   SELECT ao.document_id AS doc_key,
+                          SUM(CASE
+                              WHEN COALESCE(vs.status, 'candidate')='candidate'
+                                   THEN 1 ELSE 0 END) AS pending,
+                          SUM(CASE
+                              WHEN vs.status='verified'
+                                   THEN 1 ELSE 0 END) AS verified,
+                          COUNT(*) AS total
+                   FROM assertion a
+                   JOIN assertion_occurrence ao ON ao.assertion_id = a.id
+                   LEFT JOIN verification_state vs
+                     ON vs.target_kind='assertion'
+                    AND vs.target_id=a.id
+                    AND vs.matter_id=a.matter_id
+                   WHERE a.matter_id = ?
+                   GROUP BY ao.document_id
+               )
+               SELECT di.relative_path AS path,
+                      COALESCE(dc.doc_type, 'unknown') AS doc_type,
+                      COALESCE(dp.pending, 0) AS pending,
+                      COALESCE(dp.verified, 0) AS verified,
+                      COALESCE(dp.total, 0) AS total
+               FROM document_inventory di
+               LEFT JOIN document_card dc ON dc.doc_id = di.id
+               LEFT JOIN doc_pending dp
+                      ON dp.doc_key = di.id
+                      OR dp.doc_key = di.relative_path
+               WHERE di.matter_id = ?
+               ORDER BY pending DESC, di.relative_path
+               LIMIT ?""",
+            (self.matter_id, self.matter_id, int(limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def list_documents_needing_profile(self, limit: int = 200) -> list[dict]:
         """Return docs that need query-agnostic profiling."""

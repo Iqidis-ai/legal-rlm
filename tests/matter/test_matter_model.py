@@ -145,6 +145,9 @@ def test_stats_include_llm_usage_summary(model):
     assert stats["llm"]["totals"]["output_tokens"] == 400
     assert stats["llm"]["totals"]["total_processed_tokens"] == 2005
     assert stats["llm"]["last_run"]["estimated_cost_usd"] == pytest.approx(0.00166)
+    calls = model.list_llm_calls(run_id=run_id, limit=5)
+    assert calls, "list_llm_calls() should return the persisted call for telemetry."
+    assert "model_id" not in calls[0], "Telemetry payloads should not expose model IDs."
 
 
 def test_run_lifecycle(model):
