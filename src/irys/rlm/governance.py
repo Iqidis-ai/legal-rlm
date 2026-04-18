@@ -141,12 +141,12 @@ class CascadeDecision:
 
 # Bump whenever the prompt or schema changes — included in the
 # classifier_version so old cached decisions miss cleanly.
-CLASSIFIER_SCHEMA_VERSION = "mvi6.0"
+CLASSIFIER_SCHEMA_VERSION = "mvi7.0"
 
 
 VALID_FAMILIES = {
     "investigate", "read", "query", "trace", "steer",
-    "compare", "scenario", "clarify",
+    "compare", "scenario", "deliverable", "clarify",
 }
 
 
@@ -168,11 +168,13 @@ Six routes are available:
 
 7. `scenario` — the user is asking a HYPOTHETICAL or counterfactual — "what if X were true". Examples: "Redo the analysis assuming the contract is void", "What if we concede jurisdiction?", "Treat the waiver as valid and recompute damages", "Imagine the statute of limitations hasn't run". The user is not correcting state; they're asking for an alternative computation with an overridden assumption.
 
-8. `clarify` — the user's referent is ambiguous or the query is so vague that proceeding would produce a wrong cheap answer. Examples: "Tell me about Smith" when there are two Smiths. Route here SPARINGLY — only when a specific ambiguity makes routing unsafe.
+8. `deliverable` — the user is asking for a STRUCTURED WORK PRODUCT — a privilege log, a Rule 26 disclosure, a deposition outline, a meet-and-confer letter, etc. These have specific legal templates and the strictest verification/policy floor. Examples: "Generate a privilege log", "Draft the Rule 26(a)(1) disclosure", "Outline my deposition of Smith", "Prepare a production letter".
+
+9. `clarify` — the user's referent is ambiguous or the query is so vague that proceeding would produce a wrong cheap answer. Examples: "Tell me about Smith" when there are two Smiths. Route here SPARINGLY — only when a specific ambiguity makes routing unsafe.
 
 Guidance:
 - Default to `investigate` on a fresh matter (has_any_facts=False).
-- On a warm matter: `query` for "list X" / "show X" / "which X", `read` for "summarize" / "draft" / "explain" / "what does X mean", `trace` for "why" / "how did you" / "show the source", `steer` for "correct" / "actually X" / "no, it was Y" / "change" / "ignore", `compare` for "what changed" / "diff" / "since [X]", `scenario` for "what if" / "assume X" / "redo assuming".
+- On a warm matter: `query` for "list X" / "show X" / "which X", `read` for "summarize" / "draft" / "explain" / "what does X mean", `trace` for "why" / "how did you" / "show the source", `steer` for "correct" / "actually X" / "no, it was Y" / "change" / "ignore", `compare` for "what changed" / "diff" / "since [X]", `scenario` for "what if" / "assume X" / "redo assuming", `deliverable` for named work products ("privilege log", "Rule 26", "deposition outline", "production letter").
 - Never route to read/query/trace/steer/compare/scenario if has_any_facts=False — there's nothing to read or compare.
 - Your job is cost governance, not content judgment. Keep the decision fast.
 
@@ -186,7 +188,7 @@ User query: {query}
 
 Respond ONLY with a single JSON object:
 {{
-  "family": "investigate" | "read" | "query" | "trace" | "steer" | "compare" | "scenario" | "clarify",
+  "family": "investigate" | "read" | "query" | "trace" | "steer" | "compare" | "scenario" | "deliverable" | "clarify",
   "confidence": 0.0-1.0,
   "rationale": "one short sentence — why this route"
 }}
@@ -358,7 +360,10 @@ class CascadeGovernor:
                 f"unknown family '{family}', defaulting to investigate",
             )
         if (
-            family in {"read", "query", "trace", "steer", "compare", "scenario"}
+            family in {
+                "read", "query", "trace", "steer",
+                "compare", "scenario", "deliverable",
+            }
             and not snapshot.has_any_facts
         ):
             # Belt-and-suspenders: if the classifier routes to a warm-
@@ -440,6 +445,20 @@ class CascadeGovernor:
                 max_iter=1,
                 citation_floor=0,
                 answer_confidence_floor=0.5,
+                escalation_allowed=True,
+            )
+        if family == "deliverable":
+            # MVI-7: strictest verification + policy floor. Render a
+            # named legal work product from verified matter state.
+            # Contract citation_floor >= 1 so a deliverable with
+            # nothing to render escalates rather than silently
+            # producing an empty template.
+            return ExecutionContract(
+                family="deliverable",
+                min_iter=0,
+                max_iter=1,
+                citation_floor=1,
+                answer_confidence_floor=0.7,
                 escalation_allowed=True,
             )
         if family == "clarify":
@@ -1760,3 +1779,226 @@ class ScenarioFamilyHandler:
         except (TypeError, ValueError):
             return {}
         return parsed if isinstance(parsed, dict) else {}
+
+
+# ---------------------------------------------------------------------------
+# Deliverable-family handler (MVI-7) — first renderer: privilege log
+# ---------------------------------------------------------------------------
+
+
+DELIVERABLE_SUB_INTENTS = [
+    ("privilege_log", "privilege log / privilege review / claw-back list"),
+    ("dep_outline", "deposition outline / cross-examination prep"),
+    ("rule_26", "Rule 26(a)(1) initial disclosures"),
+    ("production_letter", "production cover letter"),
+    ("other", "any other named work product"),
+]
+
+
+DELIVERABLE_SUB_INTENT_PROMPT = """Classify which named legal work product the user is asking for. Pick EXACTLY one.
+
+Options:
+{intent_list}
+
+User request: {query}
+
+Respond ONLY with JSON: {{"intent": "name_from_list"}}
+"""
+
+
+@dataclass
+class DeliverableFamilyResult:
+    """Outcome of a deliverable-family request."""
+    intent: str                     # privilege_log | dep_outline | rule_26 | production_letter | other
+    rendered_answer: str
+    row_count: int
+    escalation_needed: bool
+    escalation_reason: Optional[str] = None
+
+
+class DeliverableFamilyHandler:
+    """Renders a named legal work product from the verified matter
+    state. MVI-7 ships ONE renderer (privilege log) to prove the
+    deliverable pattern — other intents escalate to read for now.
+    Future MVIs add renderers one at a time; the classifier already
+    carries the sub-intent so downstream expansion is a per-template
+    add, not a factory rewrite.
+    """
+
+    def __init__(
+        self,
+        matter_model: Any,
+        client: Optional[GeminiClient] = None,
+    ) -> None:
+        self.matter_model = matter_model
+        self.client = client
+
+    async def run(
+        self,
+        query: str,
+        contract: ExecutionContract,
+    ) -> DeliverableFamilyResult:
+        if self.matter_model is None:
+            return DeliverableFamilyResult(
+                intent="",
+                rendered_answer="",
+                row_count=0,
+                escalation_needed=True,
+                escalation_reason="no matter model available",
+            )
+        intent = await self._resolve_sub_intent(query)
+        if intent == "privilege_log":
+            return self._render_privilege_log()
+        # Other intents are not yet shipped — escalate to read so the
+        # user still gets an answer. This matches Codex's directive:
+        # ship ONE renderer first, add the rest one-by-one.
+        return DeliverableFamilyResult(
+            intent=intent,
+            rendered_answer="",
+            row_count=0,
+            escalation_needed=True,
+            escalation_reason=(
+                f"renderer '{intent}' not yet implemented — "
+                f"escalating to read handler for a narrative response"
+            ),
+        )
+
+    async def _resolve_sub_intent(self, query: str) -> str:
+        """NANO decides which named deliverable the user wants. If the
+        client is absent, return 'other' so we escalate rather than
+        silently default to privilege_log."""
+        if self.client is None:
+            return "other"
+        intent_list = "\n".join(
+            f"- {name}: {desc}" for name, desc in DELIVERABLE_SUB_INTENTS
+        )
+        prompt = DELIVERABLE_SUB_INTENT_PROMPT.format(
+            intent_list=intent_list, query=query,
+        )
+        try:
+            response = await self.client.complete(
+                prompt,
+                tier=ModelTier.NANO,
+                json_mode=True,
+                usage_label="deliverable_sub_intent",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("deliverable sub-intent NANO failed: %s", exc)
+            return "other"
+        try:
+            parsed = json.loads(response or "{}")
+        except (TypeError, ValueError):
+            return "other"
+        intent = str(parsed.get("intent") or "other").strip()
+        valid = {name for name, _ in DELIVERABLE_SUB_INTENTS}
+        return intent if intent in valid else "other"
+
+    def _render_privilege_log(self) -> DeliverableFamilyResult:
+        """Render a privilege log from document_card rows where
+        privilege_flag = 1 (stored as INTEGER; MVP.4's fail-closed
+        mapping puts both 'true' and 'unknown' LLM outputs into this
+        bucket). Columns align with the standard Rule 26(b)(5)(A)(ii)
+        pattern: entry no., date, author, recipient, type, privilege
+        basis, description.
+
+        Descriptions are limited to the `purpose` field's one-sentence
+        classification summary — privileged body text is NOT quoted.
+        """
+        try:
+            rows = self.matter_model.db.execute(
+                """SELECT dc.id, dc.doc_id, di.relative_path AS path,
+                          dc.doc_type, dc.doc_subtype, dc.title,
+                          dc.author, dc.sender, dc.recipient,
+                          dc.creation_date, dc.effective_date,
+                          dc.privilege_flag, dc.unresolved_flags,
+                          dc.purpose
+                   FROM document_card dc
+                   JOIN document_inventory di ON di.id = dc.doc_id
+                   WHERE di.matter_id = ?
+                     AND dc.privilege_flag = 1
+                   ORDER BY
+                      COALESCE(dc.creation_date, dc.effective_date, ''),
+                      dc.id""",
+                (self.matter_model.matter_id,),
+            ).fetchall()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("privilege log query failed: %s", exc)
+            return DeliverableFamilyResult(
+                intent="privilege_log",
+                rendered_answer="",
+                row_count=0,
+                escalation_needed=True,
+                escalation_reason=f"privilege log query failed: {exc}",
+            )
+
+        if not rows:
+            return DeliverableFamilyResult(
+                intent="privilege_log",
+                rendered_answer=(
+                    "## Privilege log\n\n"
+                    "_No documents currently classified as privileged or "
+                    "privilege-unknown. If documents are missing, confirm "
+                    "ingestion has completed for this matter before "
+                    "generating the log._"
+                ),
+                row_count=0,
+                escalation_needed=False,
+            )
+
+        header = (
+            "| # | Date | Author | Recipient | Type | Basis | Description |\n"
+            "|---|------|--------|-----------|------|-------|-------------|"
+        )
+        body_lines = []
+        unknown_count = 0
+        for i, r in enumerate(rows, start=1):
+            # unresolved_flags is a JSON-encoded list; non-empty signals
+            # the MVP.4 "unknown" fail-closed bucket — flag as TBD.
+            flags_raw = (r["unresolved_flags"] or "").strip()
+            is_tbd = False
+            if flags_raw and flags_raw not in ("[]", "null"):
+                flags_lower = flags_raw.lower()
+                if "privilege" in flags_lower or "unknown" in flags_lower:
+                    is_tbd = True
+                    unknown_count += 1
+            date = r["creation_date"] or r["effective_date"] or "—"
+            author = r["author"] or r["sender"] or "—"
+            recipient = r["recipient"] or "—"
+            doc_type = r["doc_subtype"] or r["doc_type"] or "—"
+            purpose = (r["purpose"] or r["title"] or "").strip() or "—"
+            basis_label = "TBD" if is_tbd else "Privileged"
+            body_lines.append(
+                f"| {i} | {_md_cell(date)} | {_md_cell(author)} "
+                f"| {_md_cell(recipient)} | {_md_cell(doc_type)} "
+                f"| {basis_label} | {_md_cell(purpose)} |"
+            )
+        footer_lines = [
+            "",
+            f"**Total entries:** {len(rows)} "
+            f"(privileged: {len(rows) - unknown_count}, "
+            f"TBD / needs review: {unknown_count})",
+            "",
+            "_This log is auto-generated from matter state — review "
+            "every TBD row before serving. Privileged entries show "
+            "no privileged content; descriptions are limited to "
+            "one-sentence purpose summaries._",
+        ]
+        rendered = (
+            "## Privilege log\n\n"
+            + header + "\n"
+            + "\n".join(body_lines) + "\n"
+            + "\n".join(footer_lines)
+        )
+        return DeliverableFamilyResult(
+            intent="privilege_log",
+            rendered_answer=rendered,
+            row_count=len(rows),
+            escalation_needed=False,
+        )
+
+
+def _md_cell(value: Any) -> str:
+    """Sanitize a cell value for markdown table rendering — collapse
+    pipes and newlines so a rogue doc title doesn't break the table."""
+    text = str(value or "—").replace("|", "/").replace("\n", " ").strip()
+    return text[:80] if len(text) > 80 else text

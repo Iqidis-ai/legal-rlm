@@ -19,6 +19,8 @@ from .rlm.governance import (
     CascadeDecision,
     CompareFamilyHandler,
     CompareFamilyResult,
+    DeliverableFamilyHandler,
+    DeliverableFamilyResult,
     QueryFamilyHandler,
     QueryFamilyResult,
     ReadFamilyHandler,
@@ -221,6 +223,42 @@ class Irys:
             decision.escalation_reason = query_result.escalation_reason
             # Fall through to read — which may itself escalate to
             # investigate if matter coverage is thin.
+            decision.family = "read"
+            decision.contract = CascadeGovernor._contract_for("read")
+
+        if decision.family == "deliverable":
+            # MVI-7: named work-product renderer. MVI-7 ships only the
+            # privilege-log renderer; other sub-intents escalate to
+            # read for a narrative response.
+            deliverable_result = await DeliverableFamilyHandler(
+                matter_model, client=self._client,
+            ).run(query=query, contract=decision.contract)
+            if not deliverable_result.escalation_needed:
+                self._persist_route_decision(
+                    matter_model=matter_model,
+                    query=query,
+                    decision=decision,
+                    research_mode=research_mode,
+                    terminal_family="deliverable",
+                )
+                state = self._make_simple_state(
+                    query=query,
+                    repository=repository,
+                    research_mode=research_mode,
+                    conversation_history=conversation_history,
+                    output=deliverable_result.rendered_answer,
+                    decision=decision,
+                    extra={
+                        "deliverable_intent": deliverable_result.intent,
+                        "deliverable_row_count": deliverable_result.row_count,
+                    },
+                )
+                return InvestigationResult(
+                    state=state,
+                    output=deliverable_result.rendered_answer,
+                    format=self.config.output_format,
+                )
+            decision.escalation_reason = deliverable_result.escalation_reason
             decision.family = "read"
             decision.contract = CascadeGovernor._contract_for("read")
 

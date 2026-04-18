@@ -24,6 +24,7 @@ from irys.rlm.governance import (
     CascadeDecision,
     CascadeGovernor,
     CompareFamilyHandler,
+    DeliverableFamilyHandler,
     ExecutionContract,
     QueryFamilyHandler,
     ReadFamilyHandler,
@@ -478,6 +479,107 @@ def test_scenario_handler_parses_and_answers(warm_matter):
     assert "damages would be zero" in result.answer
     # Crucially: no state mutation from a scenario turn.
     assert warm_matter.assertions.count() == before_count
+
+
+# ---------------------------------------------------------------------------
+# DeliverableFamilyHandler — privilege log renderer (MVI-7)
+# ---------------------------------------------------------------------------
+
+
+def _seed_privileged_doc(m, path: str, flag: int, is_tbd: bool = False):
+    """Directly seed a document_inventory + document_card row so the
+    privilege-log renderer has something to read. flag=1 → privileged,
+    is_tbd=True → populate unresolved_flags so the renderer marks TBD."""
+    import uuid as _uuid
+    import time as _time
+    import json as _json
+    inv_id = _uuid.uuid4().hex
+    now = _time.strftime("%Y-%m-%dT%H:%M:%S")
+    m.db.execute(
+        """INSERT INTO document_inventory
+             (id, matter_id, relative_path, size_bytes, sha256,
+              salience_score, discovered_at)
+           VALUES (?, ?, ?, 0, '', 0.5, ?)""",
+        (inv_id, m.matter_id, path, now),
+    )
+    unresolved = _json.dumps(["privilege_classification"]) if is_tbd else None
+    m.db.execute(
+        """INSERT INTO document_card
+             (id, doc_id, doc_type, doc_subtype, title, author,
+              sender, recipient, creation_date, effective_date,
+              privilege_flag, unresolved_flags, purpose,
+              operative_status, rhetorical_posture,
+              created_at, updated_at)
+           VALUES (?, ?, 'memo', 'legal_memo', ?, ?, ?, ?,
+                   '2026-03-15', '2026-03-15', ?, ?, ?,
+                   'operative', 'neutral', ?, ?)""",
+        (
+            _uuid.uuid4().hex, inv_id,
+            f"Title of {path}", "Attorney A", "Attorney A", "Client B",
+            flag, unresolved, "privileged communication",
+            now, now,
+        ),
+    )
+
+
+def test_deliverable_handler_privilege_log_no_rows(warm_matter):
+    """No privileged docs → renderer returns an empty-state message,
+    does not crash or silently produce an empty table."""
+    client = _FakeClient({
+        "deliverable_sub_intent": '{"intent": "privilege_log"}',
+    })
+    handler = DeliverableFamilyHandler(
+        matter_model=warm_matter, client=client,
+    )
+    result = asyncio.run(handler.run(
+        query="generate a privilege log",
+        contract=CascadeGovernor._contract_for("deliverable"),
+    ))
+    assert result.intent == "privilege_log"
+    assert result.row_count == 0
+    assert "No documents currently classified as privileged" in result.rendered_answer
+
+
+def test_deliverable_handler_privilege_log_renders(warm_matter):
+    """Seeded privileged + tbd rows render in the log with correct
+    TBD handling and a footer summary."""
+    _seed_privileged_doc(warm_matter, "memo1.pdf", flag=1)
+    _seed_privileged_doc(warm_matter, "memo2.pdf", flag=1, is_tbd=True)
+    _seed_privileged_doc(warm_matter, "memo3.pdf", flag=1)
+    client = _FakeClient({
+        "deliverable_sub_intent": '{"intent": "privilege_log"}',
+    })
+    handler = DeliverableFamilyHandler(
+        matter_model=warm_matter, client=client,
+    )
+    result = asyncio.run(handler.run(
+        query="generate a privilege log",
+        contract=CascadeGovernor._contract_for("deliverable"),
+    ))
+    assert result.row_count == 3
+    assert "Privilege log" in result.rendered_answer
+    assert "Attorney A" in result.rendered_answer
+    # One TBD row seeded via unresolved_flags.
+    assert "TBD" in result.rendered_answer
+    assert "privileged: 2" in result.rendered_answer
+    assert "TBD / needs review: 1" in result.rendered_answer
+
+
+def test_deliverable_handler_unsupported_intent_escalates(warm_matter):
+    """Sub-intents other than privilege_log escalate in MVI-7."""
+    client = _FakeClient({
+        "deliverable_sub_intent": '{"intent": "dep_outline"}',
+    })
+    handler = DeliverableFamilyHandler(
+        matter_model=warm_matter, client=client,
+    )
+    result = asyncio.run(handler.run(
+        query="outline my deposition of smith",
+        contract=CascadeGovernor._contract_for("deliverable"),
+    ))
+    assert result.intent == "dep_outline"
+    assert result.escalation_needed is True
+    assert "not yet implemented" in (result.escalation_reason or "")
 
 
 def test_scenario_handler_unparseable_escalates(warm_matter):
