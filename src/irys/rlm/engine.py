@@ -6050,7 +6050,7 @@ Return:
         try:
             response = await self.client.complete(
                 prompt,
-                tier=ModelTier.FLASH,
+                tier=ModelTier.LITE,
                 json_mode=True,
                 usage_label="spo_retry",
             )
@@ -6232,7 +6232,7 @@ Return:
 
         response = await self.client.complete(
             prompt,
-            tier=ModelTier.FLASH,
+            tier=ModelTier.LITE,
             usage_label="contradiction_analysis",
         )
 
@@ -6298,7 +6298,7 @@ Return:
 
         response = await self.client.complete(
             prompt,
-            tier=ModelTier.FLASH,
+            tier=ModelTier.LITE,
             usage_label="timeline_analysis",
         )
 
@@ -6350,7 +6350,7 @@ Return:
 
         response = await self.client.complete(
             prompt,
-            tier=ModelTier.FLASH,
+            tier=ModelTier.LITE,
             usage_label="evidence_classification",
         )
 
@@ -7365,7 +7365,7 @@ If not compound, return the original query as a single sub_query with priority 1
 
         response = await self.client.complete(
             prompt,
-            tier=ModelTier.FLASH,
+            tier=ModelTier.LITE,
             usage_label="query_decomposition",
         )
 
