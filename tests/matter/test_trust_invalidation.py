@@ -133,6 +133,27 @@ def test_touch_ai_target_leaves_verified_alone(model):
     assert vs["status"] == "verified"
 
 
+def test_correct_assertion_bumps_trust_revision(model):
+    """adv#12 Finding #1: user corrections are authoritative truth-
+    maintenance events and must bump trust_revision so any cached
+    cascade decision / orientation plan keyed on the pre-correction
+    state becomes unreachable. Previously only rejection / trust
+    override / doc invalidation bumped; /correct was missed."""
+    from irys.matter.enums import BeliefState
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    run_id = model.start_run("correct bumps")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact("defendant accepted the terms", "doc1.pdf")
+    before = model.cache.current_trust_revision()
+
+    model.correct_assertion(
+        aid, BeliefState.DISPUTED, run_id=run_id,
+        note="counter-evidence surfaced",
+    )
+    assert model.cache.current_trust_revision() == before + 1
+
+
 def test_gc_stale_revisions_removes_unreachable_rows(model):
     """OPT-7: rows keyed at a trust_revision more than `keep_last`
     behind current are already unreachable (get/put always scope by

@@ -262,6 +262,7 @@ class Irys:
                         "deliverable_intent": deliverable_result.intent,
                         "deliverable_row_count": deliverable_result.row_count,
                     },
+                    terminal_family="deliverable",
                 )
                 return InvestigationResult(
                     state=state,
@@ -298,6 +299,7 @@ class Irys:
                         - compare_result.baseline_assertion_count
                     ),
                 },
+                terminal_family="compare",
             )
             return InvestigationResult(
                 state=state,
@@ -335,6 +337,7 @@ class Irys:
                         "scenario_assumption": scenario_result.assumption,
                         "scenario_confidence": scenario_result.confidence_label,
                     },
+                    terminal_family="scenario",
                 )
                 return InvestigationResult(
                     state=state,
@@ -437,6 +440,7 @@ class Irys:
                     ),
                     decision=decision,
                     extra={"read_infra_failure": True},
+                    terminal_family="read_infra_failure",
                 )
                 return InvestigationResult(
                     state=state,
@@ -536,6 +540,18 @@ class Irys:
             terminal_family="investigate",
             run_id=getattr(state, "_run_id", None),
         )
+        # adv#12 Finding #2: also attach the route audit to
+        # state.findings so _extract_cascade_surface (and therefore
+        # JobResult.route / SyncInvestigateResponse.route) exposes it
+        # to clients. The full investigate path was the only terminal
+        # family that wrote to the ledger without setting findings,
+        # which left the API response with route=None for investigate.
+        try:
+            state.findings["route"] = decision.to_audit_dict(
+                terminal_family="investigate",
+            )
+        except Exception as _exc:
+            logger.warning("investigate: route findings attach failed: %s", _exc)
 
         # Format output
         formatter = get_formatter(self.config.output_format)
@@ -593,7 +609,11 @@ class Irys:
             conversation_history=conversation_history,
         )
         state.findings["final_output"] = read_result.answer
-        state.findings["route"] = decision.to_audit_dict()
+        # adv#12 Finding #2: emit classifier_family + terminal_family
+        # on every route audit dict so clients can differentiate the
+        # NANO choice from the actual terminal behavior after any
+        # escalation. Read handler is always the terminal_family here.
+        state.findings["route"] = decision.to_audit_dict(terminal_family="read")
         state.findings["read_confidence"] = read_result.confidence_label
         # Attach citations as document-anchored entries so existing
         # citation consumers have something to render.
@@ -627,7 +647,7 @@ class Irys:
             conversation_history=conversation_history,
         )
         state.findings["final_output"] = query_result.rendered_answer
-        state.findings["route"] = decision.to_audit_dict()
+        state.findings["route"] = decision.to_audit_dict(terminal_family="query")
         state.findings["query_intent"] = query_result.intent
         state.findings["query_row_count"] = len(query_result.rows)
         state.status = "completed"
@@ -642,9 +662,16 @@ class Irys:
         output: str,
         decision: CascadeDecision,
         extra: Optional[dict] = None,
+        terminal_family: Optional[str] = None,
     ) -> InvestigationState:
         """Shared builder for zero/single-LLM family results
-        (compare, scenario) that don't need a rich state object."""
+        (compare, scenario) that don't need a rich state object.
+
+        `terminal_family` overrides the route dict's terminal field
+        when the caller is a family that escalated from the
+        classifier's initial pick (e.g. deliverable that may fall
+        back to read).
+        """
         state = InvestigationState.create(
             query,
             str(Path(repository).resolve()),
@@ -652,7 +679,7 @@ class Irys:
             conversation_history=conversation_history,
         )
         state.findings["final_output"] = output
-        state.findings["route"] = decision.to_audit_dict()
+        state.findings["route"] = decision.to_audit_dict(terminal_family=terminal_family)
         if extra:
             state.findings.update(extra)
         state.status = "completed"
@@ -674,7 +701,7 @@ class Irys:
             conversation_history=conversation_history,
         )
         state.findings["final_output"] = steer_result.rendered_answer
-        state.findings["route"] = decision.to_audit_dict()
+        state.findings["route"] = decision.to_audit_dict(terminal_family="steer")
         state.findings["steer_action"] = steer_result.action
         state.findings["steer_target_hint"] = steer_result.target_hint
         state.findings["steer_candidates"] = steer_result.candidates
@@ -697,7 +724,7 @@ class Irys:
             conversation_history=conversation_history,
         )
         state.findings["final_output"] = trace_result.rendered_answer
-        state.findings["route"] = decision.to_audit_dict()
+        state.findings["route"] = decision.to_audit_dict(terminal_family="trace")
         state.findings["trace_target_kind"] = trace_result.target_kind
         state.findings["trace_target_id"] = trace_result.target_id
         state.status = "completed"
@@ -720,7 +747,7 @@ class Irys:
         state.findings["final_output"] = (
             f"Need clarification before we can answer: {decision.rationale}"
         )
-        state.findings["route"] = decision.to_audit_dict()
+        state.findings["route"] = decision.to_audit_dict(terminal_family="clarify")
         state.status = "completed"
         return state
 

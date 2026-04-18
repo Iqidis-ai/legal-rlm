@@ -7131,8 +7131,12 @@ Return:
                 for dep in (g.get("dependencies") or []):
                     if dep.get("affected_type") == "issue" and dep.get("affected_id"):
                         gapped_issue_ids.add(dep["affected_id"])
-        except Exception:
-            pass
+        except (sqlite3.Error, ValueError, RuntimeError) as _exc:
+            # adv#12 Finding #4: narrow the swallow and log. The base
+            # coverage report still drives candidates, so losing the
+            # gap boost degrades planner ranking but does not break
+            # correctness.
+            logger.warning("coverage_planner: open_gaps lookup failed: %s", _exc)
         # adv#11 review fix #1: dedup scope.
         #  - PENDING issue-focused leads (any source) block planner for
         #    that issue this iteration — the queue already has it.

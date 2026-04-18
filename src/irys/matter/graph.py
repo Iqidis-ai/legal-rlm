@@ -4703,7 +4703,15 @@ class ReasoningCacheStore:
         """Increment matter.trust_revision by 1, returning the new value.
         P0.4 invalidation triggers call this after any write that
         marks downstream targets stale so cached reasoning plans keyed
-        on the old revision become unreachable."""
+        on the old revision become unreachable.
+
+        adv#12 Finding #3: piggy-back OPT-7 GC on the bump so stale
+        reasoning_cache rows whose `tr{N}:` prefix encodes a revision
+        > keep_last behind current are swept whenever posture actually
+        changes. Previous revisions are already unreachable; this just
+        reclaims the rows. Keeps GC tied to real mutation events
+        rather than a separate maintenance schedule.
+        """
         try:
             now = _now()
             self.db.execute(
@@ -4712,7 +4720,12 @@ class ReasoningCacheStore:
             )
         except Exception:
             return 0
-        return self.current_trust_revision()
+        new_rev = self.current_trust_revision()
+        try:
+            self.gc_stale_revisions(keep_last=10)
+        except Exception:
+            pass  # GC failure must never break the invalidation path
+        return new_rev
 
     def _scoped_key(self, cache_key: str) -> str:
         """Prefix the caller's cache_key with the current trust

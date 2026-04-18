@@ -123,9 +123,22 @@ class CascadeDecision:
     snapshot: AnswerabilitySnapshot
     escalation_reason: Optional[str] = None
 
-    def to_audit_dict(self) -> dict[str, Any]:
+    def to_audit_dict(self, terminal_family: Optional[str] = None) -> dict[str, Any]:
+        """Audit dict for state.findings['route'] and ledger payloads.
+
+        `family` remains for back-compat. adv#12 Finding #2: always
+        emits `classifier_family` (the NANO-chosen route) and
+        `terminal_family` (what actually executed after any
+        escalation). Callers that know they escalated pass the
+        terminal_family explicitly; otherwise both fields equal
+        `family`. FastAPI clients read these fields to differentiate
+        cascade behavior without parsing prose.
+        """
+        term = terminal_family or self.family
         return {
             "family": self.family,
+            "classifier_family": self.family,
+            "terminal_family": term,
             "confidence": self.confidence,
             "rationale": self.rationale,
             "classifier_version": self.classifier_version,

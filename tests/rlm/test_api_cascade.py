@@ -261,6 +261,67 @@ def test_api_stale_cache_fallback_audit_label(repo_path):
     assert payload["terminal_family"] == "read"
 
 
+def test_api_state_findings_route_carries_classifier_and_terminal_family(repo_path):
+    """adv#12 Finding #2: the route dict attached to state.findings
+    must expose both `classifier_family` and `terminal_family` so
+    downstream callers (FastAPI response assembly, _extract_cascade_surface)
+    can differentiate the NANO's route decision from what actually ran.
+    Previously to_audit_dict only emitted `family`, which was the
+    classifier choice; terminal_family was missing on the state path
+    and the investigate path didn't attach route at all.
+    """
+    fake = _FakeClient({
+        "intent_classifier": (
+            '{"family": "read", "confidence": 0.9, "rationale": "warm"}'
+        ),
+        "read_synth": (
+            '{"answer": "30 days", "answer_confidence": "high", '
+            '"citations": ["msa.pdf"], "used_existing_state_only": true, '
+            '"escalation_hint": ""}'
+        ),
+    })
+    mm = _warm_in_memory_matter()
+    irys = _make_irys(fake, mm)
+
+    result = asyncio.run(irys.investigate(
+        query="Notice period?",
+        repository=repo_path,
+    ))
+    route = (getattr(result.state, "findings", {}) or {}).get("route") or {}
+    assert route.get("classifier_family") == "read"
+    assert route.get("terminal_family") == "read"
+
+
+def test_api_full_investigate_attaches_route_findings(repo_path):
+    """adv#12 Finding #2 (investigate half): the full investigate
+    path previously persisted the route to the ledger but never
+    attached it to state.findings, which left JobResult.route=None
+    for every investigate run. Now every terminal-family path writes
+    findings['route'] with classifier_family + terminal_family."""
+    fake = _FakeClient({
+        # Force cascade to route to investigate.
+        "intent_classifier": (
+            '{"family": "investigate", "confidence": 0.8, '
+            '"rationale": "novel question"}'
+        ),
+    })
+    mm = _warm_in_memory_matter()
+    irys = _make_irys(fake, mm)
+    # Make the stubbed engine.investigate return a state we can inspect.
+    captured_state = InvestigationState.create(
+        "novel question", "/tmp/repo", research_mode="deep",
+    )
+    irys._engine.investigate = AsyncMock(return_value=captured_state)
+
+    result = asyncio.run(irys.investigate(
+        query="novel question about the matter",
+        repository=repo_path,
+    ))
+    route = (getattr(result.state, "findings", {}) or {}).get("route") or {}
+    assert route.get("classifier_family") == "investigate"
+    assert route.get("terminal_family") == "investigate"
+
+
 def test_api_read_ships_when_contract_met(repo_path):
     """Sanity: high-confidence read WITH citations ships without
     escalation. Guards against over-correction in Fix B."""

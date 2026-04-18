@@ -2293,6 +2293,18 @@ class MatterModel:
                 assertion_id, exc,
             )
 
+        # adv#12 Finding #1: user correction is an authoritative
+        # truth-maintenance event; any cached cascade decision or
+        # orientation plan keyed on the pre-correction state is now
+        # stale. Bump trust_revision so those entries silently miss
+        # on the next lookup. Matches the pattern used for
+        # reject_target, trust_override set/delete, and span/doc
+        # invalidation.
+        try:
+            self.cache.bump_trust_revision()
+        except sqlite3.Error as _exc:
+            _log.warning("correct_assertion: trust_revision bump failed: %s", _exc)
+
         return result
 
     def set_trust_override(
