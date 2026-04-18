@@ -14,6 +14,7 @@ Architecture: in-process for local dev (InProcessBackend), HTTP for deployed ser
 import asyncio
 import concurrent.futures
 import html
+import logging
 import os
 import pathlib
 import queue
@@ -28,6 +29,8 @@ import gradio as gr
 
 from .backends.in_process import InProcessBackend
 from ..rlm.state import normalize_research_mode
+
+logger = logging.getLogger(__name__)
 
 # Dedicated thread pool for running async backend calls from sync Gradio callbacks.
 # InProcessBackend methods are async-in-signature but do synchronous SQLite work with
@@ -1645,19 +1648,17 @@ def _fmt_assertions(assertions: list) -> str:
             f"<td style='padding:6px 8px;vertical-align:top;font-size:12px;color:#6b7280;'>{conf}</td>"
             f"<td style='padding:6px 8px;vertical-align:top;font-size:12px;color:#6b7280;'>{_escape(src)}</td>"
             f"<td style='padding:6px 8px;vertical-align:top;font-size:12px;color:#6b7280;'>{_escape(speech)}</td>"
-            f"<td style='padding:6px 8px;vertical-align:top;font-family:ui-monospace,monospace;font-size:10px;color:#9ca3af;'>{_escape(assertion_id)}</td>"
             f"</tr>"
         )
     header = (
         "<tr style='background:#f9fafb;text-align:left;'>"
         "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Review</th>"
         "<th style='padding:6px 8px;'></th>"
-        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Proposition</th>"
+        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Finding</th>"
         "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>State</th>"
         "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Conf</th>"
         "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Source</th>"
-        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Speech</th>"
-        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>ID</th>"
+        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Speech act</th>"
         "</tr>"
     )
     return (
@@ -1711,13 +1712,13 @@ def _fmt_gaps(gaps: list, clarifications: list) -> str:
 
 
 _REVIEW_BUCKET_LABELS = {
-    0: ("Proof-critical", "#b91c1c"),   # red — gap-blocked issue
-    1: ("Contradicted", "#b45309"),     # amber — under attack
-    2: ("Issue-linked", "#2563eb"),     # blue
-    3: ("Predicate", "#0d9488"),        # teal
-    4: ("Number", "#7c3aed"),           # purple — quant
-    5: ("Citation", "#6b7280"),         # grey — authority
-    6: ("Other", "#94a3b8"),            # light grey
+    0: ("Gap blocker", "#b91c1c"),       # red — gap-blocked issue
+    1: ("Disputed", "#b45309"),          # amber — contradicted
+    2: ("Supports a claim", "#2563eb"),  # blue — issue-linked
+    3: ("Element of proof", "#0d9488"),  # teal — predicate
+    4: ("Number", "#7c3aed"),            # purple — quant
+    5: ("Legal citation", "#6b7280"),    # grey — authority
+    6: ("Other", "#94a3b8"),             # light grey
 }
 
 
@@ -1774,9 +1775,6 @@ def _fmt_review_queue(queue: list[dict]) -> str:
             "document_card": "Document classification",
         }.get(kind, kind.replace("_", " ").title())
         truncated = _truncate(text, 180)
-        # Store a short target handle so the reviewer can pick it from
-        # the dropdown. Format: "<kind>:<first 8 of id> — <short text>"
-        short_id = (row.get("target_id") or "")[:8]
         rows_html.append(
             f"<div style='padding:10px 12px;border-left:3px solid #e5e7eb;"
             f"margin-bottom:8px;background:#f9fafb;border-radius:0 6px 6px 0;'>"
@@ -1786,8 +1784,6 @@ def _fmt_review_queue(queue: list[dict]) -> str:
             f"text-transform:uppercase;letter-spacing:0.03em;'>{kind_pretty}</span>"
             f"</div>"
             f"<div style='color:#1f2937;line-height:1.45;'>{_escape(truncated)}</div>"
-            f"<div style='margin-top:6px;font-size:11px;color:#9ca3af;"
-            f"font-family:ui-monospace,monospace;'>ref: {kind}:{short_id}</div>"
             f"</div>"
         )
     return (
@@ -1811,44 +1807,49 @@ def _fmt_source_drawer(
     P0.3 verification events (human review history)."""
     if not provenance_rows and not verification_events:
         return (
-            "<div class='viz-empty'>No source or audit history for this finding. "
+            "<div class='viz-empty'>No source or review history for this finding. "
             "Try an item created during a live investigation.</div>"
         )
     sections: list[str] = []
+
+    # Attorney-readable labels for reviewers and status transitions.
+    reviewer_labels = {
+        "user": "You",
+        "attorney": "Attorney",
+        "system": "Irys",
+        "import": "Bulk import",
+    }
+    status_labels = {
+        "verified": "verified",
+        "rejected": "rejected",
+        "stale": "pulled back for re-check",
+        "candidate": "flagged for review",
+    }
 
     # --- Source (where it came from) ---
     if provenance_rows:
         lines = [
             "<div style='margin-bottom:16px;'>"
             "<div style='font-size:12px;color:#6b7280;text-transform:uppercase;"
-            "letter-spacing:0.04em;font-weight:600;margin-bottom:6px;'>Source</div>"
+            "letter-spacing:0.04em;font-weight:600;margin-bottom:6px;'>"
+            "Where this came from</div>"
         ]
         for ev in provenance_rows[:5]:
             doc = ev.get("source_document_ref") or "—"
             span_raw = ev.get("source_span_id")
             span_status = ev.get("source_span_status") or "unknown"
-            when = (ev.get("created_at") or "")[:19].replace("T", " ")
-            model_id = ev.get("model_id") or "—"
-            prompt_v = ev.get("prompt_version") or "—"
-            writer = ev.get("writer_name") or "—"
-            # Only show span identity when we have one
+            when = (ev.get("created_at") or "")[:10]  # YYYY-MM-DD, date only
+            model_id = ev.get("model_id") or "Irys"
             span_html = ""
             if span_raw:
                 span_html = (
-                    f" <span style='font-family:ui-monospace,monospace;"
-                    f"font-size:11px;color:#6b7280;'>span:{_escape(span_raw)[:40]}</span>"
+                    f" <span style='font-size:11px;color:#6b7280;'>"
+                    f"· section {_escape(_truncate(span_raw, 20))}</span>"
                 )
             elif span_status == "missing":
                 span_html = (
                     " <span style='color:#b45309;font-size:11px;'>"
-                    "(no span identity — document-level)</span>"
-                )
-            llm_call = ev.get("llm_call_id")
-            llm_html = ""
-            if llm_call:
-                llm_html = (
-                    f" <span style='font-family:ui-monospace,monospace;"
-                    f"font-size:10px;color:#9ca3af;'>call:{_escape(llm_call)[:10]}</span>"
+                    "(whole document, no specific section)</span>"
                 )
             lines.append(
                 "<div style='padding:8px 10px;background:#f9fafb;"
@@ -1857,19 +1858,14 @@ def _fmt_source_drawer(
                 f"<div style='color:#1f2937;font-weight:500;'>"
                 f"{_escape(doc)}{span_html}</div>"
                 f"<div style='color:#6b7280;font-size:12px;margin-top:2px;'>"
-                f"Extracted by <strong>{_escape(model_id)}</strong> "
-                f"via prompt <code style='background:#e5e7eb;padding:1px 4px;"
-                f"border-radius:3px;font-size:11px;'>{_escape(prompt_v)}</code>"
-                f"{llm_html}"
-                f" · {_escape(when)}</div>"
-                f"<div style='color:#9ca3af;font-size:11px;margin-top:2px;'>"
-                f"writer: {_escape(writer)}</div>"
+                f"Extracted by <strong>{_escape(model_id)}</strong>"
+                f" on {_escape(when)}</div>"
                 "</div>"
             )
         if len(provenance_rows) > 5:
             lines.append(
-                f"<div style='font-size:11px;color:#9ca3af;"
-                f"margin-top:4px;'>+ {len(provenance_rows) - 5} more attribution event(s)</div>"
+                f"<div style='font-size:11px;color:#9ca3af;margin-top:4px;'>"
+                f"+ {len(provenance_rows) - 5} more extraction event(s)</div>"
             )
         lines.append("</div>")
         sections.append("".join(lines))
@@ -1883,31 +1879,28 @@ def _fmt_source_drawer(
             "Review history</div>"
         ]
         for ev in verification_events[:20]:
-            old_s = ev.get("old_status") or "—"
             new_s = ev.get("new_status") or "—"
-            reviewer = ev.get("reviewed_by_kind") or ev.get("actor_kind") or "system"
-            reviewer_id = ev.get("reviewed_by_id") or ""
+            reviewer_key = ev.get("reviewed_by_kind") or ev.get("actor_kind") or "system"
+            actor_label = reviewer_labels.get(
+                reviewer_key, reviewer_key.replace("_", " ").title(),
+            )
             note = ev.get("note") or ev.get("review_note") or ""
             reason = ev.get("rejection_reason") or ""
-            cause = ev.get("cause") or ""
-            when = (ev.get("created_at") or "")[:19].replace("T", " ")
-            # Event-kind tint
+            when = (ev.get("created_at") or "")[:16].replace("T", " ")
             tint = {
                 "verified": "#15803d",
                 "rejected": "#991b1b",
                 "stale": "#475569",
                 "candidate": "#92400e",
             }.get(new_s, "#1f2937")
-            actor_label = _escape(reviewer)
-            if reviewer_id:
-                actor_label += f" · {_escape(reviewer_id)}"
+            action_label = status_labels.get(
+                new_s, new_s.replace("_", " "),
+            )
             detail_bits: list[str] = []
-            if note:
-                detail_bits.append(f"note: {_escape(note)}")
             if reason:
-                detail_bits.append(f"reason: {_escape(reason)}")
-            if cause and cause not in ("ai_extraction", "assertion_upsert"):
-                detail_bits.append(f"cause: {_escape(cause)}")
+                detail_bits.append(f"Reason: {_escape(reason)}")
+            if note and note != "ai_rewrite_revival":
+                detail_bits.append(f"Note: {_escape(note)}")
             detail_html = ""
             if detail_bits:
                 detail_html = (
@@ -1918,23 +1911,18 @@ def _fmt_source_drawer(
                 "<div style='padding:8px 10px;background:#f9fafb;"
                 f"border-left:3px solid {tint};border-radius:0 6px 6px 0;"
                 "margin-bottom:6px;'>"
-                f"<div style='color:#1f2937;font-weight:500;'>"
-                f"{_escape(old_s)} → <span style='color:{tint};'>{_escape(new_s)}</span>"
+                f"<div style='color:#1f2937;'>"
+                f"<span style='color:{tint};font-weight:600;'>{_escape(action_label).capitalize()}</span>"
+                f" by <strong>{_escape(actor_label)}</strong>"
                 f" <span style='font-weight:400;color:#6b7280;font-size:12px;'>"
-                f"by {actor_label} · {_escape(when)}</span></div>"
+                f"· {_escape(when)}</span></div>"
                 f"{detail_html}</div>"
             )
         lines.append("</div>")
         sections.append("".join(lines))
 
-    header = (
-        f"<div style='font-size:12px;color:#9ca3af;margin-bottom:8px;"
-        f"font-family:ui-monospace,monospace;'>"
-        f"{_escape(target_kind)}:{_escape(target_id)[:12]}…</div>"
-    )
     return (
         "<div style='max-height:420px;overflow-y:auto;'>"
-        + header
         + "\n".join(sections)
         + "</div>"
     )
@@ -1956,12 +1944,12 @@ def _review_queue_choices(queue: list[dict]) -> list[tuple[str, str]]:
         )
         kind_pretty = {
             "assertion": "Fact",
-            "evidence_edge": "Link",
-            "issue_predicate": "Element",
+            "evidence_edge": "Evidence link",
+            "issue_predicate": "Element of proof",
             "quant_fact": "Number",
-            "authority": "Citation",
-            "document_card": "Doc profile",
-            "assertion_occurrence": "Utterance",
+            "authority": "Legal citation",
+            "document_card": "Document classification",
+            "assertion_occurrence": "Quoted utterance",
         }.get(kind, kind.replace("_", " ").title())
         label = f"{kind_pretty}: {_truncate(text, 90)}"
         choices.append((label, f"{kind}:{tid}"))
@@ -2641,8 +2629,10 @@ class AppState:
         try:
             queue = _run_async(self.backend().get_review_queue(matter_id, limit=100))
         except Exception as exc:
+            logger.warning("Review queue load failed: %s", exc)
             return (
-                f"<div class='viz-empty'>Error loading review queue: {_escape(exc)}</div>",
+                "<div class='viz-empty'>Could not load the review queue. "
+                "Try refreshing after the current investigation finishes.</div>",
                 gr.update(choices=[], value=None),
             )
         html = _fmt_review_queue(queue)
@@ -2666,14 +2656,17 @@ class AppState:
             _run_async(self.backend().verify_target(
                 matter_id, kind, tid,
                 reviewed_by_kind="user",
-                reviewed_by_id="ui",
+                reviewed_by_id="",  # attorney-readable label in audit
                 review_note=(review_note or "").strip() or None,
             ))
         except ValueError as exc:
-            return f"⚠️ Cannot verify: {exc}"
+            # Value errors come from the human-reviewer gate and
+            # similar contract violations — safe to surface.
+            return f"⚠️ {exc}"
         except Exception as exc:
-            return f"⚠️ Verify failed: {exc}"
-        return f"✅ Verified {kind} — queue refreshed."
+            logger.warning("Verify failed for %s:%s — %s", kind, tid, exc)
+            return "⚠️ Verify didn't go through. Please try again."
+        return "✅ Verified — the verified-coverage bar moves up and the queue shrinks."
 
     def do_reject_target(
         self,
@@ -2694,13 +2687,17 @@ class AppState:
                 matter_id, kind, tid,
                 rejection_reason=reason,
                 reviewed_by_kind="user",
-                reviewed_by_id="ui",
+                reviewed_by_id="",
             ))
         except ValueError as exc:
-            return f"⚠️ Cannot reject: {exc}"
+            return f"⚠️ {exc}"
         except Exception as exc:
-            return f"⚠️ Reject failed: {exc}"
-        return f"✅ Rejected {kind} — downstream evidence moved to stale."
+            logger.warning("Reject failed for %s:%s — %s", kind, tid, exc)
+            return "⚠️ Reject didn't go through. Please try again."
+        return (
+            "✅ Rejected — dependent evidence and numbers were pulled back "
+            "for re-check so the memo won't rely on them."
+        )
 
     def load_review_count_badge(self, matter_id: str) -> str:
         """Small HTML chip showing how many findings are awaiting
@@ -2755,19 +2752,22 @@ class AppState:
             return "<div class='viz-empty'>No matter loaded.</div>"
         if not target_handle or ":" not in target_handle:
             return (
-                "<div class='viz-empty'>Pick an item from the review "
-                "queue to see where it came from and who has touched it.</div>"
+                "<div class='viz-empty'>Pick a finding and click "
+                "<em>Show source &amp; history</em> to see where it "
+                "came from and every review action on it.</div>"
             )
         kind, tid = target_handle.split(":", 1)
         try:
             prov = _run_async(self.backend().get_provenance(matter_id, kind, tid))
         except Exception as exc:
+            logger.debug("Provenance fetch failed: %s", exc)
             prov = []
         try:
             events = _run_async(
                 self.backend().get_verification_events(matter_id, kind, tid)
             )
         except Exception as exc:
+            logger.debug("Verification events fetch failed: %s", exc)
             events = []
         return _fmt_source_drawer(kind, tid, prov, events)
 
@@ -2784,15 +2784,19 @@ class AppState:
         try:
             ids = _run_async(self.backend().bulk_verify_by_document(
                 matter_id, ref,
-                reviewed_by_kind="user", reviewed_by_id="ui",
+                reviewed_by_kind="user", reviewed_by_id="",
             ))
         except ValueError as exc:
-            return f"⚠️ Bulk verify rejected: {exc}"
+            return f"⚠️ {exc}"
         except Exception as exc:
-            return f"⚠️ Bulk verify failed: {exc}"
+            logger.warning("Bulk verify failed for %s — %s", ref, exc)
+            return "⚠️ Bulk verify didn't go through. Please try again."
         if not ids:
-            return f"ℹ️ No candidate facts matched '{ref}'."
-        return f"✅ Verified {len(ids)} fact(s) sourced from {ref}."
+            return (
+                f"No candidate findings matched <strong>{_escape(ref)}</strong>. "
+                "Check the document name exactly as it appears in the Sources list."
+            )
+        return f"✅ Verified {len(ids)} fact(s) sourced from {_escape(ref)}."
 
     def load_gaps(self, matter_id: str) -> tuple[str, str]:
         """Return (gaps_and_steering_markdown, top_redirect_issue_id).
@@ -3458,7 +3462,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "If something is wrong, correct it below — Irys will automatically update any "
                 "conclusions that depended on that fact."
             )
-            assertions_md = gr.Markdown("*Facts will appear here after an investigation.*")
+            # gr.HTML (not gr.Markdown) so the trust-pill styled HTML
+            # table renders without sanitize_html stripping inline
+            # styles.
+            assertions_md = gr.HTML(
+                "<div class='viz-empty'>Facts will appear here after an investigation.</div>"
+            )
             refresh_assertions_btn = gr.Button("Refresh Facts", variant="secondary", size="sm")
 
             with gr.Accordion("Correct a fact", open=False):
@@ -3528,9 +3537,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 open=False,
             ):
                 source_drawer_html = gr.HTML(
-                    "<div class='viz-empty'>Select an item above to see "
-                    "source document, AI attribution, and every review "
-                    "transition chronologically.</div>"
+                    "<div class='viz-empty'>Pick a finding and click "
+                    "<em>Show source &amp; history</em> to see the "
+                    "source document, how it was extracted, and every "
+                    "review action on it.</div>"
+                )
+                show_source_btn = gr.Button(
+                    "Show source & history",
+                    variant="secondary", size="sm",
                 )
             with gr.Row():
                 verify_note = gr.Textbox(
@@ -3898,6 +3912,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=_refresh_all,
                 inputs=[matter_id_box],
                 outputs=[
+                    review_badge_md,
                     overview_md,
                     issues_md,
                     gaps_md,
@@ -3917,11 +3932,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 inputs=[query, repo_path, research_mode],
                 outputs=run_outputs,
             ).then(
-                # Auto-refresh all panels once synthesis completes (Task #128).
+                # Auto-refresh all panels once synthesis completes.
                 # Lawyers shouldn't need to click individual Refresh buttons.
                 fn=_refresh_all,
                 inputs=[matter_id_box],
                 outputs=[
+                    review_badge_md,
                     overview_md,
                     issues_md,
                     gaps_md,
@@ -4020,8 +4036,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[review_queue_html, review_target, source_drawer_html, review_badge_md],
         )
 
-        # When the reviewer picks a different item, refresh the drawer.
-        review_target.change(
+        # Drawer is refreshed when (a) the queue is refreshed, (b) the
+        # user explicitly clicks the "Show source" button below, or
+        # (c) a verify/reject action fires. We deliberately do NOT
+        # wire review_target.change to the drawer: in Gradio 6.3
+        # .change() fires on function-driven value updates as well as
+        # real user input, which would overwrite the "show the review
+        # event I just wrote" state right after verify/reject.
+        show_source_btn.click(
             fn=state.load_source_drawer,
             inputs=[matter_id_box, review_target],
             outputs=[source_drawer_html],
