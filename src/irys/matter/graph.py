@@ -4729,8 +4729,21 @@ class ReasoningCacheStore:
 
     def _scoped_key(self, cache_key: str) -> str:
         """Prefix the caller's cache_key with the current trust
-        revision so a revision bump invalidates every prior entry."""
-        return f"tr{self.current_trust_revision()}:{cache_key}"
+        revision AND the current schema version.
+
+        OPT-3 residual: trust_revision invalidates on belief/trust
+        mutations (adv#11 + adv#12 wiring). Schema_version invalidates
+        when the matter schema changes — a new column can alter what
+        a cached LLM plan would have meant. Prefixing both makes the
+        cache layer automatically stale old entries across upgrades
+        without needing a manual flush.
+
+        Layout: `tr{N}:sv{M}:{raw_key}`. tr comes first so
+        `gc_stale_revisions()` can still parse the trust revision by
+        the existing `key[2:colon]` logic.
+        """
+        from irys.matter.schema import SCHEMA_VERSION as _SV
+        return f"tr{self.current_trust_revision()}:sv{_SV}:{cache_key}"
 
     def get(self, stage: str, cache_key: str) -> Optional[dict]:
         """Return cached plan dict or None on cache miss or DB error.

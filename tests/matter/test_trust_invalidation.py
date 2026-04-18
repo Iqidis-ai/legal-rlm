@@ -242,6 +242,44 @@ def test_gc_stale_revisions_removes_unreachable_rows(model):
     assert model.cache.gc_stale_revisions(keep_last=2) == 0
 
 
+def test_cache_key_is_scoped_by_schema_version(model):
+    """OPT-3 residual: cache keys encode both trust_revision AND
+    schema_version. A schema bump should silently miss every prior
+    entry so LLM plans produced under the old schema don't leak into
+    a matter on a new schema. Verified at the key layer; the GC parser
+    still works because `tr{N}:` remains the outermost prefix.
+    """
+    from irys.matter.schema import SCHEMA_VERSION
+    scoped = model.cache._scoped_key("some_raw_key")
+    assert scoped.startswith(f"tr{model.cache.current_trust_revision()}:sv{SCHEMA_VERSION}:")
+
+    # Put a row, then verify its stored key carries the schema suffix.
+    model.cache.put("orient", "some_raw_key", {"plan": "v1"})
+    row = model.db.execute(
+        "SELECT cache_key FROM reasoning_cache WHERE matter_id=? AND stage='orient' LIMIT 1",
+        (model.matter_id,),
+    ).fetchone()
+    assert row is not None
+    assert f"sv{SCHEMA_VERSION}:" in row["cache_key"]
+
+
+def test_gc_still_parses_trust_revision_with_schema_suffix(model):
+    """gc_stale_revisions parses `tr{N}:` prefix. Adding the
+    `sv{SCHEMA_VERSION}:` component after that must not break the
+    parser — rows from old revisions are still swept."""
+    # Put at rev 0, bump 15 times, then GC with keep_last=5.
+    model.cache.put("orient", "k", {"v": 1})
+    for _ in range(15):
+        model.cache.bump_trust_revision()
+    # The bump itself calls gc_stale_revisions(keep_last=10) — ensure
+    # our initial row's revision (0) was swept.
+    row = model.db.execute(
+        "SELECT cache_key FROM reasoning_cache WHERE matter_id=? AND stage='orient' LIMIT 1",
+        (model.matter_id,),
+    ).fetchone()
+    assert row is None  # revision 0 is >10 behind current, swept
+
+
 def test_gc_stale_revisions_leaves_legacy_unprefixed_rows_alone(model):
     """Legacy rows from before P0.4 don't have a `tr{N}:` prefix.
     gc_stale_revisions must not touch them — a dedicated migration
