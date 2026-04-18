@@ -1055,16 +1055,22 @@ class MatterModel:
             issue_ids.update(self._issues_affected_by_target("assertion", tid))
         for tid in scope.get("edge_ids", set()):
             issue_ids.update(self._issues_affected_by_target("evidence_edge", tid))
+        import sqlite3 as _sqlite3
         for iid in issue_ids:
             try:
                 self.proof_state.compute_and_store(iid, policy_audience="internal")
-            except Exception:
-                pass
+            except _sqlite3.Error as _exc:
+                _log.warning(
+                    "_apply_invalidation: proof recompute failed for issue %s: %s",
+                    iid, _exc,
+                )
         if touched:
             try:
                 self.cache.bump_trust_revision()
-            except Exception:
-                pass
+            except _sqlite3.Error as _exc:
+                _log.warning(
+                    "_apply_invalidation: trust_revision bump failed: %s", _exc,
+                )
         return len(touched)
 
     def mark_document_stale(self, doc_id: str, reason: str) -> int:
@@ -1120,7 +1126,10 @@ class MatterModel:
             privilege_flag=new_flag,
         )
         # Verify the card itself under the privilege_classification
-        # scope so the reviewer's decision is audited.
+        # scope so the reviewer's decision is audited. ValueError
+        # from the human-reviewer gate is survivable (the stale
+        # sweep still runs with the new flag); logic errors should
+        # propagate.
         try:
             self.verify_target(
                 "document_card", card_id,
@@ -1128,8 +1137,11 @@ class MatterModel:
                 reviewed_by_id=reviewed_by_id,
                 review_scope="privilege_classification",
             )
-        except Exception:
-            pass  # best effort; don't block the stale sweep
+        except ValueError as _exc:
+            _log.warning(
+                "reclassify_privilege: card verify blocked by human-gate: %s",
+                _exc,
+            )
         # Collect the document's direct dependents but exclude the
         # card itself (we just verified it).
         scope = self._collect_document_invalidation_scope(inv_id)

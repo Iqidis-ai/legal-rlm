@@ -237,18 +237,22 @@ class InProcessBackend(UIBackend):
 
     async def get_overview(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
+        import sqlite3 as _sqlite3
         stats = model.stats()
         # Fetch coverage once — reused by both get_so_metrics() and weakest_issues.
+        # DB errors are survivable (overview panel renders with
+        # whatever it can); every other exception is a logic bug
+        # and should propagate.
         coverage_report: list = []
         try:
             coverage_report = model.get_issue_coverage_report()
-        except Exception:
-            pass
+        except _sqlite3.Error as _exc:
+            _log.warning("overview: coverage_report load failed: %s", _exc)
         so: dict = {}
         try:
             so = model.get_so_metrics(_coverage_report=coverage_report)
-        except Exception:
-            pass
+        except _sqlite3.Error as _exc:
+            _log.warning("overview: so_metrics load failed: %s", _exc)
         weakest: list = (
             heapq.nsmallest(5, coverage_report, key=lambda r: float(r.get("coverage_fraction", 0.0)))
             if coverage_report else []
@@ -256,12 +260,13 @@ class InProcessBackend(UIBackend):
         top_gaps: list = []
         try:
             top_gaps = model.gaps.open_gaps(limit=5)
-        except Exception:
-            pass
+        except _sqlite3.Error as _exc:
+            _log.warning("overview: top gaps load failed: %s", _exc)
         clarifications: list = []
         try:
             clarifications = model.clarifications.get_pending(limit=5)
-        except Exception:
+        except _sqlite3.Error as _exc:
+            _log.warning("overview: pending clarifications load failed: %s", _exc)
             pass
         return {
             "matter_id": matter_id,
