@@ -1651,19 +1651,26 @@ class SteerFamilyHandler:
     # "April 15" from "April 20" on otherwise-identical sibling
     # assertions.
     #
-    # Codex fallout R7: single unified ISO regex. Rules:
-    #   - Year must be 1900-2099 (plausible legal-document range)
-    #   - Neither side may be adjacent to another digit OR hyphen.
-    #     Lookbehind `(?<![\d-])` rejects BOTH digit-shifted cases
-    #     (x20260-13-45y) AND hyphen-bounded identifier cases
-    #     (Case-2026-13-45-A, 123-2026-13-45). Letter-adjacent
-    #     embedded dates (x2026-13-45y, ref=2026-04-15/paper) are
-    #     still captured.
-    # Month/day bounds live here too so we can distinguish calendar-
-    # plausible shapes (consume AND emit after calendar check) from
-    # implausible ones (consume only, don't emit).
+    # Codex fallout R7+R8: unified ISO regex. Rules:
+    #   - Year 1900-2099 (plausible legal-document range)
+    #   - Neither side may touch digit, hyphen, letter, or underscore.
+    #     Lookbehind rejects digit-shifted (x20260-13-45y),
+    #     hyphen-bounded identifiers (Case-2026-13-45-A),
+    #     letter-embedded IDs (Ex2026-04-15A), and underscore
+    #     identifiers (case_2026-04-15_a). Valid embedded dates
+    #     like `ref=2026-04-15/paper` still match because `=` / `/`
+    #     are delimiters, not word chars.
+    # Calendar validation in the match loop decides whether to also
+    # emit the date token — implausible shapes consume-only.
+    #
+    # Known over-match: `2026-04-15-2026-04-20` (date-range shape).
+    # The trailing hyphen from the first date blocks the second's
+    # lookbehind, so both dates drop and fragments flow. This is
+    # acceptable for a preview-only handler (the user confirms the
+    # candidate anyway); a future enhancement could add an explicit
+    # date-range pattern alongside.
     _ISO_DATE_REGEX = (
-        r"(?<![\d-])((?:19|20)\d{2})-(\d{1,2})-(\d{1,2})(?![\d-])"
+        r"(?<![\w\d-])((?:19|20)\d{2})-(\d{1,2})-(\d{1,2})(?![\w\d-])"
     )
     _DATE_PATTERNS = [
         # English month forms remain separate since they never

@@ -560,104 +560,67 @@ def test_read_handler_rejects_numeric_and_bool_citations(warm_matter):
 
 
 def test_specific_tokens_legal_document_boundary_matrix():
-    """Round 7 regression matrix — full set of legal-document edge
-    cases Codex has cited across rounds 4-6:
+    """Final legal-document boundary matrix after rounds 4-8 of
+    Codex adversarial review. The regex now bounds on
+    [\\w\\d-] — letter, digit, hyphen, and underscore all block
+    adjacency. This favors NOT consuming identifier-embedded
+    date shapes, which is the safer trade-off for preview-only
+    steer scoring (worst case: fragments flow and might over-
+    match a generic number, which is less harmful than a fake
+    date token artificially boosting the wrong candidate).
 
-      - identifiers with year-out-of-range fragments flow
-      - shifted-digit years don't consume
-      - letter-embedded nonsense dates consume (no fragment leak)
-      - HYPHEN-bounded case-number patterns don't consume
-      - out-of-range real years (1899/2100) don't consume AND
-        don't emit tokens (consistent rather than mixed)
-      - calendar-invalid in-range dates consume but don't emit
-      - real valid dates emit tokens, fragments suppressed
+    Cases covered:
+      - identifier-embedded dates (letter / underscore / hyphen
+        adjacent) — fragments flow, no token
+      - calendar-invalid dates — no token
+      - year-out-of-range — fragments flow
+      - real standalone / delimited-embedded dates — emit token,
+        fragments suppressed
+      - known over-match: `YYYY-MM-DD-YYYY-MM-DD` date-range shape
+        drops both dates (fragments only) — acceptable for
+        preview-only ranking; see governance.py R8 comment.
     """
     s = SteerFamilyHandler._specific_tokens
 
-    # Identifier-like strings must NOT consume (fragments flow).
-    assert "1234" in s("abc1234-5-6xyz")
-    assert "20260" in s("x20260-13-45y")
-    # Hyphen-bounded case numbers (Codex round 6).
-    assert "2026" in s("Case-2026-13-45-A")
-    assert "2026" in s("123-2026-13-45")
+    # IDENTIFIER cases — all fragments flow, no date token.
+    for text, expected_fragment in [
+        ("abc1234-5-6xyz", "1234"),      # year out of range
+        ("x20260-13-45y", "20260"),      # shifted-digit year
+        ("Case-2026-13-45-A", "2026"),   # hyphen-bounded (R6)
+        ("123-2026-13-45", "2026"),      # leading-hyphen-bounded
+        ("Ex2026-04-15A", "2026"),       # letter-embedded (R8)
+        ("case_2026-04-15_a", "2026"),   # underscore-bounded (R8)
+        ("1899-12-31", "1899"),          # year out of range
+        ("2100-01-01", "2100"),          # year out of range
+    ]:
+        tokens = s(text)
+        assert expected_fragment in tokens, (
+            f"{text!r} should emit fragment {expected_fragment!r}"
+        )
+        # And no date token.
+        for tok in tokens:
+            assert tok.count("-") < 2, (
+                f"{text!r} leaked full date token {tok!r}"
+            )
 
-    # Out-of-range years — consistent NON-consumption (Codex round 6).
-    assert "1899" in s("1899-12-31")  # fragment flows
-    assert "1899-12-31" not in s("1899-12-31")  # no date token
-    assert "2100" in s("2100-01-01")
-
-    # Letter-adjacent with valid year but nonsense calendar:
-    # consume, no fragments, no token.
-    assert s("x2026-13-45y") == set()
+    # CONSUME-ONLY / NO-EMIT: calendar-invalid dates (no fragments,
+    # no token).
     assert s("2026-02-31") == set()
-    # Same shape but in-range year AND valid calendar: emit token,
-    # no fragments.
-    valid = s("2026-04-15")
-    assert "2026-04-15" in valid
-    assert "2026" not in valid
-    assert "15" not in valid
-    # Valid embedded date still works.
-    assert "2026-04-15" in s("ref=2026-04-15/paper")
 
+    # VALID DATE: token emitted, fragments suppressed.
+    for text in ("2026-04-15", "ref=2026-04-15/paper"):
+        tokens = s(text)
+        assert "2026-04-15" in tokens
+        assert "2026" not in tokens
+        assert "15" not in tokens
 
-def test_specific_tokens_date_boundary_matrix():
-    """Round 6 regression matrix — the date-consumption regex must
-    distinguish four cases correctly:
-
-      1. `abc1234-5-6xyz` — identifier, not a date. Year 1234 is
-         outside the plausible legal-document range (1900-2099), so
-         DON'T consume; the '1234' fragment should pass through as
-         a normal number token.
-      2. `x20260-13-45y` — shifted digit adjacency; the year is 5
-         digits long which the digit-boundary lookbehind rejects,
-         so fragments pass through.
-      3. `x2026-13-45y` — letter-adjacent embedding with a real-
-         range year but invalid month/day; CONSUME the span
-         (suppress fragments) but don't output a valid date token.
-      4. `2026-04-15` — real, valid, standalone date; CONSUME the
-         span and output the full date token.
-    """
-    s = SteerFamilyHandler._specific_tokens
-
-    # Case 1: identifier with year outside plausible range.
-    tokens_id = s("abc1234-5-6xyz")
-    assert "1234" in tokens_id  # fragment flows through
-    assert "1234-5-6" not in tokens_id  # not a date
-
-    # Case 2: shifted digit — year has 5 digits, fails boundary.
-    tokens_shifted = s("x20260-13-45y")
-    # '20260' is 5 digits and matches the plain number pattern
-    # (which accepts len>=2). Ensure fragments flow and no spurious
-    # date token.
-    assert "20260" in tokens_shifted
-
-    # Case 3: valid year, nonsense date — consume, no fragments.
-    tokens_nonsense = s("x2026-13-45y")
-    assert tokens_nonsense == set()
-
-    # Case 4: real valid date.
-    tokens_valid = s("2026-04-15")
-    assert "2026-04-15" in tokens_valid
-    assert "2026" not in tokens_valid  # year fragment suppressed
-    assert "15" not in tokens_valid  # day fragment suppressed
-
-    # Case 4b: embedded valid date still works.
-    tokens_embedded = s("ref=2026-04-15/paper")
-    assert "2026-04-15" in tokens_embedded
-
-
-def test_specific_tokens_rejects_embedded_iso_fragment_leak():
-    """Round 5: the R4 broad-regex consumer used word boundaries,
-    which fail when the ISO-shape appears inside a larger token
-    (e.g. an identifier like 'x2026-13-45y'). Without boundaries,
-    the consumer catches embedded cases too."""
-    tokens = SteerFamilyHandler._specific_tokens("x2026-13-45y")
-    assert "2026" not in tokens
-    assert "13" not in tokens
-    assert "45" not in tokens
-    # Sanity: a valid embedded date still gets picked up as a real token.
-    tokens2 = SteerFamilyHandler._specific_tokens("ref=2026-04-15/paper")
-    assert "2026-04-15" in tokens2
+    # KNOWN OVER-MATCH: date range. Acceptable — preview-only.
+    range_tokens = s("2026-04-15-2026-04-20")
+    assert "2026" in range_tokens  # fragments leak
+    # Neither date emits as a token because each blocks the
+    # other's lookbehind/lookahead.
+    assert "2026-04-15" not in range_tokens
+    assert "2026-04-20" not in range_tokens
 
 
 def test_specific_tokens_rejects_regex_invalid_iso_dates():
