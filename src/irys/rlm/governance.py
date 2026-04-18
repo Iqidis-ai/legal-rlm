@@ -44,14 +44,19 @@ class ExecutionContract:
 
     Emitted by the classifier and carried through the cascade so every
     downstream gate reads from one source of truth. Later MVIs extend
-    this with coverage_goal, freshness_floor, lead_ev_floor, etc.
+    this with coverage_goal, freshness_floor, etc.
     """
-    family: str                    # investigate | read | clarify (MVI-1 only)
+    family: str                    # investigate | read | query | trace | clarify
     min_iter: int = 0              # 0 for read/clarify, floor for investigate
     max_iter: int = 20             # cap even on investigate
     citation_floor: int = 0        # minimum citations before a read can answer
     answer_confidence_floor: float = 0.5  # read escalates below this
     escalation_allowed: bool = True       # can a handler escalate to investigate?
+    # MVI-3 per-lead viability floor — the cold-loop terminator uses
+    # this instead of a hardcoded priority threshold. MVI-5 will
+    # upgrade this to a real expected-value signal (coverage gain
+    # per expected cost).
+    lead_ev_floor: float = 0.5
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

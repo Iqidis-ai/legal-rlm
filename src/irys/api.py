@@ -311,7 +311,10 @@ class Irys:
                 format=self.config.output_format,
             )
 
-        # Full investigate path — unchanged from the pre-cascade flow.
+        # Full investigate path — cascade-aware. MVI-3: we thread the
+        # ExecutionContract through so the engine's new termination
+        # controller reads family-scoped stop rules instead of the
+        # legacy confidence/count heuristics.
         self._telemetry.start_operation("investigation")
         usage_before = self._client.snapshot_usage()
         try:
@@ -320,6 +323,7 @@ class Irys:
                 repository,
                 research_mode=research_mode,
                 conversation_history=conversation_history,
+                execution_contract=decision.contract,
             )
         finally:
             self._telemetry.end_operation(

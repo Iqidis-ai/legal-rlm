@@ -718,6 +718,10 @@ class InvestigationState:
     # Accumulated knowledge
     findings: dict[str, Any] = field(default_factory=dict)
     hypothesis: Optional[str] = None
+    # MVI-3: ExecutionContract from the cascade governor. Engine
+    # termination checks read from this; investigate family uses the
+    # default contract when the caller didn't thread one through.
+    execution_contract: Optional[Any] = None
     research_mode: str = ResearchMode.DEEP.value
     query_classification: Optional[dict] = None  # Result of classify_query()
 
@@ -736,6 +740,14 @@ class InvestigationState:
     api_calls: int = 0
     estimated_tokens: int = 0
     facts_per_iteration: list[int] = field(default_factory=list)  # Track facts added per iteration for diminishing returns
+    # MVI-3 governed-progress telemetry. For each iteration, record the
+    # matter-wide (sum of issue coverage_fraction) BEFORE the iteration
+    # ran. A "material answerability delta" is any iteration where the
+    # sum advanced by >= _COVERAGE_DELTA_EPSILON (or a proof gap
+    # closed). This replaces the old count-based diminishing-returns
+    # signal.
+    coverage_sum_per_iteration: list[float] = field(default_factory=list)
+    open_gap_count_per_iteration: list[int] = field(default_factory=list)
     # SO-1 real reuse telemetry: count LLM calls avoided (cache hits, inventory skips)
     # vs. required (cache misses, cold calls). True reuse rate = avoided / (avoided + required).
     llm_calls_avoided: int = 0

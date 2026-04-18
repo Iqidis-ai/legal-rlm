@@ -1294,6 +1294,7 @@ class RLMEngine:
         repository_path: str | Path,
         research_mode: "str | None" = None,
         conversation_history: "list[dict[str, str]] | None" = None,
+        execution_contract: "Any | None" = None,
     ) -> InvestigationState:
         """
         Run full recursive investigation.
@@ -1316,6 +1317,9 @@ class RLMEngine:
             research_mode=research_mode,
             conversation_history=conversation_history,
         )
+        # MVI-3: attach the cascade ExecutionContract so the
+        # termination controller reads family-scoped stop rules.
+        state.execution_contract = execution_contract
 
         # Adapt configuration based on repository size.
         # _doc_count update triggers semaphore recreation in _get_semaphore() so
@@ -2068,6 +2072,31 @@ class RLMEngine:
             facts_after = len(state.findings.get("accumulated_facts", []))
             facts_added = facts_after - facts_before
             state.facts_per_iteration.append(facts_added)
+
+            # MVI-3: sample governed-progress signals end-of-iteration
+            # so the new termination checks can compute deltas. Sum of
+            # issue coverage_fraction is the scalar answerability
+            # proxy; open-gap count shows whether material
+            # missingness is closing. Both cheap reads off the matter
+            # model — no LLM.
+            try:
+                if self._matter_model is not None:
+                    cov_rows = self._matter_model.get_issue_coverage_report(
+                        policy_audience="internal",
+                    )
+                    coverage_sum = sum(
+                        float(r.get("coverage_fraction") or 0.0)
+                        for r in cov_rows
+                    )
+                    open_gaps = int(self._matter_model.gaps.count_open())
+                else:
+                    coverage_sum = 0.0
+                    open_gaps = 0
+            except Exception:
+                coverage_sum = 0.0
+                open_gaps = 0
+            state.coverage_sum_per_iteration.append(coverage_sum)
+            state.open_gap_count_per_iteration.append(open_gaps)
 
             # Flush belief revision for any new assertions added this iteration
             if adapter is not None:
@@ -6717,89 +6746,215 @@ Return:
 
         return base_depth
 
+    # MVI-3: governed-progress epsilon — an iteration counts as
+    # "material answerability delta" when the matter-wide sum of
+    # issue coverage_fraction advances by at least this much OR any
+    # open proof gap closes.
+    _COVERAGE_DELTA_EPSILON = 0.05
+
     def _should_continue_investigation(self, state: InvestigationState) -> tuple[bool, str]:
-        """Determine if investigation should continue.
+        """MVI-3 cascade termination controller.
 
-        Uses four criteria:
-        1. Repository size - small repos terminate faster
-        2. Research mode - simpler modes terminate faster
-        3. Diminishing returns - stop if recent iterations add few new facts
-        4. Verified citations - keep this requirement (per user preference)
+        Replaces the four legacy checks (confidence / all-docs /
+        count-based-diminishing / count-based-productivity) with:
+          1. target sufficiency  — every open high-materiality issue
+             has coverage above its floor AND no blocking proof gap
+          2. relevant scope exhausted — all docs linked to open issues
+             have been read and no new pending leads reference
+             unread docs
+          3. no material answerability delta — two consecutive
+             iterations produced no coverage advance and no gap close
+          4. dead-loop fuse — 3 iterations of zero governed progress
+             AND no viable leads (never fact-count based)
+          5. viable-lead exhaustion — no pending lead above the EV
+             floor (MVI-3 still uses the existing priority threshold;
+             MVI-5 upgrades to a real EV signal)
 
-        Returns:
-            (should_continue, reason) - reason explains why we stopped/continue
+        min_depth is now family-scoped via the ExecutionContract
+        carried on state.execution_contract. Contracts from the
+        cascade governor specify min_iter per family (0 for
+        probe/read/query/trace; floor only for investigate).
+
+        Returns (should_continue, reason).
         """
         budget = self._get_research_profile(state)
-        # Always continue if minimum criteria not met
-        if state.max_depth_reached < budget.min_depth:
+        contract = getattr(state, "execution_contract", None)
+
+        # Family-scoped min_depth gate. Contract wins if present.
+        min_depth = budget.min_depth
+        if contract is not None:
+            # ExecutionContract carries min_iter semantics; translate
+            # directly. Non-investigate contracts set min_iter=0 which
+            # opens the door for early termination the moment the
+            # target is answerable.
+            min_depth = max(0, int(getattr(contract, "min_iter", min_depth)))
+        if state.max_depth_reached < min_depth:
             return True, "Building minimum evidence base"
-
-        confidence = state.get_confidence_score()
-        conf_threshold = budget.confidence_threshold
-        min_citations = budget.min_citations
-
-        # NEW: Adjust thresholds for small document sets
-        # With fewer documents, we need fewer citations and can terminate earlier
-        if self._doc_count <= 5:
-            min_citations = min(min_citations, max(2, self._doc_count))
-            conf_threshold = max(40, conf_threshold - 15)
-        elif self._doc_count <= 10:
-            min_citations = min(min_citations, self._doc_count)
-            conf_threshold = max(45, conf_threshold - 10)
 
         mode_label = self._research_mode_label(budget.mode)
 
-        # Check 1: Mode-aware confidence check
-        if confidence["score"] >= conf_threshold and len(state.citations) >= min_citations:
+        # Check 1: target sufficiency (replaces the confidence/
+        # citation threshold). "Every open high-materiality issue has
+        # coverage at or above the contract's floor AND no blocking
+        # proof gap." If no open issues exist, fall back to citation
+        # floor so we don't spin forever on matters without an issue
+        # tree yet.
+        sufficiency_ok, sufficiency_detail = self._target_is_sufficient(
+            state, contract,
+        )
+        if sufficiency_ok:
+            return False, f"Target sufficient: {sufficiency_detail}"
+
+        # Check 2: relevant scope exhausted (replaces "all docs
+        # processed"). Only fires when we have issues + at least one
+        # citation — otherwise we're still bootstrapping.
+        if len(state.citations) >= 1 and self._relevant_scope_exhausted(state):
+            return False, "Relevant document scope exhausted"
+
+        # Check 3: no material answerability delta over last 2
+        # iterations (replaces count-based diminishing returns).
+        if self._no_material_answerability_delta(state):
             return False, (
-                f"Sufficient evidence for {mode_label} mode "
-                f"(confidence: {confidence['score']:.0f}%, {len(state.citations)} citations)"
+                f"No coverage or proof-gap progress in last 2 iterations "
+                f"(coverage_sum: {state.coverage_sum_per_iteration[-2:]})"
             )
 
-        # Check 2: For small repos, terminate if we've read all documents
-        if self._doc_count > 0 and state.documents_read >= self._doc_count:
-            if len(state.citations) >= 1:  # At least some evidence found
-                return False, f"All {self._doc_count} documents processed"
-
-        # Check 3: Diminishing returns - stop if last 2 iterations added < 3 facts each
-        # For small repos, be more aggressive (< 2 facts)
-        fact_threshold = budget.diminishing_returns_fact_threshold
-        if len(state.facts_per_iteration) >= 2:
-            recent_facts = state.facts_per_iteration[-2:]
-            if all(f < fact_threshold for f in recent_facts):
-                # Diminishing returns detected - but only stop if we have SOME evidence
-                min_citations_for_stop = budget.diminishing_returns_min_citations
-                if self._doc_count <= 5:
-                    min_citations_for_stop = min(min_citations_for_stop, max(2, self._doc_count))
-                if (
-                    len(state.citations) >= min_citations_for_stop
-                    and confidence["score"] >= budget.diminishing_returns_min_confidence
-                ):
-                    return False, (
-                        f"Diminishing returns in {mode_label} mode "
-                        f"(last 2 iterations: {recent_facts[0]}, {recent_facts[1]} new facts)"
-                    )
-
-        # Check 4: Extreme diminishing returns - 3 iterations with 0-1 facts each
-        if len(state.facts_per_iteration) >= 3:
-            recent_facts = state.facts_per_iteration[-3:]
-            if all(f <= budget.very_low_productivity_max_facts for f in recent_facts):
-                # Very low productivity - stop regardless
-                return False, (
-                    f"Very low productivity in {mode_label} mode "
-                    f"(last 3 iterations: {recent_facts} new facts each)"
-                )
-
-        # Check if we have pending leads worth investigating
+        # Check 4: dead-loop fuse. 3 iterations of zero governed
+        # progress AND no viable leads. Never fact-count based.
         pending = state.get_pending_leads()
-        high_priority = [l for l in pending if l.priority >= 0.5]
-        if not high_priority:
-            return False, "No high-priority leads remaining"
+        viable = self._viable_leads(pending, contract)
+        if self._dead_loop_detected(state) and not viable:
+            return False, (
+                "Dead loop: 3 iterations without governed progress "
+                "and no viable leads remaining"
+            )
+
+        # Check 5: viable-lead exhaustion (replaces no-high-priority).
+        if not viable:
+            return False, "No viable leads above EV floor"
 
         return True, (
             f"Continuing {mode_label} investigation "
-            f"({len(high_priority)} leads, confidence: {confidence['score']:.0f}%)"
+            f"({len(viable)} viable leads)"
         )
+
+    # ---- MVI-3 helpers ---------------------------------------------------
+
+    def _target_is_sufficient(
+        self, state: InvestigationState, contract: Any,
+    ) -> tuple[bool, str]:
+        """Codex master plan replacement for the confidence stop.
+        Coverage over the target set AND no blocking proof gap."""
+        if self._matter_model is None:
+            # Fall back to the old citation floor when matter model
+            # isn't wired (test harness / legacy callers).
+            floor = 1
+            if contract is not None:
+                floor = max(floor, int(getattr(contract, "citation_floor", 1)))
+            if len(state.citations) >= floor:
+                return True, f"{len(state.citations)} citations >= floor {floor}"
+            return False, ""
+        try:
+            coverage_rows = self._matter_model.get_issue_coverage_report(
+                policy_audience="internal",
+            )
+        except Exception:
+            return False, ""
+        if not coverage_rows:
+            # No open issues yet — fall back to a citation floor so we
+            # don't spin forever on a matter whose issue tree is still
+            # being seeded by orient.
+            floor = 1
+            if contract is not None:
+                floor = max(floor, int(getattr(contract, "citation_floor", 1)))
+            if len(state.citations) >= floor:
+                return True, f"{len(state.citations)} citations, no open issues"
+            return False, ""
+        # Floor: high-materiality issues (>=0.5) must each have
+        # coverage >= 0.6 AND no open proof gap to call the target
+        # "sufficient". Non-material issues don't block.
+        blocking = []
+        for row in coverage_rows:
+            if (row.get("materiality") or 0) < 0.5:
+                continue
+            frac = float(row.get("coverage_fraction") or 0.0)
+            if row.get("has_proof_gap") or frac < 0.6:
+                blocking.append(row.get("title", "?"))
+        if not blocking:
+            total_issues = sum(
+                1 for r in coverage_rows
+                if (r.get("materiality") or 0) >= 0.5
+            )
+            return True, f"{total_issues} high-materiality issues covered"
+        return False, ""
+
+    def _relevant_scope_exhausted(self, state: InvestigationState) -> bool:
+        """All documents materially relevant to the investigation have
+        been read and no pending lead points at unread material.
+        Replaces the repo-global 'all docs processed' check."""
+        pending = state.get_pending_leads()
+        if pending:
+            # If any pending lead still references unread material,
+            # scope isn't exhausted.
+            return False
+        # Small-repo fallback: if we read everything in the repo and
+        # have at least one citation, scope is by definition exhausted.
+        if self._doc_count > 0 and state.documents_read >= self._doc_count:
+            return True
+        return False
+
+    def _no_material_answerability_delta(
+        self, state: InvestigationState,
+    ) -> bool:
+        """True when the last 2 iterations produced no coverage
+        advance and no open-gap close. Replaces count-based
+        diminishing returns."""
+        cov = state.coverage_sum_per_iteration
+        gaps = state.open_gap_count_per_iteration
+        if len(cov) < 3 or len(gaps) < 3:
+            return False
+        # Look at the last two completed iterations: was there ANY
+        # delta? cov[-1] is post-iter-N, cov[-2] is post-iter-N-1,
+        # cov[-3] is post-iter-N-2.
+        recent_cov = cov[-3:]
+        recent_gaps = gaps[-3:]
+        cov_delta_a = recent_cov[-1] - recent_cov[-2]
+        cov_delta_b = recent_cov[-2] - recent_cov[-3]
+        gap_delta_a = recent_gaps[-2] - recent_gaps[-1]  # gap CLOSED if positive
+        gap_delta_b = recent_gaps[-3] - recent_gaps[-2]
+        material_a = (
+            cov_delta_a >= self._COVERAGE_DELTA_EPSILON or gap_delta_a > 0
+        )
+        material_b = (
+            cov_delta_b >= self._COVERAGE_DELTA_EPSILON or gap_delta_b > 0
+        )
+        return not (material_a or material_b)
+
+    def _dead_loop_detected(self, state: InvestigationState) -> bool:
+        """3 iterations with zero governed progress. Fact counts are
+        never consulted."""
+        cov = state.coverage_sum_per_iteration
+        gaps = state.open_gap_count_per_iteration
+        if len(cov) < 4 or len(gaps) < 4:
+            return False
+        recent_cov = cov[-4:]
+        recent_gaps = gaps[-4:]
+        for i in range(1, 4):
+            cov_delta = recent_cov[-i] - recent_cov[-i - 1]
+            gap_delta = recent_gaps[-i - 1] - recent_gaps[-i]
+            if cov_delta >= self._COVERAGE_DELTA_EPSILON or gap_delta > 0:
+                return False
+        return True
+
+    @staticmethod
+    def _viable_leads(pending: list, contract: Any) -> list:
+        """Lead viability check. MVI-3 retains the priority-threshold
+        gate the old code used; MVI-5 will replace this with a real
+        expected-value computation (coverage gain / expected cost)."""
+        floor = 0.5
+        if contract is not None:
+            floor = float(getattr(contract, "lead_ev_floor", floor) or floor)
+        return [l for l in pending if l.priority >= floor]
 
     def _extract_search_term(self, lead_description: str) -> str:
         """Extract a SINGLE high-value search term from lead description.
