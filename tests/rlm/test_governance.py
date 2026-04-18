@@ -559,6 +559,47 @@ def test_read_handler_rejects_numeric_and_bool_citations(warm_matter):
     assert result.failure_kind == "state_insufficient"
 
 
+def test_specific_tokens_legal_document_boundary_matrix():
+    """Round 7 regression matrix — full set of legal-document edge
+    cases Codex has cited across rounds 4-6:
+
+      - identifiers with year-out-of-range fragments flow
+      - shifted-digit years don't consume
+      - letter-embedded nonsense dates consume (no fragment leak)
+      - HYPHEN-bounded case-number patterns don't consume
+      - out-of-range real years (1899/2100) don't consume AND
+        don't emit tokens (consistent rather than mixed)
+      - calendar-invalid in-range dates consume but don't emit
+      - real valid dates emit tokens, fragments suppressed
+    """
+    s = SteerFamilyHandler._specific_tokens
+
+    # Identifier-like strings must NOT consume (fragments flow).
+    assert "1234" in s("abc1234-5-6xyz")
+    assert "20260" in s("x20260-13-45y")
+    # Hyphen-bounded case numbers (Codex round 6).
+    assert "2026" in s("Case-2026-13-45-A")
+    assert "2026" in s("123-2026-13-45")
+
+    # Out-of-range years — consistent NON-consumption (Codex round 6).
+    assert "1899" in s("1899-12-31")  # fragment flows
+    assert "1899-12-31" not in s("1899-12-31")  # no date token
+    assert "2100" in s("2100-01-01")
+
+    # Letter-adjacent with valid year but nonsense calendar:
+    # consume, no fragments, no token.
+    assert s("x2026-13-45y") == set()
+    assert s("2026-02-31") == set()
+    # Same shape but in-range year AND valid calendar: emit token,
+    # no fragments.
+    valid = s("2026-04-15")
+    assert "2026-04-15" in valid
+    assert "2026" not in valid
+    assert "15" not in valid
+    # Valid embedded date still works.
+    assert "2026-04-15" in s("ref=2026-04-15/paper")
+
+
 def test_specific_tokens_date_boundary_matrix():
     """Round 6 regression matrix — the date-consumption regex must
     distinguish four cases correctly:

@@ -1650,13 +1650,24 @@ class SteerFamilyHandler:
     # amounts get higher weights because they're what distinguishes
     # "April 15" from "April 20" on otherwise-identical sibling
     # assertions.
-    # Codex fallout R2: ISO date pattern now validates month (01-12)
-    # and day (01-31) ranges so "2026-13-45" isn't accepted as a
-    # real date token. English month phrasings already imply valid
-    # months.
+    #
+    # Codex fallout R7: single unified ISO regex. Rules:
+    #   - Year must be 1900-2099 (plausible legal-document range)
+    #   - Neither side may be adjacent to another digit OR hyphen.
+    #     Lookbehind `(?<![\d-])` rejects BOTH digit-shifted cases
+    #     (x20260-13-45y) AND hyphen-bounded identifier cases
+    #     (Case-2026-13-45-A, 123-2026-13-45). Letter-adjacent
+    #     embedded dates (x2026-13-45y, ref=2026-04-15/paper) are
+    #     still captured.
+    # Month/day bounds live here too so we can distinguish calendar-
+    # plausible shapes (consume AND emit after calendar check) from
+    # implausible ones (consume only, don't emit).
+    _ISO_DATE_REGEX = (
+        r"(?<![\d-])((?:19|20)\d{2})-(\d{1,2})-(\d{1,2})(?![\d-])"
+    )
     _DATE_PATTERNS = [
-        # YYYY-MM-DD with sane month + day bounds
-        r"\b\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b",
+        # English month forms remain separate since they never
+        # collide with hyphenated identifiers.
         # "April 15" / "Apr 15" / "March 3"
         r"\b(?:January|February|March|April|May|June|July|August|"
         r"September|October|November|December|Jan|Feb|Mar|Apr|"
@@ -1690,34 +1701,23 @@ class SteerFamilyHandler:
             # calendar-validation pass via datetime.date.
             consumed_spans: list[tuple[int, int]] = []
             # ISO YYYY-MM-DD is _DATE_PATTERNS[0]
-            # Codex fallout R6: two guards, not one.
-            # (a) Digit-boundary lookaround so we don't over-consume
-            #     shifted-digit identifiers like "x20260-13-45y".
-            # (b) Plausible-year check so arbitrary 4-2-2 digit runs
-            #     in identifier names ("abc1234-5-6xyz") don't get
-            #     treated as dates — their fragments should flow
-            #     through normally for identifier-matching.
-            iso_shaped = r"(?<!\d)(\d{4})-\d{1,2}-\d{1,2}(?!\d)"
-            for m in _re.finditer(iso_shaped, text):
+            # Codex fallout R7: single unified pass on the ISO regex.
+            # Every match (which is already year-range + boundary
+            # filtered) gets its span consumed so fragments can't
+            # leak. Then calendar validation decides whether to
+            # EMIT the date token. Consistent consumption for both
+            # valid dates (consume + emit) and calendar-invalid
+            # dates (consume only).
+            for m in _re.finditer(cls._ISO_DATE_REGEX, text):
+                consumed_spans.append(m.span())
                 try:
                     yr = int(m.group(1))
-                except (TypeError, ValueError):
-                    continue
-                # 1900-2099 is the realistic legal-document year
-                # range. Narrow enough that random 4-digit runs
-                # in identifiers don't accidentally activate the
-                # date interpretation.
-                if 1900 <= yr <= 2099:
-                    consumed_spans.append(m.span())
-            iso_pat = cls._DATE_PATTERNS[0]
-            for m in _re.finditer(iso_pat, text, flags=_re.IGNORECASE):
-                tok = m.group().strip()
-                try:
-                    yr, mo, dy = tok.split("-")
-                    _date(int(yr), int(mo), int(dy))
+                    mo = int(m.group(2))
+                    dy = int(m.group(3))
+                    _date(yr, mo, dy)
                 except (ValueError, TypeError):
                     continue
-                out.add(tok.lower())
+                out.add(m.group(0).lower())
             # Other date patterns (English month + day).
             for pat in cls._DATE_PATTERNS[1:]:
                 for m in _re.finditer(pat, text, flags=_re.IGNORECASE):
