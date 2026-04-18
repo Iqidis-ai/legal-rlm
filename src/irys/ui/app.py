@@ -1539,6 +1539,124 @@ def _fmt_gaps(gaps: list, clarifications: list) -> str:
     return "\n".join(parts) if parts else "No open gaps or clarifications."
 
 
+_REVIEW_BUCKET_LABELS = {
+    0: ("Proof-critical", "#b91c1c"),   # red — gap-blocked issue
+    1: ("Contradicted", "#b45309"),     # amber — under attack
+    2: ("Issue-linked", "#2563eb"),     # blue
+    3: ("Predicate", "#0d9488"),        # teal
+    4: ("Number", "#7c3aed"),           # purple — quant
+    5: ("Citation", "#6b7280"),         # grey — authority
+    6: ("Other", "#94a3b8"),            # light grey
+}
+
+
+def _review_bucket_badge(bucket: int, score: float) -> str:
+    label, color = _REVIEW_BUCKET_LABELS.get(
+        int(bucket or 6), _REVIEW_BUCKET_LABELS[6],
+    )
+    meter = ""
+    if score and score > 0:
+        meter = f" <span style='opacity:0.7;font-size:11px;'>· materiality {score:.0%}</span>"
+    return (
+        f"<span style='display:inline-block;padding:2px 8px;border-radius:10px;"
+        f"background:{color};color:white;font-size:11px;font-weight:600;"
+        f"text-transform:uppercase;letter-spacing:0.03em;'>{label}</span>{meter}"
+    )
+
+
+def _fmt_review_queue(queue: list[dict]) -> str:
+    """Render the prioritized review queue in attorney-readable form.
+
+    No raw IDs, no internal store names. Each row shows:
+      - bucket badge (proof-critical / contradicted / issue-linked / etc.)
+      - the finding text or citation
+      - the kind tag (Fact / Number / Citation / Predicate)
+      - a copyable target id truncated for selection — hidden text, not shown
+    """
+    if not queue:
+        return (
+            "<div class='viz-empty'>"
+            "No findings need review. The matter model is fully reviewed "
+            "or has no AI-extracted material yet."
+            "</div>"
+        )
+    rows_html = []
+    for row in queue:
+        bucket = row.get("priority_bucket", 6)
+        score = row.get("priority_score", 0.0)
+        kind = row.get("target_kind", "unknown")
+        # Pick the right context field per kind.
+        text = (
+            row.get("proposition_text")
+            or row.get("quant_raw_text")
+            or row.get("authority_citation")
+            or row.get("predicate_description")
+            or "(no preview)"
+        )
+        kind_pretty = {
+            "assertion": "Fact",
+            "assertion_occurrence": "Raw utterance",
+            "evidence_edge": "Evidence link",
+            "issue_predicate": "Proof element",
+            "quant_fact": "Number",
+            "authority": "Legal citation",
+            "document_card": "Document classification",
+        }.get(kind, kind.replace("_", " ").title())
+        truncated = _truncate(text, 180)
+        # Store a short target handle so the reviewer can pick it from
+        # the dropdown. Format: "<kind>:<first 8 of id> — <short text>"
+        short_id = (row.get("target_id") or "")[:8]
+        rows_html.append(
+            f"<div style='padding:10px 12px;border-left:3px solid #e5e7eb;"
+            f"margin-bottom:8px;background:#f9fafb;border-radius:0 6px 6px 0;'>"
+            f"<div style='margin-bottom:4px;'>"
+            f"{_review_bucket_badge(bucket, score)}"
+            f"<span style='margin-left:10px;font-size:12px;color:#6b7280;"
+            f"text-transform:uppercase;letter-spacing:0.03em;'>{kind_pretty}</span>"
+            f"</div>"
+            f"<div style='color:#1f2937;line-height:1.45;'>{_escape(truncated)}</div>"
+            f"<div style='margin-top:6px;font-size:11px;color:#9ca3af;"
+            f"font-family:ui-monospace,monospace;'>ref: {kind}:{short_id}</div>"
+            f"</div>"
+        )
+    return (
+        "<div style='max-height:540px;overflow-y:auto;padding:4px;'>"
+        f"<div style='margin-bottom:12px;font-size:13px;color:#6b7280;'>"
+        f"{len(queue)} item(s) awaiting review — ranked by proof impact."
+        f"</div>"
+        + "\n".join(rows_html)
+        + "</div>"
+    )
+
+
+def _review_queue_choices(queue: list[dict]) -> list[tuple[str, str]]:
+    """Build dropdown (label, value) pairs. Label is attorney-readable;
+    value is the internal "kind:id" handle used by verify/reject."""
+    choices = []
+    for row in queue:
+        kind = row.get("target_kind") or ""
+        tid = row.get("target_id") or ""
+        text = (
+            row.get("proposition_text")
+            or row.get("quant_raw_text")
+            or row.get("authority_citation")
+            or row.get("predicate_description")
+            or "(no preview)"
+        )
+        kind_pretty = {
+            "assertion": "Fact",
+            "evidence_edge": "Link",
+            "issue_predicate": "Element",
+            "quant_fact": "Number",
+            "authority": "Citation",
+            "document_card": "Doc profile",
+            "assertion_occurrence": "Utterance",
+        }.get(kind, kind.replace("_", " ").title())
+        label = f"{kind_pretty}: {_truncate(text, 90)}"
+        choices.append((label, f"{kind}:{tid}"))
+    return choices
+
+
 def _fmt_steering(actions: list) -> str:
     """Format get_ledger_steering_surface() output as actionable recommendations."""
     if not actions:
@@ -2196,6 +2314,105 @@ class AppState:
             return _fmt_assertions(assertions)
         except Exception as exc:
             return f"Error loading assertions: {exc}"
+
+    def load_review_queue(self, matter_id: str) -> tuple[str, gr.update]:
+        """Return (html_render, dropdown_update) for the review queue.
+
+        The dropdown is keyed as "kind:id" strings so one selection
+        drives both verify and reject. Returning a gr.update keeps
+        the dropdown live without the handler needing to rewire it.
+        """
+        if not matter_id or matter_id == "—":
+            return (
+                "<div class='viz-empty'>No matter loaded.</div>",
+                gr.update(choices=[], value=None),
+            )
+        try:
+            queue = _run_async(self.backend().get_review_queue(matter_id, limit=100))
+        except Exception as exc:
+            return (
+                f"<div class='viz-empty'>Error loading review queue: {_escape(exc)}</div>",
+                gr.update(choices=[], value=None),
+            )
+        html = _fmt_review_queue(queue)
+        choices = _review_queue_choices(queue)
+        value = choices[0][1] if choices else None
+        return html, gr.update(choices=choices, value=value)
+
+    def do_verify_target(
+        self,
+        matter_id: str,
+        target_handle: str,
+        review_note: str,
+    ) -> str:
+        """target_handle is a "kind:id" string from the dropdown."""
+        if not matter_id or matter_id == "—":
+            return "⚠️ No matter loaded."
+        if not target_handle or ":" not in target_handle:
+            return "⚠️ Select an item from the review queue first."
+        kind, tid = target_handle.split(":", 1)
+        try:
+            _run_async(self.backend().verify_target(
+                matter_id, kind, tid,
+                reviewed_by_kind="user",
+                reviewed_by_id="ui",
+                review_note=(review_note or "").strip() or None,
+            ))
+        except ValueError as exc:
+            return f"⚠️ Cannot verify: {exc}"
+        except Exception as exc:
+            return f"⚠️ Verify failed: {exc}"
+        return f"✅ Verified {kind} — queue refreshed."
+
+    def do_reject_target(
+        self,
+        matter_id: str,
+        target_handle: str,
+        rejection_reason: str,
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "⚠️ No matter loaded."
+        if not target_handle or ":" not in target_handle:
+            return "⚠️ Select an item from the review queue first."
+        reason = (rejection_reason or "").strip()
+        if not reason:
+            return "⚠️ Rejection needs a reason — explain why it's wrong."
+        kind, tid = target_handle.split(":", 1)
+        try:
+            _run_async(self.backend().reject_target(
+                matter_id, kind, tid,
+                rejection_reason=reason,
+                reviewed_by_kind="user",
+                reviewed_by_id="ui",
+            ))
+        except ValueError as exc:
+            return f"⚠️ Cannot reject: {exc}"
+        except Exception as exc:
+            return f"⚠️ Reject failed: {exc}"
+        return f"✅ Rejected {kind} — downstream evidence moved to stale."
+
+    def do_bulk_verify_by_document(
+        self,
+        matter_id: str,
+        document_ref: str,
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "⚠️ No matter loaded."
+        ref = (document_ref or "").strip()
+        if not ref:
+            return "⚠️ Enter a document name or path."
+        try:
+            ids = _run_async(self.backend().bulk_verify_by_document(
+                matter_id, ref,
+                reviewed_by_kind="user", reviewed_by_id="ui",
+            ))
+        except ValueError as exc:
+            return f"⚠️ Bulk verify rejected: {exc}"
+        except Exception as exc:
+            return f"⚠️ Bulk verify failed: {exc}"
+        if not ids:
+            return f"ℹ️ No candidate facts matched '{ref}'."
+        return f"✅ Verified {len(ids)} fact(s) sourced from {ref}."
 
     def load_gaps(self, matter_id: str) -> tuple[str, str]:
         """Return (gaps_and_steering_markdown, top_redirect_issue_id).
@@ -2892,6 +3109,69 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 correction_btn = gr.Button("Apply Correction", variant="primary")
                 correction_result = gr.Textbox(label="Result", interactive=False)
 
+        # ==================================================================
+        # REVIEW INBOX — what AI extractions need the attorney's sign-off
+        # ==================================================================
+
+        with gr.Accordion(
+            "Review Inbox — findings awaiting your sign-off",
+            open=False,
+        ):
+            gr.Markdown(
+                "Irys flags every AI-extracted finding as a **candidate** "
+                "until you verify it. Proof-critical findings, contradicted "
+                "facts, and issue-linked evidence appear first. "
+                "Verify what's right, reject what's wrong — rejected findings "
+                "are removed from clean synthesis and their downstream "
+                "evidence is marked stale immediately."
+            )
+            review_queue_html = gr.HTML(
+                "<div class='viz-empty'>Run an investigation to populate the review queue.</div>"
+            )
+            refresh_review_btn = gr.Button("Refresh review queue", variant="secondary", size="sm")
+
+            gr.Markdown("---")
+            gr.Markdown("#### Verify or reject a finding")
+            review_target = gr.Dropdown(
+                label="Pick a finding from the queue above",
+                choices=[],
+                value=None,
+                allow_custom_value=False,
+            )
+            with gr.Row():
+                verify_note = gr.Textbox(
+                    label="Verification note (optional)",
+                    placeholder="e.g. Confirmed in signed MSA §4.2",
+                    scale=4,
+                )
+                verify_btn = gr.Button("✓ Verify", variant="primary", scale=1, min_width=120)
+            with gr.Row():
+                reject_reason = gr.Textbox(
+                    label="Rejection reason (required)",
+                    placeholder="e.g. Misread — the contract says 30 days, not 15",
+                    scale=4,
+                )
+                reject_btn = gr.Button("✗ Reject", variant="stop", scale=1, min_width=120)
+            review_action_result = gr.Markdown("")
+
+            gr.Markdown("---")
+            gr.Markdown("#### Bulk verify a whole document")
+            gr.Markdown(
+                "When you've reviewed an entire contract or pleading, "
+                "approve every candidate fact from it in one action."
+            )
+            with gr.Row():
+                bulk_doc_ref = gr.Textbox(
+                    label="Document name or path",
+                    placeholder="e.g. contracts/msa.pdf  or  msa.pdf",
+                    scale=4,
+                )
+                bulk_verify_btn = gr.Button(
+                    "Verify all from document", variant="primary",
+                    scale=1, min_width=180,
+                )
+            bulk_verify_result = gr.Markdown("")
+
         with gr.Accordion("Financials — payments, damages, and numeric disputes", open=False):
             gr.Markdown(
                 "Invoices, payments, damages claims, and numeric conflicts — "
@@ -3327,6 +3607,77 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=_correct_and_refresh,
             inputs=[matter_id_box, correction_assertion_id, correction_new_state, correction_reason],
             outputs=[correction_result, assertions_md, issues_md, overview_md],
+        )
+
+        # --- Review Inbox wiring ---
+        refresh_review_btn.click(
+            fn=state.load_review_queue,
+            inputs=[matter_id_box],
+            outputs=[review_queue_html, review_target],
+        )
+
+        def _verify_and_refresh(mid, target, note):
+            result = state.do_verify_target(mid, target, note)
+            queue_html, dropdown_update = state.load_review_queue(mid)
+            return (
+                result,
+                queue_html,
+                dropdown_update,
+                # Downstream panels depend on verification state.
+                state.load_assertions(mid),
+                state.load_issues(mid),
+                state.load_overview(mid),
+                "",  # clear the note field
+            )
+
+        verify_btn.click(
+            fn=_verify_and_refresh,
+            inputs=[matter_id_box, review_target, verify_note],
+            outputs=[
+                review_action_result, review_queue_html, review_target,
+                assertions_md, issues_md, overview_md, verify_note,
+            ],
+        )
+
+        def _reject_and_refresh(mid, target, reason):
+            result = state.do_reject_target(mid, target, reason)
+            queue_html, dropdown_update = state.load_review_queue(mid)
+            return (
+                result,
+                queue_html,
+                dropdown_update,
+                state.load_assertions(mid),
+                state.load_issues(mid),
+                state.load_overview(mid),
+                "",  # clear the reason field
+            )
+
+        reject_btn.click(
+            fn=_reject_and_refresh,
+            inputs=[matter_id_box, review_target, reject_reason],
+            outputs=[
+                review_action_result, review_queue_html, review_target,
+                assertions_md, issues_md, overview_md, reject_reason,
+            ],
+        )
+
+        def _bulk_verify_doc_and_refresh(mid, doc_ref):
+            result = state.do_bulk_verify_by_document(mid, doc_ref)
+            queue_html, dropdown_update = state.load_review_queue(mid)
+            return (
+                result, queue_html, dropdown_update,
+                state.load_assertions(mid),
+                state.load_issues(mid),
+                state.load_overview(mid),
+            )
+
+        bulk_verify_btn.click(
+            fn=_bulk_verify_doc_and_refresh,
+            inputs=[matter_id_box, bulk_doc_ref],
+            outputs=[
+                bulk_verify_result, review_queue_html, review_target,
+                assertions_md, issues_md, overview_md,
+            ],
         )
 
         # --- Steering: redirect uses current run_id automatically ---

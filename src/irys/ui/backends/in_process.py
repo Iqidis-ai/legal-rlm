@@ -494,6 +494,72 @@ class InProcessBackend(UIBackend):
         return model.list_llm_calls(run_id=run_id, limit=limit)
 
     # ------------------------------------------------------------------ #
+    # P0.3 Review Queue — attorney review workflow (SO-3)                 #
+    # ------------------------------------------------------------------ #
+
+    async def get_review_queue(
+        self, matter_id: str, limit: int = 50, offset: int = 0,
+        target_kind: Optional[str] = None,
+    ) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.get_review_queue(
+            limit=limit, offset=offset, target_kind=target_kind,
+        )
+
+    async def verify_target(
+        self, matter_id: str, target_kind: str, target_id: str,
+        *, reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
+    ) -> str:
+        model = self._get_matter_model(matter_id)
+        return model.verify_target(
+            target_kind, target_id,
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+            review_note=review_note,
+            review_scope=review_scope,
+        )
+
+    async def reject_target(
+        self, matter_id: str, target_kind: str, target_id: str,
+        *, rejection_reason: str,
+        reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+    ) -> str:
+        model = self._get_matter_model(matter_id)
+        return model.reject_target(
+            target_kind, target_id,
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+            rejection_reason=rejection_reason,
+            review_note=review_note,
+        )
+
+    async def bulk_verify_by_document(
+        self, matter_id: str, document_ref: str,
+        *, reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+    ) -> list[str]:
+        model = self._get_matter_model(matter_id)
+        return model.bulk_verify_by_document(
+            document_ref,
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+        )
+
+    async def get_verification_events(
+        self, matter_id: str, target_kind: Optional[str] = None,
+        target_id: Optional[str] = None, limit: int = 50,
+    ) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.get_verification_events(
+            target_kind=target_kind, target_id=target_id, limit=limit,
+        )
+
+    # ------------------------------------------------------------------ #
     # Streaming investigation (InProcessBackend-specific)                 #
     # ------------------------------------------------------------------ #
 
