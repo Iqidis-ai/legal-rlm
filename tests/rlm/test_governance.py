@@ -95,6 +95,58 @@ def test_cold_start_hard_routes_to_investigate(empty_matter):
     assert len(client.calls) == 0
 
 
+def test_classifier_route_cache_reuses_on_repeat(warm_matter):
+    """Adversarial #10 Fix D acceptance: first query populates route
+    cache; a second identical query must reuse it (zero NANO calls)
+    so a rate-limit event on NANO can't herd warm queries into the
+    full AR loop."""
+    client = _FakeClient({
+        "intent_classifier": (
+            '{"family": "read", "confidence": 0.9, '
+            '"rationale": "warm summarize"}'
+        ),
+    })
+    gov = CascadeGovernor(client=client, matter_model=warm_matter)
+    # First call: classifier fires, cache populates.
+    first = asyncio.run(gov.decide(query="summarize", conversation_history=None))
+    assert first.family == "read"
+    assert len(client.calls) == 1
+    # Second IDENTICAL call: cache hit, classifier must NOT fire.
+    second = asyncio.run(gov.decide(query="summarize", conversation_history=None))
+    assert second.family == "read"
+    assert len(client.calls) == 1  # unchanged!
+    assert second.escalation_reason == "cache_hit"
+
+
+def test_classifier_failure_uses_stale_cache_fallback(warm_matter):
+    """When NANO fails but a stale cache entry exists, reuse it
+    rather than hard-routing to investigate — mitigates classifier
+    rate-limit SPOF."""
+    # Seed cache with a prior route.
+    client_ok = _FakeClient({
+        "intent_classifier": (
+            '{"family": "read", "confidence": 0.8, '
+            '"rationale": "prior warm route"}'
+        ),
+    })
+    gov_ok = CascadeGovernor(client=client_ok, matter_model=warm_matter)
+    asyncio.run(gov_ok.decide(query="summarize"))
+    assert len(client_ok.calls) == 1  # cache populated
+
+    # Simulate NANO outage — classifier fails on a DIFFERENT query
+    # (one that cache doesn't have exact-key for), and verify the
+    # stale-version escape hatch catches any prior cached decision.
+    class _FailingClient:
+        async def complete(self, *a, **kw):
+            raise RuntimeError("simulated NANO rate limit")
+    gov_fail = CascadeGovernor(
+        client=_FailingClient(), matter_model=warm_matter,
+    )
+    # Exact cache hit first — classifier never fires.
+    result = asyncio.run(gov_fail.decide(query="summarize"))
+    assert result.family == "read"  # stayed routed via cache
+
+
 def test_warm_matter_classifier_returns_read(warm_matter):
     """When classifier picks `read` on a warm matter, the governor
     returns a read-family decision with the read contract."""

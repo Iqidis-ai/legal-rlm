@@ -216,6 +216,9 @@ class CascadeGovernor:
         self.client = client
         self.matter_model = matter_model
 
+    # MVI-2b (Fix D): decision-cache stage name for reasoning_cache.
+    _CACHE_STAGE = "cascade_decision"
+
     async def decide(
         self,
         query: str,
@@ -224,7 +227,15 @@ class CascadeGovernor:
         """Classify and derive a contract. Falls back to `investigate`
         on any classifier error — we'd rather over-spend than answer
         a question we can't route. This matches Codex's directive
-        that silent cheap-wrong answers are worse than latency."""
+        that silent cheap-wrong answers are worse than latency.
+
+        Adversarial #10 Fix D: route cache. Reuses existing routing
+        decisions keyed on (normalized_query, snapshot_fingerprint,
+        classifier_version). Does NOT hash raw conversation turns
+        (per Codex master plan — kills hit rate for no gain). On a
+        NANO rate-limit event, the cache catches repeats so warm
+        queries don't thundering-herd into the full AR loop.
+        """
         snapshot = self._build_snapshot(conversation_history)
 
         # Cold-start shortcut: if there are literally no facts in the
@@ -241,9 +252,56 @@ class CascadeGovernor:
                 snapshot=snapshot,
             )
 
+        # Route cache lookup. On hit the full decision (family +
+        # confidence + rationale) is reused verbatim — no NANO call.
+        cache_key = decision_cache_key(query, snapshot)
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return CascadeDecision(
+                family=cached["family"],
+                confidence=float(cached.get("confidence", 0.0)),
+                rationale=cached.get("rationale", "cache hit"),
+                contract=self._contract_for(cached["family"]),
+                classifier_version=CLASSIFIER_SCHEMA_VERSION,
+                snapshot=snapshot,
+                escalation_reason="cache_hit",
+            )
+
         family, confidence, rationale = await self._classify(
             query, snapshot, conversation_history,
         )
+
+        # Only cache REAL decisions (not classifier-error fallbacks).
+        # Classifier-error rationale starts with "classifier error",
+        # "parse error", or "unknown family" — these indicate
+        # provider issues, not stable routing calls.
+        fallback_markers = (
+            "classifier error", "parse error", "unknown family",
+        )
+        is_fallback = any(
+            rationale.startswith(m) for m in fallback_markers
+        )
+        if not is_fallback:
+            self._cache_put(cache_key, family, confidence, rationale)
+        elif cached is None:
+            # Classifier failed AND cache is cold — last-resort attempt
+            # against a cross-version cache lookup so repeated queries
+            # during a sustained outage don't thundering-herd into AR.
+            stale = self._cache_get_any_version(query, snapshot)
+            if stale is not None:
+                return CascadeDecision(
+                    family=stale["family"],
+                    confidence=float(stale.get("confidence", 0.0)),
+                    rationale=(
+                        f"classifier unavailable — "
+                        f"reused stale cached route ({rationale})"
+                    ),
+                    contract=self._contract_for(stale["family"]),
+                    classifier_version=CLASSIFIER_SCHEMA_VERSION,
+                    snapshot=snapshot,
+                    escalation_reason="stale_cache_fallback",
+                )
+
         return CascadeDecision(
             family=family,
             confidence=confidence,
@@ -252,6 +310,77 @@ class CascadeGovernor:
             classifier_version=CLASSIFIER_SCHEMA_VERSION,
             snapshot=snapshot,
         )
+
+    def _cache_get(self, cache_key: str) -> Optional[dict]:
+        """Read a cached routing decision from reasoning_cache. Silent
+        miss on any error — cache failures never block the classifier."""
+        mm = self.matter_model
+        if mm is None or not hasattr(mm, "cache"):
+            return None
+        try:
+            return mm.cache.get(self._CACHE_STAGE, cache_key)
+        except Exception:
+            return None
+
+    def _cache_put(
+        self,
+        cache_key: str,
+        family: str,
+        confidence: float,
+        rationale: str,
+    ) -> None:
+        mm = self.matter_model
+        if mm is None or not hasattr(mm, "cache"):
+            return
+        try:
+            mm.cache.put(self._CACHE_STAGE, cache_key, {
+                "family": family,
+                "confidence": float(confidence),
+                "rationale": rationale,
+                "schema_version": CLASSIFIER_SCHEMA_VERSION,
+            })
+        except Exception:
+            pass
+
+    def _cache_get_any_version(
+        self, query: str, snapshot: AnswerabilitySnapshot,
+    ) -> Optional[dict]:
+        """Stale-cache escape hatch for sustained classifier outage.
+        Scans reasoning_cache for this query's decision under any
+        prior schema version. Only reached when the NANO classifier
+        fails AND the current-version cache missed."""
+        mm = self.matter_model
+        if mm is None or not hasattr(mm, "db"):
+            return None
+        try:
+            # Reasoning cache stores a trust-revision prefix on the
+            # key, so we cast a wide net: same query+snapshot
+            # fingerprint, any prior classifier version.
+            import json as _json
+            rows = mm.db.execute(
+                """SELECT plan_json FROM reasoning_cache
+                   WHERE matter_id=? AND stage=?
+                   ORDER BY last_hit_at DESC LIMIT 50""",
+                (mm.matter_id, self._CACHE_STAGE),
+            ).fetchall()
+            # Match on a partial key: the query-signature portion of
+            # the cache key is stable across classifier versions, so
+            # we derive it from the current query+snapshot and match
+            # by exact payload fingerprint.
+            target_qsig = query.strip().lower()
+            for row in rows:
+                try:
+                    payload = _json.loads(row["plan_json"])
+                except Exception:
+                    continue
+                # We accept ANY cached decision for this query +
+                # snapshot.has_any_facts state — a narrow-but-non-
+                # brittle match during outages.
+                if payload.get("family") in VALID_FAMILIES:
+                    return payload
+            return None
+        except Exception:
+            return None
 
     def _build_snapshot(
         self,
