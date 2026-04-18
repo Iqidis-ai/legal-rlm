@@ -725,6 +725,65 @@ def test_scenario_handler_unparseable_escalates(warm_matter):
     assert result.escalation_needed is True
 
 
+def test_steer_target_matcher_specific_tokens_rank_correctly():
+    """Adversarial #10 Fix F acceptance: with multiple same-topic
+    assertions, a correction containing old_value + a specific token
+    (date/amount) must rank the correct assertion first.
+
+    Scenario: two assertions mention "April" and "payment" and
+    "notice". One says "April 15" (the actual notice date), the
+    other says "April 20" (the invoice due date). User says:
+    "Actually the April 15 date was the notice date, not the
+    invoice due date." Old matcher would tie or pick wrong. New
+    matcher must rank the "April 15" assertion first because it
+    contains both old_value words AND the specific date token.
+    """
+    m = MatterModel.open_in_memory()
+    rid = m.start_run("seed")
+    ids = []
+    for prop in [
+        "invoice due date was April 20 under the payment terms",
+        "notice to cure was delivered on April 15 per clause 12",
+        "payment schedule includes monthly installments of $5000",
+    ]:
+        aid, _ = m.record_assertion(
+            AssertionCandidate(
+                proposition_text=prop,
+                speech_act=SpeechAct.ALLEGED,
+                source_role=SourceRole.OPERATIVE,
+                document_id="msa.pdf",
+            ),
+            run_id=rid,
+        )
+        ids.append(aid)
+    m.complete_run(rid)
+
+    client = _FakeClient({
+        "steer_parse": (
+            '{"action": "correct_assertion", '
+            '"target_hint": "April 15 notice date", '
+            '"old_value": "invoice due date", '
+            '"new_value": "notice date", '
+            '"rationale": "date correction"}'
+        ),
+    })
+    handler = SteerFamilyHandler(matter_model=m, client=client)
+    result = asyncio.run(handler.run(
+        query=(
+            "Actually the April 15 date was the notice date, "
+            "not the invoice due date."
+        ),
+        contract=CascadeGovernor._contract_for("steer"),
+    ))
+    assert result.action == "correct_assertion"
+    assert len(result.candidates) >= 1
+    top_text = str(result.candidates[0].get("proposition_text", ""))
+    # The top candidate must contain "April 15" (the specific token
+    # from the correction) — NOT "April 20".
+    assert "April 15" in top_text
+    assert "April 20" not in top_text
+
+
 def test_steer_handler_reject_target_with_candidates(warm_matter):
     """`reject_target` action looks up assertions by substring."""
     client = _FakeClient({

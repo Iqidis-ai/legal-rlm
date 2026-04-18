@@ -1533,7 +1533,9 @@ class SteerFamilyHandler:
                 escalation_reason="parse failed or ambiguous mutation intent",
             )
 
-        candidates = self._find_candidates(action, target_hint)
+        candidates = self._find_candidates(
+            action, target_hint, old_value, new_value,
+        )
         rendered = self._render_preview(
             action=action,
             target_hint=target_hint,
@@ -1570,18 +1572,34 @@ class SteerFamilyHandler:
             return {"action": "other"}
         return parsed if isinstance(parsed, dict) else {"action": "other"}
 
-    def _find_candidates(self, action: str, target_hint: str) -> list[dict]:
+    def _find_candidates(
+        self,
+        action: str,
+        target_hint: str,
+        old_value: Optional[str] = None,
+        new_value: Optional[str] = None,
+    ) -> list[dict]:
         """Find up to 5 best-match rows to preview for the user.
-        Different actions search different stores."""
-        if not target_hint:
+        Different actions search different stores.
+
+        Adversarial #10 Fix F: scoring factors in old_value / new_value
+        and specific tokens (dates, numeric amounts) so that
+        'April 15' / '$50' style corrections rank the correct
+        assertion above siblings that happen to share generic words.
+        """
+        if not target_hint and not old_value and not new_value:
             return []
-        needle = target_hint.lower()
         try:
             if action in {"correct_assertion", "reject_target"}:
-                # Match against recent assertions by substring.
                 rows = self.matter_model.assertions.list_recent(limit=120)
                 scored = [
-                    (self._score(r.get("proposition_text", ""), needle), r)
+                    (
+                        self._score_assertion(
+                            r.get("proposition_text", ""),
+                            target_hint, old_value, new_value,
+                        ),
+                        r,
+                    )
                     for r in rows
                 ]
                 scored = [s for s in scored if s[0] > 0]
@@ -1590,29 +1608,108 @@ class SteerFamilyHandler:
             if action == "set_source_role":
                 rows = self.matter_model.list_reviewable_documents()
                 scored = [
-                    (self._score(r.get("path", ""), needle), r)
+                    (
+                        self._score_assertion(
+                            r.get("path", ""),
+                            target_hint, old_value, new_value,
+                        ),
+                        r,
+                    )
                     for r in rows
                 ]
                 scored = [s for s in scored if s[0] > 0]
                 scored.sort(key=lambda t: -t[0])
                 return [r for _, r in scored[:5]]
-            # add_assumption has no pre-existing target to match; leave
-            # candidates empty so the UI just echoes the hint + values.
+            # add_assumption has no pre-existing target to match.
             return []
         except Exception:
             return []
 
-    @staticmethod
-    def _score(text: str, needle: str) -> int:
-        """Dumb substring scorer — count occurrences of needle words
-        in text. Good enough for the preview; not a retrieval layer."""
-        if not text or not needle:
+    # Token kinds used in specific-match scoring. Dates and numeric
+    # amounts get higher weights because they're what distinguishes
+    # "April 15" from "April 20" on otherwise-identical sibling
+    # assertions.
+    _DATE_PATTERNS = [
+        # YYYY-MM-DD
+        r"\b\d{4}-\d{2}-\d{2}\b",
+        # "April 15" / "Apr 15" / "March 3"
+        r"\b(?:January|February|March|April|May|June|July|August|"
+        r"September|October|November|December|Jan|Feb|Mar|Apr|"
+        r"Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+\d{1,2}(?:,?\s+\d{4})?\b",
+        # "15 April" / "15th April"
+        r"\b\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|"
+        r"May|June|July|August|September|October|November|December|"
+        r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\b",
+    ]
+    _NUMBER_PATTERN = r"\$?\d[\d,]*(?:\.\d+)?"
+
+    @classmethod
+    def _specific_tokens(cls, *fragments: Optional[str]) -> set[str]:
+        """Extract date and numeric tokens from any of the fragments.
+        Returns a set of lowercased tokens worth matching on. Empty
+        when no specific tokens found."""
+        import re as _re
+        out: set[str] = set()
+        for frag in fragments:
+            if not frag:
+                continue
+            text = str(frag)
+            for pat in cls._DATE_PATTERNS:
+                for m in _re.findall(pat, text, flags=_re.IGNORECASE):
+                    out.add(m.lower().strip())
+            for m in _re.findall(cls._NUMBER_PATTERN, text):
+                token = m.strip()
+                # Require at least 2 chars so noise like "1" doesn't
+                # flood the signal.
+                if len(token) >= 2:
+                    out.add(token.lower())
+        return out
+
+    @classmethod
+    def _score_assertion(
+        cls,
+        text: str,
+        target_hint: Optional[str],
+        old_value: Optional[str] = None,
+        new_value: Optional[str] = None,
+    ) -> int:
+        """Rank assertions by weighted token overlap.
+
+        Weights:
+          - word overlap with target_hint: 1 point per word
+          - word overlap with old_value: 2 points per word (this is
+            what the user is explicitly trying to correct)
+          - specific token (date / amount) match: 5 points per token
+            (heavy — distinguishes sibling assertions that only
+            differ by date or amount)
+        new_value is NOT used for scoring: the user is saying the
+        text SHOULD become new_value; it doesn't currently contain it.
+        """
+        if not text:
             return 0
         text_l = text.lower()
-        return sum(
-            1 for word in needle.split()
-            if len(word) > 2 and word in text_l
-        )
+
+        score = 0
+        # Generic-word overlap with target hint.
+        for word in (target_hint or "").split():
+            if len(word) > 2 and word.lower() in text_l:
+                score += 1
+        # Higher weight on old_value words — what the user is correcting.
+        for word in (old_value or "").split():
+            if len(word) > 2 and word.lower() in text_l:
+                score += 2
+        # Specific tokens (dates + amounts) — heavy weight.
+        tokens = cls._specific_tokens(target_hint, old_value)
+        for tok in tokens:
+            if tok in text_l:
+                score += 5
+        return score
+
+    # Back-compat alias — kept so external callers that imported the
+    # old `_score` still work.
+    @classmethod
+    def _score(cls, text: str, needle: str) -> int:
+        return cls._score_assertion(text, needle)
 
     @staticmethod
     def _render_preview(
