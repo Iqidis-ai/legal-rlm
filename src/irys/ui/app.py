@@ -3048,33 +3048,54 @@ class AppState:
         results = _run_async(_gather())
         queue, counts, assertions, issues, overview = results[:5]
 
-        # Defensive: gather captures exceptions per-task so one slow
-        # DB read doesn't nuke the whole panel refresh.
-        def _safe(v, fallback):
-            return fallback if isinstance(v, BaseException) else v
+        # One slow/failed read should not nuke the whole panel refresh
+        # (graceful degradation), but per codex_opt2_review.txt we must
+        # NOT silently substitute empty states — an empty queue renders
+        # as "All findings reviewed", a false-clean UI. Render an
+        # explicit error block per failed panel instead.
+        def _err_html(label: str, exc: BaseException) -> str:
+            return (
+                "<div class='viz-empty'>"
+                f"Couldn't load {_escape(label)}: {_escape(exc)}. "
+                "Try the panel's own Refresh button."
+                "</div>"
+            )
 
-        queue = _safe(queue, [])
-        counts = _safe(counts, {"total": 0, "by_bucket": {}})
-        assertions = _safe(assertions, [])
-        issues = _safe(issues, [])
-        overview = _safe(overview, {})
+        if isinstance(queue, BaseException):
+            queue_html = _err_html("the review queue", queue)
+            dropdown = gr.update(choices=[], value=None)
+        else:
+            queue_html = _fmt_review_queue(queue)
+            choices = _review_queue_choices(queue)
+            dropdown_value = choices[0][1] if choices else None
+            dropdown = gr.update(choices=choices, value=dropdown_value)
 
-        queue_html = _fmt_review_queue(queue)
-        choices = _review_queue_choices(queue)
-        dropdown_value = choices[0][1] if choices else None
-        dropdown = gr.update(choices=choices, value=dropdown_value)
-
-        total = int(counts.get("total", 0) or 0)
-        bucket_counts = {
-            int(k): int(v) for k, v in (counts.get("by_bucket") or {}).items()
-        }
-        badge_html = _fmt_review_count_badge(total, bucket_counts)
+        if isinstance(counts, BaseException):
+            badge_html = (
+                "<div style='padding:8px 12px;border-radius:6px;"
+                "background:#fee2e2;color:#991b1b;font-size:12px;"
+                "margin-bottom:8px;border-left:3px solid #b91c1c;'>"
+                f"Badge unavailable: {_escape(counts)}. "
+                "Hit refresh to retry."
+                "</div>"
+            )
+        else:
+            total = int(counts.get("total", 0) or 0)
+            bucket_counts = {
+                int(k): int(v) for k, v in (counts.get("by_bucket") or {}).items()
+            }
+            badge_html = _fmt_review_count_badge(total, bucket_counts)
 
         if kind_tid is not None:
             kind, tid = kind_tid
-            prov = _safe(results[5], [])
-            events = _safe(results[6], [])
-            drawer_html = _fmt_source_drawer(kind, tid, prov, events)
+            prov, events = results[5], results[6]
+            if isinstance(prov, BaseException) or isinstance(events, BaseException):
+                drawer_html = _err_html(
+                    "source & history",
+                    prov if isinstance(prov, BaseException) else events,
+                )
+            else:
+                drawer_html = _fmt_source_drawer(kind, tid, prov, events)
         else:
             drawer_html = (
                 "<div class='viz-empty'>Pick a finding and click "
@@ -3082,14 +3103,30 @@ class AppState:
                 "came from and every review action on it.</div>"
             )
 
+        assertions_html = (
+            _err_html("assertions", assertions)
+            if isinstance(assertions, BaseException)
+            else _fmt_assertions(assertions)
+        )
+        issues_html = (
+            _err_html("issues", issues)
+            if isinstance(issues, BaseException)
+            else _fmt_issues_panel(issues)
+        )
+        overview_html = (
+            _err_html("the overview", overview)
+            if isinstance(overview, BaseException)
+            else _fmt_overview_panel(overview)
+        )
+
         return {
             "queue_html": queue_html,
             "dropdown": dropdown,
             "drawer_html": drawer_html,
             "badge_html": badge_html,
-            "assertions_html": _fmt_assertions(assertions),
-            "issues_html": _fmt_issues_panel(issues),
-            "overview_html": _fmt_overview_panel(overview),
+            "assertions_html": assertions_html,
+            "issues_html": issues_html,
+            "overview_html": overview_html,
         }
 
     def load_source_drawer(

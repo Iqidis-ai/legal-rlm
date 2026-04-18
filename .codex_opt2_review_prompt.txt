@@ -1,0 +1,59 @@
+Review commits 4ecf49d + a2fdb2f on branch SebihSpecial of the Irys RLM repo.
+
+Context: OPT-2 landed. The review/verify/reject UI path used to:
+  (a) pull the full 500-row review queue three times per action
+      (pre-snapshot, post-snapshot, badge bucket count)
+  (b) refresh seven panels via seven sequential `_run_async` spawns.
+
+Now:
+  (a) a new `VerificationStateStore.count_review_queue()` returns
+      {total, by_bucket} via one GROUP BY — no per-row subqueries.
+  (b) `AppState.load_post_review_snapshot()` awaits all seven reads
+      concurrently under a single `_run_async`/`asyncio.gather`, with
+      per-task exception capture.
+
+Read:
+- `src/irys/matter/graph.py` around the new `count_review_queue()`
+  method (grep that name — it sits just above `bulk_set_status`).
+- `src/irys/matter/matter.py` and `src/irys/ui/backends/in_process.py`
+  for the two facade wrappers.
+- `src/irys/service/api.py` — the new
+  GET /matter/{id}/review-queue/count endpoint.
+- `src/irys/ui/app.py` — `load_post_review_snapshot`,
+  `_fmt_review_count_badge`, and the updated `_verify_and_refresh` /
+  `_reject_and_refresh` handlers.
+
+You are the Correctness Engineer + Performance Engineer (Tier 1).
+Judge only these two commits. Check specifically:
+
+1. SQL equivalence: does the priority_bucket CASE in
+   `count_review_queue()` produce the SAME bucket assignments as
+   `review_queue()`? The full version has a `predicate_issue` CTE that
+   feeds `pi.priority`; the count version dropped it because the
+   bucket 3 path doesn't depend on priority, only on kind. Verify
+   that's true and that no row gets a different bucket under the
+   count method.
+
+2. Dropdown/drawer correctness: `load_post_review_snapshot` resets
+   dropdown value to `choices[0][1] if choices else None` after every
+   verify/reject. Is that the same UX as the original (which also
+   reset)? Does the drawer correctly show the prior_target AFTER the
+   write when that target still exists in provenance/events?
+
+3. asyncio.gather correctness: the snapshot passes matter_id to every
+   backend call. If `_get_matter_model_or_404` is called concurrently
+   from multiple gather tasks on the same matter_id, is there a race
+   (e.g., shared cache initialization)?
+
+4. Exception hiding: we use `return_exceptions=True` with per-field
+   `_safe(v, fallback)` fallbacks. Does that reintroduce the failure
+   laundering pattern the previous Codex round flagged? Trade-off: we
+   want one slow read not to nuke the whole refresh, but we also want
+   errors to be visible.
+
+5. Anything else that looks wrong under concurrent use, or any missing
+   index that would make count_review_queue slow on a matter with
+   20,000 candidates.
+
+Produce a punch list (Must fix / Should fix / Nice). Under 500 words.
+File:line citations required.

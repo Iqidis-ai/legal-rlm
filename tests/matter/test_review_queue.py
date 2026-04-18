@@ -106,6 +106,71 @@ def test_review_queue_target_kind_filter(model):
     assert all(r["target_kind"] == "quant_fact" for r in only_quants)
 
 
+def test_count_review_queue_bucket_parity(model):
+    """OPT-2a: `count_review_queue()` drops the per-row display
+    subqueries and the `predicate_issue` CTE. Every priority_bucket
+    assignment from the lightweight count must still match the
+    full-queue bucket for the SAME row — otherwise the sidebar badge
+    would disagree with the inbox it links to.
+
+    Seeds one row per bucket type (gap-blocked, disputed, issue-linked,
+    predicate, quant, authority, other) and asserts the two paths agree.
+    """
+    from irys.matter.enums import GapType
+    adapter, _ = _adapter(model)
+
+    # Bucket 0: gap-blocked issue-linked assertion
+    iid_gap, _ = model.issues.upsert_issue(
+        "Gap-blocked claim", IssueType.CLAIM, materiality=0.9,
+    )
+    adapter.record_fact(
+        "Gap-support", "doc.pdf",
+        issue_id=iid_gap, issue_link_type="supports",
+    )
+    model.gaps.record(
+        gap_type=GapType.MISSING_ISSUE_PREDICATE,
+        description="missing predicate",
+        affected_type="issue", affected_id=iid_gap,
+        materiality=0.9,
+    )
+
+    # Bucket 2: issue-linked assertion, no gap
+    iid_ok, _ = model.issues.upsert_issue(
+        "Ok claim", IssueType.CLAIM, materiality=0.5,
+    )
+    adapter.record_fact(
+        "Ok-support", "doc.pdf",
+        issue_id=iid_ok, issue_link_type="supports",
+    )
+
+    # Bucket 3: issue predicate
+    model.issues.add_predicate(iid_ok, description="ok predicate")
+
+    # Bucket 4: quant
+    adapter.record_quant(quant_kind="amount", raw_text="$9", amount_value=9.0)
+
+    # Bucket 5: authority
+    model.authority.upsert(
+        citation="Smith v. Jones, 1 F.3d 100 (9th Cir. 2020)",
+        authority_type="case",
+    )
+
+    full = model.get_review_queue(limit=100)
+    counts = model.count_review_queue()
+
+    # Recompute bucket totals from the full queue and compare.
+    from collections import Counter
+    full_buckets = Counter(
+        int(r["priority_bucket"]) for r in full
+    )
+    count_buckets = {int(k): int(v) for k, v in counts["by_bucket"].items()}
+    assert full_buckets == Counter(count_buckets), (
+        f"bucket distributions disagree — full={dict(full_buckets)} "
+        f"count={count_buckets}"
+    )
+    assert counts["total"] == len(full)
+
+
 # ---------------------------------------------------------------------------
 # verify_target / reject_target: audit events + proof recompute
 # ---------------------------------------------------------------------------
