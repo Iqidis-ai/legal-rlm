@@ -2059,6 +2059,19 @@ async def get_review_queue(
     }
 
 
+@app.get(
+    "/matter/{matter_id}/review-queue/count",
+    tags=["Review Queue"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_review_queue_count(matter_id: str):
+    """Lightweight count + priority-bucket distribution for the review
+    queue. Used by the sidebar badge and by verify/reject snapshots so
+    the UI doesn't re-fetch the full queue just to count rows."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.count_review_queue()
+
+
 @app.post(
     "/matter/{matter_id}/verify",
     tags=["Review Queue"],

@@ -367,6 +367,12 @@ class MatterModel:
             limit=limit, offset=offset, target_kind=target_kind,
         )
 
+    def count_review_queue(self) -> dict:
+        """Bucket-only counts for the sidebar badge and for verify/reject
+        toast sizing. Avoids pulling the full queue when only totals are
+        needed."""
+        return self.verification.count_review_queue()
+
     def _issues_affected_by_target(
         self, target_kind: str, target_id: str,
     ) -> list[str]:

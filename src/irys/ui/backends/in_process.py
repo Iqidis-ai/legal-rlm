@@ -571,6 +571,10 @@ class InProcessBackend(UIBackend):
             limit=limit, offset=offset, target_kind=target_kind,
         )
 
+    async def count_review_queue(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.count_review_queue()
+
     async def verify_target(
         self, matter_id: str, target_kind: str, target_id: str,
         *, reviewed_by_kind: str = "user",

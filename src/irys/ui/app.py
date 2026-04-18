@@ -2884,8 +2884,9 @@ class AppState:
         # verify often clears the assertion + its system-inferred edge
         # + its occurrence, so the queue drops by >1.
         try:
-            before = _run_async(self.backend().get_review_queue(matter_id, limit=500))
-            before_count = len(before)
+            before_count = _run_async(
+                self.backend().count_review_queue(matter_id)
+            ).get("total")
         except Exception:
             before_count = None
         try:
@@ -2902,8 +2903,9 @@ class AppState:
             return "⚠️ Verify didn't go through. Please try again."
         if before_count is not None:
             try:
-                after = _run_async(self.backend().get_review_queue(matter_id, limit=500))
-                after_count = len(after)
+                after_count = _run_async(
+                    self.backend().count_review_queue(matter_id)
+                ).get("total", 0)
                 cleared = max(0, before_count - after_count)
                 if cleared > 1 and kind == "assertion":
                     return (
@@ -2949,14 +2951,22 @@ class AppState:
     def load_review_count_badge(self, matter_id: str) -> str:
         """Small HTML chip showing how many findings are awaiting
         review, broken down by the top buckets. Renders quiet when
-        the queue is empty."""
+        the queue is empty.
+
+        Uses the lightweight count endpoint rather than pulling the
+        full 500-row queue just to bucket-count it — ~10× cheaper on
+        active matters (OPT-2)."""
         if not matter_id or matter_id == "—":
             return ""
         try:
-            queue = _run_async(self.backend().get_review_queue(matter_id, limit=500))
+            counts = _run_async(self.backend().count_review_queue(matter_id))
         except Exception:
             return ""
-        if not queue:
+        total = int(counts.get("total", 0) or 0)
+        bucket_counts = {
+            int(k): int(v) for k, v in (counts.get("by_bucket") or {}).items()
+        }
+        if total == 0:
             return (
                 "<div style='padding:8px 12px;border-radius:6px;"
                 "background:#dcfce7;color:#14532d;font-size:12px;"
@@ -2964,10 +2974,6 @@ class AppState:
                 "✓ All findings reviewed."
                 "</div>"
             )
-        bucket_counts: dict[int, int] = {}
-        for row in queue:
-            b = int(row.get("priority_bucket", 6) or 6)
-            bucket_counts[b] = bucket_counts.get(b, 0) + 1
         lines: list[str] = []
         for bucket in sorted(bucket_counts):
             label, color = _REVIEW_BUCKET_LABELS.get(
@@ -2984,7 +2990,7 @@ class AppState:
             "<div style='padding:8px 12px;border-radius:6px;"
             "background:#fef3c7;color:#78350f;font-size:12px;"
             "margin-bottom:8px;border-left:3px solid #b45309;'>"
-            f"<strong>{len(queue)} finding(s) need review.</strong> "
+            f"<strong>{total} finding(s) need review.</strong> "
             f"Open the <em>Review Inbox</em> below to verify or reject."
             f"<div style='margin-top:6px;'>{' '.join(lines)}</div>"
             "</div>"

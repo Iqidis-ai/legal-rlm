@@ -5788,6 +5788,86 @@ class VerificationStateStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def count_review_queue(self) -> dict:
+        """Lightweight count for the badge and for verify/reject toast
+        sizing. Returns {'total': int, 'by_bucket': {bucket: count}}.
+
+        The full `review_queue` runs ~4 correlated subqueries per row for
+        display text (proposition_text, quant_raw_text, etc.). The badge
+        and the pre/post verify snapshots only need integers, so this
+        variant drops the display subqueries and the ORDER BY, keeping
+        only the CTEs that drive the priority_bucket CASE. One query,
+        no per-row work — a ~10× cut on 500-row queues.
+        """
+        rows = self.db.execute(
+            """WITH assertion_issue AS (
+                   SELECT ee.source_id AS target_id,
+                          MAX(CASE WHEN g.id IS NOT NULL THEN 1 ELSE 0 END) AS has_gap,
+                          MAX(i.materiality * i.salience) AS max_priority
+                   FROM evidence_edge ee
+                   JOIN issue i ON i.id = ee.target_id
+                   LEFT JOIN gap_link gl ON gl.affected_type='issue' AND gl.affected_id=ee.target_id
+                   LEFT JOIN gap g ON g.id = gl.gap_id AND g.status='open'
+                                   AND g.gap_type='missing_issue_predicate'
+                   WHERE ee.matter_id=? AND ee.source_kind='assertion'
+                     AND ee.target_kind='issue' AND ee.active=1
+                     AND i.status='open'
+                     AND ee.relation_type IN ('supports','establishes','attacks','negates')
+                   GROUP BY ee.source_id
+               ),
+               edge_issue AS (
+                   SELECT ee.id AS target_id,
+                          CASE WHEN g.id IS NOT NULL THEN 1 ELSE 0 END AS has_gap,
+                          i.materiality * i.salience AS priority
+                   FROM evidence_edge ee
+                   JOIN issue i ON i.id = ee.target_id
+                   LEFT JOIN gap_link gl ON gl.affected_type='issue' AND gl.affected_id=ee.target_id
+                   LEFT JOIN gap g ON g.id = gl.gap_id AND g.status='open'
+                                   AND g.gap_type='missing_issue_predicate'
+                   WHERE ee.matter_id=? AND ee.target_kind='issue' AND ee.active=1
+                     AND i.status='open'
+                     AND ee.relation_type IN ('supports','establishes','attacks','negates')
+               ),
+               contradicted AS (
+                   SELECT DISTINCT a.id AS target_id
+                   FROM assertion a
+                   JOIN assertion_link al
+                     ON (al.src_assertion_id=a.id OR al.dst_assertion_id=a.id)
+                    AND al.link_type IN ('attacks','contradicts')
+                   WHERE a.matter_id=?
+               )
+               SELECT
+                   CASE
+                       WHEN vs.target_kind='assertion' AND ai.has_gap=1 THEN 0
+                       WHEN vs.target_kind='evidence_edge' AND ei.has_gap=1 THEN 0
+                       WHEN vs.target_kind='assertion' AND ct.target_id IS NOT NULL THEN 1
+                       WHEN vs.target_kind='assertion' AND ai.max_priority IS NOT NULL THEN 2
+                       WHEN vs.target_kind='evidence_edge' AND ei.priority IS NOT NULL THEN 2
+                       WHEN vs.target_kind='issue_predicate' THEN 3
+                       WHEN vs.target_kind='quant_fact' THEN 4
+                       WHEN vs.target_kind='authority' THEN 5
+                       ELSE 6
+                   END AS priority_bucket,
+                   COUNT(*) AS n
+               FROM verification_state vs
+               LEFT JOIN assertion_issue ai ON ai.target_id = vs.target_id
+                                            AND vs.target_kind='assertion'
+               LEFT JOIN edge_issue ei ON ei.target_id = vs.target_id
+                                       AND vs.target_kind='evidence_edge'
+               LEFT JOIN contradicted ct ON ct.target_id = vs.target_id
+                                         AND vs.target_kind='assertion'
+               WHERE vs.matter_id=? AND vs.status='candidate'
+               GROUP BY priority_bucket""",
+            (
+                self.matter_id,  # assertion_issue
+                self.matter_id,  # edge_issue
+                self.matter_id,  # contradicted
+                self.matter_id,  # outer
+            ),
+        ).fetchall()
+        by_bucket = {int(r["priority_bucket"]): int(r["n"]) for r in rows}
+        return {"total": sum(by_bucket.values()), "by_bucket": by_bucket}
+
     def bulk_set_status(
         self,
         specs: list[dict],
