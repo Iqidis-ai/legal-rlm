@@ -141,11 +141,12 @@ class CascadeDecision:
 
 # Bump whenever the prompt or schema changes — included in the
 # classifier_version so old cached decisions miss cleanly.
-CLASSIFIER_SCHEMA_VERSION = "mvi4.0"
+CLASSIFIER_SCHEMA_VERSION = "mvi6.0"
 
 
 VALID_FAMILIES = {
-    "investigate", "read", "query", "trace", "steer", "clarify",
+    "investigate", "read", "query", "trace", "steer",
+    "compare", "scenario", "clarify",
 }
 
 
@@ -163,12 +164,16 @@ Six routes are available:
 
 5. `steer` — the user is CORRECTING a prior fact, OVERRIDING a belief, annotating, editing assumptions, or otherwise mutating matter state. Examples: "Actually the date was April, not March", "That assertion is wrong", "Mark the MSA as the operative contract", "Change the damages figure to 50000", "Ignore the email from March 3rd — it's drafts". The user is not asking a question; they're correcting or directing the matter model. Route here even when the phrasing is indirect ("no, the payment was 30 days after").
 
-6. `clarify` — the user's referent is ambiguous or the query is so vague that proceeding would produce a wrong cheap answer. Examples: "Tell me about Smith" when there are two Smiths. Route here SPARINGLY — only when a specific ambiguity makes routing unsafe.
+6. `compare` — the user is asking for a DIFF across time or across alternatives. Examples: "What changed since yesterday's production?", "What's new since the last investigation?", "How does this version differ from the previous one?", "What did we learn in the latest run?". Route here when the request is explicitly about changes, deltas, or comparisons across matter states.
+
+7. `scenario` — the user is asking a HYPOTHETICAL or counterfactual — "what if X were true". Examples: "Redo the analysis assuming the contract is void", "What if we concede jurisdiction?", "Treat the waiver as valid and recompute damages", "Imagine the statute of limitations hasn't run". The user is not correcting state; they're asking for an alternative computation with an overridden assumption.
+
+8. `clarify` — the user's referent is ambiguous or the query is so vague that proceeding would produce a wrong cheap answer. Examples: "Tell me about Smith" when there are two Smiths. Route here SPARINGLY — only when a specific ambiguity makes routing unsafe.
 
 Guidance:
 - Default to `investigate` on a fresh matter (has_any_facts=False).
-- On a warm matter: `query` for "list X" / "show X" / "which X", `read` for "summarize" / "draft" / "explain" / "what does X mean", `trace` for "why" / "how did you" / "show the source", `steer` for "correct" / "actually X" / "no, it was Y" / "change" / "ignore".
-- Never route to `read`, `query`, `trace`, or `steer` if has_any_facts=False — there's nothing to read or correct.
+- On a warm matter: `query` for "list X" / "show X" / "which X", `read` for "summarize" / "draft" / "explain" / "what does X mean", `trace` for "why" / "how did you" / "show the source", `steer` for "correct" / "actually X" / "no, it was Y" / "change" / "ignore", `compare` for "what changed" / "diff" / "since [X]", `scenario` for "what if" / "assume X" / "redo assuming".
+- Never route to read/query/trace/steer/compare/scenario if has_any_facts=False — there's nothing to read or compare.
 - Your job is cost governance, not content judgment. Keep the decision fast.
 
 Matter state snapshot:
@@ -181,7 +186,7 @@ User query: {query}
 
 Respond ONLY with a single JSON object:
 {{
-  "family": "investigate" | "read" | "query" | "trace" | "steer" | "clarify",
+  "family": "investigate" | "read" | "query" | "trace" | "steer" | "compare" | "scenario" | "clarify",
   "confidence": 0.0-1.0,
   "rationale": "one short sentence — why this route"
 }}
@@ -353,12 +358,13 @@ class CascadeGovernor:
                 f"unknown family '{family}', defaulting to investigate",
             )
         if (
-            family in {"read", "query", "trace"}
+            family in {"read", "query", "trace", "steer", "compare", "scenario"}
             and not snapshot.has_any_facts
         ):
             # Belt-and-suspenders: if the classifier routes to a warm-
             # matter family but the matter is empty, override. Can't
-            # read / query / trace what isn't there.
+            # read / query / trace / steer / compare / scenario an
+            # empty matter.
             return (
                 "investigate", 0.0,
                 f"{family} requested but matter has no facts",
@@ -413,6 +419,27 @@ class CascadeGovernor:
                 max_iter=1,
                 citation_floor=0,
                 answer_confidence_floor=0.0,
+                escalation_allowed=True,
+            )
+        if family == "compare":
+            # MVI-6: diff matter state across named snapshots.
+            return ExecutionContract(
+                family="compare",
+                min_iter=0,
+                max_iter=1,
+                citation_floor=0,
+                answer_confidence_floor=0.0,
+                escalation_allowed=True,
+            )
+        if family == "scenario":
+            # MVI-6: override assumption + re-read impacted state via
+            # the read-family pipeline.
+            return ExecutionContract(
+                family="scenario",
+                min_iter=0,
+                max_iter=1,
+                citation_floor=0,
+                answer_confidence_floor=0.5,
                 escalation_allowed=True,
             )
         if family == "clarify":
@@ -1449,3 +1476,287 @@ class SteerFamilyHandler:
             "target and value in the correction / annotation UI._"
         )
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Compare-family handler (MVI-6) — state diff across runs
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CompareFamilyResult:
+    """Outcome of a compare-family request."""
+    baseline_run_id: Optional[str]
+    current_assertion_count: int
+    baseline_assertion_count: int
+    new_documents_read: int
+    coverage_delta: float
+    open_gap_delta: int
+    rendered_answer: str
+    escalation_needed: bool
+    escalation_reason: Optional[str] = None
+
+
+class CompareFamilyHandler:
+    """Diffs the current matter state against a prior checkpoint and
+    surfaces what's changed. MVI-6 uses run_session rows as natural
+    snapshot boundaries — "since the last completed run" is the
+    default comparison axis. Zero LLM in the common path.
+    """
+
+    def __init__(self, matter_model: Any) -> None:
+        self.matter_model = matter_model
+
+    def run(
+        self,
+        query: str,
+        contract: ExecutionContract,
+    ) -> CompareFamilyResult:
+        if self.matter_model is None:
+            return CompareFamilyResult(
+                baseline_run_id=None,
+                current_assertion_count=0,
+                baseline_assertion_count=0,
+                new_documents_read=0,
+                coverage_delta=0.0,
+                open_gap_delta=0,
+                rendered_answer="",
+                escalation_needed=True,
+                escalation_reason="no matter model available",
+            )
+        try:
+            # Baseline = the run BEFORE the most recent one. If only
+            # one run exists, compare against zero state.
+            rows = self.matter_model.db.execute(
+                """SELECT id, assertions_at_start, started_at
+                   FROM run_session
+                   WHERE matter_id=?
+                     AND status IN ('completed','failed','interrupted')
+                     AND (operation_type IS NULL
+                          OR operation_type NOT IN ('manual_flush','background_flush'))
+                   ORDER BY started_at DESC
+                   LIMIT 2""",
+                (self.matter_model.matter_id,),
+            ).fetchall()
+        except Exception as exc:  # noqa: BLE001
+            return CompareFamilyResult(
+                baseline_run_id=None,
+                current_assertion_count=0,
+                baseline_assertion_count=0,
+                new_documents_read=0,
+                coverage_delta=0.0,
+                open_gap_delta=0,
+                rendered_answer="",
+                escalation_needed=True,
+                escalation_reason=f"run lookup failed: {exc}",
+            )
+        current = self.matter_model.assertions.count()
+        if not rows:
+            baseline = None
+            baseline_count = 0
+        elif len(rows) == 1:
+            # Only one run — compare against assertions_at_start of
+            # that run (the "empty matter" baseline).
+            baseline = dict(rows[0])
+            baseline_count = int(baseline.get("assertions_at_start") or 0)
+        else:
+            # Most recent run's assertions_at_start is how many
+            # assertions existed BEFORE it ran — that's our baseline.
+            baseline = dict(rows[0])
+            baseline_count = int(baseline.get("assertions_at_start") or 0)
+
+        assertion_delta = current - baseline_count
+        # Other deltas — documents read, open gaps, coverage sum —
+        # are computed from current state vs nothing for MVI-6. A
+        # richer snapshot layer lives in MVI-7+.
+        try:
+            coverage_rows = self.matter_model.get_issue_coverage_report(
+                policy_audience="internal",
+            )
+            coverage_sum = sum(
+                float(r.get("coverage_fraction") or 0.0)
+                for r in coverage_rows
+            )
+        except Exception:
+            coverage_sum = 0.0
+        try:
+            open_gaps = int(self.matter_model.gaps.count_open())
+        except Exception:
+            open_gaps = 0
+
+        rendered = self._render(
+            baseline_run_id=baseline.get("id") if baseline else None,
+            baseline_count=baseline_count,
+            current=current,
+            assertion_delta=assertion_delta,
+            coverage_sum=coverage_sum,
+            open_gaps=open_gaps,
+        )
+        return CompareFamilyResult(
+            baseline_run_id=(baseline.get("id") if baseline else None),
+            current_assertion_count=current,
+            baseline_assertion_count=baseline_count,
+            new_documents_read=0,  # MVI-6 scope; richer in later MVI
+            coverage_delta=coverage_sum,
+            open_gap_delta=open_gaps,
+            rendered_answer=rendered,
+            escalation_needed=False,
+        )
+
+    @staticmethod
+    def _render(
+        baseline_run_id: Optional[str],
+        baseline_count: int,
+        current: int,
+        assertion_delta: int,
+        coverage_sum: float,
+        open_gaps: int,
+    ) -> str:
+        lines = ["## What changed", ""]
+        if baseline_run_id:
+            lines.append(f"**Baseline:** run `{baseline_run_id}`")
+        else:
+            lines.append("**Baseline:** empty matter (no prior runs)")
+        lines.append("")
+        sign = "+" if assertion_delta >= 0 else ""
+        lines.append(
+            f"- **Assertions:** {baseline_count} → {current} "
+            f"({sign}{assertion_delta})"
+        )
+        lines.append(f"- **Current issue coverage sum:** {coverage_sum:.2f}")
+        lines.append(f"- **Open gaps right now:** {open_gaps}")
+        lines.append("")
+        if assertion_delta == 0 and coverage_sum == 0 and open_gaps == 0:
+            lines.append(
+                "_No material changes. If you expected new findings, "
+                "the run may not have produced them, or a later run "
+                "hasn't landed yet._"
+            )
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Scenario-family handler (MVI-6) — assumption override + re-read
+# ---------------------------------------------------------------------------
+
+
+SCENARIO_PARSE_PROMPT = """You are parsing a hypothetical legal scenario. The user wants the system to re-answer as if a specific assumption were true. Extract a concise, one-sentence assumption statement that can be treated as temporarily true for reasoning.
+
+Examples:
+- "Redo assuming the contract is void" → "The contract is void"
+- "What if jurisdiction is California" → "Jurisdiction is California"
+- "Treat the waiver as valid" → "The waiver is valid"
+- "Imagine the statute of limitations hasn't run" → "The statute of limitations has not run"
+
+User utterance: {query}
+
+Respond ONLY in JSON:
+{{
+  "assumption": "a concise, one-sentence assumption",
+  "core_question": "what the user actually wants answered under this assumption, if stated"
+}}
+"""
+
+
+@dataclass
+class ScenarioFamilyResult:
+    """Outcome of a scenario-family request."""
+    assumption: str
+    core_question: str
+    answer: str
+    confidence_label: str
+    confidence_score: float
+    escalation_needed: bool
+    escalation_reason: Optional[str] = None
+
+
+class ScenarioFamilyHandler:
+    """Parses a hypothetical assumption, then re-runs the read family
+    with the assumption injected into the synthesis prompt. MVI-6 is
+    the narrow slice — the assumption is not persisted to the matter
+    (no state mutation), it's just used as a one-turn override. A
+    future MVI can persist scenario_only assumptions for multi-turn
+    counterfactual sessions."""
+
+    def __init__(
+        self,
+        client: GeminiClient,
+        matter_model: Any,
+    ) -> None:
+        self.client = client
+        self.matter_model = matter_model
+
+    async def run(
+        self,
+        query: str,
+        contract: ExecutionContract,
+        conversation_history: Optional[list[dict[str, str]]] = None,
+    ) -> ScenarioFamilyResult:
+        if self.matter_model is None:
+            return ScenarioFamilyResult(
+                assumption="", core_question="",
+                answer="", confidence_label="low",
+                confidence_score=0.0,
+                escalation_needed=True,
+                escalation_reason="no matter model available",
+            )
+        parsed = await self._parse(query)
+        assumption = (parsed.get("assumption") or "").strip()
+        core_question = (parsed.get("core_question") or query).strip()
+        if not assumption:
+            return ScenarioFamilyResult(
+                assumption="", core_question=core_question,
+                answer="", confidence_label="low",
+                confidence_score=0.0,
+                escalation_needed=True,
+                escalation_reason="could not parse assumption",
+            )
+        # Inline the assumption as a prefix on the user question so the
+        # read handler's synth call treats it as a temporary override.
+        # No state mutation.
+        overridden_query = (
+            f"TEMPORARY HYPOTHETICAL — treat the following as true for "
+            f"the purpose of this question only: \"{assumption}\"\n\n"
+            f"Under that assumption: {core_question}"
+        )
+        read_handler = ReadFamilyHandler(
+            client=self.client, matter_model=self.matter_model,
+        )
+        read_contract = ExecutionContract(
+            family="scenario",
+            min_iter=0, max_iter=1,
+            citation_floor=contract.citation_floor,
+            answer_confidence_floor=contract.answer_confidence_floor,
+            escalation_allowed=contract.escalation_allowed,
+        )
+        read_result = await read_handler.run(
+            query=overridden_query,
+            contract=read_contract,
+            conversation_history=conversation_history,
+        )
+        return ScenarioFamilyResult(
+            assumption=assumption,
+            core_question=core_question,
+            answer=read_result.answer,
+            confidence_label=read_result.confidence_label,
+            confidence_score=read_result.confidence_score,
+            escalation_needed=read_result.escalation_needed,
+            escalation_reason=read_result.escalation_reason,
+        )
+
+    async def _parse(self, query: str) -> dict:
+        try:
+            response = await self.client.complete(
+                SCENARIO_PARSE_PROMPT.format(query=query),
+                tier=ModelTier.NANO,
+                json_mode=True,
+                usage_label="scenario_parse",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("scenario_parse NANO failed: %s", exc)
+            return {}
+        try:
+            parsed = json.loads(response or "{}")
+        except (TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}

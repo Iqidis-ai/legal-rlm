@@ -23,9 +23,11 @@ from irys.rlm.governance import (
     AnswerabilitySnapshot,
     CascadeDecision,
     CascadeGovernor,
+    CompareFamilyHandler,
     ExecutionContract,
     QueryFamilyHandler,
     ReadFamilyHandler,
+    ScenarioFamilyHandler,
     SteerFamilyHandler,
     TraceFamilyHandler,
     decision_cache_key,
@@ -415,6 +417,78 @@ def test_steer_handler_no_matter_model_escalates():
     result = asyncio.run(handler.run(
         query="correct that",
         contract=CascadeGovernor._contract_for("steer"),
+    ))
+    assert result.escalation_needed is True
+
+
+# ---------------------------------------------------------------------------
+# CompareFamilyHandler
+# ---------------------------------------------------------------------------
+
+
+def test_compare_handler_no_prior_runs(empty_matter):
+    """Empty matter with no runs renders a baseline-empty comparison,
+    not an error."""
+    handler = CompareFamilyHandler(matter_model=empty_matter)
+    result = handler.run(
+        query="what changed",
+        contract=CascadeGovernor._contract_for("compare"),
+    )
+    assert result.escalation_needed is False
+    assert "Baseline" in result.rendered_answer
+
+
+def test_compare_handler_reports_delta(warm_matter):
+    """Compare surfaces current vs baseline assertion count."""
+    handler = CompareFamilyHandler(matter_model=warm_matter)
+    result = handler.run(
+        query="what changed since last run",
+        contract=CascadeGovernor._contract_for("compare"),
+    )
+    assert result.current_assertion_count >= 3
+    assert "What changed" in result.rendered_answer
+
+
+# ---------------------------------------------------------------------------
+# ScenarioFamilyHandler
+# ---------------------------------------------------------------------------
+
+
+def test_scenario_handler_parses_and_answers(warm_matter):
+    """NANO parses assumption; read handler answers under the override
+    without mutating matter state."""
+    client = _FakeClient({
+        "scenario_parse": (
+            '{"assumption": "The contract is void", '
+            '"core_question": "What are our damages?"}'
+        ),
+        "read_synth": (
+            '{"answer": "Under that assumption, damages would be zero.", '
+            '"answer_confidence": "medium", "citations": [], '
+            '"used_existing_state_only": true, "escalation_hint": ""}'
+        ),
+    })
+    handler = ScenarioFamilyHandler(client=client, matter_model=warm_matter)
+    before_count = warm_matter.assertions.count()
+    result = asyncio.run(handler.run(
+        query="what if the contract is void — what are our damages?",
+        contract=CascadeGovernor._contract_for("scenario"),
+    ))
+    assert result.assumption == "The contract is void"
+    assert "damages would be zero" in result.answer
+    # Crucially: no state mutation from a scenario turn.
+    assert warm_matter.assertions.count() == before_count
+
+
+def test_scenario_handler_unparseable_escalates(warm_matter):
+    """When NANO can't extract a usable assumption, escalate."""
+    client = _FakeClient({
+        "scenario_parse": '{"assumption": "", "core_question": ""}',
+    })
+    handler = ScenarioFamilyHandler(client=client, matter_model=warm_matter)
+    result = asyncio.run(handler.run(
+        query="what if",
+        contract=CascadeGovernor._contract_for("scenario"),
     ))
     assert result.escalation_needed is True
 

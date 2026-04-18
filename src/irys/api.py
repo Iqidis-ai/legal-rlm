@@ -17,10 +17,14 @@ from .rlm.engine import RLMEngine, RLMConfig
 from .rlm.governance import (
     CascadeGovernor,
     CascadeDecision,
+    CompareFamilyHandler,
+    CompareFamilyResult,
     QueryFamilyHandler,
     QueryFamilyResult,
     ReadFamilyHandler,
     ReadFamilyResult,
+    ScenarioFamilyHandler,
+    ScenarioFamilyResult,
     SteerFamilyHandler,
     SteerFamilyResult,
     TraceFamilyHandler,
@@ -217,6 +221,79 @@ class Irys:
             decision.escalation_reason = query_result.escalation_reason
             # Fall through to read — which may itself escalate to
             # investigate if matter coverage is thin.
+            decision.family = "read"
+            decision.contract = CascadeGovernor._contract_for("read")
+
+        if decision.family == "compare":
+            # MVI-6: diff current state vs last completed run.
+            compare_result = CompareFamilyHandler(matter_model).run(
+                query=query, contract=decision.contract,
+            )
+            self._persist_route_decision(
+                matter_model=matter_model,
+                query=query,
+                decision=decision,
+                research_mode=research_mode,
+                terminal_family="compare",
+            )
+            state = self._make_simple_state(
+                query=query,
+                repository=repository,
+                research_mode=research_mode,
+                conversation_history=conversation_history,
+                output=compare_result.rendered_answer,
+                decision=decision,
+                extra={
+                    "compare_baseline_run_id": compare_result.baseline_run_id,
+                    "compare_assertion_delta": (
+                        compare_result.current_assertion_count
+                        - compare_result.baseline_assertion_count
+                    ),
+                },
+            )
+            return InvestigationResult(
+                state=state,
+                output=compare_result.rendered_answer,
+                format=self.config.output_format,
+            )
+
+        if decision.family == "scenario":
+            # MVI-6: NANO-parsed assumption, then read-family answer
+            # with the assumption injected as a temporary override.
+            # No state mutation.
+            scenario_result = await ScenarioFamilyHandler(
+                client=self._client, matter_model=matter_model,
+            ).run(
+                query=query,
+                contract=decision.contract,
+                conversation_history=conversation_history,
+            )
+            if not scenario_result.escalation_needed:
+                self._persist_route_decision(
+                    matter_model=matter_model,
+                    query=query,
+                    decision=decision,
+                    research_mode=research_mode,
+                    terminal_family="scenario",
+                )
+                state = self._make_simple_state(
+                    query=query,
+                    repository=repository,
+                    research_mode=research_mode,
+                    conversation_history=conversation_history,
+                    output=scenario_result.answer,
+                    decision=decision,
+                    extra={
+                        "scenario_assumption": scenario_result.assumption,
+                        "scenario_confidence": scenario_result.confidence_label,
+                    },
+                )
+                return InvestigationResult(
+                    state=state,
+                    output=scenario_result.answer,
+                    format=self.config.output_format,
+                )
+            decision.escalation_reason = scenario_result.escalation_reason
             decision.family = "read"
             decision.contract = CascadeGovernor._contract_for("read")
 
@@ -467,6 +544,30 @@ class Irys:
         state.findings["route"] = decision.to_audit_dict()
         state.findings["query_intent"] = query_result.intent
         state.findings["query_row_count"] = len(query_result.rows)
+        return state
+
+    def _make_simple_state(
+        self,
+        query: str,
+        repository: "str | Path",
+        research_mode: Optional[str],
+        conversation_history: Optional[list[dict[str, str]]],
+        output: str,
+        decision: CascadeDecision,
+        extra: Optional[dict] = None,
+    ) -> InvestigationState:
+        """Shared builder for zero/single-LLM family results
+        (compare, scenario) that don't need a rich state object."""
+        state = InvestigationState.create(
+            query,
+            str(Path(repository).resolve()),
+            research_mode=research_mode,
+            conversation_history=conversation_history,
+        )
+        state.findings["final_output"] = output
+        state.findings["route"] = decision.to_audit_dict()
+        if extra:
+            state.findings.update(extra)
         return state
 
     def _make_steer_state(
