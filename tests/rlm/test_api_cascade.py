@@ -13,7 +13,6 @@ stubbed engine so it doesn't pay real-LLM / real-repo cost.
 from __future__ import annotations
 
 import asyncio
-import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -25,10 +24,12 @@ from irys.rlm.state import InvestigationState
 
 
 @pytest.fixture
-def repo_path():
-    """A real existing dir that passes path-validation but is empty."""
-    with tempfile.TemporaryDirectory() as d:
-        yield str(Path(d).resolve())
+def repo_path(tmp_path):
+    """A real existing dir that passes path-validation but is empty.
+    Uses pytest's tmp_path fixture — pytest handles teardown with
+    platform-aware cleanup (Windows file-lock races killed the old
+    tempfile.TemporaryDirectory approach)."""
+    return str(tmp_path.resolve())
 
 
 class _FakeClient:

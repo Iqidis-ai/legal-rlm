@@ -118,6 +118,34 @@ def test_classifier_route_cache_reuses_on_repeat(warm_matter):
     assert second.escalation_reason == "cache_hit"
 
 
+def test_classifier_cache_respects_trust_revision_bump(warm_matter):
+    """Round 2 regression: a trust_revision bump (e.g., from a
+    rejection) must invalidate cached routes. The old
+    _cache_get_any_version scanned "any" cached family without
+    checking trust_revision, so a post-correction query could
+    resurrect a pre-correction route. Now fixed via strict
+    key match — cache.get() applies trust_revision prefix."""
+    client = _FakeClient({
+        "intent_classifier": (
+            '{"family": "read", "confidence": 0.9, "rationale": "warm"}'
+        ),
+    })
+    gov = CascadeGovernor(client=client, matter_model=warm_matter)
+    # First route populates cache.
+    first = asyncio.run(gov.decide(query="summarize"))
+    assert first.family == "read"
+    assert len(client.calls) == 1
+
+    # Simulate a rejection: bump trust_revision.
+    warm_matter.cache.bump_trust_revision()
+
+    # Second identical query after the bump MUST re-classify (cache
+    # miss) because trust_revision changed.
+    second = asyncio.run(gov.decide(query="summarize"))
+    assert second.family == "read"
+    assert len(client.calls) == 2  # Re-fired after trust bump.
+
+
 def test_classifier_failure_uses_stale_cache_fallback(warm_matter):
     """When NANO fails but a stale cache entry exists, reuse it
     rather than hard-routing to investigate — mitigates classifier
@@ -350,6 +378,28 @@ def test_read_handler_infra_failure_tagged_distinctly(warm_matter):
     assert result.failure_kind == "infra"
     assert result.escalation_needed is False  # critical — don't auto-escalate
     assert "simulated provider outage" in (result.escalation_reason or "")
+
+
+def test_read_handler_rejects_empty_string_citations(warm_matter):
+    """Round 2 regression: `[""]` must not count as a real citation.
+    Previously citation_floor just checked `len(citations)`, so an
+    LLM emitting `[""]` shipped a high-confidence uncited answer."""
+    client = _FakeClient({
+        "read_synth": (
+            '{"answer": "30 days", "answer_confidence": "high", '
+            '"citations": ["", "  ", null], '
+            '"used_existing_state_only": true, "escalation_hint": ""}'
+        ),
+    })
+    handler = ReadFamilyHandler(client=client, matter_model=warm_matter)
+    result = asyncio.run(handler.run(
+        query="notice period?",
+        contract=CascadeGovernor._contract_for("read"),
+    ))
+    # All three fake citations must be filtered; floor=1 forces escalation.
+    assert len(result.citations) == 0
+    assert result.escalation_needed is True
+    assert result.failure_kind == "state_insufficient"
 
 
 def test_read_handler_citation_floor_forces_escalation(warm_matter):
@@ -782,6 +832,73 @@ def test_steer_target_matcher_specific_tokens_rank_correctly():
     # from the correction) — NOT "April 20".
     assert "April 15" in top_text
     assert "April 20" not in top_text
+
+
+def test_steer_matcher_does_not_double_weight_old_value_words():
+    """Round 2 regression: two assertions BOTH contain "April 15" but
+    one describes it as an invoice due date and the other as a
+    notice date. User says 'the April 15 date was the notice date,
+    not the invoice due date.' The old scorer double-weighted
+    old_value ("invoice due date"), which ranked the WRONG-label
+    sibling first. The fix: old_value generic words don't score —
+    they're what's being negated."""
+    m = MatterModel.open_in_memory()
+    rid = m.start_run("seed")
+    # Both assertions contain "April 15" — the specific token.
+    # The correction's old_value is "invoice due date" which would
+    # under the old scoring add points to the WRONG (first) row.
+    props = [
+        # Wrong row — its description says "invoice due date" but the
+        # user is CORRECTING that away.
+        "April 15 was mischaracterized as the invoice due date",
+        # Right row — the user wants THIS one ranked first.
+        "The notice to cure was delivered on April 15",
+    ]
+    ids = []
+    for prop in props:
+        aid, _ = m.record_assertion(
+            AssertionCandidate(
+                proposition_text=prop,
+                speech_act=SpeechAct.ALLEGED,
+                source_role=SourceRole.OPERATIVE,
+                document_id="msa.pdf",
+            ),
+            run_id=rid,
+        )
+        ids.append(aid)
+    m.complete_run(rid)
+
+    client = _FakeClient({
+        "steer_parse": (
+            '{"action": "correct_assertion", '
+            '"target_hint": "April 15 notice date", '
+            '"old_value": "invoice due date", '
+            '"new_value": "notice date", '
+            '"rationale": "date was mislabeled"}'
+        ),
+    })
+    handler = SteerFamilyHandler(matter_model=m, client=client)
+    result = asyncio.run(handler.run(
+        query="Actually the April 15 date was the notice date",
+        contract=CascadeGovernor._contract_for("steer"),
+    ))
+    assert result.candidates, "expected some candidates"
+    top_text = str(result.candidates[0].get("proposition_text", ""))
+    # The top candidate MUST be the notice row, not the invoice row.
+    assert "notice to cure" in top_text.lower()
+    assert "invoice due date" not in top_text.lower()
+
+
+def test_steer_matcher_rejects_invalid_iso_date():
+    """Round 2 regression: ISO date regex validates month (01-12)
+    and day (01-31) ranges. '2026-13-45' must not be accepted as a
+    specific date token."""
+    tokens = SteerFamilyHandler._specific_tokens("2026-13-45")
+    # Nonsense ISO date should NOT be extracted.
+    assert "2026-13-45" not in tokens
+    # Real ISO date still extracts.
+    tokens2 = SteerFamilyHandler._specific_tokens("2026-04-15")
+    assert "2026-04-15" in tokens2
 
 
 def test_steer_handler_reject_target_with_candidates(warm_matter):

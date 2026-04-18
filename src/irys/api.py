@@ -608,6 +608,7 @@ class Irys:
                 )
             except Exception:
                 pass
+        state.status = "completed"
         return state
 
     def _make_query_state(
@@ -629,6 +630,7 @@ class Irys:
         state.findings["route"] = decision.to_audit_dict()
         state.findings["query_intent"] = query_result.intent
         state.findings["query_row_count"] = len(query_result.rows)
+        state.status = "completed"
         return state
 
     def _make_simple_state(
@@ -653,6 +655,7 @@ class Irys:
         state.findings["route"] = decision.to_audit_dict()
         if extra:
             state.findings.update(extra)
+        state.status = "completed"
         return state
 
     def _make_steer_state(
@@ -675,6 +678,7 @@ class Irys:
         state.findings["steer_action"] = steer_result.action
         state.findings["steer_target_hint"] = steer_result.target_hint
         state.findings["steer_candidates"] = steer_result.candidates
+        state.status = "completed"
         return state
 
     def _make_trace_state(
@@ -696,6 +700,7 @@ class Irys:
         state.findings["route"] = decision.to_audit_dict()
         state.findings["trace_target_kind"] = trace_result.target_kind
         state.findings["trace_target_id"] = trace_result.target_id
+        state.status = "completed"
         return state
 
     def _make_clarify_state(
@@ -716,6 +721,7 @@ class Irys:
             f"Need clarification before we can answer: {decision.rationale}"
         )
         state.findings["route"] = decision.to_audit_dict()
+        state.status = "completed"
         return state
 
     def _persist_route_decision(

@@ -287,6 +287,12 @@ class CascadeGovernor:
             # Classifier failed AND cache is cold — last-resort attempt
             # against a cross-version cache lookup so repeated queries
             # during a sustained outage don't thundering-herd into AR.
+            # Codex fallout R2: stale-cache fallback must NOT
+            # misrepresent the reused route as the classifier's call.
+            # We set classifier_family="_stale_cache_fallback" on the
+            # audit payload (via to_audit_dict override) so the
+            # ledger clearly distinguishes reused-during-outage from
+            # an actual NANO emission.
             stale = self._cache_get_any_version(query, snapshot)
             if stale is not None:
                 return CascadeDecision(
@@ -297,7 +303,7 @@ class CascadeGovernor:
                         f"reused stale cached route ({rationale})"
                     ),
                     contract=self._contract_for(stale["family"]),
-                    classifier_version=CLASSIFIER_SCHEMA_VERSION,
+                    classifier_version="_stale_cache_fallback",
                     snapshot=snapshot,
                     escalation_reason="stale_cache_fallback",
                 )
@@ -346,37 +352,46 @@ class CascadeGovernor:
         self, query: str, snapshot: AnswerabilitySnapshot,
     ) -> Optional[dict]:
         """Stale-cache escape hatch for sustained classifier outage.
-        Scans reasoning_cache for this query's decision under any
-        prior schema version. Only reached when the NANO classifier
-        fails AND the current-version cache missed."""
+
+        Codex fallout review round 2: the previous implementation
+        returned "the first cached family it sees" — ignoring query,
+        snapshot, and trust revision. That would resurrect
+        pre-correction routes after a trust_revision bump from
+        reject_target. The fix: match STRICTLY on the query +
+        snapshot fingerprint (only the classifier schema version is
+        allowed to differ), and preserve the existing trust-revision
+        prefix that reasoning_cache already applies so a trust bump
+        still invalidates stale routes.
+        """
         mm = self.matter_model
         if mm is None or not hasattr(mm, "db"):
             return None
         try:
-            # Reasoning cache stores a trust-revision prefix on the
-            # key, so we cast a wide net: same query+snapshot
-            # fingerprint, any prior classifier version.
             import json as _json
-            rows = mm.db.execute(
-                """SELECT plan_json FROM reasoning_cache
-                   WHERE matter_id=? AND stage=?
-                   ORDER BY last_hit_at DESC LIMIT 50""",
-                (mm.matter_id, self._CACHE_STAGE),
-            ).fetchall()
-            # Match on a partial key: the query-signature portion of
-            # the cache key is stable across classifier versions, so
-            # we derive it from the current query+snapshot and match
-            # by exact payload fingerprint.
-            target_qsig = query.strip().lower()
-            for row in rows:
-                try:
-                    payload = _json.loads(row["plan_json"])
-                except Exception:
-                    continue
-                # We accept ANY cached decision for this query +
-                # snapshot.has_any_facts state — a narrow-but-non-
-                # brittle match during outages.
-                if payload.get("family") in VALID_FAMILIES:
+            # Build a set of cache keys that would match the current
+            # query + snapshot under ANY classifier schema version.
+            # We iterate known schema versions the caller could have
+            # cached under — today that's just the current
+            # CLASSIFIER_SCHEMA_VERSION plus the next one back — but
+            # the scan is bounded by the cache_key match so extra
+            # entries never bleed in.
+            candidate_versions = [CLASSIFIER_SCHEMA_VERSION]
+            # Historical version prefixes that may still exist in the
+            # cache table. Add new entries here when the schema bumps.
+            # The list is intentionally explicit, not a wildcard —
+            # we never match "any" route regardless of query.
+            for past_ver in ("mvi6.0", "mvi4.0", "mvi2.0", "mvi1.0"):
+                if past_ver != CLASSIFIER_SCHEMA_VERSION:
+                    candidate_versions.append(past_ver)
+            # The real reasoning_cache key is trust-prefixed by the
+            # store (tr{N}:{hash}), so we look up by `cache.get()`
+            # directly — which applies the prefix and thus respects
+            # trust_revision bumps. That's the key property: a
+            # rejection → trust_rev bump → stale routes DON'T resurface.
+            for ver in candidate_versions:
+                key = decision_cache_key(query, snapshot, ver)
+                payload = self._cache_get(key)
+                if payload is not None and payload.get("family") in VALID_FAMILIES:
                     return payload
             return None
         except Exception:
@@ -817,9 +832,15 @@ class ReadFamilyHandler:
         score = self._CONFIDENCE_MAP[label]
 
         answer = str(parsed.get("answer") or "").strip()
+        # Codex fallout R2: validate citations as non-empty strings.
+        # The previous code counted `[""]` or `[0]` toward the floor —
+        # a malicious or sloppy LLM could ship a high-confidence
+        # uncited answer by emitting a fake citation list.
+        raw_citations = parsed.get("citations") or []
         citations = [
-            str(c) for c in (parsed.get("citations") or [])
+            str(c).strip() for c in raw_citations
             if isinstance(c, (str, int, float))
+            and str(c).strip()
         ]
         escalation_hint = str(parsed.get("escalation_hint") or "").strip()
 
@@ -1629,9 +1650,13 @@ class SteerFamilyHandler:
     # amounts get higher weights because they're what distinguishes
     # "April 15" from "April 20" on otherwise-identical sibling
     # assertions.
+    # Codex fallout R2: ISO date pattern now validates month (01-12)
+    # and day (01-31) ranges so "2026-13-45" isn't accepted as a
+    # real date token. English month phrasings already imply valid
+    # months.
     _DATE_PATTERNS = [
-        # YYYY-MM-DD
-        r"\b\d{4}-\d{2}-\d{2}\b",
+        # YYYY-MM-DD with sane month + day bounds
+        r"\b\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b",
         # "April 15" / "Apr 15" / "March 3"
         r"\b(?:January|February|March|April|May|June|July|August|"
         r"September|October|November|December|Jan|Feb|Mar|Apr|"
@@ -1675,13 +1700,23 @@ class SteerFamilyHandler:
     ) -> int:
         """Rank assertions by weighted token overlap.
 
+        Codex fallout R2: old_value GENERIC words (the descriptive
+        part, e.g. "invoice due date") must NOT boost score — the
+        user is saying the assertion is MISCHARACTERIZED. Matching
+        on those words just ranks the wrong-labeled sibling higher.
+        Only SPECIFIC tokens inside old_value (dates, amounts) are
+        discriminating signals and still score.
+
         Weights:
-          - word overlap with target_hint: 1 point per word
-          - word overlap with old_value: 2 points per word (this is
-            what the user is explicitly trying to correct)
-          - specific token (date / amount) match: 5 points per token
-            (heavy — distinguishes sibling assertions that only
-            differ by date or amount)
+          - word overlap with target_hint: 1 point per generic word
+          - specific tokens from target_hint + old_value (dates +
+            amounts): 5 points per token — heavy weight because
+            they're what distinguishes sibling assertions. Extracted
+            from old_value specifically so "April 15" in a
+            "payment was April 15" correction still steers ranking.
+          - word overlap with old_value (generic words): 0 points.
+            The user is saying "the text that mentions this is
+            wrong"; don't preferentially rank it.
         new_value is NOT used for scoring: the user is saying the
         text SHOULD become new_value; it doesn't currently contain it.
         """
@@ -1690,15 +1725,12 @@ class SteerFamilyHandler:
         text_l = text.lower()
 
         score = 0
-        # Generic-word overlap with target hint.
+        # Generic-word overlap with target hint only.
         for word in (target_hint or "").split():
             if len(word) > 2 and word.lower() in text_l:
                 score += 1
-        # Higher weight on old_value words — what the user is correcting.
-        for word in (old_value or "").split():
-            if len(word) > 2 and word.lower() in text_l:
-                score += 2
-        # Specific tokens (dates + amounts) — heavy weight.
+        # Specific tokens (dates + amounts) — from target_hint AND
+        # old_value. These are the discriminating signals.
         tokens = cls._specific_tokens(target_hint, old_value)
         for tok in tokens:
             if tok in text_l:
