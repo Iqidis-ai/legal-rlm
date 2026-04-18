@@ -138,6 +138,40 @@ def test_viable_leads_contract_floor(engine):
     assert all(l.priority >= 0.7 for l in viable)
 
 
+def test_lead_ev_floor_zero_stays_zero(engine):
+    """Adversarial #10 Fix E: `lead_ev_floor=0.0` must mean 'no floor'
+    — every lead passes. Old `or floor` idiom silently coerced 0.0
+    back to 0.5, giving partial gating when the caller explicitly
+    turned it off."""
+    contract = ExecutionContract(family="investigate", lead_ev_floor=0.0)
+    leads = [_lead(0.001), _lead(0.05), _lead(0.5), _lead(0.9)]
+    viable = engine._viable_leads(leads, contract=contract)
+    # floor=0.0 → every lead with priority >= 0.0 viable (all).
+    assert len(viable) == 4
+
+
+def test_lead_ev_floor_nan_and_inf_rejected(engine, caplog):
+    """NaN and ±inf must be rejected and default to 0.5 (logged),
+    not silently let everything through or filter everything out."""
+    import math
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        contract = ExecutionContract(family="investigate", lead_ev_floor=bad)
+        leads = [_lead(0.1), _lead(0.4), _lead(0.6), _lead(0.9)]
+        viable = engine._viable_leads(leads, contract=contract)
+        # With fallback floor=0.5, only priorities >= 0.5 are viable.
+        assert len(viable) == 2, f"bad floor {bad} did not default to 0.5"
+
+
+def test_lead_ev_floor_non_numeric_rejected(engine):
+    """A string or None must not crash or behave unpredictably —
+    coerce or default to 0.5."""
+    contract = ExecutionContract(family="investigate", lead_ev_floor="not a number")
+    leads = [_lead(0.1), _lead(0.6)]
+    viable = engine._viable_leads(leads, contract=contract)
+    # Defaulted to 0.5 → priority 0.6 passes, 0.1 doesn't.
+    assert len(viable) == 1
+
+
 def test_viable_leads_ev_mode(engine):
     """When leads carry expected_cost + expected_coverage_gain, the
     contract's lead_ev_floor is interpreted as coverage-per-dollar."""

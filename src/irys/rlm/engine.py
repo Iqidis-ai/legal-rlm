@@ -7000,10 +7000,33 @@ Return:
         populated ev_score (MVI-5 enrichment ran), the floor is read
         as coverage-per-dollar. When ev_score is 0 (legacy path), the
         floor is read as a raw priority threshold — preserves old
-        behavior for callers that haven't adopted EV yet."""
+        behavior for callers that haven't adopted EV yet.
+
+        Adversarial #10 Fix E: validate lead_ev_floor rigorously.
+        The old `or floor` silently coerced `0.0` back to the default
+        0.5 (so a caller trying to disable gating got partial gating
+        instead), and accepted NaN/±inf unchallenged. Now: explicit
+        0.0 means "no floor, everything passes"; non-finite values
+        are rejected and logged, defaulting to 0.5.
+        """
+        import math as _math
         floor = 0.5
         if contract is not None:
-            floor = float(getattr(contract, "lead_ev_floor", floor) or floor)
+            raw = getattr(contract, "lead_ev_floor", floor)
+            try:
+                candidate = float(raw)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "lead_ev_floor=%r is not a number; defaulting to 0.5", raw,
+                )
+                candidate = 0.5
+            if not _math.isfinite(candidate):
+                logger.warning(
+                    "lead_ev_floor=%r is non-finite; defaulting to 0.5", raw,
+                )
+                floor = 0.5
+            else:
+                floor = candidate
         viable = []
         for lead in pending:
             ev = getattr(lead, "ev_score", 0.0)
