@@ -772,6 +772,10 @@ class InvestigationState:
     # signal.
     coverage_sum_per_iteration: list[float] = field(default_factory=list)
     open_gap_count_per_iteration: list[int] = field(default_factory=list)
+    # P0.7: coverage-driven lead planner. Counts how many leads the
+    # planner has produced THIS RUN so the per-run cap (default 6)
+    # can be enforced across iterations.
+    planner_leads_added: int = 0
     # SO-1 real reuse telemetry: count LLM calls avoided (cache hits, inventory skips)
     # vs. required (cache misses, cold calls). True reuse rate = avoided / (avoided + required).
     llm_calls_avoided: int = 0

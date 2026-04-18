@@ -1962,37 +1962,56 @@ class RLMEngine:
 
             pending_leads = state.get_pending_leads()
 
+            # P0.7: coverage-driven planner runs BEFORE the no-pending
+            # break. If reactive leads are exhausted but the matter
+            # still has weak material issues, the planner can inject
+            # issue-targeted leads to keep investigation moving. The
+            # planner reads coverage map once here; we reuse it below
+            # to avoid a second SQL pass.
+            _cov_map: "dict[str, tuple[float, bool, int]]" = {}
+            if self._matter_model is not None:
+                try:
+                    _cov_map = self._get_issue_coverage_map()
+                except Exception as _exc:
+                    logger.warning("coverage_map failed: %s", _exc)
+                    _cov_map = {}
+                if _cov_map:
+                    _planner_added = self._coverage_planner(state, _cov_map)
+                    if _planner_added > 0:
+                        self._emit_step(
+                            state,
+                            StepType.THINKING,
+                            f"Coverage planner added {_planner_added} issue-targeted lead(s)",
+                        )
+                        pending_leads = state.get_pending_leads()
+
             if not pending_leads:
                 self._emit_step(state, StepType.THINKING, "No more leads to investigate")
                 break
 
             # SO-4 Leak-1+3: re-score leads by live issue coverage weakness each
             # iteration so weaker issues attract more budget as the run progresses.
-            # Guard: only query DB when at least one issue-targeted lead exists in
-            # the queue — avoids 3 unnecessary SQL queries on neutral-only iterations.
-            _cov_map: "dict[str, tuple[float, bool, int]]" = {}
-            if (self._matter_model is not None
-                    and any(_l.focus_issue_id for _l in pending_leads)):
-                _cov_map = self._get_issue_coverage_map()
-                if _cov_map:
-                    _ISSUE_BOOST = 0.35   # α — boost per unit weakness (1 - coverage_fraction)
-                    _GAP_BOOST   = 0.20   # β — extra boost when a proof gap is open
-                    _NEUTRAL_DAMP = 0.15  # κ — dampening for non-issue-anchored leads
-                    _reweighted: "list[tuple[float, object]]" = []
-                    for _lead in pending_leads:
-                        if _lead.focus_issue_id and _lead.focus_issue_id in _cov_map:
-                            _frac, _gap, _ = _cov_map[_lead.focus_issue_id]
-                            _weakness = 1.0 - _frac
-                            _adj = _lead.priority * (
-                                1.0 + _ISSUE_BOOST * _weakness + (_GAP_BOOST if _gap else 0.0)
-                            )
-                        elif not _lead.focus_issue_id:
-                            _adj = _lead.priority * (1.0 - _NEUTRAL_DAMP)
-                        else:
-                            _adj = _lead.priority  # issue-targeted, issue not yet in map
-                        _reweighted.append((_adj, _lead))
-                    _reweighted.sort(key=lambda _x: _x[0], reverse=True)
-                    pending_leads = [_l for _, _l in _reweighted]
+            # P0.7: the planner above may have already populated _cov_map;
+            # reuse it rather than paying a second SQL round-trip.
+            if _cov_map and any(_l.focus_issue_id for _l in pending_leads):
+                _ISSUE_BOOST = 0.35   # α — boost per unit weakness (1 - coverage_fraction)
+                _GAP_BOOST   = 0.20   # β — extra boost when a proof gap is open
+                _NEUTRAL_DAMP = 0.15  # κ — dampening for non-issue-anchored leads
+                _reweighted: "list[tuple[float, object]]" = []
+                for _lead in pending_leads:
+                    if _lead.focus_issue_id and _lead.focus_issue_id in _cov_map:
+                        _frac, _gap, _ = _cov_map[_lead.focus_issue_id]
+                        _weakness = 1.0 - _frac
+                        _adj = _lead.priority * (
+                            1.0 + _ISSUE_BOOST * _weakness + (_GAP_BOOST if _gap else 0.0)
+                        )
+                    elif not _lead.focus_issue_id:
+                        _adj = _lead.priority * (1.0 - _NEUTRAL_DAMP)
+                    else:
+                        _adj = _lead.priority  # issue-targeted, issue not yet in map
+                    _reweighted.append((_adj, _lead))
+                _reweighted.sort(key=lambda _x: _x[0], reverse=True)
+                pending_leads = [_l for _, _l in _reweighted]
 
             # MVI-5 per-lead EV gating — stamp expected_cost_usd and
             # expected_coverage_gain on each pending lead so
@@ -7023,6 +7042,138 @@ Return:
                 )
             else:
                 _lead.expected_coverage_gain = self._EV_NEUTRAL_GAIN
+
+    # P0.7 coverage-driven lead planner — per-iteration and per-run
+    # caps. Planner output never exceeds these; reactive leads
+    # (follow-ons, user, clarification answers) have their own budget.
+    _PLANNER_LEADS_PER_ITER = 2
+    _PLANNER_LEADS_PER_RUN = 6
+
+    def _coverage_planner(
+        self,
+        state: InvestigationState,
+        coverage_map: "dict[str, tuple[float, bool, int]]",
+    ) -> int:
+        """P0.7.1 — proactively inject issue-targeted leads based on the
+        matter model's coverage state, not the user's utterance.
+
+        Contract (per Codex design gate):
+         - Runs at the top of each _investigate_loop iteration, only
+           for family='investigate' (or legacy contract=None).
+         - Caps: 2 per iteration, 6 per run; never outranks reactive
+           leads; fills the issue-targeted quota deficit only.
+         - Lead shape: existing Lead with source='coverage_planner',
+           focus_issue_id set, a literal search_term from the issue's
+           first open predicate.
+         - EV enrichment via the existing _enrich_lead_ev path.
+         - Dedup: state.add_lead's string-similarity check already
+           suppresses identical/near-identical descriptions.
+         - NOT in P0.7.1: mid-loop clarification actions, quant-gap
+           routing, authority retrieval, proof-lane predicate scoring.
+
+        Returns the number of leads added this call.
+        """
+        if self._matter_model is None:
+            return 0
+        contract = getattr(state, "execution_contract", None)
+        family = getattr(contract, "family", None) if contract is not None else None
+        if family is not None and family != "investigate":
+            return 0
+        # Per-run cap.
+        run_remaining = self._PLANNER_LEADS_PER_RUN - state.planner_leads_added
+        if run_remaining <= 0:
+            return 0
+        # Per-iteration cap.
+        iter_cap = min(self._PLANNER_LEADS_PER_ITER, run_remaining)
+        # Issue-targeted lane deficit — planner only fills when the
+        # issue quota has capacity among pending (non-investigated)
+        # leads. Matches the Leak-6 quota logic in _investigate_loop.
+        pending = [l for l in state.get_pending_leads()]
+        issue_pending = [l for l in pending if l.focus_issue_id]
+        issue_quota = max(1, (self.config.max_leads_per_level + 1) // 2)
+        deficit = issue_quota - len(issue_pending)
+        capacity = min(iter_cap, max(0, deficit))
+        if capacity <= 0:
+            return 0
+        # Signal pass: canonical coverage report + material open gaps.
+        try:
+            rows = self._matter_model.get_issue_coverage_report(
+                policy_audience="internal",
+            )
+        except Exception as exc:
+            logger.warning("coverage_planner: coverage report failed: %s", exc)
+            return 0
+        if not rows:
+            return 0
+        # Index gapped-issue links for the has_gap boost. Only material
+        # gaps (>= 0.4) feed the planner; low-materiality noise stays
+        # in the clarification end-of-run pass.
+        gapped_issue_ids: set[str] = set()
+        try:
+            for g in self._matter_model.gaps.open_gaps(min_materiality=0.4, limit=20):
+                for dep in (g.get("dependencies") or []):
+                    if dep.get("affected_type") == "issue" and dep.get("affected_id"):
+                        gapped_issue_ids.add(dep["affected_id"])
+        except Exception:
+            pass
+        # Score candidate issues. Skip low-materiality, already-strong,
+        # or already-lead-covered issues.
+        existing_issue_focus: set[str] = {
+            l.focus_issue_id for l in state.leads if l.focus_issue_id
+        }
+        candidates: list[tuple[float, str, str, str]] = []
+        for row in rows:
+            iid = row.get("id")
+            if not iid or iid in existing_issue_focus:
+                continue
+            materiality = float(row.get("materiality") or 0.0)
+            if materiality < 0.4:
+                continue
+            frac, has_gap, _supp = coverage_map.get(iid, (1.0, False, 0))
+            has_any_gap = bool(has_gap) or iid in gapped_issue_ids
+            # Already-strong, no-gap issues — skip.
+            if frac >= 0.6 and not has_any_gap:
+                continue
+            try:
+                preds = self._matter_model.issues.get_predicates(iid, limit=1)
+            except Exception:
+                preds = []
+            pred_text = ""
+            if preds:
+                pred_text = (preds[0].get("description") or "").strip()
+            term = (pred_text or (row.get("title") or "")).strip()
+            if not term:
+                continue
+            weakness = max(0.0, 1.0 - float(frac))
+            score = weakness * 0.55 + (0.25 if has_any_gap else 0.0) + materiality * 0.20
+            candidates.append((score, iid, row.get("title") or "", term))
+        if not candidates:
+            return 0
+        candidates.sort(reverse=True)
+        added = 0
+        for score, iid, title, term in candidates[:capacity]:
+            # Description includes the issue short-hash so
+            # state.add_lead's string-similarity dedup (>0.8 word
+            # overlap) can't collapse two genuinely-different planner
+            # leads into one — titles and predicates may share the
+            # same template boilerplate ("Plaintiff must show...").
+            lead = state.add_lead(
+                description=(
+                    f"[plan:{iid[:8]}] {term[:80]} "
+                    f"(issue: {title[:60]})"
+                ),
+                source="coverage_planner",
+                priority=min(0.86, 0.55 + score),
+                search_term=term,
+                focus_issue_id=iid,
+            )
+            if lead is None:
+                continue  # state.add_lead collapsed into an existing near-dupe
+            # Same EV enrichment path as any other lead.
+            self._enrich_lead_ev([lead], coverage_map)
+            state.planner_leads_added += 1
+            added += 1
+        return added
 
     @staticmethod
     def _viable_leads(pending: list, contract: Any) -> list:
