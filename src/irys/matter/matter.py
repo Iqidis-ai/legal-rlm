@@ -708,6 +708,219 @@ class MatterModel:
                     pass
         return ids
 
+    # ------------------------------------------------------------------
+    # P0.4 Trust Invalidation Lite: bounded document + span invalidation
+    # ------------------------------------------------------------------
+
+    def _collect_document_invalidation_scope(
+        self, doc_id: str,
+    ) -> dict[str, set[str]]:
+        """Gather direct dependents of a document. Returns a dict with
+        sets keyed by target kind. Bounded — does NOT traverse
+        assertion_link, support chains, or provenance_event. Each set
+        reflects one hop from the document.
+
+        Lookup resolves doc_id as either a document_inventory.id OR a
+        relative_path so callers can pass whichever identity they have.
+        """
+        # Resolve the inventory row so we can look up its relative_path
+        # for the legacy occurrence column and collect spans.
+        inv = self.db.execute(
+            """SELECT id, relative_path FROM document_inventory
+               WHERE matter_id=? AND (id=? OR relative_path=?)""",
+            (self.matter_id, doc_id, doc_id),
+        ).fetchone()
+        if inv is None:
+            return {
+                "assertion_ids": set(), "occurrence_ids": set(),
+                "edge_ids": set(), "quant_ids": set(),
+                "authority_ids": set(), "document_card_ids": set(),
+            }
+        inv_id = inv["id"]
+        rel_path = inv["relative_path"]
+        # Occurrences: inventory-linked OR legacy path-based.
+        occ_rows = self.db.execute(
+            """SELECT ao.id, ao.assertion_id FROM assertion_occurrence ao
+               JOIN assertion a ON a.id=ao.assertion_id
+               WHERE a.matter_id=?
+                 AND (ao.document_inventory_id=? OR ao.document_id=?)""",
+            (self.matter_id, inv_id, rel_path),
+        ).fetchall()
+        occurrence_ids = {r["id"] for r in occ_rows}
+        assertion_ids = {r["assertion_id"] for r in occ_rows}
+        # Spans attached to this document (`span` is the canonical table).
+        span_rows = self.db.execute(
+            "SELECT id FROM span WHERE document_id=?",
+            (inv_id,),
+        ).fetchall() if self._table_exists("span") else []
+        doc_span_ids = {r["id"] for r in span_rows}
+        # Quants: attached to assertions we already collected OR via
+        # span_id when a quant was pinned to a doc span.
+        quant_rows = []
+        if assertion_ids:
+            placeholders = ",".join("?" * len(assertion_ids))
+            quant_rows += self.db.execute(
+                f"""SELECT id FROM quant_fact
+                    WHERE matter_id=? AND assertion_id IN ({placeholders})""",
+                (self.matter_id, *assertion_ids),
+            ).fetchall()
+        if doc_span_ids:
+            placeholders = ",".join("?" * len(doc_span_ids))
+            quant_rows += self.db.execute(
+                f"""SELECT id FROM quant_fact
+                    WHERE matter_id=? AND span_id IN ({placeholders})""",
+                (self.matter_id, *doc_span_ids),
+            ).fetchall()
+        quant_ids = {r["id"] for r in quant_rows}
+        # Authorities linked via source_doc_id or source_span_id.
+        auth_rows = []
+        auth_rows += self.db.execute(
+            """SELECT id FROM authority
+               WHERE matter_id=? AND source_doc_id=?""",
+            (self.matter_id, inv_id),
+        ).fetchall()
+        if doc_span_ids:
+            placeholders = ",".join("?" * len(doc_span_ids))
+            auth_rows += self.db.execute(
+                f"""SELECT id FROM authority
+                    WHERE matter_id=? AND source_span_id IN ({placeholders})""",
+                (self.matter_id, *doc_span_ids),
+            ).fetchall()
+        authority_ids = {r["id"] for r in auth_rows}
+        # Document card.
+        card_rows = self.db.execute(
+            "SELECT id FROM document_card WHERE doc_id=?",
+            (inv_id,),
+        ).fetchall()
+        document_card_ids = {r["id"] for r in card_rows}
+        # Evidence edges sourced from these assertions.
+        edge_ids: set[str] = set()
+        if assertion_ids:
+            placeholders = ",".join("?" * len(assertion_ids))
+            edge_rows = self.db.execute(
+                f"""SELECT id FROM evidence_edge
+                    WHERE matter_id=? AND source_kind='assertion'
+                      AND source_id IN ({placeholders})""",
+                (self.matter_id, *assertion_ids),
+            ).fetchall()
+            edge_ids = {r["id"] for r in edge_rows}
+        return {
+            "assertion_ids": assertion_ids,
+            "occurrence_ids": occurrence_ids,
+            "edge_ids": edge_ids,
+            "quant_ids": quant_ids,
+            "authority_ids": authority_ids,
+            "document_card_ids": document_card_ids,
+        }
+
+    def _collect_span_invalidation_scope(
+        self, span_id: str,
+    ) -> dict[str, set[str]]:
+        """Gather direct dependents of a single span. Narrower than
+        the document collector."""
+        occ_rows = self.db.execute(
+            """SELECT ao.id, ao.assertion_id FROM assertion_occurrence ao
+               JOIN assertion a ON a.id=ao.assertion_id
+               WHERE a.matter_id=? AND ao.span_id=?""",
+            (self.matter_id, span_id),
+        ).fetchall()
+        occurrence_ids = {r["id"] for r in occ_rows}
+        assertion_ids = {r["assertion_id"] for r in occ_rows}
+        quant_rows = self.db.execute(
+            """SELECT id FROM quant_fact
+               WHERE matter_id=? AND span_id=?""",
+            (self.matter_id, span_id),
+        ).fetchall()
+        quant_ids = {r["id"] for r in quant_rows}
+        auth_rows = self.db.execute(
+            """SELECT id FROM authority
+               WHERE matter_id=? AND source_span_id=?""",
+            (self.matter_id, span_id),
+        ).fetchall()
+        authority_ids = {r["id"] for r in auth_rows}
+        edge_ids: set[str] = set()
+        if assertion_ids:
+            placeholders = ",".join("?" * len(assertion_ids))
+            edge_rows = self.db.execute(
+                f"""SELECT id FROM evidence_edge
+                    WHERE matter_id=? AND source_kind='assertion'
+                      AND (source_span_id=?
+                           OR source_occurrence_id IN ({
+                               ",".join("?" * len(occurrence_ids))
+                           } ) OR source_id IN ({placeholders}))""",
+                (
+                    self.matter_id, span_id,
+                    *occurrence_ids, *assertion_ids,
+                ),
+            ).fetchall() if occurrence_ids else self.db.execute(
+                f"""SELECT id FROM evidence_edge
+                    WHERE matter_id=? AND source_kind='assertion'
+                      AND (source_span_id=? OR source_id IN ({placeholders}))""",
+                (self.matter_id, span_id, *assertion_ids),
+            ).fetchall()
+            edge_ids = {r["id"] for r in edge_rows}
+        return {
+            "assertion_ids": assertion_ids,
+            "occurrence_ids": occurrence_ids,
+            "edge_ids": edge_ids,
+            "quant_ids": quant_ids,
+            "authority_ids": authority_ids,
+        }
+
+    def _apply_invalidation(
+        self, scope: dict[str, set[str]], *, reason: str,
+    ) -> int:
+        """Mark every collected target stale in one sweep; recompute
+        proof for affected open issues; bump trust_revision once.
+        Returns the count of rows touched."""
+        specs: list[dict] = []
+        for kind_plural, kind_single in (
+            ("assertion_ids", "assertion"),
+            ("occurrence_ids", "assertion_occurrence"),
+            ("edge_ids", "evidence_edge"),
+            ("quant_ids", "quant_fact"),
+            ("authority_ids", "authority"),
+            ("document_card_ids", "document_card"),
+        ):
+            for tid in scope.get(kind_plural, set()):
+                specs.append({"target_kind": kind_single, "target_id": tid})
+        touched = self.verification.bulk_mark_stale(
+            specs, stale_reason=reason,
+        )
+        # Recompute proof for every issue this scope touches.
+        issue_ids: set[str] = set()
+        for tid in scope.get("assertion_ids", set()):
+            issue_ids.update(self._issues_affected_by_target("assertion", tid))
+        for tid in scope.get("edge_ids", set()):
+            issue_ids.update(self._issues_affected_by_target("evidence_edge", tid))
+        for iid in issue_ids:
+            try:
+                self.proof_state.compute_and_store(iid, policy_audience="internal")
+            except Exception:
+                pass
+        if touched:
+            try:
+                self.cache.bump_trust_revision()
+            except Exception:
+                pass
+        return len(touched)
+
+    def mark_document_stale(self, doc_id: str, reason: str) -> int:
+        """P0.4: mark every direct dependent of this document stale
+        (assertions, occurrences, edges, quants, authorities, card).
+        Recompute proof for affected issues, bump trust_revision.
+        Returns the count of targets marked stale."""
+        scope = self._collect_document_invalidation_scope(doc_id)
+        return self._apply_invalidation(scope, reason=reason)
+
+    def mark_span_stale(self, span_id: str, reason: str) -> int:
+        """P0.4: mark every direct dependent of a single span stale.
+        Tighter scope than mark_document_stale — used when a specific
+        clause is replaced but the rest of the document is
+        unchanged."""
+        scope = self._collect_span_invalidation_scope(span_id)
+        return self._apply_invalidation(scope, reason=reason)
+
     def get_verification_events(
         self,
         target_kind: Optional[str] = None,

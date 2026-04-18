@@ -133,6 +133,83 @@ def test_touch_ai_target_leaves_verified_alone(model):
     assert vs["status"] == "verified"
 
 
+def test_mark_document_stale_stales_direct_dependents(model):
+    """P0.4 AC #1: changed document hash must stale every direct
+    dependent — assertions, occurrences, edges, quants, authorities,
+    document card. Verified content is not downgraded (that's a
+    stronger opinion than "the doc changed"); test uses candidate
+    content for the strict check."""
+    from irys.matter.enums import IssueType
+    run_id = model.start_run("doc invalidation")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    # Register the document + a card so the card target exists.
+    inv_id, _ = model.inventory.upsert(
+        "contracts/msa.pdf", "a" * 64, size_bytes=1,
+    )
+    model.document_cards.upsert(
+        doc_id=inv_id, title="MSA", doc_type="contract",
+    )
+    iid, _ = model.issues.upsert_issue(
+        "Breach", IssueType.CLAIM, materiality=0.7,
+    )
+    aid = adapter.record_fact(
+        "Defendant owed payment",
+        "contracts/msa.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    qid = adapter.record_quant(
+        quant_kind="amount", raw_text="$10,000",
+        amount_value=10000.0, assertion_id=aid,
+    )
+    before_rev = model.cache.current_trust_revision()
+    count = model.mark_document_stale(
+        "contracts/msa.pdf", reason="hash_change_test",
+    )
+    assert count >= 3, (
+        f"expected stale sweep to touch assertion+occurrence+quant+card+edge, "
+        f"got {count}"
+    )
+    # Each direct dependent is now stale.
+    assert model.verification.get("assertion", aid)["status"] == "stale"
+    assert model.verification.get("quant_fact", qid)["status"] == "stale"
+    # Trust revision bumped exactly once despite multi-target sweep.
+    assert model.cache.current_trust_revision() == before_rev + 1
+
+
+def test_mark_document_stale_preserves_rejected(model):
+    """Rejection is a stronger opinion than stale — mark_document_stale
+    must NOT downgrade a rejected target to stale."""
+    run_id = model.start_run("doc stale preserves reject")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    model.inventory.upsert("c.pdf", "a" * 64, size_bytes=1)
+    aid = adapter.record_fact("rejected fact", "c.pdf")
+    model.reject_target(
+        "assertion", aid,
+        reviewed_by_kind="user", reviewed_by_id="r1",
+        rejection_reason="bad",
+    )
+    model.mark_document_stale("c.pdf", reason="hash_change")
+    vs = model.verification.get("assertion", aid)
+    assert vs["status"] == "rejected"
+
+
+def test_mark_span_stale_only_span_local(model):
+    """mark_span_stale must NOT stale assertions sourced from other
+    spans of the same document."""
+    run_id = model.start_run("span scoped")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid_in = adapter.record_fact(
+        "Fact in target span", "doc.pdf", span_id="sig-block-1",
+    )
+    aid_out = adapter.record_fact(
+        "Fact elsewhere", "doc.pdf", span_id="other-span",
+    )
+    model.mark_span_stale("sig-block-1", reason="span_replaced")
+    assert model.verification.get("assertion", aid_in)["status"] == "stale"
+    # Out-of-scope assertion is untouched (still candidate).
+    assert model.verification.get("assertion", aid_out)["status"] == "candidate"
+
+
 def test_reject_target_bumps_trust_revision(model):
     """P0.4 invalidation trigger: human rejection must bump the
     revision so any cached reasoning that referenced the
