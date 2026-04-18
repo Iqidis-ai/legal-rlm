@@ -2952,7 +2952,9 @@ class MatterModel:
     # Timeline view (SO-6, Priority 2 visual work product)
     # ------------------------------------------------------------------
 
-    def get_timeline(self, limit: int = 200) -> list[dict]:
+    def get_timeline(
+        self, limit: int = 200, policy_audience: str = "internal",
+    ) -> list[dict]:
         """Return a chronological event list derived from quant dates and assertions.
 
         Each event has:
@@ -3020,13 +3022,62 @@ class MatterModel:
             return d if d else "~"
 
         events.sort(key=_sort_key)
-        return events[:limit]
+        events = events[:limit]
+
+        # P0.5 commit 4: clean-audience timeline hides privileged
+        # content behind a "[withheld]" placeholder instead of
+        # silently dropping the row. The date and event order are
+        # preserved so the attorney sees the gap and can request the
+        # internal view if they need it. Every decision is audited.
+        if policy_audience == "clean":
+            privileged_docs = self.privilege.privileged_doc_inventory_ids()
+            if privileged_docs:
+                # Also collect relative_path → inv_id to match legacy
+                # source_doc fields that carry raw paths.
+                inv_rows = self.db.execute(
+                    "SELECT id, relative_path FROM document_inventory WHERE matter_id=?",
+                    (self.matter_id,),
+                ).fetchall()
+                path_to_inv = {r["relative_path"]: r["id"] for r in inv_rows}
+                from .trust import ContentPurpose, WITHHELD_PLACEHOLDER
+                out: list[dict] = []
+                for ev in events:
+                    src = ev.get("source_doc") or ""
+                    inv_id = (
+                        src if src in privileged_docs
+                        else path_to_inv.get(src)
+                    )
+                    is_priv = (
+                        inv_id in privileged_docs if inv_id else False
+                    )
+                    if is_priv:
+                        decision = self.content_policy.decide(
+                            purpose=ContentPurpose.TIMELINE_VIEW,
+                            subject_kind="document",
+                            subject_id=inv_id or src,
+                            policy_audience="clean",
+                            privilege_flag=True,
+                        )
+                        out.append({
+                            **ev,
+                            "event": WITHHELD_PLACEHOLDER,
+                            "source_doc": WITHHELD_PLACEHOLDER,
+                            "subject": None,
+                            "withheld": True,
+                            "withheld_reason": decision.reason_code,
+                        })
+                    else:
+                        out.append(ev)
+                return out
+        return events
 
     # ------------------------------------------------------------------
     # Evidence matrix (Priority 2 visual work product)
     # ------------------------------------------------------------------
 
-    def get_evidence_matrix(self) -> dict:
+    def get_evidence_matrix(
+        self, policy_audience: str = "internal",
+    ) -> dict:
         """Return a coverage matrix: issues × source documents.
 
         Structure:
@@ -3040,10 +3091,16 @@ class MatterModel:
           },
           "issue_totals": {issue_id: {"supporting": N, "attacking": N}},
           "source_totals": {doc_id: {"supporting": N, "attacking": N}},
+          "withheld_sources": [...]  # clean audience only
         }
 
         Only open issues with at least one assertion link are included.
         Only document sources with at least one assertion link are included.
+
+        P0.5 commit 4: under policy_audience='clean', privileged
+        document columns are replaced with a "[withheld]"
+        placeholder column so the attorney sees coverage gaps
+        instead of silently-dropped evidence.
         """
         open_issues = self.issues.get_open_issues(min_materiality=0.0)
         if not open_issues:
@@ -3117,12 +3174,82 @@ class MatterModel:
         ]
         sources_out = sorted(sources_seen)
 
+        # P0.5 commit 4: under clean audience, collapse privileged
+        # source columns into a single "[withheld]" column so the
+        # shape of the matrix is preserved but the document name
+        # never leaks. Per-cell counts that traced to a privileged
+        # source are summed into the withheld column.
+        withheld_sources: list = []
+        if policy_audience == "clean" and sources_out:
+            from .trust import ContentPurpose, WITHHELD_PLACEHOLDER
+            privileged_doc_ids = self.privilege.privileged_doc_inventory_ids()
+            inv_rows = self.db.execute(
+                "SELECT id, relative_path FROM document_inventory WHERE matter_id=?",
+                (self.matter_id,),
+            ).fetchall()
+            path_to_inv = {r["relative_path"]: r["id"] for r in inv_rows}
+            # Decide which source keys (paths or ids from the matrix)
+            # are privileged.
+            priv_sources: set = set()
+            for src in sources_out:
+                inv_id = (
+                    src if src in privileged_doc_ids
+                    else path_to_inv.get(src)
+                )
+                if inv_id and inv_id in privileged_doc_ids:
+                    priv_sources.add(src)
+                    self.content_policy.decide(
+                        purpose=ContentPurpose.MATRIX_VIEW,
+                        subject_kind="document",
+                        subject_id=inv_id,
+                        policy_audience="clean",
+                        privilege_flag=True,
+                    )
+            if priv_sources:
+                placeholder = WITHHELD_PLACEHOLDER
+                # Build new sources list with withheld at the end,
+                # privileged names removed.
+                non_priv = [s for s in sources_out if s not in priv_sources]
+                sources_out = non_priv + [placeholder]
+                withheld_sources = sorted(priv_sources)
+                # Rewrite cells: each issue's privileged-source cells
+                # collapse into one "[withheld]" column with summed counts.
+                new_cells: dict = {}
+                for iid, doc_map in cells.items():
+                    kept = {
+                        doc: vals for doc, vals in doc_map.items()
+                        if doc not in priv_sources
+                    }
+                    withheld_sum = {"supporting": 0, "attacking": 0, "total": 0}
+                    for doc, vals in doc_map.items():
+                        if doc in priv_sources:
+                            for k in withheld_sum:
+                                withheld_sum[k] += vals.get(k, 0)
+                    if withheld_sum["total"] > 0:
+                        kept[placeholder] = withheld_sum
+                    new_cells[iid] = kept
+                cells = new_cells
+                # Rewrite source_totals similarly.
+                new_source_totals: dict = {
+                    doc: vals for doc, vals in source_totals.items()
+                    if doc not in priv_sources
+                }
+                withheld_totals = {"supporting": 0, "attacking": 0}
+                for doc, vals in source_totals.items():
+                    if doc in priv_sources:
+                        for k in withheld_totals:
+                            withheld_totals[k] += vals.get(k, 0)
+                if any(v > 0 for v in withheld_totals.values()):
+                    new_source_totals[placeholder] = withheld_totals
+                source_totals = new_source_totals
+
         return {
             "issues": issues_out,
             "sources": sources_out,
             "cells": cells,
             "issue_totals": issue_totals,
             "source_totals": source_totals,
+            "withheld_sources": withheld_sources,
         }
 
     # ------------------------------------------------------------------

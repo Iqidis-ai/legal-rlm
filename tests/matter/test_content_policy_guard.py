@@ -213,6 +213,94 @@ def test_hydration_writes_content_policy_audit_rows(model):
     assert rows[0]["action"] == "allow"  # candidate is eligible for hydration
 
 
+def test_clean_timeline_replaces_privileged_events_with_placeholder(model):
+    """P0.5 commit 4: clean-audience timeline hides privileged
+    content behind "[withheld]" so the attorney sees the chronology
+    gap instead of a silent drop."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+    from irys.matter.trust import WITHHELD_PLACEHOLDER
+
+    inv_id, _ = model.inventory.upsert(
+        "internal/strategy.docx", "a" * 64, size_bytes=1,
+    )
+    model.document_cards.upsert(
+        doc_id=inv_id, title="Strategy memo",
+        doc_type="internal", privilege_flag=True,
+    )
+    inv_public, _ = model.inventory.upsert(
+        "contract.pdf", "b" * 64, size_bytes=1,
+    )
+    model.document_cards.upsert(
+        doc_id=inv_public, title="Contract",
+        doc_type="contract", privilege_flag=False,
+    )
+    # Seed one date quant per doc.
+    model.quant.record(
+        quant_kind="date", raw_text="signed 2024-03-15",
+        date_value="2024-03-15", span_id=inv_id,  # use inv_id as span
+    )
+    model.quant.record(
+        quant_kind="date", raw_text="effective 2024-04-01",
+        date_value="2024-04-01", span_id=inv_public,
+    )
+    # Internal view sees both.
+    internal = model.get_timeline(policy_audience="internal")
+    assert len(internal) == 2
+    # Clean view preserves both rows but replaces the privileged
+    # event text with "[withheld]".
+    clean = model.get_timeline(policy_audience="clean")
+    assert len(clean) == 2
+    withheld = [e for e in clean if e.get("withheld")]
+    assert len(withheld) == 1
+    assert withheld[0]["event"] == WITHHELD_PLACEHOLDER
+    # Public event is untouched.
+    public = [e for e in clean if not e.get("withheld")]
+    assert len(public) == 1
+    assert public[0]["event"] == "effective 2024-04-01"
+
+
+def test_clean_evidence_matrix_collapses_privileged_sources(model):
+    """P0.5 commit 4: clean evidence matrix collapses privileged
+    source columns into a single "[withheld]" column so the attorney
+    sees a non-zero coverage total but doesn't see which privileged
+    document supplied the support."""
+    from irys.matter.enums import IssueType
+    from irys.matter.runtime import MatterRuntimeAdapter
+    from irys.matter.trust import WITHHELD_PLACEHOLDER
+
+    iid, _ = model.issues.upsert_issue("Claim", IssueType.CLAIM, materiality=0.7)
+    inv_priv, _ = model.inventory.upsert(
+        "internal/memo.docx", "a" * 64, size_bytes=1,
+    )
+    model.document_cards.upsert(
+        doc_id=inv_priv, title="Memo",
+        doc_type="internal", privilege_flag=True,
+    )
+    model.inventory.upsert("msa.pdf", "b" * 64, size_bytes=1)
+    run_id = model.start_run("matrix clean")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_fact(
+        "Defendant acknowledged breach in memo",
+        "internal/memo.docx",
+        issue_id=iid, issue_link_type="supports",
+    )
+    adapter.record_fact(
+        "MSA requires 30-day payment",
+        "msa.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    # Internal view shows both docs named.
+    internal = model.get_evidence_matrix(policy_audience="internal")
+    assert set(internal["sources"]) >= {"internal/memo.docx", "msa.pdf"}
+    # Clean view: privileged doc collapses to placeholder column;
+    # msa.pdf keeps its name.
+    clean = model.get_evidence_matrix(policy_audience="clean")
+    assert "internal/memo.docx" not in clean["sources"]
+    assert WITHHELD_PLACEHOLDER in clean["sources"]
+    assert "msa.pdf" in clean["sources"]
+    assert "internal/memo.docx" in clean["withheld_sources"]
+
+
 def test_cached_search_writes_audit_per_hit(model):
     """P0.5 commit 3 third surface: when _search_cached_assertions
     forwards hits toward the LLM, each hit produces one
