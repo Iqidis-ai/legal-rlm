@@ -438,12 +438,17 @@ def _conversation_history_digest(conversation_history: list[dict[str, str]] | No
 # Combined output matches the legacy ANALYZE_FINDINGS_PROMPT shape so
 # downstream code is unchanged.
 
-EXTRACT_FINDINGS_PROMPT = """You extract verifiable facts from search results. Pure extraction — do not judge relevance or issue alignment.
+EXTRACT_FINDINGS_PROMPT = """You extract verifiable facts from search results. Pure extraction — do NOT judge evidentiary weight, contradiction, or hypothesis support (another pass handles that). Your only bias is relevance to the investigation below.
+
+Investigation context (for relevance only — use this to decide which facts to pick, not to evaluate them):
+- Query: {query}
+- Current hypothesis: {hypothesis}
+- Priority focus: {relevance_hint}
 
 Search Results for "{search_term}":
 {search_results}
 
-1. KEY_FACTS (max 10): the most concrete, specific facts. Prefer facts with dates, amounts, party names.
+1. KEY_FACTS (max 10): the most concrete, specific facts that are ALSO plausibly relevant to the investigation context above. Prefer facts with dates, amounts, party names, and facts that name entities or events in the query or hypothesis.
    Format each fact as: {{"fact": "under-100-char text", "source_file": "filename_if_determinable", "subject": "entity", "predicate": "snake_case_verb", "object": "value_or_target"}}
    - source_file: file identifier exactly as it appears in the results (may be "filename.pdf" or "folder/filename.pdf")
    - subject / predicate / object: REQUIRED except for purely procedural facts with no entity relationship (omit all three then)
@@ -2711,7 +2716,20 @@ class RLMEngine:
 
             # Stage 1 — LITE extraction. Always fires. Reads the big
             # search_results input, emits compact structured output.
+            # Codex review on b1ac54c: lightweight relevance hints
+            # (query + hypothesis + first predicate line of the issue
+            # focus) steer extraction toward investigation-relevant
+            # facts without asking LITE to reason.
+            _relevance_hint = "(none)"
+            if _issue_focus and "Element to prove" in _issue_focus:
+                for _ln in _issue_focus.splitlines():
+                    if _ln.strip().startswith("Element to prove"):
+                        _relevance_hint = _ln.strip()
+                        break
             stage1_prompt = EXTRACT_FINDINGS_PROMPT.format(
+                query=state.query,
+                hypothesis=state.hypothesis or "No hypothesis yet",
+                relevance_hint=_relevance_hint,
                 search_term=results.query,
                 search_results=results_text,
             )
@@ -2762,12 +2780,32 @@ class RLMEngine:
                             lines.append(f"{i}: {item.get(key, '')}")
                     return "\n".join(lines)
 
+                # Defensive pre-normalization before Stage 2 and before
+                # merge. Malformed items (non-dicts where dicts are
+                # expected, non-numeric priorities, etc.) must NOT
+                # abort the pipeline — the pre-split single-call code
+                # silently tolerated junk, and so must we.
+                normalized_facts = []
+                for f in raw_facts:
+                    if isinstance(f, dict):
+                        normalized_facts.append(f)
+                    elif f:
+                        normalized_facts.append({"fact": str(f)})
+                normalized_leads = []
+                for item in raw_leads:
+                    if isinstance(item, dict):
+                        normalized_leads.append(item)
+                    elif item:
+                        normalized_leads.append({"desc": str(item)})
+                normalized_searches = [str(s) for s in raw_searches if s]
+
                 facts_block = _fmt_indexed(
-                    [f.get("fact", "") if isinstance(f, dict) else str(f) for f in raw_facts],
+                    [str(f.get("fact", "")) for f in normalized_facts],
                 )
-                leads_block = _fmt_indexed(raw_leads, key="desc")
+                leads_block = _fmt_indexed(normalized_leads, key="desc")
                 searches_block = (
-                    "\n".join(f"- {s}" for s in raw_searches) if raw_searches else "(none)"
+                    "\n".join(f"- {s}" for s in normalized_searches)
+                    if normalized_searches else "(none)"
                 )
                 stage2_prompt = REASON_FINDINGS_PROMPT.format(
                     query=state.query,
@@ -2795,49 +2833,62 @@ class RLMEngine:
                 })
 
                 # Merge Stage 1 extraction with Stage 2 reasoning into
-                # the legacy `analysis` dict shape so downstream code is
-                # unchanged.
-                relation_by_idx = {
-                    int(r.get("fact_idx", -1)): r.get("relation", "neutral")
-                    for r in (stage2.get("fact_issue_relations") or [])
-                    if isinstance(r, dict)
-                }
-                merged_facts = []
-                for i, fact in enumerate(raw_facts):
-                    fact_dict = fact if isinstance(fact, dict) else {"fact": str(fact)}
-                    merged_facts.append({
-                        **fact_dict,
-                        "issue_relation": relation_by_idx.get(i, "neutral"),
-                    })
+                # the legacy `analysis` dict shape. All casts are guarded
+                # so a malformed JSON-valid item can't abort the merge —
+                # bad entries are silently dropped (same tolerance the
+                # pre-split code had via its single _parse_json_safe).
+                def _safe_int(val, default=-1):
+                    try:
+                        return int(val)
+                    except (TypeError, ValueError):
+                        return default
 
-                priority_by_lead = {
-                    int(p.get("lead_idx", -1)): p.get("priority", 0.5)
-                    for p in (stage2.get("lead_priorities") or [])
-                    if isinstance(p, dict)
-                }
-                merged_leads = []
-                for i, lead_item in enumerate(raw_leads):
-                    lead_dict = (
-                        lead_item if isinstance(lead_item, dict)
-                        else {"desc": str(lead_item)}
+                def _safe_float(val, default=0.5):
+                    try:
+                        return float(val)
+                    except (TypeError, ValueError):
+                        return default
+
+                relation_by_idx: dict[int, str] = {}
+                for r in (stage2.get("fact_issue_relations") or []):
+                    if not isinstance(r, dict):
+                        continue
+                    idx = _safe_int(r.get("fact_idx"), -1)
+                    if idx < 0:
+                        continue
+                    rel = r.get("relation")
+                    relation_by_idx[idx] = (
+                        str(rel) if rel in ("supports", "attacks", "neutral") else "neutral"
                     )
-                    merged_leads.append({
-                        **lead_dict,
-                        "priority": float(priority_by_lead.get(i, 0.5)),
-                    })
+
+                merged_facts = [
+                    {**fact, "issue_relation": relation_by_idx.get(i, "neutral")}
+                    for i, fact in enumerate(normalized_facts)
+                ]
+
+                priority_by_lead: dict[int, float] = {}
+                for p in (stage2.get("lead_priorities") or []):
+                    if not isinstance(p, dict):
+                        continue
+                    idx = _safe_int(p.get("lead_idx"), -1)
+                    if idx < 0:
+                        continue
+                    priority_by_lead[idx] = _safe_float(p.get("priority"), 0.5)
+
+                merged_leads = [
+                    {**lead_dict, "priority": priority_by_lead.get(i, 0.5)}
+                    for i, lead_dict in enumerate(normalized_leads)
+                ]
 
                 # next_searches: prefer Stage 2's ranked list; fall back
-                # to Stage 1 extraction if Stage 2 didn't rank any.
-                ranked = sorted(
-                    (stage2.get("next_search_priorities") or []),
-                    key=lambda x: -float(
-                        x.get("priority", 0.0) if isinstance(x, dict) else 0.0,
-                    ),
-                )
-                next_searches = [
-                    x.get("term") for x in ranked
+                # to Stage 1 if Stage 2 didn't rank any.
+                ranked_pairs = [
+                    (_safe_float(x.get("priority"), 0.0), str(x.get("term") or ""))
+                    for x in (stage2.get("next_search_priorities") or [])
                     if isinstance(x, dict) and x.get("term")
-                ] or list(raw_searches)
+                ]
+                ranked_pairs.sort(key=lambda p: -p[0])
+                next_searches = [term for _, term in ranked_pairs] or list(normalized_searches)
 
                 analysis = {
                     "key_facts": merged_facts,
