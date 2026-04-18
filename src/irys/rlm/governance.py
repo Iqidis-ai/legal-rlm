@@ -1690,15 +1690,15 @@ class SteerFamilyHandler:
             # calendar-validation pass via datetime.date.
             consumed_spans: list[tuple[int, int]] = []
             # ISO YYYY-MM-DD is _DATE_PATTERNS[0]
-            # Codex fallout R4: consume every ISO-shaped span FIRST —
-            # broad regex matches "\d{4}-\d{1,2}-\d{1,2}" regardless
-            # of whether the month/day values are valid. That way
-            # a nonsense like "2026-13-45" has its entire span
-            # consumed, so the number extractor below won't lift
-            # "2026" / "13" / "45" as independent tokens. Then the
-            # STRICT ISO regex decides which consumed spans are also
-            # ADDED to the output as valid date tokens.
-            iso_shaped = r"\b\d{4}-\d{1,2}-\d{1,2}\b"
+            # Codex fallout R5: consume every ISO-shaped span FIRST,
+            # NO word boundaries. The broad regex now catches both
+            # standalone and embedded cases ("x2026-13-45y" leaks
+            # fragments without a word boundary because x and 2 are
+            # both word chars so \b doesn't fire). The regex
+            # deliberately requires YYYY-DD-DD shape, no more — so
+            # it doesn't accidentally consume other ambiguous
+            # numeric runs like "1234-5-6".
+            iso_shaped = r"\d{4}-\d{1,2}-\d{1,2}"
             for m in _re.finditer(iso_shaped, text):
                 consumed_spans.append(m.span())
             iso_pat = cls._DATE_PATTERNS[0]

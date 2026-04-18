@@ -146,6 +146,57 @@ def test_classifier_cache_respects_trust_revision_bump(warm_matter):
     assert len(client.calls) == 2  # Re-fired after trust bump.
 
 
+def test_stale_cache_does_not_return_unrelated_prior_route():
+    """Round 5: the positive-hit test seeded only ONE prior entry,
+    so it would pass even on a blunt revert to 'first cached row
+    wins'. This test seeds a prior entry for query A and then
+    drives a classifier failure on DIFFERENT query B — the stale
+    fallback must skip A and fall through to investigate. Without
+    this the stale lookup is an audit-polluter."""
+    import json
+    from irys.rlm.governance import decision_cache_key
+    mm = MatterModel.open_in_memory()
+    run_id = mm.start_run("seed")
+    mm.record_assertion(
+        AssertionCandidate(
+            proposition_text="Seed fact",
+            speech_act=SpeechAct.ALLEGED,
+            source_role=SourceRole.ADVOCACY,
+            document_id="d.pdf",
+        ),
+        run_id=run_id,
+    )
+    mm.complete_run(run_id)
+
+    gov_probe = CascadeGovernor(client=_FakeClient({}), matter_model=mm)
+    snap = gov_probe._build_snapshot(conversation_history=None)
+    # Seed a prior-version entry for query A.
+    query_a = "summarize the matter"
+    query_b = "what are the damages"
+    prior_key = decision_cache_key(query_a, snap, "mvi6.0")
+    mm.cache.put("cascade_decision", prior_key, {
+        "family": "read", "confidence": 0.8,
+        "rationale": "route for A",
+        "schema_version": "mvi6.0",
+    })
+
+    # Force NANO failure on query B. With strict matching the stale
+    # fallback scans for query_b+snapshot under prior versions,
+    # doesn't find it, and returns None — so governor defaults to
+    # investigate. With the old overbroad behavior the fallback
+    # would have returned the A-route for B.
+    class _FailingClient:
+        async def complete(self, *a, **kw):
+            raise RuntimeError("NANO outage")
+    gov = CascadeGovernor(client=_FailingClient(), matter_model=mm)
+    result = asyncio.run(gov.decide(query=query_b))
+    # Different query → stale fallback must skip → defaults to investigate.
+    assert result.family == "investigate"
+    # Classifier_version on an investigate fallback is the current
+    # schema, not the stale-fallback sentinel.
+    assert result.classifier_version != "_stale_cache_fallback"
+
+
 def test_stale_cache_positive_hit_reuses_prior_version(warm_matter):
     """Round 4: the skip-unrelated path was tested but the POSITIVE
     HIT path was not. This test seeds a cached route under a PRIOR
@@ -506,6 +557,20 @@ def test_read_handler_rejects_numeric_and_bool_citations(warm_matter):
     assert len(result.citations) == 0
     assert result.escalation_needed is True
     assert result.failure_kind == "state_insufficient"
+
+
+def test_specific_tokens_rejects_embedded_iso_fragment_leak():
+    """Round 5: the R4 broad-regex consumer used word boundaries,
+    which fail when the ISO-shape appears inside a larger token
+    (e.g. an identifier like 'x2026-13-45y'). Without boundaries,
+    the consumer catches embedded cases too."""
+    tokens = SteerFamilyHandler._specific_tokens("x2026-13-45y")
+    assert "2026" not in tokens
+    assert "13" not in tokens
+    assert "45" not in tokens
+    # Sanity: a valid embedded date still gets picked up as a real token.
+    tokens2 = SteerFamilyHandler._specific_tokens("ref=2026-04-15/paper")
+    assert "2026-04-15" in tokens2
 
 
 def test_specific_tokens_rejects_regex_invalid_iso_dates():
