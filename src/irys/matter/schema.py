@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 56
+SCHEMA_VERSION = 57
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -19,6 +19,7 @@ _MIGRATION_NAMES: dict[int, str] = {
     54: "issue_predicate_template_metadata",
     55: "provenance_event_and_llm_call_hashes",
     56: "matter_trust_revision",
+    57: "content_policy_audit",
 }
 
 
@@ -2743,6 +2744,45 @@ def _migration_v56(conn) -> None:
     conn.commit()
 
 
+def _migration_v57(conn) -> None:
+    """P0.5 Content Policy MVI: append-only audit log of every
+    content-policy decision the guard emits (SO-5).
+
+    Writers never mutate past rows. One row per decision lets an
+    audit trace, for a given target, every time a surface asked
+    "may this enter clean output for purpose X?" and what the guard
+    returned.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS content_policy_audit (
+            id             TEXT PRIMARY KEY,
+            matter_id      TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            purpose        TEXT NOT NULL,
+            policy_audience TEXT NOT NULL,
+            target_kind    TEXT NOT NULL,
+            target_id      TEXT NOT NULL,
+            action         TEXT NOT NULL
+                CHECK (action IN ('allow','block','withhold')),
+            reason_code    TEXT NOT NULL,
+            trust_bucket   TEXT NOT NULL,
+            privilege_flag INTEGER,
+            note           TEXT,
+            created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        ) STRICT
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_content_policy_audit_target"
+        " ON content_policy_audit(matter_id, target_kind, target_id, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_content_policy_audit_purpose"
+        " ON content_policy_audit(matter_id, purpose, created_at DESC)"
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -2803,6 +2843,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (54, _migration_v54),
     (55, _migration_v55),
     (56, _migration_v56),
+    (57, _migration_v57),
 ]
 
 

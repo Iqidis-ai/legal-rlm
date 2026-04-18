@@ -26,6 +26,7 @@ from .graph import (
     ReasoningCacheStore, TrustOverrideStore, DocumentAnnotationStore,
     DecisionContextStore, AuthorityStore, ProofStateStore, AssumptionStore,
     VerificationStateStore, EvidenceStore, PrivilegeGate, ProvenanceStore,
+    ContentPolicyGuard,
 )
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
@@ -114,6 +115,7 @@ class MatterModel:
         self.evidence = EvidenceStore(db, matter_id)
         self.privilege = PrivilegeGate(db, matter_id)
         self.provenance = ProvenanceStore(db, matter_id)
+        self.content_policy = ContentPolicyGuard(db, matter_id)
         # In-memory snapshot of assertion counts captured at run start.
         # Keyed by run_id.  Allows complete_run() to compute reuse_rate without
         # an extra SELECT round-trip (DB is the authoritative fallback).

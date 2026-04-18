@@ -155,4 +155,8 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
             "irys.matter.graph:ProvenanceStore.list_for_llm_call",
         ),
     ),
+    "content_policy_audit": TableCoverageSpec(
+        writers=("irys.matter.graph:ContentPolicyGuard._append_audit",),
+        readers=("irys.matter.graph:ContentPolicyGuard.list_decisions",),
+    ),
 }

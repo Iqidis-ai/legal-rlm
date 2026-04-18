@@ -4131,6 +4131,143 @@ class PrivilegeGate:
         return {r["assertion_id"] for r in rows}
 
 
+class ContentPolicyGuard:
+    """P0.5 Content Policy MVI unified guard (SO-5).
+
+    Composes ContentPolicy.decide() with the runtime stores so every
+    user-facing surface (profile, deep_read, search_snippets_to_llm,
+    hydration, synthesis_context, timeline_view, matrix_view,
+    chat_response, export) routes through one place before
+    privileged/unknown/low-trust material can enter clean output.
+
+    Every decision is persisted to content_policy_audit so a later
+    audit can answer "for this target, every time a clean-mode
+    surface asked the guard, what did it decide and why?".
+    """
+
+    def __init__(self, db: "SQLiteMatterDB", matter_id: str) -> None:
+        self.db = db
+        self.matter_id = matter_id
+
+    def decide(
+        self,
+        *,
+        purpose: "ContentPurpose | str",
+        subject_kind: str,
+        subject_id: str,
+        policy_audience: str = "clean",
+        assertion_verification_status: Optional[str] = None,
+        edge_verification_status: Optional[str] = None,
+        belief_state: Optional[str] = None,
+        privilege_flag: Optional[bool] = None,
+        note: Optional[str] = None,
+        record: bool = True,
+    ) -> "ContentPolicyDecision":
+        """Evaluate a single content-policy request and (by default)
+        persist the decision to content_policy_audit. Callers that
+        iterate over large sets and want to skip per-row audit writes
+        can pass record=False.
+        """
+        # Local imports to keep graph.py's import section minimal and
+        # avoid a circular-import risk.
+        from .trust import ContentPolicy, ContentPurpose as _CP
+        purpose_enum = (
+            purpose if isinstance(purpose, _CP) else _CP(purpose)
+        )
+        decision = ContentPolicy.decide(
+            purpose=purpose_enum,
+            policy_audience=policy_audience,
+            assertion_verification_status=assertion_verification_status,
+            edge_verification_status=edge_verification_status,
+            belief_state=belief_state,
+            privilege_flag=privilege_flag,
+        )
+        if record:
+            try:
+                self._append_audit(
+                    purpose=purpose_enum.value,
+                    policy_audience=policy_audience,
+                    subject_kind=subject_kind,
+                    subject_id=subject_id,
+                    action=decision.action.value,
+                    reason_code=decision.reason_code,
+                    trust_bucket=decision.trust_bucket.value,
+                    privilege_flag=privilege_flag,
+                    note=note,
+                )
+            except Exception:
+                # Audit write must never break the calling path. A
+                # failed audit is worse than no audit but not worse
+                # than a failed read for an attorney waiting on the UI.
+                pass
+        return decision
+
+    def _append_audit(
+        self,
+        *,
+        purpose: str,
+        policy_audience: str,
+        subject_kind: str,
+        subject_id: str,
+        action: str,
+        reason_code: str,
+        trust_bucket: str,
+        privilege_flag: Optional[bool],
+        note: Optional[str],
+    ) -> str:
+        """Append one row to content_policy_audit. Called internally;
+        direct use from stores is fine when a non-standard audit
+        shape is needed."""
+        row_id = _id()
+        priv_int: Optional[int] = None
+        if privilege_flag is True:
+            priv_int = 1
+        elif privilege_flag is False:
+            priv_int = 0
+        self.db.execute(
+            """INSERT INTO content_policy_audit
+                (id, matter_id, purpose, policy_audience,
+                 target_kind, target_id, action, reason_code,
+                 trust_bucket, privilege_flag, note, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (row_id, self.matter_id, purpose, policy_audience,
+             subject_kind, subject_id, action, reason_code,
+             trust_bucket, priv_int, note, _now()),
+        )
+        return row_id
+
+    def list_decisions(
+        self,
+        target_kind: Optional[str] = None,
+        target_id: Optional[str] = None,
+        purpose: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Read the audit trail. Callers filter by any combination of
+        target, target_id, and purpose — or omit filters for the
+        newest N decisions matter-wide."""
+        clauses = ["matter_id=?"]
+        params: list = [self.matter_id]
+        if target_kind is not None:
+            clauses.append("target_kind=?")
+            params.append(target_kind)
+        if target_id is not None:
+            clauses.append("target_id=?")
+            params.append(target_id)
+        if purpose is not None:
+            clauses.append("purpose=?")
+            params.append(purpose)
+        where = " AND ".join(clauses)
+        params.append(int(limit))
+        rows = self.db.execute(
+            f"""SELECT * FROM content_policy_audit
+                WHERE {where}
+                ORDER BY created_at DESC LIMIT ?""",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 class DocumentCardStore:
     """Per-document intelligence card store.
 
