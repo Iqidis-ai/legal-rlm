@@ -64,6 +64,7 @@ from .models import (
     DocumentAnnotationRequest,
     VerifyTargetRequest,
     BulkVerifyByDocumentRequest,
+    BulkVerifyBySpanRequest,
 )
 from .s3_repository import S3Repository
 
@@ -2088,6 +2089,7 @@ async def verify_target(matter_id: str, request: VerifyTargetRequest):
                 reviewed_by_kind=request.reviewed_by_kind,
                 reviewed_by_id=request.reviewed_by_id,
                 review_note=request.review_note,
+                review_scope=request.review_scope,
                 run_id=request.run_id,
             )
         else:
@@ -2103,6 +2105,7 @@ async def verify_target(matter_id: str, request: VerifyTargetRequest):
                 reviewed_by_id=request.reviewed_by_id,
                 rejection_reason=request.rejection_reason,
                 review_note=request.review_note,
+                review_scope=request.review_scope,
                 run_id=request.run_id,
             )
     except ValueError as e:
@@ -2138,6 +2141,7 @@ async def bulk_verify_by_document(
             reviewed_by_kind=request.reviewed_by_kind,
             reviewed_by_id=request.reviewed_by_id,
             review_note=request.review_note,
+            review_scope=request.review_scope,
             run_id=request.run_id,
         )
     except ValueError as e:
@@ -2147,6 +2151,64 @@ async def bulk_verify_by_document(
         "document_ref": request.document_ref,
         "verified_count": len(ids),
         "verification_ids": ids,
+    }
+
+
+@app.post(
+    "/matter/{matter_id}/verify/bulk-by-span",
+    tags=["Review Queue"],
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+async def bulk_verify_by_span(matter_id: str, request: BulkVerifyBySpanRequest):
+    """Promote every candidate assertion sourced from a single span
+    (clause, signature block, paragraph) in one operation. P0.3 AC:
+    bulk verification works for document OR span set."""
+    model = await _get_matter_model_or_404(matter_id)
+    try:
+        ids = model.bulk_verify_by_span(
+            request.span_id,
+            reviewed_by_kind=request.reviewed_by_kind,
+            reviewed_by_id=request.reviewed_by_id,
+            review_note=request.review_note,
+            review_scope=request.review_scope,
+            run_id=request.run_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "matter_id": matter_id,
+        "span_id": request.span_id,
+        "verified_count": len(ids),
+        "verification_ids": ids,
+    }
+
+
+@app.get(
+    "/matter/{matter_id}/verification-events",
+    tags=["Review Queue"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_verification_events(
+    matter_id: str,
+    target_kind: Optional[str] = None,
+    target_id: Optional[str] = None,
+    limit: int = 50,
+):
+    """P0.3 AC #5: every verification transition is auditable. Returns
+    verification_event rows for the matter (or narrowed to one target),
+    newest-first. This is the user-facing audit surface SO-3 requires.
+    """
+    limit = max(1, min(limit, 500))
+    model = await _get_matter_model_or_404(matter_id)
+    events = model.get_verification_events(
+        target_kind=target_kind, target_id=target_id, limit=limit,
+    )
+    return {
+        "matter_id": matter_id,
+        "count": len(events),
+        "target_kind": target_kind,
+        "target_id": target_id,
+        "events": events,
     }
 
 

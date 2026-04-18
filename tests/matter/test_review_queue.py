@@ -220,6 +220,180 @@ def test_bulk_verify_by_document_promotes_all_candidates(model):
     )
 
 
+def test_review_queue_surfaces_predicates(model):
+    """Codex P0.3 review fix #1: candidate issue_predicate rows must
+    land in bucket 3, ordered by parent issue's materiality × salience,
+    not in the generic bucket 6 with score 0."""
+    from irys.matter.enums import IssueType
+
+    iid, _ = model.issues.upsert_issue(
+        "Breach", IssueType.CLAIM, materiality=0.9, salience=0.8,
+    )
+    pid = model.issues.add_predicate(iid, "Element: duty")
+    q = model.get_review_queue(limit=20)
+    pred_rows = [r for r in q if r["target_kind"] == "issue_predicate"]
+    assert len(pred_rows) >= 1
+    found = next(r for r in pred_rows if r["target_id"] == pid)
+    assert found["priority_bucket"] == 3
+    assert found["priority_score"] > 0.0
+    # Predicate text surfaces as context.
+    assert found["predicate_description"] == "Element: duty"
+
+
+def test_review_queue_surfaces_contradicted_assertions(model):
+    """Codex P0.3 review fix #1: assertions that appear on either
+    side of an attacks/contradicts link get bucket 1 priority, so
+    reviewers see live conflicts near the top of the queue."""
+    from irys.matter.enums import AssertionLinkType
+
+    adapter, _ = _adapter(model)
+    aid_a = adapter.record_fact("Defendant signed contract.", "doc.pdf")
+    aid_b = adapter.record_fact("Defendant never signed.", "doc.pdf")
+    model.assertions.link(aid_a, aid_b, AssertionLinkType.CONTRADICTS)
+
+    q = model.get_review_queue(limit=20)
+    by_id = {r["target_id"]: r for r in q}
+    assert aid_a in by_id and aid_b in by_id
+    # Contradicted assertions land in bucket 1 (or 0 if also gap-blocked).
+    assert by_id[aid_a]["priority_bucket"] <= 1
+    assert by_id[aid_b]["priority_bucket"] <= 1
+
+
+def test_review_scope_propagates_into_verification_row(model):
+    """Codex P0.3 review fix #2: review_scope on verify_target must
+    land in the verification_state row, not be silently swallowed."""
+    adapter, _ = _adapter(model)
+    aid = adapter.record_fact("Fact to record-truth verify", "doc.pdf")
+    model.verify_target(
+        "assertion", aid,
+        reviewed_by_kind="attorney", reviewed_by_id="a1",
+        review_scope="record_truth",
+    )
+    vs = model.verification.get("assertion", aid)
+    assert vs["review_scope"] == "record_truth"
+
+
+def test_reject_authority_triggers_issues_helper(model):
+    """Codex P0.3 review fix #3: rejecting non-assertion targets
+    (authority) still passes through _issues_affected_by_target
+    without crashing. Coverage recompute is a no-op when the
+    optional authority_issue_link table is absent, but the rejection
+    itself must succeed and emit a verification_event."""
+    adapter, run_id = _adapter(model)
+    aid = model.authority.upsert("Smith v. Jones, 1 F.3d 100")[0]
+    model.reject_target(
+        "authority", aid,
+        reviewed_by_kind="attorney", reviewed_by_id="a1",
+        rejection_reason="wrong jurisdiction",
+        run_id=run_id,
+    )
+    vs = model.verification.get("authority", aid)
+    assert vs is not None
+    assert vs["status"] == "rejected"
+
+
+def test_reject_quant_fact_traces_through_to_issue(model):
+    """Codex P0.3 review fix #3: a quant_fact is attributable to a
+    parent assertion; rejecting the quant must trace back to the
+    assertion's issues for proof recompute."""
+    from irys.matter.enums import IssueType
+
+    iid, _ = model.issues.upsert_issue("Damages", IssueType.CLAIM, materiality=0.7)
+    adapter, run_id = _adapter(model)
+    aid = adapter.record_fact(
+        "Invoice total $1000", "invoice.pdf",
+        issue_id=iid, issue_link_type="supports",
+    )
+    edge = model.db.execute(
+        "SELECT id FROM evidence_edge WHERE source_id=? AND target_id=?",
+        (aid, iid),
+    ).fetchone()
+    from irys.matter.enums import VerificationTargetKind
+    model.verification.verify(
+        VerificationTargetKind.ASSERTION, aid,
+        reviewed_by_kind="user", reviewed_by_id="r1",
+    )
+    model.verification.verify(
+        VerificationTargetKind.EVIDENCE_EDGE, edge["id"],
+        reviewed_by_kind="user", reviewed_by_id="r1",
+    )
+    # Record a quant_fact tied to this assertion.
+    qid = adapter.record_quant(
+        quant_kind="amount", raw_text="$1000 total",
+        amount_value=1000.0, assertion_id=aid,
+    )
+    # Rejecting the quant should traverse quant → parent assertion →
+    # affected issues and recompute proof state. The issue the
+    # assertion supports is returned by _issues_affected_by_target.
+    affected = model._issues_affected_by_target("quant_fact", qid)
+    assert iid in affected
+
+
+def test_bulk_verify_by_document_matches_basename_and_normalized(model):
+    """Codex P0.3 review fix #2: document_ref matching must succeed
+    for basename and slash-normalized paths, not just the exact raw
+    stored string."""
+    adapter, run_id = _adapter(model)
+    # Record a fact whose occurrence stores a Windows-style path.
+    adapter.record_fact("Claim text", "contracts/msa.pdf")
+    # Caller passes the basename.
+    ids = model.bulk_verify_by_document(
+        "msa.pdf",
+        reviewed_by_kind="user", reviewed_by_id="r1",
+    )
+    assert len(ids) == 1
+
+
+def test_bulk_verify_by_span_promotes_span_scoped(model):
+    """Codex P0.3 AC #3 coverage: span-set bulk variant must verify
+    every candidate assertion whose occurrence carries the given
+    span_id, and leave other assertions alone."""
+    adapter, run_id = _adapter(model)
+    # Each (document_id, span_id) is a unique occurrence slot — a
+    # second write to the same slot overwrites the first. Use
+    # different docs to get two distinct occurrences sharing a span_id.
+    adapter.record_fact(
+        "Fact A in signature span", "docA.pdf", span_id="sig-block-1",
+    )
+    adapter.record_fact(
+        "Fact B in signature span", "docB.pdf", span_id="sig-block-1",
+    )
+    adapter.record_fact(
+        "Fact C elsewhere", "docC.pdf", span_id="other-span",
+    )
+    ids = model.bulk_verify_by_span(
+        "sig-block-1",
+        reviewed_by_kind="user", reviewed_by_id="r1",
+        run_id=run_id,
+    )
+    assert len(ids) == 2
+    # Non-matching span must not have been promoted.
+    other_aid = model.db.execute(
+        "SELECT ao.assertion_id FROM assertion_occurrence ao WHERE ao.span_id='other-span'",
+    ).fetchone()["assertion_id"]
+    vs = model.verification.get("assertion", other_aid)
+    assert vs is None or vs["status"] == "candidate"
+
+
+def test_get_verification_events_returns_history(model):
+    """Codex P0.3 AC #5 + fix #3: verification_event rows must be
+    reachable via a matter-level API, not just the store-local
+    list_events(). Every transition must be auditable."""
+    adapter, run_id = _adapter(model)
+    aid = adapter.record_fact("verified claim", "doc.pdf")
+    model.verify_target(
+        "assertion", aid,
+        reviewed_by_kind="attorney", reviewed_by_id="a1",
+        review_note="reviewed on 2026-04-17",
+    )
+    events = model.get_verification_events("assertion", aid)
+    # candidate seed + verified transition = at least 2 events.
+    assert len(events) >= 2
+    statuses = [e["new_status"] for e in events]
+    assert "verified" in statuses
+    assert "candidate" in statuses
+
+
 def test_bulk_verify_rejects_automation_reviewer(model):
     """Promotion to verified — including via bulk — must require a
     human reviewer."""

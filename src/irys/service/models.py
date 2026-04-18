@@ -204,10 +204,26 @@ class VerifyTargetRequest(BaseModel):
     )
     reviewed_by_id: Optional[str] = Field(None, description="Reviewer identifier")
     review_note: Optional[str] = Field(None, description="Optional reviewer note")
+    review_scope: str = Field(
+        "extraction_correct",
+        description="What the review validated: extraction_correct | record_truth | "
+                    "inference | legal_conclusion",
+    )
     rejection_reason: Optional[str] = Field(
         None,
         description="Required when status='rejected': why the target is being rejected",
     )
+    run_id: Optional[str] = Field(None, description="Active run ID for audit attribution")
+
+
+class BulkVerifyBySpanRequest(BaseModel):
+    """Bulk-verify every candidate assertion sourced from a specific
+    span (e.g. a signature block, a clause, a paragraph)."""
+    span_id: str = Field(..., description="Span ID to bulk-verify assertions from")
+    reviewed_by_kind: str = Field("user", description="Reviewer role (human only)")
+    reviewed_by_id: Optional[str] = Field(None, description="Reviewer identifier")
+    review_note: Optional[str] = Field(None, description="Optional reviewer note")
+    review_scope: str = Field("extraction_correct", description="What the review validated")
     run_id: Optional[str] = Field(None, description="Active run ID for audit attribution")
 
 
@@ -218,6 +234,7 @@ class BulkVerifyByDocumentRequest(BaseModel):
     reviewed_by_kind: str = Field("user", description="Reviewer role (human only)")
     reviewed_by_id: Optional[str] = Field(None, description="Reviewer identifier")
     review_note: Optional[str] = Field(None, description="Optional reviewer note")
+    review_scope: str = Field("extraction_correct", description="What the review validated")
     run_id: Optional[str] = Field(None, description="Active run ID for audit attribution")
 
 

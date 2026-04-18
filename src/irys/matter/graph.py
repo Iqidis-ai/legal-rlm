@@ -5419,9 +5419,14 @@ class VerificationStateStore:
             kind_filter_sql = " AND vs.target_kind = ?"
             params.append(_verification_kind_value(target_kind))
         # Priority uses a CASE on target_kind and joins for the
-        # strongest signal per kind. SQLite can't do FULL OUTER so
-        # each target kind gets its own CTE and the union is sorted
-        # by (priority_bucket ASC, priority_score DESC, created_at DESC).
+        # strongest signal per kind. Buckets (codex P0.3 review fix):
+        #   0 = issue-linked assertion/edge with a proof gap
+        #   1 = contradicted assertion (attacks/contradicts link)
+        #   2 = issue-linked assertion/edge without a gap
+        #   3 = issue_predicate (candidate predicate, proof-critical)
+        #   4 = quant_fact
+        #   5 = authority
+        #   6 = everything else
         rows = self.db.execute(
             f"""WITH assertion_issue AS (
                    SELECT ee.source_id AS target_id,
@@ -5450,39 +5455,75 @@ class VerificationStateStore:
                    WHERE ee.matter_id=? AND ee.target_kind='issue' AND ee.active=1
                      AND i.status='open'
                      AND ee.relation_type IN ('supports','establishes','attacks','negates')
+               ),
+               contradicted AS (
+                   -- Codex P0.3 review fix #1: flag assertions that
+                   -- appear on either side of an attacks/contradicts
+                   -- link so reviewers see live conflicts near the
+                   -- top of the queue, not buried at bucket 6.
+                   SELECT DISTINCT a.id AS target_id
+                   FROM assertion a
+                   JOIN assertion_link al
+                     ON (al.src_assertion_id=a.id OR al.dst_assertion_id=a.id)
+                    AND al.link_type IN ('attacks','contradicts')
+                   WHERE a.matter_id=?
+               ),
+               predicate_issue AS (
+                   -- Codex P0.3 review fix #1: issue_predicate is a
+                   -- first-class review target. Surface the parent
+                   -- issue's materiality × salience so proof-critical
+                   -- predicates rank above generic predicates.
+                   SELECT ip.id AS target_id,
+                          i.materiality * i.salience AS priority
+                   FROM issue_predicate ip
+                   JOIN issue i ON i.id=ip.issue_id
+                   WHERE i.matter_id=? AND i.status='open'
+                     AND ip.status='open'
                )
                SELECT vs.id AS verification_id, vs.status, vs.target_kind, vs.target_id,
                       vs.ai_confidence, vs.created_at, vs.updated_at,
                       vs.reviewed_by_kind, vs.reviewed_by_id, vs.reviewed_at,
-                      -- Priority: 0 = issue-linked with gap, 1 = issue-linked without gap,
-                      -- 2 = quant_fact, 3 = authority, 4 = everything else.
                       CASE
                           WHEN vs.target_kind='assertion' AND ai.has_gap=1 THEN 0
-                          WHEN vs.target_kind='assertion' AND ai.max_priority IS NOT NULL THEN 1
                           WHEN vs.target_kind='evidence_edge' AND ei.has_gap=1 THEN 0
-                          WHEN vs.target_kind='evidence_edge' AND ei.priority IS NOT NULL THEN 1
-                          WHEN vs.target_kind='quant_fact' THEN 2
-                          WHEN vs.target_kind='authority' THEN 3
-                          ELSE 4
+                          WHEN vs.target_kind='assertion' AND ct.target_id IS NOT NULL THEN 1
+                          WHEN vs.target_kind='assertion' AND ai.max_priority IS NOT NULL THEN 2
+                          WHEN vs.target_kind='evidence_edge' AND ei.priority IS NOT NULL THEN 2
+                          WHEN vs.target_kind='issue_predicate' THEN 3
+                          WHEN vs.target_kind='quant_fact' THEN 4
+                          WHEN vs.target_kind='authority' THEN 5
+                          ELSE 6
                       END AS priority_bucket,
-                      COALESCE(ai.max_priority, ei.priority, 0.0) AS priority_score,
+                      COALESCE(ai.max_priority, ei.priority, pi.priority, 0.0) AS priority_score,
                       -- Target context: one of these will be non-null.
                       (SELECT a.proposition_text FROM assertion a
                          WHERE a.id=vs.target_id AND vs.target_kind='assertion') AS proposition_text,
                       (SELECT q.raw_text FROM quant_fact q
                          WHERE q.id=vs.target_id AND vs.target_kind='quant_fact') AS quant_raw_text,
                       (SELECT au.citation FROM authority au
-                         WHERE au.id=vs.target_id AND vs.target_kind='authority') AS authority_citation
+                         WHERE au.id=vs.target_id AND vs.target_kind='authority') AS authority_citation,
+                      (SELECT ip.description FROM issue_predicate ip
+                         WHERE ip.id=vs.target_id
+                           AND vs.target_kind='issue_predicate') AS predicate_description
                FROM verification_state vs
                LEFT JOIN assertion_issue ai ON ai.target_id = vs.target_id
                                             AND vs.target_kind='assertion'
                LEFT JOIN edge_issue ei ON ei.target_id = vs.target_id
                                        AND vs.target_kind='evidence_edge'
+               LEFT JOIN contradicted ct ON ct.target_id = vs.target_id
+                                         AND vs.target_kind='assertion'
+               LEFT JOIN predicate_issue pi ON pi.target_id = vs.target_id
+                                            AND vs.target_kind='issue_predicate'
                WHERE vs.matter_id=? AND vs.status='candidate'
                  {kind_filter_sql}
                ORDER BY priority_bucket ASC, priority_score DESC, vs.created_at DESC
                LIMIT ? OFFSET ?""",
-            (self.matter_id, self.matter_id, *params, int(limit), int(offset)),
+            (
+                self.matter_id, self.matter_id,  # assertion_issue, edge_issue
+                self.matter_id,                   # contradicted
+                self.matter_id,                   # predicate_issue
+                *params, int(limit), int(offset),
+            ),
         ).fetchall()
         return [dict(r) for r in rows]
 

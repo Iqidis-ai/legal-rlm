@@ -370,7 +370,14 @@ class MatterModel:
     ) -> list[str]:
         """Return open issue ids whose support depends on this target,
         so rejection can trigger proof recomputation. P0.3 AC: rejections
-        trigger proof recomputation or mark proof stale."""
+        trigger proof recomputation or mark proof stale.
+
+        Codex P0.3 review fix #3: every review target kind that can
+        carry support must be covered. Previously only assertion and
+        evidence_edge were handled — rejecting an authority, predicate,
+        or quant_fact never triggered proof recomputation.
+        """
+        ids: set[str] = set()
         if target_kind == "assertion":
             rows = self.db.execute(
                 """SELECT DISTINCT i.id FROM evidence_edge ee
@@ -380,24 +387,88 @@ class MatterModel:
                      AND ee.active=1 AND i.status='open'""",
                 (self.matter_id, target_id),
             ).fetchall()
-            edge_rows = self.db.execute(
+            legacy_rows = self.db.execute(
                 """SELECT DISTINCT issue_id AS id FROM assertion_issue_link ail
                    JOIN issue i ON i.id = ail.issue_id
                    WHERE ail.assertion_id=? AND i.matter_id=? AND i.status='open'""",
                 (target_id, self.matter_id),
             ).fetchall()
-            ids: set[str] = {r["id"] for r in rows}
-            ids.update(r["id"] for r in edge_rows)
-            return list(ids)
-        if target_kind == "evidence_edge":
-            rows = self.db.execute(
+            ids.update(r["id"] for r in rows)
+            ids.update(r["id"] for r in legacy_rows)
+            # An assertion can also support an issue via a predicate —
+            # find open predicates on open issues it links to.
+            pred_rows = self.db.execute(
+                """SELECT DISTINCT ip.issue_id AS id
+                   FROM evidence_edge ee
+                   JOIN issue_predicate ip ON ip.id=ee.target_id
+                   JOIN issue i ON i.id=ip.issue_id
+                   WHERE ee.matter_id=? AND ee.source_kind='assertion'
+                     AND ee.source_id=? AND ee.target_kind='issue_predicate'
+                     AND ee.active=1 AND i.status='open' AND ip.status='open'""",
+                (self.matter_id, target_id),
+            ).fetchall()
+            ids.update(r["id"] for r in pred_rows)
+        elif target_kind == "evidence_edge":
+            # The edge target may be an issue directly OR a predicate
+            # whose parent issue's proof state is affected.
+            issue_rows = self.db.execute(
                 """SELECT i.id FROM evidence_edge ee
                    JOIN issue i ON i.id=ee.target_id
-                   WHERE ee.id=? AND ee.matter_id=? AND i.status='open'""",
+                   WHERE ee.id=? AND ee.matter_id=?
+                     AND ee.target_kind='issue' AND i.status='open'""",
                 (target_id, self.matter_id),
             ).fetchall()
-            return [r["id"] for r in rows]
-        return []
+            ids.update(r["id"] for r in issue_rows)
+            pred_rows = self.db.execute(
+                """SELECT i.id FROM evidence_edge ee
+                   JOIN issue_predicate ip ON ip.id=ee.target_id
+                   JOIN issue i ON i.id=ip.issue_id
+                   WHERE ee.id=? AND ee.matter_id=?
+                     AND ee.target_kind='issue_predicate'
+                     AND i.status='open' AND ip.status='open'""",
+                (target_id, self.matter_id),
+            ).fetchall()
+            ids.update(r["id"] for r in pred_rows)
+        elif target_kind == "issue_predicate":
+            # A rejected predicate affects its parent issue's proof.
+            rows = self.db.execute(
+                """SELECT i.id FROM issue_predicate ip
+                   JOIN issue i ON i.id=ip.issue_id
+                   WHERE ip.id=? AND i.matter_id=? AND i.status='open'""",
+                (target_id, self.matter_id),
+            ).fetchall()
+            ids.update(r["id"] for r in rows)
+        elif target_kind == "authority":
+            # Authorities can be linked to issues as supporting law.
+            rows = self.db.execute(
+                """SELECT DISTINCT i.id FROM authority_issue_link ail
+                   JOIN issue i ON i.id=ail.issue_id
+                   WHERE ail.authority_id=? AND i.matter_id=? AND i.status='open'""",
+                (target_id, self.matter_id),
+            ).fetchall() if self._table_exists("authority_issue_link") else []
+            ids.update(r["id"] for r in rows)
+        elif target_kind == "quant_fact":
+            # A quant_fact's parent assertion (via assertion_id) is what
+            # carries issue support; trace through it.
+            parent_rows = self.db.execute(
+                "SELECT assertion_id FROM quant_fact WHERE id=? AND matter_id=?",
+                (target_id, self.matter_id),
+            ).fetchall()
+            for pr in parent_rows:
+                pid = pr["assertion_id"]
+                if pid:
+                    ids.update(self._issues_affected_by_target("assertion", pid))
+        return list(ids)
+
+    def _table_exists(self, name: str) -> bool:
+        """Small helper — some optional tables (authority_issue_link)
+        exist only after later schema migrations. Guard reads so older
+        matters don't crash."""
+        row = self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (name,),
+        ).fetchone()
+        return row is not None
 
     def verify_target(
         self,
@@ -407,16 +478,22 @@ class MatterModel:
         reviewed_by_kind: str,
         reviewed_by_id: Optional[str] = None,
         review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
         run_id: Optional[str] = None,
     ) -> str:
         """P0.3: promote a target to verified, append ledger audit
         event, recompute proof state for any open issues it supports.
+        review_scope records WHAT was validated (extraction, record
+        truth, inference, legal conclusion) so downstream audit can
+        tell a syntax-correct extraction apart from a
+        record-truth-validated fact.
         """
         vid = self.verification.verify(
             target_kind, target_id,
             reviewed_by_kind=reviewed_by_kind,
             reviewed_by_id=reviewed_by_id,
             review_note=review_note,
+            review_scope=review_scope,
             run_id=run_id,
         )
         # verification_event (written by VerificationStateStore) is the
@@ -451,6 +528,7 @@ class MatterModel:
         rejection_reason: str,
         reviewed_by_id: Optional[str] = None,
         review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
         run_id: Optional[str] = None,
     ) -> str:
         """P0.3: reject a target, append ledger audit event, and
@@ -462,6 +540,7 @@ class MatterModel:
             reviewed_by_id=reviewed_by_id,
             rejection_reason=rejection_reason,
             review_note=review_note,
+            review_scope=review_scope,
             run_id=run_id,
         )
         if run_id is not None:
@@ -486,23 +565,49 @@ class MatterModel:
         reviewed_by_kind: str,
         reviewed_by_id: Optional[str] = None,
         review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
         run_id: Optional[str] = None,
     ) -> list[str]:
         """P0.3: bulk-verify every candidate assertion whose
         occurrence points at the given document. Convenience for
         reviewers who want to approve everything sourced from a
-        single document at once."""
+        single document at once.
+
+        Codex P0.3 review fix #2: match on relative_path (slash-
+        normalized), basename, and raw document_id via the
+        document_inventory join so a caller passing either the full
+        path or a basename still hits the right assertions.
+        """
+        # Normalize incoming ref: strip backslashes, split basename.
+        ref_norm = (document_ref or "").replace("\\", "/")
+        basename = ref_norm.rsplit("/", 1)[-1] if "/" in ref_norm else ref_norm
         rows = self.db.execute(
             """SELECT DISTINCT ao.assertion_id AS id
                FROM assertion_occurrence ao
                JOIN assertion a ON a.id=ao.assertion_id
+               LEFT JOIN document_inventory di
+                 ON di.id = ao.document_inventory_id
                LEFT JOIN verification_state vs
                  ON vs.target_kind='assertion'
                 AND vs.target_id=a.id
                 AND vs.matter_id=a.matter_id
-               WHERE a.matter_id=? AND ao.document_id=?
+               WHERE a.matter_id=?
+                 AND (
+                      ao.document_id = ?
+                      OR REPLACE(ao.document_id, '\\', '/') = ?
+                      OR ao.doc_basename = ?
+                      OR REPLACE(di.relative_path, '\\', '/') = ?
+                      OR di.relative_path = ?
+                 )
                  AND COALESCE(vs.status, 'candidate')='candidate'""",
-            (self.matter_id, document_ref),
+            (
+                self.matter_id,
+                document_ref,          # exact raw
+                ref_norm,              # slash-normalized
+                basename,              # basename match
+                ref_norm,              # inventory slash-normalized
+                document_ref,          # inventory exact raw
+            ),
         ).fetchall()
         specs = [{"target_kind": "assertion", "target_id": r["id"]} for r in rows]
         ids = self.verification.bulk_set_status(
@@ -511,6 +616,7 @@ class MatterModel:
             reviewed_by_kind=reviewed_by_kind,
             reviewed_by_id=reviewed_by_id,
             review_note=review_note,
+            review_scope=review_scope,
             run_id=run_id,
         )
         # Audit + proof recompute once per target so ledger events
@@ -535,6 +641,77 @@ class MatterModel:
                 except Exception:
                     pass
         return ids
+
+    def bulk_verify_by_span(
+        self,
+        span_id: str,
+        *,
+        reviewed_by_kind: str,
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
+        run_id: Optional[str] = None,
+    ) -> list[str]:
+        """P0.3: bulk-verify every candidate assertion whose
+        occurrence points at the given span_id. Convenience for
+        reviewers approving a clause, signature block, or paragraph
+        at once (SO-3)."""
+        rows = self.db.execute(
+            """SELECT DISTINCT ao.assertion_id AS id
+               FROM assertion_occurrence ao
+               JOIN assertion a ON a.id=ao.assertion_id
+               LEFT JOIN verification_state vs
+                 ON vs.target_kind='assertion'
+                AND vs.target_id=a.id
+                AND vs.matter_id=a.matter_id
+               WHERE a.matter_id=? AND ao.span_id=?
+                 AND COALESCE(vs.status, 'candidate')='candidate'""",
+            (self.matter_id, span_id),
+        ).fetchall()
+        specs = [{"target_kind": "assertion", "target_id": r["id"]} for r in rows]
+        ids = self.verification.bulk_set_status(
+            specs,
+            new_status="verified",
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+            review_note=review_note,
+            review_scope=review_scope,
+            run_id=run_id,
+        )
+        for spec in specs:
+            if run_id is not None:
+                self.ledger.append_event(
+                    run_id=run_id,
+                    event_type=LedgerEventType.ASSERTION_REVISED,
+                    summary=(
+                        f"Bulk-verified {spec['target_kind']}:{spec['target_id']} "
+                        f"via span={span_id}"
+                    ),
+                    changed_object_type=spec["target_kind"],
+                    changed_object_id=spec["target_id"],
+                )
+            for iid in self._issues_affected_by_target(
+                spec["target_kind"], spec["target_id"],
+            ):
+                try:
+                    self.proof_state.compute_and_store(iid, policy_audience="internal")
+                except Exception:
+                    pass
+        return ids
+
+    def get_verification_events(
+        self,
+        target_kind: Optional[str] = None,
+        target_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """P0.3 review fix: expose verification_event rows so the
+        audit surface is reachable from the HTTP layer, not just the
+        store-local list_events(). SO-3 needs the user to be able to
+        see every transition chronologically."""
+        return self.verification.list_events(
+            target_kind=target_kind, target_id=target_id, limit=limit,
+        )
 
     def record_llm_call(self, record: LLMCallRecord) -> None:
         """Persist one Gemini API request for later cost and latency analysis.
