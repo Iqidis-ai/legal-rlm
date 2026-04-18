@@ -415,6 +415,36 @@ def _truncate(value: Any, limit: int = 48) -> str:
     return "" if value is None else str(value)
 
 
+def _fmt_span_label(span_id: Optional[str]) -> str:
+    """Attorney-readable rendering of a source span.
+
+    - "page:3" → "Page 3"
+    - "para:12" / "section:4.2" → "Paragraph 12" / "Section 4.2"
+    - UUID-ish strings → "—" (not useful to the reader)
+    - other human-ish labels → passed through trimmed
+    """
+    s = (span_id or "").strip()
+    if not s:
+        return "—"
+    if ":" in s:
+        kind, tail = s.split(":", 1)
+        kind = kind.lower()
+        pretty = {
+            "page": "Page",
+            "para": "Paragraph",
+            "paragraph": "Paragraph",
+            "section": "Section",
+            "clause": "Clause",
+            "line": "Line",
+        }.get(kind)
+        if pretty:
+            return f"{pretty} {tail}"
+    # Treat long hex/uuid-looking strings as uninformative.
+    if len(s) >= 24 and all(c in "0123456789abcdef-" for c in s.lower()):
+        return "—"
+    return s if len(s) <= 40 else s[:37] + "…"
+
+
 def _fmt_percent_html(value: Optional[float]) -> str:
     if value is None:
         return "&mdash;"
@@ -1295,8 +1325,7 @@ def _fmt_quant_panel(
             f"<td>{_escape(span.get('subject_type') or '')}</td>"
             f"<td>{_escape(span.get('subject_id') or '')}</td>"
             f"<td>{_fmt_money_short(span.get('amount', 0.0))}</td>"
-            f"<td>{_escape(span.get('span_id') or '')}</td>"
-            f"<td>{_escape(span.get('quant_fact_id') or '')}</td>"
+            f"<td>{_escape(_fmt_span_label(span.get('span_id')))}</td>"
             "</tr>"
             for span in payment_recon.get("source_spans", []) or []
         )
@@ -1307,7 +1336,7 @@ def _fmt_quant_panel(
         f"<td>{_fmt_money_short(invoice.get('invoiced', 0.0))}</td>"
         f"<td>{_fmt_money_short(invoice.get('paid', 0.0))}</td>"
         f"<td>{_fmt_money_short(invoice.get('outstanding', 0.0))}</td>"
-        f"<td>{'<br>'.join(_escape(str(span.get('span_id') or '')) for span in (invoice.get('source_spans') or []))}</td>"
+        f"<td>{'<br>'.join(_escape(_fmt_span_label(span.get('span_id'))) for span in (invoice.get('source_spans') or []))}</td>"
         "</tr>"
         for invoice in invoice_chain
     )
@@ -1330,9 +1359,12 @@ def _fmt_quant_panel(
             + "".join(
                 "<li>"
                 f"{_fmt_money_short(entry.get('amount_value', 0.0))}"
-                f" | span: {_escape(entry.get('span_id') or '')}"
-                f" | assertion: {_escape(entry.get('assertion_id') or '')}"
-                f"<br>{_escape(entry.get('raw_text') or '')}"
+                + (
+                    f" · {_escape(_fmt_span_label(entry.get('span_id')))}"
+                    if _fmt_span_label(entry.get("span_id")) != "—"
+                    else ""
+                )
+                + f"<br>{_escape(entry.get('raw_text') or '')}"
                 "</li>"
                 for entry in (row.get("amounts") or [])
             )
@@ -1398,7 +1430,7 @@ def _fmt_quant_panel(
             "<div class='viz-panel'><div class='viz-panel-title'>Payment grounding</div>"
             + (
                 "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
-                "<th>Type</th><th>Subject</th><th>Amount</th><th>Span</th><th>Quant fact</th>"
+                "<th>Type</th><th>Subject</th><th>Amount</th><th>Location</th>"
                 "</tr></thead><tbody>"
                 + source_span_rows
                 + "</tbody></table></div>"
@@ -3591,21 +3623,23 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
         with gr.Accordion("Timeline — dated events across the matter", open=False):
             gr.Markdown(
-                "Chronological events from date facts and temporally-scoped assertions."
+                "Chronological events from dated facts and claims pinned to a point in time."
             )
             timeline_html = gr.HTML("<div class='viz-empty'>Timeline events will appear here after an investigation.</div>")
             refresh_timeline_btn = gr.Button("Refresh Timeline", variant="secondary", size="sm")
 
         with gr.Accordion("Evidence Matrix — which documents support which issues", open=False):
             gr.Markdown(
-                "Rows are issues, columns are source documents, and cells show support/attack density."
+                "Rows are issues, columns are source documents, and cells show how strongly "
+                "each document supports or attacks the issue."
             )
             evidence_matrix_html = gr.HTML("<div class='viz-empty'>Evidence matrix will appear here after an investigation.</div>")
             refresh_evidence_btn = gr.Button("Refresh Evidence Matrix", variant="secondary", size="sm")
 
-        with gr.Accordion("Communication Graph — actors and documents", open=False):
+        with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
-                "Maps which actors appear in which documents and highlights repeated pairings."
+                "Maps which people and companies appear in which documents and highlights "
+                "repeated pairings (e.g. frequent correspondents)."
             )
             communication_html = gr.HTML("<div class='viz-empty'>Communication graph will appear here after an investigation.</div>")
             refresh_comm_btn = gr.Button("Refresh Communication Graph", variant="secondary", size="sm")
