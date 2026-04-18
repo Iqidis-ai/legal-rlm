@@ -13,6 +13,7 @@ from pathlib import Path
 import asyncio
 import json
 import logging
+import sqlite3
 
 from ..core.models import GeminiClient, ModelTier
 from ..core.repository import MatterRepository
@@ -2214,8 +2215,11 @@ class RLMEngine:
                         assertion_verification_status=row.get("verification_status"),
                         belief_state=row.get("belief_state"),
                     )
-                except Exception:
-                    pass
+                except sqlite3.Error as _exc:
+                    logger.warning(
+                        "hydration: content_policy_audit write failed: %s",
+                        _exc,
+                    )
             # Stale/excluded never enter accumulated_facts — the user
             # has already expressed an opinion on them.
             if not classification.eligible:
@@ -2348,8 +2352,11 @@ class RLMEngine:
                         assertion_verification_status=r.get("verification_status"),
                         belief_state=r.get("belief_state"),
                     )
-                except Exception:
-                    pass
+                except sqlite3.Error as _exc:
+                    logger.warning(
+                        "cached search: content_policy_audit write failed: %s",
+                        _exc,
+                    )
             hits.append(SearchHit(
                 file_path=_fp,
                 filename=Path(_fp).name,
@@ -5510,8 +5517,11 @@ Return:
                             privilege_flag=True,
                             note="synthesis_packet_line_scrub",
                         )
-                    except Exception:
-                        pass
+                    except sqlite3.Error as _exc:
+                        logger.warning(
+                            "synthesis scrub: content_policy_audit write failed: %s",
+                            _exc,
+                        )
                 if not withheld_emitted:
                     kept_lines.append("[withheld under clean policy]")
                     withheld_emitted = True
