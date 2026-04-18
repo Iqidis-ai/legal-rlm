@@ -187,6 +187,32 @@ def test_rejected_row_recorded_with_reason_code(model):
     assert row["action"] == "withhold"
 
 
+def test_hydration_writes_content_policy_audit_rows(model):
+    """P0.5 commit 3: engine hydration now routes through the guard
+    for audit. Every hydrated assertion produces a
+    ContentPurpose.HYDRATION decision row so the audit trail shows
+    what entered the LLM's context."""
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from irys.rlm.state import InvestigationState
+    from irys.matter.runtime import MatterRuntimeAdapter
+    from unittest.mock import MagicMock
+
+    run_id = model.start_run("hydration audit")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid = adapter.record_fact("Some fact to hydrate", "doc.pdf")
+
+    engine = RLMEngine(gemini_client=MagicMock(), config=RLMConfig(), matter_model=model)
+    state = InvestigationState(id="h-audit", query="test", repository_path="/tmp/h")
+    engine._hydrate_from_matter_model(state)
+
+    # Exactly one audit row for the hydrated assertion, purpose=hydration.
+    rows = model.content_policy.list_decisions(
+        target_kind="assertion", target_id=aid, purpose="hydration",
+    )
+    assert len(rows) == 1
+    assert rows[0]["action"] == "allow"  # candidate is eligible for hydration
+
+
 def test_audit_write_failure_doesnt_break_decision(model):
     """The guard's audit append is best-effort — a failing audit
     must not propagate to the caller and break the read."""

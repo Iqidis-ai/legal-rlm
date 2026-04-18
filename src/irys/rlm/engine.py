@@ -2174,6 +2174,17 @@ class RLMEngine:
             "verified": "VERIFIED",
             "candidate": "CANDIDATE",
         }
+        # P0.5 commit 3: route hydration through ContentPolicyGuard so
+        # every decision is audited and the bucket map stays
+        # consistent with the unified policy surface. We still read
+        # belief_state + verification_status from the row payload;
+        # privilege_flag is unknown at this layer (hydration query
+        # doesn't join document_card), so the guard defaults to None
+        # → fail-closed under clean audience for privileged targets,
+        # which matches MVP.4 intent. Internal-audience hydration
+        # bypasses privilege entirely.
+        from ..matter.trust import ContentPurpose
+        _guard = getattr(self._matter_model, "content_policy", None)
         for row in recent:
             prop = row.get("proposition_text", "")
             if not prop:
@@ -2190,6 +2201,21 @@ class RLMEngine:
                 "verification_status": row.get("verification_status"),
                 "reason": classification.reason,
             })
+            # Write one audit row per hydration decision (record=True
+            # by default). Best-effort — a guard write failure cannot
+            # break orientation.
+            if _guard is not None and row.get("id"):
+                try:
+                    _guard.decide(
+                        purpose=ContentPurpose.HYDRATION,
+                        subject_kind="assertion",
+                        subject_id=row["id"],
+                        policy_audience="internal",
+                        assertion_verification_status=row.get("verification_status"),
+                        belief_state=row.get("belief_state"),
+                    )
+                except Exception:
+                    pass
             # Stale/excluded never enter accumulated_facts — the user
             # has already expressed an opinion on them.
             if not classification.eligible:
