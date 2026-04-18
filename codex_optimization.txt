@@ -1,0 +1,30 @@
+**Ranked Opportunities**
+
+1. `Issue coverage` should become a read model, not a recompute-on-read path. Impact: `High`. Effort: `M-L`.  
+`get_issue_coverage_report()` already does several aggregate queries, then loops each open issue and calls `get_depth()`, `get_children()`, and sometimes `compute_coverage_rollup()`; that rollup then walks the subtree and queries per node again (`src/irys/matter/matter.py:2494-2779`, `src/irys/matter/graph.py:2605-2864`). This function is hit from the engine loop and synthesis (`src/irys/rlm/engine.py:1940`, `4667`, `5034`, `5387-5396`, `5854`) and from UI overview/issues (`src/irys/ui/backends/in_process.py:238-279`, `348-352`), so one expensive read path is getting multiplied everywhere.
+
+2. `Review queue` and `list_assertions` are not app-layer N+1s, but both still do per-row SQL work. Impact: `High`. Effort: `M`.  
+`review_queue()` uses a solid CTE shape, but then does scalar subqueries for proposition, quant text, authority citation, and predicate description on each returned row (`src/irys/matter/graph.py:5692-5789`, especially `5760-5768`). `list_recent()` for assertions bounds IDs first, which is good, but still does three correlated subqueries per row for primary occurrence metadata (`src/irys/matter/graph.py:882-945`). I’d replace both with a pre-joined primary-occurrence CTE or denormalized “display row” columns.
+
+3. The Gradio verify/reject path is doing refresh fan-out and repeated DB reads. Impact: `High`. Effort: `S-M`.  
+A single verify does queue-before and queue-after reads for the toast (`src/irys/ui/app.py:2754-2772`), then the handler reloads queue, drawer, badge, assertions, issues, and overview (`4176-4202`). The badge itself fetches the whole queue again up to 500 rows just to count buckets (`2816-2835`), and overview/issues each trigger more heavy reads. I’d add one backend `refresh_snapshot()` response and a lightweight badge-count query instead of re-fetching full panels.
+
+4. Reasoning cache reuse is likely lower than it looks, and cache hits still write. Impact: `High`. Effort: `M`.  
+This is an inference from the keys: orientation includes query, file digest, conversation history, answered clarifications, issues, gaps, annotations, and trust overrides (`src/irys/rlm/engine.py:1558-1597`); search-analysis includes full `results_text`, hypothesis, top hit names, focus issue, and predicates (`2650-2667`). Then every cache key is globally prefixed by `trust_revision` (`src/irys/matter/graph.py:4708-4725`), every hit updates `last_hit_at` (`4735-4738`), and I don’t see pruning of old revisions. I’d add per-stage hit/miss telemetry, narrower invalidation domains, sampled `last_hit_at`, and GC of unreachable `trN:` rows.
+
+5. Orientation cold-start still rescans the filesystem too many times. Impact: `Medium-High`. Effort: `S-M`.  
+`MatterRepository.get_stats()` walks files, `get_structure()` walks files again, `_orient()` calls `repo.list_files()` again, and `_ingest_documents()` walks them again (`src/irys/core/repository.py:126-140`, `src/irys/rlm/engine.py:1513-1524`, `3077`). Orientation only shows the first 100 filenames, but it still enumerates and sorts the full tree. I’d build one per-run manifest and pass it through.
+
+6. Ingest/profile still does redundant I/O and full-document parsing where a head-read would do. Impact: `Medium-High`. Effort: `M`.  
+`_profile_document()` parses the full PDF/DOCX and then only uses the first 3000 chars for classification (`src/irys/rlm/engine.py:3278-3303`), while `DocumentReader._read_pdf()` extracts every page (`src/irys/core/reader.py:80-101`). `_deep_read_document()` then reads raw bytes for SHA and later reparses the document (`src/irys/rlm/engine.py:3454-3459`, `3560-3561`). I’d use a cheap head-extract/profile path, stream the hash during parse, and carry the pre-registered `doc_id` so deep-read can `update_hash` instead of doing another `upsert`.
+
+7. Trust-revision bumps should be coalesced for human review sessions. Impact: `Medium`. Effort: `S-M`.  
+Right now every reject bumps `trust_revision` (`src/irys/matter/matter.py:645-653`). If a reviewer rejects 50 items, you invalidate all reasoning caches 50 times and create 50 generations of unreachable cache entries. A debounce or batch-review commit boundary would preserve correctness with much less churn.
+
+8. The “background maintenance” work is currently inline tail latency; the cheapest future shape is a deduped per-matter queue, not cron. Impact: `Medium`. Effort: `M`.  
+Contradiction mining, proof-gap detection, quant conflict detection, and version-chain detection all run at the end of `investigate()` (`src/irys/rlm/engine.py:1370-1393`). I’d enqueue `matter_id + task_type` work on writes or run completion, process only when no active run exists, and dedupe pending tasks. That is cheaper than periodic whole-fleet scans.
+
+9. Import/test cold start is real. Impact: `Low-Medium`. Effort: `S`.  
+I measured locally with `python -X importtime`: `import irys.rlm.engine` ended around `1.89s`, largely because `src/irys/__init__.py` eagerly imports `.api`, `.rlm.engine`, and others (`src/irys/__init__.py:5-11`). Lazy package exports would help tests, CLIs, and worker startup.
+
+If I had to prioritize just three for the next pass: `coverage read-model`, `UI refresh snapshot`, and `cache key/invalidation redesign`. Those are the places where latency, DB load, and operator-facing responsiveness are most obviously compounding.

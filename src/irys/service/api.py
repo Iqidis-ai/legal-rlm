@@ -2828,6 +2828,32 @@ async def get_llm_calls(matter_id: str, limit: int = 120, run_id: Optional[str] 
 
 
 @app.get(
+    "/matter/{matter_id}/cost-breakdown",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_cost_breakdown(matter_id: str, run_id: Optional[str] = None):
+    """Cost visibility layer: totals + per-stage + per-tier + 7-day trend +
+    monthly burn projection, with cache hit rate and latency percentiles."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_cost_breakdown(run_id=run_id)
+
+
+@app.get(
+    "/matter/{matter_id}/cost-anomalies",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_cost_anomalies(
+    matter_id: str, limit: int = 10, run_id: Optional[str] = None,
+):
+    """LLM calls that are >2σ outliers on cost or latency vs their tier mean.
+    Investigation targets for cost reduction."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_cost_anomalies(limit=limit, run_id=run_id)
+
+
+@app.get(
     "/matter/{matter_id}/damages-waterfall",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

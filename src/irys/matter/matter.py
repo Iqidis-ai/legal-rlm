@@ -1283,6 +1283,294 @@ class MatterModel:
             "pricing_verified_at": PRICING_VERIFIED_AT,
         }
 
+    def get_cost_breakdown(
+        self, run_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Cost visibility layer: richer aggregation than summarize_llm_usage.
+
+        Returns totals (with cache_hit_rate, success_rate, avg/p50/p95/p99
+        latency), by_stage + by_tier breakdowns with the same metrics, a
+        24-hour bucket trend (last 7 days), and a projected monthly burn.
+
+        Cache hit rate is cache_read_tokens / (cache_read_tokens + input_tokens).
+        run_id=None reports matter-wide; otherwise narrow to one run.
+        """
+        where = "matter_id=?"
+        params: list[Any] = [self.matter_id]
+        if run_id is not None:
+            where += " AND run_id=?"
+            params.append(run_id)
+
+        zero = {
+            "totals": {
+                "request_count": 0,
+                "estimated_cost_usd": 0.0,
+                "input_tokens": 0,
+                "cache_read_tokens": 0,
+                "output_tokens": 0,
+                "cache_hit_rate": None,
+                "success_rate": None,
+                "avg_latency_ms": None,
+                "p50_latency_ms": None,
+                "p95_latency_ms": None,
+                "p99_latency_ms": None,
+            },
+            "by_stage": [],
+            "by_tier": [],
+            "trend": [],
+            "estimated_monthly_burn_usd": 0.0,
+            "pricing_source": PRICING_SOURCE_URL,
+            "pricing_verified_at": PRICING_VERIFIED_AT,
+        }
+
+        try:
+            totals_row = self.db.execute(
+                f"""SELECT COUNT(*) AS n,
+                           COALESCE(SUM(estimated_cost_usd), 0) AS cost,
+                           COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                           COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                           COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                           COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), 0) AS ok,
+                           COALESCE(AVG(latency_ms), 0) AS avg_latency
+                       FROM llm_call WHERE {where}""",
+                params,
+            ).fetchone()
+            if not totals_row or int(totals_row["n"] or 0) == 0:
+                return zero
+
+            all_latencies = [
+                int(r["latency_ms"] or 0) for r in self.db.execute(
+                    f"SELECT latency_ms FROM llm_call WHERE {where}"
+                    f" AND latency_ms > 0 ORDER BY latency_ms ASC",
+                    params,
+                ).fetchall()
+            ]
+
+            def _pct(vals: list[int], q: float) -> Optional[int]:
+                if not vals:
+                    return None
+                idx = max(0, min(len(vals) - 1, int(len(vals) * q)))
+                return vals[idx]
+
+            n = int(totals_row["n"])
+            inp = int(totals_row["input_tokens"] or 0)
+            cached = int(totals_row["cache_read_tokens"] or 0)
+            totals = {
+                "request_count": n,
+                "estimated_cost_usd": round(float(totals_row["cost"] or 0), 6),
+                "input_tokens": inp,
+                "cache_read_tokens": cached,
+                "output_tokens": int(totals_row["output_tokens"] or 0),
+                "cache_hit_rate": (
+                    round(cached / (cached + inp), 4) if (cached + inp) > 0 else None
+                ),
+                "success_rate": (
+                    round(int(totals_row["ok"] or 0) / n, 4) if n > 0 else None
+                ),
+                "avg_latency_ms": (
+                    int(totals_row["avg_latency"]) if totals_row["avg_latency"] else None
+                ),
+                "p50_latency_ms": _pct(all_latencies, 0.5),
+                "p95_latency_ms": _pct(all_latencies, 0.95),
+                "p99_latency_ms": _pct(all_latencies, 0.99),
+            }
+
+            stage_rows = self.db.execute(
+                f"""SELECT COALESCE(usage_label, 'unknown') AS stage,
+                           COUNT(*) AS n,
+                           COALESCE(SUM(estimated_cost_usd), 0) AS cost,
+                           COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                           COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                           COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                           COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), 0) AS ok,
+                           COALESCE(AVG(latency_ms), 0) AS avg_latency
+                       FROM llm_call
+                       WHERE {where}
+                       GROUP BY stage
+                       ORDER BY cost DESC""",
+                params,
+            ).fetchall()
+            by_stage = []
+            for row in stage_rows:
+                stg_inp = int(row["input_tokens"] or 0)
+                stg_cached = int(row["cache_read_tokens"] or 0)
+                stg_n = int(row["n"] or 0)
+                by_stage.append({
+                    "stage": row["stage"],
+                    "request_count": stg_n,
+                    "estimated_cost_usd": round(float(row["cost"] or 0), 6),
+                    "input_tokens": stg_inp,
+                    "cache_read_tokens": stg_cached,
+                    "output_tokens": int(row["output_tokens"] or 0),
+                    "cache_hit_rate": (
+                        round(stg_cached / (stg_cached + stg_inp), 4)
+                        if (stg_cached + stg_inp) > 0 else None
+                    ),
+                    "success_rate": (
+                        round(int(row["ok"] or 0) / stg_n, 4) if stg_n > 0 else None
+                    ),
+                    "avg_latency_ms": (
+                        int(row["avg_latency"]) if row["avg_latency"] else None
+                    ),
+                })
+
+            tier_rows = self.db.execute(
+                f"""SELECT model_tier,
+                           MIN(model_id) AS model_id,
+                           COUNT(*) AS n,
+                           COALESCE(SUM(estimated_cost_usd), 0) AS cost,
+                           COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                           COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                           COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                           COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), 0) AS ok,
+                           COALESCE(AVG(latency_ms), 0) AS avg_latency
+                       FROM llm_call
+                       WHERE {where}
+                       GROUP BY model_tier
+                       ORDER BY cost DESC""",
+                params,
+            ).fetchall()
+            by_tier = []
+            for row in tier_rows:
+                t_inp = int(row["input_tokens"] or 0)
+                t_cached = int(row["cache_read_tokens"] or 0)
+                t_n = int(row["n"] or 0)
+                by_tier.append({
+                    "model_tier": row["model_tier"],
+                    "model_id": row["model_id"],
+                    "request_count": t_n,
+                    "estimated_cost_usd": round(float(row["cost"] or 0), 6),
+                    "input_tokens": t_inp,
+                    "cache_read_tokens": t_cached,
+                    "output_tokens": int(row["output_tokens"] or 0),
+                    "cache_hit_rate": (
+                        round(t_cached / (t_cached + t_inp), 4)
+                        if (t_cached + t_inp) > 0 else None
+                    ),
+                    "success_rate": (
+                        round(int(row["ok"] or 0) / t_n, 4) if t_n > 0 else None
+                    ),
+                    "avg_latency_ms": (
+                        int(row["avg_latency"]) if row["avg_latency"] else None
+                    ),
+                })
+
+            trend_rows = self.db.execute(
+                f"""SELECT SUBSTR(created_at, 1, 10) AS day,
+                           COUNT(*) AS n,
+                           COALESCE(SUM(estimated_cost_usd), 0) AS cost
+                       FROM llm_call
+                       WHERE {where}
+                       GROUP BY day
+                       ORDER BY day DESC
+                       LIMIT 7""",
+                params,
+            ).fetchall()
+            trend = [
+                {
+                    "day": row["day"],
+                    "request_count": int(row["n"] or 0),
+                    "estimated_cost_usd": round(float(row["cost"] or 0), 6),
+                }
+                for row in trend_rows
+            ]
+            trend.reverse()
+
+            last_week_cost = sum(t["estimated_cost_usd"] for t in trend)
+            estimated_monthly_burn_usd = round(last_week_cost * (30 / 7), 4)
+
+            return {
+                "totals": totals,
+                "by_stage": by_stage,
+                "by_tier": by_tier,
+                "trend": trend,
+                "estimated_monthly_burn_usd": estimated_monthly_burn_usd,
+                "pricing_source": PRICING_SOURCE_URL,
+                "pricing_verified_at": PRICING_VERIFIED_AT,
+            }
+        except Exception as exc:
+            _log.warning("get_cost_breakdown failed: %s", exc)
+            return zero
+
+    def get_cost_anomalies(
+        self, limit: int = 10, run_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Return calls that are outliers on cost or latency (>2σ from tier
+        mean). First candidates when chasing cost reductions."""
+        where = "matter_id=?"
+        params: list[Any] = [self.matter_id]
+        if run_id is not None:
+            where += " AND run_id=?"
+            params.append(run_id)
+        try:
+            tier_stats = self.db.execute(
+                f"""SELECT model_tier,
+                           AVG(estimated_cost_usd) AS mu_cost,
+                           AVG(latency_ms) AS mu_lat,
+                           COUNT(*) AS n
+                       FROM llm_call
+                       WHERE {where} AND success=1
+                       GROUP BY model_tier
+                       HAVING n >= 3""",
+                params,
+            ).fetchall()
+            anomalies: list[dict] = []
+            import statistics
+            for stat in tier_stats:
+                tier = stat["model_tier"]
+                mu_cost = float(stat["mu_cost"] or 0)
+                mu_lat = float(stat["mu_lat"] or 0)
+                rows = self.db.execute(
+                    f"""SELECT estimated_cost_usd, latency_ms
+                           FROM llm_call
+                           WHERE {where} AND model_tier=? AND success=1""",
+                    [*params, tier],
+                ).fetchall()
+                costs = [float(r["estimated_cost_usd"] or 0) for r in rows]
+                lats = [float(r["latency_ms"] or 0) for r in rows]
+                sig_cost = statistics.pstdev(costs) if len(costs) > 1 else 0.0
+                sig_lat = statistics.pstdev(lats) if len(lats) > 1 else 0.0
+                if sig_cost == 0 and sig_lat == 0:
+                    continue
+                outliers = self.db.execute(
+                    f"""SELECT id, created_at, model_tier, usage_label,
+                               input_tokens, output_tokens,
+                               estimated_cost_usd, latency_ms
+                           FROM llm_call
+                           WHERE {where} AND model_tier=? AND success=1
+                             AND (estimated_cost_usd > ? OR latency_ms > ?)
+                           ORDER BY estimated_cost_usd DESC
+                           LIMIT ?""",
+                    [
+                        *params, tier,
+                        mu_cost + 2 * sig_cost,
+                        mu_lat + 2 * sig_lat,
+                        limit,
+                    ],
+                ).fetchall()
+                for row in outliers:
+                    d = dict(row)
+                    d["baseline_cost"] = round(mu_cost, 6)
+                    d["baseline_latency_ms"] = int(mu_lat)
+                    d["cost_z"] = (
+                        round(
+                            (float(row["estimated_cost_usd"]) - mu_cost) / sig_cost, 2,
+                        )
+                        if sig_cost > 0 else None
+                    )
+                    d["latency_z"] = (
+                        round(
+                            (float(row["latency_ms"]) - mu_lat) / sig_lat, 2,
+                        )
+                        if sig_lat > 0 else None
+                    )
+                    anomalies.append(d)
+            anomalies.sort(key=lambda r: -float(r.get("cost_z") or 0))
+            return anomalies[:limit]
+        except Exception as exc:
+            _log.warning("get_cost_anomalies failed: %s", exc)
+            return []
+
     def list_llm_calls(
         self,
         run_id: Optional[str] = None,

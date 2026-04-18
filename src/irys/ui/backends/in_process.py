@@ -541,6 +541,23 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.list_llm_calls(run_id=run_id, limit=limit)
 
+    async def get_cost_breakdown(
+        self,
+        matter_id: str,
+        run_id: Optional[str] = None,
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_cost_breakdown(run_id=run_id)
+
+    async def get_cost_anomalies(
+        self,
+        matter_id: str,
+        limit: int = 10,
+        run_id: Optional[str] = None,
+    ) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.get_cost_anomalies(limit=limit, run_id=run_id)
+
     # ------------------------------------------------------------------ #
     # P0.3 Review Queue — attorney review workflow (SO-3)                 #
     # ------------------------------------------------------------------ #
