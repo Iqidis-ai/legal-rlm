@@ -672,6 +672,23 @@ class Lead:
     findings: Optional[str] = None
     search_term: Optional[str] = None  # Verbatim search term; bypasses _extract_search_term()
     focus_issue_id: Optional[str] = None  # Issue this lead targets, for coverage tracking
+    # MVI-5 per-lead EV gating. Coarse cost class and expected
+    # coverage gain so the termination controller can spend where
+    # it advances answerability per dollar. Both default to 0 so
+    # old code paths that don't populate EV fall back to the
+    # priority-threshold gate — the engine's _viable_leads handles
+    # that fallback. The lead planner populates these when it knows
+    # the action class and target-issue weakness.
+    expected_cost_usd: float = 0.0
+    expected_coverage_gain: float = 0.0
+
+    @property
+    def ev_score(self) -> float:
+        """Return expected answerability advance per dollar. Zero when
+        expected_cost is zero (e.g. stale leads with no cost set)."""
+        if self.expected_cost_usd <= 0:
+            return 0.0
+        return self.expected_coverage_gain / self.expected_cost_usd
 
     @classmethod
     def create(
@@ -681,8 +698,10 @@ class Lead:
         priority: float = 0.5,
         search_term: Optional[str] = None,
         focus_issue_id: Optional[str] = None,
+        expected_cost_usd: Optional[float] = None,
+        expected_coverage_gain: Optional[float] = None,
     ) -> "Lead":
-        return cls(
+        kwargs = dict(
             id=str(uuid.uuid4())[:8],
             description=description,
             source=source,
@@ -690,6 +709,11 @@ class Lead:
             search_term=search_term,
             focus_issue_id=focus_issue_id,
         )
+        if expected_cost_usd is not None:
+            kwargs["expected_cost_usd"] = expected_cost_usd
+        if expected_coverage_gain is not None:
+            kwargs["expected_coverage_gain"] = expected_coverage_gain
+        return cls(**kwargs)
 
 
 @dataclass
@@ -841,6 +865,8 @@ class InvestigationState:
         priority: float = 0.5,
         search_term: Optional[str] = None,
         focus_issue_id: Optional[str] = None,
+        expected_cost_usd: Optional[float] = None,
+        expected_coverage_gain: Optional[float] = None,
     ) -> Optional[Lead]:
         """Add a lead to investigate if not duplicate."""
         # Normalize description for comparison
@@ -856,10 +882,21 @@ class InvestigationState:
                 # Upgrade focus_issue_id from None → non-None so dedup never discards linkage
                 if existing.focus_issue_id is None and focus_issue_id is not None:
                     existing.focus_issue_id = focus_issue_id
+                # MVI-5: adopt the higher expected_coverage_gain when a
+                # duplicate lead is surfaced for a higher-weakness issue.
+                if (
+                    expected_coverage_gain is not None
+                    and expected_coverage_gain > existing.expected_coverage_gain
+                ):
+                    existing.expected_coverage_gain = expected_coverage_gain
                 return None  # Duplicate
 
-        lead = Lead.create(description, source, priority,
-                           search_term=search_term, focus_issue_id=focus_issue_id)
+        lead = Lead.create(
+            description, source, priority,
+            search_term=search_term, focus_issue_id=focus_issue_id,
+            expected_cost_usd=expected_cost_usd,
+            expected_coverage_gain=expected_coverage_gain,
+        )
         self.leads.append(lead)
         return lead
 

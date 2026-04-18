@@ -1994,6 +1994,17 @@ class RLMEngine:
                     _reweighted.sort(key=lambda _x: _x[0], reverse=True)
                     pending_leads = [_l for _, _l in _reweighted]
 
+            # MVI-5 per-lead EV gating — stamp expected_cost_usd and
+            # expected_coverage_gain on each pending lead so
+            # _viable_leads has a real coverage-per-dollar signal. Cost
+            # class is the same for all search leads today (LITE
+            # extract + maybe FLASH reason ≈ $0.0015 after the
+            # short-circuit); coverage gain is the target issue's
+            # weakness times a small scalar, with a tiny default for
+            # unanchored leads.
+            if pending_leads:
+                self._enrich_lead_ev(pending_leads, _cov_map)
+
             # SO-4 Leak-4: partition into issue-targeted and neutral to guarantee a
             # minimum issue-targeted quota — prevents neutral leads from crowding out
             # issue focus when the queue is dominated by generic follow-on searches.
@@ -6946,15 +6957,63 @@ Return:
                 return False
         return True
 
+    # MVI-5 cost classes. Coarse — coverage-per-dollar only needs to
+    # be directionally correct for the floor gate. Tune these after
+    # the cost-visibility panel accumulates real per-call deltas.
+    _LEAD_COST_SEARCH = 0.0015   # LITE extract + 35%-short-circuited FLASH reason
+    _LEAD_COST_DEEP_READ = 0.002  # LITE deep_read
+    # Coverage-gain coefficients — how much answerability advance a
+    # lead is expected to produce. weakness * coefficient.
+    _EV_ISSUE_GAIN_COEF = 0.15   # issue-targeted leads get weakness * 0.15
+    _EV_NEUTRAL_GAIN = 0.03      # small default for leads with no focus_issue
+
+    def _enrich_lead_ev(
+        self,
+        pending_leads: list,
+        coverage_map: "dict[str, tuple[float, bool, int]]",
+    ) -> None:
+        """Stamp expected_cost_usd + expected_coverage_gain on every
+        lead that doesn't have them yet. MVI-5 — feeds _viable_leads'
+        coverage-per-dollar floor check."""
+        for _lead in pending_leads:
+            if _lead.expected_cost_usd > 0 and _lead.expected_coverage_gain > 0:
+                continue  # already enriched (e.g. upstream lead planner)
+            # Cost class heuristic — for MVI-5 every lead is a search
+            # lead; deep_read leads carry a different search_term
+            # shape that the engine handles separately.
+            _lead.expected_cost_usd = self._LEAD_COST_SEARCH
+            if (
+                _lead.focus_issue_id
+                and _lead.focus_issue_id in coverage_map
+            ):
+                frac, _gap, _ = coverage_map[_lead.focus_issue_id]
+                weakness = max(0.0, 1.0 - float(frac))
+                _lead.expected_coverage_gain = max(
+                    0.01, weakness * self._EV_ISSUE_GAIN_COEF,
+                )
+            else:
+                _lead.expected_coverage_gain = self._EV_NEUTRAL_GAIN
+
     @staticmethod
     def _viable_leads(pending: list, contract: Any) -> list:
-        """Lead viability check. MVI-3 retains the priority-threshold
-        gate the old code used; MVI-5 will replace this with a real
-        expected-value computation (coverage gain / expected cost)."""
+        """Lead viability check. Two-mode: when a lead carries a
+        populated ev_score (MVI-5 enrichment ran), the floor is read
+        as coverage-per-dollar. When ev_score is 0 (legacy path), the
+        floor is read as a raw priority threshold — preserves old
+        behavior for callers that haven't adopted EV yet."""
         floor = 0.5
         if contract is not None:
             floor = float(getattr(contract, "lead_ev_floor", floor) or floor)
-        return [l for l in pending if l.priority >= floor]
+        viable = []
+        for lead in pending:
+            ev = getattr(lead, "ev_score", 0.0)
+            if ev > 0:
+                if ev >= floor:
+                    viable.append(lead)
+            else:
+                if lead.priority >= floor:
+                    viable.append(lead)
+        return viable
 
     def _extract_search_term(self, lead_description: str) -> str:
         """Extract a SINGLE high-value search term from lead description.

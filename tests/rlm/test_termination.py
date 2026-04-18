@@ -132,13 +132,35 @@ def test_viable_leads_default_floor(engine):
 
 def test_viable_leads_contract_floor(engine):
     contract = ExecutionContract(family="investigate", lead_ev_floor=0.7)
-    # Lead has no lead_ev_floor on the dataclass by default — we're
-    # testing the fallthrough path; the engine helper reads
-    # getattr(contract, "lead_ev_floor", default).
     leads = [_lead(0.3), _lead(0.6), _lead(0.75), _lead(0.9)]
     viable = engine._viable_leads(leads, contract=contract)
     assert len(viable) == 2
     assert all(l.priority >= 0.7 for l in viable)
+
+
+def test_viable_leads_ev_mode(engine):
+    """When leads carry expected_cost + expected_coverage_gain, the
+    contract's lead_ev_floor is interpreted as coverage-per-dollar."""
+    def _ev_lead(cost: float, gain: float) -> Lead:
+        return Lead.create(
+            description="ev test",
+            source="test",
+            priority=0.1,  # low — EV path should override
+            expected_cost_usd=cost,
+            expected_coverage_gain=gain,
+        )
+    # ev_score values: 10, 50, 100, 5
+    leads = [
+        _ev_lead(0.01, 0.10),   # ev=10
+        _ev_lead(0.002, 0.10),  # ev=50
+        _ev_lead(0.001, 0.10),  # ev=100
+        _ev_lead(0.02, 0.10),   # ev=5
+    ]
+    # Floor=20 → only the two high-EV leads pass.
+    contract = ExecutionContract(family="investigate", lead_ev_floor=20.0)
+    viable = engine._viable_leads(leads, contract=contract)
+    assert len(viable) == 2
+    assert all(l.ev_score >= 20.0 for l in viable)
 
 
 # ---------------------------------------------------------------------------
