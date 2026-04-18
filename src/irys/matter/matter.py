@@ -347,7 +347,204 @@ class MatterModel:
         """P0.1: thin wrapper over ProvenanceStore.list_for_target so
         callers can read an AI-derived object's provenance trail
         without reaching into the store directly."""
-        return self.provenance.list_for_target(target_kind, target_id, limit=limit)
+        rows = self.provenance.list_for_target(target_kind, target_id, limit=limit)
+        if rows:
+            return rows
+        return self._fallback_provenance_rows(target_kind, target_id, limit=limit)
+
+    @staticmethod
+    def _synthetic_span_status(span_id: Any) -> str:
+        return "present" if span_id else "missing"
+
+    def _materialize_fallback_provenance(
+        self,
+        target_kind: str,
+        target_id: str,
+        rows: list[dict],
+    ) -> list[dict]:
+        out: list[dict] = []
+        for idx, row in enumerate(rows):
+            source_document_ref = row.get("source_document_ref")
+            source_span_id = row.get("source_span_id")
+            if not source_document_ref and not source_span_id:
+                continue
+            out.append({
+                "id": f"fallback:{target_kind}:{target_id}:{idx}",
+                "matter_id": self.matter_id,
+                "target_kind": target_kind,
+                "target_id": target_id,
+                "event_kind": "derived_source_link",
+                "writer_name": "MatterModel.get_provenance",
+                "run_id": None,
+                "model_id": "stored source link",
+                "model_tier": None,
+                "prompt_version": None,
+                "extractor_version": None,
+                "llm_call_id": None,
+                "prompt_hash": None,
+                "response_hash": None,
+                "source_document_ref": source_document_ref,
+                "source_document_inventory_id": row.get("source_document_inventory_id"),
+                "source_span_id": source_span_id,
+                "source_span_status": (
+                    row.get("source_span_status")
+                    or self._synthetic_span_status(source_span_id)
+                ),
+                "note": (
+                    "Derived from stored source links because no provenance_event row "
+                    "was present for this target."
+                ),
+                "created_at": row.get("created_at") or _now(),
+            })
+        return out
+
+    def _fallback_provenance_rows(
+        self, target_kind: str, target_id: str, limit: int = 50,
+    ) -> list[dict]:
+        if target_kind == "assertion":
+            rows = self.db.execute(
+                """SELECT COALESCE(di.relative_path, ao.document_id) AS source_document_ref,
+                          ao.document_inventory_id AS source_document_inventory_id,
+                          ao.span_id AS source_span_id,
+                          ao.created_at
+                   FROM assertion_occurrence ao
+                   JOIN assertion a ON a.id = ao.assertion_id
+                   LEFT JOIN document_inventory di ON di.id = ao.document_inventory_id
+                   WHERE a.matter_id=? AND ao.assertion_id=?
+                   ORDER BY ao.created_at DESC
+                   LIMIT ?""",
+                (self.matter_id, target_id, int(limit)),
+            ).fetchall()
+            return self._materialize_fallback_provenance(
+                target_kind, target_id, [dict(r) for r in rows],
+            )
+
+        if target_kind == "assertion_occurrence":
+            rows = self.db.execute(
+                """SELECT COALESCE(di.relative_path, ao.document_id) AS source_document_ref,
+                          ao.document_inventory_id AS source_document_inventory_id,
+                          ao.span_id AS source_span_id,
+                          ao.created_at
+                   FROM assertion_occurrence ao
+                   JOIN assertion a ON a.id = ao.assertion_id
+                   LEFT JOIN document_inventory di ON di.id = ao.document_inventory_id
+                   WHERE a.matter_id=? AND ao.id=?
+                   LIMIT ?""",
+                (self.matter_id, target_id, int(limit)),
+            ).fetchall()
+            return self._materialize_fallback_provenance(
+                target_kind, target_id, [dict(r) for r in rows],
+            )
+
+        if target_kind == "quant_fact":
+            q_row = self.db.execute(
+                """SELECT assertion_id, span_id, created_at
+                   FROM quant_fact
+                   WHERE matter_id=? AND id=?""",
+                (self.matter_id, target_id),
+            ).fetchone()
+            if q_row is None:
+                return []
+            rows = []
+            if q_row["assertion_id"]:
+                occ_rows = self.db.execute(
+                    """SELECT COALESCE(di.relative_path, ao.document_id) AS source_document_ref,
+                              ao.document_inventory_id AS source_document_inventory_id,
+                              COALESCE(?, ao.span_id) AS source_span_id,
+                              ao.created_at
+                       FROM assertion_occurrence ao
+                       JOIN assertion a ON a.id = ao.assertion_id
+                       LEFT JOIN document_inventory di ON di.id = ao.document_inventory_id
+                       WHERE a.matter_id=? AND ao.assertion_id=?
+                       ORDER BY CASE WHEN ? IS NOT NULL AND ao.span_id=? THEN 0 ELSE 1 END,
+                                ao.created_at DESC
+                       LIMIT ?""",
+                    (
+                        q_row["span_id"],
+                        self.matter_id,
+                        q_row["assertion_id"],
+                        q_row["span_id"],
+                        q_row["span_id"],
+                        int(limit),
+                    ),
+                ).fetchall()
+                rows = [dict(r) for r in occ_rows]
+            if not rows and q_row["span_id"]:
+                rows = [{
+                    "source_document_ref": None,
+                    "source_document_inventory_id": None,
+                    "source_span_id": q_row["span_id"],
+                    "created_at": q_row["created_at"],
+                }]
+            return self._materialize_fallback_provenance(target_kind, target_id, rows)
+
+        if target_kind == "authority":
+            rows = self.db.execute(
+                """SELECT di.relative_path AS source_document_ref,
+                          a.source_doc_id AS source_document_inventory_id,
+                          a.source_span_id AS source_span_id,
+                          a.updated_at AS created_at
+                   FROM authority a
+                   LEFT JOIN document_inventory di ON di.id = a.source_doc_id
+                   WHERE a.matter_id=? AND a.id=?
+                   LIMIT ?""",
+                (self.matter_id, target_id, int(limit)),
+            ).fetchall()
+            return self._materialize_fallback_provenance(
+                target_kind, target_id, [dict(r) for r in rows],
+            )
+
+        if target_kind == "document_card":
+            rows = self.db.execute(
+                """SELECT di.relative_path AS source_document_ref,
+                          dc.doc_id AS source_document_inventory_id,
+                          NULL AS source_span_id,
+                          COALESCE(di.profiled_at, di.discovered_at) AS created_at
+                   FROM document_card dc
+                   JOIN document_inventory di ON di.id = dc.doc_id
+                   WHERE di.matter_id=? AND dc.id=?
+                   LIMIT ?""",
+                (self.matter_id, target_id, int(limit)),
+            ).fetchall()
+            return self._materialize_fallback_provenance(
+                target_kind, target_id, [dict(r) for r in rows],
+            )
+
+        if target_kind == "evidence_edge":
+            edge = self.db.execute(
+                """SELECT source_kind, source_id, source_document_inventory_id,
+                          source_span_id, source_occurrence_id, updated_at
+                   FROM evidence_edge
+                   WHERE matter_id=? AND id=?""",
+                (self.matter_id, target_id),
+            ).fetchone()
+            if edge is None:
+                return []
+            if edge["source_occurrence_id"] or edge["source_document_inventory_id"] or edge["source_span_id"]:
+                rows = self.db.execute(
+                    """SELECT COALESCE(di.relative_path, di_occ.relative_path, ao.document_id) AS source_document_ref,
+                              COALESCE(ee.source_document_inventory_id, ao.document_inventory_id)
+                                  AS source_document_inventory_id,
+                              COALESCE(ee.source_span_id, ao.span_id) AS source_span_id,
+                              ee.updated_at AS created_at
+                       FROM evidence_edge ee
+                       LEFT JOIN document_inventory di ON di.id = ee.source_document_inventory_id
+                       LEFT JOIN assertion_occurrence ao ON ao.id = ee.source_occurrence_id
+                       LEFT JOIN document_inventory di_occ ON di_occ.id = ao.document_inventory_id
+                       WHERE ee.matter_id=? AND ee.id=?
+                       LIMIT ?""",
+                    (self.matter_id, target_id, int(limit)),
+                ).fetchall()
+                materialized = self._materialize_fallback_provenance(
+                    target_kind, target_id, [dict(r) for r in rows],
+                )
+                if materialized:
+                    return materialized
+            if edge["source_kind"] == "assertion":
+                return self.get_provenance("assertion", edge["source_id"], limit=limit)
+            return []
+
+        return []
 
     # ------------------------------------------------------------------
     # P0.3: Review Queue and Verification API (SO-3)
@@ -1184,10 +1381,11 @@ class MatterModel:
         self.db.execute(
             """INSERT INTO llm_call
                (id, matter_id, run_id, model_tier, model_id, usage_label,
-                input_tokens, cache_read_tokens, output_tokens, total_prompt_tokens,
+                input_tokens, cache_read_tokens, tool_use_prompt_tokens,
+                thinking_tokens, output_tokens, total_prompt_tokens,
                 estimated_cost_usd, latency_ms, success, error_kind, created_at,
                 prompt_hash, response_hash)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 row_id,
                 self.matter_id,
@@ -1197,6 +1395,8 @@ class MatterModel:
                 record.usage_label,
                 record.input_tokens,
                 record.cache_read_tokens,
+                record.tool_use_prompt_tokens,
+                record.thinking_tokens,
                 record.output_tokens,
                 record.total_prompt_tokens,
                 record.estimated_cost_usd,
@@ -1223,8 +1423,11 @@ class MatterModel:
             "failed_requests": 0,
             "input_tokens": 0,
             "cache_read_tokens": 0,
+            "tool_use_prompt_tokens": 0,
+            "thinking_tokens": 0,
             "output_tokens": 0,
             "total_prompt_tokens": 0,
+            "total_processed_tokens": 0,
             "estimated_cost_usd": 0.0,
             "by_tier": {},
             "pricing_source": PRICING_SOURCE_URL,
@@ -1238,6 +1441,8 @@ class MatterModel:
                            COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END), 0) AS failed_requests,
                            COALESCE(SUM(input_tokens), 0) AS input_tokens,
                            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                           COALESCE(SUM(tool_use_prompt_tokens), 0) AS tool_use_prompt_tokens,
+                           COALESCE(SUM(thinking_tokens), 0) AS thinking_tokens,
                            COALESCE(SUM(output_tokens), 0) AS output_tokens,
                            COALESCE(SUM(total_prompt_tokens), 0) AS total_prompt_tokens,
                            COALESCE(SUM(estimated_cost_usd), 0.0) AS estimated_cost_usd
@@ -1251,6 +1456,8 @@ class MatterModel:
                            COUNT(*) AS request_count,
                            COALESCE(SUM(input_tokens), 0) AS input_tokens,
                            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                           COALESCE(SUM(tool_use_prompt_tokens), 0) AS tool_use_prompt_tokens,
+                           COALESCE(SUM(thinking_tokens), 0) AS thinking_tokens,
                            COALESCE(SUM(output_tokens), 0) AS output_tokens,
                            COALESCE(SUM(total_prompt_tokens), 0) AS total_prompt_tokens,
                            COALESCE(SUM(estimated_cost_usd), 0.0) AS estimated_cost_usd
@@ -1269,8 +1476,16 @@ class MatterModel:
                 "requests": int(row["request_count"] or 0),
                 "input_tokens": int(row["input_tokens"] or 0),
                 "cache_read_tokens": int(row["cache_read_tokens"] or 0),
+                "tool_use_prompt_tokens": int(row["tool_use_prompt_tokens"] or 0),
+                "thinking_tokens": int(row["thinking_tokens"] or 0),
                 "output_tokens": int(row["output_tokens"] or 0),
                 "total_prompt_tokens": int(row["total_prompt_tokens"] or 0),
+                "total_processed_tokens": (
+                    int(row["total_prompt_tokens"] or 0)
+                    + int(row["tool_use_prompt_tokens"] or 0)
+                    + int(row["thinking_tokens"] or 0)
+                    + int(row["output_tokens"] or 0)
+                ),
                 "estimated_cost_usd": round(float(row["estimated_cost_usd"] or 0.0), 6),
             }
             for row in tier_rows
@@ -1281,8 +1496,16 @@ class MatterModel:
             "failed_requests": int(totals["failed_requests"] or 0),
             "input_tokens": int(totals["input_tokens"] or 0),
             "cache_read_tokens": int(totals["cache_read_tokens"] or 0),
+            "tool_use_prompt_tokens": int(totals["tool_use_prompt_tokens"] or 0),
+            "thinking_tokens": int(totals["thinking_tokens"] or 0),
             "output_tokens": int(totals["output_tokens"] or 0),
             "total_prompt_tokens": int(totals["total_prompt_tokens"] or 0),
+            "total_processed_tokens": (
+                int(totals["total_prompt_tokens"] or 0)
+                + int(totals["tool_use_prompt_tokens"] or 0)
+                + int(totals["thinking_tokens"] or 0)
+                + int(totals["output_tokens"] or 0)
+            ),
             "estimated_cost_usd": round(float(totals["estimated_cost_usd"] or 0.0), 6),
             "by_tier": by_tier,
             "pricing_source": PRICING_SOURCE_URL,
@@ -1319,7 +1542,10 @@ class MatterModel:
                 "estimated_cost_usd": 0.0,
                 "input_tokens": 0,
                 "cache_read_tokens": 0,
+                "tool_use_prompt_tokens": 0,
+                "thinking_tokens": 0,
                 "output_tokens": 0,
+                "total_processed_tokens": 0,
                 "cache_hit_rate": None,
                 "success_rate": None,
                 "avg_latency_ms": None,
@@ -1341,6 +1567,8 @@ class MatterModel:
                            COALESCE(SUM(estimated_cost_usd), 0) AS cost,
                            COALESCE(SUM(input_tokens), 0) AS input_tokens,
                            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                           COALESCE(SUM(tool_use_prompt_tokens), 0) AS tool_use_prompt_tokens,
+                           COALESCE(SUM(thinking_tokens), 0) AS thinking_tokens,
                            COALESCE(SUM(output_tokens), 0) AS output_tokens,
                            COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), 0) AS ok,
                            COALESCE(AVG(latency_ms), 0) AS avg_latency
@@ -1371,14 +1599,26 @@ class MatterModel:
             n = int(totals_row["n"])
             inp = int(totals_row["input_tokens"] or 0)
             cached = int(totals_row["cache_read_tokens"] or 0)
+            tool_use = int(totals_row["tool_use_prompt_tokens"] or 0)
+            thinking = int(totals_row["thinking_tokens"] or 0)
             totals = {
                 "request_count": n,
                 "estimated_cost_usd": round(float(totals_row["cost"] or 0), 6),
                 "input_tokens": inp,
                 "cache_read_tokens": cached,
+                "tool_use_prompt_tokens": tool_use,
+                "thinking_tokens": thinking,
                 "output_tokens": int(totals_row["output_tokens"] or 0),
+                "total_processed_tokens": (
+                    inp
+                    + cached
+                    + tool_use
+                    + thinking
+                    + int(totals_row["output_tokens"] or 0)
+                ),
                 "cache_hit_rate": (
-                    round(cached / (cached + inp), 4) if (cached + inp) > 0 else None
+                    round(cached / (cached + inp + tool_use), 4)
+                    if (cached + inp + tool_use) > 0 else None
                 ),
                 "success_rate": (
                     round(int(totals_row["ok"] or 0) / n, 4) if n > 0 else None
@@ -1397,6 +1637,8 @@ class MatterModel:
                            COALESCE(SUM(estimated_cost_usd), 0) AS cost,
                            COALESCE(SUM(input_tokens), 0) AS input_tokens,
                            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                           COALESCE(SUM(tool_use_prompt_tokens), 0) AS tool_use_prompt_tokens,
+                           COALESCE(SUM(thinking_tokens), 0) AS thinking_tokens,
                            COALESCE(SUM(output_tokens), 0) AS output_tokens,
                            COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), 0) AS ok,
                            COALESCE(AVG(latency_ms), 0) AS avg_latency
@@ -1410,6 +1652,8 @@ class MatterModel:
             for row in stage_rows:
                 stg_inp = int(row["input_tokens"] or 0)
                 stg_cached = int(row["cache_read_tokens"] or 0)
+                stg_tool_use = int(row["tool_use_prompt_tokens"] or 0)
+                stg_thinking = int(row["thinking_tokens"] or 0)
                 stg_n = int(row["n"] or 0)
                 by_stage.append({
                     "stage": row["stage"],
@@ -1417,10 +1661,19 @@ class MatterModel:
                     "estimated_cost_usd": round(float(row["cost"] or 0), 6),
                     "input_tokens": stg_inp,
                     "cache_read_tokens": stg_cached,
+                    "tool_use_prompt_tokens": stg_tool_use,
+                    "thinking_tokens": stg_thinking,
                     "output_tokens": int(row["output_tokens"] or 0),
+                    "total_processed_tokens": (
+                        stg_inp
+                        + stg_cached
+                        + stg_tool_use
+                        + stg_thinking
+                        + int(row["output_tokens"] or 0)
+                    ),
                     "cache_hit_rate": (
-                        round(stg_cached / (stg_cached + stg_inp), 4)
-                        if (stg_cached + stg_inp) > 0 else None
+                        round(stg_cached / (stg_cached + stg_inp + stg_tool_use), 4)
+                        if (stg_cached + stg_inp + stg_tool_use) > 0 else None
                     ),
                     "success_rate": (
                         round(int(row["ok"] or 0) / stg_n, 4) if stg_n > 0 else None
@@ -1437,6 +1690,8 @@ class MatterModel:
                            COALESCE(SUM(estimated_cost_usd), 0) AS cost,
                            COALESCE(SUM(input_tokens), 0) AS input_tokens,
                            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                           COALESCE(SUM(tool_use_prompt_tokens), 0) AS tool_use_prompt_tokens,
+                           COALESCE(SUM(thinking_tokens), 0) AS thinking_tokens,
                            COALESCE(SUM(output_tokens), 0) AS output_tokens,
                            COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), 0) AS ok,
                            COALESCE(AVG(latency_ms), 0) AS avg_latency
@@ -1450,6 +1705,8 @@ class MatterModel:
             for row in tier_rows:
                 t_inp = int(row["input_tokens"] or 0)
                 t_cached = int(row["cache_read_tokens"] or 0)
+                t_tool_use = int(row["tool_use_prompt_tokens"] or 0)
+                t_thinking = int(row["thinking_tokens"] or 0)
                 t_n = int(row["n"] or 0)
                 by_tier.append({
                     "model_tier": row["model_tier"],
@@ -1458,10 +1715,19 @@ class MatterModel:
                     "estimated_cost_usd": round(float(row["cost"] or 0), 6),
                     "input_tokens": t_inp,
                     "cache_read_tokens": t_cached,
+                    "tool_use_prompt_tokens": t_tool_use,
+                    "thinking_tokens": t_thinking,
                     "output_tokens": int(row["output_tokens"] or 0),
+                    "total_processed_tokens": (
+                        t_inp
+                        + t_cached
+                        + t_tool_use
+                        + t_thinking
+                        + int(row["output_tokens"] or 0)
+                    ),
                     "cache_hit_rate": (
-                        round(t_cached / (t_cached + t_inp), 4)
-                        if (t_cached + t_inp) > 0 else None
+                        round(t_cached / (t_cached + t_inp + t_tool_use), 4)
+                        if (t_cached + t_inp + t_tool_use) > 0 else None
                     ),
                     "success_rate": (
                         round(int(row["ok"] or 0) / t_n, 4) if t_n > 0 else None
@@ -1551,7 +1817,8 @@ class MatterModel:
             for tier in tiers:
                 rows = self.db.execute(
                     f"""SELECT id, created_at, model_tier, usage_label,
-                               input_tokens, output_tokens,
+                               input_tokens, cache_read_tokens, tool_use_prompt_tokens,
+                               thinking_tokens, output_tokens,
                                estimated_cost_usd, latency_ms
                            FROM llm_call
                            WHERE {where} AND model_tier=? AND success=1""",
@@ -1621,7 +1888,8 @@ class MatterModel:
         try:
             rows = self.db.execute(
                 f"""SELECT run_id, model_tier, model_id, usage_label,
-                           input_tokens, cache_read_tokens, output_tokens,
+                           input_tokens, cache_read_tokens, tool_use_prompt_tokens,
+                           thinking_tokens, output_tokens,
                            total_prompt_tokens, estimated_cost_usd, latency_ms,
                            success, error_kind, created_at
                     FROM llm_call
@@ -1640,8 +1908,16 @@ class MatterModel:
                 "usage_label": row["usage_label"],
                 "input_tokens": int(row["input_tokens"] or 0),
                 "cache_read_tokens": int(row["cache_read_tokens"] or 0),
+                "tool_use_prompt_tokens": int(row["tool_use_prompt_tokens"] or 0),
+                "thinking_tokens": int(row["thinking_tokens"] or 0),
                 "output_tokens": int(row["output_tokens"] or 0),
                 "total_prompt_tokens": int(row["total_prompt_tokens"] or 0),
+                "total_processed_tokens": (
+                    int(row["total_prompt_tokens"] or 0)
+                    + int(row["tool_use_prompt_tokens"] or 0)
+                    + int(row["thinking_tokens"] or 0)
+                    + int(row["output_tokens"] or 0)
+                ),
                 "estimated_cost_usd": round(float(row["estimated_cost_usd"] or 0.0), 6),
                 "latency_ms": int(row["latency_ms"] or 0),
                 "success": bool(row["success"]),
@@ -1655,13 +1931,18 @@ class MatterModel:
         """Persist cheap per-run Gemini totals onto run_session for UI fetches."""
         self.db.execute(
             "UPDATE run_session"
-            " SET llm_input_tokens=?, llm_cache_read_tokens=?, llm_output_tokens=?,"
+            " SET llm_input_tokens=?, llm_cache_read_tokens=?,"
+            "     llm_tool_use_prompt_tokens=?, llm_thinking_tokens=?,"
+            "     llm_output_tokens=?, llm_total_processed_tokens=?,"
             "     llm_request_count=?, llm_estimated_cost_usd=?"
             " WHERE id=? AND matter_id=?",
             (
                 int(usage.get("input_tokens", 0) or 0),
                 int(usage.get("cache_read_tokens", 0) or 0),
+                int(usage.get("tool_use_prompt_tokens", 0) or 0),
+                int(usage.get("thinking_tokens", 0) or 0),
                 int(usage.get("output_tokens", 0) or 0),
+                int(usage.get("total_processed_tokens", 0) or 0),
                 int(usage.get("request_count", 0) or 0),
                 float(usage.get("estimated_cost_usd", 0.0) or 0.0),
                 run_id,

@@ -131,14 +131,16 @@ def estimate_usage_cost(
     input_tokens: int,
     output_tokens: int,
     cache_read_tokens: int = 0,
+    tool_use_prompt_tokens: int = 0,
 ) -> float:
     """Estimate Gemini API cost for one request or an accumulated usage bucket."""
     mc = MODEL_CONFIGS.get(tier or ModelTier.FLASH, MODEL_CONFIGS[ModelTier.FLASH])
-    total_prompt_tokens = input_tokens + cache_read_tokens
+    total_prompt_tokens = input_tokens + cache_read_tokens + tool_use_prompt_tokens
     input_rate, cache_rate, output_rate = mc.pricing_for_prompt_tokens(total_prompt_tokens)
     return (
         input_tokens * input_rate / 1_000_000
         + cache_read_tokens * cache_rate / 1_000_000
+        + tool_use_prompt_tokens * input_rate / 1_000_000
         + output_tokens * output_rate / 1_000_000
     )
 
@@ -157,6 +159,8 @@ class LLMCallRecord:
     model_id: str
     input_tokens: int
     cache_read_tokens: int
+    tool_use_prompt_tokens: int
+    thinking_tokens: int
     output_tokens: int
     total_prompt_tokens: int
     estimated_cost_usd: float
@@ -182,6 +186,8 @@ class UsageStats:
     """
     input_tokens: int = 0
     cache_read_tokens: int = 0  # From response.usage_metadata.cached_content_token_count
+    tool_use_prompt_tokens: int = 0
+    thinking_tokens: int = 0
     output_tokens: int = 0
     requests: int = 0
     estimated_cost_usd: float = 0.0
@@ -197,16 +203,30 @@ class UsageStats:
     def total_prompt_tokens(self) -> int:
         return self.input_tokens + self.cache_read_tokens
 
+    @property
+    def total_processed_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.cache_read_tokens
+            + self.tool_use_prompt_tokens
+            + self.thinking_tokens
+            + self.output_tokens
+        )
+
     def add(
         self,
         input_tokens: int,
         output_tokens: int,
         cache_read_tokens: int = 0,
+        tool_use_prompt_tokens: int = 0,
+        thinking_tokens: int = 0,
         estimated_cost_usd: Optional[float] = None,
     ):
         """Add tokens from a request."""
         self.input_tokens += input_tokens
         self.cache_read_tokens += cache_read_tokens
+        self.tool_use_prompt_tokens += tool_use_prompt_tokens
+        self.thinking_tokens += thinking_tokens
         self.output_tokens += output_tokens
         self.requests += 1
         self.estimated_cost_usd += (
@@ -217,6 +237,7 @@ class UsageStats:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 cache_read_tokens=cache_read_tokens,
+                tool_use_prompt_tokens=tool_use_prompt_tokens,
             )
         )
 
@@ -224,6 +245,8 @@ class UsageStats:
         return UsageStats(
             input_tokens=self.input_tokens,
             cache_read_tokens=self.cache_read_tokens,
+            tool_use_prompt_tokens=self.tool_use_prompt_tokens,
+            thinking_tokens=self.thinking_tokens,
             output_tokens=self.output_tokens,
             requests=self.requests,
             estimated_cost_usd=self.estimated_cost_usd,
@@ -235,6 +258,10 @@ class UsageStats:
         return UsageStats(
             input_tokens=max(self.input_tokens - prev.input_tokens, 0),
             cache_read_tokens=max(self.cache_read_tokens - prev.cache_read_tokens, 0),
+            tool_use_prompt_tokens=max(
+                self.tool_use_prompt_tokens - prev.tool_use_prompt_tokens, 0
+            ),
+            thinking_tokens=max(self.thinking_tokens - prev.thinking_tokens, 0),
             output_tokens=max(self.output_tokens - prev.output_tokens, 0),
             requests=max(self.requests - prev.requests, 0),
             estimated_cost_usd=max(self.estimated_cost_usd - prev.estimated_cost_usd, 0.0),
@@ -247,8 +274,11 @@ class UsageStats:
             "requests": self.requests,
             "input_tokens": self.input_tokens,
             "cache_read_tokens": self.cache_read_tokens,
+            "tool_use_prompt_tokens": self.tool_use_prompt_tokens,
+            "thinking_tokens": self.thinking_tokens,
             "output_tokens": self.output_tokens,
             "total_prompt_tokens": self.total_prompt_tokens,
+            "total_processed_tokens": self.total_processed_tokens,
             "estimated_cost_usd": round(self.estimated_cost_usd, 6),
         }
 
@@ -324,13 +354,16 @@ class GeminiClient:
         )
 
     @staticmethod
-    def _parse_usage_metadata(response: Any, prompt: str) -> tuple[int, int, int]:
+    def _parse_usage_metadata(response: Any, prompt: str) -> tuple[int, int, int, int, int]:
         """Parse token counts from a Gemini response.
 
-        Returns (input_tokens, output_tokens, cache_read_tokens) where:
+        Returns (input_tokens, output_tokens, cache_read_tokens, thinking_tokens,
+        tool_use_prompt_tokens) where:
         - input_tokens: non-cached prompt tokens (billed at full input rate)
         - output_tokens: generated tokens
         - cache_read_tokens: prompt tokens served from cache (billed at 10% of input rate)
+        - thinking_tokens: hidden reasoning tokens reported by Gemini
+        - tool_use_prompt_tokens: prompt tokens consumed by tool use
 
         Gemini's prompt_token_count is the TOTAL prompt including cached tokens.
         Non-cached input = prompt_token_count - cached_content_token_count.
@@ -339,14 +372,28 @@ class GeminiClient:
         um = getattr(response, "usage_metadata", None)
         if um is not None:
             total_prompt = getattr(um, "prompt_token_count", None) or 0
-            actual_output = getattr(um, "candidates_token_count", None) or 0
+            actual_output = (
+                getattr(um, "candidates_token_count", None)
+                or getattr(um, "response_token_count", None)
+                or 0
+            )
             actual_cache = getattr(um, "cached_content_token_count", None) or 0
+            actual_thinking = getattr(um, "thoughts_token_count", None) or 0
+            actual_tool_use = getattr(um, "tool_use_prompt_token_count", None) or 0
             actual_input = max(total_prompt - actual_cache, 0)
         else:
             actual_input = len(prompt) // 4
             actual_output = len(getattr(response, "text", "") or "") // 4
             actual_cache = 0
-        return actual_input, actual_output, actual_cache
+            actual_thinking = 0
+            actual_tool_use = 0
+        return (
+            actual_input,
+            actual_output,
+            actual_cache,
+            actual_thinking,
+            actual_tool_use,
+        )
 
     def _get_config(
         self, tier: ModelTier, *, json_mode: bool = False,
@@ -400,6 +447,8 @@ class GeminiClient:
             successful_requests += delta.requests
             totals.input_tokens += delta.input_tokens
             totals.cache_read_tokens += delta.cache_read_tokens
+            totals.tool_use_prompt_tokens += delta.tool_use_prompt_tokens
+            totals.thinking_tokens += delta.thinking_tokens
             totals.output_tokens += delta.output_tokens
             totals.requests += delta.requests
             totals.estimated_cost_usd += delta.estimated_cost_usd
@@ -411,8 +460,11 @@ class GeminiClient:
             "failed_requests": failed_requests,
             "input_tokens": totals.input_tokens,
             "cache_read_tokens": totals.cache_read_tokens,
+            "tool_use_prompt_tokens": totals.tool_use_prompt_tokens,
+            "thinking_tokens": totals.thinking_tokens,
             "output_tokens": totals.output_tokens,
             "total_prompt_tokens": totals.total_prompt_tokens,
+            "total_processed_tokens": totals.total_processed_tokens,
             "estimated_cost_usd": round(totals.estimated_cost_usd, 6),
             "by_tier": by_tier,
             "pricing_source": PRICING_SOURCE_URL,
@@ -564,6 +616,8 @@ class GeminiClient:
                     usage_label=usage_label,
                     input_tokens=0,
                     cache_read_tokens=0,
+                    tool_use_prompt_tokens=0,
+                    thinking_tokens=0,
                     output_tokens=0,
                     total_prompt_tokens=0,
                     estimated_cost_usd=0.0,
@@ -585,6 +639,8 @@ class GeminiClient:
                     usage_label=usage_label,
                     input_tokens=0,
                     cache_read_tokens=0,
+                    tool_use_prompt_tokens=0,
+                    thinking_tokens=0,
                     output_tokens=0,
                     total_prompt_tokens=0,
                     estimated_cost_usd=0.0,
@@ -597,17 +653,26 @@ class GeminiClient:
             )
             raise
 
-        actual_input, actual_output, actual_cache = self._parse_usage_metadata(response, prompt)
+        (
+            actual_input,
+            actual_output,
+            actual_cache,
+            actual_thinking,
+            actual_tool_use,
+        ) = self._parse_usage_metadata(response, prompt)
         call_cost = estimate_usage_cost(
             tier,
             input_tokens=actual_input,
             output_tokens=actual_output,
             cache_read_tokens=actual_cache,
+            tool_use_prompt_tokens=actual_tool_use,
         )
         self._usage[tier].add(
             actual_input,
             actual_output,
             cache_read_tokens=actual_cache,
+            tool_use_prompt_tokens=actual_tool_use,
+            thinking_tokens=actual_thinking,
             estimated_cost_usd=call_cost,
         )
         latency_ms = int((time.perf_counter() - started_at) * 1000)
@@ -622,6 +687,8 @@ class GeminiClient:
                 usage_label=usage_label,
                 input_tokens=actual_input,
                 cache_read_tokens=actual_cache,
+                tool_use_prompt_tokens=actual_tool_use,
+                thinking_tokens=actual_thinking,
                 output_tokens=actual_output,
                 total_prompt_tokens=actual_input + actual_cache,
                 estimated_cost_usd=call_cost,

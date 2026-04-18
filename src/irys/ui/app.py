@@ -410,6 +410,35 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _total_processed_tokens(metrics: dict[str, Any]) -> int:
+    total = _safe_int(metrics.get("total_processed_tokens"))
+    if total:
+        return total
+    return (
+        _safe_int(metrics.get("total_prompt_tokens"))
+        + _safe_int(metrics.get("tool_use_prompt_tokens"))
+        + _safe_int(metrics.get("thinking_tokens"))
+        + _safe_int(metrics.get("output_tokens"))
+    )
+
+
+def _llm_token_breakdown(metrics: dict[str, Any]) -> str:
+    parts = [f"{_safe_int(metrics.get('input_tokens')):,} in"]
+    cache_tokens = _safe_int(metrics.get("cache_read_tokens"))
+    tool_use_tokens = _safe_int(metrics.get("tool_use_prompt_tokens"))
+    thinking_tokens = _safe_int(metrics.get("thinking_tokens"))
+    output_tokens = _safe_int(metrics.get("output_tokens"))
+    total_tokens = _total_processed_tokens(metrics)
+    if cache_tokens:
+        parts.append(f"{cache_tokens:,} cache")
+    if tool_use_tokens:
+        parts.append(f"{tool_use_tokens:,} tool")
+    parts.append(f"{thinking_tokens:,} think")
+    parts.append(f"{output_tokens:,} out")
+    parts.append(f"{total_tokens:,} total")
+    return " / ".join(parts)
+
+
 def _truncate(value: Any, limit: int = 48) -> str:
     # Readability-first UI rule: never cut visible text off in the dashboard.
     return "" if value is None else str(value)
@@ -797,24 +826,35 @@ _QUARTER_STARTS = {"01": "Q1", "04": "Q2", "07": "Q3", "10": "Q4"}
 
 def _display_date(iso_date: str, precision: str | None) -> str:
     """Render an ISO date according to its precision for human-friendly display."""
-    if not iso_date or len(iso_date) < 10:
-        return iso_date or "Undated"
+    raw = (iso_date or "").strip()
+    if not raw or raw.lower() in {"null", "none"}:
+        return "Undated"
+    if len(raw) < 10:
+        return raw
     try:
-        year, month, day = iso_date[:10].split("-")
+        year, month, day = raw[:10].split("-")
     except ValueError:
-        return iso_date
+        return raw
+    if not year.isdigit():
+        return raw
     if precision == "year":
         return year
     if precision == "quarter":
-        return f"{_QUARTER_STARTS.get(month, 'Q?')} {year}"
+        if month.isdigit():
+            return f"{_QUARTER_STARTS.get(month, 'Q?')} {year}"
+        return raw
     if precision == "month":
+        if month.isdigit():
+            m_idx = int(month)
+            m_name = _MONTH_NAMES[m_idx] if 1 <= m_idx <= 12 else month
+            return f"{m_name} {year}"
+        return raw
+    # "day" or unknown precision — show full date in readable form
+    if month.isdigit() and day.isdigit():
         m_idx = int(month)
         m_name = _MONTH_NAMES[m_idx] if 1 <= m_idx <= 12 else month
-        return f"{m_name} {year}"
-    # "day" or unknown precision — show full date in readable form
-    m_idx = int(month)
-    m_name = _MONTH_NAMES[m_idx] if 1 <= m_idx <= 12 else month
-    return f"{m_name} {int(day)}, {year}"
+        return f"{m_name} {int(day)}, {year}"
+    return raw
 
 
 def _friendly_source_label(raw: Optional[str]) -> str:
@@ -1226,6 +1266,16 @@ def _fmt_llm_analytics_panel(
     p95_latency = b_totals.get("p95_latency_ms")
     avg_latency_b = b_totals.get("avg_latency_ms")
     monthly_burn = _safe_float((breakdown or {}).get("estimated_monthly_burn_usd", 0.0))
+    thinking_tokens = _safe_int(
+        b_totals.get("thinking_tokens") or summary.get("thinking_tokens", 0)
+    )
+    total_work_tokens = _total_processed_tokens(b_totals or summary)
+    if not thinking_tokens and calls:
+        thinking_tokens = sum(_safe_int(call.get("thinking_tokens", 0)) for call in calls)
+    if not total_work_tokens and calls:
+        total_work_tokens = sum(
+            _safe_int(call.get("total_processed_tokens", 0)) for call in calls
+        )
 
     # Fall back to per-call computation when breakdown is absent.
     total_latency = 0.0
@@ -1254,6 +1304,18 @@ def _fmt_llm_analytics_panel(
     cards = [
         _metric_card("Calls", f"{request_count:,}", detail=f"{len(calls):,} recent rows"),
         _metric_card("Spend", _fmt_money(total_cost), tone="amber"),
+        _metric_card(
+            "Total work",
+            f"{total_work_tokens:,}",
+            tone="blue",
+            detail="Prompt + tool + thinking + output tokens",
+        ),
+        _metric_card(
+            "Thinking",
+            f"{thinking_tokens:,}",
+            tone="blue",
+            detail="Internal reasoning tokens",
+        ),
         _metric_card(
             "Monthly burn",
             _fmt_money(monthly_burn),
@@ -1403,7 +1465,10 @@ def _fmt_llm_analytics_panel(
         f"<td>{_safe_int(call.get('input_tokens', 0)):,}</td>"
         f"<td>{_safe_int(call.get('cache_read_tokens', 0)):,}</td>"
         f"<td>{_safe_int(call.get('total_prompt_tokens', 0)):,}</td>"
+        f"<td>{_safe_int(call.get('tool_use_prompt_tokens', 0)):,}</td>"
+        f"<td>{_safe_int(call.get('thinking_tokens', 0)):,}</td>"
         f"<td>{_safe_int(call.get('output_tokens', 0)):,}</td>"
+        f"<td>{_safe_int(call.get('total_processed_tokens', 0)):,}</td>"
         f"<td>{_safe_int(call.get('latency_ms', 0)):,} ms</td>"
         f"<td>{_fmt_money(call.get('estimated_cost_usd', 0.0))}</td>"
         f"<td>{_escape(call.get('run_id') or '')}</td>"
@@ -1434,8 +1499,8 @@ def _fmt_llm_analytics_panel(
         + "<div class='viz-panel'><div class='viz-panel-title'>Recent calls</div>"
         + "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
         + "<th>Time</th><th>Stage</th><th>Tier</th><th>Model</th><th>In</th><th>Cache</th>"
-        + "<th>Prompt</th><th>Out</th><th>Latency</th><th>Cost</th><th>Run</th><th>Status</th></tr></thead><tbody>"
-        + (table_rows or "<tr><td colspan='12'>No recent calls.</td></tr>")
+        + "<th>Prompt</th><th>Tool</th><th>Think</th><th>Out</th><th>Total</th><th>Latency</th><th>Cost</th><th>Run</th><th>Status</th></tr></thead><tbody>"
+        + (table_rows or "<tr><td colspan='15'>No recent calls.</td></tr>")
         + "</tbody></table></div>"
         + (
             f"<div class='viz-footnote'>Pricing source: <a href='{pricing_source}' target='_blank'>Google Gemini API pricing</a></div>"
@@ -1672,9 +1737,7 @@ def _fmt_overview(data: dict) -> str:
     if llm_totals.get("request_count", 0):
         lines.append(
             f"**LLM Calls:** {llm_totals.get('request_count', 0)}  |  "
-            f"**Tokens:** {llm_totals.get('input_tokens', 0):,} in / "
-            f"{llm_totals.get('cache_read_tokens', 0):,} cache / "
-            f"{llm_totals.get('output_tokens', 0):,} out  |  "
+            f"**Tokens:** {_llm_token_breakdown(llm_totals)}  |  "
             f"**Est. Cost:** ${float(llm_totals.get('estimated_cost_usd', 0.0) or 0.0):.4f}"
         )
         by_tier = llm_totals.get("by_tier", {})
@@ -1690,9 +1753,7 @@ def _fmt_overview(data: dict) -> str:
         if isinstance(last_run, dict) and last_run.get("request_count", 0):
             lines.append(
                 f"**Last Run LLM:** {last_run.get('request_count', 0)} calls  |  "
-                f"{last_run.get('input_tokens', 0):,} in / "
-                f"{last_run.get('cache_read_tokens', 0):,} cache / "
-                f"{last_run.get('output_tokens', 0):,} out  |  "
+                f"{_llm_token_breakdown(last_run)}  |  "
                 f"${float(last_run.get('estimated_cost_usd', 0.0) or 0.0):.4f}"
             )
 

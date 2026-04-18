@@ -112,6 +112,8 @@ def test_stats_include_llm_usage_summary(model):
             usage_label="orientation",
             input_tokens=1200,
             cache_read_tokens=300,
+            tool_use_prompt_tokens=25,
+            thinking_tokens=80,
             output_tokens=400,
             total_prompt_tokens=1500,
             estimated_cost_usd=0.00166,
@@ -125,7 +127,10 @@ def test_stats_include_llm_usage_summary(model):
             "request_count": 1,
             "input_tokens": 1200,
             "cache_read_tokens": 300,
+            "tool_use_prompt_tokens": 25,
+            "thinking_tokens": 80,
             "output_tokens": 400,
+            "total_processed_tokens": 2005,
             "estimated_cost_usd": 0.00166,
         },
     )
@@ -135,7 +140,10 @@ def test_stats_include_llm_usage_summary(model):
     assert stats["llm"]["totals"]["request_count"] == 1
     assert stats["llm"]["totals"]["input_tokens"] == 1200
     assert stats["llm"]["totals"]["cache_read_tokens"] == 300
+    assert stats["llm"]["totals"]["tool_use_prompt_tokens"] == 25
+    assert stats["llm"]["totals"]["thinking_tokens"] == 80
     assert stats["llm"]["totals"]["output_tokens"] == 400
+    assert stats["llm"]["totals"]["total_processed_tokens"] == 2005
     assert stats["llm"]["last_run"]["estimated_cost_usd"] == pytest.approx(0.00166)
 
 

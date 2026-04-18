@@ -225,3 +225,10 @@ def test_api_timeline_limit(api_client):
     resp = client.get(f"/matter/{mid}/timeline?limit=3")
     assert resp.status_code == 200
     assert len(resp.json()) <= 3
+
+
+def test_display_date_tolerates_null_date_parts():
+    from irys.ui.app import _display_date
+
+    assert _display_date("2024-null-15", "day") == "2024-null-15"
+    assert _display_date("null", "day") == "Undated"

@@ -349,7 +349,10 @@ class ReasoningLedgerStore:
             research_mode=d.get("research_mode"),
             llm_input_tokens=d.get("llm_input_tokens"),
             llm_cache_read_tokens=d.get("llm_cache_read_tokens"),
+            llm_tool_use_prompt_tokens=d.get("llm_tool_use_prompt_tokens"),
+            llm_thinking_tokens=d.get("llm_thinking_tokens"),
             llm_output_tokens=d.get("llm_output_tokens"),
+            llm_total_processed_tokens=d.get("llm_total_processed_tokens"),
             llm_request_count=d.get("llm_request_count"),
             llm_estimated_cost_usd=d.get("llm_estimated_cost_usd"),
         )

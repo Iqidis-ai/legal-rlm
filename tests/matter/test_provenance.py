@@ -68,6 +68,8 @@ def test_record_llm_call_persists_call_id_and_hashes(model):
         model_id="gemini-test",
         input_tokens=100,
         cache_read_tokens=0,
+        tool_use_prompt_tokens=0,
+        thinking_tokens=0,
         output_tokens=50,
         total_prompt_tokens=100,
         estimated_cost_usd=0.001,
@@ -276,6 +278,28 @@ def test_get_provenance_orders_by_created_at_desc(model):
 
 def test_get_provenance_empty_for_unknown_target(model):
     assert model.get_provenance("assertion", "does_not_exist") == []
+
+
+def test_get_provenance_falls_back_to_stored_occurrence_source(model):
+    cand = AssertionCandidate(
+        proposition_text="Fallback source test",
+        speech_act=SpeechAct.OPERATIVE,
+        source_role=SourceRole.OPERATIVE,
+        assertion_kind=AssertionKind.FACTUAL,
+        model_layer=ModelLayer.RECORD,
+        document_id="records/payment-ledger.pdf",
+        span_id="span_fallback_1",
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    aid, is_new = model.assertions.upsert_occurrence(cand)
+    assert is_new
+
+    rows = model.get_provenance("assertion", aid)
+    assert len(rows) == 1
+    assert rows[0]["event_kind"] == "derived_source_link"
+    assert rows[0]["source_document_ref"] == "records/payment-ledger.pdf"
+    assert rows[0]["source_span_id"] == "span_fallback_1"
+    assert rows[0]["source_span_status"] == "present"
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 57
+SCHEMA_VERSION = 58
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -20,6 +20,7 @@ _MIGRATION_NAMES: dict[int, str] = {
     55: "provenance_event_and_llm_call_hashes",
     56: "matter_trust_revision",
     57: "content_policy_audit",
+    58: "llm_thinking_telemetry",
 }
 
 
@@ -2783,6 +2784,19 @@ def _migration_v57(conn) -> None:
     conn.commit()
 
 
+def _migration_v58(conn) -> None:
+    """Persist Gemini thinking/tool token telemetry for analytics surfaces."""
+    for alter in (
+        "ALTER TABLE llm_call ADD COLUMN tool_use_prompt_tokens INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE llm_call ADD COLUMN thinking_tokens INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE run_session ADD COLUMN llm_tool_use_prompt_tokens INTEGER",
+        "ALTER TABLE run_session ADD COLUMN llm_thinking_tokens INTEGER",
+        "ALTER TABLE run_session ADD COLUMN llm_total_processed_tokens INTEGER",
+    ):
+        _execute_allow_duplicate_column(conn, alter)
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -2844,6 +2858,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (55, _migration_v55),
     (56, _migration_v56),
     (57, _migration_v57),
+    (58, _migration_v58),
 ]
 
 

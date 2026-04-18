@@ -343,6 +343,9 @@ class RunSessionRecord:
     research_mode: Optional[str] = None
     llm_input_tokens: Optional[int] = None
     llm_cache_read_tokens: Optional[int] = None
+    llm_tool_use_prompt_tokens: Optional[int] = None
+    llm_thinking_tokens: Optional[int] = None
     llm_output_tokens: Optional[int] = None
+    llm_total_processed_tokens: Optional[int] = None
     llm_request_count: Optional[int] = None
     llm_estimated_cost_usd: Optional[float] = None
