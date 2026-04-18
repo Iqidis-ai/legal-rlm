@@ -2756,15 +2756,24 @@ async def get_proof_gaps(matter_id: str, threshold: float = 0.25):
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
 )
-async def get_matter_timeline(matter_id: str, limit: int = 200):
+async def get_matter_timeline(
+    matter_id: str,
+    limit: int = 200,
+    policy_audience: str = "clean",
+):
     """Return a chronological event list derived from date-type quant facts and
     temporally-scoped assertions.
 
     Events are ordered by date ascending (undated events last).
     Each entry has: date, event, source_doc, quant_id, assertion_id, subject, kind.
+
+    P0.5: policy_audience defaults to 'clean' — privileged events render
+    with event="[withheld]" and withheld=True so the attorney sees the
+    chronology gap. Pass 'internal' to opt into unfiltered internal-only
+    view (e.g. the attorney reviewing their own work product).
     """
     model = await _get_matter_model_or_404(matter_id)
-    return model.get_timeline(limit=limit)
+    return model.get_timeline(limit=limit, policy_audience=policy_audience)
 
 
 @app.get(
@@ -2772,15 +2781,22 @@ async def get_matter_timeline(matter_id: str, limit: int = 200):
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
 )
-async def get_evidence_matrix(matter_id: str):
+async def get_evidence_matrix(
+    matter_id: str,
+    policy_audience: str = "clean",
+):
     """Return the evidence matrix: issues × source documents.
 
     Rows = open issues; columns = source documents; cells = supporting/attacking
     assertion counts per (issue, document) pair.  Useful for identifying which
     sources contribute evidence to which claims and which issues lack source coverage.
+
+    P0.5: policy_audience defaults to 'clean' — privileged source columns
+    collapse into a single "[withheld]" column, and withheld_sources lists
+    the hidden document paths.
     """
     model = await _get_matter_model_or_404(matter_id)
-    return model.get_evidence_matrix()
+    return model.get_evidence_matrix(policy_audience=policy_audience)
 
 
 @app.get(

@@ -500,13 +500,28 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.assumptions.get_all(max_rows=limit)
 
-    async def get_timeline(self, matter_id: str, limit: int = 80) -> list[dict]:
+    async def get_timeline(
+        self,
+        matter_id: str,
+        limit: int = 80,
+        policy_audience: str = "clean",
+    ) -> list[dict]:
+        """Adversarial #9 fix: default to clean audience so privileged
+        events render as "[withheld]" in the UI. Internal-audience
+        callers (e.g. attorney reviewing their own workspace) must
+        opt in explicitly."""
         model = self._get_matter_model(matter_id)
-        return model.get_timeline(limit=limit)
+        return model.get_timeline(limit=limit, policy_audience=policy_audience)
 
-    async def get_evidence_matrix(self, matter_id: str) -> dict:
+    async def get_evidence_matrix(
+        self,
+        matter_id: str,
+        policy_audience: str = "clean",
+    ) -> dict:
+        """Adversarial #9 fix: default to clean audience so
+        privileged source columns collapse to "[withheld]"."""
         model = self._get_matter_model(matter_id)
-        return model.get_evidence_matrix()
+        return model.get_evidence_matrix(policy_audience=policy_audience)
 
     async def get_communication_map(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)

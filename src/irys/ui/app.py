@@ -817,23 +817,52 @@ def _display_date(iso_date: str, precision: str | None) -> str:
     return f"{m_name} {int(day)}, {year}"
 
 
+def _friendly_source_label(raw: Optional[str]) -> str:
+    """Attorney-readable rendering of a source doc reference.
+
+    - empty/None → "—"
+    - 32+ char hex-only (looks like an internal id) → "—"
+    - anything with "/" or "\\" → basename
+    - otherwise → trimmed as-is
+    """
+    s = (raw or "").strip()
+    if not s:
+        return "—"
+    if len(s) >= 24 and all(c in "0123456789abcdef-" for c in s.lower()):
+        return "—"
+    if "/" in s or "\\" in s:
+        norm = s.replace("\\", "/")
+        return norm.rsplit("/", 1)[-1] or norm
+    return s if len(s) <= 80 else s[:77] + "…"
+
+
 def _fmt_timeline_panel(events: list[dict]) -> str:
     if not events:
         return "<div class='viz-empty'>No timeline events available.</div>"
+    withheld_total = sum(1 for e in events if e.get("withheld"))
     items: list[str] = []
     for event in events:
         raw_date = event.get("date") or ""
         precision = event.get("date_precision")
         date = _escape(_display_date(raw_date, precision) if raw_date else "Undated")
-        title = _escape(event.get("event") or "Event")
-        source_doc = _escape(event.get("source_doc") or "Unknown source")
+        is_withheld = bool(event.get("withheld"))
+        if is_withheld:
+            title = "<em style='color:#b45309;'>Withheld under clean policy</em>"
+            source_doc = "[withheld]"
+        else:
+            title = _escape(event.get("event") or "Event")
+            source_doc = _escape(_friendly_source_label(event.get("source_doc")))
         kind = _escape(event.get("kind") or "event")
         subject = _escape(event.get("subject") or "")
         meta_parts = [kind, source_doc]
-        if subject:
+        if subject and not is_withheld:
             meta_parts.append(subject)
+        bar_style = (
+            "background:#fef3c7;border-left:3px solid #b45309;"
+            if is_withheld else ""
+        )
         items.append(
-            "<div class='timeline-item'>"
+            f"<div class='timeline-item' style='{bar_style}'>"
             f"<div class='timeline-date'>{date}</div>"
             "<div class='timeline-line'><span class='timeline-dot'></span></div>"
             "<div class='timeline-body'>"
@@ -842,7 +871,25 @@ def _fmt_timeline_panel(events: list[dict]) -> str:
             "</div>"
             "</div>"
         )
-    return "<div class='viz-shell'><div class='timeline-list'>" + "".join(items) + "</div></div>"
+    header = ""
+    if withheld_total:
+        header = (
+            "<div style='padding:8px 12px;border-radius:6px;"
+            "background:#fef3c7;color:#78350f;font-size:12px;"
+            "margin-bottom:12px;border-left:3px solid #b45309;'>"
+            f"<strong>{withheld_total} event(s) withheld</strong> under clean "
+            "policy — their dates are preserved in this timeline but the "
+            "event text and source are hidden. Privileged docs are never "
+            "shown in clean mode."
+            "</div>"
+        )
+    return (
+        "<div class='viz-shell'>"
+        + header
+        + "<div class='timeline-list'>"
+        + "".join(items)
+        + "</div></div>"
+    )
 
 
 def _fmt_evidence_matrix_panel(matrix: dict) -> str:
@@ -877,10 +924,20 @@ def _fmt_evidence_matrix_panel(matrix: dict) -> str:
             total = _safe_int(cells.get(issue["id"], {}).get(source, {}).get("total", 0))
             max_total = max(max_total, total)
 
-    header = "".join(
-        f"<th title='{_escape(source)}'>{_escape(source)}</th>"
-        for source in sources
-    )
+    # Adversarial #9 fix: render source columns with basenames, and
+    # lift the "[withheld]" placeholder into a visually distinct
+    # amber column so the attorney knows the collapse happened.
+    def _src_header(source: str) -> str:
+        if source == "[withheld]":
+            return (
+                "<th title='Clean-policy withheld: one or more privileged "
+                "documents collapsed here' "
+                "style='background:#fef3c7;color:#78350f;'>"
+                "⚠ Withheld</th>"
+            )
+        label = _friendly_source_label(source)
+        return f"<th title='{_escape(source)}'>{_escape(label)}</th>"
+    header = "".join(_src_header(source) for source in sources)
     rows: list[str] = []
     detail_rows: list[str] = []
     for issue in issues:
@@ -910,10 +967,14 @@ def _fmt_evidence_matrix_panel(matrix: dict) -> str:
                 f"style='background:{background}' title='{_escape(tooltip)}'>{total or ''}</td>"
             )
             if total:
+                _src_label = (
+                    "⚠ Withheld" if source == "[withheld]"
+                    else _friendly_source_label(source)
+                )
                 detail_rows.append(
                     "<tr>"
                     f"<td>{_escape(issue.get('title') or issue_id)}</td>"
-                    f"<td>{_escape(source)}</td>"
+                    f"<td>{_escape(_src_label)}</td>"
                     f"<td>{support}</td>"
                     f"<td>{attack}</td>"
                     f"<td>{total}</td>"
@@ -938,7 +999,7 @@ def _fmt_evidence_matrix_panel(matrix: dict) -> str:
     )
     source_totals_rows = "".join(
         "<tr>"
-        f"<td>{_escape(source)}</td>"
+        f"<td>{_escape('⚠ Withheld' if source == '[withheld]' else _friendly_source_label(source))}</td>"
         f"<td>{_safe_int(source_totals.get(source, {}).get('supporting', 0))}</td>"
         f"<td>{_safe_int(source_totals.get(source, {}).get('attacking', 0))}</td>"
         f"<td>{_safe_int(source_totals.get(source, {}).get('supporting', 0)) + _safe_int(source_totals.get(source, {}).get('attacking', 0))}</td>"
@@ -2928,10 +2989,12 @@ class AppState:
     def do_correct_assertion(
         self, matter_id: str, assertion_id: str, new_state: str, reason: str
     ) -> str:
-        if not matter_id or not assertion_id:
-            return "Provide matter ID and assertion ID."
+        if not matter_id:
+            return "Load a matter before applying a correction."
+        if not assertion_id:
+            return "Copy a Fact ID from the Extracted Facts table above and paste it into the form."
         if not new_state:
-            return "Select a belief state."
+            return "Pick the corrected characterization from the dropdown."
         try:
             result = _run_async(
                 self.backend().correct_assertion(
@@ -2946,8 +3009,10 @@ class AppState:
             return f"❌ Error: {exc}"
 
     def do_resume(self, matter_id: str, run_id: str, research_mode: str = "deep") -> str:
-        if not matter_id or not run_id:
-            return "Provide matter ID and run ID."
+        if not matter_id:
+            return "Load a matter before resuming an investigation."
+        if not run_id:
+            return "No run to resume — start an investigation first."
         normalized_mode = normalize_research_mode(research_mode)
         self.current_research_mode = normalized_mode
         # Launch resume in the executor (fire-and-forget): investigation can be
@@ -2992,8 +3057,12 @@ class AppState:
         return f"⏳ Resume of run {run_id} launched — monitor via Overview or Ledger Events."
 
     def do_redirect(self, matter_id: str, run_id: str, issue_id: str) -> str:
-        if not matter_id or not run_id or not issue_id:
-            return "Provide matter ID, run ID, and issue ID."
+        if not matter_id:
+            return "Load a matter before redirecting the investigation."
+        if not run_id:
+            return "No active investigation to redirect — start one first."
+        if not issue_id:
+            return "Pick an issue to focus on from the suggestions above."
         try:
             result = _run_async(
                 self.backend().redirect_run(matter_id, run_id, issue_id)
