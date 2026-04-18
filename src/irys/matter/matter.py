@@ -633,11 +633,15 @@ class MatterModel:
         # assertion's verification row. This is a bounded fan-out —
         # direct dependents only, no transitive walk.
         self._stale_rejection_dependents(target_kind, target_id)
+        import sqlite3 as _sqlite3
         for iid in self._issues_affected_by_target(target_kind, target_id):
             try:
                 self.proof_state.compute_and_store(iid, policy_audience="internal")
-            except Exception:
-                pass
+            except _sqlite3.Error as _exc:
+                _log.warning(
+                    "reject_target: proof recompute failed for issue %s: %s",
+                    iid, _exc,
+                )
         # P0.4: human rejection is a trust-invalidation trigger.
         # Bump the matter's trust_revision so downstream reasoning
         # caches keyed on the old revision silently miss. Subsequent
@@ -645,8 +649,8 @@ class MatterModel:
         # unreachable, forcing a fresh LLM call.
         try:
             self.cache.bump_trust_revision()
-        except Exception:
-            pass
+        except _sqlite3.Error as _exc:
+            _log.warning("reject_target: trust_revision bump failed: %s", _exc)
         return vid
 
     def _stale_rejection_dependents(
@@ -742,6 +746,7 @@ class MatterModel:
                 document_ref,          # inventory exact raw
             ),
         ).fetchall()
+        import sqlite3 as _sqlite3
         specs = [{"target_kind": "assertion", "target_id": r["id"]} for r in rows]
         ids = self.verification.bulk_set_status(
             specs,
@@ -771,8 +776,11 @@ class MatterModel:
             ):
                 try:
                     self.proof_state.compute_and_store(iid, policy_audience="internal")
-                except Exception:
-                    pass
+                except _sqlite3.Error as _exc:
+                    _log.warning(
+                        "bulk_verify: proof recompute failed for issue %s: %s",
+                        iid, _exc,
+                    )
         return ids
 
     def bulk_verify_by_span(
@@ -801,6 +809,7 @@ class MatterModel:
                  AND COALESCE(vs.status, 'candidate')='candidate'""",
             (self.matter_id, span_id),
         ).fetchall()
+        import sqlite3 as _sqlite3
         specs = [{"target_kind": "assertion", "target_id": r["id"]} for r in rows]
         ids = self.verification.bulk_set_status(
             specs,
@@ -828,8 +837,11 @@ class MatterModel:
             ):
                 try:
                     self.proof_state.compute_and_store(iid, policy_audience="internal")
-                except Exception:
-                    pass
+                except _sqlite3.Error as _exc:
+                    _log.warning(
+                        "bulk_verify: proof recompute failed for issue %s: %s",
+                        iid, _exc,
+                    )
         return ids
 
     # ------------------------------------------------------------------
