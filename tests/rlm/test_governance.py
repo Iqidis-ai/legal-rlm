@@ -146,6 +146,53 @@ def test_classifier_cache_respects_trust_revision_bump(warm_matter):
     assert len(client.calls) == 2  # Re-fired after trust bump.
 
 
+def test_stale_cache_positive_hit_reuses_prior_version(warm_matter):
+    """Round 4: the skip-unrelated path was tested but the POSITIVE
+    HIT path was not. This test seeds a cached route under a PRIOR
+    classifier schema version (mvi6.0) and then forces NANO failure
+    on the same query — `_cache_get_any_version` should find the
+    prior-version entry and reuse it with the
+    '_stale_cache_fallback' sentinel."""
+    import json
+    from irys.rlm.governance import (
+        CLASSIFIER_SCHEMA_VERSION,
+        decision_cache_key,
+        AnswerabilitySnapshot,
+    )
+
+    # Build the snapshot the governor would see for this query.
+    query = "Summarize our session"
+    # Simulate a prior classifier schema version being in cache.
+    gov_probe = CascadeGovernor(client=_FakeClient({}), matter_model=warm_matter)
+    snap = gov_probe._build_snapshot(conversation_history=None)
+    # Seed the cache under a PRIOR version so the current-version
+    # lookup misses but the stale-fallback scan finds it.
+    prior_version = "mvi6.0"
+    assert prior_version != CLASSIFIER_SCHEMA_VERSION
+    prior_key = decision_cache_key(query, snap, prior_version)
+    warm_matter.cache.put(
+        "cascade_decision", prior_key,
+        {
+            "family": "read",
+            "confidence": 0.75,
+            "rationale": "seeded prior-version route",
+            "schema_version": prior_version,
+        },
+    )
+
+    # Now NANO fails. Exact current-version cache misses (no entry
+    # under CLASSIFIER_SCHEMA_VERSION). Stale fallback must surface
+    # the prior-version entry as `_stale_cache_fallback`.
+    class _FailingClient:
+        async def complete(self, *a, **kw):
+            raise RuntimeError("NANO outage")
+    gov = CascadeGovernor(client=_FailingClient(), matter_model=warm_matter)
+    result = asyncio.run(gov.decide(query=query))
+    assert result.family == "read"  # reused route
+    assert result.classifier_version == "_stale_cache_fallback"
+    assert result.escalation_reason == "stale_cache_fallback"
+
+
 def test_stale_cache_fallback_actually_fires_under_classifier_failure(warm_matter):
     """Round 3: the R2 `test_classifier_failure_uses_stale_cache_fallback`
     never actually exercised `_cache_get_any_version()` because it hit
@@ -459,6 +506,21 @@ def test_read_handler_rejects_numeric_and_bool_citations(warm_matter):
     assert len(result.citations) == 0
     assert result.escalation_needed is True
     assert result.failure_kind == "state_insufficient"
+
+
+def test_specific_tokens_rejects_regex_invalid_iso_dates():
+    """Round 4: '2026-13-45' doesn't match the strict ISO regex
+    (month 13 exceeds 01-12), so the R3 fix never marked its span
+    consumed. That let '2026', '13', '45' leak through as
+    independent numeric tokens. Fix: broad ISO-shape regex
+    consumes the span regardless of regex validity."""
+    tokens = SteerFamilyHandler._specific_tokens("2026-13-45")
+    # Full nonsense date must not be a token.
+    assert "2026-13-45" not in tokens
+    # And its fragments must not leak either.
+    assert "2026" not in tokens
+    assert "13" not in tokens
+    assert "45" not in tokens
 
 
 def test_specific_tokens_rejects_calendar_invalid_iso_dates():

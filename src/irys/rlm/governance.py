@@ -1690,15 +1690,20 @@ class SteerFamilyHandler:
             # calendar-validation pass via datetime.date.
             consumed_spans: list[tuple[int, int]] = []
             # ISO YYYY-MM-DD is _DATE_PATTERNS[0]
+            # Codex fallout R4: consume every ISO-shaped span FIRST —
+            # broad regex matches "\d{4}-\d{1,2}-\d{1,2}" regardless
+            # of whether the month/day values are valid. That way
+            # a nonsense like "2026-13-45" has its entire span
+            # consumed, so the number extractor below won't lift
+            # "2026" / "13" / "45" as independent tokens. Then the
+            # STRICT ISO regex decides which consumed spans are also
+            # ADDED to the output as valid date tokens.
+            iso_shaped = r"\b\d{4}-\d{1,2}-\d{1,2}\b"
+            for m in _re.finditer(iso_shaped, text):
+                consumed_spans.append(m.span())
             iso_pat = cls._DATE_PATTERNS[0]
             for m in _re.finditer(iso_pat, text, flags=_re.IGNORECASE):
                 tok = m.group().strip()
-                # Always consume the span even when the date fails
-                # calendar validation — so "2026-02-31" doesn't leak
-                # its fragments (2026, 31) as independent numeric
-                # tokens. Only VALID calendar dates get added as
-                # date tokens.
-                consumed_spans.append(m.span())
                 try:
                     yr, mo, dy = tok.split("-")
                     _date(int(yr), int(mo), int(dy))
