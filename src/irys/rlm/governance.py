@@ -588,7 +588,14 @@ Respond in JSON ONLY, no prose outside the JSON:
 
 @dataclass
 class ReadFamilyResult:
-    """Outcome of one read-family call."""
+    """Outcome of one read-family call.
+
+    `failure_kind` distinguishes a real routing signal (state
+    insufficient → escalate to investigate) from an infra failure
+    (LLM call itself failed → surface to user, do NOT silently kick
+    off a multi-minute AR loop during an outage). Adversarial #10
+    finding #6.
+    """
     answer: str
     confidence_label: str         # "low" | "medium" | "high"
     confidence_score: float       # 0.0-1.0 numeric mapping
@@ -596,6 +603,7 @@ class ReadFamilyResult:
     escalation_needed: bool
     escalation_reason: Optional[str]
     raw_response: str
+    failure_kind: Optional[str] = None  # None | "state_insufficient" | "infra"
 
 
 class ReadFamilyHandler:
@@ -659,15 +667,18 @@ class ReadFamilyHandler:
                 conversation_history=conversation_history,
             )
         except Exception as exc:  # noqa: BLE001
+            # Adversarial #10 fix: infra failure must NOT silently
+            # fall through to a multi-minute AR loop. Surface it.
             logger.warning("read_synth call failed: %s", exc)
             return ReadFamilyResult(
                 answer="",
                 confidence_label="low",
                 confidence_score=0.0,
                 citations=[],
-                escalation_needed=True,
+                escalation_needed=False,  # do NOT auto-escalate on infra
                 escalation_reason=f"read call failed: {exc}",
                 raw_response="",
+                failure_kind="infra",
             )
 
         parsed = self._parse_read_json(response)
@@ -683,14 +694,36 @@ class ReadFamilyHandler:
         ]
         escalation_hint = str(parsed.get("escalation_hint") or "").strip()
 
+        # Adversarial #10 finding #2: citation_floor was declared on
+        # the contract but never enforced. A high-confidence zero-
+        # citation answer used to ship. Now an answer below the floor
+        # forces escalation to investigate (if the contract allows)
+        # regardless of the confidence label.
+        citation_shortfall = len(citations) < max(0, contract.citation_floor)
+        confidence_shortfall = score < contract.answer_confidence_floor
+
         escalation_needed = (
             contract.escalation_allowed
-            and score < contract.answer_confidence_floor
+            and (citation_shortfall or confidence_shortfall)
         )
-        escalation_reason = (
-            escalation_hint or
-            f"read confidence {label} below floor {contract.answer_confidence_floor}"
-        ) if escalation_needed else None
+        if escalation_needed:
+            reasons = []
+            if citation_shortfall:
+                reasons.append(
+                    f"citations {len(citations)} < floor {contract.citation_floor}"
+                )
+            if confidence_shortfall:
+                reasons.append(
+                    f"confidence {label} < floor {contract.answer_confidence_floor}"
+                )
+            escalation_reason = (
+                f"{escalation_hint} (" + "; ".join(reasons) + ")"
+                if escalation_hint else "; ".join(reasons)
+            )
+            failure_kind = "state_insufficient"
+        else:
+            escalation_reason = None
+            failure_kind = None
 
         return ReadFamilyResult(
             answer=answer,
@@ -700,6 +733,7 @@ class ReadFamilyHandler:
             escalation_needed=escalation_needed,
             escalation_reason=escalation_reason,
             raw_response=response or "",
+            failure_kind=failure_kind,
         )
 
     def _assemble_read_context(self) -> dict[str, str]:

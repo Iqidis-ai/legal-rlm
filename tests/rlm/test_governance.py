@@ -280,6 +280,48 @@ def test_read_handler_high_confidence_does_not_escalate(warm_matter):
     assert "30 days" in result.answer
 
 
+def test_read_handler_infra_failure_tagged_distinctly(warm_matter):
+    """Adversarial #10 fix: LLM call itself failing must set
+    failure_kind='infra' and NOT auto-escalate. api.py surfaces the
+    error to the user rather than silently kicking off the full AR
+    loop during an outage."""
+    class _FailingClient:
+        async def complete(self, *a, **kw):
+            raise RuntimeError("simulated provider outage")
+    handler = ReadFamilyHandler(
+        client=_FailingClient(), matter_model=warm_matter,
+    )
+    result = asyncio.run(handler.run(
+        query="summarize",
+        contract=CascadeGovernor._contract_for("read"),
+    ))
+    assert result.failure_kind == "infra"
+    assert result.escalation_needed is False  # critical — don't auto-escalate
+    assert "simulated provider outage" in (result.escalation_reason or "")
+
+
+def test_read_handler_citation_floor_forces_escalation(warm_matter):
+    """Adversarial #10 finding #2: citation_floor was declared but
+    not enforced. An LLM response with high confidence but zero
+    citations used to ship silently. Must now escalate."""
+    client = _FakeClient({
+        "read_synth": (
+            '{"answer": "yes", "answer_confidence": "high", '
+            '"citations": [], "used_existing_state_only": true, '
+            '"escalation_hint": ""}'
+        ),
+    })
+    handler = ReadFamilyHandler(client=client, matter_model=warm_matter)
+    # read contract has citation_floor=1
+    result = asyncio.run(handler.run(
+        query="what's the notice period?",
+        contract=CascadeGovernor._contract_for("read"),
+    ))
+    assert result.escalation_needed is True
+    assert result.failure_kind == "state_insufficient"
+    assert "citations 0 < floor 1" in (result.escalation_reason or "")
+
+
 def test_read_handler_malformed_json_escalates(warm_matter):
     """A non-JSON response must surface as a low-confidence
     escalation, not crash."""

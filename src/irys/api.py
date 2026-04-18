@@ -400,6 +400,39 @@ class Irys:
                 decision=decision,
                 conversation_history=conversation_history,
             )
+            # Adversarial #10 finding #6: distinguish "state
+            # insufficient" (escalate to investigate) from infra
+            # failure (surface an error — do NOT silently run the
+            # full AR loop during an outage).
+            if read_result.failure_kind == "infra":
+                self._persist_route_decision(
+                    matter_model=matter_model,
+                    query=query,
+                    decision=decision,
+                    research_mode=research_mode,
+                    terminal_family="read_infra_failure",
+                )
+                state = self._make_simple_state(
+                    query=query,
+                    repository=repository,
+                    research_mode=research_mode,
+                    conversation_history=conversation_history,
+                    output=(
+                        "⚠️ Read handler couldn't reach the LLM service. "
+                        f"Reason: {read_result.escalation_reason}. "
+                        "Retry when the provider is available, or rerun "
+                        "with an explicit investigate request if you "
+                        "want the full pipeline to run."
+                    ),
+                    decision=decision,
+                    extra={"read_infra_failure": True},
+                )
+                return InvestigationResult(
+                    state=state,
+                    output=state.findings["final_output"],
+                    format=self.config.output_format,
+                )
+
             if not read_result.escalation_needed:
                 # Read handler answered. Persist the route for audit.
                 self._persist_route_decision(
@@ -423,12 +456,12 @@ class Irys:
                     output=read_result.answer or formatter.format(state),
                     format=self.config.output_format,
                 )
-            # Coverage insufficient — fall through to investigate,
+            # State insufficient — fall through to investigate,
             # recording the escalation reason so the classifier can be
             # tuned against real escalation data.
             decision.escalation_reason = read_result.escalation_reason
             logger.info(
-                "Read family escalated to investigate: %s",
+                "Read family escalated to investigate (state insufficient): %s",
                 read_result.escalation_reason,
             )
 
