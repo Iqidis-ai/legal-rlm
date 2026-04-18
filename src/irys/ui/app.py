@@ -2702,6 +2702,50 @@ class AppState:
             return f"⚠️ Reject failed: {exc}"
         return f"✅ Rejected {kind} — downstream evidence moved to stale."
 
+    def load_review_count_badge(self, matter_id: str) -> str:
+        """Small HTML chip showing how many findings are awaiting
+        review, broken down by the top buckets. Renders quiet when
+        the queue is empty."""
+        if not matter_id or matter_id == "—":
+            return ""
+        try:
+            queue = _run_async(self.backend().get_review_queue(matter_id, limit=500))
+        except Exception:
+            return ""
+        if not queue:
+            return (
+                "<div style='padding:8px 12px;border-radius:6px;"
+                "background:#dcfce7;color:#14532d;font-size:12px;"
+                "margin-bottom:8px;border-left:3px solid #15803d;'>"
+                "✓ All findings reviewed."
+                "</div>"
+            )
+        bucket_counts: dict[int, int] = {}
+        for row in queue:
+            b = int(row.get("priority_bucket", 6) or 6)
+            bucket_counts[b] = bucket_counts.get(b, 0) + 1
+        lines: list[str] = []
+        for bucket in sorted(bucket_counts):
+            label, color = _REVIEW_BUCKET_LABELS.get(
+                bucket, _REVIEW_BUCKET_LABELS[6],
+            )
+            count = bucket_counts[bucket]
+            lines.append(
+                f"<span style='display:inline-block;padding:1px 6px;"
+                f"border-radius:4px;background:{color};color:white;"
+                f"font-size:10px;font-weight:700;margin-right:4px;'>"
+                f"{label}: {count}</span>"
+            )
+        return (
+            "<div style='padding:8px 12px;border-radius:6px;"
+            "background:#fef3c7;color:#78350f;font-size:12px;"
+            "margin-bottom:8px;border-left:3px solid #b45309;'>"
+            f"<strong>{len(queue)} finding(s) need review.</strong> "
+            f"Open the <em>Review Inbox</em> below to verify or reject."
+            f"<div style='margin-top:6px;'>{' '.join(lines)}</div>"
+            "</div>"
+        )
+
     def load_source_drawer(
         self, matter_id: str, target_handle: str,
     ) -> str:
@@ -3370,6 +3414,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
             # ---------- RIGHT: Intelligence sidebar ----------
             with gr.Column(scale=1, min_width=280):
+                # P0.3 visibility: review queue count chip at the top
+                # of the sidebar. Quiet green when empty; amber with
+                # bucket counts when pending.
+                review_badge_md = gr.HTML("")
+
                 gr.Markdown("### Matter Intelligence")
                 overview_md = gr.HTML(
                     "<div class='viz-empty'>Run your first investigation to see matter intelligence here.</div>"
@@ -3804,7 +3853,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             evidence = state.load_evidence_matrix(mid)
             communication = state.load_communication_map(mid)
             llm_analytics = state.load_llm_analytics(mid)
+            review_badge = state.load_review_count_badge(mid)
             return (
+                review_badge,
                 overview,
                 issues,
                 gaps_text,
@@ -3890,6 +3941,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=_refresh_all,
             inputs=[matter_id_box],
             outputs=[
+                review_badge_md,
                 overview_md,
                 issues_md,
                 gaps_md,
@@ -3957,15 +4009,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         # --- Review Inbox wiring ---
         def _refresh_review_and_drawer(mid):
             queue_html, dropdown_update = state.load_review_queue(mid)
-            # Auto-populate drawer with whatever the dropdown lands on
             new_value = dropdown_update.get("value") if isinstance(dropdown_update, dict) else None
             drawer = state.load_source_drawer(mid, new_value or "")
-            return queue_html, dropdown_update, drawer
+            badge = state.load_review_count_badge(mid)
+            return queue_html, dropdown_update, drawer, badge
 
         refresh_review_btn.click(
             fn=_refresh_review_and_drawer,
             inputs=[matter_id_box],
-            outputs=[review_queue_html, review_target, source_drawer_html],
+            outputs=[review_queue_html, review_target, source_drawer_html, review_badge_md],
         )
 
         # When the reviewer picks a different item, refresh the drawer.
@@ -3981,16 +4033,13 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             prior_target = target
             result = state.do_verify_target(mid, target, note)
             queue_html, dropdown_update = state.load_review_queue(mid)
-            # After verify the target leaves the queue. Show the drawer
-            # for the item we just acted on so the attorney sees the
-            # review event they just wrote.
             drawer = state.load_source_drawer(mid, prior_target)
             return (
                 result,
                 queue_html,
                 dropdown_update,
                 drawer,
-                # Downstream panels depend on verification state.
+                state.load_review_count_badge(mid),
                 state.load_assertions(mid),
                 state.load_issues(mid),
                 state.load_overview(mid),
@@ -4002,7 +4051,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box, review_target, verify_note],
             outputs=[
                 review_action_result, review_queue_html, review_target,
-                source_drawer_html,
+                source_drawer_html, review_badge_md,
                 assertions_md, issues_md, overview_md, verify_note,
             ],
         )
@@ -4017,6 +4066,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 queue_html,
                 dropdown_update,
                 drawer,
+                state.load_review_count_badge(mid),
                 state.load_assertions(mid),
                 state.load_issues(mid),
                 state.load_overview(mid),
@@ -4028,7 +4078,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box, review_target, reject_reason],
             outputs=[
                 review_action_result, review_queue_html, review_target,
-                source_drawer_html,
+                source_drawer_html, review_badge_md,
                 assertions_md, issues_md, overview_md, reject_reason,
             ],
         )
@@ -4038,6 +4088,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             queue_html, dropdown_update = state.load_review_queue(mid)
             return (
                 result, queue_html, dropdown_update,
+                state.load_review_count_badge(mid),
                 state.load_assertions(mid),
                 state.load_issues(mid),
                 state.load_overview(mid),
@@ -4048,6 +4099,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box, bulk_doc_ref],
             outputs=[
                 bulk_verify_result, review_queue_html, review_target,
+                review_badge_md,
                 assertions_md, issues_md, overview_md,
             ],
         )
