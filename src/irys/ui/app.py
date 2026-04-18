@@ -1948,6 +1948,41 @@ _REVIEW_BUCKET_LABELS = {
 }
 
 
+def _fmt_review_count_badge(total: int, bucket_counts: dict[int, int]) -> str:
+    """Render the sidebar review-queue badge from precomputed counts.
+    Shared by load_review_count_badge and load_post_review_snapshot so
+    both paths produce identical HTML (OPT-2b)."""
+    if total == 0:
+        return (
+            "<div style='padding:8px 12px;border-radius:6px;"
+            "background:#dcfce7;color:#14532d;font-size:12px;"
+            "margin-bottom:8px;border-left:3px solid #15803d;'>"
+            "✓ All findings reviewed."
+            "</div>"
+        )
+    lines: list[str] = []
+    for bucket in sorted(bucket_counts):
+        label, color = _REVIEW_BUCKET_LABELS.get(
+            bucket, _REVIEW_BUCKET_LABELS[6],
+        )
+        count = bucket_counts[bucket]
+        lines.append(
+            f"<span style='display:inline-block;padding:1px 6px;"
+            f"border-radius:4px;background:{color};color:white;"
+            f"font-size:10px;font-weight:700;margin-right:4px;'>"
+            f"{label}: {count}</span>"
+        )
+    return (
+        "<div style='padding:8px 12px;border-radius:6px;"
+        "background:#fef3c7;color:#78350f;font-size:12px;"
+        "margin-bottom:8px;border-left:3px solid #b45309;'>"
+        f"<strong>{total} finding(s) need review.</strong> "
+        "Open the <em>Review Inbox</em> below to verify or reject."
+        f"<div style='margin-top:6px;'>{' '.join(lines)}</div>"
+        "</div>"
+    )
+
+
 def _review_bucket_badge(bucket: int, score: float) -> str:
     label, color = _REVIEW_BUCKET_LABELS.get(
         int(bucket or 6), _REVIEW_BUCKET_LABELS[6],
@@ -2966,35 +3001,96 @@ class AppState:
         bucket_counts = {
             int(k): int(v) for k, v in (counts.get("by_bucket") or {}).items()
         }
-        if total == 0:
-            return (
-                "<div style='padding:8px 12px;border-radius:6px;"
-                "background:#dcfce7;color:#14532d;font-size:12px;"
-                "margin-bottom:8px;border-left:3px solid #15803d;'>"
-                "✓ All findings reviewed."
-                "</div>"
+        return _fmt_review_count_badge(total, bucket_counts)
+
+    def load_post_review_snapshot(
+        self, matter_id: str, target_handle: str,
+    ) -> dict:
+        """OPT-2b: one round-trip fetch for the seven panels that the
+        verify/reject handlers refresh. Each underlying backend read
+        runs concurrently inside a single event loop, so the 7
+        sequential `_run_async` spawns collapse to one.
+
+        Returns a dict with formatted HTML strings and the dropdown
+        update so the caller can unpack straight into Gradio outputs.
+        """
+        if not matter_id or matter_id == "—":
+            empty_html = "<div class='viz-empty'>No matter loaded.</div>"
+            return {
+                "queue_html": empty_html,
+                "dropdown": gr.update(choices=[], value=None),
+                "drawer_html": empty_html,
+                "badge_html": "",
+                "assertions_html": empty_html,
+                "issues_html": empty_html,
+                "overview_html": (
+                    "<div class='viz-empty'>No matter loaded. "
+                    "Run an investigation first.</div>"
+                ),
+            }
+        backend = self.backend()
+        kind_tid = target_handle.split(":", 1) if target_handle and ":" in target_handle else None
+
+        async def _gather():
+            tasks = [
+                backend.get_review_queue(matter_id, limit=100),
+                backend.count_review_queue(matter_id),
+                backend.list_assertions(matter_id, limit=50),
+                backend.list_issues(matter_id),
+                backend.get_overview(matter_id),
+            ]
+            if kind_tid is not None:
+                kind, tid = kind_tid
+                tasks.append(backend.get_provenance(matter_id, kind, tid))
+                tasks.append(backend.get_verification_events(matter_id, kind, tid))
+            return await asyncio.gather(*tasks, return_exceptions=True)
+
+        results = _run_async(_gather())
+        queue, counts, assertions, issues, overview = results[:5]
+
+        # Defensive: gather captures exceptions per-task so one slow
+        # DB read doesn't nuke the whole panel refresh.
+        def _safe(v, fallback):
+            return fallback if isinstance(v, BaseException) else v
+
+        queue = _safe(queue, [])
+        counts = _safe(counts, {"total": 0, "by_bucket": {}})
+        assertions = _safe(assertions, [])
+        issues = _safe(issues, [])
+        overview = _safe(overview, {})
+
+        queue_html = _fmt_review_queue(queue)
+        choices = _review_queue_choices(queue)
+        dropdown_value = choices[0][1] if choices else None
+        dropdown = gr.update(choices=choices, value=dropdown_value)
+
+        total = int(counts.get("total", 0) or 0)
+        bucket_counts = {
+            int(k): int(v) for k, v in (counts.get("by_bucket") or {}).items()
+        }
+        badge_html = _fmt_review_count_badge(total, bucket_counts)
+
+        if kind_tid is not None:
+            kind, tid = kind_tid
+            prov = _safe(results[5], [])
+            events = _safe(results[6], [])
+            drawer_html = _fmt_source_drawer(kind, tid, prov, events)
+        else:
+            drawer_html = (
+                "<div class='viz-empty'>Pick a finding and click "
+                "<em>Show source &amp; history</em> to see where it "
+                "came from and every review action on it.</div>"
             )
-        lines: list[str] = []
-        for bucket in sorted(bucket_counts):
-            label, color = _REVIEW_BUCKET_LABELS.get(
-                bucket, _REVIEW_BUCKET_LABELS[6],
-            )
-            count = bucket_counts[bucket]
-            lines.append(
-                f"<span style='display:inline-block;padding:1px 6px;"
-                f"border-radius:4px;background:{color};color:white;"
-                f"font-size:10px;font-weight:700;margin-right:4px;'>"
-                f"{label}: {count}</span>"
-            )
-        return (
-            "<div style='padding:8px 12px;border-radius:6px;"
-            "background:#fef3c7;color:#78350f;font-size:12px;"
-            "margin-bottom:8px;border-left:3px solid #b45309;'>"
-            f"<strong>{total} finding(s) need review.</strong> "
-            f"Open the <em>Review Inbox</em> below to verify or reject."
-            f"<div style='margin-top:6px;'>{' '.join(lines)}</div>"
-            "</div>"
-        )
+
+        return {
+            "queue_html": queue_html,
+            "dropdown": dropdown,
+            "drawer_html": drawer_html,
+            "badge_html": badge_html,
+            "assertions_html": _fmt_assertions(assertions),
+            "issues_html": _fmt_issues_panel(issues),
+            "overview_html": _fmt_overview_panel(overview),
+        }
 
     def load_source_drawer(
         self, matter_id: str, target_handle: str,
@@ -4317,21 +4413,20 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         )
 
         def _verify_and_refresh(mid, target, note):
-            # Keep a snapshot of the target BEFORE the write so the
-            # drawer shows the transition we just made.
+            # Snapshot target before the write so the drawer shows the
+            # transition we just made (prior_target).
             prior_target = target
             result = state.do_verify_target(mid, target, note)
-            queue_html, dropdown_update = state.load_review_queue(mid)
-            drawer = state.load_source_drawer(mid, prior_target)
+            snap = state.load_post_review_snapshot(mid, prior_target)
             return (
                 result,
-                queue_html,
-                dropdown_update,
-                drawer,
-                state.load_review_count_badge(mid),
-                state.load_assertions(mid),
-                state.load_issues(mid),
-                state.load_overview(mid),
+                snap["queue_html"],
+                snap["dropdown"],
+                snap["drawer_html"],
+                snap["badge_html"],
+                snap["assertions_html"],
+                snap["issues_html"],
+                snap["overview_html"],
                 "",  # clear the note field
             )
 
@@ -4348,17 +4443,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         def _reject_and_refresh(mid, target, reason):
             prior_target = target
             result = state.do_reject_target(mid, target, reason)
-            queue_html, dropdown_update = state.load_review_queue(mid)
-            drawer = state.load_source_drawer(mid, prior_target)
+            snap = state.load_post_review_snapshot(mid, prior_target)
             return (
                 result,
-                queue_html,
-                dropdown_update,
-                drawer,
-                state.load_review_count_badge(mid),
-                state.load_assertions(mid),
-                state.load_issues(mid),
-                state.load_overview(mid),
+                snap["queue_html"],
+                snap["dropdown"],
+                snap["drawer_html"],
+                snap["badge_html"],
+                snap["assertions_html"],
+                snap["issues_html"],
+                snap["overview_html"],
                 "",  # clear the reason field
             )
 
