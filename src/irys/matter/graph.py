@@ -4772,6 +4772,59 @@ class ReasoningCacheStore:
         except Exception:
             pass  # non-critical; next run will populate from LLM
 
+    def gc_stale_revisions(self, keep_last: int = 10) -> int:
+        """OPT-7: delete reasoning_cache rows whose `tr{N}:` prefix
+        encodes a trust_revision older than current - keep_last. Those
+        rows are already UNREACHABLE — _scoped_key only queries under
+        the current revision — so they are strictly dead space. Rows
+        with no `tr` prefix (legacy rows from before P0.4) are left
+        alone; a dedicated migration can retire them.
+
+        Returns the number of rows deleted. Defaults keep 10 prior
+        revisions so an operator can rollback-inspect recent plans.
+        """
+        current = self.current_trust_revision()
+        min_keep = max(0, current - max(0, int(keep_last)))
+        try:
+            rows = self.db.execute(
+                "SELECT id, cache_key FROM reasoning_cache WHERE matter_id=?",
+                (self.matter_id,),
+            ).fetchall()
+        except Exception:
+            return 0
+        to_delete: list[str] = []
+        for row in rows:
+            key = row["cache_key"] or ""
+            if not key.startswith("tr"):
+                continue
+            colon = key.find(":")
+            if colon <= 2:
+                continue
+            try:
+                rev = int(key[2:colon])
+            except ValueError:
+                continue
+            if rev < min_keep:
+                to_delete.append(row["id"])
+        if not to_delete:
+            return 0
+        _BATCH = 900
+        deleted = 0
+        try:
+            with self.db.transaction():
+                for _i in range(0, len(to_delete), _BATCH):
+                    batch = to_delete[_i : _i + _BATCH]
+                    self.db.execute(
+                        "DELETE FROM reasoning_cache WHERE id IN ({})".format(
+                            ",".join("?" * len(batch))
+                        ),
+                        batch,
+                    )
+                    deleted += len(batch)
+        except Exception:
+            return 0
+        return deleted
+
 
 class TrustOverrideStore:
     """User-set trust overrides for specific documents (SO-3 trust steering, SO-5 calibration).

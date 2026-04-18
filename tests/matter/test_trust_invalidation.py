@@ -133,6 +133,54 @@ def test_touch_ai_target_leaves_verified_alone(model):
     assert vs["status"] == "verified"
 
 
+def test_gc_stale_revisions_removes_unreachable_rows(model):
+    """OPT-7: rows keyed at a trust_revision more than `keep_last`
+    behind current are already unreachable (get/put always scope by
+    current revision). gc_stale_revisions removes them; anything
+    within the keep window stays."""
+    # Populate cache at revisions 0..4 by bumping between puts.
+    for i in range(5):
+        model.cache.put("orient", f"key_{i}", {"plan": f"rev{i}"})
+        model.cache.bump_trust_revision()
+    # current_trust_revision is now 5. With keep_last=2, anything
+    # below rev 3 must be GC'd (revs 0, 1, 2 drop; revs 3, 4 stay).
+    # But our last put was at rev 4 (before the final bump), and no
+    # put happened at rev 5 — that's fine, GC only touches existing
+    # rows.
+    assert model.cache.current_trust_revision() == 5
+    deleted = model.cache.gc_stale_revisions(keep_last=2)
+    assert deleted == 3  # revs 0, 1, 2
+
+    # Second GC is a no-op on stable state.
+    assert model.cache.gc_stale_revisions(keep_last=2) == 0
+
+
+def test_gc_stale_revisions_leaves_legacy_unprefixed_rows_alone(model):
+    """Legacy rows from before P0.4 don't have a `tr{N}:` prefix.
+    gc_stale_revisions must not touch them — a dedicated migration
+    handles that class."""
+    # Directly insert an unprefixed row (simulating legacy data).
+    import json as _json
+    model.db.execute(
+        """INSERT INTO reasoning_cache
+           (id, matter_id, stage, cache_key, plan_json, created_at, last_hit_at)
+           VALUES (?, ?, 'orient', 'legacy_key_no_prefix', ?, ?, ?)""",
+        ("legacy-1", model.matter_id, _json.dumps({"plan": "legacy"}),
+         "2020-01-01", "2020-01-01"),
+    )
+    # Bump a lot so everything SHOULD be behind any reasonable keep_last.
+    for _ in range(20):
+        model.cache.bump_trust_revision()
+    deleted = model.cache.gc_stale_revisions(keep_last=0)
+    # Legacy row survives — no `tr` prefix to parse.
+    row = model.db.execute(
+        "SELECT id FROM reasoning_cache WHERE id=?", ("legacy-1",),
+    ).fetchone()
+    assert row is not None
+    # Deleted count is whatever prefixed rows existed; legacy excluded.
+    _ = deleted
+
+
 def test_set_trust_override_bumps_trust_revision(model):
     """Adv#11 Fix 1: setting a trust override must bump trust_revision
     so reasoning_cache / cascade-decision entries keyed on the prior
