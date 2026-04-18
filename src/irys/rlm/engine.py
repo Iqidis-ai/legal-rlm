@@ -2319,6 +2319,13 @@ class RLMEngine:
         hits: list[SearchHit] = []
         _verified_count = 0
         _candidate_count = 0
+        # P0.5 commit 3 (third surface): audit every cached search hit
+        # that gets forwarded toward the LLM. The guard fires with
+        # ContentPurpose.SEARCH_SNIPPETS_TO_LLM — a later audit can
+        # answer "for this query, which assertions did Irys feed into
+        # the next LLM turn?".
+        _guard = getattr(self._matter_model, "content_policy", None)
+        from ..matter.trust import ContentPurpose
         for r in rows:
             _fp = r.get("primary_document_id") or "assertion"
             _text = r.get("primary_raw_text") or r.get("proposition_text") or ""
@@ -2331,6 +2338,18 @@ class RLMEngine:
             else:
                 _candidate_count += 1
                 _text = f"[CANDIDATE LEAD — needs source confirmation] {_text}"
+            if _guard is not None and r.get("id"):
+                try:
+                    _guard.decide(
+                        purpose=ContentPurpose.SEARCH_SNIPPETS_TO_LLM,
+                        subject_kind="assertion",
+                        subject_id=r["id"],
+                        policy_audience="internal",
+                        assertion_verification_status=r.get("verification_status"),
+                        belief_state=r.get("belief_state"),
+                    )
+                except Exception:
+                    pass
             hits.append(SearchHit(
                 file_path=_fp,
                 filename=Path(_fp).name,

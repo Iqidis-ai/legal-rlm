@@ -213,6 +213,32 @@ def test_hydration_writes_content_policy_audit_rows(model):
     assert rows[0]["action"] == "allow"  # candidate is eligible for hydration
 
 
+def test_cached_search_writes_audit_per_hit(model):
+    """P0.5 commit 3 third surface: when _search_cached_assertions
+    forwards hits toward the LLM, each hit produces one
+    SEARCH_SNIPPETS_TO_LLM audit row."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+    from irys.rlm.engine import RLMEngine, RLMConfig
+    from unittest.mock import MagicMock
+
+    run_id = model.start_run("search audit")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    aid = adapter.record_fact(
+        "Defendant signed the contract on March 3.", "doc.pdf",
+    )
+    engine = RLMEngine(gemini_client=MagicMock(), config=RLMConfig(), matter_model=model)
+    sr = engine._search_cached_assertions(["defendant"], limit=10)
+    assert sr is not None
+    # Exactly one audit row for the matched assertion, purpose=
+    # search_snippets_to_llm.
+    rows = model.content_policy.list_decisions(
+        target_kind="assertion", target_id=aid,
+        purpose="search_snippets_to_llm",
+    )
+    assert len(rows) == 1
+    assert rows[0]["action"] == "allow"
+
+
 def test_synthesis_scrub_writes_audit_on_withhold(model):
     """P0.5 commit 3 second surface: when _scrub_privileged_references
     drops a line that mentions a privileged document, it writes one
