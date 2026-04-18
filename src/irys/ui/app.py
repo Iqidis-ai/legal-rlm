@@ -1228,20 +1228,28 @@ def _fmt_llm_analytics_panel(
     monthly_burn = _safe_float((breakdown or {}).get("estimated_monthly_burn_usd", 0.0))
 
     # Fall back to per-call computation when breakdown is absent.
-    fail_count = 0
     total_latency = 0.0
     latency_count = 0
+    sampled_failures = 0
     for call in calls:
         latency = _safe_float(call.get("latency_ms"), 0.0)
         if latency > 0:
             total_latency += latency
             latency_count += 1
         if not call.get("success", True):
-            fail_count += 1
+            sampled_failures += 1
     avg_latency = (
         float(avg_latency_b) if avg_latency_b is not None
         else (total_latency / latency_count if latency_count else 0.0)
     )
+    # Matter-wide failure count when breakdown is present; otherwise fall
+    # back to the sampled recent-calls count (noted as such in the card).
+    if success_rate is not None and request_count:
+        fail_count = max(0, round(request_count * (1 - success_rate)))
+        fail_source = "matter-wide"
+    else:
+        fail_count = sampled_failures
+        fail_source = "recent rows"
 
     cards = [
         _metric_card("Calls", f"{request_count:,}", detail=f"{len(calls):,} recent rows"),
@@ -1269,7 +1277,7 @@ def _fmt_llm_analytics_panel(
             tone="red",
             detail=(
                 f"{(1 - success_rate) * 100:.1f}% of matter"
-                if success_rate is not None else None
+                if success_rate is not None else f"in {fail_source}"
             ),
         ),
     ]
@@ -3128,16 +3136,10 @@ class AppState:
             llm = stats.get("llm", {}) if isinstance(stats.get("llm"), dict) else {}
             summary = llm.get("totals", {}) if isinstance(llm, dict) else {}
             calls = _run_async(self.backend().list_llm_calls(matter_id, limit=250))
-            try:
-                breakdown = _run_async(self.backend().get_cost_breakdown(matter_id))
-            except Exception:
-                breakdown = None
-            try:
-                anomalies = _run_async(
-                    self.backend().get_cost_anomalies(matter_id, limit=10)
-                )
-            except Exception:
-                anomalies = None
+            breakdown = _run_async(self.backend().get_cost_breakdown(matter_id))
+            anomalies = _run_async(
+                self.backend().get_cost_anomalies(matter_id, limit=10)
+            )
             return _fmt_llm_analytics_panel(summary, calls, breakdown, anomalies)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading LLM analytics: {_escape(exc)}</div>"

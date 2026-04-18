@@ -1,0 +1,24 @@
+Review commits a478f1e and 1168efe on branch SebihSpecial of the Irys RLM repo.
+
+Context: we just shipped a cost visibility layer — `MatterModel.get_cost_breakdown()` + `get_cost_anomalies()`, two FastAPI endpoints, and an extended UI panel with cache hit rate, monthly burn, p95 latency, per-stage cache+latency, and an anomalies section.
+
+Read:
+- `src/irys/matter/matter.py` around lines 1286-1572 (the two new methods)
+- `src/irys/ui/backends/in_process.py` around lines 535-570 (backend wrappers)
+- `src/irys/service/api.py` around lines 2820-2870 (new endpoints)
+- `src/irys/ui/app.py` around lines 1207-1420 (`_fmt_llm_analytics_panel`)
+- `src/irys/ui/app.py` around lines 2997-3025 (`load_llm_analytics`)
+
+You are the Correctness Engineer + Performance Engineer (Tier 1, loop-until-clean). Judge ONLY the two new commits. Check specifically:
+
+1. SQL correctness: are the three aggregation queries in get_cost_breakdown equivalent to what the docstring claims? Does p95 index math round correctly for small N? Does the trend bucket actually return 7 days? Is `estimated_monthly_burn_usd = last_week_cost * (30/7)` meaningful when there are fewer than 7 days of history?
+
+2. Anomaly detection: σ is inflated by the same outlier it's trying to flag — the smoke test showed this returned 0 anomalies on an obvious outlier. Is that a bug we need to address now (e.g., use MAD or a minimum absolute threshold), or is it tolerable until we have more data?
+
+3. N+1 / hot-path cost: get_cost_breakdown issues 4 SELECTs per call. The UI fetches breakdown + anomalies + list_llm_calls + overview = 4 round trips on every analytics refresh. Acceptable? Any easy consolidation?
+
+4. Error contract: both methods swallow exceptions to `zero` / `[]` with a warning log. Does that silent-fallback violate our CLAUDE.md rule on failure laundering (cf. adversarial audits round 1-3)?
+
+5. UI correctness: does the panel render cleanly when breakdown is present but list_llm_calls is empty, and vice versa? Does it render without error when cache_hit_rate/success_rate are None?
+
+Produce a punch list (Must fix / Should fix / Nice). Under 600 words. File:line citations required.

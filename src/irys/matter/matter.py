@@ -1288,12 +1288,18 @@ class MatterModel:
     ) -> dict[str, Any]:
         """Cost visibility layer: richer aggregation than summarize_llm_usage.
 
-        Returns totals (with cache_hit_rate, success_rate, avg/p50/p95/p99
-        latency), by_stage + by_tier breakdowns with the same metrics, a
-        24-hour bucket trend (last 7 days), and a projected monthly burn.
+        Returns totals (with cache_hit_rate, success_rate, and
+        avg/p50/p95/p99 latency), by_stage + by_tier breakdowns
+        (cache_hit_rate, success_rate, avg latency only — percentiles are
+        totals-level), a trailing 7-day trend with zero-filled days, and
+        a projected monthly burn.
 
         Cache hit rate is cache_read_tokens / (cache_read_tokens + input_tokens).
         run_id=None reports matter-wide; otherwise narrow to one run.
+
+        Raises on real SQL failure — empty matters return a well-formed
+        zeroed response, but database errors propagate so callers see
+        real problems instead of silent zeros.
         """
         where = "matter_id=?"
         params: list[Any] = [self.matter_id]
@@ -1347,9 +1353,13 @@ class MatterModel:
             ]
 
             def _pct(vals: list[int], q: float) -> Optional[int]:
+                """Order-statistic percentile on a pre-sorted list. Uses
+                ceil((n+1)*q) - 1 so that p95 on N=20 returns the 19th
+                order statistic rather than the max."""
                 if not vals:
                     return None
-                idx = max(0, min(len(vals) - 1, int(len(vals) * q)))
+                import math
+                idx = max(0, min(len(vals) - 1, math.ceil((len(vals) + 1) * q) - 1))
                 return vals[idx]
 
             n = int(totals_row["n"])
@@ -1455,26 +1465,35 @@ class MatterModel:
                     ),
                 })
 
+            # Trailing 7-day window with zero-fill so the monthly burn
+            # projection is scaled against a real 7-day slice, not "up to
+            # seven days that had calls" spanning arbitrary history.
+            from datetime import datetime, timedelta, timezone
+            today = datetime.now(timezone.utc).date()
+            start = today - timedelta(days=6)
             trend_rows = self.db.execute(
                 f"""SELECT SUBSTR(created_at, 1, 10) AS day,
                            COUNT(*) AS n,
                            COALESCE(SUM(estimated_cost_usd), 0) AS cost
                        FROM llm_call
                        WHERE {where}
-                       GROUP BY day
-                       ORDER BY day DESC
-                       LIMIT 7""",
-                params,
+                         AND SUBSTR(created_at, 1, 10) >= ?
+                       GROUP BY day""",
+                [*params, start.isoformat()],
             ).fetchall()
-            trend = [
-                {
-                    "day": row["day"],
-                    "request_count": int(row["n"] or 0),
-                    "estimated_cost_usd": round(float(row["cost"] or 0), 6),
-                }
+            by_day = {
+                row["day"]: (int(row["n"] or 0), float(row["cost"] or 0))
                 for row in trend_rows
-            ]
-            trend.reverse()
+            }
+            trend = []
+            for i in range(7):
+                day = (start + timedelta(days=i)).isoformat()
+                n, cost = by_day.get(day, (0, 0.0))
+                trend.append({
+                    "day": day,
+                    "request_count": n,
+                    "estimated_cost_usd": round(cost, 6),
+                })
 
             last_week_cost = sum(t["estimated_cost_usd"] for t in trend)
             estimated_monthly_burn_usd = round(last_week_cost * (30 / 7), 4)
@@ -1488,9 +1507,11 @@ class MatterModel:
                 "pricing_source": PRICING_SOURCE_URL,
                 "pricing_verified_at": PRICING_VERIFIED_AT,
             }
-        except Exception as exc:
-            _log.warning("get_cost_breakdown failed: %s", exc)
-            return zero
+        except sqlite3.Error:
+            # Real DB errors propagate — silent-zero would launder the
+            # failure into a "clean" analytics panel, a pattern
+            # adversarial audits 1–3 flagged repeatedly.
+            raise
 
     def get_cost_anomalies(
         self, limit: int = 10, run_id: Optional[str] = None,
@@ -1574,9 +1595,10 @@ class MatterModel:
 
             anomalies.sort(key=lambda r: -float(r.get("cost_z") or 0))
             return anomalies[:limit]
-        except Exception as exc:
-            _log.warning("get_cost_anomalies failed: %s", exc)
-            return []
+        except sqlite3.Error:
+            # Same rationale as get_cost_breakdown: DB errors propagate so
+            # failures surface rather than hiding behind an empty list.
+            raise
 
     def list_llm_calls(
         self,
