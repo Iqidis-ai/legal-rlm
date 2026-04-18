@@ -26,45 +26,50 @@ logger = logging.getLogger("test_extraction")
 
 # ── Files to test ────────────────────────────────────────────────────────────
 TEST_FILES = [
+    # {
+    #     "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/af/cb/d02e2e7120dfeedb137f4daffd2656b39e92383167fd163e98e2ae03831b",
+    #     "name": "paper1.pdf",
+    #     "mime": "application/pdf",
+    # },
+    # {
+    #     "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/6f/dc/30f6d23b37ee4d2c6a1c32aa0af60fa4ca37f45d86a9ae3c4b105286f1e6",
+    #     "name": "paper 2.pdf",
+    #     "mime": "application/pdf",
+    # },
+    # {
+    #     "url": "https://iqidis-uploads-production.s3.us-east-1.amazonaws.com/uploads/cc697e13-8cb5-411d-b859-caf474a377fb.pdf",
+    #     "name": "paper 3.pdf",
+    #     "mime": "application/pdf",
+    # },
+    # {
+    #     "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/94/bf/11de44d4856dff0120adcc0c5ba9dbc947329d8e1c6ba4f4ffc913a7276d",
+    #     "name": "Screenshot 2025-10-07 172516.png",
+    #     "mime": "image/png",
+    # },
+    # {
+    #     "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/f0/e0/57fa26ce61de53db5980deb2df6455f5965f4d0954ffb7c0cefad432a985",
+    #     "name": "Handwritten Nurse Notes.pdf",
+    #     "mime": "application/pdf",
+    # },
+    # {
+    #     "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/17/90/fa2aae1a3f7aab43d9991790bad60adf175a0c95a8b044debbe2a5714658",
+    #     "name": "pdf_scanned_ocr.docx",
+    #     "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    # },
+    # {
+    #     "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/56/db/c38ad88037dbbab1d78406e23a0d6b82e30722fa7552cf2f933f4db7e03a",
+    #     "name": "epa_sample_letter_sent_to_commissioners_dated_february_29_2015.pdf",
+    #     "mime": "application/pdf",
+    # },
+    # {
+    #     "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/3a/83/4199bff573dcad3b836c468966a52c557f34c9f663d71b4e1d646e9884c1",
+    #     "name": "ASSERTION_ARCHITECTURE_SUMMARY.md",
+    #     "mime": "text/markdown",
+    # },
     {
-        "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/af/cb/d02e2e7120dfeedb137f4daffd2656b39e92383167fd163e98e2ae03831b",
-        "name": "paper1.pdf",
-        "mime": "application/pdf",
-    },
-    {
-        "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/6f/dc/30f6d23b37ee4d2c6a1c32aa0af60fa4ca37f45d86a9ae3c4b105286f1e6",
-        "name": "paper 2.pdf",
-        "mime": "application/pdf",
-    },
-    {
-        "url": "https://iqidis-uploads-production.s3.us-east-1.amazonaws.com/uploads/cc697e13-8cb5-411d-b859-caf474a377fb.pdf",
-        "name": "paper 3.pdf",
-        "mime": "application/pdf",
-    },
-    {
-        "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/94/bf/11de44d4856dff0120adcc0c5ba9dbc947329d8e1c6ba4f4ffc913a7276d",
-        "name": "Screenshot 2025-10-07 172516.png",
-        "mime": "image/png",
-    },
-    {
-        "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/f0/e0/57fa26ce61de53db5980deb2df6455f5965f4d0954ffb7c0cefad432a985",
-        "name": "Handwritten Nurse Notes.pdf",
-        "mime": "application/pdf",
-    },
-    {
-        "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/17/90/fa2aae1a3f7aab43d9991790bad60adf175a0c95a8b044debbe2a5714658",
-        "name": "pdf_scanned_ocr.docx",
-        "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    },
-    {
-        "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/56/db/c38ad88037dbbab1d78406e23a0d6b82e30722fa7552cf2f933f4db7e03a",
-        "name": "epa_sample_letter_sent_to_commissioners_dated_february_29_2015.pdf",
-        "mime": "application/pdf",
-    },
-    {
-        "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/3a/83/4199bff573dcad3b836c468966a52c557f34c9f663d71b4e1d646e9884c1",
-        "name": "ASSERTION_ARCHITECTURE_SUMMARY.md",
-        "mime": "text/markdown",
+        "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/9e/50/46f28fce4054d8902a99988487926f1760774d1ac6de05bfa7aaebc28365",
+        "name": "sample.doc",
+        "mime": "application/msword",
     },
 ]
 # ─────────────────────────────────────────────────────────────────────────────
