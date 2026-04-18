@@ -587,6 +587,18 @@ class InProcessBackend(UIBackend):
             target_kind=target_kind, target_id=target_id, limit=limit,
         )
 
+    async def get_provenance(
+        self, matter_id: str, target_kind: str, target_id: str,
+        limit: int = 50,
+    ) -> list[dict]:
+        """P0.1: return the provenance_event trail for one target.
+
+        Each row attributes the AI write: run, model, prompt version,
+        source document + span, llm_call_id — everything the attorney
+        needs to answer "where did this come from?"."""
+        model = self._get_matter_model(matter_id)
+        return model.get_provenance(target_kind, target_id, limit=limit)
+
     # ------------------------------------------------------------------ #
     # Streaming investigation (InProcessBackend-specific)                 #
     # ------------------------------------------------------------------ #

@@ -1735,6 +1735,146 @@ def _fmt_review_queue(queue: list[dict]) -> str:
     )
 
 
+def _fmt_source_drawer(
+    target_kind: str,
+    target_id: str,
+    provenance_rows: list[dict],
+    verification_events: list[dict],
+) -> str:
+    """Attorney-readable "where did this come from + what's been done
+    to it" drawer. Combines P0.1 provenance (AI write trail) with
+    P0.3 verification events (human review history)."""
+    if not provenance_rows and not verification_events:
+        return (
+            "<div class='viz-empty'>No source or audit history for this finding. "
+            "Try an item created during a live investigation.</div>"
+        )
+    sections: list[str] = []
+
+    # --- Source (where it came from) ---
+    if provenance_rows:
+        lines = [
+            "<div style='margin-bottom:16px;'>"
+            "<div style='font-size:12px;color:#6b7280;text-transform:uppercase;"
+            "letter-spacing:0.04em;font-weight:600;margin-bottom:6px;'>Source</div>"
+        ]
+        for ev in provenance_rows[:5]:
+            doc = ev.get("source_document_ref") or "—"
+            span_raw = ev.get("source_span_id")
+            span_status = ev.get("source_span_status") or "unknown"
+            when = (ev.get("created_at") or "")[:19].replace("T", " ")
+            model_id = ev.get("model_id") or "—"
+            prompt_v = ev.get("prompt_version") or "—"
+            writer = ev.get("writer_name") or "—"
+            # Only show span identity when we have one
+            span_html = ""
+            if span_raw:
+                span_html = (
+                    f" <span style='font-family:ui-monospace,monospace;"
+                    f"font-size:11px;color:#6b7280;'>span:{_escape(span_raw)[:40]}</span>"
+                )
+            elif span_status == "missing":
+                span_html = (
+                    " <span style='color:#b45309;font-size:11px;'>"
+                    "(no span identity — document-level)</span>"
+                )
+            llm_call = ev.get("llm_call_id")
+            llm_html = ""
+            if llm_call:
+                llm_html = (
+                    f" <span style='font-family:ui-monospace,monospace;"
+                    f"font-size:10px;color:#9ca3af;'>call:{_escape(llm_call)[:10]}</span>"
+                )
+            lines.append(
+                "<div style='padding:8px 10px;background:#f9fafb;"
+                "border-left:3px solid #3b82f6;border-radius:0 6px 6px 0;"
+                "margin-bottom:6px;'>"
+                f"<div style='color:#1f2937;font-weight:500;'>"
+                f"{_escape(doc)}{span_html}</div>"
+                f"<div style='color:#6b7280;font-size:12px;margin-top:2px;'>"
+                f"Extracted by <strong>{_escape(model_id)}</strong> "
+                f"via prompt <code style='background:#e5e7eb;padding:1px 4px;"
+                f"border-radius:3px;font-size:11px;'>{_escape(prompt_v)}</code>"
+                f"{llm_html}"
+                f" · {_escape(when)}</div>"
+                f"<div style='color:#9ca3af;font-size:11px;margin-top:2px;'>"
+                f"writer: {_escape(writer)}</div>"
+                "</div>"
+            )
+        if len(provenance_rows) > 5:
+            lines.append(
+                f"<div style='font-size:11px;color:#9ca3af;"
+                f"margin-top:4px;'>+ {len(provenance_rows) - 5} more attribution event(s)</div>"
+            )
+        lines.append("</div>")
+        sections.append("".join(lines))
+
+    # --- Review history (what's been done to it) ---
+    if verification_events:
+        lines = [
+            "<div>"
+            "<div style='font-size:12px;color:#6b7280;text-transform:uppercase;"
+            "letter-spacing:0.04em;font-weight:600;margin-bottom:6px;'>"
+            "Review history</div>"
+        ]
+        for ev in verification_events[:20]:
+            old_s = ev.get("old_status") or "—"
+            new_s = ev.get("new_status") or "—"
+            reviewer = ev.get("reviewed_by_kind") or ev.get("actor_kind") or "system"
+            reviewer_id = ev.get("reviewed_by_id") or ""
+            note = ev.get("note") or ev.get("review_note") or ""
+            reason = ev.get("rejection_reason") or ""
+            cause = ev.get("cause") or ""
+            when = (ev.get("created_at") or "")[:19].replace("T", " ")
+            # Event-kind tint
+            tint = {
+                "verified": "#15803d",
+                "rejected": "#991b1b",
+                "stale": "#475569",
+                "candidate": "#92400e",
+            }.get(new_s, "#1f2937")
+            actor_label = _escape(reviewer)
+            if reviewer_id:
+                actor_label += f" · {_escape(reviewer_id)}"
+            detail_bits: list[str] = []
+            if note:
+                detail_bits.append(f"note: {_escape(note)}")
+            if reason:
+                detail_bits.append(f"reason: {_escape(reason)}")
+            if cause and cause not in ("ai_extraction", "assertion_upsert"):
+                detail_bits.append(f"cause: {_escape(cause)}")
+            detail_html = ""
+            if detail_bits:
+                detail_html = (
+                    "<div style='color:#6b7280;font-size:12px;margin-top:2px;'>"
+                    + " · ".join(detail_bits) + "</div>"
+                )
+            lines.append(
+                "<div style='padding:8px 10px;background:#f9fafb;"
+                f"border-left:3px solid {tint};border-radius:0 6px 6px 0;"
+                "margin-bottom:6px;'>"
+                f"<div style='color:#1f2937;font-weight:500;'>"
+                f"{_escape(old_s)} → <span style='color:{tint};'>{_escape(new_s)}</span>"
+                f" <span style='font-weight:400;color:#6b7280;font-size:12px;'>"
+                f"by {actor_label} · {_escape(when)}</span></div>"
+                f"{detail_html}</div>"
+            )
+        lines.append("</div>")
+        sections.append("".join(lines))
+
+    header = (
+        f"<div style='font-size:12px;color:#9ca3af;margin-bottom:8px;"
+        f"font-family:ui-monospace,monospace;'>"
+        f"{_escape(target_kind)}:{_escape(target_id)[:12]}…</div>"
+    )
+    return (
+        "<div style='max-height:420px;overflow-y:auto;'>"
+        + header
+        + "\n".join(sections)
+        + "</div>"
+    )
+
+
 def _review_queue_choices(queue: list[dict]) -> list[tuple[str, str]]:
     """Build dropdown (label, value) pairs. Label is attorney-readable;
     value is the internal "kind:id" handle used by verify/reject."""
@@ -2497,6 +2637,31 @@ class AppState:
             return f"⚠️ Reject failed: {exc}"
         return f"✅ Rejected {kind} — downstream evidence moved to stale."
 
+    def load_source_drawer(
+        self, matter_id: str, target_handle: str,
+    ) -> str:
+        """Load provenance + verification history for the selected
+        review-queue target."""
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        if not target_handle or ":" not in target_handle:
+            return (
+                "<div class='viz-empty'>Pick an item from the review "
+                "queue to see where it came from and who has touched it.</div>"
+            )
+        kind, tid = target_handle.split(":", 1)
+        try:
+            prov = _run_async(self.backend().get_provenance(matter_id, kind, tid))
+        except Exception as exc:
+            prov = []
+        try:
+            events = _run_async(
+                self.backend().get_verification_events(matter_id, kind, tid)
+            )
+        except Exception as exc:
+            events = []
+        return _fmt_source_drawer(kind, tid, prov, events)
+
     def do_bulk_verify_by_document(
         self,
         matter_id: str,
@@ -3244,6 +3409,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 value=None,
                 allow_custom_value=False,
             )
+            with gr.Accordion(
+                "Where this came from + review history",
+                open=False,
+            ):
+                source_drawer_html = gr.HTML(
+                    "<div class='viz-empty'>Select an item above to see "
+                    "source document, AI attribution, and every review "
+                    "transition chronologically.</div>"
+                )
             with gr.Row():
                 verify_note = gr.Textbox(
                     label="Verification note (optional)",
@@ -3716,19 +3890,41 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         )
 
         # --- Review Inbox wiring ---
+        def _refresh_review_and_drawer(mid):
+            queue_html, dropdown_update = state.load_review_queue(mid)
+            # Auto-populate drawer with whatever the dropdown lands on
+            new_value = dropdown_update.get("value") if isinstance(dropdown_update, dict) else None
+            drawer = state.load_source_drawer(mid, new_value or "")
+            return queue_html, dropdown_update, drawer
+
         refresh_review_btn.click(
-            fn=state.load_review_queue,
+            fn=_refresh_review_and_drawer,
             inputs=[matter_id_box],
-            outputs=[review_queue_html, review_target],
+            outputs=[review_queue_html, review_target, source_drawer_html],
+        )
+
+        # When the reviewer picks a different item, refresh the drawer.
+        review_target.change(
+            fn=state.load_source_drawer,
+            inputs=[matter_id_box, review_target],
+            outputs=[source_drawer_html],
         )
 
         def _verify_and_refresh(mid, target, note):
+            # Keep a snapshot of the target BEFORE the write so the
+            # drawer shows the transition we just made.
+            prior_target = target
             result = state.do_verify_target(mid, target, note)
             queue_html, dropdown_update = state.load_review_queue(mid)
+            # After verify the target leaves the queue. Show the drawer
+            # for the item we just acted on so the attorney sees the
+            # review event they just wrote.
+            drawer = state.load_source_drawer(mid, prior_target)
             return (
                 result,
                 queue_html,
                 dropdown_update,
+                drawer,
                 # Downstream panels depend on verification state.
                 state.load_assertions(mid),
                 state.load_issues(mid),
@@ -3741,17 +3937,21 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box, review_target, verify_note],
             outputs=[
                 review_action_result, review_queue_html, review_target,
+                source_drawer_html,
                 assertions_md, issues_md, overview_md, verify_note,
             ],
         )
 
         def _reject_and_refresh(mid, target, reason):
+            prior_target = target
             result = state.do_reject_target(mid, target, reason)
             queue_html, dropdown_update = state.load_review_queue(mid)
+            drawer = state.load_source_drawer(mid, prior_target)
             return (
                 result,
                 queue_html,
                 dropdown_update,
+                drawer,
                 state.load_assertions(mid),
                 state.load_issues(mid),
                 state.load_overview(mid),
@@ -3763,6 +3963,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box, review_target, reject_reason],
             outputs=[
                 review_action_result, review_queue_html, review_target,
+                source_drawer_html,
                 assertions_md, issues_md, overview_md, reject_reason,
             ],
         )
