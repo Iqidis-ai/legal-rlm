@@ -832,15 +832,15 @@ class ReadFamilyHandler:
         score = self._CONFIDENCE_MAP[label]
 
         answer = str(parsed.get("answer") or "").strip()
-        # Codex fallout R2: validate citations as non-empty strings.
-        # The previous code counted `[""]` or `[0]` toward the floor —
-        # a malicious or sloppy LLM could ship a high-confidence
-        # uncited answer by emitting a fake citation list.
+        # Codex fallout R3: citations must be non-empty STRINGS. The
+        # R2 fix still accepted int/float/bool, so `[0]` or `[False]`
+        # trivially satisfied the floor. Legal citations are document
+        # identifiers (paths, filenames, bates numbers) — always
+        # strings. Anything else is LLM hallucination and gets filtered.
         raw_citations = parsed.get("citations") or []
         citations = [
-            str(c).strip() for c in raw_citations
-            if isinstance(c, (str, int, float))
-            and str(c).strip()
+            c.strip() for c in raw_citations
+            if isinstance(c, str) and not isinstance(c, bool) and c.strip()
         ]
         escalation_hint = str(parsed.get("escalation_hint") or "").strip()
 
@@ -1671,21 +1671,54 @@ class SteerFamilyHandler:
     @classmethod
     def _specific_tokens(cls, *fragments: Optional[str]) -> set[str]:
         """Extract date and numeric tokens from any of the fragments.
-        Returns a set of lowercased tokens worth matching on. Empty
-        when no specific tokens found."""
+        Returns a set of lowercased tokens worth matching on.
+
+        Codex fallout R3: ISO dates are validated as real calendar
+        dates via datetime.date (rejects Feb 31, Apr 31, etc.). And
+        number extraction STRIPS spans we already captured as valid
+        dates so the "13" and "45" inside a rejected "2026-13-45"
+        don't leak through as independent numeric tokens.
+        """
         import re as _re
+        from datetime import date as _date
         out: set[str] = set()
         for frag in fragments:
             if not frag:
                 continue
             text = str(frag)
-            for pat in cls._DATE_PATTERNS:
-                for m in _re.findall(pat, text, flags=_re.IGNORECASE):
-                    out.add(m.lower().strip())
-            for m in _re.findall(cls._NUMBER_PATTERN, text):
-                token = m.strip()
-                # Require at least 2 chars so noise like "1" doesn't
-                # flood the signal.
+            # Extract date tokens first. ISO dates get an extra
+            # calendar-validation pass via datetime.date.
+            consumed_spans: list[tuple[int, int]] = []
+            # ISO YYYY-MM-DD is _DATE_PATTERNS[0]
+            iso_pat = cls._DATE_PATTERNS[0]
+            for m in _re.finditer(iso_pat, text, flags=_re.IGNORECASE):
+                tok = m.group().strip()
+                # Always consume the span even when the date fails
+                # calendar validation — so "2026-02-31" doesn't leak
+                # its fragments (2026, 31) as independent numeric
+                # tokens. Only VALID calendar dates get added as
+                # date tokens.
+                consumed_spans.append(m.span())
+                try:
+                    yr, mo, dy = tok.split("-")
+                    _date(int(yr), int(mo), int(dy))
+                except (ValueError, TypeError):
+                    continue
+                out.add(tok.lower())
+            # Other date patterns (English month + day).
+            for pat in cls._DATE_PATTERNS[1:]:
+                for m in _re.finditer(pat, text, flags=_re.IGNORECASE):
+                    out.add(m.group().lower().strip())
+                    consumed_spans.append(m.span())
+            # Number extraction — skip any match whose span overlaps
+            # a consumed date span, so ISO fragments ("2026", "13",
+            # "45") don't leak through as fake numeric tokens.
+            for m in _re.finditer(cls._NUMBER_PATTERN, text):
+                s, e = m.span()
+                if any(not (e <= cs or s >= ce)
+                       for cs, ce in consumed_spans):
+                    continue
+                token = m.group().strip()
                 if len(token) >= 2:
                     out.add(token.lower())
         return out

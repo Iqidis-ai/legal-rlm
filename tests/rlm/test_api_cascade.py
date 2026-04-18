@@ -24,12 +24,14 @@ from irys.rlm.state import InvestigationState
 
 
 @pytest.fixture
-def repo_path(tmp_path):
-    """A real existing dir that passes path-validation but is empty.
-    Uses pytest's tmp_path fixture — pytest handles teardown with
-    platform-aware cleanup (Windows file-lock races killed the old
-    tempfile.TemporaryDirectory approach)."""
-    return str(tmp_path.resolve())
+def repo_path():
+    """A real existing dir for path-validation. We do NOT write to
+    this path — the test wires a MatterModel directly into the
+    engine, so Irys never touches the filesystem here. Using the
+    tests/ directory (which always exists) sidesteps the Windows
+    teardown races both tempfile.TemporaryDirectory and tmp_path
+    had with concurrent pytest fixtures holding handles."""
+    return str(Path(__file__).parent.parent.resolve())
 
 
 class _FakeClient:
@@ -207,6 +209,56 @@ def test_api_route_audit_preserves_classifier_and_terminal_family(repo_path):
     # The `family` audit field from decision.to_audit_dict is ALSO
     # the classifier's original call — verifying no in-place mutation.
     assert payload["family"] == "deliverable"
+
+
+def test_api_stale_cache_fallback_audit_label(repo_path):
+    """Round 3: when the governor returns a route via stale-cache
+    fallback (NANO failed), the ledger must label
+    `classifier_family='_stale_cache_fallback'` — NOT the reused
+    route. Otherwise the audit lies about whether a fresh
+    classification happened."""
+    import json
+    # Directly construct a CascadeDecision in the stale-cache shape
+    # and drive _persist_route_decision with it. Avoids the
+    # complexity of triggering the full governor path for audit test.
+    from irys.rlm.governance import CascadeDecision, ExecutionContract, AnswerabilitySnapshot
+    snap = AnswerabilitySnapshot(
+        matter_id="m1", assertion_count=1, verified_assertion_count=0,
+        open_issue_count=0, open_gap_count=0, actor_count=0,
+        has_any_facts=True, has_any_verified=False, trust_revision=0,
+    )
+    stale_decision = CascadeDecision(
+        family="read",
+        confidence=0.8,
+        rationale="reused stale cached route",
+        contract=ExecutionContract(family="read"),
+        classifier_version="_stale_cache_fallback",
+        snapshot=snap,
+    )
+    fake = _FakeClient({})
+    mm = _warm_in_memory_matter()
+    irys = _make_irys(fake, mm)
+    # Call _persist_route_decision directly with the stale decision.
+    run_id = mm.start_run("audit test", operation_type="read")
+    mm.complete_run(run_id)
+    irys._persist_route_decision(
+        matter_model=mm, query="x", decision=stale_decision,
+        research_mode="deep", terminal_family="read", run_id=run_id,
+    )
+    rows = mm.db.execute(
+        """SELECT snapshot_json FROM ledger_event
+           WHERE event_type='route_decision'
+           ORDER BY created_at DESC LIMIT 1"""
+    ).fetchall()
+    assert rows
+    payload = json.loads(rows[0]["snapshot_json"])
+    # The stale fallback MUST be flagged — classifier_family is the
+    # sentinel, not the reused route.
+    assert payload["classifier_family"] == "_stale_cache_fallback"
+    # The reused route is separately preserved for audit.
+    assert payload.get("reused_route") == "read"
+    # Terminal family still reports what actually ran.
+    assert payload["terminal_family"] == "read"
 
 
 def test_api_read_ships_when_contract_met(repo_path):

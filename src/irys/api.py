@@ -763,12 +763,31 @@ class Irys:
                 from .matter.enums import LedgerEventType
                 audit_payload = decision.to_audit_dict()
                 audit_payload["terminal_family"] = terminal_family
-                audit_payload["classifier_family"] = decision.family
+                # Codex fallout R3: on stale-cache fallback the
+                # decision.family is a REUSED prior route, not a
+                # fresh classifier emission. Label the audit
+                # accordingly so ledger queries can distinguish
+                # "classifier routed X" from "classifier failed,
+                # reused cached X". classifier_version carries the
+                # sentinel "_stale_cache_fallback" from the governor.
+                is_stale_fallback = (
+                    decision.classifier_version == "_stale_cache_fallback"
+                )
+                audit_payload["classifier_family"] = (
+                    "_stale_cache_fallback" if is_stale_fallback
+                    else decision.family
+                )
+                if is_stale_fallback:
+                    audit_payload["reused_route"] = decision.family
+                classifier_label = (
+                    "_stale_cache_fallback" if is_stale_fallback
+                    else decision.family
+                )
                 matter_model.ledger.append_event(
                     run_id=run_id,
                     event_type=LedgerEventType.ROUTE_DECISION,
                     summary=(
-                        f"Route: classifier={decision.family} "
+                        f"Route: classifier={classifier_label} "
                         f"terminal={terminal_family} "
                         f"conf={decision.confidence:.2f}"
                     ),
