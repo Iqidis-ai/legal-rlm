@@ -1495,76 +1495,83 @@ class MatterModel:
     def get_cost_anomalies(
         self, limit: int = 10, run_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
-        """Return calls that are outliers on cost or latency (>2σ from tier
-        mean). First candidates when chasing cost reductions."""
+        """Return calls that are outliers on cost or latency vs their tier's
+        robust baseline. First candidates when chasing cost reductions.
+
+        Uses median + MAD-based z-scores (not mean/pstdev) so that a single
+        large outlier does not inflate σ and hide itself. Thresholds:
+        modified z-score > 3.5 (Iglewicz & Hoaglin 1993) OR raw value more
+        than 3× the median, whichever flags more.
+        """
         where = "matter_id=?"
         params: list[Any] = [self.matter_id]
         if run_id is not None:
             where += " AND run_id=?"
             params.append(run_id)
         try:
-            tier_stats = self.db.execute(
-                f"""SELECT model_tier,
-                           AVG(estimated_cost_usd) AS mu_cost,
-                           AVG(latency_ms) AS mu_lat,
-                           COUNT(*) AS n
-                       FROM llm_call
-                       WHERE {where} AND success=1
-                       GROUP BY model_tier
-                       HAVING n >= 3""",
-                params,
-            ).fetchall()
-            anomalies: list[dict] = []
             import statistics
-            for stat in tier_stats:
-                tier = stat["model_tier"]
-                mu_cost = float(stat["mu_cost"] or 0)
-                mu_lat = float(stat["mu_lat"] or 0)
-                rows = self.db.execute(
-                    f"""SELECT estimated_cost_usd, latency_ms
+            tiers = [
+                row["model_tier"] for row in self.db.execute(
+                    f"""SELECT model_tier
                            FROM llm_call
-                           WHERE {where} AND model_tier=? AND success=1""",
-                    [*params, tier],
+                           WHERE {where} AND success=1
+                           GROUP BY model_tier
+                           HAVING COUNT(*) >= 3""",
+                    params,
                 ).fetchall()
-                costs = [float(r["estimated_cost_usd"] or 0) for r in rows]
-                lats = [float(r["latency_ms"] or 0) for r in rows]
-                sig_cost = statistics.pstdev(costs) if len(costs) > 1 else 0.0
-                sig_lat = statistics.pstdev(lats) if len(lats) > 1 else 0.0
-                if sig_cost == 0 and sig_lat == 0:
-                    continue
-                outliers = self.db.execute(
+            ]
+            anomalies: list[dict] = []
+            for tier in tiers:
+                rows = self.db.execute(
                     f"""SELECT id, created_at, model_tier, usage_label,
                                input_tokens, output_tokens,
                                estimated_cost_usd, latency_ms
                            FROM llm_call
-                           WHERE {where} AND model_tier=? AND success=1
-                             AND (estimated_cost_usd > ? OR latency_ms > ?)
-                           ORDER BY estimated_cost_usd DESC
-                           LIMIT ?""",
-                    [
-                        *params, tier,
-                        mu_cost + 2 * sig_cost,
-                        mu_lat + 2 * sig_lat,
-                        limit,
-                    ],
+                           WHERE {where} AND model_tier=? AND success=1""",
+                    [*params, tier],
                 ).fetchall()
-                for row in outliers:
-                    d = dict(row)
-                    d["baseline_cost"] = round(mu_cost, 6)
-                    d["baseline_latency_ms"] = int(mu_lat)
-                    d["cost_z"] = (
-                        round(
-                            (float(row["estimated_cost_usd"]) - mu_cost) / sig_cost, 2,
-                        )
-                        if sig_cost > 0 else None
+                if len(rows) < 3:
+                    continue
+                costs = [float(r["estimated_cost_usd"] or 0) for r in rows]
+                lats = [float(r["latency_ms"] or 0) for r in rows]
+                med_cost = statistics.median(costs)
+                med_lat = statistics.median(lats)
+                # Median absolute deviation (scaled to approx σ for normal data)
+                mad_cost = statistics.median(
+                    [abs(c - med_cost) for c in costs]
+                ) * 1.4826
+                mad_lat = statistics.median(
+                    [abs(l - med_lat) for l in lats]
+                ) * 1.4826
+
+                for r in rows:
+                    cost = float(r["estimated_cost_usd"] or 0)
+                    lat = float(r["latency_ms"] or 0)
+                    cost_z = (
+                        (cost - med_cost) / mad_cost if mad_cost > 0 else None
                     )
-                    d["latency_z"] = (
-                        round(
-                            (float(row["latency_ms"]) - mu_lat) / sig_lat, 2,
-                        )
-                        if sig_lat > 0 else None
+                    lat_z = (
+                        (lat - med_lat) / mad_lat if mad_lat > 0 else None
                     )
+                    # Flag if either z > 3.5 OR raw > 3× median (covers MAD=0
+                    # cases where most calls are near-identical).
+                    flag_cost = (
+                        (cost_z is not None and cost_z > 3.5)
+                        or (med_cost > 0 and cost > 3 * med_cost)
+                    )
+                    flag_lat = (
+                        (lat_z is not None and lat_z > 3.5)
+                        or (med_lat > 0 and lat > 3 * med_lat)
+                    )
+                    if not (flag_cost or flag_lat):
+                        continue
+                    d = dict(r)
+                    d["baseline_cost"] = round(med_cost, 6)
+                    d["baseline_latency_ms"] = int(med_lat)
+                    d["cost_z"] = round(cost_z, 2) if cost_z is not None else None
+                    d["latency_z"] = round(lat_z, 2) if lat_z is not None else None
                     anomalies.append(d)
+
             anomalies.sort(key=lambda r: -float(r.get("cost_z") or 0))
             return anomalies[:limit]
         except Exception as exc:
