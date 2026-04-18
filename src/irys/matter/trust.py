@@ -250,9 +250,194 @@ class TrustPolicy:
         return " AND ".join(checks)
 
 
+class ContentPurpose(str, Enum):
+    """P0.5 Content Policy MVI — the set of user-facing surfaces and
+    internal consumers that must route through the policy guard before
+    privileged or unknown material can leak into clean-mode output.
+    """
+
+    PROFILE = "profile"                           # document profile / card write
+    DEEP_READ = "deep_read"                       # per-issue detailed extraction
+    SEARCH_SNIPPETS_TO_LLM = "search_snippets_to_llm"
+    HYDRATION = "hydration"                       # seed accumulated_facts
+    SYNTHESIS_CONTEXT = "synthesis_context"       # packet assembly
+    TIMELINE_VIEW = "timeline_view"
+    MATRIX_VIEW = "matrix_view"
+    CHAT_RESPONSE = "chat_response"
+    EXPORT = "export"
+
+
+class ContentAction(str, Enum):
+    """Three outcomes the guard can emit."""
+
+    ALLOW = "allow"
+    BLOCK = "block"               # drop silently; no placeholder
+    WITHHOLD = "withhold"         # emit "[withheld]" — preserve shape
+
+
+# Stable machine reason codes used by the audit log and tests.
+REASON_ALLOWED_INTERNAL = "allowed_internal_audience"
+REASON_ALLOWED_VERIFIED = "allowed_verified"
+REASON_ALLOWED_CANDIDATE = "allowed_candidate"
+REASON_PRIVILEGE_CLEAN_MODE = "clean_mode_privileged_or_unknown"
+REASON_VERIFICATION_REJECTED = "verification_rejected"
+REASON_VERIFICATION_STALE = "verification_stale"
+REASON_BELIEF_INACTIVE = "belief_state_inactive"
+
+
+@dataclass(frozen=True)
+class ContentPolicyDecision:
+    """Result of evaluating a single content-policy request."""
+
+    action: ContentAction
+    reason_code: str
+    trust_bucket: TrustBucket
+    placeholder: Optional[str] = None
+
+    @property
+    def is_allowed(self) -> bool:
+        return self.action is ContentAction.ALLOW
+
+    @property
+    def is_withheld(self) -> bool:
+        return self.action is ContentAction.WITHHOLD
+
+    @property
+    def is_blocked(self) -> bool:
+        return self.action is ContentAction.BLOCK
+
+
+# Purposes that preserve shape via "[withheld]" placeholder when
+# clean-mode privilege excludes the content. All other purposes drop
+# the target silently (BLOCK).
+_WITHHOLD_PURPOSES: frozenset[ContentPurpose] = frozenset({
+    ContentPurpose.TIMELINE_VIEW,
+    ContentPurpose.MATRIX_VIEW,
+    ContentPurpose.EXPORT,
+    ContentPurpose.HYDRATION,              # hydration shows count, not content
+    ContentPurpose.SEARCH_SNIPPETS_TO_LLM, # placeholder lets LLM see "gap here"
+    ContentPurpose.SYNTHESIS_CONTEXT,      # scrub replaces with placeholder
+})
+
+
+WITHHELD_PLACEHOLDER = "[withheld]"
+
+
+class ContentPolicy:
+    """Single source of truth for every "can this target enter clean
+    output for purpose X?" decision in the system.
+
+    Composes TrustPolicy (verification + belief) with the clean/
+    internal privilege gate. Returns (action, reason_code,
+    trust_bucket, placeholder) so callers can:
+      - act on `action` (allow | block | withhold),
+      - render `placeholder` when withholding (preserves shape),
+      - write `reason_code` into the audit log.
+    """
+
+    @staticmethod
+    def decide(
+        *,
+        purpose: ContentPurpose,
+        policy_audience: str = "clean",
+        assertion_verification_status: Optional[str] = None,
+        edge_verification_status: Optional[str] = None,
+        belief_state: Optional[str] = None,
+        privilege_flag: Optional[bool] = None,
+    ) -> ContentPolicyDecision:
+        """Evaluate a single content-policy request."""
+        # Internal audience bypasses privilege AND verification — the
+        # attorney sees everything, including their own privileged
+        # work product.
+        if policy_audience != "clean":
+            return ContentPolicyDecision(
+                action=ContentAction.ALLOW,
+                reason_code=REASON_ALLOWED_INTERNAL,
+                trust_bucket=TrustBucket.VERIFIED,
+            )
+        # Clean-mode privilege exclusion. None/True both fail closed.
+        if privilege_flag is None or privilege_flag:
+            if purpose in _WITHHOLD_PURPOSES:
+                return ContentPolicyDecision(
+                    action=ContentAction.WITHHOLD,
+                    reason_code=REASON_PRIVILEGE_CLEAN_MODE,
+                    trust_bucket=TrustBucket.EXCLUDED,
+                    placeholder=WITHHELD_PLACEHOLDER,
+                )
+            return ContentPolicyDecision(
+                action=ContentAction.BLOCK,
+                reason_code=REASON_PRIVILEGE_CLEAN_MODE,
+                trust_bucket=TrustBucket.EXCLUDED,
+            )
+        # Privilege cleared. Now evaluate the trust bucket through
+        # the existing TrustPolicy classifier.
+        classification = TrustPolicy.classify(
+            assertion_verification_status=assertion_verification_status,
+            edge_verification_status=edge_verification_status,
+            belief_state=belief_state,
+            privilege_flag=False,
+            policy_audience=policy_audience,
+        )
+        bucket = classification.bucket
+        if bucket is TrustBucket.EXCLUDED:
+            reason = (
+                REASON_VERIFICATION_REJECTED
+                if "rejected" in (classification.reason or "")
+                else REASON_BELIEF_INACTIVE
+            )
+            action = (
+                ContentAction.WITHHOLD
+                if purpose in _WITHHOLD_PURPOSES
+                else ContentAction.BLOCK
+            )
+            placeholder = WITHHELD_PLACEHOLDER if action is ContentAction.WITHHOLD else None
+            return ContentPolicyDecision(
+                action=action, reason_code=reason,
+                trust_bucket=bucket, placeholder=placeholder,
+            )
+        if bucket is TrustBucket.STALE:
+            action = (
+                ContentAction.WITHHOLD
+                if purpose in _WITHHOLD_PURPOSES
+                else ContentAction.BLOCK
+            )
+            return ContentPolicyDecision(
+                action=action,
+                reason_code=REASON_VERIFICATION_STALE,
+                trust_bucket=bucket,
+                placeholder=(
+                    WITHHELD_PLACEHOLDER if action is ContentAction.WITHHOLD else None
+                ),
+            )
+        if bucket is TrustBucket.VERIFIED:
+            return ContentPolicyDecision(
+                action=ContentAction.ALLOW,
+                reason_code=REASON_ALLOWED_VERIFIED,
+                trust_bucket=bucket,
+            )
+        # candidate
+        return ContentPolicyDecision(
+            action=ContentAction.ALLOW,
+            reason_code=REASON_ALLOWED_CANDIDATE,
+            trust_bucket=bucket,
+        )
+
+
 __all__ = [
     "TrustBucket",
     "TrustPurpose",
     "TrustPolicy",
     "TrustClassification",
+    "ContentPurpose",
+    "ContentAction",
+    "ContentPolicyDecision",
+    "ContentPolicy",
+    "WITHHELD_PLACEHOLDER",
+    "REASON_ALLOWED_INTERNAL",
+    "REASON_ALLOWED_VERIFIED",
+    "REASON_ALLOWED_CANDIDATE",
+    "REASON_PRIVILEGE_CLEAN_MODE",
+    "REASON_VERIFICATION_REJECTED",
+    "REASON_VERIFICATION_STALE",
+    "REASON_BELIEF_INACTIVE",
 ]
