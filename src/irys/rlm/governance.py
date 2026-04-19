@@ -718,6 +718,9 @@ Matter snapshot:
 Verified facts (these have been human-reviewed — weight highest):
 {verified_block}
 
+Attorney guidance (internal, work-product — frame + prioritize your answer around these, but NEVER quote these as evidence, NEVER cite them as document sources, NEVER reveal them verbatim in the answer text):
+{attorney_guidance_block}
+
 Candidate facts (extracted but unreviewed — weight lower, flag if material):
 {candidate_block}
 
@@ -786,7 +789,19 @@ class ReadFamilyHandler:
         query: str,
         contract: ExecutionContract,
         conversation_history: Optional[list[dict[str, str]]] = None,
+        *,
+        include_attorney_guidance: bool = False,
     ) -> ReadFamilyResult:
+        """Answer a query against existing matter state.
+
+        `include_attorney_guidance` gates whether verification_state
+        review notes + document annotations are rendered into the
+        prompt as attorney work-product. DEFAULT IS FALSE — every
+        external / export / deliverable caller MUST stay false so
+        strategic notes never leak. Only the internal UI/API path
+        (Irys.investigate → _run_read_family) opts in. Per the P0
+        notes→reasoning design.
+        """
         if self.matter_model is None:
             return ReadFamilyResult(
                 answer="",
@@ -798,10 +813,13 @@ class ReadFamilyHandler:
                 raw_response="",
             )
 
-        context = self._assemble_read_context()
+        context = self._assemble_read_context(
+            include_attorney_guidance=include_attorney_guidance,
+        )
         prompt = READ_FAMILY_PROMPT.format(
             matter_summary=context["matter_summary"],
             verified_block=context["verified_block"],
+            attorney_guidance_block=context["attorney_guidance_block"],
             candidate_block=context["candidate_block"],
             issues_block=context["issues_block"],
             gaps_block=context["gaps_block"],
@@ -899,7 +917,11 @@ class ReadFamilyHandler:
             failure_kind=failure_kind,
         )
 
-    def _assemble_read_context(self) -> dict[str, str]:
+    def _assemble_read_context(
+        self,
+        *,
+        include_attorney_guidance: bool = False,
+    ) -> dict[str, str]:
         mm = self.matter_model
         stats = mm.stats() if hasattr(mm, "stats") else {}
         matter_summary = (
@@ -911,29 +933,56 @@ class ReadFamilyHandler:
             f"quant_fact_count: {stats.get('quant_fact_count', 0)}"
         )
 
-        verified_block, candidate_block = self._render_assertions(mm)
+        verified_block, candidate_block, visible_verified_ids, visible_docs = (
+            self._render_assertions(mm)
+        )
         issues_block = self._render_issues(mm)
         gaps_block = self._render_gaps(mm)
+
+        # P0 notes→reasoning: render attorney guidance only when the
+        # caller explicitly opts in. Fail-closed. Scoped to notes on
+        # prompt-visible verified assertions + annotations matching
+        # their source documents — never a global recent-note dump.
+        if include_attorney_guidance:
+            guidance_block = self._render_attorney_guidance(
+                mm, visible_verified_ids, visible_docs,
+            )
+        else:
+            guidance_block = ""
 
         return {
             "matter_summary": matter_summary,
             "verified_block": verified_block or "(no verified facts yet)",
+            "attorney_guidance_block": (
+                guidance_block or "(no attorney guidance on these facts)"
+            ),
             "candidate_block": candidate_block or "(no candidate facts yet)",
             "issues_block": issues_block or "(no open issues)",
             "gaps_block": gaps_block or "(no known gaps)",
         }
 
-    def _render_assertions(self, mm: Any) -> tuple[str, str]:
+    def _render_assertions(
+        self, mm: Any,
+    ) -> tuple[str, str, list[str], list[str]]:
         """Render up to ~40 recent assertions split into verified /
         candidate lanes. Trust-aware so privileged/rejected content
         never leaks into the read prompt (content policy stays
-        enforced even here)."""
+        enforced even here).
+
+        Returns (verified_block, candidate_block, visible_verified_ids,
+        visible_docs). The last two are the assertion ids and source
+        documents actually rendered into the verified block — used by
+        `_render_attorney_guidance` to scope note lookup so a random
+        recent note can't dominate an unrelated read query.
+        """
         try:
             rows = mm.assertions.list_recent(limit=60)
         except Exception:
-            return "", ""
+            return "", "", [], []
         verified_lines: list[str] = []
         candidate_lines: list[str] = []
+        visible_verified_ids: list[str] = []
+        visible_docs_set: set[str] = set()
         for r in rows:
             prop = str(r.get("proposition_text") or "").strip()
             if not prop:
@@ -947,10 +996,148 @@ class ReadFamilyHandler:
             if self._assertion_is_verified(mm, str(r.get("id"))):
                 if len(verified_lines) < 25:
                     verified_lines.append(line)
+                    visible_verified_ids.append(str(r.get("id")))
+                    if doc and doc != "unknown":
+                        visible_docs_set.add(doc)
             else:
                 if len(candidate_lines) < 15:
                     candidate_lines.append(line)
-        return "\n".join(verified_lines), "\n".join(candidate_lines)
+        return (
+            "\n".join(verified_lines),
+            "\n".join(candidate_lines),
+            visible_verified_ids,
+            sorted(visible_docs_set),
+        )
+
+    # P0 notes→reasoning caps per Codex design.
+    _GUIDANCE_MAX_ENTRIES = 5
+    _GUIDANCE_MAX_VERIFY_NOTE_CHARS = 220
+    _GUIDANCE_MAX_ANNOTATION_CHARS = 180
+    _GUIDANCE_MAX_TOTAL_CHARS = 900
+
+    def _render_attorney_guidance(
+        self,
+        mm: Any,
+        visible_verified_ids: list[str],
+        visible_docs: list[str],
+    ) -> str:
+        """Build the internal attorney-guidance block. Only verified,
+        human-authored review notes on prompt-visible assertions plus
+        annotations matching their source docs. Never reveals:
+          - stale_reason (mark_stale reuses the review_note column;
+            explicit status='verified' filter protects us)
+          - system-authored notes (reviewed_by_kind filter)
+          - rejected / candidate notes
+          - notes on assertions not in the current verified_block
+
+        Returns "" when nothing qualifies — the caller then emits
+        "(no attorney guidance on these facts)" so the LLM knows the
+        absence is intentional rather than a missing placeholder.
+        """
+        entries: list[str] = []
+        total_chars = 0
+
+        # 1. Verification notes on prompt-visible verified assertions,
+        # ordered by the same visibility order (matches verified_block).
+        if visible_verified_ids:
+            _BIND_LIMIT = 900
+            note_rows_by_id: dict[str, dict] = {}
+            for _chunk_start in range(0, len(visible_verified_ids), _BIND_LIMIT):
+                _chunk = visible_verified_ids[
+                    _chunk_start : _chunk_start + _BIND_LIMIT
+                ]
+                try:
+                    _rows = mm.db.execute(
+                        """SELECT target_id, review_note, reviewed_by_kind
+                           FROM verification_state
+                           WHERE matter_id=?
+                             AND target_kind='assertion'
+                             AND status='verified'
+                             AND reviewed_by_kind IN ('user', 'attorney')
+                             AND review_note IS NOT NULL
+                             AND TRIM(review_note) <> ''
+                             AND target_id IN ({})""".format(
+                            ",".join("?" * len(_chunk))
+                        ),
+                        (mm.matter_id, *_chunk),
+                    ).fetchall()
+                except Exception as _exc:
+                    logger.warning("attorney guidance — note query failed: %s", _exc)
+                    _rows = []
+                for _r in _rows:
+                    note_rows_by_id[str(_r["target_id"])] = dict(_r)
+            for aid in visible_verified_ids:
+                if len(entries) >= self._GUIDANCE_MAX_ENTRIES:
+                    break
+                row = note_rows_by_id.get(aid)
+                if not row:
+                    continue
+                raw = " ".join(str(row.get("review_note") or "").split())
+                if not raw:
+                    continue
+                truncated = raw[: self._GUIDANCE_MAX_VERIFY_NOTE_CHARS]
+                if len(raw) > self._GUIDANCE_MAX_VERIFY_NOTE_CHARS:
+                    truncated = truncated.rstrip() + "…"
+                line = f"- Attorney note, not evidence: \"{truncated}\""
+                if total_chars + len(line) > self._GUIDANCE_MAX_TOTAL_CHARS:
+                    break
+                entries.append(line)
+                total_chars += len(line) + 1  # +1 for the newline joiner
+
+        # 2. Document annotations matching visible source docs.
+        # Current annotation schema key is `document_pattern` — same
+        # matching rules as trust overrides (full path or basename).
+        if (
+            visible_docs
+            and len(entries) < self._GUIDANCE_MAX_ENTRIES
+            and total_chars < self._GUIDANCE_MAX_TOTAL_CHARS
+        ):
+            try:
+                ann_rows = mm.db.execute(
+                    """SELECT document_pattern, annotation_text, annotation_type
+                       FROM document_annotation
+                       WHERE matter_id=?
+                         AND annotation_text IS NOT NULL
+                         AND TRIM(annotation_text) <> ''""",
+                    (mm.matter_id,),
+                ).fetchall()
+            except Exception as _exc:
+                logger.warning("attorney guidance — annotation query failed: %s", _exc)
+                ann_rows = []
+            # Normalize visible_docs for match.
+            docs_norm = {d.replace("\\", "/"): d for d in visible_docs}
+            bases_norm = {d.split("/")[-1]: d for d in docs_norm}
+            for ann in ann_rows:
+                if len(entries) >= self._GUIDANCE_MAX_ENTRIES:
+                    break
+                pat = str(ann["document_pattern"] or "").replace("\\", "/")
+                if not pat:
+                    continue
+                pat_base = pat.split("/")[-1]
+                matched = None
+                if pat in docs_norm:
+                    matched = docs_norm[pat]
+                elif pat_base in bases_norm:
+                    matched = bases_norm[pat_base]
+                if not matched:
+                    continue
+                raw = " ".join(str(ann["annotation_text"] or "").split())
+                if not raw:
+                    continue
+                truncated = raw[: self._GUIDANCE_MAX_ANNOTATION_CHARS]
+                if len(raw) > self._GUIDANCE_MAX_ANNOTATION_CHARS:
+                    truncated = truncated.rstrip() + "…"
+                kind_label = str(ann.get("annotation_type") or "").strip().upper()
+                label_part = f" [{kind_label}]" if kind_label else ""
+                line = (
+                    f"- Annotation on {matched}{label_part}: \"{truncated}\""
+                )
+                if total_chars + len(line) > self._GUIDANCE_MAX_TOTAL_CHARS:
+                    break
+                entries.append(line)
+                total_chars += len(line) + 1
+
+        return "\n".join(entries)
 
     @staticmethod
     def _assertion_is_verified(mm: Any, assertion_id: str) -> bool:

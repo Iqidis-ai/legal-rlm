@@ -583,6 +583,13 @@ class Irys:
                 query=query,
                 contract=contract or decision.contract,
                 conversation_history=conversation_history,
+                # P0 notes→reasoning: internal attorney-facing path
+                # opts into verification-note + annotation rendering
+                # in the read prompt. Export / deliverable / clean-
+                # audience paths never call this code path — and if
+                # a future caller does, the ReadFamilyHandler default
+                # stays False, so privilege fails closed.
+                include_attorney_guidance=True,
             )
         finally:
             self._telemetry.end_operation(
