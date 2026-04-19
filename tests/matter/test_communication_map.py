@@ -187,3 +187,72 @@ def test_api_communication_map_with_actors(api_client):
     assert len(body["actors"]) == 2
     assert "contract.pdf" in body["documents"]
     assert len(body["actor_actor_edges"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Bridge: runtime.record_fact auto-populates speaker_actor_id from doc_card
+# ---------------------------------------------------------------------------
+
+
+def test_record_fact_resolves_speaker_from_doc_card_sender(model):
+    """Subagent (adv#13 cycle) identified: the communication graph
+    was LIVE-BUT-STARVED — schema + query + UI all wired, but
+    speaker_actor_id was never populated during extraction, so every
+    real matter's get_communication_map() returned empty. Fix:
+    runtime.record_fact now resolves document_card.sender to an
+    actor and stamps speaker_actor_id on the occurrence.
+
+    This regression asserts the whole bridge end-to-end:
+     - inventory + card seeded with a sender
+     - record_fact called with only document_id (no explicit actor)
+     - occurrence row shows the resolved speaker_actor_id
+     - get_communication_map now returns a real actor_document_edge
+    """
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    inv_id, _ = model.inventory.upsert(
+        "emails/smith_to_jones.eml", "s" * 64, size_bytes=100, file_type="eml",
+    )
+    model.document_cards.upsert(
+        doc_id=inv_id, title="smith_to_jones.eml", doc_type="email",
+        source_side="plaintiff", source_role="informal",
+        sender="John Smith", recipient="Jane Jones",
+    )
+    run_id = model.start_run("bridge test")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+
+    aid = adapter.record_fact(
+        "Smith confirmed the April 15 deadline",
+        "emails/smith_to_jones.eml",
+    )
+    row = model.db.execute(
+        "SELECT speaker_actor_id FROM assertion_occurrence WHERE assertion_id=?",
+        (aid,),
+    ).fetchone()
+    assert row["speaker_actor_id"] is not None
+    cm = model.get_communication_map()
+    assert len(cm["actors"]) == 1
+    assert len(cm["actor_document_edges"]) == 1
+    # Sender name round-trips.
+    assert cm["actors"][0]["name"] == "John Smith"
+
+
+def test_record_fact_without_doc_card_sender_leaves_speaker_null(model):
+    """Guard: when the document has no card OR the card has no
+    sender, the bridge returns None. record_fact still succeeds;
+    the occurrence just has a NULL speaker_actor_id."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    run_id = model.start_run("no-card")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    aid = adapter.record_fact(
+        "A fact from a doc with no card",
+        "random/doc.pdf",
+    )
+    row = model.db.execute(
+        "SELECT speaker_actor_id FROM assertion_occurrence WHERE assertion_id=?",
+        (aid,),
+    ).fetchone()
+    assert row["speaker_actor_id"] is None
+    cm = model.get_communication_map()
+    assert cm["actor_document_edges"] == []

@@ -230,6 +230,67 @@ class MatterRuntimeAdapter:
             return ModelLayer.REALITY
         return ModelLayer.RECORD
 
+    def _resolve_speaker_actor_for_document(
+        self, document_id: Optional[str],
+    ) -> Optional[str]:
+        """SO-5 bridge: map a document's `document_card.sender` to an
+        actor_id so every occurrence sourced from that document gets
+        tagged. Without this, `get_communication_map()` renders empty
+        on every real matter — schema + query + UI are wired, but
+        nothing ever populated the speaker_actor_id column.
+
+        Conservative: only resolves when (a) the doc has a card, (b)
+        the card has a non-empty sender, (c) upsert_actor succeeds.
+        Any failure returns None — the bridge is best-effort and
+        must never block assertion extraction.
+
+        Matches on the full doc path AND the basename so an extraction
+        path supplying either form finds the same card.
+        """
+        if not document_id:
+            return None
+        try:
+            doc_norm = str(document_id).replace("\\\\", "/").replace("\\", "/")
+            basename = doc_norm.rsplit("/", 1)[-1] if "/" in doc_norm else doc_norm
+            row = self.model.db.execute(
+                """SELECT dc.sender
+                   FROM document_card dc
+                   JOIN document_inventory di ON di.id = dc.doc_id
+                   WHERE di.matter_id = ?
+                     AND (
+                          REPLACE(di.relative_path, '\\', '/') = ?
+                          OR di.relative_path = ?
+                          OR REPLACE(di.relative_path, '\\', '/') LIKE ?
+                     )
+                   LIMIT 1""",
+                (
+                    self.model.matter_id,
+                    doc_norm,
+                    document_id,
+                    f"%/{basename}",
+                ),
+            ).fetchone()
+        except Exception as _exc:
+            _log.debug(
+                "speaker_actor resolver — doc_card lookup failed for %r: %s",
+                document_id, _exc,
+            )
+            return None
+        if not row:
+            return None
+        sender = str(row["sender"] or "").strip()
+        if not sender:
+            return None
+        try:
+            actor_id, _is_new = self.model.actors.upsert_actor(sender)
+            return actor_id
+        except Exception as _exc:
+            _log.debug(
+                "speaker_actor resolver — actor upsert failed for sender=%r: %s",
+                sender, _exc,
+            )
+            return None
+
     def _auto_provenance(
         self,
         *,
@@ -336,6 +397,17 @@ class MatterRuntimeAdapter:
         # 5-layer enforcement).  NORMATIVE→LEGAL, INFERRED origin→REALITY, else RECORD.
         model_layer = self._infer_model_layer(assertion_kind, origin_kind, model_layer)
 
+        # SO-5 communication graph bridge: if the document's
+        # document_card carries a sender, resolve it to an actor and
+        # stamp speaker_actor_id on the occurrence. Without this, the
+        # communication-map surface renders empty on every real matter
+        # (schema + query + UI all wired; the extraction path never
+        # populated the speaker_actor_id foreign key). See the Round
+        # 13 audit's communication-graph LIVE-BUT-STARVED finding.
+        speaker_actor_id = self._resolve_speaker_actor_for_document(
+            document_id,
+        )
+
         candidate = AssertionCandidate(
             proposition_text=proposition_text,
             model_layer=model_layer,
@@ -352,6 +424,7 @@ class MatterRuntimeAdapter:
             predicate_key=predicate_key,
             object_json=object_json,
             temporal_scope_end=temporal_scope_end,
+            speaker_actor_id=speaker_actor_id,
         )
         # P0.1: auto-build a ProvenanceContext when the caller didn't
         # supply one so every AI-derived assertion is attributable.
