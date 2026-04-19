@@ -111,15 +111,19 @@ def setup_logging(level: str = "INFO", log_file: Optional[str] = None):
 # =============================================================================
 
 def validate_query(query: str) -> tuple[bool, list[str]]:
-    """Validate a query string."""
+    """Validate a query string.
+
+    Only rejects empty / whitespace-only input. The previous 5-char
+    minimum blocked legitimate short inputs — pleasantries ("hi",
+    "ok", "gm"), short targeted queries ("date?", "MSA?"), follow-ups
+    ("why?"). The cascade router handles substance-vs-pleasantry
+    classification; the validator shouldn't duplicate that judgment.
+    """
     issues = []
 
     if not query or not query.strip():
         issues.append("Query cannot be empty")
         return False, issues
-
-    if len(query) < 5:
-        issues.append("Query is too short (minimum 5 characters)")
 
     return len(issues) == 0, issues
 

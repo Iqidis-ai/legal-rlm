@@ -2837,6 +2837,28 @@ def test_validate_query_allows_long_queries():
     assert issues == []
 
 
+def test_validate_query_allows_short_pleasantry_inputs():
+    """Regression: a 5-char minimum used to reject legitimate
+    pleasantries ("hi", "ok", "gm") and short targeted follow-ups
+    ("why?", "when?") before the cascade router could see them.
+    Now the validator only rejects empty/whitespace; substance-vs-
+    pleasantry classification is the router's job."""
+    for q in ["hi", "ok", "gm", "why?", "when?", "bye", "a?", "b"]:
+        valid, issues = validate_query(q)
+        assert valid is True, f"expected {q!r} to validate; issues={issues}"
+        assert issues == []
+
+
+def test_validate_query_still_rejects_empty():
+    """Guard: the nudge removed the length floor but must not have
+    accidentally allowed empty / whitespace-only input — that's
+    still a genuine error."""
+    for q in ["", "   ", "\t\n "]:
+        valid, issues = validate_query(q)
+        assert valid is False
+        assert any("empty" in msg.lower() for msg in issues)
+
+
 def test_format_matter_context_emits_known_document_ids():
     """_format_matter_context() must list known_document_ids so the LLM avoids re-reading (SO-1).
 
