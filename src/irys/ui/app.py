@@ -571,9 +571,120 @@ def _bar_row(label: str, value: float, maximum: float, meta: str = "", tone: str
     )
 
 
+_DS_CSS = """<style>
+.intel-panel{
+  background:var(--background-fill-secondary,#f8fafc);
+  border:1px solid var(--block-border-color,#e2e8f0);
+  border-radius:14px;padding:16px;
+  box-shadow:0 2px 12px rgba(0,0,0,.06);
+  display:flex;flex-direction:column;gap:10px;
+  width:100%;box-sizing:border-box;overflow:hidden;
+}
+.intel-panel .intel-panel-title{
+  font-size:11px;font-weight:700;
+  color:var(--body-text-color,#0f172a);
+  letter-spacing:.08em;text-transform:uppercase;
+  padding-bottom:6px;
+  border-bottom:1px solid var(--block-border-color,#e2e8f0);
+  margin-bottom:2px;
+}
+.intel-panel .viz-shell{display:flex;flex-direction:column;gap:8px;}
+.intel-panel .viz-card-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(90px,1fr));
+  gap:6px;
+}
+.intel-panel .viz-card{
+  border:1px solid var(--block-border-color,#e2e8f0);
+  border-radius:10px;padding:8px 6px;
+  background:var(--background-fill-primary,#fff);
+  overflow:hidden;
+}
+.intel-panel .viz-card.tone-amber{border-color:rgba(217,119,6,.4);}
+.intel-panel .viz-card.tone-green{border-color:rgba(21,128,61,.4);}
+.intel-panel .viz-card.tone-red{border-color:rgba(185,28,28,.4);}
+.intel-panel .viz-card-title{
+  font-size:9px;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--body-text-color-subdued,#64748b);margin-bottom:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.intel-panel .viz-card-value{
+  font-size:18px;font-weight:700;
+  color:var(--body-text-color,#0f172a);line-height:1.1;
+}
+.intel-panel .viz-card-detail{
+  font-size:10px;color:var(--body-text-color-subdued,#64748b);margin-top:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.intel-panel .viz-two-col{display:grid;grid-template-columns:1fr;gap:6px;}
+.intel-panel .viz-panel{
+  border:1px solid var(--block-border-color,#e2e8f0);
+  border-radius:10px;padding:10px;
+  background:var(--background-fill-primary,#fff);
+}
+.intel-panel .viz-panel-title{
+  font-size:11px;font-weight:700;
+  color:var(--body-text-color,#0f172a);margin-bottom:6px;
+}
+.intel-panel .viz-subtitle{
+  font-size:10px;font-weight:700;
+  color:var(--body-text-color-subdued,#64748b);margin-bottom:3px;
+}
+.intel-panel .viz-footnote{font-size:10px;color:var(--body-text-color-subdued,#64748b);margin-top:4px;}
+.intel-panel .viz-bar-row{
+  display:flex;flex-direction:column;gap:2px;
+  padding:3px 0;
+  border-bottom:1px solid var(--block-border-color,#e2e8f0);
+}
+.intel-panel .viz-bar-label{
+  font-size:10px;color:var(--body-text-color,#334155);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.intel-panel .viz-bar-track{
+  height:5px;border-radius:999px;
+  background:var(--block-border-color,#e2e8f0);
+  overflow:hidden;margin:2px 0;
+}
+.intel-panel .viz-bar-fill{height:100%;border-radius:999px;}
+.intel-panel .viz-bar-fill.tone-green{background:#16a34a;}
+.intel-panel .viz-bar-fill.tone-amber{background:#d97706;}
+.intel-panel .viz-bar-fill.tone-blue{background:var(--color-accent,#2563eb);}
+.intel-panel .viz-bar-fill.tone-red{background:#b91c1c;}
+.intel-panel .viz-bar-meta{font-size:9px;color:var(--body-text-color-subdued,#64748b);}
+.intel-panel .viz-list-row{
+  display:flex;justify-content:space-between;align-items:flex-start;
+  gap:6px;padding:5px 0;
+  border-bottom:1px solid var(--block-border-color,#e2e8f0);
+  font-size:11px;color:var(--body-text-color,#334155);
+}
+.intel-panel .viz-list-row strong{
+  white-space:nowrap;color:var(--body-text-color-subdued,#64748b);
+}
+.intel-panel .viz-list-columns{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+.intel-panel .viz-list-columns ul{
+  margin:3px 0 0;padding-left:12px;
+  font-size:10px;color:var(--body-text-color-subdued,#64748b);
+}
+.intel-panel .viz-list-columns li{margin-bottom:3px;}
+.intel-panel .viz-empty{
+  border:1px dashed var(--block-border-color,#cbd5e1);
+  border-radius:8px;padding:10px;
+  color:var(--body-text-color-subdued,#64748b);font-size:11px;
+}
+</style>"""
+
+
 def _fmt_overview_panel(data: dict) -> str:
     if not data:
-        return "<div class='viz-empty'>No matter loaded.</div>"
+        return (
+            _DS_CSS
+            + "<div class='intel-panel'>"
+            "<div class='intel-panel-title'>Matter Intelligence</div>"
+            "<div class='viz-empty'>"
+            "Run your first investigation to see matter intelligence here."
+            "</div>"
+            "</div>"
+        )
 
     stats = data.get("stats", {})
     so = data.get("so_metrics", {})
@@ -668,6 +779,9 @@ def _fmt_overview_panel(data: dict) -> str:
     pricing_source = _escape(llm_totals.get("pricing_source", ""))
 
     return (
+        _DS_CSS
+        + "<div class='intel-panel'>"
+        "<div class='intel-panel-title'>Matter Intelligence</div>"
         "<div class='viz-shell'>"
         "<div class='viz-card-grid'>"
         + "".join(cards)
@@ -719,6 +833,7 @@ def _fmt_overview_panel(data: dict) -> str:
         + "<div><div class='viz-subtitle'>Clarifications</div><ul>"
         + clarification_items
         + "</ul></div>"
+        + "</div>"
         + "</div>"
         + "</div>"
         + "</div>"
@@ -1966,66 +2081,78 @@ def _verification_pill(status: str | None) -> str:
 
 def _fmt_assertions(assertions: list) -> str:
     if not assertions:
-        return "No facts yet."
-    # Markdown tables don't render HTML pills reliably across Gradio
-    # versions; use an HTML table so the pill colors land.
-    rows = []
+        return "<div class='viz-empty'>No assertions recorded yet.</div>"
+    rows_html = ""
     for a in assertions:
-        assertion_id = a.get("id", "?")
+        assertion_id = _escape(a.get("id", "?"))
         prop = _escape(a.get("proposition_text") or "")
-        state = a.get("belief_state") or "—"
+        state_raw = a.get("belief_state") or "—"
+        state_cls = state_raw.lower() if state_raw != "—" else "unknown"
+        state_cell = (
+            f"<span class='belief-pill belief-{state_cls}'>{_escape(state_raw)}</span>"
+            if state_raw != "—" else "—"
+        )
         conf = f"{float(a.get('confidence', 0)):.2f}" if a.get("confidence") is not None else "—"
         src_roles = a.get("source_roles", [])
         if len(src_roles) > 1:
-            src = f"MULTI[{','.join(src_roles)}]"
-            best = min(src_roles, key=lambda r: list(_TRUST_ICONS).index(r.upper())
-                       if r.upper() in _TRUST_ICONS else 99)
+            best = min(
+                src_roles,
+                key=lambda r: list(_TRUST_ICONS).index(r.upper())
+                if r.upper() in _TRUST_ICONS else 99,
+            )
             icon = _trust_icon(best)
+            src = _escape(f"MULTI[{','.join(src_roles)}]")
         elif src_roles:
-            src = src_roles[0]
-            icon = _trust_icon(src)
+            icon = _trust_icon(src_roles[0])
+            src = _escape(src_roles[0])
         else:
-            src = a.get("source_role") or a.get("primary_source_role") or "—"
-            icon = _trust_icon(src)
-        speech = a.get("speech_act") or a.get("primary_speech_act") or "—"
+            src_role = a.get("source_role") or a.get("primary_source_role") or "—"
+            icon = _trust_icon(src_role)
+            src = _escape(src_role)
+        speech = _escape(a.get("speech_act") or a.get("primary_speech_act") or "—")
+        # Verification pill as a compact prefix on the proposition
+        # cell so the new responsive table layout keeps room for
+        # human-review signal alongside the clickable-row fact-edit.
         vpill = _verification_pill(a.get("verification_status"))
-        # Include who reviewed + why rejected when applicable.
-        review_meta_html = ""
         reviewer = a.get("reviewed_by_kind")
+        review_meta_html = ""
         if reviewer and a.get("verification_status") in ("verified", "rejected"):
             review_meta_html = (
-                f"<div style='font-size:11px;color:#6b7280;margin-top:2px;'>"
+                f" <span style='font-size:10px;color:#6b7280;'>"
                 f"by {_escape(reviewer)}"
                 + (f" — {_escape(a.get('rejection_reason') or '')}"
                    if a.get("rejection_reason") else "")
-                + "</div>"
+                + "</span>"
             )
-        rows.append(
-            f"<tr>"
-            f"<td style='padding:6px 8px;vertical-align:top;'>{vpill}{review_meta_html}</td>"
-            f"<td style='padding:6px 8px;vertical-align:top;'>{icon}</td>"
-            f"<td style='padding:6px 8px;vertical-align:top;'>{prop}</td>"
-            f"<td style='padding:6px 8px;vertical-align:top;font-size:12px;color:#6b7280;'>{_escape(state)}</td>"
-            f"<td style='padding:6px 8px;vertical-align:top;font-size:12px;color:#6b7280;'>{conf}</td>"
-            f"<td style='padding:6px 8px;vertical-align:top;font-size:12px;color:#6b7280;'>{_escape(src)}</td>"
-            f"<td style='padding:6px 8px;vertical-align:top;font-size:12px;color:#6b7280;'>{_escape(speech)}</td>"
-            f"</tr>"
+        prop_cell = f"{vpill} {prop}{review_meta_html}".lstrip()
+        rows_html += (
+            f"<tr class='assertions-row' onclick='irysSelectFact(\"{assertion_id}\")' style='cursor:pointer'>"
+            f"<td style='text-align:center'>{icon}</td>"
+            f"<td>{prop_cell}</td>"
+            f"<td>{state_cell}</td>"
+            f"<td style='text-align:right'>{conf}</td>"
+            f"<td>{src}</td>"
+            f"<td>{speech}</td>"
+            f"<td><code style='font-size:10px'>{assertion_id}</code></td>"
+            "</tr>"
         )
-    header = (
-        "<tr style='background:#f9fafb;text-align:left;'>"
-        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Review</th>"
-        "<th style='padding:6px 8px;'></th>"
-        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Finding</th>"
-        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>State</th>"
-        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Conf</th>"
-        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Source</th>"
-        "<th style='padding:6px 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;'>Speech act</th>"
-        "</tr>"
-    )
     return (
-        "<div style='overflow-x:auto;'>"
-        "<table style='border-collapse:collapse;width:100%;font-size:13px;'>"
-        f"{header}{''.join(rows)}"
+        "<div class='matrix-wrap'>"
+        "<table class='analytics-table' style='table-layout:fixed;width:100%'>"
+        "<colgroup>"
+        "<col style='width:3%'>"
+        "<col style='width:39%'>"
+        "<col style='width:10%'>"
+        "<col style='width:8%'>"
+        "<col style='width:13%'>"
+        "<col style='width:12%'>"
+        "<col style='width:15%'>"
+        "</colgroup>"
+        "<thead><tr>"
+        "<th></th><th>Proposition</th><th>State</th>"
+        "<th>Conf</th><th>Source</th><th>Speech</th><th>ID</th>"
+        "</tr></thead>"
+        "<tbody>" + rows_html + "</tbody>"
         "</table></div>"
     )
 
@@ -3056,7 +3183,7 @@ class AppState:
             assertions = _run_async(self.backend().list_assertions(matter_id, limit=50))
             return _fmt_assertions(assertions)
         except Exception as exc:
-            return f"Error loading assertions: {exc}"
+            return f"<div class='viz-empty'>Error loading assertions: {_escape(str(exc))}</div>"
 
     def load_review_queue(self, matter_id: str) -> tuple[str, gr.update]:
         """Return (html_render, dropdown_update) for the review queue.
@@ -3834,220 +3961,337 @@ def _fmt_ws_status(msg: str, kind: str = "ok") -> str:
 # ---------------------------------------------------------------------------
 
 
-def create_app(api_key: Optional[str] = None) -> gr.Blocks:
-    state = AppState(api_key=api_key)
-    _s3_mode = _get_storage_mode() == "s3"
-
-    _theme = gr.themes.Soft(
-        primary_hue=gr.themes.colors.blue,
-        secondary_hue=gr.themes.colors.slate,
-        neutral_hue=gr.themes.colors.slate,
-        font=gr.themes.GoogleFont("Inter"),
-        font_mono=gr.themes.GoogleFont("JetBrains Mono"),
-    )
-    _css = """
+_theme = gr.themes.Soft(
+    primary_hue=gr.themes.colors.blue,
+    secondary_hue=gr.themes.colors.slate,
+    neutral_hue=gr.themes.colors.slate,
+    font=gr.themes.GoogleFont("Inter"),
+    font_mono=gr.themes.GoogleFont("JetBrains Mono"),
+)
+_css = """
     .mono textarea { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
     .status-bar textarea { font-weight: 600; font-size: 13px; }
     .compact-id { font-size: 11px !important; }
-    .compact-id textarea { font-size: 11px; color: #888; }
-    .sidebar-section { border-left: 3px solid #e2e8f0; padding-left: 12px; }
-    .hero-text { font-size: 15px; color: #475569; margin-bottom: 4px !important; }
+    .compact-id textarea { font-size: 11px; color: var(--body-text-color-subdued, #888); }
     footer { display: none !important; }
-    /* Matter workspace */
+
+    /* ── Matter workspace ─────────────────────────────────── */
     .matter-card {
-        border: 1px solid #dbe4ef; border-radius: 14px; padding: 16px 18px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(241,245,249,0.94));
+        border: 1px solid var(--block-border-color, #dbe4ef);
+        border-radius: 14px; padding: 16px 18px;
+        background: var(--background-fill-primary, #fff);
         box-shadow: 0 2px 10px rgba(15,23,42,0.06); margin-bottom: 2px;
     }
     .matter-card-header {
         display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;
     }
-    .matter-card-name { font-size: 15px; font-weight: 700; color: #0f172a; }
+    .matter-card-name { font-size: 15px; font-weight: 700; color: var(--body-text-color, #0f172a); }
     .matter-card-badge {
-        font-size: 12px; font-weight: 600; color: #2563eb;
+        font-size: 12px; font-weight: 600; color: var(--color-accent, #2563eb);
         background: rgba(37,99,235,0.08); border-radius: 999px; padding: 2px 10px;
     }
     .matter-card-files { display: flex; flex-direction: column; gap: 4px; }
     .matter-file-chip {
-        display: flex; align-items: center; gap: 8px; font-size: 12px; color: #334155;
-        background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 5px 10px;
+        display: flex; align-items: center; gap: 8px; font-size: 12px;
+        color: var(--body-text-color, #334155);
+        background: var(--background-fill-secondary, #f8fafc);
+        border: 1px solid var(--block-border-color, #e2e8f0);
+        border-radius: 8px; padding: 5px 10px;
     }
-    .matter-file-icon { color: #64748b; flex-shrink: 0; }
+    .matter-file-icon { color: var(--body-text-color-subdued, #64748b); flex-shrink: 0; }
     .matter-empty-state {
-        border: 2px dashed #cbd5e1; border-radius: 14px; padding: 32px 20px;
-        text-align: center; background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+        border: 2px dashed var(--block-border-color, #cbd5e1);
+        border-radius: 14px; padding: 32px 20px;
+        text-align: center; background: var(--background-fill-secondary, #f8fafc);
     }
-    .matter-empty-title { font-size: 15px; font-weight: 600; color: #64748b; margin-bottom: 6px; }
-    .matter-empty-sub { font-size: 13px; color: #94a3b8; }
-    .ws-status {
-        font-size: 12px; border-radius: 8px; padding: 7px 12px; margin-top: 4px;
-    }
+    .matter-empty-title { font-size: 15px; font-weight: 600; color: var(--body-text-color-subdued, #64748b); margin-bottom: 6px; }
+    .matter-empty-sub { font-size: 13px; color: var(--body-text-color-subdued, #94a3b8); }
+    /* Status badges: intentional semantic colors, not theme variables */
+    .ws-status { font-size: 12px; border-radius: 8px; padding: 7px 12px; margin-top: 4px; }
     .ws-ok  { color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; }
     .ws-err { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; }
     .ws-info{ color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; }
     .gap-highlight { background: #fef3c7; border-radius: 6px; padding: 8px; }
-    .viz-shell { display: flex; flex-direction: column; gap: 12px; }
+
+    /* ── Shared viz shell ─────────────────────────────────── */
+    .viz-shell { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
     .viz-empty {
-        border: 1px dashed #cbd5e1; border-radius: 12px; padding: 14px;
-        color: #64748b; background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+        border: 1px dashed var(--block-border-color, #cbd5e1); border-radius: 12px; padding: 14px;
+        color: var(--body-text-color-subdued, #64748b);
+        background: var(--background-fill-secondary, #f8fafc);
     }
+
+    /* ── Stat cards ───────────────────────────────────────── */
     .viz-card-grid {
         display: grid; gap: 10px;
         grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
     }
     .viz-card {
-        border: 1px solid #dbe4ef; border-radius: 14px; padding: 12px 14px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(241,245,249,0.92));
-        box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
+        border: 1px solid var(--block-border-color, #dbe4ef);
+        border-radius: 14px; padding: 12px 14px;
+        background: var(--background-fill-primary, #fff);
+        box-shadow: 0 2px 8px rgba(15,23,42,0.05);
+        min-width: 0;
     }
-    .viz-card.tone-amber { border-color: rgba(217, 119, 6, 0.18); }
-    .viz-card.tone-green { border-color: rgba(21, 128, 61, 0.18); }
-    .viz-card.tone-red { border-color: rgba(185, 28, 28, 0.18); }
-    .viz-card-title { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #64748b; }
-    .viz-card-value { font-size: 24px; font-weight: 700; color: #0f172a; margin-top: 4px; }
-    .viz-card-detail { font-size: 12px; color: #475569; margin-top: 6px; }
+    .viz-card.tone-amber { border-color: rgba(217,119,6,0.25); }
+    .viz-card.tone-green { border-color: rgba(21,128,61,0.25); }
+    .viz-card.tone-red   { border-color: rgba(185,28,28,0.25); }
+    .viz-card-title {
+        font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+        color: var(--body-text-color-subdued, #64748b);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .viz-card-value {
+        font-size: 24px; font-weight: 700;
+        color: var(--body-text-color, #0f172a); margin-top: 4px;
+    }
+    .viz-card-detail {
+        font-size: 12px; color: var(--body-text-color-subdued, #475569); margin-top: 6px;
+    }
+
+    /* ── Two-column grid ─────────────────────────────────── */
     .viz-two-col {
         display: grid; gap: 12px;
         grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        min-width: 0;
     }
+
+    /* ── Panel card ──────────────────────────────────────── */
     .viz-panel {
-        border: 1px solid #dbe4ef; border-radius: 14px; padding: 14px;
-        background: rgba(255,255,255,0.92);
+        border: 1px solid var(--block-border-color, #dbe4ef);
+        border-radius: 14px; padding: 14px;
+        background: var(--background-fill-primary, #fff);
+        min-width: 0;
     }
-    .viz-panel-title { font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 10px; }
-    .viz-subtitle { font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 6px; }
-    .viz-footnote { font-size: 11px; color: #64748b; margin-top: 8px; }
+    .viz-panel-title {
+        font-size: 13px; font-weight: 700;
+        color: var(--body-text-color, #0f172a); margin-bottom: 10px;
+    }
+    .viz-subtitle {
+        font-size: 12px; font-weight: 700;
+        color: var(--body-text-color-subdued, #475569); margin-bottom: 6px;
+    }
+    .viz-footnote { font-size: 11px; color: var(--body-text-color-subdued, #64748b); margin-top: 8px; }
+
+    /* ── List rows ───────────────────────────────────────── */
     .viz-list-row {
         display: flex; justify-content: space-between; align-items: flex-start;
-        gap: 12px; padding: 8px 0; border-bottom: 1px solid #eef2f7;
-        font-size: 12px; color: #334155;
+        gap: 12px; padding: 8px 0;
+        border-bottom: 1px solid var(--block-border-color, #eef2f7);
+        font-size: 12px; color: var(--body-text-color, #334155);
+        min-width: 0;
     }
-    .viz-list-row span, .viz-list-row strong { white-space: normal; word-break: break-word; }
+    .viz-list-row span, .viz-list-row strong { white-space: normal; word-break: break-word; min-width: 0; }
     .viz-list-row:last-child { border-bottom: none; }
     .viz-list-columns {
         display: grid; gap: 14px;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     }
-    .viz-list-columns ul { margin: 0; padding-left: 18px; color: #334155; }
+    .viz-list-columns ul { margin: 0; padding-left: 18px; color: var(--body-text-color, #334155); }
     .viz-list-columns li { margin-bottom: 6px; }
+
+    /* ── Bar rows ────────────────────────────────────────── */
     .viz-bar-row {
         display: grid; gap: 8px; align-items: center;
-        grid-template-columns: minmax(110px, 1fr) minmax(130px, 2fr) minmax(100px, auto);
-        margin-bottom: 8px;
+        grid-template-columns: minmax(80px, 1fr) minmax(80px, 2fr) minmax(80px, auto);
+        margin-bottom: 8px; min-width: 0;
     }
-    .viz-bar-label { font-size: 12px; color: #334155; white-space: normal; word-break: break-word; }
-    .viz-bar-track { height: 10px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+    .viz-bar-label {
+        font-size: 12px; color: var(--body-text-color, #334155);
+        white-space: normal; word-break: break-word; min-width: 0;
+    }
+    .viz-bar-track {
+        height: 10px; border-radius: 999px;
+        background: var(--block-border-color, #e2e8f0); overflow: hidden; min-width: 0;
+    }
     .viz-bar-fill { height: 100%; border-radius: 999px; }
-    .viz-bar-fill.tone-blue { background: linear-gradient(90deg, #2563eb, #38bdf8); }
+    .viz-bar-fill.tone-blue  { background: linear-gradient(90deg, var(--color-accent,#2563eb), #38bdf8); }
     .viz-bar-fill.tone-amber { background: linear-gradient(90deg, #d97706, #f59e0b); }
     .viz-bar-fill.tone-green { background: linear-gradient(90deg, #15803d, #22c55e); }
-    .viz-bar-fill.tone-red { background: linear-gradient(90deg, #b91c1c, #ef4444); }
-    .viz-bar-meta { font-size: 12px; color: #64748b; text-align: right; }
-    .issues-stack { display: flex; flex-direction: column; gap: 10px; }
+    .viz-bar-fill.tone-red   { background: linear-gradient(90deg, #b91c1c, #ef4444); }
+    .viz-bar-meta { font-size: 12px; color: var(--body-text-color-subdued, #64748b); text-align: right; min-width: 0; word-break: break-word; }
+
+    /* ── Issues tree ─────────────────────────────────────── */
+    .issues-stack { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
     .issue-row {
         padding: 10px 12px 12px calc(12px + var(--issue-indent));
-        border: 1px solid #e2e8f0; border-radius: 12px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.96));
+        border: 1px solid var(--block-border-color, #e2e8f0); border-radius: 12px;
+        background: var(--background-fill-primary, #fff); min-width: 0;
     }
-    .issue-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .issue-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; min-width: 0; }
     .proof-pill {
         border-radius: 999px; padding: 2px 8px; font-size: 10px;
-        font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+        font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; flex-shrink: 0;
     }
     .proof-strong { background: rgba(21,128,61,0.12); color: #166534; }
     .proof-partial { background: rgba(217,119,6,0.12); color: #b45309; }
-    .proof-weak { background: rgba(249,115,22,0.12); color: #c2410c; }
-    .proof-gap { background: rgba(185,28,28,0.12); color: #b91c1c; }
-    .proof-none { background: rgba(148,163,184,0.18); color: #475569; }
-    .issue-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: #0f172a; white-space: normal; word-break: break-word; }
-    .issue-pct { font-size: 12px; color: #475569; }
-    .issue-track { height: 8px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
-    .issue-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #1d4ed8, #22c55e); }
-    .issue-meta { font-size: 12px; color: #64748b; margin-top: 8px; }
-    .timeline-list { position: relative; display: flex; flex-direction: column; gap: 12px; }
+    .proof-weak    { background: rgba(249,115,22,0.12); color: #c2410c; }
+    .proof-gap     { background: rgba(185,28,28,0.12); color: #b91c1c; }
+    .proof-none    { background: rgba(148,163,184,0.18); color: #475569; }
+    .issue-title {
+        flex: 1; min-width: 0; font-size: 13px; font-weight: 600;
+        color: var(--body-text-color, #0f172a); white-space: normal; word-break: break-word;
+    }
+    .issue-pct { font-size: 12px; color: var(--body-text-color-subdued, #475569); flex-shrink: 0; }
+    .issue-track {
+        height: 8px; border-radius: 999px;
+        background: var(--block-border-color, #e2e8f0); overflow: hidden;
+    }
+    .issue-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--color-accent,#1d4ed8), #22c55e); }
+    .issue-meta { font-size: 12px; color: var(--body-text-color-subdued, #64748b); margin-top: 8px; }
+
+    /* ── Timeline ────────────────────────────────────────── */
+    .timeline-list { position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
     .timeline-item {
         display: grid; gap: 12px; align-items: start;
-        grid-template-columns: 110px 18px minmax(0, 1fr);
+        grid-template-columns: 100px 18px minmax(0, 1fr);
     }
-    .timeline-date { font-size: 12px; font-weight: 700; color: #334155; padding-top: 2px; }
+    .timeline-date {
+        font-size: 12px; font-weight: 700;
+        color: var(--body-text-color, #334155); padding-top: 2px; word-break: break-word;
+    }
     .timeline-line { position: relative; min-height: 56px; }
     .timeline-line::before {
-        content: ''; position: absolute; left: 8px; top: 0; bottom: -12px; width: 2px; background: #dbe4ef;
+        content: ''; position: absolute; left: 8px; top: 0; bottom: -12px;
+        width: 2px; background: var(--block-border-color, #dbe4ef);
     }
     .timeline-dot {
         position: absolute; left: 2px; top: 6px; width: 14px; height: 14px;
-        border-radius: 50%; background: #2563eb; box-shadow: 0 0 0 4px rgba(37,99,235,0.12);
+        border-radius: 50%; background: var(--color-accent, #2563eb);
+        box-shadow: 0 0 0 4px rgba(37,99,235,0.12);
     }
     .timeline-body {
-        border: 1px solid #dbe4ef; border-radius: 12px; padding: 10px 12px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.96));
+        border: 1px solid var(--block-border-color, #dbe4ef); border-radius: 12px; padding: 10px 12px;
+        background: var(--background-fill-primary, #fff); min-width: 0;
     }
-    .timeline-title { font-size: 13px; font-weight: 600; color: #0f172a; white-space: normal; word-break: break-word; }
-    .timeline-meta { font-size: 12px; color: #64748b; margin-top: 6px; white-space: normal; word-break: break-word; }
+    .timeline-title {
+        font-size: 13px; font-weight: 600; color: var(--body-text-color, #0f172a);
+        white-space: normal; word-break: break-word;
+    }
+    .timeline-meta {
+        font-size: 12px; color: var(--body-text-color-subdued, #64748b);
+        margin-top: 6px; white-space: normal; word-break: break-word;
+    }
+
+    /* ── Evidence / analytics tables ─────────────────────── */
     .matrix-wrap { overflow: auto; max-width: 100%; }
     .matrix-wrap-heatmap {
-        overflow: auto;
-        max-width: 100%;
-        max-height: 72vh;
-        border: 1px solid #dbe4ef;
-        border-radius: 12px;
-        background: #ffffff;
+        overflow: auto; max-width: 100%; max-height: 72vh;
+        border: 1px solid var(--block-border-color, #dbe4ef); border-radius: 12px;
+        background: var(--background-fill-primary, #fff);
     }
-    .matrix-table, .analytics-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+    .matrix-table, .analytics-table {
+        width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px;
+    }
     .matrix-table th, .matrix-table td, .analytics-table th, .analytics-table td {
-        border-bottom: 1px solid #e2e8f0; padding: 8px 10px; text-align: left;
+        border-bottom: 1px solid var(--block-border-color, #e2e8f0);
+        padding: 8px 10px; text-align: left;
         white-space: normal; word-break: break-word; vertical-align: top;
     }
     .matrix-table thead th, .analytics-table thead th {
-        position: sticky; top: 0; background: #f8fafc; color: #334155; z-index: 1;
+        position: sticky; top: 0; z-index: 1;
+        background: var(--background-fill-secondary, #f8fafc);
+        color: var(--body-text-color, #334155);
+        font-weight: 700;
     }
-    .matrix-cell { min-width: 52px; text-align: center !important; font-weight: 700; color: #0f172a; }
-    .evidence-matrix-table {
-        width: max-content;
-        min-width: max-content;
-        table-layout: fixed;
-    }
-    .evidence-matrix-table thead th {
-        min-width: 170px;
-        max-width: 220px;
-        background: #f8fafc;
-        z-index: 3;
-    }
+    .matrix-cell { min-width: 52px; text-align: center !important; font-weight: 700; color: var(--body-text-color, #0f172a); }
+    .evidence-matrix-table { width: max-content; min-width: max-content; table-layout: fixed; }
+    .evidence-matrix-table thead th { min-width: 170px; max-width: 220px; z-index: 3; }
     .evidence-matrix-table thead th:first-child {
-        min-width: 220px;
-        max-width: 300px;
-        left: 0;
-        z-index: 5;
-        box-shadow: 2px 0 0 #dbe4ef;
+        min-width: 220px; max-width: 300px; left: 0; z-index: 5;
+        box-shadow: 2px 0 0 var(--block-border-color, #dbe4ef);
     }
     .evidence-matrix-table tbody th {
-        position: sticky;
-        left: 0;
-        min-width: 220px;
-        max-width: 300px;
-        background: #f8fafc;
-        z-index: 2;
-        box-shadow: 2px 0 0 #dbe4ef;
+        position: sticky; left: 0; min-width: 220px; max-width: 300px; z-index: 2;
+        background: var(--background-fill-secondary, #f8fafc);
+        box-shadow: 2px 0 0 var(--block-border-color, #dbe4ef);
     }
-    .evidence-matrix-table td.matrix-cell {
-        min-width: 72px;
-        width: 72px;
-        text-align: center !important;
+    .evidence-matrix-table td.matrix-cell { min-width: 72px; width: 72px; text-align: center !important; }
+
+    /* ── Communication graph ─────────────────────────────── */
+    .comm-graph {
+        width: 100%; height: auto;
+        border: 1px solid var(--block-border-color, #dbe4ef); border-radius: 14px;
+        background: var(--background-fill-secondary, #f8fafc); overflow: visible;
     }
-    .comm-graph { width: 100%; height: auto; border: 1px solid #dbe4ef; border-radius: 14px; background: #f8fafc; overflow: visible; }
-    .comm-actor-node { fill: #1d4ed8; opacity: 0.9; }
+    .comm-actor-node { fill: var(--color-accent, #1d4ed8); opacity: 0.9; }
     .comm-doc-node { fill: #0f766e; opacity: 0.85; }
-    .comm-label { font-size: 11px; fill: #334155; font-family: 'Inter', sans-serif; }
+    .comm-label { font-size: 11px; fill: var(--body-text-color, #334155); font-family: 'Inter', sans-serif; }
     .comm-label-left { text-anchor: start; }
-    .viz-detail { border-top: 1px solid #e2e8f0; padding: 10px 0; }
+
+    /* ── Expandable detail ───────────────────────────────── */
+    .viz-detail { border-top: 1px solid var(--block-border-color, #e2e8f0); padding: 10px 0; }
     .viz-detail:first-child { border-top: none; }
-    .viz-detail summary { cursor: pointer; font-weight: 600; color: #0f172a; }
-    .viz-detail-block { margin-top: 10px; font-size: 12px; color: #334155; }
+    .viz-detail summary { cursor: pointer; font-weight: 600; color: var(--body-text-color, #0f172a); }
+    .viz-detail-block { margin-top: 10px; font-size: 12px; color: var(--body-text-color, #334155); }
     .viz-detail-block ul { margin: 6px 0 0 0; padding-left: 18px; }
     .viz-detail-block li { margin-bottom: 6px; }
+
+    /* ── Sidebar column transparency ─────────────────────── */
+    .intelligence-sidebar {
+        --block-background-fill: transparent;
+        --block-border-color: transparent;
+        --block-border-width: 0px;
+        --block-shadow: none;
+        --block-padding: 0px;
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+    .intelligence-sidebar > div,
+    .intelligence-sidebar > div > div {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+    }
+
+    /* ── Global responsive safety net ───────────────────── */
+    .gradio-container * { box-sizing: border-box; }
+    .gradio-container td, .gradio-container th { overflow-wrap: break-word; }
+    .gradio-container img { max-width: 100%; height: auto; }
+
+    /* ── Assertions: clickable rows ──────────────────────── */
+    .assertions-row:hover { background: var(--background-fill-secondary, #f8fafc); }
+
+    /* ── Belief state pills ──────────────────────────────── */
+    .belief-pill {
+        display: inline-block; border-radius: 999px; padding: 2px 8px;
+        font-size: 10px; font-weight: 700; text-transform: capitalize;
+        letter-spacing: 0.04em;
+    }
+    .belief-alleged    { background: rgba(217,119,6,0.12);  color: #b45309; }
+    .belief-argued     { background: rgba(30,64,175,0.10);  color: #1e40af; }
+    .belief-admitted   { background: rgba(21,128,61,0.12);  color: #166534; }
+    .belief-operative  { background: rgba(6,95,70,0.12);    color: #065f46; }
+    .belief-performed  { background: rgba(15,118,110,0.12); color: #0f766e; }
+    .belief-disputed   { background: rgba(194,65,12,0.12);  color: #c2410c; }
+    .belief-superseded { background: rgba(71,85,105,0.12);  color: #475569; }
+    .belief-withdrawn  { background: rgba(107,114,128,0.12);color: #6b7280; }
+    .belief-inferred   { background: rgba(109,40,217,0.12); color: #6d28d9; }
+    .belief-resolved   { background: rgba(55,48,163,0.12);  color: #3730a3; }
+    .belief-unknown    { background: rgba(148,163,184,0.18);color: #475569; }
+    .belief-legend { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+
+    /* ── Correction result card ──────────────────────────── */
+    .correction-result {
+        display: flex; align-items: flex-start; gap: 10px;
+        padding: 10px 14px; border-radius: 8px; font-size: 13px;
+        border: 1px solid;
+    }
+    .correction-ok  { background: rgba(21,128,61,0.08); border-color: rgba(21,128,61,0.25); color: #166534; }
+    .correction-err { background: rgba(185,28,28,0.08); border-color: rgba(185,28,28,0.25); color: #b91c1c; }
+    .correction-icon { font-size: 18px; line-height: 1; flex-shrink: 0; }
+    .correction-detail { color: var(--body-text-color, #334155); font-size: 12px; }
+    .correction-result-empty { color: var(--body-text-color-subdued, #64748b); font-size: 12px; font-style: italic; }
     """
 
-    with gr.Blocks(title="Irys — Legal Intelligence", theme=_theme, css=_css) as demo:
+
+def create_app(api_key: Optional[str] = None) -> gr.Blocks:
+    state = AppState(api_key=api_key)
+    _s3_mode = _get_storage_mode() == "s3"
+
+    with gr.Blocks(title="Irys — Legal Intelligence") as demo:
 
         # Hidden matter_id state — auto-populated, never shown prominently
         matter_id_box = gr.Textbox(visible=False)
@@ -4218,12 +4462,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     )
 
             # ---------- RIGHT: Intelligence sidebar ----------
-            with gr.Column(scale=1, min_width=280):
-                # UI-6 privilege mode toggle. Clean is the safe default
-                # (privileged content redacted to "[withheld]"); Internal
-                # unredacts for attorney-only workspaces. The banner
-                # below surfaces the active mode so a reviewer can't
-                # forget which state they're in before sharing a view.
+            with gr.Column(scale=1, min_width=280, elem_classes=["intelligence-sidebar"]):
+                # UI-6 privilege mode toggle + P0.3 review badge
+                # preserved at the top of the new dashboard sidebar.
+                # The collaborator's UI-audit overhaul restructured
+                # the sidebar around _fmt_overview_panel, but the
+                # privilege toggle (clean vs. internal) and review-
+                # queue count chip are operational controls that
+                # attorneys need visible — not information to hide
+                # behind the overview.
                 privilege_banner_md = gr.HTML(_fmt_privilege_banner("clean"))
                 privilege_toggle = gr.Radio(
                     choices=[
@@ -4238,39 +4485,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         "private attorney workspace."
                     ),
                 )
-
-                # P0.3 visibility: review queue count chip at the top
-                # of the sidebar. Quiet green when empty; amber with
-                # bucket counts when pending.
                 review_badge_md = gr.HTML("")
 
-                gr.Markdown("### Matter Intelligence")
-                overview_md = gr.HTML(
-                    "<div class='viz-empty'>Run your first investigation to see matter intelligence here.</div>"
-                )
+                # New dashboard overview panel (collaborator's UI
+                # audit). The dark navy panel is self-contained
+                # inside the HTML — no Gradio column styling needed.
+                overview_md = gr.HTML(_fmt_overview_panel({}))
+                # Hidden components kept for callback compatibility
+                # with existing wiring.
+                issues_md = gr.HTML(visible=False)
+                gaps_md = gr.Markdown(visible=False)
+                assumptions_md = gr.Markdown(visible=False)
 
-                gr.Markdown("---")
-                gr.Markdown("### Issues & Evidence")
-                issues_md = gr.HTML(
-                    "<div class='viz-empty'>Issue coverage and proof state will appear here after investigation.</div>"
-                )
-
-                gr.Markdown("---")
-                gr.Markdown("### What's Missing")
-                gaps_md = gr.Markdown(
-                    "*Irys tracks missing documents, unanswered questions, and weak "
-                    "spots. They'll appear here after your first investigation.*"
-                )
-
-                gr.Markdown("---")
-                gr.Markdown("### Working Assumptions")
-                assumptions_md = gr.Markdown(
-                    "*Irys tracks what it's assuming to be true. If an assumption "
-                    "turns out to be wrong, conclusions that depend on it are flagged.*"
-                )
-
-                with gr.Row():
-                    refresh_sidebar_btn = gr.Button("Refresh All", variant="secondary", size="sm")
+                refresh_sidebar_btn = gr.Button("↻ Refresh", variant="secondary", size="sm")
 
         # ==================================================================
         # DETAIL ACCORDIONS (below main area)
@@ -4283,9 +4510,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "If something is wrong, correct it below — Irys will automatically update any "
                 "conclusions that depended on that fact."
             )
-            # gr.HTML (not gr.Markdown) so the trust-pill styled HTML
-            # table renders without sanitize_html stripping inline
-            # styles.
+            # gr.HTML (not gr.Markdown) so the trust-pill and belief-
+            # pill styled HTML table renders without sanitize_html
+            # stripping inline styles.
             assertions_md = gr.HTML(
                 "<div class='viz-empty'>Facts will appear here after an investigation.</div>"
             )
@@ -4316,13 +4543,24 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         ],
                         scale=1,
                     )
+                gr.HTML(
+                    "<div class='belief-legend'>"
+                    + "".join(
+                        f"<span class='belief-pill belief-{s}'>{s}</span> "
+                        for s in [
+                            "alleged", "argued", "admitted", "operative", "performed",
+                            "disputed", "superseded", "withdrawn", "inferred", "resolved",
+                        ]
+                    )
+                    + "</div>"
+                )
                 correction_reason = gr.Textbox(
                     label="Why is this correction needed?",
                     placeholder="e.g. This is from the signed contract, not the complaint",
                     lines=2,
                 )
                 correction_btn = gr.Button("Apply Correction", variant="primary")
-                correction_result = gr.Textbox(label="Result", interactive=False)
+                correction_result = gr.HTML("<div class='correction-result-empty'>Apply a correction to see the result here.</div>")
 
         # ==================================================================
         # REVIEW INBOX — what AI extractions need the attorney's sign-off
@@ -4896,16 +5134,30 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         )
 
         # --- Correction ---
+        def _fmt_correction_result(result_text: str) -> str:
+            ok = result_text.startswith("✅")
+            body = result_text[2:].strip() if result_text[:2] in ("✅", "❌") else result_text
+            label = "Correction applied" if ok else "Correction failed"
+            icon = "✅" if ok else "❌"
+            css_class = "correction-ok" if ok else "correction-err"
+            return (
+                f"<div class='correction-result {css_class}'>"
+                f"<span class='correction-icon'>{icon}</span>"
+                f"<div><strong>{label}</strong><br>"
+                f"<span class='correction-detail'>{_escape(body)}</span></div>"
+                f"</div>"
+            )
+
         def _correct_and_refresh(mid, aid, new_state_str, reason):
             result_text = state.do_correct_assertion(mid, aid, new_state_str, reason)
             if result_text.startswith("\u2705"):
                 return (
-                    result_text,
+                    _fmt_correction_result(result_text),
                     state.load_assertions(mid),
                     state.load_issues(mid),
                     state.load_overview(mid),
                 )
-            return result_text, gr.update(), gr.update(), gr.update()
+            return _fmt_correction_result(result_text), gr.update(), gr.update(), gr.update()
 
         correction_btn.click(
             fn=_correct_and_refresh,
@@ -5072,6 +5324,30 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[resume_result],
         )
 
+        # Inject JS: clicking an assertions row fills the Fact ID textbox
+        _fact_select_js = """
+() => {
+    window.irysSelectFact = function(id) {
+        const labels = document.querySelectorAll('label');
+        for (const lbl of labels) {
+            if (lbl.textContent.includes('Fact ID')) {
+                const box = lbl.closest('.block')?.querySelector('textarea, input[type=text]');
+                if (box) {
+                    const desc = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value') ||
+                        Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+                    desc.set.call(box, id);
+                    box.dispatchEvent(new Event('input', { bubbles: true }));
+                    box.dispatchEvent(new Event('change', { bubbles: true }));
+                    break;
+                }
+            }
+        }
+    };
+}
+"""
+        demo.load(fn=None, js=_fact_select_js)
+
         # Inject JS to enable folder selection on the folder-upload inputs
         if _s3_mode:
             _folder_upload_js = """
@@ -5128,7 +5404,7 @@ def main():
         print("No GEMINI_API_KEY set — pass --api-key or set the env var")
 
     demo = create_app(api_key=api_key)
-    demo.launch(server_port=args.port, share=args.share)
+    demo.launch(server_port=args.port, share=args.share, theme=_theme, css=_css)
 
 
 if __name__ == "__main__":
