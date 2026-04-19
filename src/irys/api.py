@@ -33,7 +33,7 @@ from .rlm.governance import (
     TraceFamilyResult,
     decision_cache_key,
 )
-from .rlm.state import InvestigationState, normalize_research_mode
+from .rlm.state import InvestigationState, StepType, normalize_research_mode
 from .output import get_formatter
 
 logger = logging.getLogger("irys")
@@ -591,6 +591,72 @@ class Irys:
                 {"query_length": len(query)},
             )
 
+    # Attorney-facing labels for the cascade families. Mirrors the UI
+    # chip; kept here so the reasoning-trace prose matches the chip
+    # and never leaks an internal token like "read".
+    _ROUTE_PROSE = {
+        "investigate": "Deep investigation",
+        "read": "Quick summary",
+        "query": "Direct lookup",
+        "trace": "Reasoning trace",
+        "steer": "Correction preview",
+        "compare": "Change comparison",
+        "scenario": "What-if analysis",
+        "deliverable": "Document draft",
+        "clarify": "Clarification request",
+    }
+
+    def _seed_cheap_path_trace(
+        self,
+        state: InvestigationState,
+        decision: CascadeDecision,
+        terminal_family: str,
+        extra: Optional[list[tuple[StepType, str]]] = None,
+    ) -> None:
+        """Populate state.thinking_steps for a cheap-path family (read,
+        query, trace, steer, compare, scenario, deliverable, clarify)
+        so the UI's Reasoning Trace tab isn't blank on these flows.
+
+        Without this, a user running "what do we know" sees an empty
+        trace — the full AR loop is the only path that streams
+        thinking_steps. This puts three short attorney-facing lines
+        on state.thinking_steps regardless of path:
+          1. what the classifier decided (and why)
+          2. the source of the answer (existing matter state vs.
+             fresh investigation)
+          3. any family-specific detail the caller passes via `extra`
+
+        Reasoning-trace prose never uses internal family tokens
+        ('read' / 'investigate'); it uses the same attorney labels
+        the UI chip displays.
+        """
+        try:
+            term_label = self._ROUTE_PROSE.get(
+                terminal_family, terminal_family.title(),
+            )
+            cls = str(decision.family or "").strip()
+            rationale = (decision.rationale or "").strip()
+            if cls and cls != terminal_family:
+                cls_label = self._ROUTE_PROSE.get(cls, cls.title())
+                route_line = (
+                    f"Routed to {term_label} "
+                    f"(escalated from {cls_label})"
+                )
+            else:
+                route_line = f"Routed to {term_label}"
+            if rationale:
+                route_line += f". Reason: {rationale}"
+            state.add_step(StepType.THINKING, route_line)
+            state.add_step(
+                StepType.THINKING,
+                "Answered from existing matter state (no new documents read).",
+            )
+            if extra:
+                for step_type, content in extra:
+                    state.add_step(step_type, content)
+        except Exception as _exc:
+            logger.debug("_seed_cheap_path_trace failed: %s", _exc)
+
     def _make_read_state(
         self,
         query: str,
@@ -615,6 +681,17 @@ class Irys:
         # escalation. Read handler is always the terminal_family here.
         state.findings["route"] = decision.to_audit_dict(terminal_family="read")
         state.findings["read_confidence"] = read_result.confidence_label
+        # Populate thinking_steps so the UI reasoning-trace tab shows
+        # transparency on the cheap path. See _seed_cheap_path_trace.
+        _cit_count = len(read_result.citations or [])
+        self._seed_cheap_path_trace(
+            state, decision, "read",
+            extra=[(
+                StepType.SYNTHESIS,
+                f"Answer confidence: {read_result.confidence_label} "
+                f"({_cit_count} citation{'s' if _cit_count != 1 else ''}).",
+            )],
+        )
         # Attach citations as document-anchored entries so existing
         # citation consumers have something to render.
         for doc in read_result.citations:
@@ -650,6 +727,16 @@ class Irys:
         state.findings["route"] = decision.to_audit_dict(terminal_family="query")
         state.findings["query_intent"] = query_result.intent
         state.findings["query_row_count"] = len(query_result.rows)
+        _row_count = len(query_result.rows)
+        self._seed_cheap_path_trace(
+            state, decision, "query",
+            extra=[(
+                StepType.FINDING,
+                f"Query intent: {query_result.intent}. "
+                f"Returned {_row_count} matching record"
+                f"{'s' if _row_count != 1 else ''}.",
+            )],
+        )
         state.status = "completed"
         return state
 
@@ -682,6 +769,12 @@ class Irys:
         state.findings["route"] = decision.to_audit_dict(terminal_family=terminal_family)
         if extra:
             state.findings.update(extra)
+        # Seed a minimal reasoning trace so the UI tab isn't blank on
+        # compare / scenario / deliverable / read_infra_failure paths.
+        self._seed_cheap_path_trace(
+            state, decision,
+            terminal_family or str(decision.family or ""),
+        )
         state.status = "completed"
         return state
 
@@ -702,6 +795,16 @@ class Irys:
         )
         state.findings["final_output"] = steer_result.rendered_answer
         state.findings["route"] = decision.to_audit_dict(terminal_family="steer")
+        _cand_count = len(steer_result.candidates or [])
+        self._seed_cheap_path_trace(
+            state, decision, "steer",
+            extra=[(
+                StepType.THINKING,
+                f"Preview only — showing {_cand_count} candidate"
+                f"{'s' if _cand_count != 1 else ''}; nothing has "
+                "been applied.",
+            )],
+        )
         state.findings["steer_action"] = steer_result.action
         state.findings["steer_target_hint"] = steer_result.target_hint
         state.findings["steer_candidates"] = steer_result.candidates
@@ -725,6 +828,14 @@ class Irys:
         )
         state.findings["final_output"] = trace_result.rendered_answer
         state.findings["route"] = decision.to_audit_dict(terminal_family="trace")
+        self._seed_cheap_path_trace(
+            state, decision, "trace",
+            extra=[(
+                StepType.THINKING,
+                f"Traced {trace_result.target_kind} — no LLM synthesis, "
+                "reading directly from the reasoning ledger.",
+            )],
+        )
         state.findings["trace_target_kind"] = trace_result.target_kind
         state.findings["trace_target_id"] = trace_result.target_id
         state.status = "completed"
@@ -748,6 +859,7 @@ class Irys:
             f"Need clarification before we can answer: {decision.rationale}"
         )
         state.findings["route"] = decision.to_audit_dict(terminal_family="clarify")
+        self._seed_cheap_path_trace(state, decision, "clarify")
         state.status = "completed"
         return state
 

@@ -320,6 +320,31 @@ _ROUTE_LABELS = {
 }
 
 
+def _fmt_thinking_steps_fallback(state: Any) -> str:
+    """Render state.thinking_steps as a reasoning trace when neither
+    streaming call_thinking nor ledger events are available. This
+    happens on cheap-path families (read, query, trace, steer,
+    compare, scenario, deliverable, clarify) where no run session
+    runs — api._seed_cheap_path_trace populates thinking_steps
+    directly on the state so the UI tab isn't blank. Returns empty
+    string when there are no steps.
+    """
+    try:
+        steps = getattr(state, "thinking_steps", None) or []
+        if not steps:
+            return ""
+        lines: list[str] = []
+        for idx, s in enumerate(steps, start=1):
+            content = getattr(s, "content", "") or ""
+            if not content:
+                continue
+            # Attorney-facing — skip the developer prefixes like [T].
+            lines.append(f"{idx}. {content}")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 def _fmt_route_chip(state: Any) -> str | None:
     """Return a short route chip ("via Quick summary") for the status
     line, or None if no cascade route is available. When the classifier
@@ -2675,6 +2700,13 @@ class AppState:
                                     structured_trace = "\n".join(lines)
                         except Exception:
                             pass  # keep raw thinking fallback
+                    # Cheap-path families (read, query, trace, etc.)
+                    # don't run the full engine and therefore don't
+                    # stream thinking or emit ledger events. Fall back
+                    # to state.thinking_steps (seeded by api._seed_cheap_path_trace)
+                    # so the Reasoning Trace tab isn't blank on those flows.
+                    if not structured_trace.strip():
+                        structured_trace = _fmt_thinking_steps_fallback(state) or structured_trace
                     main_output, diagnostics_output = _split_run_output_sections(self.final_output)
                     self.final_output = main_output or self.final_output
                     self.final_diagnostics = diagnostics_output
