@@ -303,6 +303,49 @@ def _fmt_research_mode_label(value: Any) -> str:
     return normalize_research_mode(value).replace("_", " ").title()
 
 
+# Attorney-facing labels for cascade terminal families. Kept free of
+# developer jargon — "Deep investigation" rather than "investigate",
+# "Quick summary" rather than "read" — per the UI/UX memory that the
+# attorney audience should never see internal family tokens.
+_ROUTE_LABELS = {
+    "investigate": "Deep investigation",
+    "read": "Quick summary",
+    "query": "Direct lookup",
+    "trace": "Reasoning trace",
+    "steer": "Correction preview",
+    "compare": "Change comparison",
+    "scenario": "What-if analysis",
+    "deliverable": "Document draft",
+    "clarify": "Clarification requested",
+}
+
+
+def _fmt_route_chip(state: Any) -> str | None:
+    """Return a short route chip ("via Quick summary") for the status
+    line, or None if no cascade route is available. When the classifier
+    family and terminal family differ (escalation happened) show both:
+    e.g. "via Quick summary → Deep investigation". This makes the cost
+    cascade decision visible without exposing internal family tokens.
+    """
+    try:
+        findings = getattr(state, "findings", {}) or {}
+        route = findings.get("route") if isinstance(findings, dict) else None
+        if not route:
+            return None
+        classifier = str(route.get("classifier_family") or "").strip()
+        terminal = str(route.get("terminal_family") or "").strip()
+        # Internal-only families that attorneys shouldn't see named.
+        if terminal in {"read_infra_failure"} or not terminal:
+            return None
+        term_label = _ROUTE_LABELS.get(terminal, terminal.title())
+        if classifier and classifier != terminal:
+            cls_label = _ROUTE_LABELS.get(classifier, classifier.title())
+            return f"via {cls_label} → {term_label}"
+        return f"via {term_label}"
+    except Exception:
+        return None
+
+
 def _fmt_ledger_event(event: dict) -> str | None:
     """Format a single ledger event dict into a human-readable trace line.
 
@@ -2604,11 +2647,13 @@ class AppState:
                     llm_calls = int(metrics.get("llm_request_count", 0) or 0)
                     llm_cost = float(metrics.get("llm_estimated_cost_usd", 0.0) or 0.0)
                     mode_label = _fmt_research_mode_label(getattr(state, "research_mode", None))
+                    _route_chip = _fmt_route_chip(state)
                     status = (
                         f"✅  {mode_label} | {elapsed:.0f}s | "
                         f"Docs: {state.documents_read} ({state.documents_from_cache} cached) | "
                         f"Reuse: {rate_str} | "
                         f"LLM: {llm_calls} calls / ${llm_cost:.4f}"
+                        + (f" | {_route_chip}" if _route_chip else "")
                     )
                     # Replace raw thinking trace with structured ledger events so the
                     # Reasoning Trace tab shows durable, matter-model-backed content.
@@ -2801,11 +2846,13 @@ class AppState:
                     llm_calls = int(metrics.get("llm_request_count", 0) or 0)
                     llm_cost = float(metrics.get("llm_estimated_cost_usd", 0.0) or 0.0)
                     mode_label = _fmt_research_mode_label(getattr(state, "research_mode", None))
+                    _route_chip = _fmt_route_chip(state)
                     status = (
                         f"✅  {mode_label} | {elapsed:.0f}s | "
                         f"Docs: {state.documents_read} ({state.documents_from_cache} cached) | "
                         f"Reuse: {rate_str} | "
                         f"LLM: {llm_calls} calls / ${llm_cost:.4f}"
+                        + (f" | {_route_chip}" if _route_chip else "")
                     )
 
                     structured_trace = "\n".join(call_thinking)
