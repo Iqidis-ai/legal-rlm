@@ -326,6 +326,45 @@ def test_read_citation_floor_waived_on_used_existing_state_only():
     assert result.answer.startswith("Matter has 3 facts")
 
 
+def test_used_existing_state_only_string_false_does_not_waive_citation_floor():
+    """adv#14 Finding #2: bool('false') is True in Python — a prior
+    implementation of the citation-floor waiver accepted any truthy
+    value, so an LLM emitting the STRING "false" silently waived the
+    floor. Now the parse is strict: only real bool True or the exact
+    string 'true' (case-insensitive) counts as true."""
+    mm, _aid = _seed_matter_with_verified_fact()
+    response = (
+        '{"answer": "No evidence yet.", "answer_confidence": "medium", '
+        '"citations": [], "used_existing_state_only": "false", '
+        '"escalation_hint": "search docs"}'
+    )
+    client = _CapturingClient(response)
+    handler = ReadFamilyHandler(client=client, matter_model=mm)
+    result = asyncio.run(handler.run(
+        query="what did we find", contract=_READ_CONTRACT,
+    ))
+    # String "false" → citation floor still fires → escalate.
+    assert result.escalation_needed is True
+
+
+def test_used_existing_state_only_string_true_does_waive():
+    """Companion: string 'true' (case-insensitive) must correctly
+    waive the citation floor — preserves the plan B intent when the
+    LLM emits the boolean as a JSON string rather than a literal."""
+    mm, _aid = _seed_matter_with_verified_fact()
+    response = (
+        '{"answer": "Matter has 3 facts.", "answer_confidence": "medium", '
+        '"citations": [], "used_existing_state_only": "TRUE", '
+        '"escalation_hint": ""}'
+    )
+    client = _CapturingClient(response)
+    handler = ReadFamilyHandler(client=client, matter_model=mm)
+    result = asyncio.run(handler.run(
+        query="summarize", contract=_READ_CONTRACT,
+    ))
+    assert result.escalation_needed is False
+
+
 def test_read_still_escalates_when_state_genuinely_insufficient():
     """Guard: the nudge must NOT accidentally suppress legit
     escalation. An answer with used_existing_state_only=false AND

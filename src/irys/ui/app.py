@@ -5333,12 +5333,22 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             if (lbl.textContent.includes('Fact ID')) {
                 const box = lbl.closest('.block')?.querySelector('textarea, input[type=text]');
                 if (box) {
-                    const desc = Object.getOwnPropertyDescriptor(
-                        window.HTMLInputElement.prototype, 'value') ||
-                        Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
-                    desc.set.call(box, id);
-                    box.dispatchEvent(new Event('input', { bubbles: true }));
-                    box.dispatchEvent(new Event('change', { bubbles: true }));
+                    // adv#14 Finding #5: pick the prototype matching
+                    // the actual element. The old code OR'd both and
+                    // always picked HTMLInputElement — calling that
+                    // setter on a textarea raises an illegal-invocation
+                    // error and the click does nothing. Gradio renders
+                    // Textbox(lines=1) as input and Textbox(lines≥2)
+                    // as textarea — we must handle both.
+                    const proto = (box instanceof HTMLTextAreaElement)
+                        ? window.HTMLTextAreaElement.prototype
+                        : window.HTMLInputElement.prototype;
+                    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+                    if (desc && desc.set) {
+                        desc.set.call(box, id);
+                        box.dispatchEvent(new Event('input', { bubbles: true }));
+                        box.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
                     break;
                 }
             }

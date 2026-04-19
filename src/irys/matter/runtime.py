@@ -185,6 +185,12 @@ class MatterRuntimeAdapter:
         # stops (API call from another thread) require a DB read on every check to maintain
         # the "detects stop between every pair of consecutive check points" contract.
         self._stop_flag: bool = False
+        # adv#14 Finding #3: per-run cache for speaker-actor
+        # resolution. Without this, extraction of 10k assertions from
+        # 100 documents fires 10k redundant doc_card+alias lookups.
+        # Keyed on the incoming document_id (post-normalize). None
+        # cached when the doc has no sender or resolution failed.
+        self._speaker_actor_cache: "dict[str, Optional[str]]" = {}
 
     # ------------------------------------------------------------------
     # Called from engine._orient()
@@ -249,47 +255,90 @@ class MatterRuntimeAdapter:
         """
         if not document_id:
             return None
+        # adv#14 Finding #3: per-run cache. Extraction typically
+        # records many assertions from the same doc; without this
+        # we re-query doc_card + re-resolve the actor on every
+        # single occurrence.
+        cache_key = str(document_id)
+        if cache_key in self._speaker_actor_cache:
+            return self._speaker_actor_cache[cache_key]
+        # Pre-normalize path in Python so the SQL can use a plain
+        # equality lookup against an indexed column instead of
+        # REPLACE()+OR+LIKE (adv#14 Finding #3 perf note). Try
+        # normalized full-path match first; fall back to basename
+        # only when no exact hit.
+        sender: Optional[str] = None
         try:
-            doc_norm = str(document_id).replace("\\\\", "/").replace("\\", "/")
+            doc_norm = cache_key.replace("\\\\", "/").replace("\\", "/")
             basename = doc_norm.rsplit("/", 1)[-1] if "/" in doc_norm else doc_norm
             row = self.model.db.execute(
-                """SELECT dc.sender
-                   FROM document_card dc
+                """SELECT dc.sender FROM document_card dc
                    JOIN document_inventory di ON di.id = dc.doc_id
-                   WHERE di.matter_id = ?
-                     AND (
-                          REPLACE(di.relative_path, '\\', '/') = ?
-                          OR di.relative_path = ?
-                          OR REPLACE(di.relative_path, '\\', '/') LIKE ?
-                     )
+                   WHERE di.matter_id = ? AND di.relative_path = ?
                    LIMIT 1""",
-                (
-                    self.model.matter_id,
-                    doc_norm,
-                    document_id,
-                    f"%/{basename}",
-                ),
+                (self.model.matter_id, doc_norm),
             ).fetchone()
+            if row is None and doc_norm != cache_key:
+                # Try the raw (un-normalized) path — Windows repos
+                # store backslashed paths verbatim.
+                row = self.model.db.execute(
+                    """SELECT dc.sender FROM document_card dc
+                       JOIN document_inventory di ON di.id = dc.doc_id
+                       WHERE di.matter_id = ? AND di.relative_path = ?
+                       LIMIT 1""",
+                    (self.model.matter_id, cache_key),
+                ).fetchone()
+            if row is None and basename:
+                # Last-resort basename match.
+                row = self.model.db.execute(
+                    """SELECT dc.sender FROM document_card dc
+                       JOIN document_inventory di ON di.id = dc.doc_id
+                       WHERE di.matter_id = ?
+                         AND (di.relative_path = ?
+                              OR di.relative_path LIKE ?
+                              OR di.relative_path LIKE ?)
+                       LIMIT 1""",
+                    (
+                        self.model.matter_id,
+                        basename,
+                        f"%/{basename}",
+                        f"%\\{basename}",
+                    ),
+                ).fetchone()
+            if row and row["sender"]:
+                sender = str(row["sender"] or "").strip()
         except Exception as _exc:
             _log.debug(
                 "speaker_actor resolver — doc_card lookup failed for %r: %s",
                 document_id, _exc,
             )
+            self._speaker_actor_cache[cache_key] = None
             return None
-        if not row:
-            return None
-        sender = str(row["sender"] or "").strip()
         if not sender:
+            self._speaker_actor_cache[cache_key] = None
             return None
+        # adv#14 Finding #4: use alias + fuzzy resolution BEFORE
+        # upserting a new actor. Without this, "John Smith" (sender)
+        # creates a distinct actor even when an existing "Jonathan
+        # Smith" has "John Smith" registered as an alias. Identity
+        # fragmentation silently forks the actor store.
+        actor_id: Optional[str] = None
         try:
-            actor_id, _is_new = self.model.actors.upsert_actor(sender)
-            return actor_id
-        except Exception as _exc:
-            _log.debug(
-                "speaker_actor resolver — actor upsert failed for sender=%r: %s",
-                sender, _exc,
-            )
-            return None
+            actor_id = self.model.actors.resolve_by_name(sender)
+        except Exception:
+            actor_id = None
+        if not actor_id:
+            try:
+                actor_id, _is_new = self.model.actors.upsert_actor(sender)
+            except Exception as _exc:
+                _log.debug(
+                    "speaker_actor resolver — actor upsert failed for sender=%r: %s",
+                    sender, _exc,
+                )
+                self._speaker_actor_cache[cache_key] = None
+                return None
+        self._speaker_actor_cache[cache_key] = actor_id
+        return actor_id
 
     def _auto_provenance(
         self,

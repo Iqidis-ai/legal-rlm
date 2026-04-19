@@ -7366,6 +7366,39 @@ Respond as JSON only:
             # LLM may be eager. Require the same threshold the read
             # handler uses.
             return False
+        # adv#14 Finding #1: cross-check the probe's cited docs
+        # against documents we've ACTUALLY seen in this run. A LITE
+        # probe can invent "ghost.pdf" to satisfy its own citation
+        # floor — treating that as sufficient would terminate a
+        # real investigation on fabricated evidence. Build the set
+        # of known doc identifiers from state.citations plus
+        # accumulated_facts, then require at least one probe
+        # citation to match something real.
+        known_docs: set[str] = set()
+        for _c in (state.citations or []):
+            _d = (getattr(_c, "document", "") or "").strip().lower()
+            if _d:
+                known_docs.add(_d)
+                known_docs.add(_d.rsplit("/", 1)[-1])  # basename too
+        for _f in (state.findings.get("accumulated_facts") or []):
+            if isinstance(_f, dict):
+                _d = str(_f.get("document") or _f.get("source_document") or "").strip().lower()
+                if _d:
+                    known_docs.add(_d)
+                    known_docs.add(_d.rsplit("/", 1)[-1])
+        matched = False
+        for _cite in citations:
+            _cl = _cite.strip().lower()
+            if _cl in known_docs or _cl.rsplit("/", 1)[-1] in known_docs:
+                matched = True
+                break
+        if not matched:
+            logger.warning(
+                "sufficiency_probe: rejected can_answer=true — "
+                "none of %r match state.citations / accumulated_facts",
+                citations,
+            )
+            return False
         # Stamp the early-terminate decision. The engine loop reads
         # this on the next _should_continue_investigation call and
         # breaks out.

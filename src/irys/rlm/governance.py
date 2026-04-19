@@ -978,7 +978,19 @@ class ReadFamilyHandler:
         # "matter has 3 facts, 2 open issues" is legit with zero doc
         # citations — escalating to investigate reaches the same
         # conclusion and burns tokens.
-        used_existing_state_only = bool(parsed.get("used_existing_state_only"))
+        # adv#14 Finding #2: strict boolean parse. `bool("false")`
+        # is True in Python — a previous LLM response with
+        # `"used_existing_state_only": "false"` (string) would have
+        # accidentally waived the citation floor. Accept only real
+        # JSON true OR the exact string "true" (case-insensitive);
+        # everything else is false.
+        _raw_flag = parsed.get("used_existing_state_only")
+        if isinstance(_raw_flag, bool):
+            used_existing_state_only = _raw_flag
+        elif isinstance(_raw_flag, str):
+            used_existing_state_only = _raw_flag.strip().lower() == "true"
+        else:
+            used_existing_state_only = False
         effective_citation_floor = (
             0 if used_existing_state_only else max(0, contract.citation_floor)
         )

@@ -91,19 +91,20 @@ def _state_with_facts(query="summarize", n_facts=3, n_cits=1) -> InvestigationSt
 
 def test_probe_can_answer_stamps_early_terminate(engine):
     """Probe says yes at ≥medium confidence with ≥1 citation —
-    engine writes final_output + early_terminate_reason."""
+    engine writes final_output + early_terminate_reason. Citation
+    must match a doc actually seen this run (adv#14 Finding #1)."""
     client = _ProbeClient(
-        '{"can_answer": true, "answer": "Payment is net 30 per the MSA.", '
-        '"confidence": "medium", "citations": ["contracts/msa.pdf"], '
+        '{"can_answer": true, "answer": "Answer per contracts/doc_0.pdf.", '
+        '"confidence": "medium", "citations": ["contracts/doc_0.pdf"], '
         '"reason_not_yet": ""}'
     )
     engine.client = client
-    s = _state_with_facts()
+    s = _state_with_facts()  # seeds contracts/doc_0.pdf citation
     result = asyncio.run(engine._run_sufficiency_probe(s))
     assert result is True
     assert s.early_terminate_reason is not None
     assert "medium" in s.early_terminate_reason
-    assert s.findings["final_output"].startswith("Payment is net 30")
+    assert s.findings["final_output"].startswith("Answer per contracts/doc_0.pdf")
 
 
 def test_probe_insufficient_answer_does_not_terminate(engine):
@@ -131,6 +132,39 @@ def test_probe_can_answer_false_keeps_loop_running(engine):
     s = _state_with_facts()
     assert asyncio.run(engine._run_sufficiency_probe(s)) is False
     assert s.early_terminate_reason is None
+
+
+def test_probe_rejects_hallucinated_citations(engine):
+    """adv#14 Finding #1: probe must not accept can_answer=true when
+    the cited documents never appeared in state. Empty state +
+    fabricated 'ghost.pdf' citation used to stamp early_terminate."""
+    client = _ProbeClient(
+        '{"can_answer": true, "answer": "Fabricated per ghost.pdf.", '
+        '"confidence": "medium", "citations": ["ghost.pdf"], '
+        '"reason_not_yet": ""}'
+    )
+    engine.client = client
+    # State with NO citations and NO accumulated facts — the probe's
+    # "ghost.pdf" has never entered this run.
+    s = _state_with_facts(n_facts=0, n_cits=0)
+    assert asyncio.run(engine._run_sufficiency_probe(s)) is False
+    assert s.early_terminate_reason is None
+
+
+def test_probe_accepts_citation_matching_state(engine):
+    """Counter-test: when a probe's citation matches a real
+    state.citations entry, the probe correctly terminates. Ensures
+    the cross-check isn't over-rejecting legitimate answers."""
+    client = _ProbeClient(
+        '{"can_answer": true, "answer": "Real answer per contracts/doc_0.pdf.", '
+        '"confidence": "medium", "citations": ["contracts/doc_0.pdf"], '
+        '"reason_not_yet": ""}'
+    )
+    engine.client = client
+    s = _state_with_facts(n_facts=3, n_cits=1)
+    # _state_with_facts citation is "contracts/doc_0.pdf" — matches.
+    assert asyncio.run(engine._run_sufficiency_probe(s)) is True
+    assert s.early_terminate_reason is not None
 
 
 def test_probe_respects_max_per_run(engine):

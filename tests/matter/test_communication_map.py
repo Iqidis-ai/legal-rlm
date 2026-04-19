@@ -237,6 +237,86 @@ def test_record_fact_resolves_speaker_from_doc_card_sender(model):
     assert cm["actors"][0]["name"] == "John Smith"
 
 
+def test_speaker_actor_resolution_is_cached_per_adapter(model):
+    """adv#14 Finding #3: the bridge was doing one doc_card+actor
+    lookup per assertion — a 10k-assertion import from 100 docs
+    fired 10k redundant queries. Now per-adapter cache keyed on
+    document_id collapses repeat lookups."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    inv_id, _ = model.inventory.upsert(
+        "emails/e.eml", "s" * 64, size_bytes=1, file_type="eml",
+    )
+    model.document_cards.upsert(
+        doc_id=inv_id, title="e.eml", doc_type="email",
+        source_side="plaintiff", source_role="informal",
+        sender="Cache Subject",
+    )
+    run_id = model.start_run("cache test")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+
+    # First call populates the cache. Subsequent calls with the
+    # same doc_id must return the same actor id WITHOUT hitting
+    # the DB — verified by spying on model.db.execute.
+    a1 = adapter._resolve_speaker_actor_for_document("emails/e.eml")
+    assert a1 is not None
+
+    calls_after_first = 0
+    orig_execute = model.db.execute
+
+    def _counting(sql, params=()):
+        nonlocal calls_after_first
+        calls_after_first += 1
+        return orig_execute(sql, params)
+
+    model.db.execute = _counting  # type: ignore[assignment]
+    try:
+        for _ in range(50):
+            a2 = adapter._resolve_speaker_actor_for_document("emails/e.eml")
+            assert a2 == a1
+    finally:
+        model.db.execute = orig_execute  # type: ignore[assignment]
+    assert calls_after_first == 0, (
+        f"expected 0 DB calls for repeat lookups, got {calls_after_first}"
+    )
+
+
+def test_speaker_bridge_resolves_to_existing_alias(model):
+    """adv#14 Finding #4: the bridge used to call upsert_actor
+    directly, which bypasses ActorStore's alias resolution. A
+    doc_card with sender 'John Smith' would create a distinct actor
+    even when an existing 'Jonathan Smith' has 'John Smith'
+    registered as an alias. Now the bridge tries resolve_by_name
+    first."""
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    # Pre-seed an actor with an alias.
+    jon_id, _ = model.actors.upsert_actor("Jonathan Smith")
+    model.actors.add_alias(jon_id, "John Smith")
+
+    inv_id, _ = model.inventory.upsert(
+        "letter.pdf", "s" * 64, size_bytes=1, file_type="pdf",
+    )
+    model.document_cards.upsert(
+        doc_id=inv_id, title="letter.pdf", doc_type="letter",
+        source_side="plaintiff", source_role="informal",
+        sender="John Smith",  # alias for jon_id
+    )
+    run_id = model.start_run("alias test")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+
+    resolved = adapter._resolve_speaker_actor_for_document("letter.pdf")
+    assert resolved == jon_id, (
+        "expected speaker to resolve to existing Jonathan Smith via alias"
+    )
+    # Actor count stays at 1 — no duplicate was forked.
+    row = model.db.execute(
+        "SELECT COUNT(*) AS n FROM actor WHERE matter_id = ?",
+        (model.matter_id,),
+    ).fetchone()
+    assert row["n"] == 1
+
+
 def test_record_fact_without_doc_card_sender_leaves_speaker_null(model):
     """Guard: when the document has no card OR the card has no
     sender, the bridge returns None. record_fact still succeeds;
