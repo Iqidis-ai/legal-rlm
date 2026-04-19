@@ -3357,6 +3357,186 @@ class AppState:
             )
         return f"✅ Verified {len(ids)} fact(s) sourced from {_escape(ref)}."
 
+    def load_batch_review_facts(
+        self,
+        matter_id: str,
+        document_ref: str,
+    ) -> tuple[gr.update, gr.update, gr.update, gr.update]:
+        """Load candidate facts for a document so the attorney can
+        review + selectively verify them. Returns gr.update tuples
+        for (CheckboxGroup, metadata HTML, verify-selected button,
+        result markdown). Everything stays hidden until a real
+        document is picked AND it has candidate facts.
+        """
+        hide = (
+            gr.update(choices=[], value=[], visible=False),
+            gr.update(value="", visible=False),
+            gr.update(visible=False),
+            gr.update(value="", visible=False),
+        )
+        if not matter_id or matter_id == "—":
+            return hide
+        ref = (document_ref or "").strip()
+        if not ref:
+            return hide
+        try:
+            rows = _run_async(
+                self.backend().list_candidate_assertions_for_document(
+                    matter_id, ref,
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "load_batch_review_facts failed for %s: %s", ref, exc,
+            )
+            return (
+                gr.update(choices=[], value=[], visible=False),
+                gr.update(value="", visible=False),
+                gr.update(visible=False),
+                gr.update(
+                    value=(
+                        "⚠️ Couldn't load candidate facts for this "
+                        "document. Check the document name."
+                    ),
+                    visible=True,
+                ),
+            )
+        if not rows:
+            return (
+                gr.update(choices=[], value=[], visible=False),
+                gr.update(value="", visible=False),
+                gr.update(visible=False),
+                gr.update(
+                    value=(
+                        "No candidate facts remain for this document "
+                        "— everything has already been verified or "
+                        "rejected."
+                    ),
+                    visible=True,
+                ),
+            )
+        # Build the checkbox choice list. Label embeds the proposition
+        # + full metadata (source role, speech act, confidence, doc)
+        # so the attorney has everything they need to accept/reject
+        # each row without opening a drawer. Value is the assertion id.
+        choices: list[tuple[str, str]] = []
+        detail_lines: list[str] = []
+        for r in rows:
+            prop = str(r.get("proposition_text") or "").strip() or "(no text)"
+            role = str(r.get("primary_source_role") or "unknown").upper()
+            speech_act = str(r.get("primary_speech_act") or "").lower() or "extracted"
+            conf_raw = r.get("confidence")
+            try:
+                conf_str = f"{float(conf_raw):.0%}" if conf_raw is not None else "—"
+            except (TypeError, ValueError):
+                conf_str = "—"
+            occ_count = int(r.get("occurrence_count") or 1)
+            occ_str = f", appears {occ_count}×" if occ_count > 1 else ""
+            short = prop[:180] + ("…" if len(prop) > 180 else "")
+            label = (
+                f"[{role}] {short}  —  {speech_act}, "
+                f"confidence {conf_str}{occ_str}"
+            )
+            choices.append((label, str(r.get("id"))))
+            detail_lines.append(
+                f"<li><strong>{_escape(short)}</strong> — "
+                f"<em>{_escape(role)}</em> · "
+                f"{_escape(speech_act)} · "
+                f"confidence {_escape(conf_str)}{_escape(occ_str)}</li>"
+            )
+        # Pre-check every id — the intent is "verify all" with
+        # opt-out. Attorney unchecks to exclude.
+        all_ids = [aid for _, aid in choices]
+        summary_html = (
+            "<div class='viz-note'>"
+            f"<strong>{len(rows)} candidate fact(s)</strong> from "
+            f"<code>{_escape(ref)}</code>. Every fact is pre-selected "
+            "— uncheck any you don't want to verify, then click "
+            "<strong>Verify selected</strong>."
+            "</div>"
+        )
+        return (
+            gr.update(choices=choices, value=all_ids, visible=True),
+            gr.update(value=summary_html, visible=True),
+            gr.update(visible=True),
+            gr.update(value="", visible=False),
+        )
+
+    def do_batch_verify_selected(
+        self,
+        matter_id: str,
+        selected_ids: list[str],
+    ) -> tuple[gr.update, gr.update, gr.update, gr.update]:
+        """Verify the attorney-selected subset. Returns the same 4
+        gr.update tuple shape as load_batch_review_facts so the UI
+        binding can wire one event to all four components.
+        """
+        if not matter_id or matter_id == "—":
+            return (
+                gr.update(),
+                gr.update(),
+                gr.update(),
+                gr.update(value="⚠️ No matter loaded.", visible=True),
+            )
+        ids = [str(i) for i in (selected_ids or []) if i]
+        if not ids:
+            return (
+                gr.update(),
+                gr.update(),
+                gr.update(),
+                gr.update(
+                    value=(
+                        "⚠️ Nothing selected. Check at least one fact "
+                        "to verify — or use \"Verify all from document\" "
+                        "above for the one-shot action."
+                    ),
+                    visible=True,
+                ),
+            )
+        try:
+            verified = _run_async(
+                self.backend().bulk_verify_assertion_ids(
+                    matter_id, ids,
+                    reviewed_by_kind="user", reviewed_by_id="",
+                )
+            )
+        except ValueError as exc:
+            return (
+                gr.update(),
+                gr.update(),
+                gr.update(),
+                gr.update(value=f"⚠️ {exc}", visible=True),
+            )
+        except Exception as exc:
+            logger.warning("Batch verify failed: %s", exc)
+            return (
+                gr.update(),
+                gr.update(),
+                gr.update(),
+                gr.update(
+                    value=(
+                        "⚠️ Batch verify didn't go through. Please "
+                        "try again."
+                    ),
+                    visible=True,
+                ),
+            )
+        skipped = len(ids) - len(verified)
+        msg = f"✅ Verified {len(verified)} selected fact(s)."
+        if skipped:
+            msg += (
+                f" Skipped {skipped} that were already verified "
+                "or no longer candidate — refresh the list."
+            )
+        # Hide the checklist after success so the UI returns to
+        # "load new doc" mode.
+        return (
+            gr.update(choices=[], value=[], visible=False),
+            gr.update(value="", visible=False),
+            gr.update(visible=False),
+            gr.update(value=msg, visible=True),
+        )
+
     def load_gaps(self, matter_id: str) -> tuple[str, str]:
         """Return (gaps_and_steering_markdown, top_redirect_issue_id).
 
@@ -4215,6 +4395,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     filterable=True,
                     scale=4,
                 )
+                review_facts_btn = gr.Button(
+                    "Review facts first", variant="secondary",
+                    scale=1, min_width=160,
+                )
                 bulk_verify_btn = gr.Button(
                     "Verify all from document", variant="primary",
                     scale=1, min_width=180,
@@ -4224,6 +4408,23 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     size="sm",
                 )
             bulk_verify_result = gr.Markdown("")
+            # Batch-review panel — renders the candidate facts from
+            # the selected document with full metadata, pre-checked,
+            # so the attorney can uncheck anything they don't want
+            # to promote and then verify the subset in one action.
+            batch_review_facts = gr.CheckboxGroup(
+                label="Candidate facts from this document (uncheck any you don't want to verify)",
+                choices=[],
+                value=[],
+                visible=False,
+                interactive=True,
+            )
+            batch_review_metadata = gr.HTML(visible=False)
+            batch_verify_selected_btn = gr.Button(
+                "Verify selected", variant="primary",
+                visible=False,
+            )
+            batch_review_result = gr.Markdown("", visible=False)
 
         with gr.Accordion("Financials — payments, damages, and numeric disputes", open=False):
             gr.Markdown(
@@ -4805,6 +5006,43 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box, bulk_doc_ref],
             outputs=[
                 bulk_verify_result, review_queue_html, review_target,
+                review_badge_md,
+                assertions_md, issues_md, overview_md,
+            ],
+        )
+
+        # Batch-review: "Review facts first" loads the checkable list;
+        # "Verify selected" commits the uncheck-filtered subset. Hides
+        # the bulk_verify_result markdown so the two flows' status
+        # lines don't stack on top of each other.
+        review_facts_btn.click(
+            fn=state.load_batch_review_facts,
+            inputs=[matter_id_box, bulk_doc_ref],
+            outputs=[
+                batch_review_facts, batch_review_metadata,
+                batch_verify_selected_btn, batch_review_result,
+            ],
+        )
+
+        def _batch_verify_and_refresh(mid, selected):
+            updates = state.do_batch_verify_selected(mid, selected)
+            return (
+                *updates,
+                state.load_review_queue(mid)[0],
+                state.load_review_queue(mid)[1],
+                state.load_review_count_badge(mid),
+                state.load_assertions(mid),
+                state.load_issues(mid),
+                state.load_overview(mid),
+            )
+
+        batch_verify_selected_btn.click(
+            fn=_batch_verify_and_refresh,
+            inputs=[matter_id_box, batch_review_facts],
+            outputs=[
+                batch_review_facts, batch_review_metadata,
+                batch_verify_selected_btn, batch_review_result,
+                review_queue_html, review_target,
                 review_badge_md,
                 assertions_md, issues_md, overview_md,
             ],

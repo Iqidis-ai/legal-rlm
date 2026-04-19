@@ -986,6 +986,167 @@ class MatterModel:
                     )
         return ids
 
+    def list_candidate_assertions_for_document(
+        self,
+        document_ref: str,
+    ) -> list[dict]:
+        """Return the candidate assertions sourced from one document,
+        with enough metadata for an attorney to accept or reject each
+        one without opening individual rows.
+
+        Mirrors `bulk_verify_by_document`'s document-matching rules
+        (full path / slash-normalized / basename / inventory join) so
+        the same document_ref maps to the same assertion set —
+        attorneys can "see what I'm about to verify" without divergence
+        between the preview and the one-shot action.
+
+        Returns the list ordered newest-first. Each row carries:
+          id, proposition_text, belief_state, primary_source_role,
+          primary_speech_act, primary_document_id, confidence,
+          occurrence_count, created_at.
+
+        Only candidate rows are returned — already-verified, rejected,
+        or stale assertions are filtered out (same gate as the bulk
+        verify path).
+        """
+        ref_norm = (document_ref or "").replace("\\", "/")
+        basename = ref_norm.rsplit("/", 1)[-1] if "/" in ref_norm else ref_norm
+        rows = self.db.execute(
+            """SELECT DISTINCT
+                   a.id AS id,
+                   a.proposition_text AS proposition_text,
+                   a.belief_state AS belief_state,
+                   a.confidence AS confidence,
+                   a.created_at AS created_at,
+                   fo.primary_source_role AS primary_source_role,
+                   fo.primary_speech_act AS primary_speech_act,
+                   fo.primary_document_id AS primary_document_id,
+                   fo.occurrence_count AS occurrence_count
+               FROM assertion_occurrence ao
+               JOIN assertion a ON a.id=ao.assertion_id
+               LEFT JOIN document_inventory di
+                 ON di.id = ao.document_inventory_id
+               LEFT JOIN verification_state vs
+                 ON vs.target_kind='assertion'
+                AND vs.target_id=a.id
+                AND vs.matter_id=a.matter_id
+               LEFT JOIN (
+                   SELECT assertion_id,
+                          MIN(source_role) AS primary_source_role,
+                          MIN(speech_act) AS primary_speech_act,
+                          MIN(document_id) AS primary_document_id,
+                          COUNT(*) AS occurrence_count
+                   FROM assertion_occurrence
+                   GROUP BY assertion_id
+               ) fo ON fo.assertion_id = a.id
+               WHERE a.matter_id=?
+                 AND (
+                      ao.document_id = ?
+                      OR REPLACE(ao.document_id, '\\', '/') = ?
+                      OR ao.doc_basename = ?
+                      OR REPLACE(di.relative_path, '\\', '/') = ?
+                      OR di.relative_path = ?
+                 )
+                 AND COALESCE(vs.status, 'candidate')='candidate'
+                 AND a.belief_state NOT IN ('withdrawn', 'superseded', 'rejected')
+               ORDER BY a.created_at DESC""",
+            (
+                self.matter_id,
+                document_ref,
+                ref_norm,
+                basename,
+                ref_norm,
+                document_ref,
+            ),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def bulk_verify_assertion_ids(
+        self,
+        assertion_ids: list[str],
+        *,
+        reviewed_by_kind: str,
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
+        run_id: Optional[str] = None,
+    ) -> list[str]:
+        """Verify an explicit set of assertion ids. Used by the
+        "review-then-verify" flow where the attorney has seen each
+        fact and unchecked any they don't want to promote. Filters to
+        ids that actually belong to this matter and are still
+        candidates — an attacker-controlled id list can't promote
+        random rows, and a stale UI selection silently skips
+        already-verified items.
+        """
+        if not assertion_ids:
+            return []
+        seen: set[str] = set()
+        filtered_input: list[str] = []
+        for aid in assertion_ids:
+            if not aid or aid in seen:
+                continue
+            seen.add(aid)
+            filtered_input.append(aid)
+        if not filtered_input:
+            return []
+        import sqlite3 as _sqlite3
+        # SQLite bind-param limit: chunk the IN list.
+        _BIND_LIMIT = 900
+        valid_ids: list[str] = []
+        for _chunk_start in range(0, len(filtered_input), _BIND_LIMIT):
+            _chunk = filtered_input[_chunk_start : _chunk_start + _BIND_LIMIT]
+            _rows = self.db.execute(
+                """SELECT a.id FROM assertion a
+                   LEFT JOIN verification_state vs
+                     ON vs.target_kind='assertion'
+                    AND vs.target_id=a.id
+                    AND vs.matter_id=a.matter_id
+                   WHERE a.matter_id=?
+                     AND a.id IN ({})
+                     AND COALESCE(vs.status, 'candidate')='candidate'
+                     AND a.belief_state NOT IN ('withdrawn', 'superseded', 'rejected')""".format(
+                    ",".join("?" * len(_chunk))
+                ),
+                (self.matter_id, *_chunk),
+            ).fetchall()
+            valid_ids.extend(r["id"] for r in _rows)
+        if not valid_ids:
+            return []
+        specs = [{"target_kind": "assertion", "target_id": aid} for aid in valid_ids]
+        ids = self.verification.bulk_set_status(
+            specs,
+            new_status="verified",
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+            review_note=review_note,
+            review_scope=review_scope,
+            run_id=run_id,
+        )
+        for spec in specs:
+            if run_id is not None:
+                self.ledger.append_event(
+                    run_id=run_id,
+                    event_type=LedgerEventType.ASSERTION_REVISED,
+                    summary=(
+                        f"Batch-verified {spec['target_kind']}:{spec['target_id']} "
+                        "via selected-subset flow"
+                    ),
+                    changed_object_type=spec["target_kind"],
+                    changed_object_id=spec["target_id"],
+                )
+            for iid in self._issues_affected_by_target(
+                spec["target_kind"], spec["target_id"],
+            ):
+                try:
+                    self.proof_state.compute_and_store(iid, policy_audience="internal")
+                except _sqlite3.Error as _exc:
+                    _log.warning(
+                        "bulk_verify_ids: proof recompute failed for issue %s: %s",
+                        iid, _exc,
+                    )
+        return ids
+
     def bulk_verify_by_span(
         self,
         span_id: str,

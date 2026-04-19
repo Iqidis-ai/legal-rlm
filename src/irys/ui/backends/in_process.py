@@ -626,6 +626,30 @@ class InProcessBackend(UIBackend):
             reviewed_by_id=reviewed_by_id,
         )
 
+    async def list_candidate_assertions_for_document(
+        self, matter_id: str, document_ref: str,
+    ) -> list[dict]:
+        """Return candidate assertions + metadata for the
+        review-before-verify flow. Attorney inspects the list,
+        unchecks anything they don't want to approve, then submits
+        the subset via bulk_verify_assertion_ids."""
+        model = self._get_matter_model(matter_id)
+        return model.list_candidate_assertions_for_document(document_ref)
+
+    async def bulk_verify_assertion_ids(
+        self, matter_id: str, assertion_ids: list[str],
+        *, reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+    ) -> list[str]:
+        model = self._get_matter_model(matter_id)
+        return model.bulk_verify_assertion_ids(
+            assertion_ids,
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+            review_note=review_note,
+        )
+
     async def get_verification_events(
         self, matter_id: str, target_kind: Optional[str] = None,
         target_id: Optional[str] = None, limit: int = 50,
