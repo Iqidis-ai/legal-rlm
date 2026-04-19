@@ -776,6 +776,13 @@ class InvestigationState:
     # planner has produced THIS RUN so the per-run cap (default 6)
     # can be enforced across iterations.
     planner_leads_added: int = 0
+    # Sufficiency probe (plan A): when the interim probe says "we can
+    # answer now at ≥medium+≥1 citation", the engine sets this to
+    # a short string describing the trigger, sets the probe's answer
+    # as final_output, and exits the loop — overriding contract
+    # min_iter. Unset (None) means no early-terminate decision has
+    # been made.
+    early_terminate_reason: Optional[str] = None
     # SO-1 real reuse telemetry: count LLM calls avoided (cache hits, inventory skips)
     # vs. required (cache misses, cold calls). True reuse rate = avoided / (avoided + required).
     llm_calls_avoided: int = 0
@@ -1897,6 +1904,7 @@ class InvestigationState:
             # checkpoint/resume doesn't reset the per-run cap and allow
             # another 6 planner leads in the same logical run.
             "planner_leads_added": self.planner_leads_added,
+            "early_terminate_reason": self.early_terminate_reason,
             "documents_read": self.documents_read,
             "documents_from_cache": self.documents_from_cache,
             "searches_performed": self.searches_performed,
@@ -2020,6 +2028,7 @@ class InvestigationState:
         state.facts_per_iteration = data.get("facts_per_iteration", [])
         # Restore planner counter; absent in pre-P0.7 checkpoints.
         state.planner_leads_added = int(data.get("planner_leads_added", 0) or 0)
+        state.early_terminate_reason = data.get("early_terminate_reason")
         state.documents_read = data.get("documents_read", 0)
         state.documents_from_cache = data.get("documents_from_cache", 0)
         state.searches_performed = data.get("searches_performed", 0)

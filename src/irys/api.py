@@ -5,7 +5,7 @@ from typing import Optional, Any, Callable
 from pathlib import Path
 import logging
 
-from .core.models import GeminiClient
+from .core.models import GeminiClient, ModelTier
 from .core.repository import MatterRepository
 from .core.utils import (
     setup_logging,
@@ -31,6 +31,8 @@ from .rlm.governance import (
     SteerFamilyResult,
     TraceFamilyHandler,
     TraceFamilyResult,
+    _PLEASANTRY_PROMPT,
+    _is_pleasantry,
     decision_cache_key,
 )
 from .rlm.state import InvestigationState, StepType, normalize_research_mode
@@ -178,6 +180,21 @@ class Irys:
                 from .matter import MatterModel
                 self._matter_models[repo_key] = MatterModel.open(repo_key)
             self._engine._matter_model = self._matter_models[repo_key]
+
+        # Pleasantry fast-path — answer "hi" / "thanks" / "how are you"
+        # with a single NANO-tier call, no classifier, no read, no
+        # investigate. Users sometimes type social niceties into the
+        # same input as investigation queries; running those through
+        # the cascade is pure waste. _is_pleasantry is conservative
+        # (length cap + exact-phrase match) so legit queries still
+        # flow into the cascade.
+        if _is_pleasantry(query):
+            return await self._run_pleasantry(
+                query=query,
+                repository=repository,
+                research_mode=research_mode,
+                conversation_history=conversation_history,
+            )
 
         # MVI-1 Answerability-Governed Cost Cascade — front door.
         # Decide whether to run the full recursive loop at all, answer
@@ -869,6 +886,71 @@ class Irys:
         self._seed_cheap_path_trace(state, decision, "clarify")
         state.status = "completed"
         return state
+
+    async def _run_pleasantry(
+        self,
+        *,
+        query: str,
+        repository: "str | Path",
+        research_mode: Optional[str],
+        conversation_history: Optional[list[dict[str, str]]],
+    ) -> "InvestigationResult":
+        """Answer a pleasantry directly with one NANO call. No
+        cascade, no read, no investigate. See governance._is_pleasantry
+        for the detection rules.
+        """
+        self._telemetry.start_operation("pleasantry")
+        usage_before = self._client.snapshot_usage()
+        try:
+            try:
+                response = await self._client.complete(
+                    _PLEASANTRY_PROMPT.format(query=query),
+                    tier=ModelTier.NANO,
+                    json_mode=False,
+                    usage_label="pleasantry",
+                )
+            except Exception as exc:
+                logger.warning("pleasantry call failed: %s", exc)
+                response = "Hi — ready when you are."
+            answer = (response or "").strip()
+            # Paranoid trim — keep it to two sentences even if the
+            # model ignores the cap.
+            if len(answer) > 240:
+                answer = answer[:240].rstrip() + "…"
+            state = InvestigationState.create(
+                query,
+                str(Path(repository).resolve()),
+                research_mode=research_mode,
+                conversation_history=conversation_history,
+            )
+            state.findings["final_output"] = answer
+            # Synthetic route audit so clients can distinguish the
+            # pleasantry path in the response without a new contract.
+            state.findings["route"] = {
+                "family": "pleasantry",
+                "classifier_family": "pleasantry",
+                "terminal_family": "pleasantry",
+                "confidence": 1.0,
+                "rationale": "pleasantry fast-path — no cascade",
+                "classifier_version": "_pleasantry_fast_path",
+            }
+            state.add_step(
+                StepType.THINKING,
+                "Recognized as a pleasantry — answering directly, no matter lookup.",
+            )
+            state.status = "completed"
+            self._attach_usage_summary(state, usage_before)
+            return InvestigationResult(
+                state=state,
+                output=answer,
+                format=self.config.output_format,
+            )
+        finally:
+            self._telemetry.end_operation(
+                "pleasantry",
+                "pleasantry_complete",
+                {"query_length": len(query)},
+            )
 
     def _persist_route_decision(
         self,

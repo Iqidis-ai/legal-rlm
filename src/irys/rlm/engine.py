@@ -2242,6 +2242,17 @@ class RLMEngine:
             if iteration % 2 == 0:  # Every other iteration
                 state.reprioritize_leads()
 
+            # Plan A: sufficiency probe every 2 iterations. Runs after
+            # iter 2, 4, 6, ... so iter 1 doesn't false-positive on a
+            # matter that just happens to have seed state. The probe
+            # can stamp state.early_terminate_reason which overrides
+            # contract.min_iter in _should_continue_investigation.
+            if iteration >= 2 and iteration % self._SUFFICIENCY_PROBE_CADENCE == 0:
+                try:
+                    await self._run_sufficiency_probe(state)
+                except Exception as _probe_exc:
+                    logger.warning("sufficiency probe failed: %s", _probe_exc)
+
             # Save checkpoint periodically
             if self.config.checkpoint_dir and iteration % self.config.checkpoint_interval == 0:
                 self._save_checkpoint(state, iteration)
@@ -6849,6 +6860,19 @@ Return:
         budget = self._get_research_profile(state)
         contract = getattr(state, "execution_contract", None)
 
+        # Plan A: sufficiency probe has priority over min_iter.
+        # When the interim probe decides we can answer now, that
+        # signal overrides the contract's minimum-iteration floor —
+        # research modes otherwise mandate more iters than needed,
+        # wasting tokens on matters where we already have the
+        # answer. The loop itself sets state.findings['final_output']
+        # to the probe answer before flipping this flag, so callers
+        # downstream of the loop still see the synthesis output they
+        # expect.
+        _etr = getattr(state, "early_terminate_reason", None)
+        if _etr:
+            return False, f"Sufficiency probe: {_etr}"
+
         # Family-scoped min_depth gate. Contract wins if present.
         min_depth = budget.min_depth
         if contract is not None:
@@ -7217,6 +7241,148 @@ Return:
             state.planner_leads_added += 1
             added += 1
         return added
+
+    # Plan A: sufficiency probe. Cheap LITE-tier mid-loop check that
+    # asks "can we answer the user's query right now with what we
+    # have?". Runs every 2 iterations to avoid false positives from a
+    # single noisy iter and to cap cost. When the probe says YES, the
+    # engine stamps state.early_terminate_reason, writes the probe's
+    # answer to state.findings['final_output'], and the termination
+    # controller exits the loop — overriding contract.min_iter.
+    _SUFFICIENCY_PROBE_PROMPT = """You are a cost-governance probe inside an investigation loop for a legal-matter intelligence system. Your job is to decide whether the matter state ALREADY contains enough to answer the user's query, so the loop can stop early instead of running more expensive iterations.
+
+User's query: {query}
+
+Accumulated findings so far (may be partial):
+{findings_summary}
+
+Per-issue coverage snapshot:
+{coverage_summary}
+
+Decide:
+- `can_answer`: true ONLY if you can produce a medium-or-higher-confidence answer that's grounded in the findings above, with at least one specific document citation.
+- `answer`: your actual answer, 2-4 sentences, with the citation inline (e.g. "per contracts/msa.pdf, ...").
+- `confidence`: "low" | "medium" | "high"
+- `citations`: list of document names you used.
+- `reason_not_yet`: empty string if can_answer=true; otherwise a short phrase naming what's still missing.
+
+BIAS TOWARD finishing when a grounded answer exists — the next iteration costs real money. Say `can_answer: false` only when the findings genuinely can't support an answer at medium confidence.
+
+Respond as JSON only:
+{{
+  "can_answer": true | false,
+  "answer": "...",
+  "confidence": "low" | "medium" | "high",
+  "citations": ["doc.pdf"],
+  "reason_not_yet": "..."
+}}
+"""
+
+    _SUFFICIENCY_PROBE_CADENCE = 2  # run after every 2nd iteration
+    _SUFFICIENCY_PROBE_MAX_PER_RUN = 3  # upper bound on probe cost
+
+    async def _run_sufficiency_probe(
+        self,
+        state: InvestigationState,
+    ) -> bool:
+        """Run one interim sufficiency probe. Returns True when the
+        probe decided we can answer now AND updated state accordingly
+        (final_output set, early_terminate_reason stamped). Returns
+        False to keep the loop running.
+
+        Cheap — LITE tier, ~1k-token prompt. Budget bounded by
+        _SUFFICIENCY_PROBE_MAX_PER_RUN.
+        """
+        _probes_used = int(state.findings.get("_probes_used", 0) or 0)
+        if _probes_used >= self._SUFFICIENCY_PROBE_MAX_PER_RUN:
+            return False
+        import json as _json
+        # Build compact findings summary. Keep this cheap — we only
+        # need enough to let the probe judge answerability.
+        _findings_text = ""
+        _facts = state.findings.get("accumulated_facts") or []
+        if _facts:
+            _lines = []
+            for f in _facts[:12]:
+                txt = str(f.get("text") if isinstance(f, dict) else f).strip()
+                if txt:
+                    _lines.append(f"- {txt[:200]}")
+            _findings_text = "\n".join(_lines) or "(no facts accumulated yet)"
+        else:
+            _findings_text = "(no facts accumulated yet)"
+        _cit_lines: list[str] = []
+        for _c in (state.citations or [])[:10]:
+            _cit_lines.append(f"- {getattr(_c, 'document', '')}")
+        if _cit_lines:
+            _findings_text += "\n\nCitations:\n" + "\n".join(_cit_lines)
+        # Coverage snapshot.
+        _cov_text = ""
+        if self._matter_model is not None:
+            try:
+                _cov_rows = self._matter_model.get_issue_coverage_report(
+                    policy_audience="internal",
+                )[:8]
+                _cov_text = "\n".join(
+                    f"- {r.get('title', '?')[:70]}: "
+                    f"coverage {float(r.get('coverage_fraction') or 0.0):.0%}, "
+                    f"{int(r.get('supporting_count') or 0)} supporting"
+                    for r in _cov_rows
+                ) or "(no open issues)"
+            except Exception:
+                _cov_text = "(coverage snapshot unavailable)"
+        else:
+            _cov_text = "(no matter model)"
+        prompt = self._SUFFICIENCY_PROBE_PROMPT.format(
+            query=state.query[:400],
+            findings_summary=_findings_text[:2000],
+            coverage_summary=_cov_text[:1000],
+        )
+        state.findings["_probes_used"] = _probes_used + 1
+        try:
+            from ..core.models import ModelTier as _ModelTier
+            raw = await self.client.complete(
+                prompt,
+                tier=_ModelTier.LITE,
+                json_mode=True,
+                usage_label="sufficiency_probe",
+            )
+        except Exception as exc:
+            logger.warning("sufficiency_probe call failed: %s", exc)
+            return False
+        try:
+            parsed = _json.loads(raw or "{}")
+        except Exception:
+            return False
+        if not parsed.get("can_answer"):
+            return False
+        confidence = str(parsed.get("confidence") or "low").lower()
+        citations = [
+            c.strip() for c in (parsed.get("citations") or [])
+            if isinstance(c, str) and not isinstance(c, bool) and c.strip()
+        ]
+        answer = str(parsed.get("answer") or "").strip()
+        if confidence not in {"medium", "high"} or not citations or not answer:
+            # Don't trust "can_answer=true" with thin evidence — the
+            # LLM may be eager. Require the same threshold the read
+            # handler uses.
+            return False
+        # Stamp the early-terminate decision. The engine loop reads
+        # this on the next _should_continue_investigation call and
+        # breaks out.
+        state.findings["final_output"] = answer
+        state.findings["sufficiency_probe_confidence"] = confidence
+        state.findings["sufficiency_probe_citations"] = citations
+        state.early_terminate_reason = (
+            f"matter already answers the query at {confidence} confidence "
+            f"with {len(citations)} citation(s); skipping further iterations"
+        )
+        self._emit_step(
+            state,
+            StepType.THINKING,
+            f"Sufficiency probe: can answer now ({confidence} confidence, "
+            f"{len(citations)} citation(s)) — stopping loop.",
+        )
+        return True
 
     @staticmethod
     def _viable_leads(pending: list, contract: Any) -> list:

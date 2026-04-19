@@ -317,6 +317,7 @@ _ROUTE_LABELS = {
     "scenario": "What-if analysis",
     "deliverable": "Document draft",
     "clarify": "Clarification requested",
+    "pleasantry": "Friendly reply",
 }
 
 

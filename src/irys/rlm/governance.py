@@ -715,6 +715,67 @@ def decision_cache_key(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Pleasantry fast-path
+# ---------------------------------------------------------------------------
+# Users sometimes type social niceties into the same input box they use for
+# investigation queries: "hi", "thanks", "how are you", etc. Running those
+# through the NANO classifier + read/investigate handlers is pure waste — we
+# know up front there is no intelligence to surface. Route directly to a
+# cheap NANO response so the attorney gets a pleasant reply in a fraction
+# of a second at near-zero cost. NEVER applied to questions that could
+# legitimately be about the matter (e.g. "how are things looking on this
+# case" would exceed the length cap AND contain "case", which disqualifies
+# it anyway).
+
+_PLEASANTRY_PROMPT = """A user of a legal intelligence platform typed the
+following greeting or pleasantry. Respond in ONE short, warm sentence (not
+more than 20 words). Do not offer legal analysis, do not ask follow-up
+questions about any matter, do not mention capabilities. Just acknowledge
+them and be briefly welcoming.
+
+User input: {query}
+
+Respond with plain text only. No JSON, no labels."""
+
+
+# Canonical single-word / phrase pleasantries we route directly. Matching
+# is case-insensitive and anchored — an utterance containing one of these
+# plus other content (e.g. "hi, what's the damages exposure") goes through
+# the normal cascade.
+_PLEASANTRY_PHRASES: frozenset[str] = frozenset({
+    "hi", "hello", "hey", "yo", "hiya",
+    "good morning", "good afternoon", "good evening", "good night",
+    "gm", "gn",
+    "how are you", "how are you?", "how's it going", "how are things",
+    "what's up", "whats up", "sup",
+    "thanks", "thank you", "thx", "ty", "thanks!",
+    "ok", "okay", "cool", "nice", "great", "awesome", "got it",
+    "bye", "goodbye", "see you", "cya", "later",
+})
+
+
+def _is_pleasantry(query: str) -> bool:
+    """Return True when `query` is pure social exchange — no matter-
+    related substance to route. Conservative: length cap + exact-phrase
+    match against the canonical list. Anything with real content
+    (punctuation beyond '!?', a noun phrase naming matter content, a
+    question about work) falls through to the normal cascade.
+    """
+    if not query:
+        return False
+    normalized = query.strip().lower()
+    # Strip trailing punctuation so "hi!" or "hello." match.
+    normalized = normalized.rstrip("!?.,;: \t")
+    if not normalized:
+        return False
+    # Length cap — anything over 30 chars is substantive enough that a
+    # legit query is more likely than pure pleasantry.
+    if len(normalized) > 30:
+        return False
+    return normalized in _PLEASANTRY_PHRASES
+
+
 READ_FAMILY_PROMPT = """You are answering a follow-up question about a legal matter that has already been investigated. You may ONLY use the facts, issues, conversation, and other context below — you have NOT searched any documents on this turn. Do not invent findings, do not claim a new investigation, and do not speculate beyond what the matter model contains.
 
 DEFAULT TO FINISHING on existing state. Synthesis questions ("summarize", "what do we know about X", "explain", "draft") should almost always be answered from what is present here — even if the answer has to honestly acknowledge gaps. Escalation is costly (30+ seconds of fresh document work). Prefer a grounded partial answer over a request for more investigation.
