@@ -288,6 +288,65 @@ def test_batch_verify_toctou_race_cannot_overwrite_rejection():
     assert vs["status"] == "rejected"
 
 
+def test_read_contract_confidence_floor_nudged_down():
+    """Plan B: read's answer_confidence_floor dropped from 0.5 to
+    0.35 so medium-leaning-low reads ship instead of reflexively
+    triggering a 30s investigate that usually reaches the same
+    conclusion. Locks the new floor value so a future regression
+    to 0.5 fails this test."""
+    c = CascadeGovernor._contract_for("read")
+    assert c.answer_confidence_floor == 0.35
+
+
+def test_read_citation_floor_waived_on_used_existing_state_only():
+    """Plan B: citation_floor=1 stays configured, but the handler
+    waives it when the LLM returned used_existing_state_only=true.
+    Zero citations on a pure-synthesis answer is legit (e.g.
+    'matter has 3 facts and 2 issues'). Previously this escalated
+    to investigate — now it ships.
+    """
+    mm, _aid = _seed_matter_with_verified_fact()
+    # Zero citations + used_existing_state_only=true + medium conf.
+    response = (
+        '{"answer": "Matter has 3 facts and 2 open issues; payment '
+        'obligation is net 30.", "answer_confidence": "medium", '
+        '"citations": [], "used_existing_state_only": true, '
+        '"escalation_hint": ""}'
+    )
+    client = _CapturingClient(response)
+    handler = ReadFamilyHandler(client=client, matter_model=mm)
+    result = asyncio.run(handler.run(
+        query="summarize matter status",
+        contract=_READ_CONTRACT,
+    ))
+    # No escalation — the used_existing_state_only flag waived the
+    # citation floor, and medium confidence (0.65) clears the 0.35
+    # confidence floor.
+    assert result.escalation_needed is False
+    assert result.answer.startswith("Matter has 3 facts")
+
+
+def test_read_still_escalates_when_state_genuinely_insufficient():
+    """Guard: the nudge must NOT accidentally suppress legit
+    escalation. An answer with used_existing_state_only=false AND
+    zero citations AND low confidence still escalates — the LLM
+    signaled it wanted fresh docs, so defer to that."""
+    mm, _aid = _seed_matter_with_verified_fact()
+    response = (
+        '{"answer": "We have no evidence of breach in the matter yet.", '
+        '"answer_confidence": "low", "citations": [], '
+        '"used_existing_state_only": false, '
+        '"escalation_hint": "search for defendants production of emails"}'
+    )
+    client = _CapturingClient(response)
+    handler = ReadFamilyHandler(client=client, matter_model=mm)
+    result = asyncio.run(handler.run(
+        query="what evidence of breach do we have",
+        contract=_READ_CONTRACT,
+    ))
+    assert result.escalation_needed is True
+
+
 def test_guidance_budget_caps_enforced():
     """More than 5 verified+noted facts must not all render; entries
     cap at _GUIDANCE_MAX_ENTRIES."""

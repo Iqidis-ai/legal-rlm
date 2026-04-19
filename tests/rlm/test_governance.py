@@ -518,12 +518,18 @@ def test_read_handler_infra_failure_tagged_distinctly(warm_matter):
 def test_read_handler_rejects_empty_string_citations(warm_matter):
     """Round 2 regression: `[""]` must not count as a real citation.
     Previously citation_floor just checked `len(citations)`, so an
-    LLM emitting `[""]` shipped a high-confidence uncited answer."""
+    LLM emitting `[""]` shipped a high-confidence uncited answer.
+
+    Plan B note: test uses `used_existing_state_only: false` so
+    the citation floor still fires — the invariant under test is
+    "empty-string citations don't count", not "zero-citation
+    synthesis answers escalate" (the latter is plan B's new
+    relaxation)."""
     client = _FakeClient({
         "read_synth": (
             '{"answer": "30 days", "answer_confidence": "high", '
             '"citations": ["", "  ", null], '
-            '"used_existing_state_only": true, "escalation_hint": ""}'
+            '"used_existing_state_only": false, "escalation_hint": ""}'
         ),
     })
     handler = ReadFamilyHandler(client=client, matter_model=warm_matter)
@@ -541,12 +547,18 @@ def test_read_handler_rejects_numeric_and_bool_citations(warm_matter):
     """Round 3: R2 accepted int/float/bool as valid citations so
     `[0]` or `[False]` trivially satisfied the floor. Citations are
     document identifiers — always strings. Non-string entries must
-    be rejected."""
+    be rejected.
+
+    Plan B note: test uses `used_existing_state_only: false` so
+    the citation floor still fires — the invariant under test is
+    that int/bool/float citations get filtered, not the zero-
+    citation escalation path (which plan B deliberately relaxes
+    for `used_existing_state_only: true`)."""
     client = _FakeClient({
         "read_synth": (
             '{"answer": "30 days", "answer_confidence": "high", '
             '"citations": [0, false, 3.14, true, 42], '
-            '"used_existing_state_only": true, "escalation_hint": ""}'
+            '"used_existing_state_only": false, "escalation_hint": ""}'
         ),
     })
     handler = ReadFamilyHandler(client=client, matter_model=warm_matter)
@@ -660,11 +672,15 @@ def test_specific_tokens_rejects_calendar_invalid_iso_dates():
 def test_read_handler_citation_floor_forces_escalation(warm_matter):
     """Adversarial #10 finding #2: citation_floor was declared but
     not enforced. An LLM response with high confidence but zero
-    citations used to ship silently. Must now escalate."""
+    citations used to ship silently. Must now escalate — UNLESS the
+    LLM also set used_existing_state_only=true (plan B: zero-
+    citation synthesis over existing state is legit). This fixture
+    uses `used_existing_state_only: false` so the citation floor
+    still fires."""
     client = _FakeClient({
         "read_synth": (
             '{"answer": "yes", "answer_confidence": "high", '
-            '"citations": [], "used_existing_state_only": true, '
+            '"citations": [], "used_existing_state_only": false, '
             '"escalation_hint": ""}'
         ),
     })

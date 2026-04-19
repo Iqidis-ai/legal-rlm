@@ -543,12 +543,21 @@ class CascadeGovernor:
         """Family → contract mapping. Per Codex: mode selection and
         stopping rules are the same decision at different levels."""
         if family == "read":
+            # Thresholds tuned to favor finishing on existing state
+            # rather than reflexively escalating to a 30s AR loop.
+            # An honest "we don't have much on X" answer at medium-
+            # low confidence is usually the right ship — running
+            # investigate to reach the same conclusion is waste.
+            # The citation floor stays at 1 BUT is waived when the
+            # read handler explicitly returned used_existing_state_only
+            # — zero citations on a pure synthesis answer is legit
+            # (see _run_read_family escalation-gate override below).
             return ExecutionContract(
                 family="read",
                 min_iter=0,
                 max_iter=1,
                 citation_floor=1,
-                answer_confidence_floor=0.5,
+                answer_confidence_floor=0.35,
                 escalation_allowed=True,
             )
         if family == "query":
@@ -708,9 +717,13 @@ def decision_cache_key(
 
 READ_FAMILY_PROMPT = """You are answering a follow-up question about a legal matter that has already been investigated. You may ONLY use the facts, issues, conversation, and other context below — you have NOT searched any documents on this turn. Do not invent findings, do not claim a new investigation, and do not speculate beyond what the matter model contains.
 
+DEFAULT TO FINISHING on existing state. Synthesis questions ("summarize", "what do we know about X", "explain", "draft") should almost always be answered from what is present here — even if the answer has to honestly acknowledge gaps. Escalation is costly (30+ seconds of fresh document work). Prefer a grounded partial answer over a request for more investigation.
+
+Only set `answer_confidence: "low"` when the user is asking you to extract fresh evidence from a NEW document or data source that isn't in the matter state (e.g. "find me every exhibit from defendant's production" when no production docs are present). For synthesis / summary / framing questions over existing material, answer at medium or high confidence with whatever citations you can ground, even if the matter is early-stage.
+
 If the existing state contains a direct answer, give it concisely and cite source documents from the facts below.
 
-If the existing state does NOT contain a sufficient answer, say so plainly and set answer_confidence to "low". The caller may escalate to a fresh investigation.
+If the existing state genuinely lacks the evidence the user is asking for, set answer_confidence to "low" AND set escalation_hint to name the specific documents / spans a fresh investigation should search. Do NOT default to "low" just because the topic is under-developed — say what you know.
 
 Matter snapshot:
 {matter_summary}
@@ -895,7 +908,20 @@ class ReadFamilyHandler:
         # citation answer used to ship. Now an answer below the floor
         # forces escalation to investigate (if the contract allows)
         # regardless of the confidence label.
-        citation_shortfall = len(citations) < max(0, contract.citation_floor)
+        #
+        # User-request tuning (plan B): waive the citation floor when
+        # the LLM explicitly returned `used_existing_state_only:true`.
+        # That flag is the direct signal we actually care about
+        # ("grounded in what we already have"); the citation count
+        # was only ever a proxy for it. A pure synthesis answer like
+        # "matter has 3 facts, 2 open issues" is legit with zero doc
+        # citations — escalating to investigate reaches the same
+        # conclusion and burns tokens.
+        used_existing_state_only = bool(parsed.get("used_existing_state_only"))
+        effective_citation_floor = (
+            0 if used_existing_state_only else max(0, contract.citation_floor)
+        )
+        citation_shortfall = len(citations) < effective_citation_floor
         confidence_shortfall = score < contract.answer_confidence_floor
 
         escalation_needed = (

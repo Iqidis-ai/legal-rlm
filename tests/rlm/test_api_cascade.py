@@ -131,7 +131,13 @@ def test_api_read_infra_failure_does_not_silently_run_investigate(repo_path):
 def test_api_read_zero_citations_forces_escalation(repo_path):
     """Adversarial #10 acceptance B: a high-confidence read with
     zero citations must not ship under citation_floor=1 — it must
-    escalate to investigate."""
+    escalate to investigate. Plan B narrowed this: zero-citation
+    answers still escalate UNLESS the LLM set
+    used_existing_state_only=true (meaning it grounded in existing
+    matter state without doc-level citations, which is legit for
+    pure synthesis). This fixture uses used_existing_state_only=false
+    so the citation floor still fires as the original test
+    intended."""
     fake = _FakeClient({
         "intent_classifier": (
             '{"family": "read", "confidence": 0.9, '
@@ -139,8 +145,8 @@ def test_api_read_zero_citations_forces_escalation(repo_path):
         ),
         "read_synth": (
             '{"answer": "it is X", "answer_confidence": "high", '
-            '"citations": [], "used_existing_state_only": true, '
-            '"escalation_hint": ""}'
+            '"citations": [], "used_existing_state_only": false, '
+            '"escalation_hint": "find X in the recent production"}'
         ),
     })
     mm = _warm_in_memory_matter()
