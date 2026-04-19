@@ -187,6 +187,107 @@ def test_candidate_assertion_note_not_leaked():
     assert "never-ever-leak-this-candidate-note" not in client.last_prompt
 
 
+def test_verbatim_echo_is_redacted_from_answer():
+    """adv#13 Finding #1: prompt-only 'don't quote' is insufficient.
+    If the LLM emits a note verbatim in `answer` (induced by a query
+    like "what did the attorney say"), the post-LLM redactor MUST
+    strip it before the handler returns. Otherwise the note ships
+    to the UI / callback / logs as public answer text.
+    """
+    note = (
+        "CRITICAL: this clause is what the MSJ hinges on — emphasize it "
+        "when summarizing."
+    )
+    mm, _aid = _seed_matter_with_verified_fact(note=note)
+    # Response that quotes the note back verbatim — the LLM
+    # disregarded the "do not quote" instruction.
+    leaky_response = (
+        '{"answer": "The attorney said: \\"' + note + '\\" and we should follow that.", '
+        '"answer_confidence": "high", '
+        '"citations": ["contracts/msa.pdf"], '
+        '"used_existing_state_only": true, "escalation_hint": ""}'
+    )
+    client = _CapturingClient(leaky_response)
+    handler = ReadFamilyHandler(client=client, matter_model=mm)
+
+    result = asyncio.run(handler.run(
+        query="what did the attorney say about this clause",
+        contract=_READ_CONTRACT,
+        include_attorney_guidance=True,
+    ))
+    # The raw note string must NOT appear in the returned answer.
+    assert note not in result.answer
+    # The neutral redaction marker tells callers something was stripped.
+    assert "[attorney guidance not quoted]" in result.answer
+
+
+def test_redaction_preserves_legitimate_answer_text():
+    """The redactor must not delete a legitimate summary that happens
+    to share short common phrases with the note. Only substrings of
+    _GUIDANCE_ECHO_MIN_SUBSTRING or more chars trigger redaction."""
+    mm, _aid = _seed_matter_with_verified_fact(
+        note="This clause is what the MSJ hinges on.",
+    )
+    clean_response = (
+        '{"answer": "Payment is net 30 days. Notice period is 60 days.", '
+        '"answer_confidence": "high", '
+        '"citations": ["contracts/msa.pdf"], '
+        '"used_existing_state_only": true, "escalation_hint": ""}'
+    )
+    client = _CapturingClient(clean_response)
+    handler = ReadFamilyHandler(client=client, matter_model=mm)
+    result = asyncio.run(handler.run(
+        query="summarize", contract=_READ_CONTRACT,
+        include_attorney_guidance=True,
+    ))
+    # Legitimate answer content passes through unmodified.
+    assert "Payment is net 30 days" in result.answer
+    assert "[attorney guidance not quoted]" not in result.answer
+
+
+def test_batch_verify_toctou_race_cannot_overwrite_rejection():
+    """adv#13 Finding #2: the SELECT-candidate + UPDATE-verified
+    sequence is wrapped in a BEGIN IMMEDIATE transaction. A
+    concurrent rejection committed before our transaction starts
+    must be visible to the SELECT (so we skip), and no rejection
+    can commit between our SELECT and UPDATE.
+
+    We simulate the pre-transaction rejection: reject id X first,
+    then call batch-verify with [X]. Expected outcome: X is skipped,
+    rejection stands.
+    """
+    from irys.matter.enums import ReviewedByKind, VerificationTargetKind
+    mm = MatterModel.open_in_memory()
+    run_id = mm.start_run("toctou")
+    c = AssertionCandidate(
+        proposition_text="race target",
+        speech_act=SpeechAct.OPERATIVE,
+        source_role=SourceRole.OPERATIVE,
+        document_id="doc.pdf",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        origin_kind=OriginKind.EXTRACTED,
+    )
+    aid, _ = mm.assertions.upsert_occurrence(c, run_id=run_id)
+    # Reviewer A rejects first.
+    mm.verification.reject(
+        VerificationTargetKind.ASSERTION, aid,
+        reviewed_by_kind=ReviewedByKind.USER,
+        rejection_reason="wrong doc",
+    )
+    # Reviewer B's batch-verify list still includes the id — would
+    # have resolved at UI-load time before the rejection hit.
+    verified = mm.bulk_verify_assertion_ids(
+        [aid], reviewed_by_kind="user",
+    )
+    assert verified == [], (
+        "batch-verify must skip an already-rejected row, not overwrite"
+    )
+    # Status stays rejected.
+    vs = mm.verification.get(VerificationTargetKind.ASSERTION, aid)
+    assert vs["status"] == "rejected"
+
+
 def test_guidance_budget_caps_enforced():
     """More than 5 verified+noted facts must not all render; entries
     cap at _GUIDANCE_MAX_ENTRIES."""

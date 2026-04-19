@@ -1093,36 +1093,44 @@ class MatterModel:
         import sqlite3 as _sqlite3
         # SQLite bind-param limit: chunk the IN list.
         _BIND_LIMIT = 900
-        valid_ids: list[str] = []
-        for _chunk_start in range(0, len(filtered_input), _BIND_LIMIT):
-            _chunk = filtered_input[_chunk_start : _chunk_start + _BIND_LIMIT]
-            _rows = self.db.execute(
-                """SELECT a.id FROM assertion a
-                   LEFT JOIN verification_state vs
-                     ON vs.target_kind='assertion'
-                    AND vs.target_id=a.id
-                    AND vs.matter_id=a.matter_id
-                   WHERE a.matter_id=?
-                     AND a.id IN ({})
-                     AND COALESCE(vs.status, 'candidate')='candidate'
-                     AND a.belief_state NOT IN ('withdrawn', 'superseded', 'rejected')""".format(
-                    ",".join("?" * len(_chunk))
-                ),
-                (self.matter_id, *_chunk),
-            ).fetchall()
-            valid_ids.extend(r["id"] for r in _rows)
-        if not valid_ids:
-            return []
-        specs = [{"target_kind": "assertion", "target_id": aid} for aid in valid_ids]
-        ids = self.verification.bulk_set_status(
-            specs,
-            new_status="verified",
-            reviewed_by_kind=reviewed_by_kind,
-            reviewed_by_id=reviewed_by_id,
-            review_note=review_note,
-            review_scope=review_scope,
-            run_id=run_id,
-        )
+        # adv#13 Finding #2: close the TOCTOU race between the
+        # candidate SELECT and the bulk_set_status UPDATE. Wrap both
+        # in ONE transaction — self.db.transaction() issues
+        # BEGIN IMMEDIATE, so no other connection can flip status
+        # between our filter and our verify UPDATE. Without this, a
+        # concurrent rejection could silently be overwritten to
+        # verified.
+        with self.db.transaction():
+            valid_ids: list[str] = []
+            for _chunk_start in range(0, len(filtered_input), _BIND_LIMIT):
+                _chunk = filtered_input[_chunk_start : _chunk_start + _BIND_LIMIT]
+                _rows = self.db.execute(
+                    """SELECT a.id FROM assertion a
+                       LEFT JOIN verification_state vs
+                         ON vs.target_kind='assertion'
+                        AND vs.target_id=a.id
+                        AND vs.matter_id=a.matter_id
+                       WHERE a.matter_id=?
+                         AND a.id IN ({})
+                         AND COALESCE(vs.status, 'candidate')='candidate'
+                         AND a.belief_state NOT IN ('withdrawn', 'superseded', 'rejected')""".format(
+                        ",".join("?" * len(_chunk))
+                    ),
+                    (self.matter_id, *_chunk),
+                ).fetchall()
+                valid_ids.extend(r["id"] for r in _rows)
+            if not valid_ids:
+                return []
+            specs = [{"target_kind": "assertion", "target_id": aid} for aid in valid_ids]
+            ids = self.verification.bulk_set_status(
+                specs,
+                new_status="verified",
+                reviewed_by_kind=reviewed_by_kind,
+                reviewed_by_id=reviewed_by_id,
+                review_note=review_note,
+                review_scope=review_scope,
+                run_id=run_id,
+            )
         for spec in specs:
             if run_id is not None:
                 self.ledger.append_event(

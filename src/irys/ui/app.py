@@ -2906,6 +2906,15 @@ class AppState:
                                     structured_trace = "\n".join(lines)
                         except Exception:
                             pass
+                    # adv#13 Finding #3: the session-stream path
+                    # drifted from the other stream path. Cheap-path
+                    # families seed state.thinking_steps via
+                    # api._seed_cheap_path_trace but never stream
+                    # thinking and never start a run — so without
+                    # this fallback the Reasoning Trace tab stays
+                    # blank on read/query/trace/steer/etc. answers.
+                    if not structured_trace.strip():
+                        structured_trace = _fmt_thinking_steps_fallback(state) or structured_trace
 
                     main_output, diagnostics_output = _split_run_output_sections(self.final_output)
                     self.final_output = main_output or self.final_output

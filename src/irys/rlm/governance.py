@@ -816,6 +816,13 @@ class ReadFamilyHandler:
         context = self._assemble_read_context(
             include_attorney_guidance=include_attorney_guidance,
         )
+        # adv#13 Finding #1: prompt-only "don't quote" instruction is
+        # insufficient — a user can induce the LLM to emit a
+        # verification note verbatim with a query like "what did the
+        # attorney say about X". Capture the guidance text now so
+        # post-LLM redaction can strip any verbatim echo BEFORE the
+        # answer reaches the service response / UI / callback / logs.
+        _guidance_raw = context.get("attorney_guidance_block") or ""
         prompt = READ_FAMILY_PROMPT.format(
             matter_summary=context["matter_summary"],
             verified_block=context["verified_block"],
@@ -863,6 +870,14 @@ class ReadFamilyHandler:
         score = self._CONFIDENCE_MAP[label]
 
         answer = str(parsed.get("answer") or "").strip()
+        # adv#13 Finding #1: hard boundary — strip any verbatim echo
+        # of attorney-guidance text from the answer. Extracts the
+        # quoted note/annotation strings the prompt just received and
+        # scans the LLM answer for each; any substring match of
+        # meaningful length triggers a redaction. Belt-and-suspenders
+        # alongside the prompt instruction.
+        if include_attorney_guidance and _guidance_raw:
+            answer = self._strip_guidance_echo(answer, _guidance_raw)
         # Codex fallout R3: citations must be non-empty STRINGS. The
         # R2 fix still accepted int/float/bool, so `[0]` or `[False]`
         # trivially satisfied the floor. Legal citations are document
@@ -1008,6 +1023,69 @@ class ReadFamilyHandler:
             visible_verified_ids,
             sorted(visible_docs_set),
         )
+
+    # Minimum length of a guidance substring that counts as a
+    # "verbatim echo" for redaction. Shorter fragments (single common
+    # words) overmatch; this is the bar for "the LLM is quoting the
+    # note". Tuned for legal note prose — 40 chars is a clause, not
+    # a stop-word accident.
+    _GUIDANCE_ECHO_MIN_SUBSTRING = 40
+
+    @classmethod
+    def _strip_guidance_echo(cls, answer: str, guidance_block: str) -> str:
+        """Redact any verbatim quote of attorney-guidance text from
+        the answer. Extracts the quoted note/annotation strings from
+        the guidance block (between double quotes) and scans `answer`
+        for each. Any substring match of >= _GUIDANCE_ECHO_MIN_SUBSTRING
+        chars triggers a replacement with the neutral marker
+        '[attorney guidance not quoted]' so the caller can see
+        something was filtered.
+
+        Returns the (possibly) redacted answer. Never raises — the
+        caller path must not fail over a regex mismatch.
+        """
+        if not answer or not guidance_block:
+            return answer
+        import re as _re
+        try:
+            quoted = _re.findall(r'"([^"]{40,})"', guidance_block)
+        except Exception:
+            return answer
+        if not quoted:
+            return answer
+        redacted = answer
+        for note in quoted:
+            note = note.strip()
+            if len(note) < cls._GUIDANCE_ECHO_MIN_SUBSTRING:
+                continue
+            # Direct containment check — the LLM is unlikely to
+            # paraphrase enough to evade a full-note match while
+            # still conveying the privileged content.
+            if note in redacted:
+                redacted = redacted.replace(
+                    note, "[attorney guidance not quoted]",
+                )
+                continue
+            # Substring leak: scan for the longest contiguous
+            # overlap of >= _GUIDANCE_ECHO_MIN_SUBSTRING chars.
+            for start in range(0, len(note) - cls._GUIDANCE_ECHO_MIN_SUBSTRING + 1):
+                for end in range(
+                    len(note),
+                    start + cls._GUIDANCE_ECHO_MIN_SUBSTRING - 1,
+                    -1,
+                ):
+                    fragment = note[start:end]
+                    if len(fragment) < cls._GUIDANCE_ECHO_MIN_SUBSTRING:
+                        break
+                    if fragment in redacted:
+                        redacted = redacted.replace(
+                            fragment, "[attorney guidance not quoted]",
+                        )
+                        break
+                else:
+                    continue
+                break
+        return redacted
 
     # P0 notes→reasoning caps per Codex design.
     _GUIDANCE_MAX_ENTRIES = 5
