@@ -42,7 +42,7 @@ class LegalCase:
             "date_filed": self.date_filed,
             "citation": self.citation,
             "docket_number": self.docket_number,
-            "opinion_text": self.opinion_text[:2000] if self.opinion_text else None,
+            "opinion_text": self.opinion_text if self.opinion_text else None,
             "url": self.url,
             "snippet": self.snippet,
         }
@@ -142,44 +142,66 @@ class CourtListenerClient:
         filed_after: Optional[str] = None,
         filed_before: Optional[str] = None,
         max_results: int = 10,
+        case_name: Optional[str] = None,
+        cites_opinion_id: Optional[int] = None,
+        status: Optional[str] = None,
+        cite_count_gte: Optional[int] = None,
+        order_by: str = "score desc",
+        semantic: bool = False,
+        highlight: bool = False,
     ) -> list[LegalCase]:
-        """Search for legal opinions/case law.
+        """Search for legal opinions/case law via /search/?type=o.
 
         Args:
-            query: Search query (supports boolean operators, phrases in quotes)
-            court: Court ID filter (e.g., "scotus", "ca9", "nysd")
-            filed_after: Filter cases filed after this date (YYYY-MM-DD)
-            filed_before: Filter cases filed before this date (YYYY-MM-DD)
-            max_results: Maximum results to return (default 10)
-
-        Returns:
-            List of LegalCase objects
-
-        Example:
-            cases = await client.search_opinions(
-                query='"breach of contract" damages',
-                court="scotus",
-                filed_after="2020-01-01"
-            )
+            query: Free-text query. May contain search operators
+                (e.g. "caseName:(Obergefell)", "cites:2812209").
+            court: Court ID filter (e.g., "scotus", "ca9", "tex").
+            filed_after / filed_before: ISO date bounds.
+            max_results: Cap on returned results (default 10).
+            case_name: Convenience — wraps into ``caseName:(...)`` operator.
+            cites_opinion_id: If set, adds ``cites:<id>`` to the query for
+                forward-citation traversal.
+            status: Precedential status filter (e.g. "Published").
+            cite_count_gte: Shortcut for ``citeCount:[N TO *]`` (influence filter).
+            order_by: Sort order. Default "score desc".
+                Also useful: "dateFiled desc", "citeCount desc".
+            semantic: Enable Citegeist semantic search (case-law only).
+            highlight: Request highlighted snippets (<mark>).
         """
         session = await self._ensure_session()
 
-        params = {
-            "q": query,
-            "type": "o",  # opinions
-            "order_by": "score desc",
-        }
+        q_parts: list[str] = []
+        if query:
+            q_parts.append(query.strip())
+        if case_name:
+            q_parts.append(f'caseName:("{case_name}")')
+        if cites_opinion_id:
+            q_parts.append(f"cites:{int(cites_opinion_id)}")
+        if cite_count_gte:
+            q_parts.append(f"citeCount:[{int(cite_count_gte)} TO *]")
+        q = " ".join(p for p in q_parts if p).strip() or "*"
 
+        params: dict[str, Any] = {
+            "q": q,
+            "type": "o",
+            "order_by": order_by,
+        }
         if court:
             params["court"] = court
         if filed_after:
             params["filed_after"] = filed_after
         if filed_before:
             params["filed_before"] = filed_before
+        if status:
+            params["stat_" + status.capitalize()] = "on"
+        if semantic:
+            params["semantic"] = "true"
+        if highlight:
+            params["highlight"] = "on"
 
         try:
             url = f"{self.SEARCH_URL}/?{urlencode(params)}"
-            logger.info(f"CourtListener search: {query[:50]}...")
+            logger.info(f"CourtListener search: q={q[:80]}")
 
             async with session.get(url) as response:
                 if response.status != 200:
@@ -190,17 +212,19 @@ class CourtListenerClient:
                 results = []
 
                 for item in data.get("results", [])[:max_results]:
-                    case = LegalCase(
-                        id=str(item.get("id", "")),
-                        case_name=item.get("caseName", item.get("case_name", "Unknown")),
-                        court=item.get("court", ""),
-                        date_filed=item.get("dateFiled", item.get("date_filed")),
-                        citation=item.get("citation", [None])[0] if item.get("citation") else None,
-                        docket_number=item.get("docketNumber", item.get("docket_number")),
-                        snippet=item.get("snippet", ""),
-                        url=f"https://www.courtlistener.com{item.get('absolute_url', '')}",
-                    )
-                    results.append(case)
+                    citations = item.get("citation") or []
+                    citation_str = citations[0] if citations else None
+                    abs_url = item.get("absolute_url", "") or ""
+                    results.append(LegalCase(
+                        id=str(item.get("cluster_id") or item.get("id", "")),
+                        case_name=item.get("caseName") or item.get("case_name") or "Unknown",
+                        court=item.get("court") or item.get("court_id") or "",
+                        date_filed=item.get("dateFiled") or item.get("date_filed"),
+                        citation=citation_str,
+                        docket_number=item.get("docketNumber") or item.get("docket_number"),
+                        snippet=item.get("snippet") or "",
+                        url=f"https://www.courtlistener.com{abs_url}" if abs_url else None,
+                    ))
 
                 logger.info(f"CourtListener found {len(results)} cases")
                 return results
@@ -250,56 +274,153 @@ class CourtListenerClient:
             logger.error(f"CourtListener docket search failed: {e}")
             return []
 
-    async def get_opinion(self, opinion_id: str) -> Optional[LegalCase]:
-        """Get full opinion text by ID.
+    async def lookup_citations(
+        self,
+        text: str,
+        max_chars: int = 60000,
+    ) -> list[dict]:
+        """Resolve citations inside a text blob via POST /citation-lookup/.
+
+        Batches an arbitrary text (up to the API's hard 64K-char cap) into a
+        single request; Eyecite extracts every citation and the server
+        returns matched clusters. Results are returned as a list of raw
+        per-citation objects keeping ``status`` and ``clusters`` intact so
+        callers can distinguish resolved (200) vs. not-found (404) vs.
+        ambiguous (300).
 
         Args:
-            opinion_id: The opinion ID from search results
+            text: The text to scan. Truncated to ``max_chars`` to respect
+                the 64K cap; callers chunk if they need more.
+            max_chars: Defensive cap under 64000.
+        """
+        if not text:
+            return []
+        if not self.api_token:
+            logger.warning("citation-lookup requires COURTLISTENER_API_TOKEN")
+            return []
 
-        Returns:
-            LegalCase with full opinion_text, or None
+        session = await self._ensure_session()
+        blob = text[:min(max_chars, 64000)]
+        url = f"{self.BASE_URL}/citation-lookup/"
+        try:
+            logger.info(f"CourtListener citation-lookup: {len(blob)} chars")
+            async with session.post(url, data={"text": blob}) as response:
+                if response.status != 200:
+                    logger.error(f"citation-lookup API error: {response.status}")
+                    return []
+                data = await response.json()
+                if isinstance(data, dict):
+                    return data.get("citations", []) or []
+                return data or []
+        except Exception as e:
+            logger.error(f"citation-lookup failed: {e}")
+            return []
+
+    async def get_cluster(self, cluster_id: int | str) -> Optional[dict]:
+        """Fetch a full cluster record (case metadata + sub-opinion URLs)."""
+        session = await self._ensure_session()
+        try:
+            url = f"{self.BASE_URL}/clusters/{cluster_id}/"
+            async with session.get(url, allow_redirects=True) as response:
+                if response.status != 200:
+                    logger.warning(f"get_cluster {cluster_id}: status={response.status}")
+                    return None
+                return await response.json()
+        except Exception as e:
+            logger.error(f"get_cluster {cluster_id} failed: {e}")
+            return None
+
+    async def get_opinion(
+        self,
+        opinion_id: Optional[str | int] = None,
+        cluster_id: Optional[str | int] = None,
+        prefer: str = "lead-opinion",
+    ) -> Optional[LegalCase]:
+        """Fetch a single opinion's text.
+
+        Either ``opinion_id`` (direct) or ``cluster_id`` (picks a sub-opinion
+        matching ``prefer`` — defaults to the lead opinion, falling back to
+        the first sub-opinion) may be passed.
         """
         session = await self._ensure_session()
-
         try:
-            url = f"{self.BASE_URL}/opinions/{opinion_id}/"
+            target_opinion_id = opinion_id
+            cluster_data: Optional[dict] = None
 
+            if target_opinion_id is None and cluster_id is not None:
+                cluster_data = await self.get_cluster(cluster_id)
+                if not cluster_data:
+                    return None
+                sub_urls = cluster_data.get("sub_opinions") or []
+                if not sub_urls:
+                    return None
+                for sub_url in sub_urls:
+                    async with session.get(sub_url) as sub_resp:
+                        if sub_resp.status != 200:
+                            continue
+                        sub = await sub_resp.json()
+                        if sub.get("type") == prefer:
+                            target_opinion_id = sub.get("id")
+                            break
+                if target_opinion_id is None:
+                    last = sub_urls[0].rstrip("/").rsplit("/", 1)[-1]
+                    target_opinion_id = last
+
+            if target_opinion_id is None:
+                return None
+
+            url = f"{self.BASE_URL}/opinions/{target_opinion_id}/"
             async with session.get(url) as response:
                 if response.status != 200:
                     return None
-
                 data = await response.json()
 
-                # Get the cluster for case metadata
-                cluster_url = data.get("cluster")
+                if cluster_data is None:
+                    cluster_url = data.get("cluster")
+                    if cluster_url:
+                        async with session.get(cluster_url) as cr:
+                            if cr.status == 200:
+                                cluster_data = await cr.json()
+
                 case_name = "Unknown"
                 court = ""
                 date_filed = None
+                citation_str = None
+                cluster_pk = cluster_id
+                if cluster_data:
+                    case_name = cluster_data.get("case_name") or case_name
+                    date_filed = cluster_data.get("date_filed") or date_filed
+                    cluster_pk = cluster_data.get("id") or cluster_pk
+                    cites = cluster_data.get("citations") or []
+                    if cites:
+                        c0 = cites[0]
+                        if isinstance(c0, dict):
+                            citation_str = " ".join(
+                                str(c0.get(k, "")) for k in ("volume", "reporter", "page") if c0.get(k)
+                            ).strip() or None
+                        else:
+                            citation_str = str(c0)
 
-                if cluster_url:
-                    async with session.get(cluster_url) as cluster_resp:
-                        if cluster_resp.status == 200:
-                            cluster = await cluster_resp.json()
-                            case_name = cluster.get("case_name", "Unknown")
-                            date_filed = cluster.get("date_filed")
-                            # Get court from docket
-                            docket_url = cluster.get("docket")
-                            if docket_url:
-                                async with session.get(docket_url) as docket_resp:
-                                    if docket_resp.status == 200:
-                                        docket = await docket_resp.json()
-                                        court = docket.get("court", "")
-
-                # Extract opinion text (prefer plain_text, fallback to html)
-                opinion_text = data.get("plain_text") or data.get("html", "")
-
+                opinion_text = (
+                    data.get("plain_text")
+                    or data.get("html_with_citations")
+                    or data.get("html")
+                    or ""
+                )
+                abs_url = cluster_data.get("absolute_url") if cluster_data else None
+                cl_url = (
+                    f"https://www.courtlistener.com{abs_url}"
+                    if abs_url and abs_url.startswith("/")
+                    else f"https://www.courtlistener.com/opinion/{cluster_pk or target_opinion_id}/"
+                )
                 return LegalCase(
-                    id=str(opinion_id),
+                    id=str(target_opinion_id),
                     case_name=case_name,
                     court=court,
                     date_filed=date_filed,
+                    citation=citation_str,
                     opinion_text=opinion_text,
-                    url=f"https://www.courtlistener.com/opinion/{opinion_id}/",
+                    url=cl_url,
                 )
 
         except Exception as e:

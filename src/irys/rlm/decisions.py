@@ -1550,3 +1550,141 @@ async def analyze_external(
         "combined_framework": "",
         "summary": "",
     }
+
+
+
+# =============================================================================
+# Research-agent decisions (gate + per-turn action decider + final brief)
+# =============================================================================
+
+
+async def should_research_externally(
+    query: str,
+    facts: list[str],
+    triggers_summary: str,
+    client: GeminiClient,
+    active_step: Optional["InvestigationStep"] = None,
+) -> dict:
+    """LITE gate: decide whether the research agent should run at all.
+
+    Returns: {"needed": bool, "reason": str}
+    """
+    start_time = time.time()
+    facts_text = "\n".join(f"- {f}" for f in (facts or [])[:15]) or "(none)"
+    trig = (triggers_summary or "").strip() or "(none)"
+    prompt = prompts.P_SHOULD_RESEARCH.format(
+        query=query,
+        facts=facts_text,
+        triggers=trig,
+    )
+    _log_llm_call("should_research_externally", ModelTier.LITE, prompt, start_time)
+    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step)
+    result = parse_json_safe(response)
+
+    if result is not None and "needed" in result:
+        _log_llm_result("should_research_externally", result, time.time() - start_time)
+        return {"needed": bool(result.get("needed")), "reason": str(result.get("reason", ""))}
+
+    # Safe default: research when legal keywords present
+    legal_keywords = ["contract", "damages", "liability", "breach", "negligence",
+                      "statute", "regulation", "precedent", "case", "court"]
+    is_legal = any(kw in query.lower() for kw in legal_keywords)
+    logger.warning("should_research_externally: JSON parse failed; falling back to keyword heuristic")
+    return {"needed": is_legal, "reason": "Fallback heuristic: legal keyword match" if is_legal else "Fallback heuristic: no legal keywords"}
+
+
+async def decide_next_action(
+    query: str,
+    gap: str,
+    reasoning: str,
+    facts: list[str],
+    triggers_summary: str,
+    tool_schemas: list[dict],
+    research_log: str,
+    client: GeminiClient,
+    active_step: Optional["InvestigationStep"] = None,
+    last_turn_content: str = "",
+) -> dict:
+    """FLASH agent turn: pick the next batch of tool calls.
+
+    Returns: {"reasoning": str, "actions": [{"tool": str, "args": dict}], "done_after_this": bool}
+    """
+    start_time = time.time()
+    facts_text = "\n".join(f"- {f}" for f in (facts or [])[:15]) or "(none)"
+    trig = (triggers_summary or "").strip() or "(none)"
+    schemas_text = json.dumps(tool_schemas, indent=2)
+    log_text = (research_log or "").strip() or "(empty — this is turn 1)"
+    last_turn_section = (
+        f"LAST TURN RESULTS (structured — use this to inform your next decision):\n{last_turn_content}"
+        if last_turn_content.strip()
+        else "(turn 1 — no prior results)"
+    )
+    prompt = prompts.P_DECIDE_NEXT_ACTION.format(
+        query=query,
+        gap=gap or "(not specified)",
+        reasoning=reasoning or "(not specified)",
+        fact_count=len(facts or []),
+        facts=facts_text,
+        triggers=trig,
+        tool_schemas=schemas_text,
+        research_log=log_text,
+        last_turn_section=last_turn_section,
+    )
+    _log_llm_call("decide_next_action", ModelTier.FLASH, prompt, start_time)
+    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step)
+    result = parse_json_safe(response)
+
+    if not isinstance(result, dict):
+        logger.warning("decide_next_action: JSON parse failed; treating as done")
+        return {"reasoning": "parse_failure", "actions": [], "done_after_this": True}
+
+    actions_raw = result.get("actions") or []
+    actions: list[dict] = []
+    if isinstance(actions_raw, list):
+        for a in actions_raw:
+            if isinstance(a, dict) and a.get("tool"):
+                actions.append({"tool": str(a["tool"]), "args": dict(a.get("args") or {})})
+
+    out = {
+        "reasoning": str(result.get("reasoning", "")),
+        "actions": actions,
+        "done_after_this": bool(result.get("done_after_this", False)),
+    }
+    _log_llm_result("decide_next_action", out, time.time() - start_time)
+    return out
+
+
+async def build_research_brief(
+    query: str,
+    case_law_results: str,
+    web_results: str,
+    client: GeminiClient,
+    active_step: Optional["InvestigationStep"] = None,
+) -> dict:
+    """FLASH: final research brief consumed by synthesis. Same output schema as the former analyze_external.
+
+    Returns: {key_precedents, legal_standards, regulations, combined_framework, summary}
+    """
+    start_time = time.time()
+    prompt = prompts.P_BUILD_BRIEF.format(
+        query=query,
+        case_law_results=case_law_results or "No case law results found.",
+        web_results=web_results or "No web/regulatory results found.",
+    )
+    _log_llm_call("build_research_brief", ModelTier.FLASH, prompt, start_time)
+    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step)
+    result = parse_json_safe(response)
+
+    if result:
+        _log_llm_result("build_research_brief", result, time.time() - start_time)
+        return result
+
+    logger.warning("build_research_brief: JSON parse failed; returning empty brief")
+    return {
+        "key_precedents": [],
+        "legal_standards": [],
+        "regulations": [],
+        "regulatory_standards": [],
+        "combined_framework": "",
+        "summary": "",
+    }

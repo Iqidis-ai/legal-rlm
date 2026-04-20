@@ -34,7 +34,8 @@ try:
 except ImportError:
     pass  # python-dotenv not installed; rely on shell environment
 
-DEFAULT_API_URL = "https://rlm.iryslegal.com/"
+# DEFAULT_API_URL = "https://rlm.iryslegal.com/"
+DEFAULT_API_URL = "http://localhost:8000/"
 QUERIES_FILE = Path(__file__).parent / "caselaw_benchmark_queries.json"
 OUTPUT_DIR = Path("caselaw_benchmark_output")
 

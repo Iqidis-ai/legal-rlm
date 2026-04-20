@@ -167,6 +167,17 @@ Fires during lead execution with real-time deltas. This is the most frequent eve
 | `external_results` | After external search returns | `{source, count, items}` |
 | `analysis` | After external results analyzed | `{summary, key_precedents, regulations, ...}` |
 | `triggers` | When external research triggers found | `{count, triggers}` |
+| `tool_call` | Research agent announces its next batch of tool calls | `{message, turn, reasoning, actions, action_count}` |
+| `citations_validated` | `lookup_citations` resolved one or more citations | `{message, resolved_count, unresolved_count, items}` |
+| `opinion_fetched` | `get_opinion` fetched an opinion's full text | `{message, case_name, citation, url, char_count, ok}` |
+| `citing_cases` | `find_citing_cases` returned forward-citing opinions | `{message, source_opinion_id, count, items}` |
+
+> **Research-agent payloads.** When any `lead.update` is emitted by the research agent (both the 4 agent-specific kinds above and the shared `external_results` / `analysis` kinds when they come from the agent path), the `data` object additionally carries:
+> - `message` — a short, user-friendly label suitable for direct display (e.g. `"Validated case citations"`)
+> - `tool` — the underlying tool name (`search_opinions` / `lookup_citations` / `get_opinion` / `get_cluster` / `find_citing_cases` / `web_search` / `fetch_url`)
+> - `ok` — boolean success flag; when `false`, an additional `error` string is present
+>
+> Legacy (non-agent) `external_results` / `analysis` updates do not carry `tool` / `ok`; treat them as optional on those two kinds.
 
 #### `kind: "matches"`
 
@@ -373,6 +384,90 @@ External research triggers discovered in a document (jurisdictions, regulations,
   }
 }
 ```
+
+#### `kind: "tool_call"` *(research agent)*
+
+The research agent is announcing the next batch of tool calls it will dispatch in parallel. Emitted **before** execution so the UI can preview planned work.
+
+```json
+{
+  "lead_id": "r1-turn-1",
+  "kind": "tool_call",
+  "data": {
+    "message": "Planning next research calls",
+    "turn": 1,
+    "reasoning": "Three cited authorities detected — batching into one lookup_citations call.",
+    "actions": [
+      {"tool": "lookup_citations", "args": {"text": "991 S.W.2d 849; 960 S.W.2d 41; 576 U.S. 644"}}
+    ],
+    "action_count": 1
+  }
+}
+```
+
+#### `kind: "citations_validated"` *(research agent)*
+
+`lookup_citations` finished. Resolved citations are already persisted as `case_law` citations; this event summarizes what landed.
+
+```json
+{
+  "lead_id": "r1-turn-1",
+  "kind": "citations_validated",
+  "data": {
+    "message": "Validated case citations",
+    "tool": "lookup_citations",
+    "ok": true,
+    "resolved_count": 3,
+    "unresolved_count": 0,
+    "items": [
+      {"input": "991 S.W.2d 849", "cluster_id": 1234567, "case_name": "Trevino v. State", "citation": "991 S.W.2d 849"},
+      {"input": "960 S.W.2d 41", "cluster_id": 2345678, "case_name": "Formosa Plastics Corp. v. Presidio Eng'rs", "citation": "960 S.W.2d 41"}
+    ]
+  }
+}
+```
+
+#### `kind: "opinion_fetched"` *(research agent)*
+
+`get_opinion` fetched the full text of a sub-opinion. The text is stored in the `case_law` entry; this event announces the fetch and the character count.
+
+```json
+{
+  "lead_id": "r1-turn-2",
+  "kind": "opinion_fetched",
+  "data": {
+    "message": "Fetched full opinion text",
+    "tool": "get_opinion",
+    "ok": true,
+    "case_name": "Obergefell v. Hodges",
+    "citation": "576 U.S. 644",
+    "url": "https://www.courtlistener.com/opinion/2812209/",
+    "char_count": 58342
+  }
+}
+```
+
+#### `kind: "citing_cases"` *(research agent)*
+
+`find_citing_cases` ran a forward-citation traversal (`cites:<id>` query) and found later cases that cite the source opinion.
+
+```json
+{
+  "lead_id": "r1-turn-2",
+  "kind": "citing_cases",
+  "data": {
+    "message": "Found cases citing this authority",
+    "tool": "find_citing_cases",
+    "ok": true,
+    "source_opinion_id": 2812209,
+    "count": 5,
+    "items": [
+      {"name": "Pavan v. Smith", "citation": "137 S. Ct. 2075", "url": "https://...", "court": "scotus", "date": "2017-06-26"}
+    ]
+  }
+}
+```
+
 
 ---
 
@@ -718,6 +813,10 @@ Top-level leads (from the initial plan) always have `parent_lead_id: null`. Spaw
 | `lead.update` (spawned) | Show "spawned new lead" indicator, draw tree connection |
 | `lead.update` (external_results) | Show external search results |
 | `lead.update` (analysis) | Show external research summary |
+| `lead.update` (tool_call) | Show "Planning next research calls" + optional actions preview |
+| `lead.update` (citations_validated) | Show "Validated N citations" summary chip |
+| `lead.update` (opinion_fetched) | Show case name + link when opinion text is loaded |
+| `lead.update` (citing_cases) | Show list of cases citing a given authority |
 | `lead.done` | Mark lead complete, show duration |
 | `lead.error` | Mark lead failed with error message |
 | `checkpoint` | Show sufficiency status bar |
