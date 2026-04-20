@@ -24,6 +24,12 @@ from ..core.fact_store import FactStore
 from ..core.telemetry import InvestigationTelemetry, StepOperation
 from .state import InvestigationState, StepType, ThinkingStep, Citation, Lead, classify_query
 from . import decisions
+from .research_agent import (
+    ResearchAgent,
+    ResearchAgentConfig,
+    ResearchContext,
+    ResearchEmitter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +75,11 @@ class RLMConfig:
     max_case_law_queries: int = 5  # Max queries to run
     max_web_queries: int = 5       # Max queries to run
     parallel_external_searches: bool = True  # Run queries in parallel
+    # Research-agent settings (replace legacy keyword-routed external search)
+    max_research_turns: int = 4           # Hard cap on decide_next_action calls
+    max_research_actions_per_turn: int = 6  # Soft cap on parallel tool calls per turn
+    research_tool_timeout_s: float = 45.0
+    research_turn_timeout_s: float = 90.0
     # S3 settings (all optional; local disk used if not set)
     s3_bucket: Optional[str] = None
     s3_region: str = "us-east-1"
@@ -363,12 +374,14 @@ class RLMEngine:
                     visible=False,
                 )
 
-                # Phase 2: Investigation loop with continuous recalibration
-                # - Reads documents, extracts facts, accumulates research triggers
-                # - Continuously checks: sufficient? need to replan? need external research?
-                # - External search is triggered MID-LOOP after triggers are accumulated
-                #   (not upfront with generic terms - that produced irrelevant results)
+                # Phase 2: Investigation loop — reads documents, extracts facts,
+                # accumulates research triggers. External research has moved out of
+                # the loop body and now runs once after the loop (below).
                 await self._investigate_loop(state, repo, cache)
+
+                # Phase 2b: External research agent (runs at most once per
+                # investigation). Gated by LITE should_research_externally.
+                await self._run_external_research_post_loop(state)
 
                 # Phase 3: Final synthesis
                 await self._synthesize(state, is_simple)
@@ -552,66 +565,16 @@ class RLMEngine:
             },
         )
 
-        # Step 3: External search only if assessment says we need it
+        # Step 3: Research agent (replaces legacy two-phase external-search flow)
         if not can_answer_from_docs and self.config.enable_external_search and self.external_search:
-            case_law_queries = assessment.get("case_law_searches", [])
-            web_queries = assessment.get("web_searches", [])
-
-            if case_law_queries or web_queries:
-                # Execute round 1
-                state.findings["initial_plan"] = {
-                    "case_law_searches": case_law_queries,
-                    "web_searches": web_queries,
-                }
-                await self._execute_external_searches(state)
-
-                # Step 4: Check if we need more (only if we got results)
-                has_results = bool(
-                    self._external_research.get("case_law") or
-                    self._external_research.get("web")
-                )
-
-                if has_results and gap:
-                    # Summarize what we found for sufficiency check
-                    results_summary = self._format_results_summary()
-
-                    t_step_suff = self._telemetry.begin_step("sufficiency_check", "investigation_loop") if self._telemetry else None
-                    sufficiency = await decisions.check_search_sufficiency(
-                        query=state.query,
-                        original_gap=gap,
-                        results_summary=results_summary,
-                        client=self.client,
-                        active_step=t_step_suff,
-                    )
-                    if t_step_suff:
-                        self._telemetry.end_step(t_step_suff)
-
-                    if not sufficiency.get("sufficient", True):
-                        additional_search = sufficiency.get("additional_search", "")
-                        remaining_gap = sufficiency.get("remaining_gap", "")
-                        if additional_search:
-                            gap_reason = f" — remaining gap: {remaining_gap}" if remaining_gap else ""
-                            await self._emit_step_async(
-                                state,
-                                StepType.THINKING,
-                                f"Insufficient — need additional search: \"{additional_search}\"{gap_reason}",
-                            )
-
-                            # Determine if it's case law or web based on content
-                            is_case_law = any(
-                                term in additional_search.lower()
-                                for term in ["case", "v.", "vs", "court", "ruling", "precedent"]
-                            )
-
-                            state.findings["initial_plan"] = {
-                                "case_law_searches": [additional_search] if is_case_law else [],
-                                "web_searches": [] if is_case_law else [additional_search],
-                            }
-                            await self._execute_external_searches(state)
-                    else:
-                        await self._emit_step_async(state, StepType.THINKING, "External results sufficient", visible=False)
-                elif not has_results:
-                    await self._emit_step_async(state, StepType.THINKING, "No external results found", visible=False)
+            research_context = ResearchContext(
+                gap=gap or "",
+                reasoning=assessment.get("reasoning", "") or "",
+                cached_facts=state.findings.get("accumulated_facts", [])[:15],
+                triggers_summary="",
+                source_path="small_repo",
+            )
+            await self._run_research_agent(state, research_context)
         elif can_answer_from_docs:
             await self._emit_step_async(state, StepType.THINKING, "Proceeding with documents only (no external search needed)", visible=False)
 
@@ -704,7 +667,7 @@ class RLMEngine:
         case_law = self._external_research.get("case_law", [])
         if case_law:
             case_lines = []
-            for c in case_law[:5]:
+            for c in case_law[:100]:
                 snippet = c.get('snippet') or c.get('opinion_text') or 'No snippet available'
                 case_lines.append(
                     f"- **{c.get('case_name', 'Unknown')}** ({c.get('citation') or 'No citation'})\n"
@@ -724,7 +687,7 @@ class RLMEngine:
         web = self._external_research.get("web", [])
         if web:
             web_lines = []
-            for r in web[:5]:
+            for r in web[:30]:
                 web_lines.append(
                     f"- **{r.get('title', 'Untitled')}**\n"
                     f"  URL: {r.get('url', '')}\n"
@@ -744,6 +707,98 @@ class RLMEngine:
                     result["web"] += f"\n\n**Regulatory Context:** {summary}"
 
         return result
+
+
+    async def _run_research_agent(
+        self,
+        state: InvestigationState,
+        context: ResearchContext,
+    ) -> None:
+        """Run the tool-calling research agent once, persisting everything to state/store.
+
+        Replaces the legacy keyword-routed two-phase external-search flow
+        (`_execute_external_searches` + `_check_if_external_needed` +
+        `check_search_sufficiency`). Used by both small-repo and large-repo
+        paths — caller builds the :class:`ResearchContext`.
+        """
+        if not self.external_search or not self.config.enable_external_search:
+            return
+
+        emitter = ResearchEmitter(
+            emit_lead_started=self._emit_lead_started,
+            emit_lead_update=self._emit_lead_update,
+            emit_lead_done=self._emit_lead_done,
+            on_citation=self.on_citation,
+        )
+        agent_cfg = ResearchAgentConfig(
+            max_turns=self.config.max_research_turns,
+            max_actions_per_turn=self.config.max_research_actions_per_turn,
+            per_tool_timeout_s=self.config.research_tool_timeout_s,
+            turn_timeout_s=self.config.research_turn_timeout_s,
+        )
+        agent = ResearchAgent(
+            client=self.client,
+            external_search=self.external_search,
+            emitter=emitter,
+            external_research_store=self._external_research,
+            config=agent_cfg,
+            telemetry=self._telemetry,
+        )
+        try:
+            await agent.run(state, context)
+        except Exception as e:
+            logger.warning("research agent crashed (context=%s): %s", context.source_path, e)
+
+    async def _run_external_research_post_loop(self, state: InvestigationState) -> None:
+        """Large-repo path: gate with LITE, then run the research agent once.
+
+        Called after ``_investigate_loop`` exits so document facts + triggers
+        are already accumulated. The LITE gate decides whether any external
+        research should run at all.
+        """
+        if not self.external_search or not self.config.enable_external_search:
+            return
+
+        facts = state.findings.get("accumulated_facts", [])[:15]
+        triggers_summary = ""
+        if hasattr(state, "get_trigger_summary"):
+            try:
+                triggers_summary = state.get_trigger_summary() or ""
+            except Exception:
+                triggers_summary = ""
+
+        t_gate = self._telemetry.begin_step("should_research_externally", "investigation_loop") if self._telemetry else None
+        try:
+            gate = await decisions.should_research_externally(
+                query=state.query,
+                facts=facts,
+                triggers_summary=triggers_summary,
+                client=self.client,
+                active_step=t_gate,
+            )
+        except Exception as e:
+            logger.warning("should_research_externally failed: %s", e)
+            gate = {"needed": False, "reason": f"gate_error: {e}"}
+        finally:
+            if t_gate:
+                self._telemetry.end_step(t_gate)
+
+        if not gate.get("needed"):
+            await self._emit_step_async(
+                state, StepType.THINKING,
+                f"External research skipped: {gate.get('reason', '')}",
+                visible=False,
+            )
+            return
+
+        context = ResearchContext(
+            gap=gate.get("reason", ""),
+            reasoning="Document extraction surfaced legal/regulatory triggers.",
+            cached_facts=facts,
+            triggers_summary=triggers_summary,
+            source_path="large_repo",
+        )
+        await self._run_research_agent(state, context)
 
     async def _create_plan(self, state: InvestigationState, repo: MatterRepository):
         """Phase 1: Create investigation plan using LLM."""
@@ -1119,7 +1174,7 @@ class RLMEngine:
                     f"**{c.get('case_name', 'Unknown')}** ({c.get('citation') or 'No citation'})\n"
                     f"Court: {c.get('court', 'Unknown')}\nDate: {c.get('date_filed', 'Unknown')}\n"
                     f"Snippet: {(c.get('snippet') or c.get('opinion_text', ''))[:500] if c.get('snippet') or c.get('opinion_text') else 'No summary'}"
-                    for c in self._external_research["case_law"][:5]
+                    for c in self._external_research["case_law"][:100]
                 ])
 
             # Format web results
@@ -1128,7 +1183,7 @@ class RLMEngine:
                 web_text = "\n\n".join([
                     f"**{r.get('title', 'Untitled')}**\nURL: {r.get('url', '')}\n"
                     f"Content: {r.get('content', 'No content')[:500]}"
-                    for r in self._external_research["web"][:5]
+                    for r in self._external_research["web"][:30]
                 ])
 
             # Single consolidated call replaces analyze_case_law_results + analyze_web_results
@@ -1304,31 +1359,9 @@ class RLMEngine:
                             },
                         )
 
-            # 3. Dynamic external search - trigger if we discover we need it
-            # (e.g., found references to case law, regulations, state-specific rules)
-            # Supports tiered queries - can run multiple iterations with new queries
-            if self.config.enable_external_search and self.external_search:
-                # Check if findings suggest we need external research
-                new_queries = await self._check_if_external_needed(state, executed_external_queries)
-                if new_queries:
-                    new_case_law = new_queries.get("case_law_queries", [])
-                    new_web = new_queries.get("web_queries", [])
-                    total_new = len(new_case_law) + len(new_web)
-
-                    if total_new > 0:
-                        self._emit_step(
-                            state, StepType.SEARCH,
-                            f"Triggering {total_new} external searches from document triggers",
-                            visible=False,
-                        )
-                        await self._execute_external_searches(
-                            state,
-                            case_law_queries=new_case_law,
-                            web_queries=new_web,
-                        )
-                        # Track executed queries
-                        executed_external_queries.update(new_case_law)
-                        executed_external_queries.update(new_web)
+            # 3. External research is no longer triggered per iteration; it
+            # runs once after the investigate loop finishes (see
+            # _run_external_research_post_loop). Kept here for documentation.
 
             # Save checkpoint periodically
             if self.config.checkpoint_dir and iteration % self.config.checkpoint_interval == 0:
@@ -1822,7 +1855,7 @@ class RLMEngine:
         # Exception: Allow if answering from cached facts (we intentionally skipped reading)
         small_repo_content = state.findings.get("small_repo_content")
         answered_from_cache = state.findings.get("answered_from_cache", False)
-        
+
         # Donot block synthesis when no documents were read
         # if state.documents_read == 0 and not small_repo_content and not answered_from_cache:
         #     self._emit_step(
@@ -2166,6 +2199,7 @@ class RLMEngine:
         try:
             if state.status not in ("completed", "failed"):
                 await self._investigate_loop(state, repo, cache)
+                await self._run_external_research_post_loop(state)
                 await self._synthesize(state)
                 state.complete()
 

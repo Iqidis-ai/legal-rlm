@@ -742,3 +742,118 @@ Synthesize all external research:
     "summary": "Unified external legal context"
 }}"""
 
+
+
+# =============================================================================
+# Research-agent prompts (LITE gate + FLASH action decider + FLASH brief)
+# =============================================================================
+
+P_SHOULD_RESEARCH = """Decide whether external legal research (case law, regulations, or web) is needed to answer this query.
+
+Query: {query}
+
+Facts already established from documents:
+{facts}
+
+Signals picked up while reading documents (jurisdictions, regulations cited, legal doctrines, case names mentioned, etc.):
+{triggers}
+
+Return JSON:
+{{
+    "needed": true or false,
+    "reason": "one sentence explaining the decision"
+}}
+
+Guidance:
+- "needed": true when the query asks about legal standards, precedent, statutes, regulations, or validates cited authorities; or when document signals surface specific legal doctrines/citations the answer depends on.
+- "needed": false when the query is a purely factual or document-extraction question answerable from the facts above.
+"""
+
+
+P_DECIDE_NEXT_ACTION = """You are a legal-research agent deciding the next set of API calls.
+
+QUERY:
+{query}
+
+CONTEXT:
+- Gap to close: {gap}
+- Reasoning: {reasoning}
+- Known facts from documents ({fact_count}):
+{facts}
+- Document signals (jurisdictions, regulations, doctrines, case names):
+{triggers}
+
+TOOLS AVAILABLE (JSON schemas):
+{tool_schemas}
+
+RESEARCH LOG SO FAR (one-line summary per call, most recent last):
+{research_log}
+
+{last_turn_section}
+
+═══════════════════════════════════════════════════════════════════════════════
+INSTRUCTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+Pick the most efficient next step. You MAY emit multiple tool calls in one turn; they will run in parallel.
+
+TOOL SELECTION RULES (follow in order):
+1. If the query or gap contains raw reporter citations (e.g. "991 S.W.2d 849", "168 S.W.3d 802"), your FIRST turn MUST be a SINGLE `lookup_citations` call with ALL of them concatenated in the `text` arg. Do not split into per-citation calls. Do not lead with `search_opinions` or `web_search` for this case.
+1b. On subsequent turns, check the research log for lines like `lookup_citations(...) -> resolved N; Case Name (261 S.W.3d 316, cluster_id=12345)`. If a citation is already resolved and its cluster_id is visible in the log, call `get_cluster(cluster_id=...)` or `get_opinion(cluster_id=...)` directly — do NOT call `lookup_citations` again for those same citations.
+2. If the input is case names only, use `search_opinions` with `case_name:` (parallel, one per name is fine). Use `lookup_citations` afterward once you have reporter strings to validate. IMPORTANT: do NOT pass a raw reporter citation string (e.g. "261 S.W.3d 316") as the `q` argument to `search_opinions` — CourtListener keyword search will match "S.W." against party name abbreviations and return completely unrelated cases. For citation resolution, strongly prefer `lookup_citations`; fall back to `search_opinions` with a descriptive case name only if `lookup_citations` returns zero results.
+3. Use `get_opinion` / `get_cluster` ONLY when you need full text to extract a rule or check scope — not for validation.
+4. `find_citing_cases` is for forward-citation / precedent traversal, not for status checks.
+5. Use `web_search` (Tavily) for: (a) current events / regulations, (b) case-name disambiguation when CL returned zero, (c) at most ONE status-check pass per investigation. CourtListener does NOT expose Shepard's / KeyCite — do not loop on "overruled / abrogated / negative treatment" web queries. One pass is enough; accept best-effort.
+
+STOPPING RULES (set `done_after_this=true` when ANY applies):
+- Accumulated results already answer the query.
+- The last 2 turns added no new case_law, opinions, or distinct web domains for the same sub-goal.
+- You are about to emit a call whose args are a near-duplicate of a prior turn's call (different wording, same intent). Stop instead.
+- The research log shows `[DUPLICATE]` markers on your recent calls.
+
+BATCHING:
+- `lookup_citations.text` accepts up to ~60,000 chars and ~250 citations in one request. Always batch.
+- Parallel `search_opinions` calls for distinct case names in one turn is fine.
+
+Return strict JSON:
+{{
+    "reasoning": "why these calls (1-2 sentences, dev-facing)",
+    "actions": [
+        {{"tool": "<tool_name>", "args": {{ ... }}}}
+    ],
+    "done_after_this": false
+}}
+
+If no more research is useful, return `"actions": []` with `"done_after_this": true`.
+"""
+
+
+P_BUILD_BRIEF = """Query: {query}
+
+=== CASE LAW GATHERED ===
+{case_law_results}
+
+=== WEB / REGULATORY RESULTS ===
+{web_results}
+
+═══════════════════════════════════════════════════════════════════════════════
+UNIFIED EXTERNAL ANALYSIS
+═══════════════════════════════════════════════════════════════════════════════
+
+Synthesize the research:
+- Precedents: standards, tests, applicable holdings
+- Regulations: requirements, thresholds
+- Combined framework: how they interact for our situation
+
+=== OUTPUT (JSON only) ===
+{{
+    "key_precedents": [
+        {{"case": "Name", "citation": "cite", "holding": "holding", "applicability": "application"}}
+    ],
+    "legal_standards": ["standard"],
+    "regulations": [
+        {{"name": "Name", "source": "source", "key_requirements": "requirements"}}
+    ],
+    "combined_framework": "How case law + regulations together inform this situation",
+    "summary": "Unified external legal context"
+}}"""

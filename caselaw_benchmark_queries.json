@@ -1,0 +1,220 @@
+{
+  "description": "Caselaw benchmark queries from AR Video Review (April 16, 2026). Tests V1 and V2 query shapes against the same five Texas cases.",
+  "version": "1.0",
+  "reference": "CASELAW IMPROVEMENTS PRODUCT BRIEF.md",
+  "queries": [
+    {
+      "id": "V1",
+      "label": "Case Names Validation",
+      "description": "User provides case names only (no citation numbers). System must look up and validate each case, retrieving the correct case from CourtListener and binding the right citation number to each name.",
+      "query": "Can you find and validate the Texas state cases? Trevino v. State\nFormosa Plastics Corp. USA v. Presidio Engineers & Contractors, Inc.\nKroger Co. v. Persley\nCity of Keller v. Wilson\nIn re Halliburton Co.",
+      "s3_urls": [],
+      "judge_instructions": {
+        "overview": "The query provides five Texas case names. The system must retrieve the correct case for each name from CourtListener and produce a validation memo. The most critical check is that 'Trevino v. State' resolves to the Court of Criminal Appeals 1999 case (991 S.W.2d 849) — NOT any of the many district-level 'Trevino v. State' cases from other individuals. Additionally, verify that each case's inline citation number in the memo body maps to the correct case in the citations/sources list.",
+        "expected_cases": [
+          {
+            "case_name": "Trevino v. State",
+            "citation": "991 S.W.2d 849",
+            "year": 1999,
+            "court": "Tex. Crim. App.",
+            "full_citation": "991 S.W.2d 849 (Tex. Crim. App. 1999)",
+            "courtlistener_url_fragment": "courtlistener.com",
+            "notes": "CRITICAL: Must be the Texas Court of Criminal Appeals case, NOT any of the many district appellate 'Trevino v. State' cases (Bobby Trevino, Melissa Trevino, Abel Trevino, Jorge Trevino Cardenas, Joshua Lee Trevino, etc.). The correct case is about Rule 404(b) extraneous offense evidence and Batson challenges. If the citation linked is NOT 991 S.W.2d 849, this is a binding failure."
+          },
+          {
+            "case_name": "Formosa Plastics Corp. USA v. Presidio Engineers & Contractors, Inc.",
+            "citation": "960 S.W.2d 41",
+            "year": 1998,
+            "court": "Tex.",
+            "full_citation": "960 S.W.2d 41 (Tex. 1998)",
+            "courtlistener_url_fragment": "courtlistener.com",
+            "notes": "Texas Supreme Court case on fraudulent inducement / Economic Loss Rule. Citation number 960 S.W.2d 41 is the key identifier."
+          },
+          {
+            "case_name": "Kroger Co. v. Persley",
+            "citation": "261 S.W.3d 316",
+            "year": 2008,
+            "court": "Tex. App.",
+            "full_citation": "261 S.W.3d 316 (Tex. App.\u2014Houston [1st Dist.] 2008, no pet.)",
+            "courtlistener_url_fragment": "courtlistener.com",
+            "notes": "Premises liability / constructive notice case. Watch for wrong bindings: the known failure mode is binding 261 S.W.3d 316 to 'Glattly v. AirSera, LLC' instead of Kroger."
+          },
+          {
+            "case_name": "City of Keller v. Wilson",
+            "citation": "168 S.W.3d 802",
+            "year": 2005,
+            "court": "Tex.",
+            "full_citation": "168 S.W.3d 802 (Tex. 2005)",
+            "courtlistener_url_fragment": "courtlistener.com",
+            "notes": "Texas Supreme Court legal sufficiency standard case. Watch for wrong binding to 'BMC Software Belgium, N.V. v. Marchand'."
+          },
+          {
+            "case_name": "In re Halliburton Co.",
+            "citation": "80 S.W.3d 566",
+            "year": 2002,
+            "court": "Tex.",
+            "full_citation": "80 S.W.3d 566 (Tex. 2002)",
+            "courtlistener_url_fragment": "courtlistener.com",
+            "notes": "Texas Supreme Court arbitration clause enforceability case. Watch for wrong binding to 'Reata Construction Corp. v. City of Denton'."
+          }
+        ],
+        "pass_criteria": [
+          "All five cases are addressed in the analysis memo",
+          "Trevino v. State is identified with citation 991 S.W.2d 849 (Tex. Crim. App. 1999) — not a district-level Trevino individual",
+          "Formosa Plastics is identified with citation 960 S.W.2d 41",
+          "Kroger Co. v. Persley is identified with citation 261 S.W.3d 316",
+          "City of Keller v. Wilson is identified with citation 168 S.W.3d 802",
+          "In re Halliburton Co. is identified with citation 80 S.W.3d 566",
+          "At least 4 of the 5 cases have CourtListener URLs in the citations/sources list",
+          "No clearly wrong substitute cases appear (Glattly v. AirSera, BMC Software Belgium, Reata Construction) bound to the queried case names"
+        ],
+        "fail_indicators": [
+          "Trevino v. State is linked to a district appellate Trevino individual (Bobby, Melissa, Abel, Jorge, Joshua, etc.) rather than the 1999 CCA case",
+          "Citation 261 S.W.3d 316 is attributed to Glattly v. AirSera or any case other than Kroger Co. v. Persley",
+          "Citation 168 S.W.3d 802 is attributed to BMC Software Belgium or any case other than City of Keller v. Wilson",
+          "Citation 80 S.W.3d 566 is attributed to Reata Construction Corp. or any case other than In re Halliburton Co.",
+          "Fewer than 3 of the 5 expected cases appear in the analysis",
+          "Any expected case citation number is completely wrong (off by volume, reporter, or page)"
+        ],
+        "judge_notes": "For citation binding, look at both (a) the citation number stated in the memo body next to each case name, and (b) the citations list document names vs. their context/URL. A case is 'correctly bound' if the case name in the memo body appears with the correct citation number. A case is 'in sources' if the citations list contains an entry whose document name matches the case name (fuzzy ok) and whose context contains the right reporter citation. If the analysis correctly discusses the holdings (e.g., Rule 404(b) for Trevino, Economic Loss Rule for Formosa) that is a positive signal even if citation numbers are slightly off."
+      }
+    },
+    {
+      "id": "V2",
+      "label": "Citation Numbers Validation",
+      "description": "User provides reporter citation numbers only (no case names). System must look up each citation via CourtListener Citation Lookup and return the correct case name bound to each citation. This is the hardest binding test — known failure mode is returning wrong case names for 261 S.W.3d 316, 168 S.W.3d 802, and 80 S.W.3d 566.",
+      "query": "Please validate these citations 991 S.W.2d 849 (Tex. Crim. App. 1999), 960 S.W.2d 41 (Tex. 1998), 261 S.W.3d 316 (Tex. App.\u2014Houston [1st Dist.] 2008, no pet.), 168 S.W.3d 802 (Tex. 2005), 80 S.W.3d 566 (Tex. 2002)",
+      "s3_urls": [],
+      "judge_instructions": {
+        "overview": "The query provides five bare citation strings. The system must map each citation number to the correct case name. This is the primary binding test from the April 16 product review where 3 of 5 rows showed wrong case names. Pay close attention to whether 261 S.W.3d 316, 168 S.W.3d 802, and 80 S.W.3d 566 map to the correct cases or to the known wrong substitutes (Glattly, BMC Software, Reata Construction).",
+        "expected_cases": [
+          {
+            "citation": "991 S.W.2d 849",
+            "correct_case_name": "Trevino v. State",
+            "year": 1999,
+            "court": "Tex. Crim. App.",
+            "notes": "This citation is fairly unique. Should resolve to Trevino v. State without ambiguity."
+          },
+          {
+            "citation": "960 S.W.2d 41",
+            "correct_case_name": "Formosa Plastics Corp. USA v. Presidio Engineers & Contractors, Inc.",
+            "year": 1998,
+            "court": "Tex.",
+            "notes": "Texas Supreme Court. Should resolve cleanly."
+          },
+          {
+            "citation": "261 S.W.3d 316",
+            "correct_case_name": "Kroger Co. v. Persley",
+            "year": 2008,
+            "court": "Tex. App.\u2014Houston [1st Dist.]",
+            "known_wrong_answers": ["Glattly v. AirSera, LLC", "Glattly v. Air-Cruisers Co"],
+            "notes": "HIGHEST RISK ROW. Known failure: system returns Glattly v. AirSera instead of Kroger. If Glattly appears for this citation, that is a critical binding failure."
+          },
+          {
+            "citation": "168 S.W.3d 802",
+            "correct_case_name": "City of Keller v. Wilson",
+            "year": 2005,
+            "court": "Tex.",
+            "known_wrong_answers": ["BMC Software Belgium, N.V. v. Marchand", "BMC Software"],
+            "notes": "HIGH RISK ROW. Known failure: system returns BMC Software Belgium instead of City of Keller. If BMC Software appears for this citation, that is a critical binding failure."
+          },
+          {
+            "citation": "80 S.W.3d 566",
+            "correct_case_name": "In re Halliburton Co.",
+            "year": 2002,
+            "court": "Tex.",
+            "known_wrong_answers": ["Reata Construction Corp. v. City of Denton", "Reata Construction"],
+            "notes": "HIGH RISK ROW. Known failure: system returns Reata Construction instead of In re Halliburton. This wrong answer is non-deterministic — yesterday's run gave BMC Software, today's gave Reata. Any wrong case name here is a binding failure."
+          }
+        ],
+        "pass_criteria": [
+          "991 S.W.2d 849 is mapped to Trevino v. State (or close variant)",
+          "960 S.W.2d 41 is mapped to Formosa Plastics Corp. USA v. Presidio Engineers (or close variant)",
+          "261 S.W.3d 316 is mapped to Kroger Co. v. Persley (NOT Glattly v. AirSera or any other substitute)",
+          "168 S.W.3d 802 is mapped to City of Keller v. Wilson (NOT BMC Software Belgium or any other substitute)",
+          "80 S.W.3d 566 is mapped to In re Halliburton Co. (NOT Reata Construction Corp. or any other substitute)",
+          "All five citations are addressed in the validation output",
+          "The sources/citations list contains the correct case names for at least 4 of the 5 citations"
+        ],
+        "fail_indicators": [
+          "261 S.W.3d 316 is mapped to Glattly v. AirSera, LLC or any case other than Kroger Co. v. Persley",
+          "168 S.W.3d 802 is mapped to BMC Software Belgium, N.V. v. Marchand or any case other than City of Keller v. Wilson",
+          "80 S.W.3d 566 is mapped to Reata Construction Corp. v. City of Denton or any case other than In re Halliburton Co.",
+          "Any citation is shown as 'Valid' but bound to the wrong case name",
+          "Two or more citations have wrong case name bindings",
+          "The sources panel contains primarily noise results (e.g., cases where 'S.W.' appears as a substring of a party name, like 'A.N.S.W.E.R. v. Norton') rather than real cases at the queried reporter positions"
+        ],
+        "judge_notes": "For V2, the primary check is the citation-to-case-name mapping. Look at (a) the validation table or structured output in the analysis — what case name does the system assign to each citation number? (b) The citations list — do the document entries match the correct cases? A 'Valid' status on a row with the wrong case name is a double failure (wrong binding + misleading status). Also check whether the sources list is clean (real cases at those reporter positions) or polluted with S.W. substring noise from keyword search artifacts. The V2 query is a pure citation-number lookup that should use Citation Lookup API, not keyword search."
+      }
+    },
+    {
+      "id": "V3",
+      "label": "Full Tool-Chain Coverage — Texas Constructive Notice Deep-Dive",
+      "description": "Multi-step research task designed to exercise every research tool in sequence: lookup_citations → get_opinion → get_cluster → find_citing_cases → search_opinions → web_search → fetch_url. The query is intentionally layered so each step depends on or naturally follows from the previous one.",
+      "query": "I need a thorough analysis of the Texas constructive-notice standard in premises-liability cases. Please do the following in order:\n\n1. Validate the citations 261 S.W.3d 316 and 168 S.W.3d 802 — confirm the correct case name, court, and year for each.\n2. Retrieve the full opinion text of Kroger Co. v. Persley (261 S.W.3d 316) and extract the precise rule the court articulates for constructive notice.\n3. Confirm the cluster-level metadata (parties, court, date decided, citation count) for the Kroger cluster you found.\n4. Find all opinions that have cited Kroger Co. v. Persley since it was decided. Highlight any Texas Supreme Court decisions in that list and describe how they applied or distinguished the rule.\n5. Search CourtListener for other Texas appellate opinions decided after 2008 that address 'constructive notice' in a premises-liability or slip-and-fall context.\n6. Run a web search for recent law-review articles, bar-journal pieces, or secondary sources that analyse the Texas constructive-notice standard.\n7. From the web search results, pick the most authoritative-looking page and fetch its full text to see whether it confirms or adds nuance to what the cases say.\n\nSummarise your findings in a structured memo.",
+      "s3_urls": [],
+      "judge_instructions": {
+        "overview": "This query is a deliberately layered research chain meant to force the system to call all seven research tools: lookup_citations, get_opinion, get_cluster, find_citing_cases, search_opinions, web_search, and fetch_url. Because external APIs are non-deterministic, the pass criteria are intentionally loose — focus on whether the tools were invoked and whether the substantive outputs are coherent, not on exact citations or perfect completeness.",
+        "expected_tools": [
+          {
+            "tool": "lookup_citations",
+            "trigger": "Step 1 — validate 261 S.W.3d 316 and 168 S.W.3d 802",
+            "required": true
+          },
+          {
+            "tool": "get_opinion",
+            "trigger": "Step 2 — retrieve full text of Kroger Co. v. Persley",
+            "required": true
+          },
+          {
+            "tool": "get_cluster",
+            "trigger": "Step 3 — confirm cluster metadata for the Kroger cluster",
+            "required": false,
+            "note": "May be satisfied implicitly by get_opinion returning cluster metadata"
+          },
+          {
+            "tool": "find_citing_cases",
+            "trigger": "Step 4 — forward citations of Kroger v. Persley",
+            "required": true
+          },
+          {
+            "tool": "search_opinions",
+            "trigger": "Step 5 — broader search for Texas constructive-notice cases",
+            "required": true
+          },
+          {
+            "tool": "web_search",
+            "trigger": "Step 6 — secondary sources / law review articles",
+            "required": true
+          },
+          {
+            "tool": "fetch_url",
+            "trigger": "Step 7 — fetch full text of the best web result",
+            "required": false,
+            "note": "May be skipped if web_search returns no useful URLs, or if the agent judges the snippets sufficient"
+          }
+        ],
+        "pass_criteria": [
+          "lookup_citations is invoked and returns a result for at least one of the two provided citation strings",
+          "261 S.W.3d 316 is identified as Kroger Co. v. Persley (NOT Glattly v. AirSera or any other substitute)",
+          "168 S.W.3d 802 is identified as City of Keller v. Wilson (NOT BMC Software Belgium or any other substitute)",
+          "get_opinion is invoked and the memo includes at least one sentence extracted from the actual Kroger opinion text",
+          "find_citing_cases is invoked for the Kroger opinion and the memo lists at least one citing case",
+          "search_opinions is invoked with a query related to Texas premises liability or constructive notice",
+          "web_search is invoked and at least one web source is referenced in the memo",
+          "At least 5 of the 7 tools are invoked during the investigation",
+          "The final memo is structured (sections or numbered points) and addresses all seven requested steps"
+        ],
+        "fail_indicators": [
+          "261 S.W.3d 316 is attributed to Glattly v. AirSera or any case other than Kroger Co. v. Persley",
+          "168 S.W.3d 802 is attributed to BMC Software Belgium or any case other than City of Keller v. Wilson",
+          "Fewer than 4 of the 7 tools are invoked (tool-chain collapse)",
+          "The memo contains no text that could plausibly derive from the full Kroger opinion (get_opinion not used or ignored)",
+          "find_citing_cases is never called and no citing cases appear in the output",
+          "The response consists only of LLM-generated text with no external sources cited"
+        ],
+        "judge_notes": "Grade this query on tool coverage and factual coherence, not perfection. A run that calls all 7 tools but gets one citing-case name slightly wrong should still pass. A run that calls only 2-3 tools and produces a memo written entirely from prior knowledge should fail even if the legal content is accurate. For fetch_url specifically, accept a soft pass if the agent explains why it skipped the step (e.g., no suitable URL found). The primary red lines are: wrong citation bindings for 261 S.W.3d 316 and 168 S.W.3d 802, and tool-chain collapse (fewer than 4 tools invoked)."
+      }
+    }
+  ]
+}

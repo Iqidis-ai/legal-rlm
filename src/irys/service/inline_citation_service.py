@@ -27,10 +27,10 @@ logger = logging.getLogger("irys.inline_citation")
 # ── Citation budget ──────────────────────────────────────────────────────
 # Hard ceiling across all types.  Per-type soft caps only kick in when the
 # total exceeds MAX_TOTAL.
-MAX_TOTAL_CITATIONS = 120
+MAX_TOTAL_CITATIONS = 165
 SOFT_CAP_DOCUMENT = 35
-SOFT_CAP_WEB = 35
-SOFT_CAP_CASE_LAW = 50
+SOFT_CAP_WEB = 30
+SOFT_CAP_CASE_LAW = 100
 
 # Per-citation text limit for the injection prompt (chars).  We only need
 # enough for the LLM to identify anchors; the full text lives elsewhere.
