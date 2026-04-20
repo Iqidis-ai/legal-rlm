@@ -530,6 +530,7 @@ async def _run_investigation(
     job.status = JobStatus.PROCESSING
     s3_repo = None
     temp_dir = None
+    corpus_key = None
     _run_interrupted = False  # set True on user stop; temp dir kept for resume
 
     try:
@@ -541,10 +542,15 @@ async def _run_investigation(
         )
         temp_dir = await s3_repo.download_to_temp(job_id)
 
+        # Restore matter DB from S3 so warm runs hit the reasoning cache (orient/search/synthesis)
+        # instead of reprocessing everything from scratch on each EC2 boot.
+        corpus_key = _compute_corpus_key(f"s3://{config.s3_bucket}/{request.s3_prefix}")
+        if config.enable_matter_model:
+            await s3_repo.restore_matter_db(corpus_key, config.matter_db_dir, config.matter_db_s3_prefix)
+
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model, checkpoint_dir=config.checkpoint_dir)
-        corpus_key = _compute_corpus_key(f"s3://{config.s3_bucket}/{request.s3_prefix}")
         matter_id = _wire_matter_model(irys, str(temp_dir), corpus_key, config)
         if matter_id:
             job.matter_id = matter_id
@@ -597,6 +603,9 @@ async def _run_investigation(
         job.completed_at = datetime.now()
 
     finally:
+        # Persist matter DB to S3 so the next run (even after EC2 restart) gets warm cache hits.
+        if config.enable_matter_model and s3_repo and corpus_key:
+            await s3_repo.persist_matter_db(corpus_key, config.matter_db_dir, config.matter_db_s3_prefix)
         # Preserve temp dir when interrupted — checkpoint references this path for resume.
         if not _run_interrupted and s3_repo and temp_dir:
             await s3_repo.cleanup(job_id)
@@ -1147,6 +1156,10 @@ async def upload_investigate_sync(
             )
             temp_dir = await upload_repo.download_to_temp(job_id)
 
+            # Restore matter DB from S3 so warm runs hit the reasoning cache.
+            if config.enable_matter_model:
+                await s3_repo.restore_matter_db(sync_corpus_key, config.matter_db_dir, config.matter_db_s3_prefix)
+
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model, checkpoint_dir=config.checkpoint_dir)
@@ -1240,6 +1253,9 @@ async def upload_investigate_sync(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         _active_sync_requests -= 1
+        # Persist matter DB to S3 so the next run gets warm cache hits.
+        if config.enable_matter_model and s3_repo and sync_corpus_key:
+            await s3_repo.persist_matter_db(sync_corpus_key, config.matter_db_dir, config.matter_db_s3_prefix)
         # Unpin here (outer finally) so the pin covers cleanup and open_gaps, not just investigate().
         if sync_matter_id:
             _cnt = _sync_running_matter_ids.get(sync_matter_id, 0)
@@ -1320,6 +1336,7 @@ async def _run_urls_investigation(
     job.status = JobStatus.PROCESSING
     s3_repo = None
     temp_dir = None
+    corpus_key = None
     _run_interrupted = False  # set True on user stop; temp dir kept for resume
 
     try:
@@ -1333,10 +1350,14 @@ async def _run_urls_investigation(
         # Download documents from URLs
         temp_dir = await s3_repo.download_urls_to_temp(job_id, request.s3_urls)
 
+        # Restore matter DB from S3 so warm runs hit the reasoning cache.
+        corpus_key = _compute_corpus_key(",".join(sorted(_url_to_str(u) for u in request.s3_urls)))
+        if config.enable_matter_model:
+            await s3_repo.restore_matter_db(corpus_key, config.matter_db_dir, config.matter_db_s3_prefix)
+
         # Run investigation
         from irys import Irys
         irys = Irys(api_key=config.gemini_api_key, enable_matter_model=config.enable_matter_model, checkpoint_dir=config.checkpoint_dir)
-        corpus_key = _compute_corpus_key(",".join(sorted(_url_to_str(u) for u in request.s3_urls)))
         matter_id = _wire_matter_model(irys, str(temp_dir), corpus_key, config)
         if matter_id:
             job.matter_id = matter_id
@@ -1386,6 +1407,9 @@ async def _run_urls_investigation(
         job.completed_at = datetime.now()
 
     finally:
+        # Persist matter DB to S3 so the next run gets warm cache hits.
+        if config.enable_matter_model and s3_repo and corpus_key:
+            await s3_repo.persist_matter_db(corpus_key, config.matter_db_dir, config.matter_db_s3_prefix)
         # Preserve temp dir when interrupted — checkpoint references this path for resume.
         if not _run_interrupted and s3_repo and temp_dir:
             await s3_repo.cleanup(job_id)

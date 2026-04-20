@@ -168,9 +168,11 @@ def _upload_files_to_s3_matter(uploaded_files: list, name: str) -> tuple[str, st
 
 
 def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Path:
-    """Download all docs from an S3 matter to a fresh temp dir.
+    """Download all docs from an S3 matter to a stable temp dir keyed by session_id.
 
-    Caller is responsible for shutil.rmtree after use.
+    Existing document files are replaced with the current S3 contents; the
+    .irys/ subdirectory (matter DB) is left untouched so warm cache carries
+    over between runs on the same matter.
     """
     import tempfile
     bucket = _s3_bucket()
@@ -178,6 +180,14 @@ def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Pa
     prefix = f"{_s3_matters_base_prefix()}/{safe}/"
     temp_dir = pathlib.Path(tempfile.gettempdir()) / "irys" / session_id
     temp_dir.mkdir(parents=True, exist_ok=True)
+    # Remove stale document files from a prior run but keep .irys/ (matter DB).
+    for item in temp_dir.iterdir():
+        if item.name == ".irys":
+            continue
+        if item.is_file():
+            item.unlink(missing_ok=True)
+        elif item.is_dir():
+            shutil.rmtree(item, ignore_errors=True)
     s3 = _get_s3_client()
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
@@ -2589,7 +2599,7 @@ class AppState:
         self.current_matter_id: Optional[str] = None
         self.current_run_id: Optional[str] = None
         self.current_repo_path: Optional[str] = None
-        self.current_research_mode: str = "deep"
+        self.current_research_mode: str = "simple"
         # UI-6: privilege mode. "clean" redacts privileged content in
         # timeline / evidence matrix / etc. (safe default). "internal"
         # bypasses the gate for attorney-only workspaces. Changed via
@@ -4408,7 +4418,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     ("Deep", "deep"),
                     ("Sebih Special", "sebih_special"),
                 ],
-                value="deep",
+                value="simple",
                 scale=1,
                 min_width=220,
             )
@@ -4991,7 +5001,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 if not matter_name or not matter_name.strip():
                     yield ("", "", "", "❌ Select a matter first", "")
                     return
-                session_id = _uuid.uuid4().hex[:12]
+                # Stable per-matter session_id so the .irys/ matter DB at
+                # temp_dir/.irys/matter.sqlite3 survives between runs on the
+                # same matter (warm cache → quick summary routing on re-queries).
+                import hashlib as _hashlib
+                session_id = _hashlib.sha256(matter_name.strip().lower().encode()).hexdigest()[:16]
                 try:
                     temp_dir = _download_s3_matter_to_temp(matter_name.strip(), session_id)
                 except Exception as e:
@@ -5000,7 +5014,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 try:
                     yield from state.stream_investigation_session(query_text, str(temp_dir), mode)
                 finally:
-                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    # Remove document files but preserve .irys/ (matter DB) for the next run.
+                    if temp_dir.exists():
+                        for _item in temp_dir.iterdir():
+                            if _item.name == ".irys":
+                                continue
+                            if _item.is_file():
+                                _item.unlink(missing_ok=True)
+                            elif _item.is_dir():
+                                shutil.rmtree(_item, ignore_errors=True)
 
             submit_btn.click(
                 fn=_stream_s3,

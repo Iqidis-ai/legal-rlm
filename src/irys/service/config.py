@@ -27,6 +27,7 @@ class ServiceConfig:
     # Storage Settings (for small instances)
     temp_dir: str = "/tmp/irys"
     matter_db_dir: str = "/tmp/irys/matters"  # Persistent matter model DBs
+    matter_db_s3_prefix: str = "matter-dbs"  # S3 prefix for persisting matter DBs across restarts
     checkpoint_dir: str = "/tmp/irys/checkpoints"  # Investigation checkpoint files (SO-3 resume)
     cleanup_after_seconds: int = 300  # 5 minutes
     max_concurrent_jobs: int = 3
@@ -61,6 +62,7 @@ class ServiceConfig:
             # Storage Settings
             temp_dir=os.getenv("IRYS_TEMP_DIR", "/tmp/irys"),
             matter_db_dir=os.getenv("IRYS_MATTER_DB_DIR", "/tmp/irys/matters"),
+            matter_db_s3_prefix=os.getenv("IRYS_MATTER_DB_S3_PREFIX", "matter-dbs"),
             checkpoint_dir=os.getenv("IRYS_CHECKPOINT_DIR", "/tmp/irys/checkpoints"),
             cleanup_after_seconds=int(os.getenv("IRYS_CLEANUP_SECONDS", "300")),
             max_concurrent_jobs=int(os.getenv("IRYS_MAX_CONCURRENT_JOBS", "3")),

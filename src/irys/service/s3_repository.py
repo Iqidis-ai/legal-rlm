@@ -566,6 +566,78 @@ class S3Repository:
         logger.info(f"Uploaded {count} files to s3://{self.bucket}/{upload_prefix}/")
         return upload_prefix
 
+    async def restore_matter_db(
+        self,
+        corpus_key: str,
+        matter_db_dir: str,
+        s3_prefix: str = "matter-dbs",
+    ) -> bool:
+        """Download matter DB from S3 to local matter_db_dir if it exists.
+
+        Returns True if a DB was restored or was already present, False if not found in S3.
+        Called before _wire_matter_model so the engine opens a warm (cached) DB.
+        """
+        local_path = Path(matter_db_dir) / corpus_key / ".irys" / "matter.sqlite3"
+
+        if local_path.exists():
+            logger.debug(f"Matter DB already present locally for corpus {corpus_key[:8]}")
+            return True
+
+        s3_key = f"{s3_prefix}/{corpus_key}/matter.sqlite3"
+
+        def _restore() -> bool:
+            try:
+                self._s3.head_object(Bucket=self.bucket, Key=s3_key)
+            except ClientError as e:
+                if e.response["Error"]["Code"] in ("404", "NoSuchKey"):
+                    return False
+                raise
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            self._s3.download_file(self.bucket, s3_key, str(local_path))
+            return True
+
+        try:
+            restored = await asyncio.to_thread(_restore)
+        except Exception as e:
+            logger.warning(f"Could not restore matter DB for corpus {corpus_key[:8]}: {e}")
+            return False
+
+        if restored:
+            logger.info(
+                f"Restored matter DB for corpus {corpus_key[:8]} from s3://{self.bucket}/{s3_key}"
+            )
+        return restored
+
+    async def persist_matter_db(
+        self,
+        corpus_key: str,
+        matter_db_dir: str,
+        s3_prefix: str = "matter-dbs",
+    ) -> None:
+        """Upload local matter DB to S3 after investigation completes.
+
+        Silently skips if the DB file does not exist locally (e.g. matter model disabled).
+        Called in the finally block so cache survives both successful and failed runs.
+        """
+        local_path = Path(matter_db_dir) / corpus_key / ".irys" / "matter.sqlite3"
+
+        if not local_path.exists():
+            logger.debug(f"No matter DB found locally for corpus {corpus_key[:8]}, skipping persist")
+            return
+
+        s3_key = f"{s3_prefix}/{corpus_key}/matter.sqlite3"
+
+        def _persist() -> None:
+            self._s3.upload_file(str(local_path), self.bucket, s3_key)
+
+        try:
+            await asyncio.to_thread(_persist)
+            logger.info(
+                f"Persisted matter DB for corpus {corpus_key[:8]} to s3://{self.bucket}/{s3_key}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to persist matter DB for corpus {corpus_key[:8]}: {e}")
+
     async def delete_prefix(self, prefix: str) -> int:
         """Delete all objects under a prefix.
 
