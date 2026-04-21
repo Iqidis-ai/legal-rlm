@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 import httpx
 
+from ..core.utils import setup_logging, _log_message_id
 from .config import ServiceConfig, get_config
 from .models import (
     InvestigateRequest,
@@ -114,6 +115,9 @@ async def lifespan(app: FastAPI):
     if errors and not config.debug:
         for error in errors:
             logger.error(f"Config error: {error}")
+
+    # Ensure message-ID log filter is attached before any request arrives.
+    setup_logging(level=config.log_level)
 
     # Create temp directory
     Path(config.temp_dir).mkdir(parents=True, exist_ok=True)
@@ -1367,6 +1371,11 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
     job_id = f"stream_{uuid.uuid4().hex[:8]}"
     message_id = request.message_id
     user_id = request.user_id
+
+    # Set context var — propagates automatically to all logs within this
+    # request's async task and any child tasks spawned from it.
+    _log_message_id.set(message_id or '')
+
     logger.info(
         f"stream request received | job={job_id} msg={message_id} user={user_id} session={request.session_id} "
         f"urls={len(request.s3_urls)} query={request.query[:80]!r}"

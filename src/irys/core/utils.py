@@ -7,12 +7,27 @@ import asyncio
 import logging
 import functools
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Callable, TypeVar, Optional, Awaitable
 from datetime import datetime
 import re
 
 T = TypeVar('T')
+
+# Per-request context variable — set once at the stream endpoint boundary,
+# automatically inherited by every asyncio task spawned from that request.
+_log_message_id: ContextVar[str] = ContextVar('log_message_id', default='')
+
+
+class _MessageIdFilter(logging.Filter):
+    """Prepends [msg=<id>] to every log record when a message ID is active."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg_id = _log_message_id.get('')
+        if msg_id:
+            record.msg = f"[msg={msg_id}] {record.msg}"
+        return True
+
 
 # Configure logging
 logger = logging.getLogger("irys")
@@ -188,15 +203,23 @@ def setup_logging(level: str = "INFO", log_file: Optional[str] = None):
     """Configure logging for the system."""
     log_level = getattr(logging, level.upper(), logging.INFO)
 
-    handlers = [logging.StreamHandler()]
+    new_handlers = [logging.StreamHandler()]
     if log_file:
-        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+        new_handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
 
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=handlers,
+        handlers=new_handlers,
     )
+
+    # Attach the message-ID filter to all root logger handlers (idempotent).
+    # Filters on loggers are skipped for propagated records — only handler
+    # filters run for every record that reaches them, which is what we want.
+    root = logging.getLogger()
+    for handler in root.handlers:
+        if not any(isinstance(f, _MessageIdFilter) for f in handler.filters):
+            handler.addFilter(_MessageIdFilter())
 
 
 # =============================================================================
