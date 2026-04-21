@@ -1364,11 +1364,18 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
             detail=f"Too many URLs ({len(request.s3_urls)}). Max: {config.max_documents_per_job}",
         )
 
+    job_id = f"stream_{uuid.uuid4().hex[:8]}"
+    message_id = request.message_id
+    user_id = request.user_id
+    logger.info(
+        f"stream request received | job={job_id} msg={message_id} user={user_id} session={request.session_id} "
+        f"urls={len(request.s3_urls)} query={request.query[:80]!r}"
+    )
+
     queue: asyncio.Queue = asyncio.Queue()
 
     async def run_investigation():
         """Download docs and run investigation, pushing events to queue."""
-        job_id = f"stream_{uuid.uuid4().hex[:8]}"
         s3_repo = None
         temp_dir = None
         start_time = time.time()
@@ -1492,9 +1499,13 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
                     "session_id": request.session_id,
                 },
             })
+            logger.info(
+                f"stream complete | job={job_id} msg={message_id} user={user_id} session={request.session_id} "
+                f"duration={duration:.1f}s docs={result.state.documents_read}"
+            )
 
         except Exception as e:
-            logger.error(f"Stream investigation failed: {e}")
+            logger.error(f"Stream investigation failed | job={job_id} msg={message_id} user={user_id} session={request.session_id}: {e}")
             queue.put_nowait({
                 "event": "error",
                 "data": {"error": str(e)},
