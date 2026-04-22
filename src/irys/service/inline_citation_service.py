@@ -531,12 +531,12 @@ Do not include explanations or commentary."""
         """Validate the annotated response."""
         # Rule 1: Non-empty
         if not annotated or not annotated.strip():
-            logger.debug("Validation failed: empty response")
+            logger.info("Citation validation failed: empty response")
             return False
 
         # Rule 2: Reject comma-separated IDs in brackets (e.g., [id1, id2])
         if cls.MULTI_ID_PATTERN.search(annotated):
-            logger.debug("Validation failed: found comma-separated citation IDs in brackets")
+            logger.info("Citation validation failed: comma-separated IDs in brackets")
             return False
 
         # Rule 3: Extract all citation markers
@@ -545,17 +545,16 @@ Do not include explanations or commentary."""
         # Rule 4: All IDs must be valid (no unknown IDs)
         invalid_ids = found_ids - valid_ids
         if invalid_ids:
-            logger.debug(f"Validation failed: invalid IDs {invalid_ids}")
+            logger.info("Citation validation failed: %d hallucinated IDs %s", len(invalid_ids), list(invalid_ids)[:3])
             return False
 
-        # Rule 5: Length check ±10%
-        # Remove markers for length comparison
+        # Rule 5: Length check ±15% (generous to handle minor reformatting by LLM)
         annotated_clean = cls.CITATION_MARKER_PATTERN.sub("", annotated)
         original_clean = original.strip()
 
         len_ratio = len(annotated_clean) / len(original_clean) if original_clean else 0
-        if len_ratio < 0.9 or len_ratio > 1.1:
-            logger.debug(f"Validation failed: length ratio {len_ratio:.2f} outside 0.9-1.1")
+        if len_ratio < 0.85 or len_ratio > 1.15:
+            logger.info("Citation validation failed: length ratio %.2f outside 0.85-1.15", len_ratio)
             return False
 
         return True
