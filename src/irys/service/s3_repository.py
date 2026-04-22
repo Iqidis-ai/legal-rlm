@@ -113,13 +113,15 @@ class S3Repository:
         self.config = config or get_config()
 
         # Initialize S3 client with increased connection pool (default is 10,
-        # which saturates quickly when downloading many documents concurrently)
+        # which saturates quickly when downloading many documents concurrently).
+        # 20 concurrent downloads × 2 boto3 calls each (head_object + download_file)
+        # = 40 connections needed; use 50 to give headroom for simultaneous jobs.
         self._s3 = boto3.client(
             "s3",
             region_name=self.config.s3_region,
             aws_access_key_id=self.config.aws_access_key_id,
             aws_secret_access_key=self.config.aws_secret_access_key,
-            config=Config(max_pool_connections=30),
+            config=Config(max_pool_connections=50),
         )
 
         # Temp storage tracking
