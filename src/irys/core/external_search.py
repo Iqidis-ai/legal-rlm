@@ -296,7 +296,7 @@ class CourtListenerClient:
         if not text:
             return []
         if not self.api_token:
-            logger.warning("citation-lookup requires COURTLISTENER_API_TOKEN")
+            logger.warning("citation-lookup requires COURTLISTENER_API_TOKEN!")
             return []
 
         session = await self._ensure_session()
