@@ -1119,7 +1119,7 @@ class RLMEngine:
                     web_results = data.get("results", [])
                     if web_results:
                         self._external_research["web"].extend(web_results)
-                        items = [{"name": r.get("title", "Untitled"), "snippet": (r.get("content") or "")[:200], "url": r.get("url", "")} for r in web_results]
+                        items = [{"type": "web", "name": r.get("title", "Untitled"), "title": r.get("title", "Untitled"), "snippet": (r.get("content") or "")[:200], "url": r.get("url", "")} for r in web_results]
                         await self._emit_lead_update(state, ext_lead.id, "external_results", {
                             "source": "web", "count": len(web_results), "items": items,
                         })

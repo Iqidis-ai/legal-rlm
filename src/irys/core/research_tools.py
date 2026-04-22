@@ -147,6 +147,7 @@ def _items_for_ui(cases: list[dict]) -> list[dict]:
     """Slim down case_law entries to the fields the frontend renders."""
     return [
         {
+            "type": "caselaw",
             "name": c.get("case_name") or "Unknown",
             "citation": c.get("citation") or "",
             "snippet": (c.get("snippet") or "")[:250],
@@ -389,7 +390,7 @@ async def _execute_web_search(ctx: ToolContext, **args: Any) -> ToolResult:
             "query": q,
             "count": len(entries),
             "items": [
-                {"title": e["title"], "url": e["url"], "snippet": (e["content"] or "")[:250]}
+                {"type": "web", "name": e["title"], "title": e["title"], "url": e["url"], "snippet": (e["content"] or "")[:250]}
                 for e in entries
             ],
         },
@@ -437,7 +438,7 @@ async def _execute_fetch_url(ctx: ToolContext, **args: Any) -> ToolResult:
             "source": "web",
             "query": url,
             "count": 1,
-            "items": [{"title": entry["title"], "url": entry["url"], "snippet": entry["content"][:250]}],
+            "items": [{"type": "web", "name": entry["title"], "title": entry["title"], "url": entry["url"], "snippet": entry["content"][:250]}],
         },
         log_line=f"fetch_url({url}) -> {len(entry['content'])} chars",
     )
