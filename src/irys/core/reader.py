@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 _MISTRAL_OCR_URL = "https://api.mistral.ai/v1/ocr"
 _OCR_MODEL = "mistral-ocr-latest"
 _OCR_TIMEOUT_SECONDS = 60  # configurable default
+# Files larger than this are skipped for OCR to avoid 413 Payload Too Large.
+# Base64 encoding adds ~33% overhead, so 35 MB raw → ~47 MB payload.
+_MISTRAL_MAX_FILE_BYTES = 35 * 1024 * 1024  # 35 MB
 
 # MIME types for image extensions
 _IMAGE_MIME: dict[str, str] = {
@@ -683,6 +686,19 @@ class DocumentReader:
             },
         }
 
+        # Skip OCR for files that would exceed Mistral's payload limit.
+        # Base64 encoding adds ~33% overhead; 35 MB raw → ~47 MB payload → 413.
+        if len(data) > _MISTRAL_MAX_FILE_BYTES:
+            size_mb = len(data) / (1024 * 1024)
+            logger.warning(
+                "Skipping Mistral OCR for %s (%.1f MB > %.0f MB limit) — using original extraction",
+                path.name, size_mb, _MISTRAL_MAX_FILE_BYTES / (1024 * 1024),
+            )
+            return self._empty_doc(path, file_type), OcrCallMetadata(
+                latency_ms=0, page_count=0, timed_out=False,
+                file_type=file_type, file_name=path.name,
+            )
+
         t0 = time.monotonic()
         timed_out = False
 
@@ -699,21 +715,41 @@ class DocumentReader:
                 resp.raise_for_status()
                 return resp.json()
 
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_do_request),
-                timeout=ocr_timeout,
-            )
-        except asyncio.TimeoutError:
+        # Retry transient 5xx errors (502 Bad Gateway, 503, 504) up to 2 times.
+        _TRANSIENT_STATUS_CODES = {502, 503, 504}
+        last_exc: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(_do_request),
+                    timeout=ocr_timeout,
+                )
+                last_exc = None
+                break
+            except asyncio.TimeoutError as exc:
+                latency_ms = int((time.monotonic() - t0) * 1000)
+                logger.warning("Mistral OCR timed out after %.0fs for %s", ocr_timeout, path.name)
+                return self._empty_doc(path, file_type), OcrCallMetadata(
+                    latency_ms=latency_ms, page_count=0, timed_out=True,
+                    file_type=file_type, file_name=path.name,
+                )
+            except Exception as exc:
+                status = getattr(getattr(exc, 'response', None), 'status_code', None)
+                if status in _TRANSIENT_STATUS_CODES and attempt < 2:
+                    wait = 2 ** attempt  # 1s, 2s
+                    logger.warning(
+                        "Mistral OCR %d error for %s, retrying in %ds (attempt %d/3)",
+                        status, path.name, wait, attempt + 1,
+                    )
+                    await asyncio.sleep(wait)
+                    last_exc = exc
+                    continue
+                last_exc = exc
+                break
+
+        if last_exc is not None:
             latency_ms = int((time.monotonic() - t0) * 1000)
-            logger.warning("Mistral OCR timed out after %.0fs for %s", ocr_timeout, path.name)
-            return self._empty_doc(path, file_type), OcrCallMetadata(
-                latency_ms=latency_ms, page_count=0, timed_out=True,
-                file_type=file_type, file_name=path.name,
-            )
-        except Exception as exc:
-            latency_ms = int((time.monotonic() - t0) * 1000)
-            logger.warning("Mistral OCR error for %s: %s", path.name, exc)
+            logger.warning("Mistral OCR error for %s: %s", path.name, last_exc)
             return self._empty_doc(path, file_type), OcrCallMetadata(
                 latency_ms=latency_ms, page_count=0, timed_out=False,
                 file_type=file_type, file_name=path.name,
