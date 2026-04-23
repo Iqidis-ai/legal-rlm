@@ -275,7 +275,7 @@ class RLMEngine:
                 "aws_secret_access_key": self.config.aws_secret_access_key,
             }
         self.fact_store = FactStore(Path(repository_path), s3_config=s3_facts_config)
-        facts_loaded = self.fact_store.load()
+        facts_loaded = await asyncio.to_thread(self.fact_store.load)
 
         # Emit fact store status to UI trace
         if facts_loaded > 0:
@@ -410,7 +410,7 @@ class RLMEngine:
                 )
                 if fact_count > 0:
                     try:
-                        saved = self.fact_store.save()
+                        saved = await asyncio.to_thread(self.fact_store.save)
                         self._emit_step(
                             state,
                             StepType.FINDING,
