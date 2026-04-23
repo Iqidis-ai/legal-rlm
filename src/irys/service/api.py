@@ -172,7 +172,7 @@ async def _cleanup_stale_temp_dirs(config: ServiceConfig):
                 age_seconds = now - entry.stat().st_mtime
                 if age_seconds > config.cleanup_after_seconds:
                     try:
-                        shutil.rmtree(entry)
+                        await asyncio.to_thread(shutil.rmtree, entry)
                         logger.debug(f"Removed stale temp dir: {entry}")
                     except Exception as rm_err:
                         logger.warning(f"Failed to remove {entry}: {rm_err}")
@@ -748,7 +748,7 @@ async def _run_upload_investigation(
             # LOCAL MODE: Delete temp directory
             import shutil
             if temp_dir and temp_dir.exists():
-                shutil.rmtree(temp_dir)
+                await asyncio.to_thread(shutil.rmtree, temp_dir)
         else:
             # S3 MODE: Cleanup temp and optionally S3
             if s3_repo:
@@ -837,7 +837,7 @@ async def upload_search(
         if config.storage_mode == "local":
             import shutil
             if temp_dir and temp_dir.exists():
-                shutil.rmtree(temp_dir)
+                await asyncio.to_thread(shutil.rmtree, temp_dir)
         else:
             await s3_repo.cleanup(job_id)
             await s3_repo.delete_prefix(s3_prefix)
@@ -856,7 +856,7 @@ async def upload_search(
         if config.storage_mode == "local":
             import shutil
             if temp_dir and temp_dir.exists():
-                shutil.rmtree(temp_dir)
+                await asyncio.to_thread(shutil.rmtree, temp_dir)
         elif s3_repo and s3_prefix:
             try:
                 await s3_repo.delete_prefix(s3_prefix)
@@ -970,7 +970,7 @@ async def upload_investigate_sync(
         if config.storage_mode == "local":
             import shutil
             if temp_dir and temp_dir.exists():
-                shutil.rmtree(temp_dir)
+                await asyncio.to_thread(shutil.rmtree, temp_dir)
         else:
             if s3_repo:
                 await s3_repo.cleanup(job_id)
@@ -1009,7 +1009,7 @@ async def upload_investigate_sync(
         if config.storage_mode == "local":
             import shutil
             if temp_dir and temp_dir.exists():
-                shutil.rmtree(temp_dir)
+                await asyncio.to_thread(shutil.rmtree, temp_dir)
         elif s3_repo and s3_prefix:
             try:
                 await s3_repo.delete_prefix(s3_prefix)
