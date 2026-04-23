@@ -326,7 +326,7 @@ class S3Repository:
         if job_id in self._temp_dirs:
             temp_dir, _ = self._temp_dirs.pop(job_id)
             if temp_dir.exists():
-                shutil.rmtree(temp_dir)
+                await asyncio.to_thread(shutil.rmtree, temp_dir)
                 logger.info(f"Cleaned up temp directory: {temp_dir}")
 
     async def cleanup_expired(self) -> int:
