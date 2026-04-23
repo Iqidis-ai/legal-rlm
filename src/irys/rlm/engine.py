@@ -2013,7 +2013,7 @@ class RLMEngine:
                 break
 
             try:
-                doc = self.repo.read(filepath)
+                doc, _ = await self.repo.read_async(filepath)
                 if doc:
                     # Get excerpt respecting both per-doc and remaining budget limits
                     # Account for header overhead in budget
@@ -2223,10 +2223,10 @@ class RLMEngine:
         for fp in file_paths:
             try:
                 if repository:
-                    doc = repository.read(str(fp))
+                    doc, _ = await repository.read_async(str(fp))
                 else:
                     temp_repo = MatterRepository(fp.parent)
-                    doc = temp_repo.read(str(fp))
+                    doc, _ = await temp_repo.read_async(str(fp))
 
                 content = doc.get_excerpt(self.config.excerpt_chars_complex)
 
