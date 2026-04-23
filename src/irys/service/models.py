@@ -164,12 +164,13 @@ class SearchResponse(BaseModel):
 class HealthResponse(BaseModel):
     """Health check response."""
     status: str = "healthy"
-    version: str
-    gemini_connected: bool
-    s3_connected: bool
-    active_jobs: int
-    temp_storage_mb: float
-    uptime_seconds: float
+    # --- Full fields (restore alongside full health check in api.py) ---
+    # version: str
+    # gemini_connected: bool
+    # s3_connected: bool
+    # active_jobs: int
+    # temp_storage_mb: float
+    # uptime_seconds: float
 
 
 class ErrorResponse(BaseModel):

@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 # In-memory job storage (use Redis in production for multi-worker)
 _jobs: dict[str, JobResult] = {}
-_start_time: float = time.time()
+# _start_time: float = time.time()
 
 
 async def _load_session(
@@ -275,45 +275,48 @@ async def root_redirect():
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check():
     """Health check endpoint."""
-    config = get_config()
+    return HealthResponse(status="healthy")
 
-    # Check S3 connection
-    s3_connected = False
-    if config.s3_bucket:
-        try:
-            import boto3
-            s3 = boto3.client("s3", region_name=config.s3_region)
-            s3.head_bucket(Bucket=config.s3_bucket)
-            s3_connected = True
-        except Exception:
-            pass
-
-    # Check Gemini connection
-    gemini_connected = bool(config.gemini_api_key)
-
-    # Calculate temp storage usage
-    temp_dir = Path(config.temp_dir)
-    temp_size_mb = 0.0
-    if temp_dir.exists():
-        temp_size_mb = sum(
-            f.stat().st_size for f in temp_dir.rglob("*") if f.is_file()
-        ) / (1024 * 1024)
-
-    # Count active jobs
-    active_jobs = sum(
-        1 for job in _jobs.values()
-        if job.status in (JobStatus.PENDING, JobStatus.PROCESSING)
-    )
-
-    return HealthResponse(
-        status="healthy",
-        version=VERSION,
-        gemini_connected=gemini_connected,
-        s3_connected=s3_connected,
-        active_jobs=active_jobs,
-        temp_storage_mb=round(temp_size_mb, 2),
-        uptime_seconds=round(time.time() - _start_time, 2),
-    )
+    # --- Full health check (restore when S3/Gemini checks are needed) ---
+    # config = get_config()
+    #
+    # # Check S3 connection
+    # s3_connected = False
+    # if config.s3_bucket:
+    #     try:
+    #         import boto3
+    #         s3 = boto3.client("s3", region_name=config.s3_region)
+    #         s3.head_bucket(Bucket=config.s3_bucket)
+    #         s3_connected = True
+    #     except Exception:
+    #         pass
+    #
+    # # Check Gemini connection
+    # gemini_connected = bool(config.gemini_api_key)
+    #
+    # # Calculate temp storage usage
+    # temp_dir = Path(config.temp_dir)
+    # temp_size_mb = 0.0
+    # if temp_dir.exists():
+    #     temp_size_mb = sum(
+    #         f.stat().st_size for f in temp_dir.rglob("*") if f.is_file()
+    #     ) / (1024 * 1024)
+    #
+    # # Count active jobs
+    # active_jobs = sum(
+    #     1 for job in _jobs.values()
+    #     if job.status in (JobStatus.PENDING, JobStatus.PROCESSING)
+    # )
+    #
+    # return HealthResponse(
+    #     status="healthy",
+    #     version=VERSION,
+    #     gemini_connected=gemini_connected,
+    #     s3_connected=s3_connected,
+    #     active_jobs=active_jobs,
+    #     temp_storage_mb=round(temp_size_mb, 2),
+    #     uptime_seconds=round(time.time() - _start_time, 2),
+    # )
 
 
 @app.post(
