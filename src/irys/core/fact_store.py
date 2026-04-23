@@ -28,6 +28,12 @@ class StoredFact:
     def __post_init__(self):
         if not self.extracted:
             self.extracted = datetime.now().strftime("%Y-%m-%d")
+        # Coerce page to int — LLM output or persisted data may have it as str
+        if self.page is not None:
+            try:
+                self.page = int(self.page)
+            except (ValueError, TypeError):
+                self.page = None
 
     def to_json_line(self) -> str:
         """Convert to JSON line for JSONL storage."""
@@ -45,6 +51,26 @@ class StoredFact:
         # Check if any significant query words appear in the fact
         query_words = [w for w in query_lower.split() if len(w) > 3]
         return any(word in fact_lower for word in query_words)
+
+
+def _coerce_page(value) -> Optional[int]:
+    """Coerce a page value from LLM output to int, returning None on failure."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _safe_page(page) -> int:
+    """Return an int page number for sorting, handling str/None gracefully."""
+    if page is None:
+        return 0
+    try:
+        return int(page)
+    except (ValueError, TypeError):
+        return 0
 
 
 class FactStore:
@@ -263,7 +289,7 @@ class FactStore:
             fact = StoredFact(
                 fact=fact_text,
                 source=source_filename,
-                page=quote.get("page"),
+                page=_coerce_page(quote.get("page")),
                 quote=quote_text,
                 query_context=query_context,
             )
@@ -293,7 +319,7 @@ class FactStore:
         facts = self._facts.copy()
 
         # Sort by source to group facts from same document
-        facts.sort(key=lambda f: (f.source, f.page or 0))
+        facts.sort(key=lambda f: (f.source, _safe_page(f.page)))
 
         return facts[:max_facts]
 
