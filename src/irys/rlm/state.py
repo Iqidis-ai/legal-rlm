@@ -394,6 +394,10 @@ class InvestigationState:
     # Telemetry summary (populated by engine after finalize())
     telemetry_summary: Optional[dict] = None
 
+    def __post_init__(self):
+        # O(1) dedup set — stores normalized fact strings for fast lookup
+        self._fact_hashes: set[str] = set()
+
     @classmethod
     def create(cls, query: str, repository_path: str) -> "InvestigationState":
         return cls(
@@ -484,17 +488,16 @@ class InvestigationState:
         return len(intersection) / len(union)
 
     def add_fact(self, fact: str) -> bool:
-        """Add a fact if not duplicate. Returns True if added."""
+        """Add a fact if not duplicate (O(1) hash-based dedup). Returns True if added."""
         if "accumulated_facts" not in self.findings:
             self.findings["accumulated_facts"] = []
 
         fact_normalized = " ".join(fact.lower().split())
 
-        for existing in self.findings["accumulated_facts"]:
-            existing_normalized = " ".join(existing.lower().split())
-            if self._word_overlap(fact_normalized, existing_normalized) > 0.7:
-                return False
+        if fact_normalized in self._fact_hashes:
+            return False
 
+        self._fact_hashes.add(fact_normalized)
         self.findings["accumulated_facts"].append(fact)
         return True
 
@@ -1130,6 +1133,9 @@ class InvestigationState:
 
         # Restore other fields
         state.findings = data.get("findings", {})
+        # Rebuild _fact_hashes from restored facts
+        for fact in state.findings.get("accumulated_facts", []):
+            state._fact_hashes.add(" ".join(fact.lower().split()))
         state.hypothesis = data.get("hypothesis")
         state.query_classification = data.get("query_classification")
 
