@@ -295,8 +295,9 @@ class RLMEngine:
         cache = InvestigationCache()
 
         # Seed prior session data if provided
+        # Run off the event loop via to_thread so /health stays responsive
         if seed_facts:
-            added = state.add_facts(seed_facts)
+            added = await asyncio.to_thread(state.add_facts, seed_facts)
             logger.info(f"Seeded {added}/{len(seed_facts)} prior-session facts")
         if seed_citations:
             for c in seed_citations:
