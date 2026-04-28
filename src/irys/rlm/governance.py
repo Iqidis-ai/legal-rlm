@@ -1,7 +1,7 @@
-"""Answerability-Governed Cost Cascade — front-door governance.
+"""Answerability-Governed Cost Cascade front-door governance.
 
-MVI-1 of the cascade design (see `codex_master_plan.txt` and the
-project CLAUDE.md). Decides whether a user query should:
+MVI-1 of the cascade design summarized in `docs/PROJECT_CONTEXT.md`.
+Decides whether a user query should:
 
   - enter the full recursive investigate loop (expensive, minutes)
   - be answered from existing matter state + conversation (cheap,
@@ -9,7 +9,7 @@ project CLAUDE.md). Decides whether a user query should:
   - be bounced back to the user as a clarification question (no
     LLM spend on the answer)
 
-The core primitive is an `ExecutionContract` — the classifier emits
+The core primitive is an `ExecutionContract`; the classifier emits
 one, and every downstream gate (termination, per-lead EV, family
 handlers) reads from it. Mode selection and stopping rules are the
 same decision at different levels of the cascade.

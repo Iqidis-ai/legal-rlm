@@ -24,7 +24,7 @@ dev = [
 ]
 
 [project.scripts]
-irys-server = "irys.service.api:app"
+irys-server = "irys.service.api:main"
 
 [build-system]
 requires = ["hatchling"]

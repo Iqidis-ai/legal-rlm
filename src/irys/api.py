@@ -196,12 +196,11 @@ class Irys:
                 conversation_history=conversation_history,
             )
 
-        # MVI-1 Answerability-Governed Cost Cascade — front door.
+        # MVI-1 Answerability-Governed Cost Cascade front door.
         # Decide whether to run the full recursive loop at all, answer
         # from existing matter state (`read`), or bounce back a
         # clarification (`clarify`). See src/irys/rlm/governance.py
-        # for the cascade design and codex_master_plan.txt for the
-        # founder-approved architecture.
+        # and docs/PROJECT_CONTEXT.md for the architecture summary.
         matter_model = self._engine._matter_model
         governor = CascadeGovernor(client=self._client, matter_model=matter_model)
         decision = await governor.decide(

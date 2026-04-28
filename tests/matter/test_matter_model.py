@@ -954,7 +954,7 @@ def test_so1_reuse_rate_hard_gate_stable_matter(model):
     """SO-1 hard gate: targets_met['reuse_rate'] is True on repeated queries over stable matter.
 
     This is the regression test the auditor requested to move SO-1 from PARTIAL to PASS.
-    Asserts the quantitative success criterion: reuse_rate >= 0.70 (from CLAUDE.md).
+    Asserts the quantitative success criterion: reuse_rate >= 0.70.
     """
     # Simulate prior ingestion run that built 20 assertions
     run1 = model.start_run("initial ingestion run")

@@ -120,9 +120,9 @@ ships today, read the list above or `src/irys/service/api.py`.
 
 ---
 
-This contract standardizes the full matter-intelligence API surface required by
-`CONSOLIDATED_IMPLEMENTATION_SPEC.md` and the blocking API/service gap in
-`ENHANCEMENT_DESIGN.md`. Current implementation code lives under
+This contract standardizes the full matter-intelligence API surface distilled
+from the prior planning artifacts now consolidated in `docs/PROJECT_CONTEXT.md`.
+Current implementation code lives under
 `src/irys/service`, `src/irys/matter`, and `src/irys/rlm`; existing singular
 paths such as `/matter/{matter_id}` should remain compatibility aliases while
 new clients target the canonical v1 paths below.

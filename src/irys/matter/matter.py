@@ -4554,7 +4554,7 @@ class MatterModel:
         """Compute measurable Sacred Outcome success criteria from stored state.
 
         Returns a snapshot of how well the current matter model satisfies the
-        quantitative success criteria defined in the project CLAUDE.md.  Metrics
+        quantitative success criteria defined in docs/PROJECT_CONTEXT.md. Metrics
         that require ground truth or run telemetry (reuse_rate, gap_detection_recall,
         numeric_extraction_rate) are reported as None.
 
@@ -4777,7 +4777,7 @@ class MatterModel:
                 "quant_facts": quant_fact_count,
                 "actors": actor_count,
             },
-            # Targets from CLAUDE.md
+            # Targets from docs/PROJECT_CONTEXT.md
             "targets": targets,
             # Pass/fail per metric (None = not enough data to evaluate)
             "targets_met": {

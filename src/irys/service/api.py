@@ -3334,3 +3334,17 @@ async def resume_run(
         "new_run_id": new_run_id,
         "matter_id": matter_id,
     }
+
+
+def main() -> None:
+    """Run the FastAPI service from the packaged console script."""
+    import uvicorn
+
+    config = get_config()
+    uvicorn.run(
+        "irys.service.api:app",
+        host="0.0.0.0",
+        port=config.port,
+        reload=config.debug,
+        log_level=config.log_level.lower(),
+    )

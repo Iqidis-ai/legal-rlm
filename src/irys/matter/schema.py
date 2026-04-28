@@ -1504,7 +1504,7 @@ def _migration_v29(conn) -> None:
 
     A reuse_rate of 1.0 means no new assertions were created (full reuse);
     0.0 means the matter was empty at start (first run).  The target from
-    CLAUDE.md is > 0.70 on repeated queries over a stable matter.
+    docs/PROJECT_CONTEXT.md is > 0.70 on repeated queries over a stable matter.
     """
     conn.execute(
         "ALTER TABLE run_session ADD COLUMN assertions_at_start INTEGER"
