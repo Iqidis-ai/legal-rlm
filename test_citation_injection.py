@@ -147,14 +147,14 @@ def _check_keyword_cited(keyword: str, text: str) -> bool:
     return False
 
 
-def run_scenario(scenario: dict) -> dict:
+async def _run_scenario_async(scenario: dict) -> dict:
     """Run one test scenario and return results."""
     config = IrysConfig(enable_inline_citations=True)
 
     answer = scenario["answer"]
     citations = scenario["citations"]
 
-    annotated, reordered, diag = InlineCitationService.inject(
+    annotated, reordered, diag = await InlineCitationService.inject(
         answer=answer,
         citations=citations,
         config=config,
@@ -168,6 +168,12 @@ def run_scenario(scenario: dict) -> dict:
             results["failed"].append(keyword)
 
     return results, annotated, answer, citations
+
+
+def run_scenario(scenario: dict) -> dict:
+    """Sync wrapper for test compatibility."""
+    import asyncio
+    return asyncio.run(_run_scenario_async(scenario))
 
 
 def print_separator(label: str = ""):

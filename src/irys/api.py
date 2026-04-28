@@ -222,7 +222,7 @@ class Irys:
         # Post-processing: inline citation injection (optional)
         if self.config.enable_inline_citations:
             from .service.inline_citation_service import InlineCitationService
-            output, reordered_citations, injection_diag = InlineCitationService.inject(
+            output, reordered_citations, injection_diag = await InlineCitationService.inject(
                 answer=output,
                 citations=state.citations,
                 config=self.config,
