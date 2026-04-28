@@ -97,7 +97,7 @@ class InlineCitationService:
     CITATION_MARKER_PATTERN = re.compile(r'\[([a-f0-9]{8})\]')
 
     @classmethod
-    def inject(
+    async def inject(
         cls,
         answer: str,
         citations: list,
@@ -128,7 +128,7 @@ class InlineCitationService:
             selected = cls._select_citations(citations)
             all_ids = {getattr(c, 'id', None) for c in citations} - {None}
 
-            final, diag = cls._inject_with_retry(answer, selected, config, all_ids)
+            final, diag = await cls._inject_single(answer, selected, config, all_ids)
 
             # Compute matched / unmatched from the final text (before renumbering)
             matched_ids = set(cls.CITATION_MARKER_PATTERN.findall(final))
@@ -262,18 +262,18 @@ class InlineCitationService:
     # -------------------------------------------------------------------------
 
     @classmethod
-    def _inject_with_retry(
+    async def _inject_single(
         cls,
         answer: str,
         citations: list,
         config,
         all_valid_ids: set,
     ) -> tuple[str, dict[str, Any]]:
-        """Sanitize, build prompt, call LLM with one retry on validation failure.
+        """Sanitize, build prompt, call LLM once (GeminiClient handles retries/fallbacks).
 
         Returns (annotated_text, diagnostics_dict).
         """
-        diag: dict[str, Any] = {"retries": 0, "validation_passed": False}
+        diag: dict[str, Any] = {"validation_passed": False}
 
         sanitized = cls._sanitize_citations(citations)
         if not sanitized:
@@ -294,7 +294,7 @@ class InlineCitationService:
             telemetry_step = None
 
         t0 = time.monotonic()
-        annotated = cls._call_gemini_lite(prompt, config, active_step=telemetry_step)
+        annotated = await cls._call_gemini_lite(prompt, config, active_step=telemetry_step)
         diag["llm_latency_ms"] = int((time.monotonic() - t0) * 1000)
 
         if cls._validate_response(annotated, answer, all_valid_ids):
@@ -302,26 +302,7 @@ class InlineCitationService:
             cls._attach_llm_telemetry(diag, telemetry_step)
             return annotated, diag
 
-        logger.info("Citation injection attempt 1 failed validation, retrying")
-        diag["retries"] = 1
-
-        # Reset step for retry
-        try:
-            from ..core.telemetry import InvestigationStep
-            telemetry_step = InvestigationStep(seq=0, step_name="citation_injection_retry", phase="post_processing")
-        except Exception:
-            telemetry_step = None
-
-        t0 = time.monotonic()
-        annotated = cls._call_gemini_lite(prompt, config, active_step=telemetry_step)
-        diag["llm_latency_ms"] += int((time.monotonic() - t0) * 1000)
-
-        if cls._validate_response(annotated, answer, all_valid_ids):
-            diag["validation_passed"] = True
-            cls._attach_llm_telemetry(diag, telemetry_step)
-            return annotated, diag
-
-        logger.warning("Citation injection failed after retry, returning original answer")
+        logger.warning("Citation injection failed validation, returning original answer")
         cls._attach_llm_telemetry(diag, telemetry_step)
         return answer, diag
 
@@ -454,12 +435,10 @@ class InlineCitationService:
         return "\n\n".join(blocks)
 
     @classmethod
-    def _call_gemini_lite(cls, prompt: str, config, active_step=None) -> str:
-        """Call Gemini Lite model for citation injection."""
-        import asyncio
+    async def _call_gemini_lite(cls, prompt: str, config, active_step=None) -> str:
+        """Call Gemini Lite model for citation injection (async, non-blocking)."""
         from ..core.models import GeminiClient, ModelTier
 
-        # Get or create client
         api_key = getattr(config, 'api_key', None) or os.environ.get("GEMINI_API_KEY")
         client = GeminiClient(api_key=api_key)
 
@@ -500,28 +479,14 @@ Return the full ANSWER text with citation markers inserted.
 Return only the ANSWER text.
 Do not include explanations or commentary."""
 
-        async def _complete():
-            return await client.complete(
-                prompt=prompt,
-                tier=ModelTier.LITE,
-                system_prompt=system_prompt,
-                timeout=30.0,
-                use_cache=False,
-                active_step=active_step,
-            )
-
-        # Run async call
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    future = pool.submit(asyncio.run, _complete())
-                    return future.result(timeout=35.0)
-            else:
-                return loop.run_until_complete(_complete())
-        except RuntimeError:
-            return asyncio.run(_complete())
+        return await client.complete(
+            prompt=prompt,
+            tier=ModelTier.LITE,
+            system_prompt=system_prompt,
+            timeout=30.0,
+            use_cache=False,
+            active_step=active_step,
+        )
 
     # Pattern to detect comma-separated IDs in brackets (invalid format)
     MULTI_ID_PATTERN = re.compile(r'\[[a-f0-9]{8}(?:,\s*[a-f0-9]{8})+\]')
