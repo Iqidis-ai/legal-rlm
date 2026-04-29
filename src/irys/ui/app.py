@@ -139,7 +139,10 @@ def _s3_matter_doc_count(matter_name: str) -> str:
 def _upload_files_to_s3_matter(uploaded_files: list, name: str) -> tuple[str, str]:
     """Upload Gradio files to S3 under matters/<name>/.
 
-    Appends to existing matter if the name already exists.
+    Appends to existing matter if the name already exists. Per-file failures
+    are isolated (do not abort the batch), retried with exponential backoff,
+    and reported in the status string. Filename collisions get a numeric
+    suffix instead of silently overwriting.
     Returns (display_name, status_message).
     """
     bucket = _s3_bucket()
@@ -148,23 +151,82 @@ def _upload_files_to_s3_matter(uploaded_files: list, name: str) -> tuple[str, st
     safe = _sanitize_matter_name(name)
     prefix = f"{_s3_matters_base_prefix()}/{safe}"
     s3 = _get_s3_client()
+
+    # Pre-load existing keys so we can avoid silent overwrite on collision.
+    used_keys: set[str] = set()
+    try:
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=f"{prefix}/"):
+            for obj in page.get("Contents", []):
+                used_keys.add(obj["Key"])
+    except Exception as exc:
+        logging.warning("S3 list before upload failed for '%s': %s", safe, exc)
+
     saved = 0
+    failed: list[tuple[str, str]] = []
     for f in uploaded_files:
-        if isinstance(f, str):
-            actual_path = pathlib.Path(f)
-            display_name = actual_path.name
-        else:
-            actual_path = pathlib.Path(f.name)
-            display_name = actual_path.name
-            orig = getattr(f, "orig_name", None)
-            if orig and not _is_hash_filename(pathlib.Path(orig).name):
-                display_name = pathlib.Path(orig).name
+        try:
+            if isinstance(f, str):
+                actual_path = pathlib.Path(f)
+                display_name = actual_path.name
+            else:
+                actual_path = pathlib.Path(f.name)
+                display_name = actual_path.name
+                orig = getattr(f, "orig_name", None)
+                if orig and not _is_hash_filename(pathlib.Path(orig).name):
+                    display_name = pathlib.Path(orig).name
+        except Exception as exc:
+            failed.append((str(f)[:80], f"resolve path: {exc}"))
+            continue
+
         key = f"{prefix}/{display_name}"
-        s3.upload_file(str(actual_path), bucket, key)
-        saved += 1
+        if key in used_keys:
+            stem = pathlib.Path(display_name).stem
+            ext = pathlib.Path(display_name).suffix
+            n = 2
+            while True:
+                cand_name = f"{stem} ({n}){ext}"
+                cand_key = f"{prefix}/{cand_name}"
+                if cand_key not in used_keys:
+                    display_name = cand_name
+                    key = cand_key
+                    break
+                n += 1
+        used_keys.add(key)
+
+        last_err: Optional[Exception] = None
+        ok = False
+        for attempt in range(3):
+            try:
+                s3.upload_file(str(actual_path), bucket, key)
+                ok = True
+                break
+            except Exception as exc:
+                last_err = exc
+                if attempt < 2:
+                    time.sleep(0.5 * (2 ** attempt))
+        if ok:
+            saved += 1
+        else:
+            failed.append((display_name, str(last_err) if last_err else "unknown"))
+            logging.error(
+                "S3 upload failed after retries for '%s' -> %s: %s",
+                display_name, key, last_err,
+            )
+
     count = _s3_matter_doc_count(name)
     display = safe.replace("_", " ")
-    return display, f"Saved {saved} file(s) to '{safe}' — {count} total"
+    total = saved + len(failed)
+    if failed:
+        sample = "; ".join(f"{n}: {e}" for n, e in failed[:3])
+        more = f" (+{len(failed) - 3} more)" if len(failed) > 3 else ""
+        msg = (
+            f"Saved {saved}/{total} file(s) to '{safe}' — {count} total. "
+            f"{len(failed)} failed: {sample}{more}"
+        )
+    else:
+        msg = f"Saved {saved} file(s) to '{safe}' — {count} total"
+    return display, msg
 
 
 def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Path:
@@ -3962,7 +4024,7 @@ def _fmt_ws_status(msg: str, kind: str = "ok") -> str:
     """Render a styled status pill. kind: ok | err | info"""
     if not msg:
         return ""
-    tone = {"ok": "ws-ok", "err": "ws-err", "info": "ws-info"}.get(kind, "ws-info")
+    tone = {"ok": "ws-ok", "err": "ws-err", "info": "ws-info", "warn": "ws-warn"}.get(kind, "ws-info")
     return f"<div class='ws-status {tone}'>{_escape(msg)}</div>"
 
 
@@ -4021,6 +4083,7 @@ _css = """
     .ws-ok  { color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; }
     .ws-err { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; }
     .ws-info{ color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; }
+    .ws-warn{ color: #92400e; background: #fffbeb; border: 1px solid #fde68a; }
     .gap-highlight { background: #fef3c7; border-radius: 6px; padding: 8px; }
 
     /* ── Shared viz shell ─────────────────────────────────── */
@@ -4859,11 +4922,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 if not files:
                     return gr.update(), _fmt_ws_status("No files selected", "info"), gr.update(), gr.update()
                 try:
-                    _upload_files_to_s3_matter(files, matter_name.strip())
+                    _, status_msg = _upload_files_to_s3_matter(files, matter_name.strip())
                     updated = _list_s3_matter_files(matter_name.strip())
+                    tone = "warn" if "failed" in status_msg.lower() else "ok"
                     return (
                         gr.update(choices=updated, value=None),
-                        _fmt_ws_status(f"Added {len(files)} file(s) to '{matter_name}'", "ok"),
+                        _fmt_ws_status(status_msg, tone),
                         None,
                         _fmt_matter_card(matter_name, updated),
                     )
@@ -4882,11 +4946,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 if not files:
                     return gr.update(), _fmt_ws_status("No folder selected", "info"), gr.update(), gr.update()
                 try:
-                    _upload_files_to_s3_matter(files, matter_name.strip())
+                    _, status_msg = _upload_files_to_s3_matter(files, matter_name.strip())
                     updated = _list_s3_matter_files(matter_name.strip())
+                    tone = "warn" if "failed" in status_msg.lower() else "ok"
                     return (
                         gr.update(choices=updated, value=None),
-                        _fmt_ws_status(f"Added {len(files)} file(s) from folder to '{matter_name}'", "ok"),
+                        _fmt_ws_status(status_msg, tone),
                         None,
                         _fmt_matter_card(matter_name, updated),
                     )
@@ -4905,16 +4970,21 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     return gr.update(), "", _fmt_ws_status("Enter a matter name first", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update()
                 try:
                     all_files = (files or []) + (folder_files or [])
+                    status_msg = ""
                     if all_files:
-                        display_name, _ = _upload_files_to_s3_matter(all_files, name.strip())
+                        display_name, status_msg = _upload_files_to_s3_matter(all_files, name.strip())
                     else:
                         display_name = _sanitize_matter_name(name.strip()).replace("_", " ")
                     names = _list_s3_matter_names()
                     new_files = _list_s3_matter_files(display_name)
+                    if status_msg and "failed" in status_msg.lower():
+                        ok_msg = _fmt_ws_status(f"Created '{display_name}' — {status_msg}", "warn")
+                    else:
+                        ok_msg = _fmt_ws_status(f"Created '{display_name}'", "ok")
                     return (
                         gr.update(choices=names, value=display_name),
                         display_name,
-                        _fmt_ws_status(f"Created '{display_name}'", "ok"),
+                        ok_msg,
                         gr.update(visible=True),
                         gr.update(choices=new_files, value=None),
                         _fmt_matter_card(display_name, new_files),
