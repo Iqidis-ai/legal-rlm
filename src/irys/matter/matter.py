@@ -26,7 +26,8 @@ from .graph import (
     ReasoningCacheStore, TrustOverrideStore, DocumentAnnotationStore,
     DecisionContextStore, AuthorityStore, ProofStateStore, AssumptionStore,
     VerificationStateStore, EvidenceStore, PrivilegeGate, ProvenanceStore,
-    ContentPolicyGuard,
+    ContentPolicyGuard, MemoryBrokerStore,
+    MemoryBrokerPolicyError,
 )
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
@@ -116,6 +117,7 @@ class MatterModel:
         self.privilege = PrivilegeGate(db, matter_id)
         self.provenance = ProvenanceStore(db, matter_id)
         self.content_policy = ContentPolicyGuard(db, matter_id)
+        self.memory_broker = MemoryBrokerStore(db, matter_id)
         # In-memory snapshot of assertion counts captured at run start.
         # Keyed by run_id.  Allows complete_run() to compute reuse_rate without
         # an extra SELECT round-trip (DB is the authoritative fallback).
@@ -3139,6 +3141,189 @@ class MatterModel:
     # Query context (read at start of each run)
     # ------------------------------------------------------------------
 
+    def _context_row_passes_taint_policy(
+        self,
+        row: dict,
+        target_kind: str,
+        id_key: str = "id",
+    ) -> bool:
+        target_id = row.get(id_key)
+        if not target_id:
+            return True
+        taints = self.memory_broker.list_object_taint(target_kind, str(target_id))
+        if not taints:
+            return True
+        return all(
+            t.get("taint_class") in MemoryBrokerStore.CLEAN_TAINT_CLASSES
+            for t in taints
+        )
+
+    def _filter_context_rows_by_taint(
+        self,
+        rows: list[dict],
+        target_kind: str,
+        id_key: str = "id",
+    ) -> list[dict]:
+        return [
+            row
+            for row in rows
+            if self._context_row_passes_taint_policy(row, target_kind, id_key)
+        ]
+
+    def _tainted_target_ids(self, target_kind: str) -> set[str]:
+        rows = self.db.execute(
+            """SELECT target_id, taint_class FROM object_taint
+               WHERE matter_id=? AND target_kind=?""",
+            (self.matter_id, target_kind),
+        ).fetchall()
+        return {
+            str(row["target_id"])
+            for row in rows
+            if row["taint_class"] not in MemoryBrokerStore.CLEAN_TAINT_CLASSES
+        }
+
+    def _assertion_has_tainted_context(
+        self,
+        assertion_id: str,
+        *,
+        tainted_occurrences: set[str],
+        tainted_artifacts: set[str],
+        tainted_actors: set[str],
+    ) -> bool:
+        rows = self.db.execute(
+            """SELECT id, document_id, speaker_actor_id
+               FROM assertion_occurrence WHERE assertion_id=?""",
+            (assertion_id,),
+        ).fetchall()
+        for row in rows:
+            if row["id"] in tainted_occurrences:
+                return True
+            if row["document_id"] in tainted_artifacts:
+                return True
+            if row["speaker_actor_id"] in tainted_actors:
+                return True
+        return False
+
+    def _clean_issue_coverage_by_id(
+        self,
+        issue_ids: list[str],
+        *,
+        tainted_assertions: set[str],
+        tainted_occurrences: set[str],
+        tainted_artifacts: set[str],
+        tainted_actors: set[str],
+        tainted_criteria: set[str] | None = None,
+        tainted_support_edges: set[str] | None = None,
+    ) -> dict[str, float]:
+        tainted_criteria = tainted_criteria or set()
+        tainted_support_edges = tainted_support_edges or set()
+        coverage: dict[str, float] = {}
+        for issue_id in issue_ids:
+            predicate_rows = self.db.execute(
+                "SELECT id FROM issue_predicate WHERE issue_id=?",
+                (issue_id,),
+            ).fetchall()
+            clean_predicate_ids = [
+                row["id"]
+                for row in predicate_rows
+                if row["id"] not in tainted_criteria
+            ]
+            predicate_count = len(clean_predicate_ids)
+            rows = self.db.execute(
+                """SELECT DISTINCT ail.id AS link_id, a.id, a.belief_state
+                   FROM assertion_issue_link ail
+                   JOIN assertion a ON a.id = ail.assertion_id
+                   WHERE ail.issue_id=? AND ail.relation_type IN ('supports', 'establishes')""",
+                (issue_id,),
+            ).fetchall()
+            weighted_support = 0.0
+            for row in rows:
+                if row["link_id"] in tainted_support_edges:
+                    continue
+                assertion_id = row["id"]
+                if assertion_id in tainted_assertions:
+                    continue
+                if self._assertion_has_tainted_context(
+                    assertion_id,
+                    tainted_occurrences=tainted_occurrences,
+                    tainted_artifacts=tainted_artifacts,
+                    tainted_actors=tainted_actors,
+                ):
+                    continue
+                state = str(row["belief_state"] or "").lower()
+                if state in {"operative", "admitted", "resolved"}:
+                    weighted_support += 1.0
+                elif state in {"alleged", "argued", "inferred"}:
+                    weighted_support += 0.5
+                elif state not in {"disputed", "withdrawn", "superseded"}:
+                    weighted_support += 0.3
+            if predicate_count > 0:
+                coverage[issue_id] = min(weighted_support, predicate_count) / predicate_count
+            else:
+                coverage[issue_id] = min(weighted_support, 1.0)
+        return coverage
+
+    def _clean_subtree_issues(
+        self,
+        issue_id: str,
+        *,
+        tainted_issues: set[str],
+        include_self: bool = True,
+    ) -> list[dict]:
+        subtree = self.issues.get_subtree(issue_id, include_self=include_self)
+        return [issue for issue in subtree if issue["id"] not in tainted_issues]
+
+    def _clean_weakest_leaf_id(
+        self,
+        issue_id: str,
+        *,
+        tainted_issues: set[str],
+        tainted_assertions: set[str],
+        tainted_occurrences: set[str],
+        tainted_artifacts: set[str],
+        tainted_actors: set[str],
+        tainted_criteria: set[str],
+        tainted_support_edges: set[str],
+    ) -> str | None:
+        subtree = self._clean_subtree_issues(
+            issue_id,
+            tainted_issues=tainted_issues,
+            include_self=True,
+        )
+        if not subtree:
+            return None
+        subtree_ids = {issue["id"] for issue in subtree}
+        parent_ids = {
+            issue.get("parent_issue_id")
+            for issue in subtree
+            if issue.get("parent_issue_id") in subtree_ids
+        }
+        leaf_ids = sorted(subtree_ids - parent_ids)
+        if not leaf_ids:
+            return None
+        coverage_by_id = self._clean_issue_coverage_by_id(
+            leaf_ids,
+            tainted_assertions=tainted_assertions,
+            tainted_occurrences=tainted_occurrences,
+            tainted_artifacts=tainted_artifacts,
+            tainted_actors=tainted_actors,
+            tainted_criteria=tainted_criteria,
+            tainted_support_edges=tainted_support_edges,
+        )
+        by_id = {issue["id"]: issue for issue in subtree}
+
+        def _leaf_rank(leaf_id: str) -> tuple:
+            issue = by_id[leaf_id]
+            coverage = coverage_by_id.get(leaf_id, 0.0)
+            priority = (
+                float(issue.get("materiality") or 0.5)
+                * float(issue.get("salience") or 0.5)
+                * (1.0 - coverage)
+            )
+            return (-priority, leaf_id)
+
+        return min(leaf_ids, key=_leaf_rank)
+
     def build_query_context(self) -> QueryMatterContext:
         """
         Build a QueryMatterContext from current matter state.
@@ -3153,22 +3338,68 @@ class MatterModel:
 
         assertion_count = self.assertions.count()
         # Limit to 10: engine context only uses count + first 3 descriptions.
-        open_gaps = self.gaps.open_gaps(min_materiality=0.3, limit=10)
-        open_issues = self.issues.get_open_issues(min_materiality=0.3)
+        open_gaps = self._filter_context_rows_by_taint(
+            self.gaps.open_gaps(min_materiality=0.3, limit=10),
+            "gap",
+        )
+        open_issues = self._filter_context_rows_by_taint(
+            self.issues.get_open_issues(min_materiality=0.3),
+            "issue",
+        )
         actor_count = self.actors.count()
+        tainted_issues = self._tainted_target_ids("issue")
 
         # Top actors by canonical name (limit 10 to keep context brief)
+        tainted_actors = self._tainted_target_ids("actor")
         known_actors = [
             a["canonical_name"]
-            for a in self.actors.list_actors(limit=10)
-        ]
+            for a in self.actors.list_actors()
+            if a["id"] not in tainted_actors
+        ][:10]
 
         # Documents already indexed in the assertion store
+        tainted_artifacts = self._tainted_target_ids("artifact")
+        tainted_artifacts |= self._tainted_target_ids("artifacts")
+        tainted_assertions = self._tainted_target_ids("assertion")
+        tainted_assertions |= self._tainted_target_ids("claims")
+        tainted_occurrences = self._tainted_target_ids("assertion_occurrence")
+        tainted_occurrences |= self._tainted_target_ids("claim_occurrence")
+        tainted_criteria = (
+            self._tainted_target_ids("criteria")
+            | self._tainted_target_ids("issue_predicate")
+        )
+        tainted_support_edges = (
+            self._tainted_target_ids("support_edge")
+            | self._tainted_target_ids("support_edges")
+            | self._tainted_target_ids("assertion_issue_link")
+            | self._tainted_target_ids("evidence_edge")
+        )
+        actor_filters = ""
+        actor_params: list[Any] = []
+        if tainted_actors:
+            actor_filters = (
+                f" AND (ao.speaker_actor_id IS NULL OR ao.speaker_actor_id NOT IN "
+                f"({','.join('?' for _ in tainted_actors)}))"
+            )
+            actor_params.extend(sorted(tainted_actors))
         rows = self.db.execute(
-            """SELECT DISTINCT document_id FROM assertion_occurrence
-               WHERE assertion_id IN (SELECT id FROM assertion WHERE matter_id=?)
-               ORDER BY document_id LIMIT 20""",
-            (self.matter_id,),
+            f"""SELECT DISTINCT ao.document_id
+                FROM assertion_occurrence ao
+                JOIN assertion a ON a.id = ao.assertion_id
+                WHERE a.matter_id=?
+                  AND ao.document_id IS NOT NULL
+                  AND a.id NOT IN ({','.join('?' for _ in tainted_assertions) or "''"})
+                  AND ao.id NOT IN ({','.join('?' for _ in tainted_occurrences) or "''"})
+                  AND ao.document_id NOT IN ({','.join('?' for _ in tainted_artifacts) or "''"})
+                  {actor_filters}
+                ORDER BY ao.document_id LIMIT 20""",
+            (
+                self.matter_id,
+                *sorted(tainted_assertions),
+                *sorted(tainted_occurrences),
+                *sorted(tainted_artifacts),
+                *actor_params,
+            ),
         ).fetchall()
         known_document_ids = [r["document_id"] for r in rows]
 
@@ -3190,11 +3421,15 @@ class MatterModel:
             # coverage_fraction directly from the canonical coverage
             # report, which already applies
             # TrustPurpose.PROOF_CANDIDATE eligibility to both lanes.
-            coverage_rows = self.get_issue_coverage_report(policy_audience="internal")
-            coverage_by_id = {
-                r["id"]: float(r.get("coverage_fraction") or 0.0)
-                for r in coverage_rows
-            }
+            coverage_by_id = self._clean_issue_coverage_by_id(
+                [issue["id"] for issue in open_issues],
+                tainted_assertions=tainted_assertions,
+                tainted_occurrences=tainted_occurrences,
+                tainted_artifacts=tainted_artifacts,
+                tainted_actors=tainted_actors,
+                tainted_criteria=tainted_criteria,
+                tainted_support_edges=tainted_support_edges,
+            )
 
             # Use subtree-aware weakness: for each root issue, find its weakest
             # leaf descendant. The engine should target the most specific weak element,
@@ -3207,36 +3442,69 @@ class MatterModel:
             weakest = min(open_issues, key=_weakness)
             weakest_issue_id = weakest["id"]
 
-            # If the weakest issue has children, drill down to its weakest leaf
-            children = self.issues.get_children(weakest_issue_id)
+            # If the weakest issue has children, drill down through a taint-aware
+            # subtree. Raw compute_coverage_rollup can see quarantined children.
+            children = [
+                child
+                for child in self.issues.get_children(weakest_issue_id)
+                if child["id"] not in tainted_issues
+            ]
             if children:
-                rollup = self.issues.compute_coverage_rollup(weakest_issue_id)
-                leaf_id = rollup.get("weakest_leaf_id")
+                leaf_id = self._clean_weakest_leaf_id(
+                    weakest_issue_id,
+                    tainted_issues=tainted_issues,
+                    tainted_assertions=tainted_assertions,
+                    tainted_occurrences=tainted_occurrences,
+                    tainted_artifacts=tainted_artifacts,
+                    tainted_actors=tainted_actors,
+                    tainted_criteria=tainted_criteria,
+                    tainted_support_edges=tainted_support_edges,
+                )
                 if leaf_id:
                     weakest_issue_id = leaf_id
 
         # Answered clarifications: inject user context into orientation (limit to 3 most recent)
-        answered_clarifications = self.clarifications.get_answered(limit=3)
+        answered_clarifications = self._filter_context_rows_by_taint(
+            self.clarifications.get_answered(limit=3),
+            "clarification",
+        )
 
         # Document annotations: strategic notes from user (SO-3 annotation)
-        document_annotations = self.annotations.list_recent(limit=10)
+        document_annotations = self._filter_context_rows_by_taint(
+            self.annotations.list_recent(limit=10),
+            "annotation",
+        )
 
         # SO-2: top predicate_key values from the typed assertion graph so orientation
         # can generate SPO-aware search leads targeting known relationship types.
         pred_rows = self.db.execute(
-            """SELECT predicate_key, COUNT(*) AS cnt
-               FROM assertion
-               WHERE matter_id=? AND predicate_key IS NOT NULL
-               GROUP BY predicate_key
-               ORDER BY cnt DESC
-               LIMIT 10""",
-            (self.matter_id,),
+            f"""SELECT a.predicate_key, COUNT(*) AS cnt
+                FROM assertion a
+                LEFT JOIN assertion_occurrence ao ON ao.assertion_id = a.id
+                WHERE a.matter_id=? AND a.predicate_key IS NOT NULL
+                  AND a.id NOT IN ({','.join('?' for _ in tainted_assertions) or "''"})
+                  AND (ao.id IS NULL OR ao.id NOT IN ({','.join('?' for _ in tainted_occurrences) or "''"}))
+                  AND (ao.document_id IS NULL OR ao.document_id NOT IN ({','.join('?' for _ in tainted_artifacts) or "''"}))
+                  {actor_filters}
+                GROUP BY a.predicate_key
+                ORDER BY cnt DESC
+                LIMIT 10""",
+            (
+                self.matter_id,
+                *sorted(tainted_assertions),
+                *sorted(tainted_occurrences),
+                *sorted(tainted_artifacts),
+                *actor_params,
+            ),
         ).fetchall()
         key_predicates = [r["predicate_key"] for r in pred_rows]
 
         # Gap 3: inject active assumptions so the engine can surface them in
         # orientation and respect assumption-gated predicates.
-        active_assumptions = self.assumptions.get_active(max_rows=20)
+        active_assumptions = self._filter_context_rows_by_taint(
+            self.assumptions.get_active(max_rows=20),
+            "assumption",
+        )
 
         # Document intelligence: count of documents with structured cards
         doc_card_count = self.document_cards.count()
@@ -3625,6 +3893,112 @@ class MatterModel:
     # ------------------------------------------------------------------
     # Clarification engine (SO-7, SO-3)
     # ------------------------------------------------------------------
+
+    def _require_domain_profile(
+        self,
+        domain_profile_id: str,
+        domain_profile_version: int,
+    ) -> dict:
+        profile = self.memory_broker.get_domain_profile(
+            domain_profile_id, domain_profile_version
+        )
+        if profile is None:
+            raise MemoryBrokerPolicyError(
+                f"Current domain profile required for clarification answer: "
+                f"{domain_profile_id}@{domain_profile_version}"
+            )
+        return profile
+
+    def _compatible_profile_mapping_hash(
+        self,
+        *,
+        source_domain_profile_id: str,
+        source_domain_profile_version: int,
+        target_domain_profile_id: str,
+        target_domain_profile_version: int,
+        target_kind: str,
+        target_namespace: str,
+    ) -> str:
+        mappings = self.memory_broker.list_profile_mappings(
+            target_domain_profile_id,
+            target_kind=target_kind,
+            target_namespace=target_namespace,
+        )
+        for mapping in mappings:
+            if (
+                mapping.get("source_domain_profile_id") == source_domain_profile_id
+                and int(mapping.get("source_domain_profile_version") or 0) == source_domain_profile_version
+                and int(mapping.get("target_domain_profile_version") or 0) == target_domain_profile_version
+                and mapping.get("compatibility_status") in {"compatible", "identity"}
+            ):
+                return str(mapping["target_mapping_hash"])
+        raise MemoryBrokerPolicyError(
+            "Compatible profile mapping missing for "
+            f"{source_domain_profile_id}->{target_domain_profile_id} "
+            f"{target_kind}/{target_namespace}"
+        )
+
+    def _current_revision_expectations_for(
+        self,
+        keys: set[str],
+    ) -> dict[str, int]:
+        expected: dict[str, int] = {}
+        for key in keys:
+            namespace, target_kind, target_id = self.memory_broker.parse_revision_key(key)
+            expected[key] = self.memory_broker.get_namespace_revision(
+                namespace, target_kind, target_id
+            )
+        return expected
+
+    def answer_clarification(
+        self,
+        question_id: str,
+        answer_text: str,
+        *,
+        domain_profile_id: str = "legal",
+        domain_profile_version: int = 1,
+    ) -> bool:
+        profile = self._require_domain_profile(domain_profile_id, domain_profile_version)
+        effective_profile_version = int(profile["profile_version"])
+        mapping_hash = self._compatible_profile_mapping_hash(
+            source_domain_profile_id=domain_profile_id,
+            source_domain_profile_version=effective_profile_version,
+            target_domain_profile_id=domain_profile_id,
+            target_domain_profile_version=effective_profile_version,
+            target_kind="clarification",
+            target_namespace="clarifications",
+        )
+        revision_keys = {
+            self.memory_broker.revision_key("clarifications"),
+            self.memory_broker.revision_key(
+                "clarifications", "clarification", question_id
+            ),
+            self.memory_broker.revision_key("object_taint"),
+            self.memory_broker.revision_key(
+                "object_taint", "clarification", question_id
+            ),
+            self.memory_broker.revision_key("policy"),
+            self.memory_broker.revision_key(
+                "domain_profiles", "profile", domain_profile_id
+            ),
+            self.memory_broker.revision_key("profile_mappings"),
+            self.memory_broker.revision_key(
+                "profile_mappings", "profile", domain_profile_id
+            ),
+            self.memory_broker.revision_key(
+                "profile_mappings", "mapping", mapping_hash
+            ),
+        }
+        return self.memory_broker.answer_clarification_with_cas(
+            question_id=question_id,
+            answer_text=answer_text,
+            expected_revisions=self._current_revision_expectations_for(revision_keys),
+            domain_profile_id=domain_profile_id,
+            domain_profile_version=effective_profile_version,
+            source_domain_profile_id=domain_profile_id,
+            source_domain_profile_version=effective_profile_version,
+            profile_mapping_hash=mapping_hash,
+        )
 
     def generate_clarifications_from_gaps(
         self,

@@ -29,6 +29,9 @@ def test_in_memory_db_creates_schema():
         "verification_state", "verification_event",
         # P0.1: provenance substrate
         "provenance_event",
+        # Memory broker substrate
+        "namespace_revision", "object_taint",
+        "domain_profile", "profile_mapping",
     ]:
         assert required in tables, f"Missing table: {required}"
 
@@ -40,6 +43,328 @@ def test_schema_version_recorded():
     ).fetchone()
     assert row is not None
     assert row[0] == SCHEMA_VERSION
+
+
+def test_memory_broker_substrate_tables_exist():
+    db = SQLiteMatterDB.in_memory()
+    expected_columns = {
+        "namespace_revision": {"matter_id", "namespace", "target_kind", "target_id", "revision"},
+        "object_taint": {
+            "matter_id", "target_kind", "target_id", "taint_class",
+            "domain_profile_id", "domain_profile_version", "profile_mapping_hash",
+        },
+        "domain_profile": {"profile_id", "profile_version", "profile_json", "mapping_hash"},
+        "profile_mapping": {
+            "source_domain_profile_id",
+            "target_domain_profile_id",
+            "compatibility_status",
+            "target_namespace",
+        },
+    }
+    for table, columns in expected_columns.items():
+        live = {
+            row[1]
+            for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        assert columns <= live
+
+
+def test_memory_broker_store_round_trips_substrate_state():
+    from irys.matter import MatterModel
+    from irys.matter.graph import MemoryBrokerCASMismatch
+
+    model = MatterModel.open_in_memory()
+    broker = model.memory_broker
+
+    assert broker.get_namespace_revision("claims") == 0
+    assert broker.bump_namespace_revision("claims") == 1
+    assert broker.bump_namespace_revision("claims") == 2
+
+    taint_id = broker.record_object_taint(
+        target_kind="claim",
+        target_id="c1",
+        taint_class="unknown_taint",
+        derivation_reason="test",
+    )
+    assert broker.get_namespace_revision("object_taint") == 1
+    assert broker.get_namespace_revision("object_taint", "claim", "c1") == 1
+    taints = broker.list_object_taint("claim", "c1")
+    assert taints[0]["id"] == taint_id
+    assert taints[0]["taint_class"] == "unknown_taint"
+    duplicate_taint_id = broker.record_object_taint(
+        target_kind="claim",
+        target_id="c1",
+        taint_class="unknown_taint",
+        derivation_reason="test",
+    )
+    assert duplicate_taint_id == taint_id
+    assert len(broker.list_object_taint("claim", "c1")) == 1
+    assert broker.get_namespace_revision("object_taint") == 2
+
+    profile_id = broker.upsert_domain_profile(
+        profile_id="legal",
+        profile_version=1,
+        profile_kind="legal",
+        profile_json='{"claim":"assertion"}',
+        mapping_hash="sha256:test",
+    )
+    profile = broker.get_domain_profile("legal", 1)
+    assert profile is not None
+    assert profile["id"] == profile_id
+    assert broker.get_namespace_revision("domain_profiles") == 1
+    assert broker.get_namespace_revision("domain_profiles", "profile", "legal") == 1
+
+    legal_mapping_id = broker.record_profile_mapping(
+        source_domain_profile_id="legal",
+        source_domain_profile_version=1,
+        target_domain_profile_id="legal",
+        target_domain_profile_version=1,
+        source_mapping_hash="sha256:test",
+        target_mapping_hash="sha256:test",
+        target_kind="clarification",
+        target_namespace="clarifications",
+        compatibility_status="identity",
+    )
+    assert legal_mapping_id
+    assert broker.get_namespace_revision("profile_mappings") == 1
+    assert broker.get_namespace_revision("profile_mappings", "profile", "legal") == 1
+    assert broker.get_namespace_revision("profile_mappings", "mapping", "sha256:test") == 1
+
+    mapping_id = broker.record_profile_mapping(
+        source_domain_profile_id="legal",
+        source_domain_profile_version=1,
+        target_domain_profile_id="finance",
+        target_domain_profile_version=1,
+        source_mapping_hash="sha256:legal",
+        target_mapping_hash="sha256:finance",
+        target_kind="claim",
+        target_namespace="claims",
+        compatibility_status="requires_transform",
+    )
+    mappings = broker.list_profile_mappings("finance", target_kind="claim")
+    assert mappings[0]["id"] == mapping_id
+    assert mappings[0]["compatibility_status"] == "requires_transform"
+    assert broker.get_namespace_revision("profile_mappings") == 2
+    assert broker.get_namespace_revision("profile_mappings", "profile", "finance") == 1
+    assert broker.get_namespace_revision("profile_mappings", "mapping", "sha256:finance") == 1
+
+    q_id = model.clarifications.add_question("Is the signed amendment available?")
+    expected = {
+        "clarifications:*": 0,
+        f"clarifications:clarification:{q_id}": 0,
+        "object_taint:*": broker.get_namespace_revision("object_taint"),
+        f"object_taint:clarification:{q_id}": 0,
+        "policy:*": broker.get_namespace_revision("policy"),
+        "domain_profiles:profile:legal": broker.get_namespace_revision(
+            "domain_profiles", "profile", "legal"
+        ),
+        "profile_mappings:*": broker.get_namespace_revision("profile_mappings"),
+        "profile_mappings:profile:legal": broker.get_namespace_revision(
+            "profile_mappings", "profile", "legal"
+        ),
+        "profile_mappings:mapping:sha256:test": broker.get_namespace_revision(
+            "profile_mappings", "mapping", "sha256:test"
+        ),
+    }
+    assert broker.answer_clarification_with_cas(
+        question_id=q_id,
+        answer_text="Yes.",
+        expected_revisions=expected,
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        source_domain_profile_id="legal",
+        source_domain_profile_version=1,
+        profile_mapping_hash="sha256:test",
+    )
+    answered = model.clarifications.get_answered()
+    assert answered[0]["id"] == q_id
+    assert broker.get_namespace_revision("clarifications") == 1
+    assert broker.get_namespace_revision("clarifications", "clarification", q_id) == 1
+    taint = broker.list_object_taint("clarification", q_id)[0]
+    assert taint["taint_class"] == "user_supplied_clean"
+    assert taint["domain_profile_id"] == "legal"
+    assert taint["domain_profile_version"] == 1
+    assert taint["profile_mapping_hash"] == "sha256:test"
+
+    with pytest.raises(MemoryBrokerCASMismatch):
+        broker.answer_clarification_with_cas(
+            question_id=q_id,
+            answer_text="Stale write.",
+            expected_revisions=expected,
+            domain_profile_id="legal",
+            domain_profile_version=1,
+            source_domain_profile_id="legal",
+            source_domain_profile_version=1,
+            profile_mapping_hash="sha256:test",
+        )
+
+
+def test_brokered_clarification_rejects_mismatched_profile_mapping_hash():
+    from irys.matter import MatterModel
+    from irys.matter.graph import MemoryBrokerPolicyError
+
+    model = MatterModel.open_in_memory()
+    broker = model.memory_broker
+    broker.upsert_domain_profile(
+        profile_id="legal",
+        profile_version=1,
+        profile_kind="legal",
+        profile_json='{"claim":"assertion"}',
+        mapping_hash="sha256:profile",
+    )
+    broker.record_profile_mapping(
+        source_domain_profile_id="legal",
+        source_domain_profile_version=1,
+        target_domain_profile_id="legal",
+        target_domain_profile_version=1,
+        source_mapping_hash="sha256:profile",
+        target_mapping_hash="sha256:real",
+        target_kind="clarification",
+        target_namespace="clarifications",
+        compatibility_status="identity",
+    )
+    q_id = model.clarifications.add_question("Is the amendment available?")
+    expected = {
+        "clarifications:*": 0,
+        f"clarifications:clarification:{q_id}": 0,
+        "object_taint:*": 0,
+        f"object_taint:clarification:{q_id}": 0,
+        "policy:*": 0,
+        "domain_profiles:profile:legal": broker.get_namespace_revision(
+            "domain_profiles", "profile", "legal"
+        ),
+        "profile_mappings:*": broker.get_namespace_revision("profile_mappings"),
+        "profile_mappings:profile:legal": broker.get_namespace_revision(
+            "profile_mappings", "profile", "legal"
+        ),
+        "profile_mappings:mapping:sha256:fake": 0,
+    }
+
+    with pytest.raises(MemoryBrokerPolicyError):
+        broker.answer_clarification_with_cas(
+            question_id=q_id,
+            answer_text="Yes.",
+            expected_revisions=expected,
+            domain_profile_id="legal",
+            domain_profile_version=1,
+            source_domain_profile_id="legal",
+            source_domain_profile_version=1,
+            profile_mapping_hash="sha256:fake",
+        )
+
+
+def test_answer_clarification_does_not_create_or_overwrite_profile_mapping():
+    from irys.matter import MatterModel
+    from irys.matter.graph import MemoryBrokerPolicyError
+
+    model = MatterModel.open_in_memory()
+    broker = model.memory_broker
+    broker.upsert_domain_profile(
+        profile_id="finance",
+        profile_version=1,
+        profile_kind="finance",
+        profile_json='{"metric":"revenue"}',
+        mapping_hash="sha256:finance-real",
+    )
+    q_id = model.clarifications.add_question("Is revenue recognized ratably?")
+
+    with pytest.raises(MemoryBrokerPolicyError):
+        model.answer_clarification(
+            q_id,
+            "Yes.",
+            domain_profile_id="finance",
+            domain_profile_version=1,
+        )
+
+    profile = broker.get_domain_profile("finance", 1)
+    assert profile is not None
+    assert profile["profile_json"] == '{"metric":"revenue"}'
+    assert profile["mapping_hash"] == "sha256:finance-real"
+    assert broker.list_profile_mappings(
+        "finance",
+        target_kind="clarification",
+        target_namespace="clarifications",
+    ) == []
+
+
+def test_brokered_clarification_requires_source_profile_revision_for_cross_domain_mapping():
+    from irys.matter import MatterModel
+    from irys.matter.graph import MemoryBrokerCASMismatch
+
+    model = MatterModel.open_in_memory()
+    broker = model.memory_broker
+    broker.upsert_domain_profile(
+        profile_id="legal",
+        profile_version=1,
+        profile_kind="legal",
+        profile_json='{"claim":"assertion"}',
+        mapping_hash="sha256:legal",
+    )
+    broker.upsert_domain_profile(
+        profile_id="finance",
+        profile_version=1,
+        profile_kind="finance",
+        profile_json='{"metric":"revenue"}',
+        mapping_hash="sha256:finance",
+    )
+    broker.record_profile_mapping(
+        source_domain_profile_id="finance",
+        source_domain_profile_version=1,
+        target_domain_profile_id="legal",
+        target_domain_profile_version=1,
+        source_mapping_hash="sha256:finance",
+        target_mapping_hash="sha256:finance-to-legal",
+        target_kind="clarification",
+        target_namespace="clarifications",
+        compatibility_status="compatible",
+    )
+    q_id = model.clarifications.add_question("Does this finance fact map to legal context?")
+    expected = {
+        "clarifications:*": 0,
+        f"clarifications:clarification:{q_id}": 0,
+        "object_taint:*": 0,
+        f"object_taint:clarification:{q_id}": 0,
+        "policy:*": 0,
+        "domain_profiles:profile:legal": broker.get_namespace_revision(
+            "domain_profiles", "profile", "legal"
+        ),
+        "profile_mappings:*": broker.get_namespace_revision("profile_mappings"),
+        "profile_mappings:profile:legal": broker.get_namespace_revision(
+            "profile_mappings", "profile", "legal"
+        ),
+        "profile_mappings:profile:finance": broker.get_namespace_revision(
+            "profile_mappings", "profile", "finance"
+        ),
+        "profile_mappings:mapping:sha256:finance-to-legal": broker.get_namespace_revision(
+            "profile_mappings", "mapping", "sha256:finance-to-legal"
+        ),
+    }
+
+    with pytest.raises(MemoryBrokerCASMismatch):
+        broker.answer_clarification_with_cas(
+            question_id=q_id,
+            answer_text="Yes.",
+            expected_revisions=expected,
+            domain_profile_id="legal",
+            domain_profile_version=1,
+            source_domain_profile_id="finance",
+            source_domain_profile_version=1,
+            profile_mapping_hash="sha256:finance-to-legal",
+        )
+
+    expected["domain_profiles:profile:finance"] = broker.get_namespace_revision(
+        "domain_profiles", "profile", "finance"
+    )
+    assert broker.answer_clarification_with_cas(
+        question_id=q_id,
+        answer_text="Yes.",
+        expected_revisions=expected,
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        source_domain_profile_id="finance",
+        source_domain_profile_version=1,
+        profile_mapping_hash="sha256:finance-to-legal",
+    )
 
 
 def test_foreign_keys_enforced():

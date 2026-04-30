@@ -95,11 +95,8 @@ def test_cold_start_hard_routes_to_investigate(empty_matter):
     assert len(client.calls) == 0
 
 
-def test_classifier_route_cache_reuses_on_repeat(warm_matter):
-    """Adversarial #10 Fix D acceptance: first query populates route
-    cache; a second identical query must reuse it (zero NANO calls)
-    so a rate-limit event on NANO can't herd warm queries into the
-    full AR loop."""
+def test_classifier_route_cache_is_fail_closed_on_repeat(warm_matter):
+    """Legacy route cache rows miss until a broker manifest can validate them."""
     client = _FakeClient({
         "intent_classifier": (
             '{"family": "read", "confidence": 0.9, '
@@ -111,11 +108,11 @@ def test_classifier_route_cache_reuses_on_repeat(warm_matter):
     first = asyncio.run(gov.decide(query="summarize", conversation_history=None))
     assert first.family == "read"
     assert len(client.calls) == 1
-    # Second IDENTICAL call: cache hit, classifier must NOT fire.
+    # Second IDENTICAL call: legacy route cache must not steer routing.
     second = asyncio.run(gov.decide(query="summarize", conversation_history=None))
     assert second.family == "read"
-    assert len(client.calls) == 1  # unchanged!
-    assert second.escalation_reason == "cache_hit"
+    assert len(client.calls) == 2
+    assert second.escalation_reason is None
 
 
 def test_classifier_cache_respects_trust_revision_bump(warm_matter):
@@ -197,7 +194,7 @@ def test_stale_cache_does_not_return_unrelated_prior_route():
     assert result.classifier_version != "_stale_cache_fallback"
 
 
-def test_stale_cache_positive_hit_reuses_prior_version(warm_matter):
+def test_stale_cache_positive_hit_is_fail_closed_without_manifest(warm_matter):
     """Round 4: the skip-unrelated path was tested but the POSITIVE
     HIT path was not. This test seeds a cached route under a PRIOR
     classifier schema version (mvi6.0) and then forces NANO failure
@@ -216,8 +213,8 @@ def test_stale_cache_positive_hit_reuses_prior_version(warm_matter):
     # Simulate a prior classifier schema version being in cache.
     gov_probe = CascadeGovernor(client=_FakeClient({}), matter_model=warm_matter)
     snap = gov_probe._build_snapshot(conversation_history=None)
-    # Seed the cache under a PRIOR version so the current-version
-    # lookup misses but the stale-fallback scan finds it.
+    # Seed the cache under a PRIOR version. It must still miss because
+    # cascade_decision is a semantic cache stage.
     prior_version = "mvi6.0"
     assert prior_version != CLASSIFIER_SCHEMA_VERSION
     prior_key = decision_cache_key(query, snap, prior_version)
@@ -231,17 +228,15 @@ def test_stale_cache_positive_hit_reuses_prior_version(warm_matter):
         },
     )
 
-    # Now NANO fails. Exact current-version cache misses (no entry
-    # under CLASSIFIER_SCHEMA_VERSION). Stale fallback must surface
-    # the prior-version entry as `_stale_cache_fallback`.
+    # Now NANO fails. Legacy stale fallback must not surface the prior route.
     class _FailingClient:
         async def complete(self, *a, **kw):
             raise RuntimeError("NANO outage")
     gov = CascadeGovernor(client=_FailingClient(), matter_model=warm_matter)
     result = asyncio.run(gov.decide(query=query))
-    assert result.family == "read"  # reused route
-    assert result.classifier_version == "_stale_cache_fallback"
-    assert result.escalation_reason == "stale_cache_fallback"
+    assert result.family == "investigate"
+    assert result.classifier_version != "_stale_cache_fallback"
+    assert result.escalation_reason is None
 
 
 def test_stale_cache_fallback_actually_fires_under_classifier_failure(warm_matter):
@@ -281,7 +276,7 @@ def test_stale_cache_fallback_actually_fires_under_classifier_failure(warm_matte
     assert result.family == "investigate"
 
 
-def test_classifier_failure_uses_stale_cache_fallback(warm_matter):
+def test_classifier_failure_ignores_legacy_stale_cache(warm_matter):
     """When NANO fails but a stale cache entry exists, reuse it
     rather than hard-routing to investigate — mitigates classifier
     rate-limit SPOF."""
@@ -307,7 +302,8 @@ def test_classifier_failure_uses_stale_cache_fallback(warm_matter):
     )
     # Exact cache hit first — classifier never fires.
     result = asyncio.run(gov_fail.decide(query="summarize"))
-    assert result.family == "read"  # stayed routed via cache
+    assert result.family == "investigate"
+    assert result.classifier_version != "_stale_cache_fallback"
 
 
 def test_warm_matter_classifier_returns_read(warm_matter):

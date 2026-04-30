@@ -159,4 +159,20 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
         writers=("irys.matter.graph:ContentPolicyGuard._append_audit",),
         readers=("irys.matter.graph:ContentPolicyGuard.list_decisions",),
     ),
+    "namespace_revision": TableCoverageSpec(
+        writers=("irys.matter.graph:MemoryBrokerStore.bump_namespace_revision",),
+        readers=("irys.matter.graph:MemoryBrokerStore.get_namespace_revision",),
+    ),
+    "object_taint": TableCoverageSpec(
+        writers=("irys.matter.graph:MemoryBrokerStore.record_object_taint",),
+        readers=("irys.matter.graph:MemoryBrokerStore.list_object_taint",),
+    ),
+    "domain_profile": TableCoverageSpec(
+        writers=("irys.matter.graph:MemoryBrokerStore.upsert_domain_profile",),
+        readers=("irys.matter.graph:MemoryBrokerStore.get_domain_profile",),
+    ),
+    "profile_mapping": TableCoverageSpec(
+        writers=("irys.matter.graph:MemoryBrokerStore.record_profile_mapping",),
+        readers=("irys.matter.graph:MemoryBrokerStore.list_profile_mappings",),
+    ),
 }

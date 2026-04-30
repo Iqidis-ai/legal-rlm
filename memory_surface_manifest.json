@@ -1,0 +1,1511 @@
+{
+  "manifest_schema_version": 1,
+  "protocol_target": "memory_coordination_v14",
+  "legacy_surface_defaults": {
+    "migration_owner": "memory_broker",
+    "hard_expiry": "2026-05-31",
+    "taint_behavior": "legacy_unknown_until_brokered",
+    "profile_behavior": "legacy_unknown_until_profile_bound"
+  },
+  "domain_profile_namespaces": [
+    "domain_profiles",
+    "profile_mappings"
+  ],
+  "semantic_cache_stages": [
+    {
+      "stage": "cascade_decision",
+      "store": "irys.matter.graph:ReasoningCacheStore",
+      "required_behavior": "miss_without_broker_validated_manifest"
+    },
+    {
+      "stage": "orient",
+      "store": "irys.matter.graph:ReasoningCacheStore",
+      "required_behavior": "miss_without_broker_validated_manifest"
+    },
+    {
+      "stage": "search_analysis",
+      "store": "irys.matter.graph:ReasoningCacheStore",
+      "required_behavior": "miss_without_broker_validated_manifest"
+    },
+    {
+      "stage": "synthesis",
+      "store": "irys.matter.graph:ReasoningCacheStore",
+      "required_behavior": "miss_without_broker_validated_manifest"
+    }
+  ],
+  "read_surfaces": [
+    {
+      "surface": "MatterModel.build_query_context",
+      "source": "src/irys/matter/matter.py",
+      "policy_audience": "internal",
+      "dependencies": [
+        "workspaces",
+        "claims",
+        "claim_occurrences",
+        "artifacts",
+        "entities",
+        "objective_nodes",
+        "criteria",
+        "support_edges",
+        "gaps",
+        "clarifications",
+        "annotations",
+        "guidance",
+        "assumptions",
+        "artifact_cards",
+        "review_state",
+        "policy",
+        "trust_overrides"
+      ],
+      "taint_sensitive": true
+    },
+    {
+      "surface": "RLMEngine._orient",
+      "source": "src/irys/rlm/engine.py",
+      "policy_audience": "internal",
+      "dependencies": [
+        "guidance",
+        "claims",
+        "objective_nodes",
+        "criteria",
+        "entities",
+        "artifacts",
+        "clarifications",
+        "annotations",
+        "assumptions",
+        "cache_records",
+        "inference_calls"
+      ],
+      "taint_sensitive": true
+    },
+    {
+      "surface": "RLMEngine._analyze_search_results",
+      "source": "src/irys/rlm/engine.py",
+      "policy_audience": "internal",
+      "dependencies": [
+        "artifacts",
+        "spans",
+        "criteria",
+        "objective_nodes",
+        "cache_records",
+        "inference_calls"
+      ],
+      "taint_sensitive": true
+    },
+    {
+      "surface": "RLMEngine._synthesize",
+      "source": "src/irys/rlm/engine.py",
+      "policy_audience": "clean",
+      "dependencies": [
+        "claims",
+        "claim_occurrences",
+        "claim_relations",
+        "support_edges",
+        "proof_state",
+        "cache_records",
+        "review_state",
+        "quants",
+        "gaps",
+        "authority",
+        "guidance",
+        "assumptions",
+        "policy",
+        "content_policy",
+        "cache_records",
+        "inference_calls"
+      ],
+      "taint_sensitive": true
+    },
+    {
+      "surface": "CascadeGovernor._build_snapshot",
+      "source": "src/irys/rlm/governance.py",
+      "policy_audience": "internal",
+      "dependencies": [
+        "claims",
+        "artifacts",
+        "objective_nodes",
+        "review_state",
+        "proof_state",
+        "cache_records"
+      ],
+      "taint_sensitive": true
+    },
+    {
+      "surface": "ReadFamilyHandler.run",
+      "source": "src/irys/rlm/governance.py",
+      "policy_audience": "clean",
+      "dependencies": [
+        "claims",
+        "claim_occurrences",
+        "artifacts",
+        "spans",
+        "guidance",
+        "objective_nodes",
+        "gaps",
+        "review_state",
+        "policy",
+        "inference_calls"
+      ],
+      "taint_sensitive": true
+    }
+  ],
+  "read_surface_groups": [
+    {
+      "surfaces": [
+        "CompareFamilyHandler.run",
+        "DeliverableFamilyHandler.run",
+        "QueryFamilyHandler.run",
+        "ScenarioFamilyHandler.run",
+        "SteerFamilyHandler.run",
+        "TraceFamilyHandler.run"
+      ],
+      "source": "src/irys/rlm/governance.py",
+      "policy_audience": "mixed_user_facing",
+      "dependencies": [
+        "claims",
+        "claim_occurrences",
+        "claim_relations",
+        "quants",
+        "entities",
+        "artifacts",
+        "artifact_relations",
+        "authority",
+        "objective_nodes",
+        "criteria",
+        "support_edges",
+        "proof_state",
+        "review_state",
+        "gaps",
+        "assumptions",
+        "clarifications",
+        "annotations",
+        "guidance",
+        "provenance",
+        "inference_calls",
+        "policy",
+        "content_policy"
+      ],
+      "taint_sensitive": true,
+      "profile_behavior": "legacy_unknown_until_profile_bound"
+    }
+  ],
+  "write_surfaces": [
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "entities",
+        "entity_aliases"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ActorStore.add_alias"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifacts",
+        "claim_occurrences",
+        "entities",
+        "entity_affiliations",
+        "entity_aliases",
+        "spans"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ActorStore.merge_actors"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "entities",
+        "entity_aliases"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ActorStore.upsert_actor"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "claim_relations"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "AssertionStore.detect_heuristic_contradictions"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "claim_relations"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "AssertionStore.link"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "claims"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "AssertionStore.set_belief_state"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifacts",
+        "claim_occurrences",
+        "claims",
+        "revision_events",
+        "spans"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "AssertionStore.upsert_occurrence"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "claims",
+        "revision_events"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "AssertionStore.write_revision_rows"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "assumptions"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "AssumptionStore.link"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "assumptions"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "AssumptionStore.set_status"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "assumptions"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "AssumptionStore.upsert"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "authority"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "AuthorityStore.link_to_issue"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "authority"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "AuthorityStore.unlink_from_issue"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "authority"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "AuthorityStore.upsert"
+    },
+    {
+      "surface": "ClarificationStore.add_question",
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "clarifications",
+        "guidance"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "clarifications",
+        "guidance"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ClarificationStore.answer_question"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "guidance"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DecisionContextStore.clear"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "guidance"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DecisionContextStore.set"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifacts",
+        "document_actor_roles",
+        "entities"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DocumentActorRoleStore.upsert"
+    },
+    {
+      "surface": "DocumentAnnotationStore.add",
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "annotations",
+        "guidance"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "annotations",
+        "guidance"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DocumentAnnotationStore.delete"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifact_cards",
+        "policy"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DocumentCardStore.upsert"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifact_relations"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DocumentInventoryStore.link_documents"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifacts"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DocumentInventoryStore.mark_ingested"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifacts"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DocumentInventoryStore.mark_profile_complete"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifacts"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DocumentInventoryStore.mark_profile_failed"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifacts"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DocumentInventoryStore.mark_profile_started"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifacts"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DocumentInventoryStore.set_family_membership"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifacts"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DocumentInventoryStore.set_salience"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifacts"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DocumentInventoryStore.update_hash"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "artifacts"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "DocumentInventoryStore.upsert"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "review_state",
+        "support_edges"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "EvidenceStore.backfill_from_legacy_links"
+    },
+    {
+      "surface": "EvidenceStore.upsert_edge",
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "support_edges"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "gaps"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "GapStore.record"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "gaps"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "GapStore.record_many"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "criteria"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "IssueStore.add_predicate"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "criteria"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "IssueStore.add_predicates_batch"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "criteria"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "IssueStore.apply_template"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "support_edges"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "IssueStore.link_assertion"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "support_edges"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "IssueStore.link_assertion_to_predicate"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "criteria"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "IssueStore.resolve_predicate"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "criteria"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "IssueStore.resolve_predicate_by_description"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "criteria"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "IssueStore.set_predicate_status"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "objective_nodes"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "IssueStore.upsert_issue"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "spans"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.add_doc_span"
+    },
+    {
+      "surface": "MatterModel.answer_clarification",
+      "source": "src/irys/matter/matter.py",
+      "broker_status": "brokered_cas_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "none",
+      "taint_behavior": "enforced_by_object_taint_rows",
+      "profile_behavior": "enforced_by_domain_profile_and_profile_mapping_rows",
+      "writes": [
+        "clarifications",
+        "guidance",
+        "namespace_revision",
+        "object_taint",
+        "policy",
+        "schema_state"
+      ]
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "belief_revisions",
+        "claims",
+        "revision_events"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.apply_revision"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "belief_revisions",
+        "cache_records",
+        "claims",
+        "proof_state",
+        "propagation_queue",
+        "revision_events",
+        "workspaces"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.correct_assertion"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "propagation_queue"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.delete_pending_propagation_db"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "belief_revisions",
+        "cache_records",
+        "claims",
+        "policy",
+        "proof_state",
+        "propagation_queue",
+        "revision_events",
+        "trust_overrides",
+        "workspaces"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.delete_trust_override"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "propagation_queue"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.enqueue_correction_pending"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "propagation_queue"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.enqueue_evidence_pending"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "claim_relations"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.link_assertions"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "cache_records",
+        "proof_state",
+        "review_state",
+        "support_edges",
+        "workspaces"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.mark_document_stale"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "cache_records",
+        "proof_state",
+        "review_state",
+        "support_edges",
+        "workspaces"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.mark_span_stale"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "artifact_cards",
+        "cache_records",
+        "policy",
+        "proof_state",
+        "review_state",
+        "support_edges",
+        "workspaces"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.reclassify_privilege"
+    },
+    {
+      "surface": "MatterModel.record_assertion",
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "artifacts",
+        "claim_occurrences",
+        "claims",
+        "revision_events",
+        "spans"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "gaps"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.record_gap"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "inference_calls"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.record_llm_call"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "runs"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.record_run_usage_summary"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "artifact_relations",
+        "artifacts"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.refresh_document_families"
+    },
+    {
+      "surface": "MatterModel.reject_target",
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "cache_records",
+        "proof_state",
+        "review_state",
+        "support_edges",
+        "workspaces"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31"
+    },
+    {
+      "surface": "MatterModel.set_trust_override",
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "belief_revisions",
+        "cache_records",
+        "claims",
+        "policy",
+        "proof_state",
+        "propagation_queue",
+        "revision_events",
+        "trust_overrides",
+        "workspaces"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "artifact_cards",
+        "artifacts",
+        "policy"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.upsert_document_intelligence"
+    },
+    {
+      "surface": "MatterModel.upsert_document_profile",
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "artifact_cards",
+        "artifacts",
+        "policy"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31"
+    },
+    {
+      "surface": "MatterModel.verify_target",
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "proof_state",
+        "review_state",
+        "support_edges"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31"
+    },
+    {
+      "source": "src/irys/matter/runtime.py",
+      "writes": [
+        "entities",
+        "entity_aliases"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterRuntimeAdapter.record_actor"
+    },
+    {
+      "surface": "MatterRuntimeAdapter.record_assertion_link",
+      "source": "src/irys/matter/runtime.py",
+      "writes": [
+        "claim_relations"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31"
+    },
+    {
+      "surface": "MatterRuntimeAdapter.record_fact",
+      "source": "src/irys/matter/runtime.py",
+      "writes": [
+        "artifacts",
+        "claim_occurrences",
+        "claims",
+        "entities",
+        "entity_aliases",
+        "revision_events",
+        "spans",
+        "support_edges"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31"
+    },
+    {
+      "source": "src/irys/matter/runtime.py",
+      "writes": [
+        "artifacts",
+        "claim_occurrences",
+        "claims",
+        "entities",
+        "entity_aliases",
+        "revision_events",
+        "spans",
+        "support_edges"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterRuntimeAdapter.record_facts_batch"
+    },
+    {
+      "source": "src/irys/matter/runtime.py",
+      "writes": [
+        "gaps"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterRuntimeAdapter.record_gap"
+    },
+    {
+      "source": "src/irys/matter/runtime.py",
+      "writes": [
+        "quants"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterRuntimeAdapter.record_quant"
+    },
+    {
+      "source": "src/irys/matter/runtime.py",
+      "writes": [
+        "quants"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterRuntimeAdapter.record_quants_batch"
+    },
+    {
+      "source": "src/irys/matter/runtime.py",
+      "writes": [
+        "belief_revisions",
+        "cache_records",
+        "claims",
+        "policy",
+        "proof_state",
+        "propagation_queue",
+        "revision_events",
+        "trust_overrides",
+        "workspaces"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterRuntimeAdapter.set_trust_override"
+    },
+    {
+      "surface": "MemoryBrokerStore.answer_clarification_with_cas",
+      "source": "src/irys/matter/graph.py",
+      "broker_status": "brokered_cas_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "none",
+      "taint_behavior": "enforced_by_object_taint_rows",
+      "profile_behavior": "enforced_by_domain_profile_and_profile_mapping_rows",
+      "writes": [
+        "clarifications",
+        "guidance",
+        "namespace_revision",
+        "object_taint",
+        "policy",
+        "schema_state"
+      ]
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "namespace_revision",
+        "schema_state"
+      ],
+      "broker_status": "broker_substrate",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "none",
+      "taint_behavior": "enforced_by_object_taint_rows",
+      "profile_behavior": "enforced_by_domain_profile_and_profile_mapping_rows",
+      "surface": "MemoryBrokerStore.bump_namespace_revision"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "namespace_revision",
+        "object_taint",
+        "policy",
+        "schema_state"
+      ],
+      "broker_status": "broker_substrate",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "none",
+      "taint_behavior": "enforced_by_object_taint_rows",
+      "profile_behavior": "enforced_by_domain_profile_and_profile_mapping_rows",
+      "surface": "MemoryBrokerStore.record_object_taint"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "namespace_revision",
+        "profile_mappings",
+        "schema_state"
+      ],
+      "broker_status": "broker_substrate",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "none",
+      "taint_behavior": "enforced_by_object_taint_rows",
+      "profile_behavior": "enforced_by_domain_profile_and_profile_mapping_rows",
+      "surface": "MemoryBrokerStore.record_profile_mapping"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "domain_profiles",
+        "namespace_revision",
+        "schema_state"
+      ],
+      "broker_status": "broker_substrate",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "none",
+      "taint_behavior": "enforced_by_object_taint_rows",
+      "profile_behavior": "enforced_by_domain_profile_and_profile_mapping_rows",
+      "surface": "MemoryBrokerStore.upsert_domain_profile"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "proof_state"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ProofStateStore.compute_all"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "proof_state"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ProofStateStore.compute_and_store"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "provenance"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ProvenanceStore.record"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "quants"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "QuantStore.record"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "quants"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "QuantStore.record_many"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "cache_records",
+        "workspaces"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ReasoningCacheStore.bump_trust_revision"
+    },
+    {
+      "surface": "ReasoningCacheStore.gc_stale_revisions",
+      "source": "src/irys/matter/graph.py",
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "writes": [
+        "cache_records"
+      ]
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "cache_records"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ReasoningCacheStore.get"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "cache_records"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ReasoningCacheStore.put"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "spans"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "SpanStore.upsert"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "spans"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "SpanStore.upsert_many"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "policy",
+        "trust_overrides"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "TrustOverrideStore.delete"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "policy",
+        "trust_overrides"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "TrustOverrideStore.set"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "review_state"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "VerificationStateStore.candidate"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "review_state",
+        "support_edges"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "VerificationStateStore.mark_stale"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "review_state",
+        "support_edges"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "VerificationStateStore.reject"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "review_state",
+        "support_edges"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "VerificationStateStore.set_status"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "review_state",
+        "support_edges"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "VerificationStateStore.verify"
+    }
+  ],
+  "write_surface_groups": [],
+  "object_taint_kinds": [
+    "artifacts",
+    "artifact cards",
+    "artifact relations",
+    "spans",
+    "entities",
+    "entity aliases",
+    "entity affiliations",
+    "document actor roles",
+    "claims",
+    "claim occurrences",
+    "claim relations",
+    "objective nodes",
+    "criteria",
+    "support edges",
+    "quant facts",
+    "authorities",
+    "gaps",
+    "annotations",
+    "guidance",
+    "assumptions",
+    "clarifications",
+    "revision events",
+    "belief revisions",
+    "propagation queue entries",
+    "trust overrides",
+    "generated work product",
+    "output transforms",
+    "cached answers"
+  ],
+  "inference_call_registry": [
+    "pleasantry",
+    "orientation",
+    "search_extract",
+    "search_reason",
+    "document_profile",
+    "document_deep_read",
+    "synthesis",
+    "section_selection",
+    "spo_retry",
+    "entity_extraction",
+    "contradiction_analysis",
+    "timeline_analysis",
+    "evidence_classification",
+    "sufficiency_probe",
+    "query_decomposition",
+    "intent_classifier",
+    "read_synth",
+    "query_sub_intent",
+    "steer_parse",
+    "scenario_parse",
+    "deliverable_sub_intent"
+  ]
+}

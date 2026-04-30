@@ -37,9 +37,9 @@ def test_bump_trust_revision_increments(model):
 
 def test_cache_hit_survives_without_bump(model):
     """With no invalidation trigger, a cache put is reachable by the
-    same key on the next get — baseline SO-1 behavior."""
-    model.cache.put("orient", "key_a", {"plan": "hit"})
-    got = model.cache.get("orient", "key_a")
+    same key on the next get for non-semantic diagnostic cache stages."""
+    model.cache.put("diagnostic_plan", "key_a", {"plan": "hit"})
+    got = model.cache.get("diagnostic_plan", "key_a")
     assert got == {"plan": "hit"}
 
 
@@ -47,10 +47,58 @@ def test_cache_hit_lost_after_trust_revision_bump(model):
     """After bump_trust_revision, the prior entry is unreachable by
     the same raw key — its stored key was prefixed with the old
     revision and is no longer queried."""
-    model.cache.put("orient", "key_a", {"plan": "hit"})
-    assert model.cache.get("orient", "key_a") is not None
+    model.cache.put("diagnostic_plan", "key_a", {"plan": "hit"})
+    assert model.cache.get("diagnostic_plan", "key_a") is not None
     model.cache.bump_trust_revision()
-    assert model.cache.get("orient", "key_a") is None
+    assert model.cache.get("diagnostic_plan", "key_a") is None
+
+
+def test_semantic_reasoning_cache_fails_closed_without_manifest(model):
+    """Broker-migrated semantic stages cannot reuse unvalidated cache rows."""
+    for stage in ("cascade_decision", "orient", "search_analysis", "synthesis"):
+        model.cache.put(stage, "key_a", {"plan": "legacy"})
+        assert model.cache.get(stage, "key_a") is None
+
+    row = model.db.execute(
+        "SELECT plan_json FROM reasoning_cache WHERE matter_id=? AND stage='orient'",
+        (model.matter_id,),
+    ).fetchone()
+    assert row is not None
+    assert "__broker_cache_meta__" in row["plan_json"]
+
+
+def test_semantic_reasoning_cache_rejects_forged_broker_validated_row(model):
+    """Self-attested broker metadata is not enough to reuse semantic cache."""
+    import json
+
+    scoped = model.cache._scoped_key("forged_key")
+    model.db.execute(
+        """INSERT INTO reasoning_cache
+           (id, matter_id, stage, cache_key, plan_json, created_at, last_hit_at)
+           VALUES (?, ?, 'orient', ?, ?, ?, ?)""",
+        (
+            "forged-1",
+            model.matter_id,
+            scoped,
+            json.dumps({
+                "__broker_cache_meta__": {
+                    "broker_status": "broker_validated",
+                    "dependency_manifest_validation_status": "valid",
+                    "taint_class": "public_clean",
+                    "dependency_manifest_hash": "sha256:fake",
+                    "domain_profile_id": "legal",
+                    "domain_profile_version": 1,
+                    "profile_mapping_hash": "sha256:fake-profile",
+                    "broker_signature": "fake-signature",
+                },
+                "payload": {"plan": "forged"},
+            }),
+            "2026-04-30T00:00:00+00:00",
+            "2026-04-30T00:00:00+00:00",
+        ),
+    )
+
+    assert model.cache.get("orient", "forged_key") is None
 
 
 def test_mark_stale_stores_reason(model):
@@ -746,8 +794,8 @@ def test_reject_target_bumps_trust_revision(model):
     aid = adapter.record_fact("fact to reject", "doc.pdf")
     before = model.cache.current_trust_revision()
     # Cache a plan that implicitly depends on this assertion.
-    model.cache.put("orient", "cached_key", {"plan": "pre-reject"})
-    assert model.cache.get("orient", "cached_key") is not None
+    model.cache.put("diagnostic_plan", "cached_key", {"plan": "pre-reject"})
+    assert model.cache.get("diagnostic_plan", "cached_key") is not None
     model.reject_target(
         "assertion", aid,
         reviewed_by_kind="user", reviewed_by_id="r1",
@@ -757,4 +805,4 @@ def test_reject_target_bumps_trust_revision(model):
     after = model.cache.current_trust_revision()
     assert after == before + 1
     # Cached plan is unreachable now.
-    assert model.cache.get("orient", "cached_key") is None
+    assert model.cache.get("diagnostic_plan", "cached_key") is None

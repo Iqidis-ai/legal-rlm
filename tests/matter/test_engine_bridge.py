@@ -3018,6 +3018,47 @@ def test_build_query_context_populates_key_predicates():
     assert ctx.key_predicates[0] == "agreed_to_pay", "predicates ordered by frequency descending"
 
 
+def test_build_query_context_excludes_tainted_key_predicates():
+    """Object-tainted assertions must not leak predicate hints into orientation."""
+    from irys.matter import MatterModel, AssertionCandidate, SpeechAct, SourceRole
+    from irys.matter.enums import ModelLayer, AssertionKind, OriginKind
+
+    model = MatterModel.open_in_memory()
+    tainted = AssertionCandidate(
+        proposition_text="Party A agreed to pay $100k",
+        speech_act=SpeechAct.ALLEGED,
+        source_role=SourceRole.ADVOCACY,
+        document_id="tainted.txt",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        origin_kind=OriginKind.EXTRACTED,
+        predicate_key="agreed_to_pay",
+    )
+    clean = AssertionCandidate(
+        proposition_text="Party B executed the contract",
+        speech_act=SpeechAct.ALLEGED,
+        source_role=SourceRole.ADVOCACY,
+        document_id="clean.txt",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        origin_kind=OriginKind.EXTRACTED,
+        predicate_key="executed_contract",
+    )
+    tainted_id, _ = model.assertions.upsert_occurrence(tainted)
+    model.assertions.upsert_occurrence(clean)
+    model.memory_broker.record_object_taint(
+        target_kind="assertion",
+        target_id=tainted_id,
+        taint_class="unknown_taint",
+        derivation_reason="test quarantine",
+    )
+
+    ctx = model.build_query_context()
+
+    assert "agreed_to_pay" not in ctx.key_predicates
+    assert "executed_contract" in ctx.key_predicates
+
+
 # ---------------------------------------------------------------------------
 # SO-4: _build_issue_coverage_summary()
 # ---------------------------------------------------------------------------

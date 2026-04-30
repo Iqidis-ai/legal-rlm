@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 58
+SCHEMA_VERSION = 60
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -21,6 +21,8 @@ _MIGRATION_NAMES: dict[int, str] = {
     56: "matter_trust_revision",
     57: "content_policy_audit",
     58: "llm_thinking_telemetry",
+    59: "memory_broker_substrate",
+    60: "object_taint_profile_binding",
 }
 
 
@@ -2797,6 +2799,113 @@ def _migration_v58(conn) -> None:
     conn.commit()
 
 
+def _migration_v59(conn) -> None:
+    """Add memory-broker substrate tables for freshness, taint, and profiles."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS namespace_revision (
+            id           TEXT PRIMARY KEY,
+            matter_id    TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            namespace    TEXT NOT NULL,
+            target_kind  TEXT NOT NULL,
+            target_id    TEXT NOT NULL,
+            revision     INTEGER NOT NULL DEFAULT 0,
+            updated_at   TEXT NOT NULL,
+            UNIQUE(matter_id, namespace, target_kind, target_id)
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_namespace_revision_lookup"
+        " ON namespace_revision(matter_id, namespace, target_kind, target_id)"
+    )
+
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS object_taint (
+            id                  TEXT PRIMARY KEY,
+            matter_id           TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            target_kind         TEXT NOT NULL,
+            target_id           TEXT NOT NULL,
+            taint_class         TEXT NOT NULL,
+            domain_profile_id   TEXT,
+            domain_profile_version INTEGER,
+            profile_mapping_hash TEXT,
+            source_packet_id    TEXT NOT NULL DEFAULT '',
+            provenance_event_id TEXT NOT NULL DEFAULT '',
+            policy_decision_id  TEXT,
+            derivation_reason   TEXT,
+            created_at          TEXT NOT NULL,
+            UNIQUE(matter_id, target_kind, target_id, taint_class, source_packet_id, provenance_event_id)
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_object_taint_target"
+        " ON object_taint(matter_id, target_kind, target_id, taint_class)"
+    )
+
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS domain_profile (
+            id                  TEXT PRIMARY KEY,
+            matter_id           TEXT REFERENCES matter(id) ON DELETE CASCADE,
+            profile_id          TEXT NOT NULL,
+            profile_version     INTEGER NOT NULL,
+            profile_kind        TEXT NOT NULL,
+            profile_json        TEXT NOT NULL,
+            mapping_hash        TEXT NOT NULL,
+            status              TEXT NOT NULL DEFAULT 'current',
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            UNIQUE(matter_id, profile_id, profile_version)
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_domain_profile_current"
+        " ON domain_profile(matter_id, profile_id, status)"
+    )
+
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS profile_mapping (
+            id                              TEXT PRIMARY KEY,
+            matter_id                       TEXT REFERENCES matter(id) ON DELETE CASCADE,
+            source_domain_profile_id        TEXT NOT NULL,
+            source_domain_profile_version   INTEGER NOT NULL,
+            target_domain_profile_id        TEXT NOT NULL,
+            target_domain_profile_version   INTEGER NOT NULL,
+            source_mapping_hash             TEXT NOT NULL,
+            target_mapping_hash             TEXT NOT NULL,
+            target_kind                     TEXT NOT NULL,
+            target_namespace                TEXT NOT NULL,
+            compatibility_status            TEXT NOT NULL,
+            required_transform_id           TEXT,
+            reviewer_id                     TEXT,
+            created_at                      TEXT NOT NULL,
+            UNIQUE(
+                matter_id,
+                source_domain_profile_id,
+                source_domain_profile_version,
+                target_domain_profile_id,
+                target_domain_profile_version,
+                target_kind,
+                target_namespace
+            )
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_profile_mapping_lookup"
+        " ON profile_mapping(matter_id, target_domain_profile_id, target_kind, target_namespace)"
+    )
+    conn.commit()
+
+
+def _migration_v60(conn) -> None:
+    """Bind object taint rows to domain-profile and profile-mapping state."""
+    for alter in (
+        "ALTER TABLE object_taint ADD COLUMN domain_profile_id TEXT",
+        "ALTER TABLE object_taint ADD COLUMN domain_profile_version INTEGER",
+        "ALTER TABLE object_taint ADD COLUMN profile_mapping_hash TEXT",
+    ):
+        _execute_allow_duplicate_column(conn, alter)
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -2859,6 +2968,8 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (56, _migration_v56),
     (57, _migration_v57),
     (58, _migration_v58),
+    (59, _migration_v59),
+    (60, _migration_v60),
 ]
 
 

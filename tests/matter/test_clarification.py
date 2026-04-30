@@ -161,6 +161,24 @@ def test_query_context_includes_answered_clarifications(model):
     assert "payment record" in ctx.answered_clarifications[0]["question_text"].lower()
 
 
+def test_query_context_excludes_tainted_answered_clarifications(model):
+    """Broker taint policy quarantines dirty context rows."""
+    q_id = model.clarifications.add_question(
+        question_text="Is the payment record in the repository?",
+    )
+    model.clarifications.answer_question(q_id, "No, request it from the client.")
+    model.memory_broker.record_object_taint(
+        target_kind="clarification",
+        target_id=q_id,
+        taint_class="unknown_taint",
+        derivation_reason="test quarantine",
+    )
+
+    ctx = model.build_query_context()
+
+    assert ctx.answered_clarifications == []
+
+
 def test_query_context_excludes_pending_clarifications(model):
     """Pending (unanswered) questions must NOT appear in QueryMatterContext."""
     model.clarifications.add_question("Is the contract signed?")

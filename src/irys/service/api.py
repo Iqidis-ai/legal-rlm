@@ -1766,8 +1766,13 @@ async def answer_clarification(
     subsequent investigation runs for this matter.
     """
     model = await _get_matter_model_or_404(matter_id)
+    from irys.matter.graph import MemoryBrokerCASMismatch, MemoryBrokerPolicyError
     try:
-        found = model.clarifications.answer_question(question_id, request.answer_text)
+        found = model.answer_clarification(question_id, request.answer_text)
+    except MemoryBrokerCASMismatch as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except MemoryBrokerPolicyError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
     if not found:
@@ -2527,7 +2532,7 @@ async def correct_assertion(
                 run_id=_active_run_id,
                 why_it_matters="User directly corrected an assertion during this run",
             )
-            model.clarifications.answer_question(
+            model.answer_clarification(
                 synth_q_id,
                 f"Assertion '{prop_text}' corrected to {request.new_belief_state}. "
                 f"Re-examine evidence related to this claim. {synth_note}".strip(),

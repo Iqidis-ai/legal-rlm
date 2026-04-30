@@ -12,7 +12,7 @@ import json as _json_mod
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 _log = logging.getLogger(__name__)
 
@@ -4674,10 +4674,16 @@ class ReasoningCacheStore:
 
     Keyed on (matter_id, stage, cache_key) where cache_key is a
     sha256 hash of the query and repo-state proxy computed by the caller.
-    On warm runs the engine checks this store before calling the LLM,
-    skipping the FLASH model call when the query and repo structure are
-    unchanged (SO-1 hot path).
+    Semantic stages (`cascade_decision`, `orient`, `search_analysis`,
+    `synthesis`) now fail closed unless a future broker validates their
+    dependency manifests. Other stages retain the lightweight trust-revision
+    cache behavior.
     """
+    _BROKER_REQUIRED_STAGES = frozenset(
+        {"cascade_decision", "orient", "search_analysis", "synthesis"}
+    )
+    _BROKER_META_KEY = "__broker_cache_meta__"
+    _BROKER_PAYLOAD_KEY = "payload"
 
     def __init__(self, db: SQLiteMatterDB, matter_id: str):
         self.db = db
@@ -4745,7 +4751,56 @@ class ReasoningCacheStore:
         from irys.matter.schema import SCHEMA_VERSION as _SV
         return f"tr{self.current_trust_revision()}:sv{_SV}:{cache_key}"
 
-    def get(self, stage: str, cache_key: str) -> Optional[dict]:
+    @classmethod
+    def _wrap_for_storage(cls, stage: str, plan: Any) -> Any:
+        """Mark semantic cache writes as legacy-untrusted until brokered.
+
+        Rows remain useful for audit and garbage collection tests, but reads
+        from stages that can steer retrieval, context, or user-facing answers
+        fail closed unless a future broker validates the dependency manifest.
+        """
+        if stage not in cls._BROKER_REQUIRED_STAGES:
+            return plan
+        return {
+            cls._BROKER_META_KEY: {
+                "broker_status": "legacy_untrusted",
+                "taint_class": "unknown_taint",
+                "dependency_manifest_validation_status": "unvalidated",
+                "note": "Semantic cache is unreadable until broker-validated metadata exists.",
+            },
+            cls._BROKER_PAYLOAD_KEY: plan,
+        }
+
+    @classmethod
+    def _unwrap_for_read(cls, stage: str, cached: Any) -> Any:
+        if stage not in cls._BROKER_REQUIRED_STAGES:
+            return cached
+        if not isinstance(cached, dict):
+            return None
+        meta = cached.get(cls._BROKER_META_KEY)
+        if not isinstance(meta, dict):
+            return None
+        if meta.get("broker_status") != "broker_validated":
+            return None
+        if meta.get("dependency_manifest_validation_status") != "valid":
+            return None
+        if meta.get("taint_class") == "unknown_taint":
+            return None
+        if not cls._broker_manifest_is_valid(meta):
+            return None
+        return cached.get(cls._BROKER_PAYLOAD_KEY)
+
+    @classmethod
+    def _broker_manifest_is_valid(cls, meta: dict[str, Any]) -> bool:
+        """Validate broker-authored cache metadata.
+
+        There is not yet a durable broker manifest store to resolve and verify.
+        Until that exists, semantic cache reuse stays disabled even when row JSON
+        self-attests `broker_validated`.
+        """
+        return False
+
+    def get(self, stage: str, cache_key: str) -> Optional[Any]:
         """Return cached plan dict or None on cache miss or DB error.
 
         Wraps all DB access in try/except so a corrupt or missing cache table
@@ -4773,7 +4828,7 @@ class ReasoningCacheStore:
                 )
             except Exception:
                 pass  # last_hit_at update is non-critical
-            return json.loads(row["plan_json"])
+            return self._unwrap_for_read(stage, json.loads(row["plan_json"]))
         except Exception:
             return None
 
@@ -4793,7 +4848,15 @@ class ReasoningCacheStore:
                    ON CONFLICT(matter_id, stage, cache_key)
                    DO UPDATE SET plan_json=excluded.plan_json,
                                  last_hit_at=excluded.last_hit_at""",
-                (_id(), self.matter_id, stage, scoped, json.dumps(plan), now, now),
+                (
+                    _id(),
+                    self.matter_id,
+                    stage,
+                    scoped,
+                    json.dumps(self._wrap_for_storage(stage, plan)),
+                    now,
+                    now,
+                ),
             )
         except Exception:
             pass  # non-critical; next run will populate from LLM
@@ -4850,6 +4913,559 @@ class ReasoningCacheStore:
         except Exception:
             return 0
         return deleted
+
+
+class MemoryBrokerCASMismatch(RuntimeError):
+    """Raised when a brokered write observes a stale namespace revision."""
+
+
+class MemoryBrokerPolicyError(RuntimeError):
+    """Raised when a brokered write violates taint or profile policy."""
+
+
+class MemoryBrokerStore:
+    """Low-level substrate for broker freshness, taint, and profile state."""
+
+    CLEAN_TAINT_CLASSES = frozenset({
+        "clean",
+        "public_clean",
+        "system_clean",
+        "user_supplied_clean",
+    })
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def get_namespace_revision(
+        self,
+        namespace: str,
+        target_kind: str = "*",
+        target_id: str = "*",
+    ) -> int:
+        row = self.db.execute(
+            """SELECT revision FROM namespace_revision
+               WHERE matter_id=? AND namespace=? AND target_kind=? AND target_id=?""",
+            (self.matter_id, namespace, target_kind, target_id),
+        ).fetchone()
+        return int(row["revision"] or 0) if row else 0
+
+    @staticmethod
+    def parse_revision_key(key: str) -> tuple[str, str, str]:
+        parts = key.split(":", 2)
+        if len(parts) == 1:
+            return parts[0], "*", "*"
+        if len(parts) == 2 and parts[1] == "*":
+            return parts[0], "*", "*"
+        if len(parts) == 3:
+            return parts[0], parts[1], parts[2]
+        raise ValueError(f"Invalid namespace revision key: {key}")
+
+    @staticmethod
+    def revision_key(
+        namespace: str,
+        target_kind: str = "*",
+        target_id: str = "*",
+    ) -> str:
+        if target_kind == "*" and target_id == "*":
+            return f"{namespace}:*"
+        return f"{namespace}:{target_kind}:{target_id}"
+
+    def _get_namespace_revision_in_tx(
+        self,
+        namespace: str,
+        target_kind: str = "*",
+        target_id: str = "*",
+    ) -> int:
+        row = self.db.execute(
+            """SELECT revision FROM namespace_revision
+               WHERE matter_id=? AND namespace=? AND target_kind=? AND target_id=?""",
+            (self.matter_id, namespace, target_kind, target_id),
+        ).fetchone()
+        return int(row["revision"] or 0) if row else 0
+
+    def _assert_expected_revisions(
+        self,
+        expected_revisions: dict[str, int],
+        required_keys: set[str],
+    ) -> None:
+        missing = sorted(required_keys - set(expected_revisions))
+        if missing:
+            raise MemoryBrokerCASMismatch(
+                f"Missing expected namespace revisions: {', '.join(missing)}"
+            )
+        for key in sorted(required_keys):
+            namespace, target_kind, target_id = self.parse_revision_key(key)
+            current = self._get_namespace_revision_in_tx(
+                namespace, target_kind, target_id
+            )
+            expected = int(expected_revisions[key])
+            if current != expected:
+                raise MemoryBrokerCASMismatch(
+                    f"Namespace revision mismatch for {key}: "
+                    f"expected {expected}, current {current}"
+                )
+
+    def _require_current_domain_profile(
+        self,
+        profile_id: str,
+        profile_version: int | None,
+    ) -> dict:
+        if profile_version is None:
+            row = self.db.execute(
+                """SELECT * FROM domain_profile
+                   WHERE matter_id=? AND profile_id=? AND status='current'
+                   ORDER BY profile_version DESC LIMIT 1""",
+                (self.matter_id, profile_id),
+            ).fetchone()
+        else:
+            row = self.db.execute(
+                """SELECT * FROM domain_profile
+                   WHERE matter_id=? AND profile_id=? AND profile_version=?
+                     AND status='current'""",
+                (self.matter_id, profile_id, int(profile_version)),
+            ).fetchone()
+        if row is None:
+            raise MemoryBrokerPolicyError(
+                f"Current domain profile required for brokered write: {profile_id}"
+            )
+        return dict(row)
+
+    def _require_profile_mapping(
+        self,
+        *,
+        source_domain_profile_id: str,
+        source_domain_profile_version: int,
+        target_domain_profile_id: str,
+        target_domain_profile_version: int,
+        target_kind: str,
+        target_namespace: str,
+    ) -> dict:
+        row = self.db.execute(
+            """SELECT * FROM profile_mapping
+               WHERE matter_id=? AND source_domain_profile_id=?
+                 AND source_domain_profile_version=?
+                 AND target_domain_profile_id=?
+                 AND target_domain_profile_version=?
+                 AND target_kind=? AND target_namespace=?
+                 AND compatibility_status IN ('compatible', 'identity')""",
+            (
+                self.matter_id,
+                source_domain_profile_id,
+                int(source_domain_profile_version),
+                target_domain_profile_id,
+                int(target_domain_profile_version),
+                target_kind,
+                target_namespace,
+            ),
+        ).fetchone()
+        if row is None:
+            raise MemoryBrokerPolicyError(
+                "Compatible profile mapping required for brokered write: "
+                f"{source_domain_profile_id}->{target_domain_profile_id} "
+                f"{target_kind}/{target_namespace}"
+            )
+        return dict(row)
+
+    def answer_clarification_with_cas(
+        self,
+        *,
+        question_id: str,
+        answer_text: str,
+        expected_revisions: dict[str, int],
+        domain_profile_id: str,
+        domain_profile_version: int | None = None,
+        source_domain_profile_id: str | None = None,
+        source_domain_profile_version: int | None = None,
+        profile_mapping_hash: str | None = None,
+        taint_class: str = "user_supplied_clean",
+    ) -> bool:
+        """Brokered pilot write for clarification answers.
+
+        This is intentionally narrow: it demonstrates the enforced path before
+        migrating every legacy writer. The write validates expected namespace
+        revisions under BEGIN IMMEDIATE, requires a current domain profile,
+        updates the canonical clarification row, records object taint, and bumps
+        exact namespaces in the same transaction.
+        """
+        if taint_class not in self.CLEAN_TAINT_CLASSES:
+            raise MemoryBrokerPolicyError(
+                f"Clarification answers require clean taint, got {taint_class}"
+            )
+        required_revision_keys = {
+            self.revision_key("clarifications"),
+            self.revision_key("clarifications", "clarification", question_id),
+            self.revision_key("object_taint"),
+            self.revision_key("object_taint", "clarification", question_id),
+            self.revision_key("policy"),
+            self.revision_key("domain_profiles", "profile", domain_profile_id),
+            self.revision_key("profile_mappings"),
+            self.revision_key("profile_mappings", "profile", domain_profile_id),
+        }
+        now = _now()
+        with self.db.write_transaction():
+            profile = self._require_current_domain_profile(
+                domain_profile_id, domain_profile_version
+            )
+            effective_profile_version = int(profile["profile_version"])
+            source_profile_id = source_domain_profile_id or domain_profile_id
+            source_profile_version = (
+                int(source_domain_profile_version)
+                if source_domain_profile_version is not None
+                else effective_profile_version
+            )
+            if source_profile_id != domain_profile_id:
+                self._require_current_domain_profile(
+                    source_profile_id, source_profile_version
+                )
+                required_revision_keys.add(
+                    self.revision_key(
+                        "domain_profiles", "profile", source_profile_id
+                    )
+                )
+                required_revision_keys.add(
+                    self.revision_key(
+                        "profile_mappings", "profile", source_profile_id
+                    )
+                )
+            mapping = self._require_profile_mapping(
+                source_domain_profile_id=source_profile_id,
+                source_domain_profile_version=source_profile_version,
+                target_domain_profile_id=domain_profile_id,
+                target_domain_profile_version=effective_profile_version,
+                target_kind="clarification",
+                target_namespace="clarifications",
+            )
+            mapping_hash = mapping["target_mapping_hash"]
+            if profile_mapping_hash is not None and profile_mapping_hash != mapping_hash:
+                raise MemoryBrokerPolicyError(
+                    "Profile mapping hash mismatch for brokered write: "
+                    f"expected {mapping_hash}, got {profile_mapping_hash}"
+                )
+            effective_mapping_hash = mapping_hash
+            required_mapping_key = self.revision_key(
+                "profile_mappings", "mapping", effective_mapping_hash
+            )
+            if required_mapping_key not in required_revision_keys:
+                required_revision_keys.add(required_mapping_key)
+            self._assert_expected_revisions(
+                expected_revisions,
+                required_revision_keys,
+            )
+            cur = self.db.execute(
+                """UPDATE clarification_question
+                   SET answer_text=?, answered_at=?, status='answered'
+                   WHERE id=? AND matter_id=?""",
+                (answer_text, now, question_id, self.matter_id),
+            )
+            if cur.rowcount <= 0:
+                return False
+            self.db.execute(
+                """INSERT OR IGNORE INTO object_taint
+                   (id, matter_id, target_kind, target_id, taint_class,
+                    domain_profile_id, domain_profile_version, profile_mapping_hash,
+                    source_packet_id, provenance_event_id, policy_decision_id,
+                    derivation_reason, created_at)
+                   VALUES (?, ?, 'clarification', ?, ?, ?, ?, ?, '', '', NULL, ?, ?)""",
+                (
+                    _id(),
+                    self.matter_id,
+                    question_id,
+                    taint_class,
+                    domain_profile_id,
+                    effective_profile_version,
+                    effective_mapping_hash,
+                    f"brokered_clarification_answer:{domain_profile_id}:{effective_mapping_hash}",
+                    now,
+                ),
+            )
+            self._bump_namespace_revision_in_tx("clarifications", now=now)
+            self._bump_namespace_revision_in_tx(
+                "clarifications", "clarification", question_id, now=now
+            )
+            self._bump_namespace_revision_in_tx("object_taint", now=now)
+            self._bump_namespace_revision_in_tx(
+                "object_taint", "clarification", question_id, now=now
+            )
+            self._bump_namespace_revision_in_tx("policy", now=now)
+        return True
+
+    def bump_namespace_revision(
+        self,
+        namespace: str,
+        target_kind: str = "*",
+        target_id: str = "*",
+    ) -> int:
+        now = _now()
+        row_id = _id()
+        self.db.execute(
+            """INSERT INTO namespace_revision
+               (id, matter_id, namespace, target_kind, target_id, revision, updated_at)
+               VALUES (?, ?, ?, ?, ?, 1, ?)
+               ON CONFLICT(matter_id, namespace, target_kind, target_id)
+               DO UPDATE SET revision=revision+1, updated_at=excluded.updated_at""",
+            (row_id, self.matter_id, namespace, target_kind, target_id, now),
+        )
+        return self.get_namespace_revision(namespace, target_kind, target_id)
+
+    def _bump_namespace_revision_in_tx(
+        self,
+        namespace: str,
+        target_kind: str = "*",
+        target_id: str = "*",
+        *,
+        now: str | None = None,
+    ) -> None:
+        self.db.execute(
+            """INSERT INTO namespace_revision
+               (id, matter_id, namespace, target_kind, target_id, revision, updated_at)
+               VALUES (?, ?, ?, ?, ?, 1, ?)
+               ON CONFLICT(matter_id, namespace, target_kind, target_id)
+               DO UPDATE SET revision=revision+1, updated_at=excluded.updated_at""",
+            (
+                _id(),
+                self.matter_id,
+                namespace,
+                target_kind,
+                target_id,
+                now or _now(),
+            ),
+        )
+
+    def record_object_taint(
+        self,
+        *,
+        target_kind: str,
+        target_id: str,
+        taint_class: str,
+        domain_profile_id: str | None = None,
+        domain_profile_version: int | None = None,
+        profile_mapping_hash: str | None = None,
+        source_packet_id: str | None = None,
+        provenance_event_id: str | None = None,
+        policy_decision_id: str | None = None,
+        derivation_reason: str | None = None,
+    ) -> str:
+        row_id = _id()
+        now = _now()
+        with self.db.transaction():
+            self.db.execute(
+                """INSERT OR IGNORE INTO object_taint
+                   (id, matter_id, target_kind, target_id, taint_class,
+                    domain_profile_id, domain_profile_version, profile_mapping_hash,
+                    source_packet_id, provenance_event_id, policy_decision_id,
+                    derivation_reason, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    row_id,
+                    self.matter_id,
+                    target_kind,
+                    target_id,
+                    taint_class,
+                    domain_profile_id,
+                    int(domain_profile_version) if domain_profile_version is not None else None,
+                    profile_mapping_hash,
+                    source_packet_id or "",
+                    provenance_event_id or "",
+                    policy_decision_id,
+                    derivation_reason,
+                    now,
+                ),
+            )
+            self._bump_namespace_revision_in_tx("object_taint", now=now)
+            self._bump_namespace_revision_in_tx(
+                "object_taint", target_kind, target_id, now=now
+            )
+            self._bump_namespace_revision_in_tx("policy", now=now)
+        row = self.db.execute(
+            """SELECT id FROM object_taint
+               WHERE matter_id=? AND target_kind=? AND target_id=? AND taint_class=?
+                 AND source_packet_id=? AND provenance_event_id=?""",
+            (
+                self.matter_id,
+                target_kind,
+                target_id,
+                taint_class,
+                source_packet_id or "",
+                provenance_event_id or "",
+            ),
+        ).fetchone()
+        return row["id"] if row else row_id
+
+    def list_object_taint(self, target_kind: str, target_id: str) -> list[dict]:
+        rows = self.db.execute(
+            """SELECT * FROM object_taint
+               WHERE matter_id=? AND target_kind=? AND target_id=?
+               ORDER BY created_at DESC""",
+            (self.matter_id, target_kind, target_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def upsert_domain_profile(
+        self,
+        *,
+        profile_id: str,
+        profile_version: int,
+        profile_kind: str,
+        profile_json: str,
+        mapping_hash: str,
+        status: str = "current",
+    ) -> str:
+        row_id = _id()
+        now = _now()
+        with self.db.transaction():
+            self.db.execute(
+                """INSERT INTO domain_profile
+                   (id, matter_id, profile_id, profile_version, profile_kind,
+                    profile_json, mapping_hash, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(matter_id, profile_id, profile_version)
+                   DO UPDATE SET profile_kind=excluded.profile_kind,
+                                 profile_json=excluded.profile_json,
+                                 mapping_hash=excluded.mapping_hash,
+                                 status=excluded.status,
+                                 updated_at=excluded.updated_at""",
+                (
+                    row_id,
+                    self.matter_id,
+                    profile_id,
+                    int(profile_version),
+                    profile_kind,
+                    profile_json,
+                    mapping_hash,
+                    status,
+                    now,
+                    now,
+                ),
+            )
+            self._bump_namespace_revision_in_tx("domain_profiles", now=now)
+            self._bump_namespace_revision_in_tx(
+                "domain_profiles", "profile", profile_id, now=now
+            )
+        row = self.db.execute(
+            """SELECT id FROM domain_profile
+               WHERE matter_id=? AND profile_id=? AND profile_version=?""",
+            (self.matter_id, profile_id, int(profile_version)),
+        ).fetchone()
+        return row["id"] if row else row_id
+
+    def get_domain_profile(self, profile_id: str, profile_version: int | None = None) -> dict | None:
+        if profile_version is None:
+            row = self.db.execute(
+                """SELECT * FROM domain_profile
+                   WHERE matter_id=? AND profile_id=? AND status='current'
+                   ORDER BY profile_version DESC LIMIT 1""",
+                (self.matter_id, profile_id),
+            ).fetchone()
+        else:
+            row = self.db.execute(
+                """SELECT * FROM domain_profile
+                   WHERE matter_id=? AND profile_id=? AND profile_version=?""",
+                (self.matter_id, profile_id, int(profile_version)),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def record_profile_mapping(
+        self,
+        *,
+        source_domain_profile_id: str,
+        source_domain_profile_version: int,
+        target_domain_profile_id: str,
+        target_domain_profile_version: int,
+        source_mapping_hash: str,
+        target_mapping_hash: str,
+        target_kind: str,
+        target_namespace: str,
+        compatibility_status: str,
+        required_transform_id: str | None = None,
+        reviewer_id: str | None = None,
+    ) -> str:
+        row_id = _id()
+        now = _now()
+        with self.db.transaction():
+            self.db.execute(
+                """INSERT INTO profile_mapping
+                   (id, matter_id, source_domain_profile_id, source_domain_profile_version,
+                    target_domain_profile_id, target_domain_profile_version,
+                    source_mapping_hash, target_mapping_hash, target_kind, target_namespace,
+                    compatibility_status, required_transform_id, reviewer_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(
+                       matter_id, source_domain_profile_id, source_domain_profile_version,
+                       target_domain_profile_id, target_domain_profile_version,
+                       target_kind, target_namespace
+                   )
+                   DO UPDATE SET source_mapping_hash=excluded.source_mapping_hash,
+                                 target_mapping_hash=excluded.target_mapping_hash,
+                                 compatibility_status=excluded.compatibility_status,
+                                 required_transform_id=excluded.required_transform_id,
+                                 reviewer_id=excluded.reviewer_id,
+                                 created_at=excluded.created_at""",
+                (
+                    row_id,
+                    self.matter_id,
+                    source_domain_profile_id,
+                    int(source_domain_profile_version),
+                    target_domain_profile_id,
+                    int(target_domain_profile_version),
+                    source_mapping_hash,
+                    target_mapping_hash,
+                    target_kind,
+                    target_namespace,
+                    compatibility_status,
+                    required_transform_id,
+                    reviewer_id,
+                    now,
+                ),
+            )
+            self._bump_namespace_revision_in_tx("profile_mappings", now=now)
+            self._bump_namespace_revision_in_tx(
+                "profile_mappings", "profile", target_domain_profile_id, now=now
+            )
+            self._bump_namespace_revision_in_tx(
+                "profile_mappings", "mapping", target_mapping_hash, now=now
+            )
+        row = self.db.execute(
+            """SELECT id FROM profile_mapping
+               WHERE matter_id=? AND source_domain_profile_id=?
+                 AND source_domain_profile_version=?
+                 AND target_domain_profile_id=?
+                 AND target_domain_profile_version=?
+                 AND target_kind=? AND target_namespace=?""",
+            (
+                self.matter_id,
+                source_domain_profile_id,
+                int(source_domain_profile_version),
+                target_domain_profile_id,
+                int(target_domain_profile_version),
+                target_kind,
+                target_namespace,
+            ),
+        ).fetchone()
+        return row["id"] if row else row_id
+
+    def list_profile_mappings(
+        self,
+        target_domain_profile_id: str,
+        *,
+        target_kind: str | None = None,
+        target_namespace: str | None = None,
+    ) -> list[dict]:
+        where = "matter_id=? AND target_domain_profile_id=?"
+        params: list[Any] = [self.matter_id, target_domain_profile_id]
+        if target_kind is not None:
+            where += " AND target_kind=?"
+            params.append(target_kind)
+        if target_namespace is not None:
+            where += " AND target_namespace=?"
+            params.append(target_namespace)
+        rows = self.db.execute(
+            f"""SELECT * FROM profile_mapping
+                WHERE {where}
+                ORDER BY created_at DESC""",
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
 class TrustOverrideStore:

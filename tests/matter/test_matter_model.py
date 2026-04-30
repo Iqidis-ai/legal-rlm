@@ -9,7 +9,7 @@ import pytest
 from irys.core.models import LLMCallRecord
 from irys.matter import (
     MatterModel, AssertionCandidate, SpeechAct, SourceRole,
-    ModelLayer, AssertionKind, LedgerEventType, GapType,
+    ModelLayer, AssertionKind, LedgerEventType, GapType, IssueType,
     RevisionCause, BeliefState,
 )
 from irys.matter.enums import OriginKind
@@ -525,6 +525,26 @@ def test_build_query_context_populates_known_document_ids(model):
     assert "answer.pdf" in ctx.known_document_ids
 
 
+def test_build_query_context_excludes_tainted_known_document_ids(model):
+    from irys.matter.runtime import MatterRuntimeAdapter
+
+    run_id = model.start_run("doc taint test")
+    adapter = MatterRuntimeAdapter(model, run_id)
+    adapter.record_fact("Contract requires payment by Jan 15.", document_id="contract.pdf")
+    adapter.record_fact("Complaint alleges breach.", document_id="complaint.pdf")
+    model.memory_broker.record_object_taint(
+        target_kind="artifact",
+        target_id="contract.pdf",
+        taint_class="unknown_taint",
+        derivation_reason="test quarantine",
+    )
+
+    ctx = model.build_query_context()
+
+    assert "contract.pdf" not in ctx.known_document_ids
+    assert "complaint.pdf" in ctx.known_document_ids
+
+
 def test_build_query_context_known_document_ids_empty_with_no_assertions(model):
     """known_document_ids must be empty when no assertions have been recorded."""
     ctx = model.build_query_context()
@@ -547,6 +567,56 @@ def test_build_query_context_populates_known_actors(model):
         "Recorded actors must appear in known_actors in query context (SO-5)"
     )
     assert "John Smith" in ctx.known_actors
+
+
+def test_build_query_context_excludes_tainted_known_actors(model):
+    acme_id, _ = model.actors.upsert_actor("Acme Corporation", actor_type="company")
+    model.actors.upsert_actor("John Smith", actor_type="person")
+    model.memory_broker.record_object_taint(
+        target_kind="actor",
+        target_id=acme_id,
+        taint_class="unknown_taint",
+        derivation_reason="test quarantine",
+    )
+
+    ctx = model.build_query_context()
+
+    assert "Acme Corporation" not in ctx.known_actors
+    assert "John Smith" in ctx.known_actors
+
+
+def test_build_query_context_excludes_tainted_child_from_weakest_issue(model):
+    parent_id, _ = model.issues.upsert_issue(
+        "Parent claim",
+        IssueType.CLAIM,
+        materiality=0.9,
+        salience=0.9,
+    )
+    clean_child_id, _ = model.issues.upsert_issue(
+        "Clean child",
+        IssueType.CLAIM,
+        parent_issue_id=parent_id,
+        materiality=0.7,
+        salience=0.7,
+    )
+    tainted_child_id, _ = model.issues.upsert_issue(
+        "Tainted child",
+        IssueType.CLAIM,
+        parent_issue_id=parent_id,
+        materiality=1.0,
+        salience=1.0,
+    )
+    model.memory_broker.record_object_taint(
+        target_kind="issue",
+        target_id=tainted_child_id,
+        taint_class="unknown_taint",
+        derivation_reason="test quarantine",
+    )
+
+    ctx = model.build_query_context()
+
+    assert tainted_child_id not in [issue["id"] for issue in ctx.open_issues]
+    assert ctx.weakest_issue_id == clean_child_id
 
 
 def test_open_gaps_includes_dependencies(model):
