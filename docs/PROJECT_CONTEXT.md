@@ -105,6 +105,15 @@ The core distinction:
   workflow kind, output shape, objective id, dependency manifest hash, validation
   results, blockers, warnings, and review-required status.
 
+Synthesis now receives a mandatory `Workflow Quality Contract` section before
+the evidence packet. It translates the active objective, success criteria,
+obligations, validator directives, and working-set dependency hash into
+instructions the final Pro synthesis call must honor. After synthesis, the
+engine runs one focused Pro repair pass for fixable structural misses such as
+missing gap disclosure, missing assumption labeling, or absent draft structure.
+Citation shortfalls are treated as non-fabrication constraints, not as an excuse
+to invent source support.
+
 The intended architecture is an objective/obligation planner rather than a
 rigid mode switch. A user may ask for a draft, but the system should build an
 objective, derive obligations, assemble a working set, choose operators, render
@@ -118,16 +127,18 @@ Near-term implementation order:
    at run start.
 2. Emit synthesis and sufficiency-probe answers through `OutputEnvelope` while
    preserving the existing `final_output` compatibility field.
-3. Build workflow-specific obligation templates for drafts, solutions, and
+3. Feed the workflow contract into synthesis and run one repair pass for
+   fixable output-validator failures before final emission.
+4. Build workflow-specific obligation templates for drafts, solutions, and
    analysis memos.
-4. Teach context assembly to emit a `WorkingSet` plus dependency manifest, not
+5. Teach context assembly to emit a `WorkingSet` plus dependency manifest, not
    only prompt text.
-5. Add validators that recompute obligations after rendering, starting with
+6. Add validators that recompute obligations after rendering, starting with
    citation coverage, unsupported factual claims, open proof gaps, authority
    coverage, and privilege leakage.
-6. Record validation results as ledger/output events so failed drafts and
+7. Record validation results as ledger/output events so failed drafts and
    solution plans become reusable training signals for future runs.
-7. Add quantitative-statistical obligations for quant-heavy work: distribution
+8. Add quantitative-statistical obligations for quant-heavy work: distribution
    checks, outlier detection, reconciliation variance, confidence intervals,
    scenario/sensitivity bands, and numeric assumption audit trails.
 
@@ -173,6 +184,8 @@ Major capabilities present in the codebase:
   deliverable/clarify flows.
 - Workflow contract metadata and checkpoint-safe objective, obligation,
   working-set, plan-action, validation-result, and output-envelope primitives.
+- Mandatory workflow-quality synthesis context plus a one-pass repair loop for
+  fixable output-validator failures before final emission.
 - Coverage-driven lead planning and proof-gap surfacing.
 - Gradio dashboard with matter intelligence panels, steering, review, trust
   controls, privilege mode, and cost visibility.

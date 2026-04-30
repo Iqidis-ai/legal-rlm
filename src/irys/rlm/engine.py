@@ -865,6 +865,28 @@ Original Query: {query}
 {context_packet}
 """
 
+WORKFLOW_OUTPUT_REPAIR_PROMPT = """You are revising legal work product after a workflow validator pass.
+
+Active workflow contract:
+{workflow_section}
+
+Validator findings to fix or respect:
+{validation_issues}
+
+Original output:
+{output_text}
+
+Rewrite the output so it better satisfies the active workflow contract.
+
+Rules:
+- Return only the revised output.
+- Preserve every supported legal/factual point from the original output.
+- Do not invent citations, facts, authorities, document names, or procedural history.
+- If source support is insufficient, disclose the limitation instead of fabricating support.
+- Fix structure, missing gap disclosure, and assumption labeling when validators ask for them.
+- Keep the work product clean and professional for its workflow kind and output shape.
+"""
+
 # Additional specialized prompts for enhanced analysis
 
 ENTITY_EXTRACTION_PROMPT = """You are a legal analyst extracting entities from document text.
@@ -1405,6 +1427,115 @@ class RLMEngine:
             )
         return obligations
 
+    def _build_workflow_quality_section(self, state: InvestigationState) -> str:
+        """Describe the active output contract for synthesis and repair."""
+        if state.run_objective is None or state.working_set is None:
+            self._initialize_workflow_state(state)
+        objective = state.run_objective
+        if objective is None:
+            return ""
+
+        lines = [
+            "Workflow Quality Contract (mandatory):",
+            f"- Workflow kind: {objective.workflow_kind}",
+            f"- Output shape: {objective.output_shape}",
+            f"- User goal: {objective.user_goal}",
+            f"- Audience: {objective.audience}",
+            f"- Policy audience: {objective.policy_audience}",
+        ]
+        if objective.success_criteria:
+            lines.append("- Success criteria:")
+            for criterion in objective.success_criteria[:8]:
+                lines.append(f"  - {criterion}")
+        if objective.constraints:
+            lines.append("- Constraints:")
+            for constraint in objective.constraints[:8]:
+                lines.append(f"  - {constraint}")
+
+        if state.workflow_obligations:
+            lines.append("- Obligations:")
+            for obligation in state.workflow_obligations[:12]:
+                validator = obligation.validator or obligation.obligation_type
+                flags = []
+                flags.append("required" if obligation.required else "optional")
+                flags.append("blocking" if obligation.blocking else "advisory")
+                lines.append(
+                    f"  - [{validator}] {obligation.description} "
+                    f"({', '.join(flags)})"
+                )
+
+        directives = self._workflow_validator_directives(state.workflow_obligations)
+        if directives:
+            lines.append("- Validator directives:")
+            for directive in directives:
+                lines.append(f"  - {directive}")
+
+        working_set = state.working_set
+        if working_set is not None:
+            counts = [
+                ("verified assertions", len(working_set.verified_assertion_ids)),
+                ("candidate assertions", len(working_set.candidate_assertion_ids)),
+                ("issues", len(working_set.issue_ids)),
+                ("gaps", len(working_set.gap_ids)),
+                ("documents", len(working_set.document_ids)),
+                ("authorities", len(working_set.authority_ids)),
+                ("assumptions", len(working_set.assumption_ids)),
+            ]
+            if any(count for _, count in counts) or working_set.dependency_manifest_hash:
+                lines.append("- Working set:")
+                for label, count in counts:
+                    if count:
+                        lines.append(f"  - {label}: {count}")
+                if working_set.dependency_manifest_hash:
+                    lines.append(
+                        "  - dependency manifest hash: "
+                        f"{working_set.dependency_manifest_hash}"
+                    )
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _workflow_validator_directives(
+        obligations: list[Obligation],
+    ) -> list[str]:
+        validators = {
+            item.validator or item.obligation_type
+            for item in obligations
+            if item.validator or item.obligation_type
+        }
+        directives: list[str] = []
+        if "citation_floor" in validators:
+            directives.append(
+                "Material factual claims need record support; if support is "
+                "insufficient, disclose the limitation instead of inventing "
+                "citations."
+            )
+        if "gap_disclosure" in validators:
+            directives.append(
+                "Visible proof gaps, missing inputs, and unknowns must be "
+                "disclosed rather than smoothed over."
+            )
+        if "draft_template" in validators:
+            directives.append(
+                "Use the selected work-product structure with clear sections, "
+                "tables, or lists where appropriate."
+            )
+        if "assumption_labeling" in validators:
+            directives.append(
+                "Separate temporary assumptions from established matter facts."
+            )
+        if "human_review_required" in validators:
+            directives.append(
+                "Do not claim a draft is ready for filing, service, or external "
+                "use before human review passes."
+            )
+        if "read_answerability" in validators:
+            directives.append(
+                "Answer only from existing eligible matter state unless the "
+                "contract permits fresh extraction."
+            )
+        return directives
+
     def _emit_output(
         self,
         state: InvestigationState,
@@ -1626,6 +1757,105 @@ class RLMEngine:
             return len(rows)
         except Exception:
             return 0
+
+    @staticmethod
+    def _repairable_workflow_results(
+        validation_results: list[ValidationResult],
+    ) -> list[ValidationResult]:
+        fixable_validators = {
+            "gap_disclosure",
+            "draft_template",
+            "assumption_labeling",
+        }
+        return [
+            result
+            for result in validation_results
+            if result.validator in fixable_validators
+            and not result.passed
+            and (result.blocking_issues or result.warnings)
+        ]
+
+    @staticmethod
+    def _workflow_validation_issue_count(
+        validation_results: list[ValidationResult],
+    ) -> int:
+        return sum(
+            len(result.blocking_issues) + len(result.warnings)
+            for result in validation_results
+        )
+
+    @staticmethod
+    def _format_workflow_validation_issues(
+        validation_results: list[ValidationResult],
+    ) -> str:
+        lines: list[str] = []
+        for result in validation_results:
+            issues = list(result.blocking_issues or []) + list(result.warnings or [])
+            if result.passed and not issues:
+                continue
+            status = "passed" if result.passed else "failed"
+            if issues:
+                lines.append(
+                    f"- {result.validator} ({status}): {'; '.join(issues)}"
+                )
+            else:
+                lines.append(f"- {result.validator} ({status})")
+        return "\n".join(lines) or "- No validator findings."
+
+    async def _repair_output_if_needed(
+        self,
+        state: InvestigationState,
+        output_text: str,
+        *,
+        emitter: str,
+    ) -> str:
+        """Run one focused repair pass for fixable workflow-output failures."""
+        if state.run_objective is None or state.working_set is None:
+            self._initialize_workflow_state(state)
+
+        validation_results = self._validate_workflow_output(
+            state,
+            output_text,
+            emitter=emitter,
+        )
+        repairable = self._repairable_workflow_results(validation_results)
+        if not repairable:
+            return output_text
+
+        prompt = WORKFLOW_OUTPUT_REPAIR_PROMPT.format(
+            workflow_section=self._build_workflow_quality_section(state),
+            validation_issues=self._format_workflow_validation_issues(
+                validation_results
+            ),
+            output_text=output_text,
+        )
+        try:
+            state.llm_calls_required += 1
+            repaired = await self.client.complete(
+                prompt,
+                tier=ModelTier.PRO,
+                usage_label=f"{emitter}_workflow_repair",
+                conversation_history=state.conversation_history,
+            )
+        except Exception:
+            return output_text
+
+        if not isinstance(repaired, str) or not repaired.strip():
+            return output_text
+        repaired = repaired.strip()
+
+        repaired_results = self._validate_workflow_output(
+            state,
+            repaired,
+            emitter=emitter,
+        )
+        original_issue_count = self._workflow_validation_issue_count(repairable)
+        repaired_issue_count = self._workflow_validation_issue_count(
+            self._repairable_workflow_results(repaired_results)
+        )
+        if repaired_issue_count <= original_issue_count:
+            return repaired
+        return output_text
 
     async def investigate(
         self,
@@ -4856,6 +5086,11 @@ Return:
             except Exception:
                 pass  # gate is best-effort; never suppress synthesis
 
+        response = await self._repair_output_if_needed(
+            state,
+            response,
+            emitter="synthesis",
+        )
         self._emit_output(state, response, emitter="synthesis")
 
         # Persist legal citations found in synthesis output to authority store (SO-4).
@@ -6016,6 +6251,10 @@ Return:
         # Assemble in fixed priority order so the total-cap pass below
         # cannot crowd out mandatory sections.
         ordered: list[tuple[str, str, bool]] = []  # (key, text, mandatory)
+
+        workflow_quality = self._build_workflow_quality_section(state)
+        if workflow_quality.strip():
+            ordered.append(("workflow_quality", workflow_quality.rstrip(), True))
 
         advocacy_gate = self._build_advocacy_gate_block()
         if advocacy_gate.strip():

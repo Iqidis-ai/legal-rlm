@@ -6,6 +6,9 @@ checkpoint serialization. The planner and validators can build on this
 without inventing a second state channel.
 """
 
+import asyncio
+
+from irys.core.models import ModelTier
 from irys.rlm.state import (
     InvestigationState,
     Obligation,
@@ -22,6 +25,16 @@ from irys.rlm.governance import CascadeGovernor
 
 class _StubClient:
     pass
+
+
+class _RepairClient:
+    def __init__(self, response: str):
+        self.response = response
+        self.calls = []
+
+    async def complete(self, prompt, **kwargs):
+        self.calls.append((prompt, kwargs))
+        return self.response
 
 
 def test_workflow_primitives_survive_checkpoint_roundtrip():
@@ -151,3 +164,67 @@ def test_engine_emit_output_wraps_final_output_and_validates():
         for result in envelope.validation_results
     )
     assert any("citation support" in issue for issue in envelope.blocking_issues)
+
+
+def test_workflow_quality_section_surfaces_contract_for_synthesis():
+    state = InvestigationState.create("draft a privilege log", ".")
+    state.execution_contract = CascadeGovernor._contract_for("deliverable")
+    engine = RLMEngine(gemini_client=_StubClient(), config=RLMConfig())
+    engine._initialize_workflow_state(state)
+    assert state.working_set is not None
+    state.working_set.document_ids = ["doc-1"]
+    state.working_set.dependency_manifest_hash = "dep123"
+
+    section = engine._build_workflow_quality_section(state)
+
+    assert "Workflow Quality Contract" in section
+    assert "Workflow kind: drafting" in section
+    assert "Output shape: legal_work_product" in section
+    assert "[draft_template]" in section
+    assert "[human_review_required]" in section
+    assert "dependency manifest hash: dep123" in section
+    assert "Do not claim a draft is ready" in section
+
+
+def test_repair_output_runs_once_for_fixable_workflow_failure():
+    repaired_text = "## Analysis\n\nAssumptions:\n- Payment was made temporarily."
+    client = _RepairClient(repaired_text)
+    state = InvestigationState.create("what if payment was made?", ".")
+    state.execution_contract = CascadeGovernor._contract_for("scenario")
+    engine = RLMEngine(gemini_client=client, config=RLMConfig())
+    engine._initialize_workflow_state(state)
+
+    repaired = asyncio.run(
+        engine._repair_output_if_needed(
+            state,
+            "Payment was made.",
+            emitter="synthesis",
+        )
+    )
+
+    assert repaired == repaired_text
+    assert len(client.calls) == 1
+    prompt, kwargs = client.calls[0]
+    assert "temporary assumptions were not explicitly labeled" in prompt
+    assert "Do not invent citations" in prompt
+    assert kwargs["tier"] == ModelTier.PRO
+    assert kwargs["usage_label"] == "synthesis_workflow_repair"
+
+
+def test_repair_output_skips_nonfixable_citation_floor_failure():
+    client = _RepairClient("unused")
+    state = InvestigationState.create("analyze exposure", ".")
+    state.execution_contract = CascadeGovernor._contract_for("investigate")
+    engine = RLMEngine(gemini_client=client, config=RLMConfig())
+    engine._initialize_workflow_state(state)
+
+    output = asyncio.run(
+        engine._repair_output_if_needed(
+            state,
+            "No citations here.",
+            emitter="synthesis",
+        )
+    )
+
+    assert output == "No citations here."
+    assert client.calls == []
