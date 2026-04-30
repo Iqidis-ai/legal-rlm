@@ -5,6 +5,12 @@ from irys.core.models import UsageStats, ModelTier, MODEL_CONFIGS, GeminiClient
 
 
 class TestUsageStatsCostEstimation:
+    def test_pro_tier_uses_current_model_limit(self):
+        """PRO uses Gemini 3.1 Pro's documented output cap."""
+        mc = MODEL_CONFIGS[ModelTier.PRO]
+        assert mc.model_id == "gemini-3.1-pro-preview"
+        assert mc.max_output_tokens == 65_536
+
     def test_nano_tier_uses_lite_pricing(self):
         """NANO uses same flash-lite model/price as LITE."""
         stats = UsageStats(tier=ModelTier.NANO)
@@ -49,12 +55,12 @@ class TestUsageStatsCostEstimation:
         assert stats.cache_read_tokens == 0
 
     def test_pro_large_context_uses_high_rate(self):
-        """Gemini 2.5 Pro prices prompts >200k tokens at the higher standard rate."""
+        """Gemini 3.1 Pro prices prompts >200k tokens at the higher standard rate."""
         stats = UsageStats(tier=ModelTier.PRO)
         stats.add(input_tokens=250_000, output_tokens=100_000)
         expected = (
-            250_000 * 2.50 / 1_000_000
-            + 100_000 * 15.00 / 1_000_000
+            250_000 * 4.00 / 1_000_000
+            + 100_000 * 18.00 / 1_000_000
         )
         assert abs(stats.estimated_cost - expected) < 1e-9
 
@@ -62,7 +68,7 @@ class TestUsageStatsCostEstimation:
         """Cache reads stay at 10% of the active Pro input rate above 200k tokens."""
         stats = UsageStats(tier=ModelTier.PRO)
         stats.add(input_tokens=0, output_tokens=0, cache_read_tokens=250_000)
-        expected = 250_000 * 0.25 / 1_000_000
+        expected = 250_000 * 0.40 / 1_000_000
         assert abs(stats.estimated_cost - expected) < 1e-9
 
     def test_fallback_cost_when_tier_is_none(self):

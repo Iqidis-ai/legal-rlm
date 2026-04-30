@@ -31,7 +31,7 @@ from google.genai import types
 logger = logging.getLogger(__name__)
 
 PRICING_SOURCE_URL = "https://ai.google.dev/gemini-api/docs/pricing"
-PRICING_VERIFIED_AT = "2026-04-10"
+PRICING_VERIFIED_AT = "2026-04-30"
 
 # P0.1 provenance bridge: GeminiClient.complete() stamps the active call's
 # identity here so downstream writers (MatterRuntimeAdapter._auto_provenance)
@@ -67,7 +67,7 @@ class ModelConfig:
     def pricing_for_prompt_tokens(self, total_prompt_tokens: int) -> tuple[float, float, float]:
         """Return (input_rate, cache_read_rate, output_rate) for a request size.
 
-        Gemini 2.5 Pro has a higher rate once prompt size exceeds 200k tokens.
+        Gemini Pro models have a higher rate once prompt size exceeds 200k tokens.
         Flash, Flash-Lite, and Flash-Lite Preview are flat-rate for the text-only
         calls this app makes.
         Cache reads are billed at 10% of the active input rate.
@@ -84,7 +84,7 @@ class ModelConfig:
 
 
 # Model configurations per tier
-# Pricing verified April 10, 2026 against Google Gemini API pricing docs.
+# Pricing verified April 30, 2026 against Google Gemini API pricing docs.
 # NANO and LITE use the same model (gemini-2.5-flash-lite) — distinction is token budget:
 #   NANO: short output (≤2048 tokens) for triage/classification tasks
 #   LITE: full output (≤8192 tokens) for document reading and extraction
@@ -113,14 +113,14 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
         cost_per_1m_output=1.50,
     ),
     ModelTier.PRO: ModelConfig(
-        model_id="gemini-2.5-pro",
+        model_id="gemini-3.1-pro-preview",
         thinking_level="",
-        max_output_tokens=32768,
-        cost_per_1m_input=1.25,
-        cost_per_1m_output=10.00,
+        max_output_tokens=65536,
+        cost_per_1m_input=2.00,
+        cost_per_1m_output=12.00,
         large_context_threshold=200_000,
-        cost_per_1m_input_large=2.50,
-        cost_per_1m_output_large=15.00,
+        cost_per_1m_input_large=4.00,
+        cost_per_1m_output_large=18.00,
     ),
 }
 
