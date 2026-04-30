@@ -63,6 +63,66 @@ The cascade code lives in `src/irys/rlm/governance.py`. Keep that module as the
 single substrate for routing, execution contracts, and family handlers unless a
 concrete scaling reason appears.
 
+## Workflow Engine Direction
+
+The next frontier is not "more prompts." The engine needs explicit workflow
+state so different work products can be planned, checked, resumed, and improved
+without hiding their requirements inside one generic synthesis pass.
+
+The core distinction:
+
+- Analysis workflows answer "what is true, what is supported, what is missing,
+  and how confident are we?"
+- Drafting workflows answer "what document should exist, for which audience,
+  with which required sections, citations, procedural constraints, privilege
+  boundaries, and review gates?"
+- Solution workflows answer "what should we do, under which assumptions, with
+  which alternatives, tradeoffs, risks, dependencies, and validation tests?"
+- Lookup, trace, compare, steer, scenario, clarify, and deliverable routes are
+  execution families, but their outputs still need workflow contracts.
+
+`ExecutionContract` now carries:
+
+- `family`: the route that will execute.
+- `workflow_kind`: the kind of work being performed, such as `analysis`,
+  `drafting`, `solution`, `lookup`, `trace`, or `steering`.
+- `output_contract`: a small machine-readable contract describing the expected
+  output shape and hard requirements.
+
+`InvestigationState` now has durable workflow primitives:
+
+- `RunObjective`: user goal, workflow kind, output shape, audience, policy
+  audience, success criteria, constraints, and source query.
+- `Obligation`: a required condition such as citation support, element
+  coverage, authority coverage, procedural compliance, privilege safety,
+  gap disclosure, or review-before-service.
+- `WorkingSet`: the verified/candidate assertions, issues, gaps, documents,
+  authorities, assumptions, and dependency manifest hash the workflow may use.
+- `PlanAction`: planned operator steps that target obligations.
+- `ValidationResult`: validator output, blocking issues, warnings, score, and
+  per-obligation status.
+
+The intended architecture is an objective/obligation planner rather than a
+rigid mode switch. A user may ask for a draft, but the system should build an
+objective, derive obligations, assemble a working set, choose operators, render
+the output, validate it, and either ship with caveats or loop back to fill the
+blocking gaps. The same mechanism applies to solution design and research
+review; only the obligation templates and validators change.
+
+Near-term implementation order:
+
+1. Populate `RunObjective` and default obligations from the classifier contract
+   at run start.
+2. Build workflow-specific obligation templates for drafts, solutions, and
+   analysis memos.
+3. Teach context assembly to emit a `WorkingSet` plus dependency manifest, not
+   only prompt text.
+4. Add validators that recompute obligations after rendering, starting with
+   citation coverage, unsupported factual claims, open proof gaps, authority
+   coverage, and privilege leakage.
+5. Record validation results as ledger/output events so failed drafts and
+   solution plans become reusable training signals for future runs.
+
 ## Canonical Entry Points
 
 - UI: `python -m irys.ui.app`
@@ -103,6 +163,8 @@ Major capabilities present in the codebase:
   matrix, and exports.
 - Cost cascade routing for investigate/read/query/trace/steer/compare/scenario/
   deliverable/clarify flows.
+- Workflow contract metadata and checkpoint-safe objective, obligation,
+  working-set, plan-action, and validation-result primitives.
 - Coverage-driven lead planning and proof-gap surfacing.
 - Gradio dashboard with matter intelligence panels, steering, review, trust
   controls, privilege mode, and cost visibility.

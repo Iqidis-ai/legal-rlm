@@ -361,10 +361,19 @@ def test_contract_for_each_family():
     Investigate has a floor, read/clarify have 0 min_iter."""
     investigate = CascadeGovernor._contract_for("investigate")
     read = CascadeGovernor._contract_for("read")
+    scenario = CascadeGovernor._contract_for("scenario")
+    deliverable = CascadeGovernor._contract_for("deliverable")
     clarify = CascadeGovernor._contract_for("clarify")
     assert investigate.min_iter >= 1
+    assert investigate.workflow_kind == "analysis"
+    assert investigate.output_contract["fresh_extraction_allowed"] is True
     assert read.min_iter == 0
     assert read.max_iter == 1
+    assert read.output_contract["must_ground_in_existing_state"] is True
+    assert scenario.workflow_kind == "solution"
+    assert scenario.output_contract["must_label_assumptions"] is True
+    assert deliverable.workflow_kind == "drafting"
+    assert deliverable.output_contract["requires_template"] is True
     assert clarify.max_iter == 0
     assert clarify.escalation_allowed is False
 

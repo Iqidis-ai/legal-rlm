@@ -41,6 +41,18 @@ class ResearchMode(Enum):
     SEBIH_SPECIAL = "sebih_special"
 
 
+class WorkflowKind(Enum):
+    """High-level shape of work the engine is performing."""
+    ANALYSIS = "analysis"
+    DRAFTING = "drafting"
+    SOLUTION = "solution"
+    LOOKUP = "lookup"
+    TRACE = "trace"
+    STEERING = "steering"
+    COMPARISON = "comparison"
+    CLARIFICATION = "clarification"
+
+
 def normalize_research_mode(
     value: Any,
     *,
@@ -717,6 +729,261 @@ class Lead:
 
 
 @dataclass
+class RunObjective:
+    """The user-visible objective a run is trying to satisfy."""
+    id: str
+    workflow_kind: str
+    user_goal: str
+    output_shape: str
+    audience: str = "internal"
+    policy_audience: str = "clean"
+    success_criteria: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+    source_query: Optional[str] = None
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        user_goal: str,
+        output_shape: str,
+        workflow_kind: str = WorkflowKind.ANALYSIS.value,
+        audience: str = "internal",
+        policy_audience: str = "clean",
+        success_criteria: Optional[list[str]] = None,
+        constraints: Optional[list[str]] = None,
+        source_query: Optional[str] = None,
+    ) -> "RunObjective":
+        return cls(
+            id=str(uuid.uuid4())[:8],
+            workflow_kind=str(workflow_kind or WorkflowKind.ANALYSIS.value),
+            user_goal=user_goal,
+            output_shape=output_shape,
+            audience=audience,
+            policy_audience=policy_audience,
+            success_criteria=list(success_criteria or []),
+            constraints=list(constraints or []),
+            source_query=source_query,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "workflow_kind": self.workflow_kind,
+            "user_goal": self.user_goal,
+            "output_shape": self.output_shape,
+            "audience": self.audience,
+            "policy_audience": self.policy_audience,
+            "success_criteria": self.success_criteria,
+            "constraints": self.constraints,
+            "source_query": self.source_query,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RunObjective":
+        return cls(
+            id=str(data.get("id") or str(uuid.uuid4())[:8]),
+            workflow_kind=str(data.get("workflow_kind") or WorkflowKind.ANALYSIS.value),
+            user_goal=str(data.get("user_goal") or ""),
+            output_shape=str(data.get("output_shape") or ""),
+            audience=str(data.get("audience") or "internal"),
+            policy_audience=str(data.get("policy_audience") or "clean"),
+            success_criteria=list(data.get("success_criteria") or []),
+            constraints=list(data.get("constraints") or []),
+            source_query=data.get("source_query"),
+        )
+
+
+@dataclass
+class Obligation:
+    """A condition that must be satisfied for an output to be acceptable."""
+    id: str
+    description: str
+    obligation_type: str
+    required: bool = True
+    blocking: bool = True
+    satisfied: bool = False
+    source_refs: list[str] = field(default_factory=list)
+    validator: Optional[str] = None
+    status_note: Optional[str] = None
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        description: str,
+        obligation_type: str,
+        required: bool = True,
+        blocking: bool = True,
+        source_refs: Optional[list[str]] = None,
+        validator: Optional[str] = None,
+    ) -> "Obligation":
+        return cls(
+            id=str(uuid.uuid4())[:8],
+            description=description,
+            obligation_type=obligation_type,
+            required=required,
+            blocking=blocking,
+            source_refs=list(source_refs or []),
+            validator=validator,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "description": self.description,
+            "obligation_type": self.obligation_type,
+            "required": self.required,
+            "blocking": self.blocking,
+            "satisfied": self.satisfied,
+            "source_refs": self.source_refs,
+            "validator": self.validator,
+            "status_note": self.status_note,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Obligation":
+        return cls(
+            id=str(data.get("id") or str(uuid.uuid4())[:8]),
+            description=str(data.get("description") or ""),
+            obligation_type=str(data.get("obligation_type") or "general"),
+            required=bool(data.get("required", True)),
+            blocking=bool(data.get("blocking", True)),
+            satisfied=bool(data.get("satisfied", False)),
+            source_refs=list(data.get("source_refs") or []),
+            validator=data.get("validator"),
+            status_note=data.get("status_note"),
+        )
+
+
+@dataclass
+class WorkingSet:
+    """Object ids and dependency metadata a workflow is allowed to reason over."""
+    verified_assertion_ids: list[str] = field(default_factory=list)
+    candidate_assertion_ids: list[str] = field(default_factory=list)
+    issue_ids: list[str] = field(default_factory=list)
+    gap_ids: list[str] = field(default_factory=list)
+    document_ids: list[str] = field(default_factory=list)
+    authority_ids: list[str] = field(default_factory=list)
+    assumption_ids: list[str] = field(default_factory=list)
+    dependency_manifest_hash: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "verified_assertion_ids": self.verified_assertion_ids,
+            "candidate_assertion_ids": self.candidate_assertion_ids,
+            "issue_ids": self.issue_ids,
+            "gap_ids": self.gap_ids,
+            "document_ids": self.document_ids,
+            "authority_ids": self.authority_ids,
+            "assumption_ids": self.assumption_ids,
+            "dependency_manifest_hash": self.dependency_manifest_hash,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "WorkingSet":
+        return cls(
+            verified_assertion_ids=list(data.get("verified_assertion_ids") or []),
+            candidate_assertion_ids=list(data.get("candidate_assertion_ids") or []),
+            issue_ids=list(data.get("issue_ids") or []),
+            gap_ids=list(data.get("gap_ids") or []),
+            document_ids=list(data.get("document_ids") or []),
+            authority_ids=list(data.get("authority_ids") or []),
+            assumption_ids=list(data.get("assumption_ids") or []),
+            dependency_manifest_hash=data.get("dependency_manifest_hash"),
+        )
+
+
+@dataclass
+class PlanAction:
+    """One planned operator step for satisfying workflow obligations."""
+    id: str
+    action_type: str
+    description: str
+    target_obligation_ids: list[str] = field(default_factory=list)
+    input_refs: list[str] = field(default_factory=list)
+    expected_output: Optional[str] = None
+    status: str = "planned"
+    result_refs: list[str] = field(default_factory=list)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        action_type: str,
+        description: str,
+        target_obligation_ids: Optional[list[str]] = None,
+        input_refs: Optional[list[str]] = None,
+        expected_output: Optional[str] = None,
+    ) -> "PlanAction":
+        return cls(
+            id=str(uuid.uuid4())[:8],
+            action_type=action_type,
+            description=description,
+            target_obligation_ids=list(target_obligation_ids or []),
+            input_refs=list(input_refs or []),
+            expected_output=expected_output,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "action_type": self.action_type,
+            "description": self.description,
+            "target_obligation_ids": self.target_obligation_ids,
+            "input_refs": self.input_refs,
+            "expected_output": self.expected_output,
+            "status": self.status,
+            "result_refs": self.result_refs,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PlanAction":
+        return cls(
+            id=str(data.get("id") or str(uuid.uuid4())[:8]),
+            action_type=str(data.get("action_type") or "unknown"),
+            description=str(data.get("description") or ""),
+            target_obligation_ids=list(data.get("target_obligation_ids") or []),
+            input_refs=list(data.get("input_refs") or []),
+            expected_output=data.get("expected_output"),
+            status=str(data.get("status") or "planned"),
+            result_refs=list(data.get("result_refs") or []),
+        )
+
+
+@dataclass
+class ValidationResult:
+    """Result of checking an output or working set against obligations."""
+    validator: str
+    passed: bool
+    score: float = 0.0
+    blocking_issues: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    obligation_status: dict[str, bool] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "validator": self.validator,
+            "passed": self.passed,
+            "score": self.score,
+            "blocking_issues": self.blocking_issues,
+            "warnings": self.warnings,
+            "obligation_status": self.obligation_status,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ValidationResult":
+        return cls(
+            validator=str(data.get("validator") or "unknown"),
+            passed=bool(data.get("passed", False)),
+            score=float(data.get("score", 0.0) or 0.0),
+            blocking_issues=list(data.get("blocking_issues") or []),
+            warnings=list(data.get("warnings") or []),
+            obligation_status=dict(data.get("obligation_status") or {}),
+        )
+
+
+@dataclass
 class InvestigationState:
     """
     Complete state of an RLM investigation.
@@ -748,6 +1015,11 @@ class InvestigationState:
     execution_contract: Optional[Any] = None
     research_mode: str = ResearchMode.DEEP.value
     query_classification: Optional[dict] = None  # Result of classify_query()
+    run_objective: Optional[RunObjective] = None
+    workflow_obligations: list[Obligation] = field(default_factory=list)
+    working_set: Optional[WorkingSet] = None
+    plan_actions: list[PlanAction] = field(default_factory=list)
+    validation_results: list[ValidationResult] = field(default_factory=list)
 
     # In-flight dedup: tracks repo-relative paths currently on the cold path in this run.
     # Prevents the same document from being LLM-analyzed multiple times within a single
@@ -1899,6 +2171,17 @@ class InvestigationState:
             "hypothesis": self.hypothesis,
             "research_mode": self.research_mode,
             "query_classification": self.query_classification,
+            "run_objective": (
+                self.run_objective.to_dict() if self.run_objective else None
+            ),
+            "workflow_obligations": [
+                obligation.to_dict() for obligation in self.workflow_obligations
+            ],
+            "working_set": self.working_set.to_dict() if self.working_set else None,
+            "plan_actions": [action.to_dict() for action in self.plan_actions],
+            "validation_results": [
+                result.to_dict() for result in self.validation_results
+            ],
             "facts_per_iteration": self.facts_per_iteration,
             # P0.7 (adv#11 review fix #3): persist planner_leads_added so a
             # checkpoint/resume doesn't reset the per-run cap and allow
@@ -2025,6 +2308,22 @@ class InvestigationState:
         state.hypothesis = data.get("hypothesis")
         state.research_mode = normalize_research_mode(data.get("research_mode"))
         state.query_classification = data.get("query_classification")
+        if data.get("run_objective"):
+            state.run_objective = RunObjective.from_dict(data["run_objective"])
+        state.workflow_obligations = [
+            Obligation.from_dict(item)
+            for item in data.get("workflow_obligations", [])
+        ]
+        if data.get("working_set"):
+            state.working_set = WorkingSet.from_dict(data["working_set"])
+        state.plan_actions = [
+            PlanAction.from_dict(item)
+            for item in data.get("plan_actions", [])
+        ]
+        state.validation_results = [
+            ValidationResult.from_dict(item)
+            for item in data.get("validation_results", [])
+        ]
         state.facts_per_iteration = data.get("facts_per_iteration", [])
         # Restore planner counter; absent in pre-P0.7 checkpoints.
         state.planner_leads_added = int(data.get("planner_leads_added", 0) or 0)

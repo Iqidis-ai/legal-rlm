@@ -47,6 +47,8 @@ class ExecutionContract:
     this with coverage_goal, freshness_floor, etc.
     """
     family: str                    # investigate | read | query | trace | clarify
+    workflow_kind: str = "analysis"  # analysis | drafting | solution | lookup | ...
+    output_contract: dict[str, Any] = field(default_factory=dict)
     min_iter: int = 0              # 0 for read/clarify, floor for investigate
     max_iter: int = 20             # cap even on investigate
     citation_floor: int = 0        # minimum citations before a read can answer
@@ -554,6 +556,13 @@ class CascadeGovernor:
             # (see _run_read_family escalation-gate override below).
             return ExecutionContract(
                 family="read",
+                workflow_kind="analysis",
+                output_contract={
+                    "output_shape": "narrative_answer",
+                    "must_ground_in_existing_state": True,
+                    "fresh_extraction_allowed": False,
+                    "validator": "read_answerability",
+                },
                 min_iter=0,
                 max_iter=1,
                 citation_floor=1,
@@ -564,6 +573,12 @@ class CascadeGovernor:
             # MVI-2: zero-iteration, zero-LLM plain enumeration
             return ExecutionContract(
                 family="query",
+                workflow_kind="lookup",
+                output_contract={
+                    "output_shape": "state_listing",
+                    "model_call_allowed": False,
+                    "fresh_extraction_allowed": False,
+                },
                 min_iter=0,
                 max_iter=0,
                 citation_floor=0,
@@ -575,6 +590,11 @@ class CascadeGovernor:
             # NANO fallback only if the user phrasing is ambiguous.
             return ExecutionContract(
                 family="trace",
+                workflow_kind="trace",
+                output_contract={
+                    "output_shape": "provenance_explanation",
+                    "must_include_derivation": True,
+                },
                 min_iter=0,
                 max_iter=1,
                 citation_floor=0,
@@ -586,6 +606,12 @@ class CascadeGovernor:
             # Returns a preview the user confirms via existing UI.
             return ExecutionContract(
                 family="steer",
+                workflow_kind="steering",
+                output_contract={
+                    "output_shape": "mutation_preview",
+                    "auto_apply_allowed": False,
+                    "must_name_target_candidates": True,
+                },
                 min_iter=0,
                 max_iter=1,
                 citation_floor=0,
@@ -596,6 +622,11 @@ class CascadeGovernor:
             # MVI-6: diff matter state across named snapshots.
             return ExecutionContract(
                 family="compare",
+                workflow_kind="comparison",
+                output_contract={
+                    "output_shape": "delta_report",
+                    "requires_baseline": True,
+                },
                 min_iter=0,
                 max_iter=1,
                 citation_floor=0,
@@ -607,6 +638,12 @@ class CascadeGovernor:
             # the read-family pipeline.
             return ExecutionContract(
                 family="scenario",
+                workflow_kind="solution",
+                output_contract={
+                    "output_shape": "counterfactual_analysis",
+                    "assumptions_are_temporary": True,
+                    "must_label_assumptions": True,
+                },
                 min_iter=0,
                 max_iter=1,
                 citation_floor=0,
@@ -621,6 +658,13 @@ class CascadeGovernor:
             # producing an empty template.
             return ExecutionContract(
                 family="deliverable",
+                workflow_kind="drafting",
+                output_contract={
+                    "output_shape": "legal_work_product",
+                    "requires_template": True,
+                    "requires_output_validator": True,
+                    "requires_review_before_service": True,
+                },
                 min_iter=0,
                 max_iter=1,
                 citation_floor=1,
@@ -630,6 +674,11 @@ class CascadeGovernor:
         if family == "clarify":
             return ExecutionContract(
                 family="clarify",
+                workflow_kind="clarification",
+                output_contract={
+                    "output_shape": "targeted_question",
+                    "model_call_allowed": False,
+                },
                 min_iter=0,
                 max_iter=0,
                 citation_floor=0,
@@ -639,6 +688,13 @@ class CascadeGovernor:
         # investigate — existing loop contract
         return ExecutionContract(
             family="investigate",
+            workflow_kind="analysis",
+            output_contract={
+                "output_shape": "investigation_memo",
+                "fresh_extraction_allowed": True,
+                "requires_citations": True,
+                "requires_gap_section": True,
+            },
             min_iter=1,
             max_iter=20,
             citation_floor=1,

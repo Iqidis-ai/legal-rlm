@@ -27,8 +27,12 @@ from .state import (
     ThinkingStep,
     Citation,
     Lead,
+    Obligation,
     ResearchMode,
+    RunObjective,
     normalize_research_mode,
+    WorkflowKind,
+    WorkingSet,
 )
 
 # SO-5: module-level map from LLM-returned doc_source_role strings to SourceRole enums.
@@ -1288,6 +1292,117 @@ class RLMEngine:
             very_low_productivity_max_facts=1,
         )
 
+    def _initialize_workflow_state(self, state: InvestigationState) -> None:
+        """Seed checkpoint-safe workflow state from the active contract."""
+        contract = getattr(state, "execution_contract", None)
+        output_contract = dict(getattr(contract, "output_contract", {}) or {})
+        workflow_kind = str(
+            getattr(contract, "workflow_kind", None) or WorkflowKind.ANALYSIS.value
+        )
+        output_shape = str(output_contract.get("output_shape") or "investigation_memo")
+
+        if state.run_objective is None:
+            state.run_objective = RunObjective.create(
+                user_goal=state.query,
+                output_shape=output_shape,
+                workflow_kind=workflow_kind,
+                policy_audience="clean",
+                success_criteria=self._workflow_success_criteria(contract),
+                source_query=state.query,
+            )
+        if not state.workflow_obligations:
+            state.workflow_obligations = self._workflow_obligations(contract)
+        if state.working_set is None:
+            state.working_set = WorkingSet()
+
+    @staticmethod
+    def _workflow_success_criteria(contract: Any) -> list[str]:
+        output_contract = dict(getattr(contract, "output_contract", {}) or {})
+        criteria: list[str] = []
+        if output_contract.get("must_ground_in_existing_state"):
+            criteria.append("use only policy-eligible existing matter state")
+        if output_contract.get("fresh_extraction_allowed"):
+            criteria.append("advance issue coverage with fresh evidence when needed")
+        if (
+            output_contract.get("requires_citations")
+            or getattr(contract, "citation_floor", 0) > 0
+        ):
+            criteria.append("ground material claims in cited source artifacts")
+        if output_contract.get("requires_gap_section"):
+            criteria.append("disclose material proof gaps and missing inputs")
+        if output_contract.get("requires_template"):
+            criteria.append("follow the selected work-product template")
+        if output_contract.get("must_label_assumptions"):
+            criteria.append("label temporary assumptions separately from matter facts")
+        if output_contract.get("requires_output_validator"):
+            criteria.append("pass workflow validators or surface blocking review issues")
+        return criteria or ["satisfy the user goal using policy-eligible matter state"]
+
+    @staticmethod
+    def _workflow_obligations(contract: Any) -> list[Obligation]:
+        output_contract = dict(getattr(contract, "output_contract", {}) or {})
+        obligations: list[Obligation] = []
+
+        def add(
+            description: str,
+            obligation_type: str,
+            validator: str | None = None,
+        ) -> None:
+            obligations.append(
+                Obligation.create(
+                    description=description,
+                    obligation_type=obligation_type,
+                    validator=validator,
+                )
+            )
+
+        if output_contract.get("must_ground_in_existing_state"):
+            add(
+                "Output must not claim fresh document work occurred on this turn.",
+                "state_grounding",
+                "read_answerability",
+            )
+        if (
+            output_contract.get("requires_citations")
+            or getattr(contract, "citation_floor", 0) > 0
+        ):
+            add(
+                "Material factual claims require source support.",
+                "citation",
+                "citation_floor",
+            )
+        if output_contract.get("requires_gap_section"):
+            add(
+                "Open material gaps must be disclosed instead of papered over.",
+                "missingness",
+                "gap_disclosure",
+            )
+        if output_contract.get("requires_template"):
+            add(
+                "Draft output must be organized by the selected work-product template.",
+                "template",
+                "draft_template",
+            )
+        if output_contract.get("must_label_assumptions"):
+            add(
+                "Temporary assumptions must be labeled apart from stored matter facts.",
+                "assumption",
+                "assumption_labeling",
+            )
+        if output_contract.get("requires_review_before_service"):
+            add(
+                "Draft is not service-ready until a human review gate passes.",
+                "review",
+                "human_review_required",
+            )
+        if not obligations:
+            add(
+                "Output must satisfy the active route contract.",
+                "contract",
+                "route_contract",
+            )
+        return obligations
+
     async def investigate(
         self,
         query: str,
@@ -1320,6 +1435,7 @@ class RLMEngine:
         # MVI-3: attach the cascade ExecutionContract so the
         # termination controller reads family-scoped stop rules.
         state.execution_contract = execution_contract
+        self._initialize_workflow_state(state)
 
         # Adapt configuration based on repository size.
         # _doc_count update triggers semaphore recreation in _get_semaphore() so
