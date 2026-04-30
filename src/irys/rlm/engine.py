@@ -234,6 +234,7 @@ class RLMConfig:
     min_lead_priority: float = 0.3
     excerpt_chars: int = 8000
     parallel_reads: int = 5
+    max_initial_deep_read_documents: int = 20
     checkpoint_dir: Optional[str] = None  # Directory for checkpoints
     checkpoint_interval: int = 5  # Save checkpoint every N iterations
     adaptive_depth: bool = True  # Adjust depth based on complexity
@@ -1931,6 +1932,16 @@ class RLMEngine:
         try:
             # Phase 1: Orientation — pass pre-computed stats to avoid a second glob walk
             await self._orient(state, repo, _stats=stats)
+            if state.findings.get("_direct_repository_answer"):
+                state.complete()
+                if run_id is not None:
+                    self._cleanup_checkpoints(state)
+                    self._matter_model.complete_run(
+                        run_id,
+                        llm_calls_avoided=state.llm_calls_avoided,
+                        llm_calls_required=state.llm_calls_required,
+                    )
+                return state
 
             # Phase 1.5: Document Ingestion — read all new/changed documents BEFORE
             # searching. This ensures the system understands what's in the repo
@@ -2105,6 +2116,127 @@ class RLMEngine:
 
         return state
 
+    @staticmethod
+    def _compact_inventory_signal(text: str) -> str:
+        return _re_date.sub(r"[^a-z0-9]+", "", str(text or "").lower())
+
+    @staticmethod
+    def _repository_inventory_target(query: str) -> tuple[str, str] | None:
+        q = " ".join(str(query or "").lower().split())
+        compact = RLMEngine._compact_inventory_signal(q)
+        count_intent = any(
+            phrase in q
+            for phrase in (
+                "how many",
+                "number of",
+                "count",
+                "are there any",
+            )
+        )
+        list_intent = any(
+            phrase in q
+            for phrase in (
+                "list files",
+                "list documents",
+                "list filings",
+                "which files",
+                "which documents",
+                "which filings",
+                "what files",
+                "what documents",
+                "what filings",
+            )
+        )
+        list_intent = list_intent or (
+            q.startswith(("list 10", "list the 10", "what 10", "which 10"))
+            and any(term in q for term in ("are there", "available", "exist"))
+        )
+        asks_inventory = count_intent or list_intent
+        if not asks_inventory:
+            return None
+        content_terms = (
+            "analyze",
+            "compare",
+            "contain",
+            "contains",
+            "disclose",
+            "discuss",
+            "explain",
+            "income",
+            "mention",
+            "mentions",
+            "missing",
+            "revenue",
+            "risk factor",
+            "say",
+            "says",
+            "show",
+            "summarize",
+            "trend",
+        )
+        if any(term in q for term in content_terms):
+            return None
+
+        targets = (
+            ("10k", "10-K"),
+            ("10q", "10-Q"),
+            ("8k", "8-K"),
+            ("ex99", "EX-99"),
+        )
+        for compact_target, label in targets:
+            if compact_target in compact:
+                return compact_target, label
+        return None
+
+    def _try_answer_from_repository_inventory(
+        self,
+        state: InvestigationState,
+        file_list: list[Any],
+    ) -> bool:
+        target = self._repository_inventory_target(state.query)
+        if target is None:
+            return False
+        compact_target, label = target
+
+        matches: list[str] = []
+        for file_info in file_list:
+            rel_path = str(getattr(file_info, "relative_path", "") or "")
+            if compact_target in self._compact_inventory_signal(rel_path):
+                matches.append(rel_path)
+        matches = sorted(dict.fromkeys(matches))
+
+        noun = "document" if len(matches) == 1 else "documents"
+        lines = [f"There are {len(matches)} {label} {noun} in the repository."]
+        if matches:
+            shown = matches[:50]
+            lines.append("")
+            lines.extend(f"- `{path}`" for path in shown)
+            if len(matches) > len(shown):
+                lines.append(f"- ... {len(matches) - len(shown)} more")
+
+        state.findings["repository_inventory_answer"] = {
+            "target": label,
+            "count": len(matches),
+            "matched_paths": matches,
+            "source": "repository_path_metadata",
+        }
+        state.findings["_direct_repository_answer"] = True
+        state.early_terminate_reason = (
+            f"Answered {label} inventory question from repository path metadata"
+        )
+        self._emit_output(
+            state,
+            "\n".join(lines),
+            emitter="repository_inventory",
+        )
+        self._emit_step(
+            state,
+            StepType.FINDING,
+            f"Answered from repository path metadata: {len(matches)} {label} {noun}; "
+            "skipping profiling and deep read",
+        )
+        return True
+
     async def _orient(self, state: InvestigationState, repo: MatterRepository, _stats=None):
         """Phase 1: Understand repository and form initial hypothesis.
 
@@ -2134,6 +2266,10 @@ class RLMEngine:
         if len(file_list) > 100:
             file_listing_lines.append(f"  ... and {len(file_list) - 100} more files")
         file_listing_str = "\n".join(file_listing_lines) if file_listing_lines else "  (no supported files found)"
+
+        # Cheap count/list questions can finish from filenames alone.
+        if self._try_answer_from_repository_inventory(state, file_list):
+            return
 
         # Read persisted matter state — activates SO-1 (reuse) and SO-4 (issue-driven)
         adapter = getattr(state, "_matter_adapter", None)
@@ -3933,6 +4069,259 @@ class RLMEngine:
         if top_files:
             await self._batch_deep_read(state, repo, top_files, focus_issue_id=focus_issue_id)
 
+    def _initial_deep_read_cap(self, state: InvestigationState, total_files: int) -> int:
+        """Foreground cap for the first cold-path deep-read slice."""
+        if total_files <= 0:
+            return 0
+        if self._query_requests_full_document_review(state.query):
+            return total_files
+        cap = max(1, int(self.config.max_initial_deep_read_documents or 1))
+        mode = normalize_research_mode(getattr(state, "research_mode", None))
+        if mode == ResearchMode.SIMPLE.value:
+            cap = min(cap, 8)
+        elif mode == ResearchMode.SEBIH_SPECIAL.value:
+            cap = max(cap, 30)
+        return min(total_files, cap)
+
+    @staticmethod
+    def _query_requests_full_document_review(query: str) -> bool:
+        q = " ".join(str(query or "").lower().split())
+        full_review_phrases = (
+            "read every document",
+            "read all documents",
+            "read every file",
+            "read all files",
+            "ingest every document",
+            "ingest all documents",
+            "review every document",
+            "review all documents",
+            "review every file",
+            "review all files",
+            "summarize every document",
+            "summarize all documents",
+        )
+        return any(phrase in q for phrase in full_review_phrases)
+
+    @staticmethod
+    def _query_is_finance_focused(query: str) -> bool:
+        q = str(query or "").lower()
+        finance_terms = (
+            "finance",
+            "financial",
+            "financials",
+            "revenue",
+            "gross margin",
+            "operating margin",
+            "net income",
+            "cash flow",
+            "cashflow",
+            "profit",
+            "loss",
+            "ebitda",
+            "balance sheet",
+            "statement of operations",
+            "income statement",
+            "10-k",
+            "10k",
+            "10-q",
+            "10q",
+            "sec filing",
+            "annual report",
+            "quarterly report",
+            "earnings",
+            "guidance",
+            "arr",
+        )
+        return any(term in q for term in finance_terms)
+
+    @staticmethod
+    def _query_path_terms(query: str) -> set[str]:
+        raw_terms = _re_date.split(r"[^a-z0-9]+", str(query or "").lower())
+        stop = {
+            "about", "after", "again", "against", "every", "file", "files",
+            "from", "have", "into", "over", "that", "their", "there", "this",
+            "what", "when", "where", "which", "with", "would", "your",
+        }
+        return {term for term in raw_terms if len(term) > 3 and term not in stop}
+
+    @staticmethod
+    def _path_has_any(path_lower: str, needles: tuple[str, ...]) -> bool:
+        return any(needle in path_lower for needle in needles)
+
+    def _score_initial_deep_read_file(
+        self,
+        state: InvestigationState,
+        file_info: Any,
+        *,
+        query_terms: set[str],
+        plan_doc_types: list[str],
+        plan_folders: list[str],
+        target_documents: set[str],
+        finance_focused: bool,
+    ) -> tuple[float, list[str]]:
+        """Score a file using only cheap foreground path/name signals."""
+        from ..core.search import get_document_priority
+
+        rel_path = str(getattr(file_info, "relative_path", "") or "")
+        filename = str(getattr(file_info, "filename", "") or rel_path)
+        path_lower = rel_path.replace("\\", "/").lower()
+        name_lower = filename.lower()
+        score = float(get_document_priority(filename))
+        reasons = ["base document-priority score"]
+
+        if path_lower in target_documents or name_lower in target_documents:
+            score += 100.0
+            reasons.append("orientation target document")
+
+        for term in sorted(query_terms):
+            if term in path_lower or term in name_lower:
+                score += 1.75
+                reasons.append(f"path matches query term '{term}'")
+                break
+
+        for rank, folder in enumerate(plan_folders[:8]):
+            folder = folder.strip().replace("\\", "/").lower()
+            if folder and folder in path_lower:
+                score += max(0.4, 2.0 - rank * 0.15)
+                reasons.append(f"orientation folder '{folder}'")
+                break
+
+        for rank, doc_type in enumerate(plan_doc_types[:8]):
+            doc_type = doc_type.strip().lower()
+            if doc_type and doc_type in path_lower:
+                score += max(0.3, 1.5 - rank * 0.12)
+                reasons.append(f"orientation document type '{doc_type}'")
+                break
+
+        if finance_focused:
+            annual = self._path_has_any(
+                path_lower,
+                ("10-k", "10k", "annual-report", "annual_report", "annual report"),
+            )
+            quarterly = self._path_has_any(
+                path_lower,
+                ("10-q", "10q", "quarterly-report", "quarterly_report"),
+            )
+            earnings = self._path_has_any(
+                path_lower,
+                (
+                    "earnings",
+                    "ex-99",
+                    "ex99",
+                    "investor-relations",
+                    "investor_relations",
+                ),
+            )
+            if annual:
+                score += 6.0
+                reasons.append("finance query: annual/10-K source")
+            if quarterly:
+                score += 5.0
+                reasons.append("finance query: quarterly/10-Q source")
+            if earnings:
+                score += 2.5
+                reasons.append("finance query: earnings/investor exhibit")
+            if self._path_has_any(
+                path_lower,
+                ("financial", "finance", "mda", "md&a"),
+            ):
+                score += 1.5
+                reasons.append("finance query: financial path signal")
+            if self._path_has_any(path_lower, ("8-k", "8k")) and not earnings:
+                score += 0.3
+                reasons.append("finance query: generic 8-K is secondary")
+            if self._path_has_any(
+                path_lower,
+                ("def 14a", "def14a", "proxy", "form-4", "form_4", "13g", "s-8"),
+            ):
+                score -= 2.0
+                reasons.append("finance query: lower-value filing family")
+            if (
+                self._path_has_any(
+                    path_lower,
+                    ("press-release", "press_release", "press/"),
+                )
+                and not earnings
+            ):
+                score -= 1.0
+                reasons.append("finance query: generic press material")
+
+        return score, reasons
+
+    def _select_initial_deep_read_files(
+        self,
+        state: InvestigationState,
+        files: list[Any],
+    ) -> list[Any]:
+        """Select the foreground deep-read slice from path/name signals.
+
+        Large corpora should not cold-read every new file before the first
+        answer. This keeps broad corpus/wiki maintenance separate from the
+        user-facing foreground path.
+        """
+        if not files:
+            return []
+        cap = self._initial_deep_read_cap(state, len(files))
+        if cap >= len(files):
+            state.findings["initial_deep_read_selection"] = {
+                "mode": "all_files",
+                "selected_count": len(files),
+                "skipped_count": 0,
+                "total_new_files": len(files),
+            }
+            return list(files)
+
+        plan = state.findings.get("initial_plan") or {}
+        plan_doc_types = [
+            str(item).lower() for item in (plan.get("document_priority") or [])
+            if isinstance(item, str) and item.strip()
+        ]
+        plan_folders = [
+            str(item).lower() for item in (plan.get("relevant_folders") or [])
+            if isinstance(item, str) and item.strip()
+        ]
+        target_documents = {
+            str(item).replace("\\", "/").lower()
+            for item in (plan.get("target_documents") or [])
+            if isinstance(item, str) and item.strip()
+        }
+        query_terms = self._query_path_terms(state.query)
+        finance_focused = self._query_is_finance_focused(state.query)
+
+        scored: list[tuple[float, str, Any, list[str]]] = []
+        for file_info in files:
+            score, reasons = self._score_initial_deep_read_file(
+                state,
+                file_info,
+                query_terms=query_terms,
+                plan_doc_types=plan_doc_types,
+                plan_folders=plan_folders,
+                target_documents=target_documents,
+                finance_focused=finance_focused,
+            )
+            path_key = str(getattr(file_info, "relative_path", "") or "").lower()
+            scored.append((score, path_key, file_info, reasons))
+
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        selected = scored[:cap]
+        selected_files = [item[2] for item in selected]
+        state.findings["initial_deep_read_selection"] = {
+            "mode": "path_scored",
+            "selected_count": len(selected_files),
+            "skipped_count": max(0, len(files) - len(selected_files)),
+            "total_new_files": len(files),
+            "cap": cap,
+            "finance_focused": finance_focused,
+            "selected_paths": [
+                str(getattr(item[2], "relative_path", "") or "") for item in selected
+            ],
+            "selection_reasons": {
+                str(getattr(item[2], "relative_path", "") or ""): item[3][:4]
+                for item in selected[:10]
+            },
+        }
+        return selected_files
+
     async def _ingest_documents(
         self, state: InvestigationState, repo: MatterRepository
     ):
@@ -3960,6 +4349,8 @@ class RLMEngine:
 
         new_files = [f for f in all_files if str(f.relative_path) not in ingested]
         cached_count = len(all_files) - len(new_files)
+        selected_new_files = self._select_initial_deep_read_files(state, new_files)
+        selected_new_paths = {str(f.relative_path) for f in selected_new_files}
 
         # Phase 1: Query-agnostic profiling for docs that haven't been profiled.
         # This populates document cards (type, source role, operative status)
@@ -3990,8 +4381,19 @@ class RLMEngine:
                     pass  # unreadable files will be skipped during profiling too
 
             unprofiled_rows = _mm.list_documents_needing_profile(limit=200)
-            # Preserve salience ordering from list_needing_profile (highest first)
-            unprofiled = [r["relative_path"] for r in unprofiled_rows]
+            # Foreground profiling follows the same selected document slice as
+            # foreground deep-read. Broad corpus-card maintenance belongs in a
+            # background/batch path, not in the user's first answer latency.
+            if selected_new_paths:
+                unprofiled = [
+                    r["relative_path"]
+                    for r in unprofiled_rows
+                    if r["relative_path"] in selected_new_paths
+                ]
+            else:
+                # Historical backfill for already-ingested docs stays bounded.
+                cap = self._initial_deep_read_cap(state, len(unprofiled_rows))
+                unprofiled = [r["relative_path"] for r in unprofiled_rows[:cap]]
 
         if unprofiled:
             self._emit_step(
@@ -4009,48 +4411,16 @@ class RLMEngine:
             state.findings["all_documents_ingested"] = True
             return
 
-        # Score new files by query relevance: filename keywords + document type priority.
-        # Most informative documents get read first (contracts before misc, query-matching
-        # filenames before generic ones).
-        from ..core.search import get_document_priority
-        query_terms = {w.lower() for w in state.query.split() if len(w) > 3}
-
-        # Use orientation plan hints if available (document_priority, relevant_folders)
-        plan = state.findings.get("initial_plan") or {}
-        plan_doc_types = [d.lower() for d in (plan.get("document_priority") or [])]
-        plan_folders = {f.lower() for f in (plan.get("relevant_folders") or [])}
-
-        def _file_score(f) -> float:
-            score = 0.0
-            name_lower = f.filename.lower()
-            path_lower = str(f.relative_path).lower()
-
-            # Document type priority (contracts=1.5, emails=0.9, etc.)
-            score += get_document_priority(f.filename)
-
-            # Filename matches query terms (e.g., query "resignation" matches "Letters of resignation.pdf")
-            for term in query_terms:
-                if term in name_lower:
-                    score += 2.0
-                    break  # one match is enough signal
-
-            # Orientation plan ranked this document type
-            for rank, doc_type in enumerate(plan_doc_types):
-                if doc_type in name_lower:
-                    score += 1.0 - (rank * 0.1)  # higher-ranked types score more
-                    break
-
-            # File is in a folder the orientation flagged as relevant
-            for folder in plan_folders:
-                if folder in path_lower:
-                    score += 0.5
-                    break
-
-            return score
-
-        # Sort by score descending — most relevant first
-        new_files.sort(key=_file_score, reverse=True)
-        file_paths = [str(f.relative_path) for f in new_files]
+        # Use only the foreground-selected slice for the first query-coupled read.
+        file_paths = [str(f.relative_path) for f in selected_new_files]
+        skipped_count = max(0, len(new_files) - len(selected_new_files))
+        if skipped_count:
+            self._emit_step(
+                state,
+                StepType.READING,
+                f"Foreground selected {len(file_paths)} of {len(new_files)} new documents "
+                "by path/name signals; deferred the rest for targeted search or background maintenance",
+            )
 
         # Phase 2: Query-coupled deep read for fact extraction.
         # Only process docs that still need evidence extraction for current query.
@@ -4071,7 +4441,7 @@ class RLMEngine:
         # Only mark fully ingested if the run was not stopped mid-batch
         _post_adapter = getattr(state, "_matter_adapter", None)
         if _post_adapter is None or not _post_adapter.is_stop_requested():
-            state.findings["all_documents_ingested"] = True
+            state.findings["all_documents_ingested"] = skipped_count == 0
 
     async def _batch_profile(
         self,

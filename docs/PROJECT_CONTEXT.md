@@ -114,6 +114,16 @@ missing gap disclosure, missing assumption labeling, or absent draft structure.
 Citation shortfalls are treated as non-fabrication constraints, not as an excuse
 to invent source support.
 
+The foreground cold path now keeps corpus mapping separate from answer latency.
+For cheap inventory questions, such as counting `10-K` files, the engine answers
+directly from repository path metadata and skips profiling/deep-read entirely.
+For substantive questions, before the first deep-read batch, the engine ranks
+new files by cheap path/name signals, orientation target documents, relevant
+folders, document-priority hints, and finance filing families such as `10-K`,
+`10-Q`, and `EX-99` earnings materials. Large corpora deep-read only the
+selected foreground slice first; deferred files remain available to targeted
+search and future background maintenance.
+
 The intended architecture is an objective/obligation planner rather than a
 rigid mode switch. A user may ask for a draft, but the system should build an
 objective, derive obligations, assemble a working set, choose operators, render
@@ -186,6 +196,10 @@ Major capabilities present in the codebase:
   working-set, plan-action, validation-result, and output-envelope primitives.
 - Mandatory workflow-quality synthesis context plus a one-pass repair loop for
   fixable output-validator failures before final emission.
+- Repository-inventory fast path for count/list questions that can be answered
+  from filenames and folders without LLM calls, profiling, or deep reading.
+- Path/name-aware foreground deep-read selection for large corpora, with broad
+  document-card/wiki maintenance left out of the first-answer path.
 - Coverage-driven lead planning and proof-gap surfacing.
 - Gradio dashboard with matter intelligence panels, steering, review, trust
   controls, privilege mode, and cost visibility.
