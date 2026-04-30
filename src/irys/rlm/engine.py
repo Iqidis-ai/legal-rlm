@@ -28,8 +28,10 @@ from .state import (
     Citation,
     Lead,
     Obligation,
+    OutputEnvelope,
     ResearchMode,
     RunObjective,
+    ValidationResult,
     normalize_research_mode,
     WorkflowKind,
     WorkingSet,
@@ -1402,6 +1404,228 @@ class RLMEngine:
                 "route_contract",
             )
         return obligations
+
+    def _emit_output(
+        self,
+        state: InvestigationState,
+        output_text: str,
+        *,
+        emitter: str,
+    ) -> OutputEnvelope:
+        """Central output wrapper for workflow-aware user-facing text.
+
+        The current service/UI still reads findings["final_output"], so
+        this keeps that compatibility while also attaching an auditable
+        envelope and validation results for the next UI/API layer.
+        """
+        if state.run_objective is None or state.working_set is None:
+            self._initialize_workflow_state(state)
+        validation_results = self._validate_workflow_output(
+            state,
+            output_text,
+            emitter=emitter,
+        )
+        if validation_results:
+            state.validation_results.extend(validation_results)
+            self._apply_validation_results_to_obligations(
+                state.workflow_obligations,
+                validation_results,
+            )
+
+        objective = state.run_objective
+        working_set = state.working_set
+        output_envelope = OutputEnvelope.create(
+            output_text=output_text,
+            workflow_kind=(
+                objective.workflow_kind if objective else WorkflowKind.ANALYSIS.value
+            ),
+            output_shape=objective.output_shape if objective else "answer",
+            emitter=emitter,
+            objective_id=objective.id if objective else None,
+            dependency_manifest_hash=(
+                working_set.dependency_manifest_hash if working_set else None
+            ),
+            validation_results=validation_results,
+            review_required=any(
+                item.validator == "human_review_required"
+                for item in state.workflow_obligations
+            ),
+        )
+        state.output_envelope = output_envelope
+        state.findings["output_envelope"] = output_envelope.to_dict()
+        state.findings["final_output"] = output_text
+        return output_envelope
+
+    def _validate_workflow_output(
+        self,
+        state: InvestigationState,
+        output_text: str,
+        *,
+        emitter: str,
+    ) -> list[ValidationResult]:
+        """Run first-pass structural validators against workflow obligations."""
+        results: list[ValidationResult] = []
+        contract = getattr(state, "execution_contract", None)
+        output_contract = dict(getattr(contract, "output_contract", {}) or {})
+        citation_floor = max(0, int(getattr(contract, "citation_floor", 0) or 0))
+        if output_contract.get("requires_citations"):
+            citation_floor = max(citation_floor, 1)
+
+        seen_validators: set[str] = set()
+        for obligation in state.workflow_obligations:
+            validator = obligation.validator or obligation.obligation_type
+            if validator in seen_validators:
+                continue
+            seen_validators.add(validator)
+            result = self._run_workflow_validator(
+                validator,
+                state,
+                output_text,
+                citation_floor=citation_floor,
+                emitter=emitter,
+            )
+            if result is not None:
+                results.append(result)
+        return results
+
+    def _run_workflow_validator(
+        self,
+        validator: str,
+        state: InvestigationState,
+        output_text: str,
+        *,
+        citation_floor: int,
+        emitter: str,
+    ) -> Optional[ValidationResult]:
+        matching_obligation_ids = [
+            item.id
+            for item in state.workflow_obligations
+            if (item.validator or item.obligation_type) == validator
+        ]
+
+        if validator == "citation_floor":
+            citations = [
+                c for c in state.citations
+                if getattr(c, "document", None)
+            ]
+            probe_citations = [
+                c for c in (state.findings.get("sufficiency_probe_citations") or [])
+                if isinstance(c, str) and c.strip()
+            ]
+            support_count = max(len(citations), len(probe_citations))
+            passed = support_count >= citation_floor
+            return ValidationResult(
+                validator=validator,
+                passed=passed,
+                score=1.0 if passed else 0.0,
+                blocking_issues=[] if passed else [
+                    f"citation support {support_count} < floor {citation_floor}"
+                ],
+                obligation_status={
+                    oid: passed for oid in matching_obligation_ids
+                },
+            )
+
+        if validator == "gap_disclosure":
+            gap_count = self._open_gap_count()
+            if gap_count <= 0:
+                passed = True
+            else:
+                lowered = output_text.lower()
+                passed = any(
+                    marker in lowered
+                    for marker in ("gap", "missing", "unresolved", "unknown")
+                )
+            return ValidationResult(
+                validator=validator,
+                passed=passed,
+                score=1.0 if passed else 0.0,
+                blocking_issues=[] if passed else [
+                    f"{gap_count} open gap(s) were not visibly disclosed"
+                ],
+                obligation_status={
+                    oid: passed for oid in matching_obligation_ids
+                },
+            )
+
+        if validator == "human_review_required":
+            return ValidationResult(
+                validator=validator,
+                passed=False,
+                score=0.0,
+                warnings=["human review required before external use"],
+                obligation_status={
+                    oid: False for oid in matching_obligation_ids
+                },
+            )
+
+        if validator == "draft_template":
+            has_structure = any(marker in output_text for marker in ("#", "|", "\n- "))
+            return ValidationResult(
+                validator=validator,
+                passed=bool(output_text.strip()) and has_structure,
+                score=1.0 if output_text.strip() and has_structure else 0.4,
+                warnings=[] if has_structure else [
+                    "draft output has no visible section/table/list structure"
+                ],
+                obligation_status={
+                    oid: bool(output_text.strip()) and has_structure
+                    for oid in matching_obligation_ids
+                },
+            )
+
+        if validator == "assumption_labeling":
+            lowered = output_text.lower()
+            mentions_assumption = "assum" in lowered
+            return ValidationResult(
+                validator=validator,
+                passed=mentions_assumption,
+                score=1.0 if mentions_assumption else 0.0,
+                blocking_issues=[] if mentions_assumption else [
+                    "temporary assumptions were not explicitly labeled"
+                ],
+                obligation_status={
+                    oid: mentions_assumption for oid in matching_obligation_ids
+                },
+            )
+
+        return ValidationResult(
+            validator=validator,
+            passed=bool(output_text.strip()),
+            score=1.0 if output_text.strip() else 0.0,
+            blocking_issues=[] if output_text.strip() else [
+                f"{validator} produced no output"
+            ],
+            obligation_status={
+                oid: bool(output_text.strip()) for oid in matching_obligation_ids
+            },
+        )
+
+    @staticmethod
+    def _apply_validation_results_to_obligations(
+        obligations: list[Obligation],
+        validation_results: list[ValidationResult],
+    ) -> None:
+        by_id: dict[str, tuple[bool, str]] = {}
+        for result in validation_results:
+            note = (
+                "; ".join(result.blocking_issues or result.warnings)
+                or f"{result.validator}: {'passed' if result.passed else 'failed'}"
+            )
+            for obligation_id, passed in result.obligation_status.items():
+                by_id[obligation_id] = (bool(passed), note)
+        for obligation in obligations:
+            if obligation.id in by_id:
+                obligation.satisfied, obligation.status_note = by_id[obligation.id]
+
+    def _open_gap_count(self) -> int:
+        if self._matter_model is None:
+            return 0
+        try:
+            rows = self._matter_model.gaps.open_gaps(limit=1000)
+            return len(rows)
+        except Exception:
+            return 0
 
     async def investigate(
         self,
@@ -4608,8 +4832,6 @@ Return:
                 except Exception:
                     pass
 
-        state.findings["final_output"] = response
-
         # SO-5: Post-synthesis advocacy gate.
         # If any open issues rely exclusively on advocacy sources, force-append a
         # Source Calibration Advisory that names them. Prompt-level instruction alone
@@ -4618,7 +4840,6 @@ Return:
             try:
                 _adv_enforced = self._enforce_advocacy_gate(response)
                 if _adv_enforced is not None:
-                    state.findings["final_output"] = _adv_enforced
                     response = _adv_enforced
             except Exception:
                 pass  # gate is best-effort; never suppress synthesis
@@ -4631,10 +4852,11 @@ Return:
             try:
                 _enforced = self._enforce_quant_threshold_gate(response)
                 if _enforced is not None:
-                    state.findings["final_output"] = _enforced
                     response = _enforced
             except Exception:
                 pass  # gate is best-effort; never suppress synthesis
+
+        self._emit_output(state, response, emitter="synthesis")
 
         # Persist legal citations found in synthesis output to authority store (SO-4).
         if self._matter_model is not None:
@@ -7518,9 +7740,9 @@ Respond as JSON only:
         # Stamp the early-terminate decision. The engine loop reads
         # this on the next _should_continue_investigation call and
         # breaks out.
-        state.findings["final_output"] = answer
         state.findings["sufficiency_probe_confidence"] = confidence
         state.findings["sufficiency_probe_citations"] = citations
+        self._emit_output(state, answer, emitter="sufficiency_probe")
         state.early_terminate_reason = (
             f"matter already answers the query at {confidence} confidence "
             f"with {len(citations)} citation(s); skipping further iterations"
@@ -8002,6 +8224,8 @@ Respond as JSON only:
         # guard at the engine level for direct callers too.
         if state.status not in ("completed", "failed"):
             state.findings.pop("final_output", None)
+            state.findings.pop("output_envelope", None)
+            state.output_envelope = None
         repo = MatterRepository(state.repository_path)
 
         self._emit_step(state, StepType.THINKING, "Resuming investigation from checkpoint")

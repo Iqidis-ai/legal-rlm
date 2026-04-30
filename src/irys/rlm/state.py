@@ -984,6 +984,99 @@ class ValidationResult:
 
 
 @dataclass
+class OutputEnvelope:
+    """Auditable wrapper around user-facing output text."""
+    id: str
+    output_text: str
+    workflow_kind: str
+    output_shape: str
+    emitter: str
+    objective_id: Optional[str] = None
+    working_set_hash: Optional[str] = None
+    dependency_manifest_hash: Optional[str] = None
+    validation_results: list[ValidationResult] = field(default_factory=list)
+    blocking_issues: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    review_required: bool = False
+    created_at: datetime = field(default_factory=datetime.now)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        output_text: str,
+        workflow_kind: str,
+        output_shape: str,
+        emitter: str,
+        objective_id: Optional[str] = None,
+        working_set_hash: Optional[str] = None,
+        dependency_manifest_hash: Optional[str] = None,
+        validation_results: Optional[list[ValidationResult]] = None,
+        review_required: bool = False,
+    ) -> "OutputEnvelope":
+        results = list(validation_results or [])
+        return cls(
+            id=str(uuid.uuid4())[:8],
+            output_text=output_text,
+            workflow_kind=workflow_kind,
+            output_shape=output_shape,
+            emitter=emitter,
+            objective_id=objective_id,
+            working_set_hash=working_set_hash,
+            dependency_manifest_hash=dependency_manifest_hash,
+            validation_results=results,
+            blocking_issues=[
+                issue for result in results for issue in result.blocking_issues
+            ],
+            warnings=[warning for result in results for warning in result.warnings],
+            review_required=review_required,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "output_text": self.output_text,
+            "workflow_kind": self.workflow_kind,
+            "output_shape": self.output_shape,
+            "emitter": self.emitter,
+            "objective_id": self.objective_id,
+            "working_set_hash": self.working_set_hash,
+            "dependency_manifest_hash": self.dependency_manifest_hash,
+            "validation_results": [
+                result.to_dict() for result in self.validation_results
+            ],
+            "blocking_issues": self.blocking_issues,
+            "warnings": self.warnings,
+            "review_required": self.review_required,
+            "created_at": self.created_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "OutputEnvelope":
+        return cls(
+            id=str(data.get("id") or str(uuid.uuid4())[:8]),
+            output_text=str(data.get("output_text") or ""),
+            workflow_kind=str(data.get("workflow_kind") or WorkflowKind.ANALYSIS.value),
+            output_shape=str(data.get("output_shape") or "answer"),
+            emitter=str(data.get("emitter") or "unknown"),
+            objective_id=data.get("objective_id"),
+            working_set_hash=data.get("working_set_hash"),
+            dependency_manifest_hash=data.get("dependency_manifest_hash"),
+            validation_results=[
+                ValidationResult.from_dict(item)
+                for item in data.get("validation_results", [])
+            ],
+            blocking_issues=list(data.get("blocking_issues") or []),
+            warnings=list(data.get("warnings") or []),
+            review_required=bool(data.get("review_required", False)),
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if data.get("created_at") else datetime.now()
+            ),
+        )
+
+
+@dataclass
 class InvestigationState:
     """
     Complete state of an RLM investigation.
@@ -1020,6 +1113,7 @@ class InvestigationState:
     working_set: Optional[WorkingSet] = None
     plan_actions: list[PlanAction] = field(default_factory=list)
     validation_results: list[ValidationResult] = field(default_factory=list)
+    output_envelope: Optional[OutputEnvelope] = None
 
     # In-flight dedup: tracks repo-relative paths currently on the cold path in this run.
     # Prevents the same document from being LLM-analyzed multiple times within a single
@@ -2182,6 +2276,9 @@ class InvestigationState:
             "validation_results": [
                 result.to_dict() for result in self.validation_results
             ],
+            "output_envelope": (
+                self.output_envelope.to_dict() if self.output_envelope else None
+            ),
             "facts_per_iteration": self.facts_per_iteration,
             # P0.7 (adv#11 review fix #3): persist planner_leads_added so a
             # checkpoint/resume doesn't reset the per-run cap and allow
@@ -2324,6 +2421,8 @@ class InvestigationState:
             ValidationResult.from_dict(item)
             for item in data.get("validation_results", [])
         ]
+        if data.get("output_envelope"):
+            state.output_envelope = OutputEnvelope.from_dict(data["output_envelope"])
         state.facts_per_iteration = data.get("facts_per_iteration", [])
         # Restore planner counter; absent in pre-P0.7 checkpoints.
         state.planner_leads_added = int(data.get("planner_leads_added", 0) or 0)

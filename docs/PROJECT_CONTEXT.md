@@ -101,6 +101,9 @@ The core distinction:
 - `PlanAction`: planned operator steps that target obligations.
 - `ValidationResult`: validator output, blocking issues, warnings, score, and
   per-obligation status.
+- `OutputEnvelope`: auditable wrapper around final user-facing text, including
+  workflow kind, output shape, objective id, dependency manifest hash, validation
+  results, blockers, warnings, and review-required status.
 
 The intended architecture is an objective/obligation planner rather than a
 rigid mode switch. A user may ask for a draft, but the system should build an
@@ -113,15 +116,20 @@ Near-term implementation order:
 
 1. Populate `RunObjective` and default obligations from the classifier contract
    at run start.
-2. Build workflow-specific obligation templates for drafts, solutions, and
+2. Emit synthesis and sufficiency-probe answers through `OutputEnvelope` while
+   preserving the existing `final_output` compatibility field.
+3. Build workflow-specific obligation templates for drafts, solutions, and
    analysis memos.
-3. Teach context assembly to emit a `WorkingSet` plus dependency manifest, not
+4. Teach context assembly to emit a `WorkingSet` plus dependency manifest, not
    only prompt text.
-4. Add validators that recompute obligations after rendering, starting with
+5. Add validators that recompute obligations after rendering, starting with
    citation coverage, unsupported factual claims, open proof gaps, authority
    coverage, and privilege leakage.
-5. Record validation results as ledger/output events so failed drafts and
+6. Record validation results as ledger/output events so failed drafts and
    solution plans become reusable training signals for future runs.
+7. Add quantitative-statistical obligations for quant-heavy work: distribution
+   checks, outlier detection, reconciliation variance, confidence intervals,
+   scenario/sensitivity bands, and numeric assumption audit trails.
 
 ## Canonical Entry Points
 
@@ -164,7 +172,7 @@ Major capabilities present in the codebase:
 - Cost cascade routing for investigate/read/query/trace/steer/compare/scenario/
   deliverable/clarify flows.
 - Workflow contract metadata and checkpoint-safe objective, obligation,
-  working-set, plan-action, and validation-result primitives.
+  working-set, plan-action, validation-result, and output-envelope primitives.
 - Coverage-driven lead planning and proof-gap surfacing.
 - Gradio dashboard with matter intelligence panels, steering, review, trust
   controls, privilege mode, and cost visibility.

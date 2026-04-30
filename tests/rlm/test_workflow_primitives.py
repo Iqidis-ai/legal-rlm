@@ -9,6 +9,7 @@ without inventing a second state channel.
 from irys.rlm.state import (
     InvestigationState,
     Obligation,
+    OutputEnvelope,
     PlanAction,
     RunObjective,
     ValidationResult,
@@ -86,6 +87,34 @@ def test_workflow_primitives_survive_checkpoint_roundtrip():
     ]
 
 
+def test_output_envelope_survives_checkpoint_roundtrip():
+    state = InvestigationState.create("analyze exposure", ".")
+    validation = ValidationResult(
+        validator="citation_floor",
+        passed=False,
+        blocking_issues=["citation support 0 < floor 1"],
+    )
+    state.output_envelope = OutputEnvelope.create(
+        output_text="Draft answer",
+        workflow_kind=WorkflowKind.ANALYSIS.value,
+        output_shape="investigation_memo",
+        emitter="test",
+        objective_id="obj1",
+        dependency_manifest_hash="dep123",
+        validation_results=[validation],
+    )
+
+    restored = InvestigationState.from_dict(state.to_dict())
+
+    assert restored.output_envelope is not None
+    assert restored.output_envelope.output_text == "Draft answer"
+    assert restored.output_envelope.dependency_manifest_hash == "dep123"
+    assert restored.output_envelope.validation_results[0].validator == "citation_floor"
+    assert restored.output_envelope.blocking_issues == [
+        "citation support 0 < floor 1",
+    ]
+
+
 def test_engine_seeds_workflow_state_from_execution_contract():
     state = InvestigationState.create("draft a privilege log", ".")
     state.execution_contract = CascadeGovernor._contract_for("deliverable")
@@ -103,3 +132,22 @@ def test_engine_seeds_workflow_state_from_execution_contract():
     assert "draft_template" in validators
     assert "human_review_required" in validators
     assert state.working_set is not None
+
+
+def test_engine_emit_output_wraps_final_output_and_validates():
+    state = InvestigationState.create("analyze exposure", ".")
+    state.execution_contract = CascadeGovernor._contract_for("investigate")
+    engine = RLMEngine(gemini_client=_StubClient(), config=RLMConfig())
+    engine._initialize_workflow_state(state)
+
+    envelope = engine._emit_output(state, "No citations here.", emitter="test")
+
+    assert state.findings["final_output"] == "No citations here."
+    assert state.findings["output_envelope"]["id"] == envelope.id
+    assert state.output_envelope is envelope
+    assert envelope.workflow_kind == WorkflowKind.ANALYSIS.value
+    assert any(
+        result.validator == "citation_floor" and not result.passed
+        for result in envelope.validation_results
+    )
+    assert any("citation support" in issue for issue in envelope.blocking_issues)
