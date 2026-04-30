@@ -2,7 +2,7 @@
 
 Verifies:
 1. ClarificationStore.add_question() persists and deduplicates questions
-2. ClarificationStore.answer_question() updates status and records answer
+2. MatterModel.answer_clarification() updates status through the broker
 3. get_pending() / get_answered() filter by status
 4. MatterModel.generate_clarifications_from_gaps() creates questions from high-materiality gaps
 5. Answered clarifications are included in QueryMatterContext
@@ -10,7 +10,7 @@ Verifies:
 """
 
 import pytest
-from irys.matter import MatterModel, ClarificationStore
+from irys.matter import MatterModel
 from irys.matter.enums import GapType, IssueType
 
 
@@ -44,11 +44,11 @@ def test_add_question_is_idempotent(model):
     assert model.clarifications.count_pending() == 1
 
 
-def test_answer_question_updates_status(model):
+def test_answer_clarification_updates_status(model):
     q_id = model.clarifications.add_question("Do you have the wire transfer record?")
     assert model.clarifications.count_pending() == 1
 
-    model.clarifications.answer_question(q_id, "Yes, we have a wire transfer record dated Jan 20.")
+    model.answer_clarification(q_id, "Yes, we have a wire transfer record dated Jan 20.")
 
     assert model.clarifications.count_pending() == 0
     answered = model.clarifications.get_answered()
@@ -58,10 +58,16 @@ def test_answer_question_updates_status(model):
     assert answered[0]["answered_at"] is not None
 
 
+def test_direct_clarification_answer_writer_is_disabled(model):
+    q_id = model.clarifications.add_question("Do you have the wire transfer record?")
+    with pytest.raises(RuntimeError, match="memory broker"):
+        model.clarifications.answer_question(q_id, "Bypass attempt.")
+
+
 def test_get_pending_excludes_answered(model):
     q1 = model.clarifications.add_question("Question A?")
     q2 = model.clarifications.add_question("Question B?")
-    model.clarifications.answer_question(q1, "Answer A")
+    model.answer_clarification(q1, "Answer A")
 
     pending = model.clarifications.get_pending()
     assert len(pending) == 1
@@ -154,11 +160,71 @@ def test_query_context_includes_answered_clarifications(model):
     q_id = model.clarifications.add_question(
         question_text="Is the payment record in the repository?",
     )
-    model.clarifications.answer_question(q_id, "No, we need to request it from the client.")
+    model.answer_clarification(q_id, "No, we need to request it from the client.")
 
     ctx = model.build_query_context()
     assert len(ctx.answered_clarifications) == 1
     assert "payment record" in ctx.answered_clarifications[0]["question_text"].lower()
+
+
+def test_query_context_excludes_profile_stale_answered_clarifications(model):
+    q_id = model.clarifications.add_question(
+        question_text="Is the payment record in the repository?",
+    )
+    model.answer_clarification(q_id, "No, request it from the client.")
+    assert len(model.build_query_context().answered_clarifications) == 1
+
+    default_hash = model.memory_broker.default_legal_profile_hash()
+    model.memory_broker.record_profile_mapping(
+        source_domain_profile_id="legal",
+        source_domain_profile_version=1,
+        target_domain_profile_id="legal",
+        target_domain_profile_version=1,
+        source_mapping_hash=default_hash,
+        target_mapping_hash="sha256:rotated-legal-profile",
+        target_kind="clarification",
+        target_namespace="clarifications",
+        compatibility_status="identity",
+    )
+
+    ctx = model.build_query_context()
+
+    assert ctx.answered_clarifications == []
+
+
+def test_query_context_includes_current_nonlegal_profile_clarification(model):
+    model.memory_broker.upsert_domain_profile(
+        profile_id="finance",
+        profile_version=1,
+        profile_kind="finance",
+        profile_json='{"metric":"revenue"}',
+        mapping_hash="sha256:finance",
+    )
+    model.memory_broker.record_profile_mapping(
+        source_domain_profile_id="finance",
+        source_domain_profile_version=1,
+        target_domain_profile_id="finance",
+        target_domain_profile_version=1,
+        source_mapping_hash="sha256:finance",
+        target_mapping_hash="sha256:finance",
+        target_kind="clarification",
+        target_namespace="clarifications",
+        compatibility_status="identity",
+    )
+    q_id = model.clarifications.add_question(
+        question_text="Is revenue recognized ratably?",
+    )
+    model.answer_clarification(
+        q_id,
+        "Yes.",
+        domain_profile_id="finance",
+        domain_profile_version=1,
+    )
+
+    ctx = model.build_query_context()
+
+    assert len(ctx.answered_clarifications) == 1
+    assert "revenue" in ctx.answered_clarifications[0]["question_text"].lower()
 
 
 def test_query_context_excludes_tainted_answered_clarifications(model):
@@ -166,7 +232,7 @@ def test_query_context_excludes_tainted_answered_clarifications(model):
     q_id = model.clarifications.add_question(
         question_text="Is the payment record in the repository?",
     )
-    model.clarifications.answer_question(q_id, "No, request it from the client.")
+    model.answer_clarification(q_id, "No, request it from the client.")
     model.memory_broker.record_object_taint(
         target_kind="clarification",
         target_id=q_id,
@@ -290,7 +356,7 @@ def test_get_new_answered_clarifications_returns_post_run_answers(model):
 
     # Add and answer a question AFTER adapter creation — must appear
     q_id = model.clarifications.add_question("Do you have the signed amendment?")
-    model.clarifications.answer_question(q_id, "Yes, it's in the contract folder.")
+    model.answer_clarification(q_id, "Yes, it's in the contract folder.")
 
     new_answers = adapter.get_new_answered_clarifications()
     assert len(new_answers) == 1
@@ -309,7 +375,7 @@ def test_get_new_answered_clarifications_deduplicates_across_calls(model):
     adapter = MatterRuntimeAdapter(model, run_id)
 
     q_id = model.clarifications.add_question("Is the payment record in the repository?")
-    model.clarifications.answer_question(q_id, "No, we need to request it.")
+    model.answer_clarification(q_id, "No, we need to request it.")
 
     # First call: should return the answer
     first = adapter.get_new_answered_clarifications()
@@ -333,7 +399,7 @@ def test_get_new_answered_clarifications_pre_run_answers_excluded(model):
 
     # Answer a question first
     q_id = model.clarifications.add_question("Is Exhibit B signed?")
-    model.clarifications.answer_question(q_id, "Yes.")
+    model.answer_clarification(q_id, "Yes.")
 
     # Now start run
     run_id = model.start_run("pre-run filter test")

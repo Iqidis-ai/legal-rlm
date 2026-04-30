@@ -241,7 +241,8 @@ Current V12 implementation status:
 - Assertion-derived context excludes rows tainted at the assertion,
   assertion-occurrence, artifact/document, or speaker-actor level.
 - `object_taint` now stores `domain_profile_id`, `domain_profile_version`, and
-  `profile_mapping_hash`; schema version 60 adds those columns for existing DBs.
+  `profile_mapping_hash`; schema version 61 scopes taint uniqueness by those
+  profile fields so cross-profile judgments cannot collapse into one row.
 - Brokered clarification writes require a compatible `profile_mapping`, CAS-check
   `profile_mappings:*`, `profile_mappings:profile:<profile_id>`, and
   `profile_mappings:mapping:<hash>`, and bind the resulting taint row to the
@@ -1124,5 +1125,33 @@ already-current domain profile and already-compatible mapping. The answer path
 does not create or overwrite domain profiles or mappings. Cross-domain brokered
 clarification writes require the source profile to exist/currently match and add
 the source profile revision to CAS expectations. Current lint coverage is 12
+read surfaces, 97 write surfaces, 47 schema tables, 41 namespaces, and 21
+inference labels. It is ready for fresh review.
+
+Reviewer 14 rejected V14 because the brokered path was correct but not
+operationally bootstrapped for ordinary matters, object taint uniqueness was
+not profile-scoped, cross-domain profile-mapping revisions were asymmetric,
+answered clarifications wrote guidance without bumping the `guidance`
+namespace, and engine hydration/read-family paths could still leak tainted
+objects.
+
+V15 addresses those blockers by installing the default legal domain profile and
+identity clarification mapping at matter construction, not inside answer commit;
+adding schema version 61 profile-scoped `object_taint` uniqueness; bumping both
+source and target profile-mapping revision keys; bumping `guidance:*` during
+brokered clarification answers; filtering tainted assertions/artifacts from
+engine hydration; normalizing taint target-kind aliases such as
+`actor/entity/entities`, `assertion/claim/claims`, `issue/objective_node`, and
+`gap/gaps`; filtering tainted assertions, issues, and gaps from
+`ReadFamilyHandler`; and disabling the old direct
+`ClarificationStore.answer_question` writer. `MatterModel.build_query_context`
+now assembles orientation state inside one SQLite read transaction so the
+context is a coherent snapshot while durable dependency manifests remain the
+next frontier. Profile-bound clean taint is now checked against the currently
+compatible profile mapping before answered clarifications can re-enter query
+context, so mapping drift quarantines old brokered answers until remapped or
+retagged. This check uses the taint row's own profile binding rather than a
+hardcoded legal profile, so current finance/code/other profile-bound
+clarifications can hydrate through the same path. Current lint coverage is 12
 read surfaces, 97 write surfaces, 47 schema tables, 41 namespaces, and 21
 inference labels. It is ready for fresh review.

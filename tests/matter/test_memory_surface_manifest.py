@@ -68,7 +68,7 @@ def test_manifest_rejects_overbroad_writer_namespaces():
     target = next(
         item
         for item in manifest["write_surfaces"]
-        if item["surface"] == "ClarificationStore.answer_question"
+        if item["surface"] == "ClarificationStore.add_question"
     )
     target["writes"] = sorted(set(target["writes"]) | {"claims"})
 
@@ -76,4 +76,4 @@ def test_manifest_rejects_overbroad_writer_namespaces():
         manifest, protocol_text
     )
 
-    assert "ClarificationStore.answer_question:extra:claims" in issues
+    assert "ClarificationStore.add_question:extra:claims" in issues

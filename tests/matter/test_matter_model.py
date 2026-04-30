@@ -585,6 +585,20 @@ def test_build_query_context_excludes_tainted_known_actors(model):
     assert "John Smith" in ctx.known_actors
 
 
+def test_build_query_context_respects_entity_taint_alias_for_actors(model):
+    acme_id, _ = model.actors.upsert_actor("Acme Corporation", actor_type="company")
+    model.memory_broker.record_object_taint(
+        target_kind="entity",
+        target_id=acme_id,
+        taint_class="unknown_taint",
+        derivation_reason="test quarantine",
+    )
+
+    ctx = model.build_query_context()
+
+    assert "Acme Corporation" not in ctx.known_actors
+
+
 def test_build_query_context_excludes_tainted_child_from_weakest_issue(model):
     parent_id, _ = model.issues.upsert_issue(
         "Parent claim",

@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 60
+SCHEMA_VERSION = 61
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -23,6 +23,7 @@ _MIGRATION_NAMES: dict[int, str] = {
     58: "llm_thinking_telemetry",
     59: "memory_broker_substrate",
     60: "object_taint_profile_binding",
+    61: "object_taint_profile_scoped_uniqueness",
 }
 
 
@@ -2825,15 +2826,19 @@ def _migration_v59(conn) -> None:
             target_kind         TEXT NOT NULL,
             target_id           TEXT NOT NULL,
             taint_class         TEXT NOT NULL,
-            domain_profile_id   TEXT,
-            domain_profile_version INTEGER,
-            profile_mapping_hash TEXT,
+            domain_profile_id   TEXT NOT NULL DEFAULT '',
+            domain_profile_version INTEGER NOT NULL DEFAULT 0,
+            profile_mapping_hash TEXT NOT NULL DEFAULT '',
             source_packet_id    TEXT NOT NULL DEFAULT '',
             provenance_event_id TEXT NOT NULL DEFAULT '',
             policy_decision_id  TEXT,
             derivation_reason   TEXT,
             created_at          TEXT NOT NULL,
-            UNIQUE(matter_id, target_kind, target_id, taint_class, source_packet_id, provenance_event_id)
+            UNIQUE(
+                matter_id, target_kind, target_id, taint_class,
+                domain_profile_id, domain_profile_version, profile_mapping_hash,
+                source_packet_id, provenance_event_id
+            )
         ) STRICT"""
     )
     conn.execute(
@@ -2906,6 +2911,59 @@ def _migration_v60(conn) -> None:
     conn.commit()
 
 
+def _migration_v61(conn) -> None:
+    """Scope object_taint uniqueness by domain profile and mapping hash."""
+    conn.execute("DROP INDEX IF EXISTS ix_object_taint_target")
+    conn.execute("ALTER TABLE object_taint RENAME TO object_taint_old")
+    conn.execute(
+        """CREATE TABLE object_taint (
+            id                  TEXT PRIMARY KEY,
+            matter_id           TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            target_kind         TEXT NOT NULL,
+            target_id           TEXT NOT NULL,
+            taint_class         TEXT NOT NULL,
+            domain_profile_id   TEXT NOT NULL DEFAULT '',
+            domain_profile_version INTEGER NOT NULL DEFAULT 0,
+            profile_mapping_hash TEXT NOT NULL DEFAULT '',
+            source_packet_id    TEXT NOT NULL DEFAULT '',
+            provenance_event_id TEXT NOT NULL DEFAULT '',
+            policy_decision_id  TEXT,
+            derivation_reason   TEXT,
+            created_at          TEXT NOT NULL,
+            UNIQUE(
+                matter_id, target_kind, target_id, taint_class,
+                domain_profile_id, domain_profile_version, profile_mapping_hash,
+                source_packet_id, provenance_event_id
+            )
+        ) STRICT"""
+    )
+    conn.execute(
+        """INSERT OR IGNORE INTO object_taint (
+               id, matter_id, target_kind, target_id, taint_class,
+               domain_profile_id, domain_profile_version, profile_mapping_hash,
+               source_packet_id, provenance_event_id, policy_decision_id,
+               derivation_reason, created_at
+           )
+           SELECT
+               id, matter_id, target_kind, target_id, taint_class,
+               COALESCE(domain_profile_id, ''),
+               COALESCE(domain_profile_version, 0),
+               COALESCE(profile_mapping_hash, ''),
+               COALESCE(source_packet_id, ''),
+               COALESCE(provenance_event_id, ''),
+               policy_decision_id,
+               derivation_reason,
+               created_at
+           FROM object_taint_old"""
+    )
+    conn.execute("DROP TABLE object_taint_old")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_object_taint_target"
+        " ON object_taint(matter_id, target_kind, target_id, taint_class)"
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -2970,6 +3028,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (58, _migration_v58),
     (59, _migration_v59),
     (60, _migration_v60),
+    (61, _migration_v61),
 ]
 
 

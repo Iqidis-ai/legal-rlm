@@ -384,19 +384,6 @@
     {
       "source": "src/irys/matter/graph.py",
       "writes": [
-        "clarifications",
-        "guidance"
-      ],
-      "broker_status": "legacy_direct_writer",
-      "migration_owner": "memory_broker",
-      "hard_expiry": "2026-05-31",
-      "taint_behavior": "legacy_unknown_until_brokered",
-      "profile_behavior": "legacy_unknown_until_profile_bound",
-      "surface": "ClarificationStore.answer_question"
-    },
-    {
-      "source": "src/irys/matter/graph.py",
-      "writes": [
         "guidance"
       ],
       "broker_status": "legacy_direct_writer",
@@ -1231,6 +1218,21 @@
       "taint_behavior": "enforced_by_object_taint_rows",
       "profile_behavior": "enforced_by_domain_profile_and_profile_mapping_rows",
       "surface": "MemoryBrokerStore.upsert_domain_profile"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "domain_profiles",
+        "namespace_revision",
+        "profile_mappings",
+        "schema_state"
+      ],
+      "broker_status": "broker_substrate",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "none",
+      "taint_behavior": "enforced_by_object_taint_rows",
+      "profile_behavior": "enforced_by_domain_profile_and_profile_mapping_rows",
+      "surface": "MemoryBrokerStore.ensure_default_legal_profile"
     },
     {
       "source": "src/irys/matter/graph.py",

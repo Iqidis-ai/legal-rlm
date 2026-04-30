@@ -960,10 +960,10 @@ class AssertionStore:
         aggregates — ~3-5× faster for large assertion stores because we only need
         proposition_text, belief_state, and a single source_role per assertion.
 
-        Filters out inactive belief states (disputed/withdrawn/superseded) at the
-        DB level so the LIMIT budget is not wasted on assertions that will be skipped
-        during hydration. This ensures the 200-slot window contains only active facts
-        even after many user corrections. (SO-2 budget efficiency)
+        Filters out inactive belief states and broker-tainted assertion context
+        at the DB level so the LIMIT budget is not wasted on assertions that
+        cannot enter clean hydration. This covers taint on the assertion, its
+        occurrences, source artifacts, and speaker actors.
 
         P0.2: also returns verification_status so callers can classify
         each row through TrustPolicy and partition into
@@ -990,6 +990,33 @@ class AssertionStore:
                    SELECT id FROM assertion
                    WHERE matter_id=?
                      AND belief_state NOT IN ('disputed','withdrawn','superseded')
+                     AND NOT EXISTS (
+                         SELECT 1 FROM object_taint ot
+                         WHERE ot.matter_id=assertion.matter_id
+                           AND ot.target_kind IN ('assertion', 'claims')
+                           AND ot.target_id=assertion.id
+                           AND ot.taint_class NOT IN (
+                               'clean', 'public_clean', 'system_clean', 'user_supplied_clean'
+                           )
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1
+                         FROM assertion_occurrence ao_taint
+                         JOIN object_taint ot
+                           ON ot.matter_id=assertion.matter_id
+                          AND ot.taint_class NOT IN (
+                              'clean', 'public_clean', 'system_clean', 'user_supplied_clean'
+                          )
+                          AND (
+                              (ot.target_kind IN ('assertion_occurrence', 'claim_occurrence')
+                               AND ot.target_id=ao_taint.id)
+                              OR (ot.target_kind IN ('artifact', 'artifacts')
+                                  AND ot.target_id=ao_taint.document_id)
+                              OR (ot.target_kind IN ('actor', 'entity', 'entities')
+                                  AND ot.target_id=ao_taint.speaker_actor_id)
+                          )
+                         WHERE ao_taint.assertion_id=assertion.id
+                     )
                    ORDER BY created_at DESC
                    LIMIT ?
                ),
@@ -2923,19 +2950,11 @@ class ClarificationStore:
         return q_id
 
     def answer_question(self, question_id: str, answer_text: str) -> bool:
-        """Record the user's answer to a clarification question.
-
-        Returns True if the question was found and updated, False if it does not
-        exist in this matter (caller should return 404).
-        """
-        now = _now()
-        cur = self.db.execute(
-            """UPDATE clarification_question
-               SET answer_text=?, answered_at=?, status='answered'
-               WHERE id=? AND matter_id=?""",
-            (answer_text, now, question_id, self.matter_id),
+        """Disabled direct writer; use MatterModel.answer_clarification()."""
+        raise RuntimeError(
+            "ClarificationStore.answer_question bypasses memory broker policy; "
+            "use MatterModel.answer_clarification()"
         )
-        return cur.rowcount > 0
 
     def get_pending(self, limit: "int | None" = None) -> list[dict]:
         """Return unanswered clarification questions, newest first."""
@@ -4932,10 +4951,85 @@ class MemoryBrokerStore:
         "system_clean",
         "user_supplied_clean",
     })
+    TAINT_KIND_ALIASES = {
+        "actor": "entities",
+        "actors": "entities",
+        "entity": "entities",
+        "entities": "entities",
+        "artifact": "artifacts",
+        "artifacts": "artifacts",
+        "document": "artifacts",
+        "documents": "artifacts",
+        "assertion": "claims",
+        "assertions": "claims",
+        "claim": "claims",
+        "claims": "claims",
+        "assertion_occurrence": "claim_occurrence",
+        "assertion_occurrences": "claim_occurrence",
+        "claim_occurrence": "claim_occurrence",
+        "claim_occurrences": "claim_occurrence",
+        "criterion": "criteria",
+        "criteria": "criteria",
+        "issue_predicate": "criteria",
+        "issue_predicates": "criteria",
+        "evidence_edge": "support_edges",
+        "support_edge": "support_edges",
+        "support_edges": "support_edges",
+        "assertion_issue_link": "support_edges",
+        "gap": "gaps",
+        "gaps": "gaps",
+        "issue": "objective_nodes",
+        "issues": "objective_nodes",
+        "objective_node": "objective_nodes",
+        "objective_nodes": "objective_nodes",
+    }
+    DEFAULT_LEGAL_PROFILE_ID = "legal"
+    DEFAULT_LEGAL_PROFILE_VERSION = 1
 
     def __init__(self, db: SQLiteMatterDB, matter_id: str):
         self.db = db
         self.matter_id = matter_id
+
+    @classmethod
+    def canonical_taint_kind(cls, target_kind: str) -> str:
+        key = str(target_kind or "").strip()
+        return cls.TAINT_KIND_ALIASES.get(key, key)
+
+    @classmethod
+    def taint_kind_aliases(cls, target_kind: str) -> tuple[str, ...]:
+        canonical = cls.canonical_taint_kind(target_kind)
+        aliases = {
+            alias
+            for alias, mapped in cls.TAINT_KIND_ALIASES.items()
+            if mapped == canonical
+        }
+        aliases.add(canonical)
+        return tuple(sorted(aliases))
+
+    @classmethod
+    def default_legal_profile_json(cls) -> str:
+        profile = {
+            "broker_protocol": "memory_coordination_v14",
+            "neutral_kernel": {
+                "artifact": "document",
+                "claim": "assertion",
+                "claim_occurrence": "assertion_occurrence",
+                "criterion": "issue_predicate",
+                "entity": "actor",
+                "objective_node": "issue",
+                "support_edge": "evidence_edge",
+                "workspace": "matter",
+            },
+            "profile_id": cls.DEFAULT_LEGAL_PROFILE_ID,
+            "profile_kind": "legal",
+            "profile_version": cls.DEFAULT_LEGAL_PROFILE_VERSION,
+        }
+        return _json_mod.dumps(profile, sort_keys=True, separators=(",", ":"))
+
+    @classmethod
+    def default_legal_profile_hash(cls) -> str:
+        payload = cls.default_legal_profile_json()
+        return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def get_namespace_revision(
         self,
@@ -5095,6 +5189,7 @@ class MemoryBrokerStore:
         required_revision_keys = {
             self.revision_key("clarifications"),
             self.revision_key("clarifications", "clarification", question_id),
+            self.revision_key("guidance"),
             self.revision_key("object_taint"),
             self.revision_key("object_taint", "clarification", question_id),
             self.revision_key("policy"),
@@ -5183,6 +5278,7 @@ class MemoryBrokerStore:
             self._bump_namespace_revision_in_tx(
                 "clarifications", "clarification", question_id, now=now
             )
+            self._bump_namespace_revision_in_tx("guidance", now=now)
             self._bump_namespace_revision_in_tx("object_taint", now=now)
             self._bump_namespace_revision_in_tx(
                 "object_taint", "clarification", question_id, now=now
@@ -5248,6 +5344,14 @@ class MemoryBrokerStore:
     ) -> str:
         row_id = _id()
         now = _now()
+        canonical_target_kind = self.canonical_taint_kind(target_kind)
+        profile_id_key = domain_profile_id or ""
+        profile_version_key = (
+            int(domain_profile_version) if domain_profile_version is not None else 0
+        )
+        mapping_hash_key = profile_mapping_hash or ""
+        source_packet_key = source_packet_id or ""
+        provenance_event_key = provenance_event_id or ""
         with self.db.transaction():
             self.db.execute(
                 """INSERT OR IGNORE INTO object_taint
@@ -5259,14 +5363,14 @@ class MemoryBrokerStore:
                 (
                     row_id,
                     self.matter_id,
-                    target_kind,
+                    canonical_target_kind,
                     target_id,
                     taint_class,
-                    domain_profile_id,
-                    int(domain_profile_version) if domain_profile_version is not None else None,
-                    profile_mapping_hash,
-                    source_packet_id or "",
-                    provenance_event_id or "",
+                    profile_id_key,
+                    profile_version_key,
+                    mapping_hash_key,
+                    source_packet_key,
+                    provenance_event_key,
                     policy_decision_id,
                     derivation_reason,
                     now,
@@ -5274,32 +5378,162 @@ class MemoryBrokerStore:
             )
             self._bump_namespace_revision_in_tx("object_taint", now=now)
             self._bump_namespace_revision_in_tx(
-                "object_taint", target_kind, target_id, now=now
+                "object_taint", canonical_target_kind, target_id, now=now
             )
             self._bump_namespace_revision_in_tx("policy", now=now)
         row = self.db.execute(
             """SELECT id FROM object_taint
                WHERE matter_id=? AND target_kind=? AND target_id=? AND taint_class=?
+                 AND domain_profile_id=? AND domain_profile_version=?
+                 AND profile_mapping_hash=?
                  AND source_packet_id=? AND provenance_event_id=?""",
             (
                 self.matter_id,
-                target_kind,
+                canonical_target_kind,
                 target_id,
                 taint_class,
-                source_packet_id or "",
-                provenance_event_id or "",
+                profile_id_key,
+                profile_version_key,
+                mapping_hash_key,
+                source_packet_key,
+                provenance_event_key,
             ),
         ).fetchone()
         return row["id"] if row else row_id
 
     def list_object_taint(self, target_kind: str, target_id: str) -> list[dict]:
+        aliases = self.taint_kind_aliases(target_kind)
         rows = self.db.execute(
-            """SELECT * FROM object_taint
-               WHERE matter_id=? AND target_kind=? AND target_id=?
+            f"""SELECT * FROM object_taint
+               WHERE matter_id=? AND target_kind IN ({','.join('?' for _ in aliases)})
+                 AND target_id=?
                ORDER BY created_at DESC""",
-            (self.matter_id, target_kind, target_id),
+            (self.matter_id, *aliases, target_id),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def object_is_clean(self, target_kind: str, target_id: str) -> bool:
+        taints = self.list_object_taint(target_kind, target_id)
+        if not taints:
+            return True
+        return all(
+            row.get("taint_class") in self.CLEAN_TAINT_CLASSES
+            for row in taints
+        )
+
+    def current_profile_mapping_hash(
+        self,
+        *,
+        domain_profile_id: str,
+        domain_profile_version: int,
+        target_kind: str,
+        target_namespace: str,
+        source_domain_profile_id: str | None = None,
+        source_domain_profile_version: int | None = None,
+    ) -> str | None:
+        source_id = source_domain_profile_id or domain_profile_id
+        source_version = (
+            int(source_domain_profile_version)
+            if source_domain_profile_version is not None
+            else int(domain_profile_version)
+        )
+        for mapping in self.list_profile_mappings(
+            domain_profile_id,
+            target_kind=target_kind,
+            target_namespace=target_namespace,
+        ):
+            if (
+                mapping.get("source_domain_profile_id") == source_id
+                and int(mapping.get("source_domain_profile_version") or 0) == source_version
+                and int(mapping.get("target_domain_profile_version") or 0)
+                == int(domain_profile_version)
+                and mapping.get("compatibility_status") in {"identity", "compatible"}
+            ):
+                return str(mapping["target_mapping_hash"])
+        return None
+
+    def object_is_clean_for_profile(
+        self,
+        target_kind: str,
+        target_id: str,
+        *,
+        domain_profile_id: str,
+        domain_profile_version: int,
+        target_namespace: str,
+        source_domain_profile_id: str | None = None,
+        source_domain_profile_version: int | None = None,
+    ) -> bool:
+        taints = self.list_object_taint(target_kind, target_id)
+        if not taints:
+            return True
+        if any(row.get("taint_class") not in self.CLEAN_TAINT_CLASSES for row in taints):
+            return False
+        current_mapping_hash = self.current_profile_mapping_hash(
+            domain_profile_id=domain_profile_id,
+            domain_profile_version=domain_profile_version,
+            target_kind=target_kind,
+            target_namespace=target_namespace,
+            source_domain_profile_id=source_domain_profile_id,
+            source_domain_profile_version=source_domain_profile_version,
+        )
+        for row in taints:
+            row_profile_id = str(row.get("domain_profile_id") or "")
+            row_profile_version = int(row.get("domain_profile_version") or 0)
+            row_mapping_hash = str(row.get("profile_mapping_hash") or "")
+            if not (row_profile_id or row_profile_version or row_mapping_hash):
+                continue
+            if current_mapping_hash is None:
+                return False
+            if row_profile_id != domain_profile_id:
+                return False
+            if row_profile_version != int(domain_profile_version):
+                return False
+            if row_mapping_hash != current_mapping_hash:
+                return False
+        return True
+
+    def object_is_clean_for_current_profile_binding(
+        self,
+        target_kind: str,
+        target_id: str,
+        *,
+        target_namespace: str,
+    ) -> bool:
+        taints = self.list_object_taint(target_kind, target_id)
+        if not taints:
+            return True
+        if any(row.get("taint_class") not in self.CLEAN_TAINT_CLASSES for row in taints):
+            return False
+        for row in taints:
+            row_profile_id = str(row.get("domain_profile_id") or "")
+            row_profile_version = int(row.get("domain_profile_version") or 0)
+            row_mapping_hash = str(row.get("profile_mapping_hash") or "")
+            if not (row_profile_id or row_profile_version or row_mapping_hash):
+                continue
+            if not row_profile_id or row_profile_version <= 0 or not row_mapping_hash:
+                return False
+            current_mapping_hash = self.current_profile_mapping_hash(
+                domain_profile_id=row_profile_id,
+                domain_profile_version=row_profile_version,
+                target_kind=target_kind,
+                target_namespace=target_namespace,
+            )
+            if current_mapping_hash != row_mapping_hash:
+                return False
+        return True
+
+    def tainted_target_ids(self, target_kind: str) -> set[str]:
+        aliases = self.taint_kind_aliases(target_kind)
+        rows = self.db.execute(
+            f"""SELECT target_id, taint_class FROM object_taint
+               WHERE matter_id=? AND target_kind IN ({','.join('?' for _ in aliases)})""",
+            (self.matter_id, *aliases),
+        ).fetchall()
+        return {
+            str(row["target_id"])
+            for row in rows
+            if row["taint_class"] not in self.CLEAN_TAINT_CLASSES
+        }
 
     def upsert_domain_profile(
         self,
@@ -5382,7 +5616,26 @@ class MemoryBrokerStore:
     ) -> str:
         row_id = _id()
         now = _now()
+        source_version = int(source_domain_profile_version)
+        target_version = int(target_domain_profile_version)
         with self.db.transaction():
+            existing = self.db.execute(
+                """SELECT target_mapping_hash FROM profile_mapping
+                   WHERE matter_id=? AND source_domain_profile_id=?
+                     AND source_domain_profile_version=?
+                     AND target_domain_profile_id=?
+                     AND target_domain_profile_version=?
+                     AND target_kind=? AND target_namespace=?""",
+                (
+                    self.matter_id,
+                    source_domain_profile_id,
+                    source_version,
+                    target_domain_profile_id,
+                    target_version,
+                    target_kind,
+                    target_namespace,
+                ),
+            ).fetchone()
             self.db.execute(
                 """INSERT INTO profile_mapping
                    (id, matter_id, source_domain_profile_id, source_domain_profile_version,
@@ -5405,9 +5658,9 @@ class MemoryBrokerStore:
                     row_id,
                     self.matter_id,
                     source_domain_profile_id,
-                    int(source_domain_profile_version),
+                    source_version,
                     target_domain_profile_id,
-                    int(target_domain_profile_version),
+                    target_version,
                     source_mapping_hash,
                     target_mapping_hash,
                     target_kind,
@@ -5422,9 +5675,24 @@ class MemoryBrokerStore:
             self._bump_namespace_revision_in_tx(
                 "profile_mappings", "profile", target_domain_profile_id, now=now
             )
+            if source_domain_profile_id != target_domain_profile_id:
+                self._bump_namespace_revision_in_tx(
+                    "profile_mappings", "profile", source_domain_profile_id, now=now
+                )
             self._bump_namespace_revision_in_tx(
                 "profile_mappings", "mapping", target_mapping_hash, now=now
             )
+            if (
+                existing is not None
+                and existing["target_mapping_hash"]
+                and existing["target_mapping_hash"] != target_mapping_hash
+            ):
+                self._bump_namespace_revision_in_tx(
+                    "profile_mappings",
+                    "mapping",
+                    existing["target_mapping_hash"],
+                    now=now,
+                )
         row = self.db.execute(
             """SELECT id FROM profile_mapping
                WHERE matter_id=? AND source_domain_profile_id=?
@@ -5435,9 +5703,9 @@ class MemoryBrokerStore:
             (
                 self.matter_id,
                 source_domain_profile_id,
-                int(source_domain_profile_version),
+                source_version,
                 target_domain_profile_id,
-                int(target_domain_profile_version),
+                target_version,
                 target_kind,
                 target_namespace,
             ),
@@ -5466,6 +5734,61 @@ class MemoryBrokerStore:
             params,
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def ensure_default_legal_profile(self) -> None:
+        """Install the default legal profile/mapping for newly opened matters.
+
+        This is intentionally outside brokered answer paths: runtime writes can
+        require a current profile without silently creating one at commit time.
+        Existing profile or mapping rows are left intact.
+        """
+        profile = self.get_domain_profile(
+            self.DEFAULT_LEGAL_PROFILE_ID,
+            self.DEFAULT_LEGAL_PROFILE_VERSION,
+        )
+        if profile is None:
+            profile_hash = self.default_legal_profile_hash()
+            self.upsert_domain_profile(
+                profile_id=self.DEFAULT_LEGAL_PROFILE_ID,
+                profile_version=self.DEFAULT_LEGAL_PROFILE_VERSION,
+                profile_kind="legal",
+                profile_json=self.default_legal_profile_json(),
+                mapping_hash=profile_hash,
+            )
+        else:
+            profile_hash = str(profile["mapping_hash"])
+
+        mappings = self.list_profile_mappings(
+            self.DEFAULT_LEGAL_PROFILE_ID,
+            target_kind="clarification",
+            target_namespace="clarifications",
+        )
+        for mapping in mappings:
+            same_identity_pair = (
+                mapping.get("source_domain_profile_id") == self.DEFAULT_LEGAL_PROFILE_ID
+                and int(mapping.get("source_domain_profile_version") or 0)
+                == self.DEFAULT_LEGAL_PROFILE_VERSION
+                and int(mapping.get("target_domain_profile_version") or 0)
+                == self.DEFAULT_LEGAL_PROFILE_VERSION
+            )
+            if not same_identity_pair:
+                continue
+            if mapping.get("compatibility_status") in {"identity", "compatible"}:
+                return
+            # Preserve an explicit incompatible/requires-transform policy row.
+            return
+
+        self.record_profile_mapping(
+            source_domain_profile_id=self.DEFAULT_LEGAL_PROFILE_ID,
+            source_domain_profile_version=self.DEFAULT_LEGAL_PROFILE_VERSION,
+            target_domain_profile_id=self.DEFAULT_LEGAL_PROFILE_ID,
+            target_domain_profile_version=self.DEFAULT_LEGAL_PROFILE_VERSION,
+            source_mapping_hash=profile_hash,
+            target_mapping_hash=profile_hash,
+            target_kind="clarification",
+            target_namespace="clarifications",
+            compatibility_status="identity",
+        )
 
 
 class TrustOverrideStore:

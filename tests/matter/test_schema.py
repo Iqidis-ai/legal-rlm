@@ -69,6 +69,37 @@ def test_memory_broker_substrate_tables_exist():
         assert columns <= live
 
 
+def test_matter_model_bootstraps_default_legal_broker_profile():
+    from irys.matter import MatterModel
+
+    model = MatterModel.open_in_memory()
+    broker = model.memory_broker
+    profile = broker.get_domain_profile("legal", 1)
+    assert profile is not None
+    assert profile["profile_kind"] == "legal"
+    assert profile["mapping_hash"] == broker.default_legal_profile_hash()
+
+    mappings = broker.list_profile_mappings(
+        "legal",
+        target_kind="clarification",
+        target_namespace="clarifications",
+    )
+    assert any(
+        mapping["source_domain_profile_id"] == "legal"
+        and mapping["source_domain_profile_version"] == 1
+        and mapping["target_domain_profile_version"] == 1
+        and mapping["compatibility_status"] == "identity"
+        and mapping["target_mapping_hash"] == broker.default_legal_profile_hash()
+        for mapping in mappings
+    )
+
+    q_id = model.clarifications.add_question("Is the signed amendment available?")
+    assert model.answer_clarification(q_id, "Yes.")
+    taint = broker.list_object_taint("clarification", q_id)[0]
+    assert taint["domain_profile_id"] == "legal"
+    assert taint["profile_mapping_hash"] == broker.default_legal_profile_hash()
+
+
 def test_memory_broker_store_round_trips_substrate_state():
     from irys.matter import MatterModel
     from irys.matter.graph import MemoryBrokerCASMismatch
@@ -87,7 +118,7 @@ def test_memory_broker_store_round_trips_substrate_state():
         derivation_reason="test",
     )
     assert broker.get_namespace_revision("object_taint") == 1
-    assert broker.get_namespace_revision("object_taint", "claim", "c1") == 1
+    assert broker.get_namespace_revision("object_taint", "claims", "c1") == 1
     taints = broker.list_object_taint("claim", "c1")
     assert taints[0]["id"] == taint_id
     assert taints[0]["taint_class"] == "unknown_taint"
@@ -101,6 +132,33 @@ def test_memory_broker_store_round_trips_substrate_state():
     assert len(broker.list_object_taint("claim", "c1")) == 1
     assert broker.get_namespace_revision("object_taint") == 2
 
+    legal_taint_id = broker.record_object_taint(
+        target_kind="claim",
+        target_id="c2",
+        taint_class="clean",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:legal",
+        source_packet_id="packet",
+        provenance_event_id="prov",
+    )
+    finance_taint_id = broker.record_object_taint(
+        target_kind="claim",
+        target_id="c2",
+        taint_class="clean",
+        domain_profile_id="finance",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:finance",
+        source_packet_id="packet",
+        provenance_event_id="prov",
+    )
+    assert finance_taint_id != legal_taint_id
+    assert len(broker.list_object_taint("claim", "c2")) == 2
+
+    profile_rev_before = broker.get_namespace_revision("domain_profiles")
+    profile_specific_rev_before = broker.get_namespace_revision(
+        "domain_profiles", "profile", "legal"
+    )
     profile_id = broker.upsert_domain_profile(
         profile_id="legal",
         profile_version=1,
@@ -111,9 +169,19 @@ def test_memory_broker_store_round_trips_substrate_state():
     profile = broker.get_domain_profile("legal", 1)
     assert profile is not None
     assert profile["id"] == profile_id
-    assert broker.get_namespace_revision("domain_profiles") == 1
-    assert broker.get_namespace_revision("domain_profiles", "profile", "legal") == 1
+    assert broker.get_namespace_revision("domain_profiles") == profile_rev_before + 1
+    assert (
+        broker.get_namespace_revision("domain_profiles", "profile", "legal")
+        == profile_specific_rev_before + 1
+    )
 
+    mapping_rev_before = broker.get_namespace_revision("profile_mappings")
+    mapping_profile_rev_before = broker.get_namespace_revision(
+        "profile_mappings", "profile", "legal"
+    )
+    mapping_hash_rev_before = broker.get_namespace_revision(
+        "profile_mappings", "mapping", "sha256:test"
+    )
     legal_mapping_id = broker.record_profile_mapping(
         source_domain_profile_id="legal",
         source_domain_profile_version=1,
@@ -126,10 +194,20 @@ def test_memory_broker_store_round_trips_substrate_state():
         compatibility_status="identity",
     )
     assert legal_mapping_id
-    assert broker.get_namespace_revision("profile_mappings") == 1
-    assert broker.get_namespace_revision("profile_mappings", "profile", "legal") == 1
-    assert broker.get_namespace_revision("profile_mappings", "mapping", "sha256:test") == 1
+    assert broker.get_namespace_revision("profile_mappings") == mapping_rev_before + 1
+    assert (
+        broker.get_namespace_revision("profile_mappings", "profile", "legal")
+        == mapping_profile_rev_before + 1
+    )
+    assert (
+        broker.get_namespace_revision("profile_mappings", "mapping", "sha256:test")
+        == mapping_hash_rev_before + 1
+    )
 
+    mapping_rev_before = broker.get_namespace_revision("profile_mappings")
+    source_mapping_profile_rev_before = broker.get_namespace_revision(
+        "profile_mappings", "profile", "legal"
+    )
     mapping_id = broker.record_profile_mapping(
         source_domain_profile_id="legal",
         source_domain_profile_version=1,
@@ -144,14 +222,39 @@ def test_memory_broker_store_round_trips_substrate_state():
     mappings = broker.list_profile_mappings("finance", target_kind="claim")
     assert mappings[0]["id"] == mapping_id
     assert mappings[0]["compatibility_status"] == "requires_transform"
-    assert broker.get_namespace_revision("profile_mappings") == 2
+    assert broker.get_namespace_revision("profile_mappings") == mapping_rev_before + 1
     assert broker.get_namespace_revision("profile_mappings", "profile", "finance") == 1
+    assert (
+        broker.get_namespace_revision("profile_mappings", "profile", "legal")
+        == source_mapping_profile_rev_before + 1
+    )
     assert broker.get_namespace_revision("profile_mappings", "mapping", "sha256:finance") == 1
+
+    old_hash_rev_before = broker.get_namespace_revision(
+        "profile_mappings", "mapping", "sha256:finance"
+    )
+    broker.record_profile_mapping(
+        source_domain_profile_id="legal",
+        source_domain_profile_version=1,
+        target_domain_profile_id="finance",
+        target_domain_profile_version=1,
+        source_mapping_hash="sha256:legal",
+        target_mapping_hash="sha256:finance-v2",
+        target_kind="claim",
+        target_namespace="claims",
+        compatibility_status="requires_transform",
+    )
+    assert (
+        broker.get_namespace_revision("profile_mappings", "mapping", "sha256:finance")
+        == old_hash_rev_before + 1
+    )
+    assert broker.get_namespace_revision("profile_mappings", "mapping", "sha256:finance-v2") == 1
 
     q_id = model.clarifications.add_question("Is the signed amendment available?")
     expected = {
         "clarifications:*": 0,
         f"clarifications:clarification:{q_id}": 0,
+        "guidance:*": broker.get_namespace_revision("guidance"),
         "object_taint:*": broker.get_namespace_revision("object_taint"),
         f"object_taint:clarification:{q_id}": 0,
         "policy:*": broker.get_namespace_revision("policy"),
@@ -180,6 +283,7 @@ def test_memory_broker_store_round_trips_substrate_state():
     assert answered[0]["id"] == q_id
     assert broker.get_namespace_revision("clarifications") == 1
     assert broker.get_namespace_revision("clarifications", "clarification", q_id) == 1
+    assert broker.get_namespace_revision("guidance") == 1
     taint = broker.list_object_taint("clarification", q_id)[0]
     assert taint["taint_class"] == "user_supplied_clean"
     assert taint["domain_profile_id"] == "legal"
@@ -227,6 +331,7 @@ def test_brokered_clarification_rejects_mismatched_profile_mapping_hash():
     expected = {
         "clarifications:*": 0,
         f"clarifications:clarification:{q_id}": 0,
+        "guidance:*": broker.get_namespace_revision("guidance"),
         "object_taint:*": 0,
         f"object_taint:clarification:{q_id}": 0,
         "policy:*": 0,
@@ -322,6 +427,7 @@ def test_brokered_clarification_requires_source_profile_revision_for_cross_domai
     expected = {
         "clarifications:*": 0,
         f"clarifications:clarification:{q_id}": 0,
+        "guidance:*": broker.get_namespace_revision("guidance"),
         "object_taint:*": 0,
         f"object_taint:clarification:{q_id}": 0,
         "policy:*": 0,

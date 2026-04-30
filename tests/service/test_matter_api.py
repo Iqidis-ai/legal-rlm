@@ -203,24 +203,6 @@ def test_get_clarifications_returns_pending(client, register_model):
 
 def test_answer_clarification(client, register_model):
     model = register_model
-    model.memory_broker.upsert_domain_profile(
-        profile_id="legal",
-        profile_version=1,
-        profile_kind="legal",
-        profile_json='{"default_profile":"legal"}',
-        mapping_hash="sha256:legal-default",
-    )
-    model.memory_broker.record_profile_mapping(
-        source_domain_profile_id="legal",
-        source_domain_profile_version=1,
-        target_domain_profile_id="legal",
-        target_domain_profile_version=1,
-        source_mapping_hash="sha256:legal-default",
-        target_mapping_hash="sha256:legal-default",
-        target_kind="clarification",
-        target_namespace="clarifications",
-        compatibility_status="identity",
-    )
     q_id = model.clarifications.add_question(
         question_text="Is the signed amendment available?",
     )

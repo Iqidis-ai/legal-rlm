@@ -17,7 +17,9 @@ from __future__ import annotations
 import asyncio
 import pytest
 
-from irys.matter import MatterModel, AssertionCandidate, SpeechAct, SourceRole
+from irys.matter import (
+    MatterModel, AssertionCandidate, SpeechAct, SourceRole, GapType, IssueType,
+)
 from irys.rlm.governance import (
     CLASSIFIER_SCHEMA_VERSION,
     AnswerabilitySnapshot,
@@ -489,6 +491,55 @@ def test_read_handler_high_confidence_does_not_escalate(warm_matter):
     assert result.escalation_needed is False
     assert result.citations == ["msa.pdf"]
     assert "30 days" in result.answer
+
+
+def test_read_context_excludes_broker_tainted_assertions_issues_and_gaps():
+    m = MatterModel.open_in_memory()
+    clean_id, _ = m.record_assertion(
+        AssertionCandidate(
+            proposition_text="Clean fact for read context.",
+            speech_act=SpeechAct.ALLEGED,
+            source_role=SourceRole.ADVOCACY,
+            document_id="clean.pdf",
+        )
+    )
+    tainted_id, _ = m.record_assertion(
+        AssertionCandidate(
+            proposition_text="Tainted fact must not enter read context.",
+            speech_act=SpeechAct.ALLEGED,
+            source_role=SourceRole.ADVOCACY,
+            document_id="tainted.pdf",
+        )
+    )
+    issue_id, _ = m.issues.upsert_issue("Tainted issue", IssueType.CLAIM)
+    gap_id = m.gaps.record(
+        GapType.MISSING_DOCUMENT,
+        "Tainted gap must not enter read context.",
+    )
+    m.memory_broker.record_object_taint(
+        target_kind="claim",
+        target_id=tainted_id,
+        taint_class="unknown_taint",
+    )
+    m.memory_broker.record_object_taint(
+        target_kind="objective_node",
+        target_id=issue_id,
+        taint_class="unknown_taint",
+    )
+    m.memory_broker.record_object_taint(
+        target_kind="gaps",
+        target_id=gap_id,
+        taint_class="unknown_taint",
+    )
+
+    handler = ReadFamilyHandler(client=_FakeClient({}), matter_model=m)
+    context = handler._assemble_read_context()
+
+    assert clean_id
+    assert "Clean fact for read context." in context["candidate_block"]
+    assert "Tainted fact must not enter read context." not in context["candidate_block"]
+    assert "Tainted issue" not in context["issues_block"]
+    assert "Tainted gap must not enter read context." not in context["gaps_block"]
 
 
 def test_read_handler_infra_failure_tagged_distinctly(warm_matter):

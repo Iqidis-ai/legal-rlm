@@ -118,6 +118,7 @@ class MatterModel:
         self.provenance = ProvenanceStore(db, matter_id)
         self.content_policy = ContentPolicyGuard(db, matter_id)
         self.memory_broker = MemoryBrokerStore(db, matter_id)
+        self.memory_broker.ensure_default_legal_profile()
         # In-memory snapshot of assertion counts captured at run start.
         # Keyed by run_id.  Allows complete_run() to compute reuse_rate without
         # an extra SELECT round-trip (DB is the authoritative fallback).
@@ -3146,41 +3147,59 @@ class MatterModel:
         row: dict,
         target_kind: str,
         id_key: str = "id",
+        *,
+        domain_profile_id: str | None = None,
+        domain_profile_version: int | None = None,
+        target_namespace: str | None = None,
     ) -> bool:
         target_id = row.get(id_key)
         if not target_id:
             return True
-        taints = self.memory_broker.list_object_taint(target_kind, str(target_id))
-        if not taints:
-            return True
-        return all(
-            t.get("taint_class") in MemoryBrokerStore.CLEAN_TAINT_CLASSES
-            for t in taints
-        )
+        if (
+            domain_profile_id is not None
+            and domain_profile_version is not None
+            and target_namespace is not None
+        ):
+            return self.memory_broker.object_is_clean_for_profile(
+                target_kind,
+                str(target_id),
+                domain_profile_id=domain_profile_id,
+                domain_profile_version=domain_profile_version,
+                target_namespace=target_namespace,
+            )
+        if target_namespace is not None:
+            return self.memory_broker.object_is_clean_for_current_profile_binding(
+                target_kind,
+                str(target_id),
+                target_namespace=target_namespace,
+            )
+        return self.memory_broker.object_is_clean(target_kind, str(target_id))
 
     def _filter_context_rows_by_taint(
         self,
         rows: list[dict],
         target_kind: str,
         id_key: str = "id",
+        *,
+        domain_profile_id: str | None = None,
+        domain_profile_version: int | None = None,
+        target_namespace: str | None = None,
     ) -> list[dict]:
         return [
             row
             for row in rows
-            if self._context_row_passes_taint_policy(row, target_kind, id_key)
+            if self._context_row_passes_taint_policy(
+                row,
+                target_kind,
+                id_key,
+                domain_profile_id=domain_profile_id,
+                domain_profile_version=domain_profile_version,
+                target_namespace=target_namespace,
+            )
         ]
 
     def _tainted_target_ids(self, target_kind: str) -> set[str]:
-        rows = self.db.execute(
-            """SELECT target_id, taint_class FROM object_taint
-               WHERE matter_id=? AND target_kind=?""",
-            (self.matter_id, target_kind),
-        ).fetchall()
-        return {
-            str(row["target_id"])
-            for row in rows
-            if row["taint_class"] not in MemoryBrokerStore.CLEAN_TAINT_CLASSES
-        }
+        return self.memory_broker.tainted_target_ids(target_kind)
 
     def _assertion_has_tainted_context(
         self,
@@ -3325,11 +3344,17 @@ class MatterModel:
         return min(leaf_ids, key=_leaf_rank)
 
     def build_query_context(self) -> QueryMatterContext:
+        """Build a coherent read snapshot for the recursive engine."""
+        with self.db.transaction():
+            return self._build_query_context_snapshot()
+
+    def _build_query_context_snapshot(self) -> QueryMatterContext:
         """
         Build a QueryMatterContext from current matter state.
 
         Called at the start of each investigation run to give the engine
-        a snapshot of what is already known, enabling targeted retrieval.
+        a transactionally coherent snapshot of what is already known, enabling
+        targeted retrieval.
         """
         row = self.db.execute(
             "SELECT id, name FROM matter WHERE id=?", (self.matter_id,)
@@ -3467,6 +3492,7 @@ class MatterModel:
         answered_clarifications = self._filter_context_rows_by_taint(
             self.clarifications.get_answered(limit=3),
             "clarification",
+            target_namespace="clarifications",
         )
 
         # Document annotations: strategic notes from user (SO-3 annotation)
@@ -3973,6 +3999,7 @@ class MatterModel:
             self.memory_broker.revision_key(
                 "clarifications", "clarification", question_id
             ),
+            self.memory_broker.revision_key("guidance"),
             self.memory_broker.revision_key("object_taint"),
             self.memory_broker.revision_key(
                 "object_taint", "clarification", question_id

@@ -76,6 +76,37 @@ def test_different_propositions_two_assertions(model):
     assert model.assertions.count() == 2
 
 
+def test_list_recent_for_hydration_excludes_broker_tainted_context(model):
+    clean_id, _ = model.assertions.upsert_occurrence(
+        make_candidate("Clean fact remains available.", doc_id="clean.pdf")
+    )
+    tainted_assertion_id, _ = model.assertions.upsert_occurrence(
+        make_candidate("Tainted assertion must not hydrate.", doc_id="tainted.pdf")
+    )
+    tainted_doc_id, _ = model.assertions.upsert_occurrence(
+        make_candidate("Tainted document fact must not hydrate.", doc_id="bad_doc.pdf")
+    )
+
+    model.memory_broker.record_object_taint(
+        target_kind="assertion",
+        target_id=tainted_assertion_id,
+        taint_class="unknown_taint",
+    )
+    model.memory_broker.record_object_taint(
+        target_kind="artifact",
+        target_id="bad_doc.pdf",
+        taint_class="unknown_taint",
+    )
+
+    row_ids = {
+        row["id"]
+        for row in model.assertions.list_recent_for_hydration(limit=20)
+    }
+    assert clean_id in row_ids
+    assert tainted_assertion_id not in row_ids
+    assert tainted_doc_id not in row_ids
+
+
 def test_normalized_dedup_whitespace(model):
     """Whitespace variations of the same proposition should dedup."""
     c1 = make_candidate("Payment was made on time.", doc_id="doc1")

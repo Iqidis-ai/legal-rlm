@@ -1075,6 +1075,18 @@ class ReadFamilyHandler:
             "gaps_block": gaps_block or "(no known gaps)",
         }
 
+    @staticmethod
+    def _object_is_clean(mm: Any, target_kind: str, target_id: Any) -> bool:
+        if not target_id:
+            return True
+        broker = getattr(mm, "memory_broker", None)
+        if broker is None:
+            return True
+        try:
+            return bool(broker.object_is_clean(target_kind, str(target_id)))
+        except Exception:
+            return False
+
     def _render_assertions(
         self, mm: Any,
     ) -> tuple[str, str, list[str], list[str]]:
@@ -1098,6 +1110,8 @@ class ReadFamilyHandler:
         visible_verified_ids: list[str] = []
         visible_docs_set: set[str] = set()
         for r in rows:
+            if not self._object_is_clean(mm, "assertion", r.get("id")):
+                continue
             prop = str(r.get("proposition_text") or "").strip()
             if not prop:
                 continue
@@ -1339,6 +1353,8 @@ class ReadFamilyHandler:
             return ""
         lines: list[str] = []
         for i in issues:
+            if not ReadFamilyHandler._object_is_clean(mm, "issue", i.get("id")):
+                continue
             title = str(i.get("title") or "").strip()
             mat = i.get("materiality", 0) or 0
             status = i.get("status", "open")
@@ -1354,6 +1370,8 @@ class ReadFamilyHandler:
             return ""
         lines: list[str] = []
         for g in gaps:
+            if not ReadFamilyHandler._object_is_clean(mm, "gap", g.get("id")):
+                continue
             desc = str(g.get("description") or "").strip()
             gtype = g.get("gap_type", "unknown")
             if desc:
