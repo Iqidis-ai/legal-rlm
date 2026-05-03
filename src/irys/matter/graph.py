@@ -4880,7 +4880,8 @@ class ReasoningCacheStore:
         """Validate broker-authored cache metadata against the manifest store.
 
         Returns True only when the stored manifest_hash resolves to a recorded
-        manifest whose namespace dependencies are still fresh.
+        manifest whose namespace dependencies are still fresh, and the cache
+        row's taint_class matches the manifest's declared taint_class.
         """
         manifest_hash = meta.get("dependency_manifest_hash")
         if not manifest_hash:
@@ -4888,7 +4889,11 @@ class ReasoningCacheStore:
         broker = self._broker
         if broker is None:
             return False
-        result = broker.validate_dependency_manifest(manifest_hash)
+        taint_class = meta.get("taint_class")
+        result = broker.validate_dependency_manifest(
+            manifest_hash,
+            allowed_taint_classes={taint_class} if taint_class else None,
+        )
         return result.valid
 
     def get(self, stage: str, cache_key: str) -> Optional[Any]:
@@ -6533,6 +6538,7 @@ class MemoryBrokerStore:
                 self.bump_namespace_revision(
                     "unknown_domains", "cluster", evidence_cluster_hash,
                 )
+                self.bump_namespace_revision("unknown_domains", "*", "*")
                 return existing["id"]
             row_id = _id()
             self.db.execute(
@@ -6549,6 +6555,7 @@ class MemoryBrokerStore:
             self.bump_namespace_revision(
                 "unknown_domains", "cluster", evidence_cluster_hash,
             )
+            self.bump_namespace_revision("unknown_domains", "*", "*")
         return row_id
 
 

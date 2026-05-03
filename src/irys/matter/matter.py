@@ -2157,6 +2157,14 @@ class MatterModel:
         """Search active assertions for hot-path query answering."""
         return self.assertions.search(queries, issue_id=issue_id, limit=limit)
 
+    def _ensure_belief_trust_weights(self) -> None:
+        """Load composed trust weights into the belief engine if not yet set."""
+        if self.belief.trust_weights is not None:
+            return
+        _, tw, _ = self._read_matter_domain_composition()
+        if tw:
+            self.belief.trust_weights = tw
+
     def apply_revision(
         self,
         seed_assertion_ids: list[str],
@@ -2166,6 +2174,7 @@ class MatterModel:
         _collect_unvisited: "list[str] | None" = None,
     ) -> list[RevisionResult]:
         """Trigger belief revision from seed assertions."""
+        self._ensure_belief_trust_weights()
         return self.belief.apply(seed_assertion_ids, cause, run_id, note, _collect_unvisited)
 
     def enqueue_correction_pending(
@@ -2347,6 +2356,7 @@ class MatterModel:
         it is silently cleared to None so stale IDs cannot misattribute audit rows
         regardless of the calling path (REST, in-process, or engine).
         """
+        self._ensure_belief_trust_weights()
         # Model-level run_id guard — covers all callers (r37 MEDIUM fix).
         if run_id:
             try:
