@@ -646,3 +646,106 @@ def test_composition_zero_confidence_falls_back():
     facets, tw, primary = model._read_matter_domain_composition()
     assert primary == "legal"
     assert len(tw) > 0
+
+
+# --- Brokered CAS correction tests ---
+
+
+def _make_model_with_assertion():
+    """Create a model with one assertion for correction tests."""
+    from irys.matter.models import AssertionCandidate
+    from irys.matter.enums import (
+        AssertionKind,
+        ModelLayer,
+        OriginKind,
+        SourceRole,
+        SpeechAct,
+    )
+
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("test")
+    a_id, _ = model.record_assertion(
+        AssertionCandidate(
+            proposition_text="Defendant breached the contract on Jan 1.",
+            model_layer=ModelLayer.RECORD,
+            assertion_kind=AssertionKind.FACTUAL,
+            speech_act=SpeechAct.ALLEGED,
+            source_role=SourceRole.OPERATIVE,
+            origin_kind=OriginKind.EXTRACTED,
+            document_id="doc1.pdf",
+        ),
+        run_id=run_id,
+    )
+    model.complete_run(run_id)
+    return model, a_id
+
+
+def test_brokered_correction_succeeds_with_fresh_revisions():
+    """Correction with valid expected_revisions should succeed."""
+    from irys.matter.enums import BeliefState
+
+    model, a_id = _make_model_with_assertion()
+    revisions = model.correct_assertion_revision_keys(a_id)
+    assert len(revisions) > 0
+
+    result = model.correct_assertion(
+        assertion_id=a_id,
+        new_state=BeliefState.OPERATIVE,
+        note="Test brokered correction",
+        expected_revisions=revisions,
+    )
+    assert result.assertion_id == a_id
+
+
+def test_brokered_correction_rejects_stale_revisions():
+    """Correction with stale revisions should raise CAS mismatch."""
+    from irys.matter.enums import BeliefState
+    from irys.matter.graph import MemoryBrokerCASMismatch
+
+    model, a_id = _make_model_with_assertion()
+    revisions = model.correct_assertion_revision_keys(a_id)
+
+    model.memory_broker.bump_namespace_revision("assertions")
+
+    with pytest.raises(MemoryBrokerCASMismatch):
+        model.correct_assertion(
+            assertion_id=a_id,
+            new_state=BeliefState.OPERATIVE,
+            note="Stale revision test",
+            expected_revisions=revisions,
+        )
+
+
+def test_brokered_correction_bumps_namespaces():
+    """Brokered correction should bump assertion and cache_records namespaces."""
+    from irys.matter.enums import BeliefState
+
+    model, a_id = _make_model_with_assertion()
+    broker = model.memory_broker
+
+    rev_before = broker.get_namespace_revision("assertions")
+    cache_rev_before = broker.get_namespace_revision("cache_records")
+
+    revisions = model.correct_assertion_revision_keys(a_id)
+    model.correct_assertion(
+        assertion_id=a_id,
+        new_state=BeliefState.OPERATIVE,
+        note="Bump check",
+        expected_revisions=revisions,
+    )
+
+    assert broker.get_namespace_revision("assertions") > rev_before
+    assert broker.get_namespace_revision("cache_records") > cache_rev_before
+
+
+def test_legacy_correction_still_works_without_revisions():
+    """Correction without expected_revisions uses the legacy path."""
+    from irys.matter.enums import BeliefState
+
+    model, a_id = _make_model_with_assertion()
+    result = model.correct_assertion(
+        assertion_id=a_id,
+        new_state=BeliefState.OPERATIVE,
+        note="Legacy path",
+    )
+    assert result.assertion_id == a_id

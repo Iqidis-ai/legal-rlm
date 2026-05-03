@@ -2447,6 +2447,21 @@ async def get_matter_gaps(matter_id: str, min_materiality: float = 0.0, limit: O
     return model.gaps.open_gaps(min_materiality=min_materiality, limit=limit)
 
 
+@app.get(
+    "/matter/{matter_id}/assertions/{assertion_id}/correct/revisions",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_correction_revisions(matter_id: str, assertion_id: str):
+    """Snapshot namespace revisions for CAS-protected assertion correction.
+
+    Call this before presenting the correction form, then pass the result
+    as expected_revisions in the POST .../correct request body.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    return model.correct_assertion_revision_keys(assertion_id)
+
+
 @app.post(
     "/matter/{matter_id}/assertions/{assertion_id}/correct",
     tags=["Matter Model"],
@@ -2514,9 +2529,18 @@ async def correct_assertion(
             run_id=_active_run_id,
             confidence=request.confidence,
             note=request.note,
+            expected_revisions=request.expected_revisions,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        if "CAS" in type(e).__name__ or "CASMismatch" in type(e).__name__:
+            raise HTTPException(
+                status_code=409,
+                detail="Namespace revision conflict — another write occurred since "
+                       "your revision snapshot. Re-fetch revisions and retry.",
+            )
+        raise
 
     # SO-3 active-run steering: inject correction as a synthetic clarification
     # so the currently-running investigation loop re-examines related evidence.

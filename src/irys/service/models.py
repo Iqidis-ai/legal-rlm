@@ -187,6 +187,11 @@ class CorrectAssertionRequest(BaseModel):
     confidence: float = Field(0.8, ge=0.0, le=1.0, description="Confidence level 0.0–1.0")
     note: str = Field(..., description="Reason for the correction")
     run_id: Optional[str] = Field(None, description="Active run ID for audit attribution; server falls back to latest running run if omitted")
+    expected_revisions: Optional[dict[str, int]] = Field(
+        None,
+        description="Namespace revision snapshot for CAS protection; "
+                    "obtain from GET .../correct/revisions before submitting",
+    )
 
 
 # P0.3 Review Queue and Verification API (SO-3)

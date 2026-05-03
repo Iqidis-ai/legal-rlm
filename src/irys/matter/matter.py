@@ -2341,6 +2341,11 @@ class MatterModel:
                     len(_batch), _e,
                 )
 
+    _CORRECT_ASSERTION_CAS_NAMESPACES = (
+        "assertions", "claim_occurrences", "proof_state",
+        "cache_records", "object_taint",
+    )
+
     def correct_assertion(
         self,
         assertion_id: str,
@@ -2348,6 +2353,7 @@ class MatterModel:
         run_id: Optional[str] = None,
         note: Optional[str] = None,
         confidence: Optional[float] = None,
+        expected_revisions: Optional[dict[str, int]] = None,
     ) -> RevisionResult:
         """Apply a user correction to an assertion and propagate.
 
@@ -2356,12 +2362,70 @@ class MatterModel:
         the corrected assertion — so issue-level prioritization in the loop
         reflects the correction, not a stale pre-correction state (SO-2).
 
+        When expected_revisions is provided, the write is protected by CAS:
+        namespace revisions are validated before the correction proceeds,
+        preventing stale-view writes from the API.
+
         run_id is validated: if provided but not a running session for this matter,
         it is silently cleared to None so stale IDs cannot misattribute audit rows
         regardless of the calling path (REST, in-process, or engine).
         """
+        if expected_revisions is not None:
+            return self._correct_assertion_brokered(
+                assertion_id, new_state, run_id, note, confidence,
+                expected_revisions,
+            )
         self._ensure_belief_trust_weights()
-        # Model-level run_id guard — covers all callers (r37 MEDIUM fix).
+        return self._correct_assertion_inner(
+            assertion_id, new_state, run_id, note, confidence,
+        )
+
+    def _correct_assertion_brokered(
+        self,
+        assertion_id: str,
+        new_state: BeliefState,
+        run_id: Optional[str],
+        note: Optional[str],
+        confidence: Optional[float],
+        expected_revisions: dict[str, int],
+    ) -> RevisionResult:
+        """CAS-protected correction: validates namespace revisions before writing."""
+        from .graph import MemoryBrokerCASMismatch
+
+        broker = self.memory_broker
+        required_keys = set()
+        for ns in self._CORRECT_ASSERTION_CAS_NAMESPACES:
+            required_keys.add(broker.revision_key(ns))
+        required_keys.add(
+            broker.revision_key("assertions", "assertion", assertion_id)
+        )
+
+        now = _now()
+        with self.db.write_transaction():
+            broker._assert_expected_revisions(expected_revisions, required_keys)
+            self._ensure_belief_trust_weights()
+
+            result = self._correct_assertion_inner(
+                assertion_id, new_state, run_id, note, confidence,
+            )
+
+            for ns in self._CORRECT_ASSERTION_CAS_NAMESPACES:
+                broker._bump_namespace_revision_in_tx(ns, now=now)
+            broker._bump_namespace_revision_in_tx(
+                "assertions", "assertion", assertion_id, now=now,
+            )
+
+        return result
+
+    def _correct_assertion_inner(
+        self,
+        assertion_id: str,
+        new_state: BeliefState,
+        run_id: Optional[str],
+        note: Optional[str],
+        confidence: Optional[float],
+    ) -> RevisionResult:
+        """Core correction logic shared by legacy and brokered paths."""
         if run_id:
             try:
                 _valid_run = self.db.execute(
@@ -2391,17 +2455,8 @@ class MatterModel:
             note=note,
         )
 
-        # Retry nodes left unvisited by BFS budget truncation (r17/r18 HIGH fix).
-        # Unvisited nodes come from result.truncation_pending — stored locally on the
-        # RevisionResult, never on the engine, so concurrent corrections cannot
-        # contaminate each other's retry frontiers.
-        #
-        # Cap: 3 inline rounds to bound synchronous HTTP latency (~6k visits max).
-        # Any remaining nodes after the cap stay in result.truncation_pending so the
-        # caller (e.g. REST endpoint) can surface propagation_truncated to the client,
-        # and the next flush_revisions() or compute_all() will finish the work.
         _pending: list[str] = list(result.truncation_pending)
-        result.truncation_pending = []  # consumed from here; new ones collected below
+        result.truncation_pending = []
         for _round in range(3):
             if not _pending:
                 break
@@ -2421,29 +2476,14 @@ class MatterModel:
             )
             _pending = _next_pending
 
-        # Update top-level truncation flag: False only if we fully converged.
         result.propagation_truncated = bool(_pending)
         if _pending:
-            result.truncation_pending = _pending  # surface remaining work to caller
-            # Durably queue unvisited nodes so the next flush_revisions() call can
-            # finish propagation — prevents permanent stale states after cap exhaustion
-            # (adversarial #028 HIGH fix). Lock protects concurrent corrections on the
-            # same shared MatterModel instance (r25 MEDIUM fix).
+            result.truncation_pending = _pending
             self.enqueue_correction_pending(_pending, run_id=run_id)
 
-        # Targeted proof_state recompute: find issues linked to this assertion
-        # and any that were revised as dependents (result.propagated_to).
-        # This ensures downstream issue/proof consumers see the corrected state.
-        # Note: when MAX_WORK truncation occurred, propagated_to may be incomplete;
-        # remaining issues will be refreshed on the next compute_all() or trust-override.
-        # The truncation SYSTEM_WARNING in the ledger makes this visible to users.
         try:
-            # Deduplicate to avoid SQLite bind-variable overrun on large propagation sets.
-            # dict.fromkeys preserves order while deduplicating.
             affected = list(dict.fromkeys([assertion_id] + (result.propagated_to or [])))
             if affected:
-                # SQLite bind limit ~999: chunk the assertion list so ALL affected
-                # issues are discovered, even when propagation chains exceed 900 nodes.
                 _SQL_PARAM_LIMIT = 900
                 issue_ids_to_recompute: set[str] = set()
                 for _batch_start in range(0, len(affected), _SQL_PARAM_LIMIT):
@@ -2457,8 +2497,6 @@ class MatterModel:
                     ).fetchall()
                     issue_ids_to_recompute.update(r["issue_id"] for r in _rows)
                 if issue_ids_to_recompute:
-                    # Pre-load trust overrides once — avoids one DB query per issue
-                    # (same pattern as compute_all()).
                     _override_rows = self.db.execute(
                         """SELECT document_pattern, trust_level FROM document_trust_override
                            WHERE matter_id=? AND trust_level != 'normal'
@@ -2468,31 +2506,39 @@ class MatterModel:
                     _overrides = [
                         (r["document_pattern"], r["trust_level"]) for r in _override_rows
                     ]
-                    # Batch all writes in one transaction — N→1 BEGIN/COMMIT cycles.
-                    with self.db.transaction():
-                        for _iid in issue_ids_to_recompute:
-                            self.proof_state.compute_and_store(
-                                _iid, _preloaded_overrides=_overrides
-                            )
+                    for _iid in issue_ids_to_recompute:
+                        self.proof_state.compute_and_store(
+                            _iid, _preloaded_overrides=_overrides
+                        )
         except Exception as exc:
             _log.warning(
                 "proof_state recompute after correct_assertion failed for %r: %s",
                 assertion_id, exc,
             )
 
-        # adv#12 Finding #1: user correction is an authoritative
-        # truth-maintenance event; any cached cascade decision or
-        # orientation plan keyed on the pre-correction state is now
-        # stale. Bump trust_revision so those entries silently miss
-        # on the next lookup. Matches the pattern used for
-        # reject_target, trust_override set/delete, and span/doc
-        # invalidation.
         try:
             self.cache.bump_trust_revision()
         except sqlite3.Error as _exc:
             _log.warning("correct_assertion: trust_revision bump failed: %s", _exc)
 
         return result
+
+    def correct_assertion_revision_keys(self, assertion_id: str) -> dict[str, int]:
+        """Snapshot current namespace revisions needed for a brokered correction.
+
+        Callers (e.g. the REST API) call this before presenting the correction
+        form, then pass the result as expected_revisions to correct_assertion().
+        """
+        broker = self.memory_broker
+        revisions: dict[str, int] = {}
+        for ns in self._CORRECT_ASSERTION_CAS_NAMESPACES:
+            key = broker.revision_key(ns)
+            revisions[key] = broker.get_namespace_revision(ns)
+        key = broker.revision_key("assertions", "assertion", assertion_id)
+        revisions[key] = broker.get_namespace_revision(
+            "assertions", "assertion", assertion_id,
+        )
+        return revisions
 
     def set_trust_override(
         self,
