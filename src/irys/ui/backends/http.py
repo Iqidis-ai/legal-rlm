@@ -324,6 +324,17 @@ class HttpBackend(UIBackend):
         _log.warning("list_documents_needing_profile: unexpected type %s", type(result).__name__)
         return []
 
+    async def get_taint_summary(
+        self, matter_id: str, limit: int = 50
+    ) -> dict:
+        result = await self._get(
+            f"/matter/{matter_id}/taint-summary", {"limit": limit}
+        )
+        if not isinstance(result, dict):
+            _log.warning("get_taint_summary: expected dict, got %s", type(result).__name__)
+            return {"by_class": [], "by_kind": [], "recent": [], "total": 0}
+        return result
+
     async def answer_clarification(
         self, matter_id: str, question_id: str, answer_text: str
     ) -> bool:

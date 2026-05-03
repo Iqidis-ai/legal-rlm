@@ -2591,6 +2591,139 @@ def _fmt_doc_triage_panel(docs: list, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_TAINT_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Sensitivity & Taint Summary",
+        "empty": "No taint records found — all objects are clean.",
+        "class_header": "By Sensitivity Class",
+        "kind_header": "By Object Kind",
+        "recent_header": "Recent Taint Events",
+    },
+    "finance": {
+        "title": "Sensitivity & Taint Summary",
+        "empty": "No taint records found — all objects are clean.",
+        "class_header": "By Sensitivity Class",
+        "kind_header": "By Object Kind",
+        "recent_header": "Recent Taint Events",
+    },
+    "coding": {
+        "title": "Sensitivity & Taint Summary",
+        "empty": "No sensitivity records found — all artifacts are clean.",
+        "class_header": "By Sensitivity Class",
+        "kind_header": "By Artifact Kind",
+        "recent_header": "Recent Sensitivity Events",
+    },
+    "academic_research": {
+        "title": "Sensitivity & Access Summary",
+        "empty": "No access restrictions found — all documents are clean.",
+        "class_header": "By Access Class",
+        "kind_header": "By Object Kind",
+        "recent_header": "Recent Access Events",
+    },
+    "biomedical": {
+        "title": "Sensitivity & Taint Summary",
+        "empty": "No sensitivity records found — all artifacts are clean.",
+        "class_header": "By Sensitivity Class",
+        "kind_header": "By Artifact Kind",
+        "recent_header": "Recent Sensitivity Events",
+    },
+}
+
+_TAINT_CLASS_COLORS: dict[str, str] = {
+    "public_clean": "#22c55e",
+    "clean_with_withheld": "#86efac",
+    "internal_work_product": "#eab308",
+    "privileged": "#f97316",
+    "sealed_privileged": "#ef4444",
+    "material_nonpublic": "#ef4444",
+    "confidential_counterparty": "#ef4444",
+    "phi": "#dc2626",
+    "clinical_trial_confidential": "#dc2626",
+    "regulatory_confidential": "#f97316",
+    "security_sensitive": "#f97316",
+    "secret_or_credential": "#dc2626",
+    "embargoed_research": "#f97316",
+    "human_subjects_sensitive": "#dc2626",
+    "license_restricted": "#eab308",
+    "unknown_taint": "#94a3b8",
+}
+
+
+def _fmt_taint_summary_panel(data: dict, domain: str = "legal") -> str:
+    labels = _TAINT_LABELS.get(domain, _TAINT_LABELS["legal"])
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    total = int(data.get("total", 0)) if isinstance(data.get("total"), (int, float)) else 0
+    if total == 0:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    parts = [
+        f"<h3 style='margin:0 0 8px 0;'>{_escape(labels['title'])}</h3>",
+        f"<div style='color:#666;font-size:0.9em;margin-bottom:8px;'>{total} taint record{'s' if total != 1 else ''} across matter</div>",
+    ]
+
+    by_class = data.get("by_class", [])
+    if isinstance(by_class, list) and by_class:
+        parts.append(f"<h4 style='margin:12px 0 4px 0;'>{_escape(labels['class_header'])}</h4>")
+        parts.append("<table style='border-collapse:collapse;width:100%;font-size:0.9em;'>")
+        parts.append("<tr style='background:#f1f5f9;'><th style='text-align:left;padding:4px 8px;'>Class</th><th style='text-align:left;padding:4px 8px;'>Count</th><th style='text-align:left;padding:4px 8px;'>Bar</th></tr>")
+        max_cnt = max((int(r.get("count", 0)) for r in by_class if isinstance(r, dict)), default=1) or 1
+        for row in by_class:
+            if not isinstance(row, dict):
+                continue
+            tc = _escape(str(row.get("taint_class", "?")))
+            cnt = int(row.get("count", 0)) if isinstance(row.get("count"), (int, float)) else 0
+            color = _TAINT_CLASS_COLORS.get(str(row.get("taint_class", "")), "#94a3b8")
+            bar = int((cnt / max_cnt) * 100)
+            parts.append(
+                f"<tr><td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>"
+                f"<span style='display:inline-block;background:{color};color:white;padding:1px 8px;border-radius:8px;font-size:0.85em;'>{tc}</span></td>"
+                f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{cnt}</td>"
+                f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>"
+                f"<div style='background:#e2e8f0;border-radius:4px;height:12px;width:100px;'>"
+                f"<div style='background:{color};border-radius:4px;height:12px;width:{bar}px;'></div></div></td></tr>"
+            )
+        parts.append("</table>")
+
+    by_kind = data.get("by_kind", [])
+    if isinstance(by_kind, list) and by_kind:
+        parts.append(f"<h4 style='margin:12px 0 4px 0;'>{_escape(labels['kind_header'])}</h4>")
+        pills = []
+        for row in by_kind:
+            if not isinstance(row, dict):
+                continue
+            kind = _escape(str(row.get("target_kind", "?")))
+            cnt = int(row.get("count", 0)) if isinstance(row.get("count"), (int, float)) else 0
+            pills.append(f"<span style='display:inline-block;background:#e2e8f0;padding:2px 10px;border-radius:10px;margin:2px 4px;font-size:0.85em;'>{kind}: {cnt}</span>")
+        parts.append("<div style='margin-bottom:8px;'>" + "".join(pills) + "</div>")
+
+    recent = data.get("recent", [])
+    if isinstance(recent, list) and recent:
+        valid_recent = [r for r in recent if isinstance(r, dict)]
+        if valid_recent:
+            parts.append(f"<h4 style='margin:12px 0 4px 0;'>{_escape(labels['recent_header'])}</h4>")
+            parts.append("<table style='border-collapse:collapse;width:100%;font-size:0.85em;'>")
+            parts.append("<tr style='background:#f1f5f9;'><th style='text-align:left;padding:4px 8px;'>Object</th><th style='text-align:left;padding:4px 8px;'>Class</th><th style='text-align:left;padding:4px 8px;'>Reason</th><th style='text-align:left;padding:4px 8px;'>When</th></tr>")
+            for row in valid_recent[:20]:
+                kind = _escape(str(row.get("target_kind", "?")))
+                tid = _escape(str(row.get("target_id", "?"))[:40])
+                tc = _escape(str(row.get("taint_class", "?")))
+                reason = _escape(str(row.get("derivation_reason", "—"))[:60])
+                when = _escape(str(row.get("created_at", "?"))[:19])
+                color = _TAINT_CLASS_COLORS.get(str(row.get("taint_class", "")), "#94a3b8")
+                parts.append(
+                    f"<tr><td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{kind}/{tid}</td>"
+                    f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>"
+                    f"<span style='background:{color};color:white;padding:1px 6px;border-radius:6px;font-size:0.85em;'>{tc}</span></td>"
+                    f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{reason}</td>"
+                    f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{when}</td></tr>"
+                )
+            parts.append("</table>")
+
+    return "\n".join(parts)
+
+
 def _fmt_domain_profile_panel(summary: dict, domain: str = "legal") -> str:
     labels = _DOMAIN_PROFILE_LABELS.get(domain, _DOMAIN_PROFILE_LABELS["legal"])
     if not summary or not isinstance(summary, dict):
@@ -6419,6 +6552,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading document triage: {_escape(exc)}</div>"
 
+    def load_taint_summary(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_taint_summary(matter_id))
+            return _fmt_taint_summary_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading taint summary: {_escape(exc)}</div>"
+
     def load_clarification_choices(self, matter_id: str) -> list:
         if not matter_id or matter_id == "—":
             return []
@@ -7795,6 +7937,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             content_policy_html = gr.HTML("<div class='viz-empty'>Content policy audit will appear here after an investigation.</div>")
             refresh_content_policy_btn = gr.Button("Refresh Content Policy Audit", variant="secondary", size="sm")
 
+        with gr.Accordion("Sensitivity & Taint — what content is restricted or flagged", open=False):
+            gr.Markdown(
+                "Shows how content sensitivity is tracked across the matter model. Each object "
+                "(document, assertion, entity) can carry taint classifications that control what "
+                "can be disclosed in different audience modes."
+            )
+            taint_summary_html = gr.HTML("<div class='viz-empty'>Taint summary will appear here after an investigation.</div>")
+            refresh_taint_btn = gr.Button("Refresh Taint Summary", variant="secondary", size="sm")
+
         with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
                 "Maps which people and companies appear in which documents and highlights "
@@ -8297,6 +8448,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_document_triage(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[doc_triage_html],
+            ).then(
+                fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[taint_summary_html],
             )
         else:
             submit_btn.click(
@@ -8351,6 +8506,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_document_triage(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[doc_triage_html],
+            ).then(
+                fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[taint_summary_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -8406,6 +8565,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_document_triage(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[doc_triage_html],
+        ).then(
+            fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[taint_summary_html],
         )
 
         export_report_btn.click(
@@ -8554,6 +8717,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_document_triage(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[doc_triage_html],
+        )
+        refresh_taint_btn.click(
+            fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[taint_summary_html],
         )
         refresh_content_policy_btn.click(
             fn=lambda mid: state.load_content_policy_audit(mid, domain=state._detect_domain(mid)),

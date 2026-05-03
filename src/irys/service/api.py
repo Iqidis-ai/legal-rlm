@@ -3253,6 +3253,20 @@ async def get_document_triage(
 
 
 @app.get(
+    "/matter/{matter_id}/taint-summary",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_taint_summary(
+    matter_id: str,
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """Return aggregated taint records: counts by class/kind plus recent entries (SO-5)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.summarize_taint(limit=limit)
+
+
+@app.get(
     "/matter/{matter_id}/domain-profile",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

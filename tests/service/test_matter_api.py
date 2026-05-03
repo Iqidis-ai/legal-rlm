@@ -1691,3 +1691,28 @@ def test_document_triage_with_limit(client, register_model):
 def test_document_triage_404(client):
     resp = client.get("/matter/unknown/document-triage")
     assert resp.status_code == 404
+
+
+# ── Taint Summary endpoint tests ─────────────────────────────────────
+
+def test_taint_summary(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/taint-summary")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "by_class" in data
+    assert "by_kind" in data
+    assert "recent" in data
+    assert "total" in data
+    assert isinstance(data["total"], int)
+
+
+def test_taint_summary_with_limit(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/taint-summary", params={"limit": 10})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "by_class" in data
+
+
+def test_taint_summary_404(client):
+    resp = client.get("/matter/unknown/taint-summary")
+    assert resp.status_code == 404

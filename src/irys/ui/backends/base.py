@@ -276,6 +276,13 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_taint_summary(
+        self, matter_id: str, limit: int = 50
+    ) -> dict:
+        """Return aggregated taint records: counts by class/kind + recent entries."""
+        ...
+
+    @abstractmethod
     async def answer_clarification(
         self, matter_id: str, question_id: str, answer_text: str
     ) -> bool:

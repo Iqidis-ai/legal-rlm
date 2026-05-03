@@ -665,6 +665,12 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.list_documents_needing_profile(limit=limit)
 
+    async def get_taint_summary(
+        self, matter_id: str, limit: int = 50
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.summarize_taint(limit=limit)
+
     async def answer_clarification(
         self, matter_id: str, question_id: str, answer_text: str
     ) -> bool:

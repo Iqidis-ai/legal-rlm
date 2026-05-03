@@ -4315,6 +4315,44 @@ class MatterModel:
             "speech_acts": speech_acts,
         }
 
+    def summarize_taint(self, limit: int = 100) -> dict:
+        """Return a summary of taint records grouped by class and kind."""
+        try:
+            by_class = self.db.execute(
+                """SELECT taint_class, COUNT(*) AS cnt
+                   FROM object_taint WHERE matter_id=?
+                   GROUP BY taint_class ORDER BY cnt DESC""",
+                (self.matter_id,),
+            ).fetchall()
+            by_kind = self.db.execute(
+                """SELECT target_kind, COUNT(*) AS cnt
+                   FROM object_taint WHERE matter_id=?
+                   GROUP BY target_kind ORDER BY cnt DESC""",
+                (self.matter_id,),
+            ).fetchall()
+            recent = self.db.execute(
+                """SELECT id, target_kind, target_id, taint_class,
+                          derivation_reason, created_at
+                   FROM object_taint WHERE matter_id=?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (self.matter_id, max(1, min(limit, 500))),
+            ).fetchall()
+        except Exception:
+            return {"by_class": [], "by_kind": [], "recent": [], "total": 0}
+
+        return {
+            "by_class": [
+                {"taint_class": r["taint_class"], "count": int(r["cnt"])}
+                for r in by_class
+            ],
+            "by_kind": [
+                {"target_kind": r["target_kind"], "count": int(r["cnt"])}
+                for r in by_kind
+            ],
+            "recent": [dict(r) for r in recent],
+            "total": sum(int(r["cnt"]) for r in by_class),
+        }
+
     @staticmethod
     def _coverage_fraction(weighted_support: float, predicate_count: int) -> float:
         """Compute evidence coverage fraction for a single issue.

@@ -1599,3 +1599,116 @@ def test_fmt_doc_triage_panel_salience_colors():
     assert "#22c55e" in result
     assert "#eab308" in result
     assert "#94a3b8" in result
+
+
+# ── Taint Summary panel tests ────────────────────────────────────────
+
+def test_fmt_taint_summary_panel_empty():
+    from irys.ui.app import _fmt_taint_summary_panel
+    result = _fmt_taint_summary_panel({})
+    assert "clean" in result.lower()
+
+
+def test_fmt_taint_summary_panel_none():
+    from irys.ui.app import _fmt_taint_summary_panel
+    result = _fmt_taint_summary_panel(None)
+    assert "clean" in result.lower()
+
+
+def test_fmt_taint_summary_panel_zero_total():
+    from irys.ui.app import _fmt_taint_summary_panel
+    result = _fmt_taint_summary_panel({"by_class": [], "by_kind": [], "recent": [], "total": 0})
+    assert "clean" in result.lower()
+
+
+def test_fmt_taint_summary_panel_basic():
+    from irys.ui.app import _fmt_taint_summary_panel
+    data = {
+        "by_class": [
+            {"taint_class": "privileged", "count": 5},
+            {"taint_class": "public_clean", "count": 12},
+        ],
+        "by_kind": [
+            {"target_kind": "assertion", "count": 10},
+            {"target_kind": "document", "count": 7},
+        ],
+        "recent": [
+            {
+                "id": "t1",
+                "target_kind": "assertion",
+                "target_id": "a1",
+                "taint_class": "privileged",
+                "derivation_reason": "attorney-client privilege detected",
+                "created_at": "2026-05-03T10:00:00",
+            },
+        ],
+        "total": 17,
+    }
+    result = _fmt_taint_summary_panel(data, domain="legal")
+    assert "Sensitivity" in result
+    assert "17 taint" in result
+    assert "privileged" in result
+    assert "public_clean" in result
+    assert "assertion" in result
+    assert "attorney-client" in result
+
+
+def test_fmt_taint_summary_panel_skips_non_dict():
+    from irys.ui.app import _fmt_taint_summary_panel
+    data = {
+        "by_class": [{"taint_class": "privileged", "count": 1}, "bad"],
+        "by_kind": [42, {"target_kind": "doc", "count": 1}],
+        "recent": ["not-a-dict"],
+        "total": 2,
+    }
+    result = _fmt_taint_summary_panel(data, domain="legal")
+    assert "privileged" in result
+
+
+def test_fmt_taint_summary_panel_xss():
+    from irys.ui.app import _fmt_taint_summary_panel
+    xss = '<img src=x onerror=alert(1)>'
+    data = {
+        "by_class": [{"taint_class": xss, "count": 1}],
+        "by_kind": [{"target_kind": xss, "count": 1}],
+        "recent": [{
+            "id": "t1", "target_kind": xss, "target_id": xss,
+            "taint_class": xss, "derivation_reason": xss,
+            "created_at": "2026-05-03T10:00:00",
+        }],
+        "total": 1,
+    }
+    result = _fmt_taint_summary_panel(data, domain="legal")
+    assert "<img" not in result
+    assert "&lt;img" in result
+
+
+def test_fmt_taint_summary_panel_coding_domain():
+    from irys.ui.app import _fmt_taint_summary_panel
+    data = {
+        "by_class": [{"taint_class": "security_sensitive", "count": 3}],
+        "by_kind": [{"target_kind": "code_artifact", "count": 3}],
+        "recent": [],
+        "total": 3,
+    }
+    result = _fmt_taint_summary_panel(data, domain="coding")
+    assert "Sensitivity" in result
+    assert "Artifact Kind" in result
+
+
+def test_fmt_taint_summary_panel_class_colors():
+    from irys.ui.app import _fmt_taint_summary_panel
+    data = {
+        "by_class": [
+            {"taint_class": "public_clean", "count": 5},
+            {"taint_class": "sealed_privileged", "count": 2},
+            {"taint_class": "unknown_taint", "count": 1},
+        ],
+        "by_kind": [],
+        "recent": [],
+        "total": 8,
+    }
+    result = _fmt_taint_summary_panel(data, domain="legal")
+    assert "#22c55e" in result
+    assert "#ef4444" in result
+    assert "#94a3b8" in result
