@@ -4393,6 +4393,125 @@ def _fmt_steering_panel(actions: list[dict], domain: str = "legal") -> str:
     )
 
 
+_BELIEF_STATE_COLORS: dict[str, str] = {
+    "accepted": "#16a34a",
+    "supported": "#2563eb",
+    "disputed": "#d97706",
+    "rejected": "#dc2626",
+    "undetermined": "#6b7280",
+}
+
+_ORIGIN_LABELS: dict[str, str] = {
+    "ai_extracted": "AI-Extracted",
+    "attorney_annotated": "Attorney Note",
+    "system_inferred": "System Inferred",
+    "imported": "Imported",
+    "legacy_backfill": "Backfill",
+}
+
+
+def _fmt_assertion_inspector(health: dict, domain: str = "legal") -> str:
+    if health.get("error"):
+        return f"<div class='viz-empty'>Assertion not found.</div>"
+    aid = _escape(health.get("assertion_id", "?"))
+    prop = _escape(health.get("proposition_text", ""))
+    belief = health.get("belief_state", "undetermined")
+    belief_label = _domain_belief_label(belief, domain) if belief else "—"
+    belief_color = _BELIEF_STATE_COLORS.get(belief, "#6b7280")
+    conf = health.get("confidence", 0)
+    conf_val = float(conf) if isinstance(conf, (int, float)) else 0.0
+    oscillating = health.get("oscillating", False)
+    support_count = health.get("support_count", 0)
+    attack_count = health.get("attack_count", 0)
+    has_superseding = health.get("has_superseding", False)
+    support_roles = health.get("support_source_roles", [])
+    attack_roles = health.get("attack_source_roles", [])
+
+    osc_badge = (
+        "<span style='background:#dc2626;color:white;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:6px'>OSCILLATING</span>"
+        if oscillating else ""
+    )
+    supersede_badge = (
+        "<span style='background:#7c3aed;color:white;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:6px'>SUPERSEDED</span>"
+        if has_superseding else ""
+    )
+
+    header = (
+        "<div style='margin-bottom:12px'>"
+        f"<div style='font-size:13px;font-weight:600;margin-bottom:4px'>{prop}</div>"
+        f"<div style='font-size:11px;color:#6b7280'>ID: <code>{aid}</code></div>"
+        f"<div style='margin-top:6px'>"
+        f"<span style='background:{belief_color};color:white;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600'>"
+        f"{_escape(belief_label.upper())}</span>"
+        f" <span style='font-size:11px;color:#6b7280'>confidence {conf_val:.2f}</span>"
+        f"{osc_badge}{supersede_badge}"
+        "</div></div>"
+    )
+
+    role_pills = lambda roles: " ".join(
+        f"<span style='background:#e5e7eb;padding:1px 5px;border-radius:3px;font-size:10px'>{_escape(r)}</span>"
+        for r in (roles[:5] if isinstance(roles, list) else [])
+    )
+
+    evidence_html = (
+        "<div style='display:flex;gap:16px;margin-bottom:12px'>"
+        f"<div style='flex:1;padding:8px;background:#f0fdf4;border-radius:6px;border-left:3px solid #16a34a'>"
+        f"<div style='font-size:10px;color:#6b7280;text-transform:uppercase'>Supporting</div>"
+        f"<div style='font-size:18px;font-weight:600;color:#16a34a'>{support_count}</div>"
+        f"<div style='margin-top:4px'>{role_pills(support_roles)}</div></div>"
+        f"<div style='flex:1;padding:8px;background:#fef2f2;border-radius:6px;border-left:3px solid #dc2626'>"
+        f"<div style='font-size:10px;color:#6b7280;text-transform:uppercase'>Attacking</div>"
+        f"<div style='font-size:18px;font-weight:600;color:#dc2626'>{attack_count}</div>"
+        f"<div style='margin-top:4px'>{role_pills(attack_roles)}</div></div>"
+        "</div>"
+    )
+
+    provenance = health.get("provenance", [])
+    if provenance:
+        prov_rows = ""
+        for p in provenance:
+            if not isinstance(p, dict):
+                continue
+            event_kind = _escape(str(p.get("event_kind", "unknown")))
+            writer = _escape(str(p.get("writer_name", "—")))
+            model_id = _escape(str(p.get("model_id") or "—"))
+            model_tier = _escape(str(p.get("model_tier") or "—"))
+            ts = _escape(str(p.get("created_at") or "—"))
+            origin = _escape(_ORIGIN_LABELS.get(event_kind, event_kind.replace("_", " ").title()))
+            source_ref = _escape(str(p.get("source_document_ref") or ""))
+            span_status = p.get("source_span_status", "")
+            span_badge = ""
+            if span_status == "present":
+                span_badge = "<span style='color:#16a34a;font-size:10px'> (span linked)</span>"
+            elif span_status == "missing":
+                span_badge = "<span style='color:#d97706;font-size:10px'> (span missing)</span>"
+            prov_rows += (
+                "<tr>"
+                f"<td style='font-size:11px;white-space:nowrap'>{ts[:19]}</td>"
+                f"<td><span class='pill pill-neutral' style='font-size:10px;padding:1px 5px'>{origin}</span></td>"
+                f"<td style='font-size:11px'>{writer}</td>"
+                f"<td style='font-size:11px'>{model_id}{(' / ' + model_tier) if model_tier != '—' else ''}</td>"
+                f"<td style='font-size:11px'>{source_ref}{span_badge}</td>"
+                "</tr>"
+            )
+        prov_html = (
+            "<div class='viz-header' style='margin-top:8px'><strong>Provenance Trail</strong></div>"
+            "<div class='table-wrap'><table class='viz-table'>"
+            "<thead><tr><th>Timestamp</th><th>Origin</th><th>Writer</th><th>Model</th><th>Source</th></tr></thead>"
+            "<tbody>" + prov_rows + "</tbody></table></div>"
+        )
+    else:
+        prov_html = "<div style='font-size:11px;color:#6b7280;margin-top:8px'>No provenance events recorded for this assertion.</div>"
+
+    return (
+        "<div class='viz-shell'>"
+        + header
+        + evidence_html
+        + prov_html
+        + "</div>"
+    )
+
+
 def _fmt_quant(payment_recon: dict, damages: list) -> str:
     """Format quant reconciliation and damages waterfall (SO-6)."""
     parts = []
@@ -5097,6 +5216,19 @@ class AppState:
             return _fmt_assertions(results, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error searching: {_escape(str(exc))}</div>"
+
+    def inspect_assertion(self, matter_id: str, assertion_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        aid = (assertion_id or "").strip()
+        if not aid:
+            return "<div class='viz-empty'>Enter an assertion ID to inspect.</div>"
+        try:
+            health = _run_async(self.backend().get_assertion_health(matter_id, aid))
+            domain = self._detect_domain(matter_id)
+            return _fmt_assertion_inspector(health, domain=domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error inspecting assertion: {_escape(str(exc))}</div>"
 
     def load_review_queue(self, matter_id: str) -> tuple[str, gr.update]:
         """Return (html_render, dropdown_update) for the review queue.
@@ -6885,6 +7017,30 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 correction_result = gr.HTML("<div class='correction-result-empty'>Apply a correction to see the result here.</div>")
 
         # ==================================================================
+        # ASSERTION INSPECTOR — deep-dive provenance for a single fact
+        # ==================================================================
+
+        with gr.Accordion(
+            "Assertion Inspector — trace how a fact was derived and who supports it",
+            open=False,
+        ):
+            gr.Markdown(
+                "Copy a Fact ID from the table above and click **Inspect** to see its "
+                "full provenance trail: which documents it came from, which model extracted it, "
+                "and how many other facts support or attack it."
+            )
+            with gr.Row():
+                inspector_assertion_id = gr.Textbox(
+                    label="Fact ID (copy from table above)",
+                    placeholder="e.g. a-3f8c…",
+                    scale=3,
+                )
+                inspect_btn = gr.Button("Inspect", variant="primary", size="sm", scale=1)
+            inspector_html = gr.HTML(
+                "<div class='viz-empty'>Enter an assertion ID to see its provenance and evidence summary.</div>"
+            )
+
+        # ==================================================================
         # REVIEW INBOX — what AI extractions need the attorney's sign-off
         # ==================================================================
 
@@ -7908,6 +8064,18 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=_correct_and_refresh,
             inputs=[matter_id_box, correction_assertion_id, correction_new_state, correction_reason],
             outputs=[correction_result, assertions_md, issues_md, overview_md],
+        )
+
+        # --- Assertion Inspector wiring ---
+        inspect_btn.click(
+            fn=lambda mid, aid: state.inspect_assertion(mid, aid),
+            inputs=[matter_id_box, inspector_assertion_id],
+            outputs=[inspector_html],
+        )
+        inspector_assertion_id.submit(
+            fn=lambda mid, aid: state.inspect_assertion(mid, aid),
+            inputs=[matter_id_box, inspector_assertion_id],
+            outputs=[inspector_html],
         )
 
         # --- Review Inbox wiring ---

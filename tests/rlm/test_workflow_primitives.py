@@ -1000,3 +1000,95 @@ def test_fmt_steering_panel_all_non_dict_returns_empty():
     from irys.ui.app import _fmt_steering_panel
     result = _fmt_steering_panel(["bad", 42, None])
     assert "viz-empty" in result
+
+
+# ---------------------------------------------------------------------------
+# Assertion Inspector panel (SO-2 provenance transparency)
+# ---------------------------------------------------------------------------
+
+def test_fmt_assertion_inspector_not_found():
+    from irys.ui.app import _fmt_assertion_inspector
+    result = _fmt_assertion_inspector({"error": "assertion_not_found"})
+    assert "viz-empty" in result
+    assert "not found" in result
+
+
+def test_fmt_assertion_inspector_basic():
+    from irys.ui.app import _fmt_assertion_inspector
+    health = {
+        "assertion_id": "a-123",
+        "proposition_text": "The contract was signed on Jan 1",
+        "belief_state": "accepted",
+        "confidence": 0.92,
+        "oscillating": False,
+        "support_count": 3,
+        "attack_count": 1,
+        "has_superseding": False,
+        "support_source_roles": ["CONTRACT", "DEPOSITION"],
+        "attack_source_roles": ["COMPLAINT"],
+        "provenance": [
+            {
+                "event_kind": "ai_extracted",
+                "writer_name": "DocumentAnalyzer",
+                "model_id": "gpt-4",
+                "model_tier": "high",
+                "created_at": "2026-05-01T10:00:00",
+                "source_document_ref": "contract_v2.pdf",
+                "source_span_status": "present",
+            },
+        ],
+    }
+    result = _fmt_assertion_inspector(health)
+    assert "a-123" in result
+    assert "The contract was signed" in result
+    assert "ACCEPTED" in result
+    assert "0.92" in result
+    assert "3" in result
+    assert "1" in result
+    assert "CONTRACT" in result
+    assert "AI-Extracted" in result
+    assert "DocumentAnalyzer" in result
+    assert "gpt-4" in result
+    assert "contract_v2.pdf" in result
+    assert "span linked" in result
+
+
+def test_fmt_assertion_inspector_oscillating():
+    from irys.ui.app import _fmt_assertion_inspector
+    health = {
+        "assertion_id": "a-osc",
+        "proposition_text": "Unstable claim",
+        "belief_state": "disputed",
+        "confidence": 0.45,
+        "oscillating": True,
+        "support_count": 2,
+        "attack_count": 2,
+        "has_superseding": True,
+        "support_source_roles": [],
+        "attack_source_roles": [],
+        "provenance": [],
+    }
+    result = _fmt_assertion_inspector(health)
+    assert "OSCILLATING" in result
+    assert "SUPERSEDED" in result
+    assert "No provenance events" in result
+
+
+def test_fmt_assertion_inspector_non_dict_provenance():
+    from irys.ui.app import _fmt_assertion_inspector
+    health = {
+        "assertion_id": "a-bad",
+        "proposition_text": "Test",
+        "belief_state": "accepted",
+        "confidence": 0.8,
+        "oscillating": False,
+        "support_count": 0,
+        "attack_count": 0,
+        "has_superseding": False,
+        "support_source_roles": [],
+        "attack_source_roles": [],
+        "provenance": ["not-a-dict", {"event_kind": "ai_extracted", "writer_name": "X", "created_at": "2026-01-01"}],
+    }
+    result = _fmt_assertion_inspector(health)
+    assert "Provenance Trail" in result
+    assert "AI-Extracted" in result
