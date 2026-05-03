@@ -259,3 +259,8 @@ class UIBackend(ABC):
     async def generate_clarifications(self, matter_id: str, top_n: int = 3) -> list[str]:
         """Generate clarification questions from gaps. Returns new question_ids."""
         ...
+
+    @abstractmethod
+    async def search_assertions(self, matter_id: str, query: str, limit: int = 20) -> list[dict]:
+        """Search assertions by text."""
+        ...

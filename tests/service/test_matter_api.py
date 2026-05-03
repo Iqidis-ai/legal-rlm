@@ -1363,3 +1363,36 @@ def test_generate_clarifications_empty(client, register_model):
 def test_generate_clarifications_404_for_unknown_matter(client):
     resp = client.post("/matter/unknown/generate-clarifications")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/assertions/search
+# ---------------------------------------------------------------------------
+
+def test_search_assertions_returns_results(client, register_model):
+    model = register_model
+    _add_assertion(model, text="Payment was due January 15.")
+    _add_assertion(model, text="Delivery occurred in March.")
+    resp = client.get(f"/matter/{MATTER_ID}/assertions/search", params={"q": "payment"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) >= 1
+    assert any("payment" in a.get("proposition_text", "").lower() for a in data)
+
+
+def test_search_assertions_empty_results(client, register_model):
+    _add_assertion(register_model, text="Payment was due January 15.")
+    resp = client.get(f"/matter/{MATTER_ID}/assertions/search", params={"q": "nonexistent_xyz"})
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_search_assertions_requires_min_length(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/assertions/search", params={"q": "x"})
+    assert resp.status_code == 422
+
+
+def test_search_assertions_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/assertions/search", params={"q": "test"})
+    assert resp.status_code == 404

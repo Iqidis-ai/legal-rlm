@@ -2051,6 +2051,21 @@ async def get_matter_assertions(matter_id: str, limit: int = 50, offset: int = 0
 
 
 @app.get(
+    "/matter/{matter_id}/assertions/search",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def search_assertions(
+    matter_id: str,
+    q: str = Query(..., min_length=2, max_length=200),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    """Search assertions by text across proposition text and occurrence content."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.search_assertions([q], limit=limit)
+
+
+@app.get(
     "/matter/{matter_id}/assertions/{assertion_id}/history",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

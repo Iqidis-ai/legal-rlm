@@ -4777,6 +4777,27 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading assertions: {_escape(str(exc))}</div>"
 
+    def search_assertions(self, matter_id: str, query: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        if not query or len(query.strip()) < 2:
+            return self.load_assertions(matter_id)
+        try:
+            backend = self.backend()
+            results = _run_async(backend.search_assertions(matter_id, query.strip(), limit=20))
+            domain = "legal"
+            try:
+                overview = _run_async(backend.get_overview(matter_id))
+                dc = overview.get("domain_composition", {}) if isinstance(overview, dict) else {}
+                domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
+            except Exception:
+                pass
+            if not results:
+                return f"<div class='viz-empty'>No facts matching “{_escape(query.strip())}”.</div>"
+            return _fmt_assertions(results, domain=domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error searching: {_escape(str(exc))}</div>"
+
     def load_review_queue(self, matter_id: str) -> tuple[str, gr.update]:
         """Return (html_render, dropdown_update) for the review queue.
 
@@ -6298,9 +6319,13 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "If something is wrong, correct it below — Irys will automatically update any "
                 "conclusions that depended on that fact."
             )
-            # gr.HTML (not gr.Markdown) so the trust-pill and belief-
-            # pill styled HTML table renders without sanitize_html
-            # stripping inline styles.
+            with gr.Row():
+                assertion_search_box = gr.Textbox(
+                    label="Search facts",
+                    placeholder="Type to filter facts by content…",
+                    scale=4,
+                )
+                assertion_search_btn = gr.Button("Search", variant="secondary", size="sm", scale=1)
             assertions_md = gr.HTML(
                 "<div class='viz-empty'>Facts will appear here after an investigation.</div>"
             )
@@ -7048,6 +7073,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         refresh_assertions_btn.click(
             fn=lambda mid: state.load_assertions(mid),
             inputs=[matter_id_box],
+            outputs=[assertions_md],
+        )
+        assertion_search_btn.click(
+            fn=lambda mid, q: state.search_assertions(mid, q),
+            inputs=[matter_id_box, assertion_search_box],
+            outputs=[assertions_md],
+        )
+        assertion_search_box.submit(
+            fn=lambda mid, q: state.search_assertions(mid, q),
+            inputs=[matter_id_box, assertion_search_box],
             outputs=[assertions_md],
         )
         refresh_quant_btn.click(

@@ -653,6 +653,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.generate_clarifications_from_gaps(top_n=top_n)
 
+    async def search_assertions(self, matter_id: str, query: str, limit: int = 20) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.search_assertions([query], limit=limit)
+
     async def list_llm_calls(
         self,
         matter_id: str,
