@@ -2719,12 +2719,35 @@ class MatterModel:
         )
         return revisions
 
+    _TRUST_OVERRIDE_CAS_NAMESPACES = (
+        "trust_overrides", "cache_records",
+    )
+
+    def trust_override_revision_keys(self, document_pattern: str) -> dict[str, int]:
+        """Snapshot namespace revisions for CAS-protected set/delete trust override.
+
+        Callers (e.g. the REST API) call this before presenting the trust
+        override form, then pass the result as expected_revisions to
+        set_trust_override() or delete_trust_override().
+        """
+        broker = self.memory_broker
+        revisions: dict[str, int] = {}
+        for ns in self._TRUST_OVERRIDE_CAS_NAMESPACES:
+            key = broker.revision_key(ns)
+            revisions[key] = broker.get_namespace_revision(ns)
+        key = broker.revision_key("trust_overrides", "document", document_pattern)
+        revisions[key] = broker.get_namespace_revision(
+            "trust_overrides", "document", document_pattern,
+        )
+        return revisions
+
     def set_trust_override(
         self,
         document_pattern: str,
         trust_level: str,
         note: Optional[str] = None,
         run_id: Optional[str] = None,
+        expected_revisions: Optional[dict[str, int]] = None,
     ) -> str:
         """Set a document trust override and trigger belief revision on affected assertions.
 
@@ -2737,9 +2760,66 @@ class MatterModel:
         Belief revision failure does not block the override — the override is persisted
         regardless of whether propagation succeeds.
 
+        When expected_revisions is provided, the write is protected by CAS:
+        namespace revisions are validated before the mutation proceeds.
+
         Returns the override_id.
         """
-        # Model-level run_id guard — same pattern as correct_assertion (r37 / adv#030 fix).
+        if expected_revisions is not None:
+            return self._set_trust_override_brokered(
+                document_pattern, trust_level, note, run_id,
+                expected_revisions,
+            )
+        return self._set_trust_override_inner(
+            document_pattern, trust_level, note, run_id,
+        )
+
+    def _set_trust_override_brokered(
+        self,
+        document_pattern: str,
+        trust_level: str,
+        note: Optional[str],
+        run_id: Optional[str],
+        expected_revisions: dict[str, int],
+    ) -> str:
+        """CAS-protected trust override: validates namespace revisions before writing."""
+        from .graph import MemoryBrokerCASMismatch
+
+        broker = self.memory_broker
+        required_keys = set()
+        for ns in self._TRUST_OVERRIDE_CAS_NAMESPACES:
+            required_keys.add(broker.revision_key(ns))
+        required_keys.add(
+            broker.revision_key("trust_overrides", "document", document_pattern)
+        )
+
+        now = _now()
+        with self.db.write_transaction():
+            broker._assert_expected_revisions(expected_revisions, required_keys)
+
+            override_id = self._set_trust_override_inner(
+                document_pattern, trust_level, note, run_id,
+            )
+
+            for ns in self._TRUST_OVERRIDE_CAS_NAMESPACES:
+                broker._bump_namespace_revision_in_tx(ns, now=now)
+            broker._bump_namespace_revision_in_tx(
+                "trust_overrides", "document", document_pattern, now=now,
+            )
+            broker._bump_namespace_revision_in_tx(
+                "trust_overrides", now=now,
+            )
+
+        return override_id
+
+    def _set_trust_override_inner(
+        self,
+        document_pattern: str,
+        trust_level: str,
+        note: Optional[str],
+        run_id: Optional[str],
+    ) -> str:
+        """Core trust override logic shared by legacy and brokered paths."""
         if run_id:
             try:
                 _valid_run = self.db.execute(
@@ -2754,19 +2834,11 @@ class MatterModel:
 
         override_id = self.trust_overrides.set(document_pattern, trust_level, note)
 
-        # Adv#11 Fix 1: trust posture changed — bump trust_revision so any
-        # cascade decision / reasoning cache keyed on the prior revision
-        # silently misses. Belief revision below only touches existing
-        # assertion rows; the revision bump invalidates cached plans that
-        # *would have* routed around the newly re-scored source.
         try:
             self.cache.bump_trust_revision()
         except sqlite3.Error as _exc:
             _log.warning("set_trust_override: trust_revision bump failed: %s", _exc)
 
-        # Trigger belief revision on all assertions from the affected document.
-        # Uses indexed doc_basename column (schema v27) for exact basename lookup —
-        # replaces leading-wildcard LIKE ('%/basename') which was not sargable.
         affected_ids: list[str] = []
         _trust_unvisited: list[str] = []
         try:
@@ -2797,12 +2869,10 @@ class MatterModel:
                 )
         except (sqlite3.Error, ValueError, RuntimeError) as exc:
             _log.warning("Trust override belief revision failed for %r: %s", document_pattern, exc)
-        # Enqueue outside the except block so DB failures propagate rather than being swallowed.
         self.enqueue_evidence_pending(_trust_unvisited, cause=RevisionCause.TRUST_OVERRIDE, run_id=run_id)
 
-        # Targeted proof state recompute: only recompute issues linked to affected assertions.
-        # No-op when affected_ids is empty (pattern matched nothing — proof state unchanged).
-        # Chunks affected_ids to stay within SQLite's ~999 bind-variable limit.
+        import sqlite3 as _sqlite3
+        _any_recomputed = False
         try:
             if affected_ids:
                 _SQL_PARAM_LIMIT = 900
@@ -2816,7 +2886,6 @@ class MatterModel:
                     ).fetchall()
                     issue_ids_to_recompute.update(r["issue_id"] for r in _rows)
                 if issue_ids_to_recompute:
-                    # Pre-fetch overrides once; batch all writes in one transaction.
                     _ov_rows = self.db.execute(
                         """SELECT document_pattern, trust_level FROM document_trust_override
                            WHERE matter_id=? AND trust_level != 'normal'
@@ -2828,14 +2897,20 @@ class MatterModel:
                     ]
                     with self.db.transaction():
                         for _iid in issue_ids_to_recompute:
-                            self.proof_state.compute_and_store(
-                                _iid, _preloaded_overrides=_preloaded
-                            )
-            else:
-                # No assertions matched — nothing to recompute; proof state is unchanged.
-                pass
+                            try:
+                                self.proof_state.compute_and_store(
+                                    _iid, _preloaded_overrides=_preloaded
+                                )
+                                _any_recomputed = True
+                            except _sqlite3.Error as _exc:
+                                _log.warning(
+                                    "set_trust_override: proof recompute failed for issue %s: %s",
+                                    _iid, _exc,
+                                )
         except (sqlite3.Error, ValueError, RuntimeError) as exc:
             _log.warning("Trust override proof state refresh failed for %r: %s", document_pattern, exc)
+        if _any_recomputed:
+            self.memory_broker.bump_namespace_revision("proof_state")
 
         return override_id
 
@@ -2843,20 +2918,64 @@ class MatterModel:
         self,
         document_pattern: str,
         run_id: Optional[str] = None,
+        expected_revisions: Optional[dict[str, int]] = None,
     ) -> None:
         """Delete a document trust override and re-propagate belief revision.
 
         Mirrors set_trust_override: deletes the row first, then re-runs belief
         revision on affected assertions so beliefs revert to auto-inferred trust.
         Proof state is recomputed for affected issues.
+
+        When expected_revisions is provided, the write is protected by CAS.
         """
+        if expected_revisions is not None:
+            return self._delete_trust_override_brokered(
+                document_pattern, run_id, expected_revisions,
+            )
+        return self._delete_trust_override_inner(document_pattern, run_id)
+
+    def _delete_trust_override_brokered(
+        self,
+        document_pattern: str,
+        run_id: Optional[str],
+        expected_revisions: dict[str, int],
+    ) -> None:
+        """CAS-protected trust override delete: validates namespace revisions before writing."""
+        from .graph import MemoryBrokerCASMismatch
+
+        broker = self.memory_broker
+        required_keys = set()
+        for ns in self._TRUST_OVERRIDE_CAS_NAMESPACES:
+            required_keys.add(broker.revision_key(ns))
+        required_keys.add(
+            broker.revision_key("trust_overrides", "document", document_pattern)
+        )
+
+        now = _now()
+        with self.db.write_transaction():
+            broker._assert_expected_revisions(expected_revisions, required_keys)
+
+            self._delete_trust_override_inner(document_pattern, run_id)
+
+            for ns in self._TRUST_OVERRIDE_CAS_NAMESPACES:
+                broker._bump_namespace_revision_in_tx(ns, now=now)
+            broker._bump_namespace_revision_in_tx(
+                "trust_overrides", "document", document_pattern, now=now,
+            )
+            broker._bump_namespace_revision_in_tx(
+                "trust_overrides", now=now,
+            )
+
+    def _delete_trust_override_inner(
+        self,
+        document_pattern: str,
+        run_id: Optional[str],
+    ) -> None:
+        """Core trust override delete logic shared by legacy and brokered paths."""
         deleted = self.trust_overrides.delete(document_pattern)
         if not deleted:
-            return  # nothing to propagate — no override existed
+            return
 
-        # Adv#11 Fix 1: trust posture reverted — bump trust_revision so
-        # cached cascade decisions made while the override was in force
-        # become unreachable. Mirrors the bump in set_trust_override.
         try:
             self.cache.bump_trust_revision()
         except sqlite3.Error as _exc:
@@ -2894,8 +3013,8 @@ class MatterModel:
             _log.warning("Trust override delete belief revision failed for %r: %s", document_pattern, exc)
         self.enqueue_evidence_pending(_trust_unvisited, cause=RevisionCause.TRUST_OVERRIDE, run_id=run_id)
 
-        # No compute_all() fallback on delete: if no assertions matched the pattern,
-        # nothing changed and a full recompute would be wasted work.
+        import sqlite3 as _sqlite3
+        _any_recomputed = False
         try:
             if affected_ids:
                 _SQL_PARAM_LIMIT = 900
@@ -2920,11 +3039,20 @@ class MatterModel:
                     ]
                     with self.db.transaction():
                         for _iid in issue_ids_to_recompute:
-                            self.proof_state.compute_and_store(
-                                _iid, _preloaded_overrides=_preloaded
-                            )
+                            try:
+                                self.proof_state.compute_and_store(
+                                    _iid, _preloaded_overrides=_preloaded
+                                )
+                                _any_recomputed = True
+                            except _sqlite3.Error as _exc:
+                                _log.warning(
+                                    "delete_trust_override: proof recompute failed for issue %s: %s",
+                                    _iid, _exc,
+                                )
         except (sqlite3.Error, ValueError, RuntimeError) as exc:
             _log.warning("Trust override delete proof state refresh failed for %r: %s", document_pattern, exc)
+        if _any_recomputed:
+            self.memory_broker.bump_namespace_revision("proof_state")
 
     def mine_contradictions(self, run_id: Optional[str] = None) -> list[dict]:
         """

@@ -885,3 +885,112 @@ def test_verification_revision_keys_allows_unknown_target_kind():
     revisions = model.verification_revision_keys("custom_kind", "any-id")
     assert isinstance(revisions, dict)
     assert len(revisions) > 0
+
+
+# ---------------------------------------------------------------------------
+# Trust override CAS tests
+# ---------------------------------------------------------------------------
+
+
+def test_trust_override_revision_keys_returns_revisions():
+    """trust_override_revision_keys should return a non-empty revision dict."""
+    model = MatterModel.open_in_memory()
+    revisions = model.trust_override_revision_keys("test_doc.pdf")
+    assert isinstance(revisions, dict)
+    assert len(revisions) > 0
+
+
+def test_brokered_set_trust_override_succeeds_with_fresh_revisions():
+    """Set trust override with valid expected_revisions should succeed."""
+    model, _a_id = _make_model_with_assertion()
+    revisions = model.trust_override_revision_keys("doc1.pdf")
+
+    override_id = model.set_trust_override(
+        "doc1.pdf", "high", note="CAS test",
+        expected_revisions=revisions,
+    )
+    assert override_id is not None
+
+
+def test_brokered_set_trust_override_rejects_stale_revisions():
+    """Set trust override with stale revisions should raise CAS mismatch."""
+    from irys.matter.graph import MemoryBrokerCASMismatch
+
+    model, _a_id = _make_model_with_assertion()
+    revisions = model.trust_override_revision_keys("doc1.pdf")
+
+    model.memory_broker.bump_namespace_revision("trust_overrides")
+
+    with pytest.raises(MemoryBrokerCASMismatch):
+        model.set_trust_override(
+            "doc1.pdf", "high",
+            expected_revisions=revisions,
+        )
+
+
+def test_brokered_delete_trust_override_succeeds_with_fresh_revisions():
+    """Delete trust override with valid expected_revisions should succeed."""
+    model, _a_id = _make_model_with_assertion()
+    model.set_trust_override("doc1.pdf", "low")
+
+    revisions = model.trust_override_revision_keys("doc1.pdf")
+    model.delete_trust_override(
+        "doc1.pdf",
+        expected_revisions=revisions,
+    )
+    assert model.trust_overrides.list_all() == []
+
+
+def test_brokered_delete_trust_override_rejects_stale_revisions():
+    """Delete trust override with stale revisions should raise CAS mismatch."""
+    from irys.matter.graph import MemoryBrokerCASMismatch
+
+    model, _a_id = _make_model_with_assertion()
+    model.set_trust_override("doc1.pdf", "low")
+    revisions = model.trust_override_revision_keys("doc1.pdf")
+
+    model.memory_broker.bump_namespace_revision("trust_overrides")
+
+    with pytest.raises(MemoryBrokerCASMismatch):
+        model.delete_trust_override(
+            "doc1.pdf",
+            expected_revisions=revisions,
+        )
+
+
+def test_brokered_set_trust_override_bumps_broad_trust_overrides():
+    """Brokered set_trust_override should bump both specific and broad
+    trust_overrides revisions for fan-out coverage."""
+    model, _a_id = _make_model_with_assertion()
+    broker = model.memory_broker
+
+    broad_before = broker.get_namespace_revision("trust_overrides")
+    specific_before = broker.get_namespace_revision(
+        "trust_overrides", "document", "doc1.pdf",
+    )
+
+    revisions = model.trust_override_revision_keys("doc1.pdf")
+    model.set_trust_override(
+        "doc1.pdf", "high",
+        expected_revisions=revisions,
+    )
+
+    assert broker.get_namespace_revision("trust_overrides") > broad_before
+    assert broker.get_namespace_revision(
+        "trust_overrides", "document", "doc1.pdf",
+    ) > specific_before
+
+
+def test_legacy_set_trust_override_works_without_revisions():
+    """Set trust override without expected_revisions uses the legacy path."""
+    model, _a_id = _make_model_with_assertion()
+    override_id = model.set_trust_override("doc1.pdf", "low")
+    assert override_id is not None
+
+
+def test_legacy_delete_trust_override_works_without_revisions():
+    """Delete trust override without expected_revisions uses the legacy path."""
+    model, _a_id = _make_model_with_assertion()
+    model.set_trust_override("doc1.pdf", "low")
+    model.delete_trust_override("doc1.pdf")
+    assert model.trust_overrides.list_all() == []

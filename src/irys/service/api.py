@@ -1783,7 +1783,7 @@ async def answer_clarification(
 @app.post(
     "/matter/{matter_id}/trust-overrides",
     tags=["Matter Model"],
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
     """Set or update a trust override for a document pattern (SO-3 trust steering).
@@ -1791,6 +1791,9 @@ async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
     Marks a document as low-trust (force ALLEGED speech act regardless of filename
     heuristics), normal (reset to auto-inference), or high-trust (promote ALLEGED
     facts to OPERATIVE). Takes effect on the next investigation run.
+
+    When expected_revisions is provided, the write is CAS-protected
+    against stale-view mutations (409 on conflict).
     """
     model = await _get_matter_model_or_404(matter_id)
     # Validated run_id attribution — same pattern as correct_assertion (r37 fix).
@@ -1820,10 +1823,20 @@ async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
             pass
     try:
         override_id = model.set_trust_override(
-            request.document_pattern, request.trust_level, request.note, run_id=_trust_run_id
+            request.document_pattern, request.trust_level, request.note,
+            run_id=_trust_run_id,
+            expected_revisions=getattr(request, "expected_revisions", None),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        if "CAS" in type(e).__name__ or "CASMismatch" in type(e).__name__:
+            raise HTTPException(
+                status_code=409,
+                detail="Namespace revision conflict — another write occurred since "
+                       "your revision snapshot. Re-fetch revisions and retry.",
+            )
+        raise
     return {"status": "set", "override_id": override_id}
 
 
@@ -1838,19 +1851,46 @@ async def list_trust_overrides(matter_id: str):
     return {"overrides": model.trust_overrides.list_all()}
 
 
-@app.delete(
-    "/matter/{matter_id}/trust-overrides/{document_pattern:path}",
+@app.get(
+    "/matter/{matter_id}/trust-overrides/revisions",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
 )
-async def delete_trust_override(matter_id: str, document_pattern: str):
+async def get_trust_override_revisions(
+    matter_id: str, document_pattern: str,
+):
+    """Snapshot namespace revisions for CAS-protected set/delete trust override.
+
+    Call this before presenting the trust override form, then pass the result
+    as expected_revisions in the POST or DELETE request body.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    return model.trust_override_revision_keys(document_pattern)
+
+
+@app.delete(
+    "/matter/{matter_id}/trust-overrides/{document_pattern:path}",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+async def delete_trust_override(matter_id: str, document_pattern: str, expected_revisions: Optional[dict[str, int]] = None):
     """Remove a trust override for a document pattern (SO-3 trust steering).
 
     Restores auto-inferred trust for the matching document pattern.
-    Returns 404 if the matter is not found.
+    Returns 404 if the matter is not found. Returns 409 on CAS conflict
+    when expected_revisions is provided and stale.
     """
     model = await _get_matter_model_or_404(matter_id)
-    model.delete_trust_override(document_pattern)
+    try:
+        model.delete_trust_override(document_pattern, expected_revisions=expected_revisions)
+    except Exception as e:
+        if "CAS" in type(e).__name__ or "CASMismatch" in type(e).__name__:
+            raise HTTPException(
+                status_code=409,
+                detail="Namespace revision conflict — another write occurred since "
+                       "your revision snapshot. Re-fetch revisions and retry.",
+            )
+        raise
     return {"status": "deleted", "document_pattern": document_pattern}
 
 

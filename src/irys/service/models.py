@@ -175,6 +175,11 @@ class TrustOverrideRequest(BaseModel):
     )
     note: Optional[str] = Field(None, description="Reason for the override")
     run_id: Optional[str] = Field(None, description="Active run ID for audit attribution; validated server-side against run_session")
+    expected_revisions: Optional[dict[str, int]] = Field(
+        None,
+        description="CAS revision snapshot from GET .../trust-overrides/revisions. When provided, "
+                    "the write is protected against stale-view mutations (409 on conflict).",
+    )
 
 
 class CorrectAssertionRequest(BaseModel):
