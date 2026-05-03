@@ -820,7 +820,11 @@ def _fmt_overview_panel(data: dict) -> str:
         _metric_card(
             "Actors",
             f"{_safe_int(stats.get('actor_count', 0)):,}",
-            detail=f"Quant facts: {_safe_int(stats.get('quant_fact_count', 0)):,}",
+            detail=(
+                f"Quant facts: {_safe_int(stats.get('quant_fact_count', 0)):,}"
+                + (f" | Version chains: {_safe_int(data.get('version_chain_count', 0)):,}"
+                   if data.get("version_chain_count") else "")
+            ),
         ),
         _metric_card(
             "LLM Cost",

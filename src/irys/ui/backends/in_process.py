@@ -283,6 +283,11 @@ class InProcessBackend(UIBackend):
             contradiction_count = len(model.assertions.find_contradictions())
         except Exception:
             pass
+        version_chain_count = 0
+        try:
+            version_chain_count = len(model.list_version_families())
+        except Exception:
+            pass
         return {
             "matter_id": matter_id,
             "stats": stats,
@@ -293,6 +298,7 @@ class InProcessBackend(UIBackend):
             "pending_clarifications": clarifications,
             "domain_composition": domain_composition,
             "contradiction_count": contradiction_count,
+            "version_chain_count": version_chain_count,
         }
 
     # ------------------------------------------------------------------ #
