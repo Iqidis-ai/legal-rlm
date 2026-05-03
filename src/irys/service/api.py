@@ -3127,6 +3127,22 @@ async def get_system_health(matter_id: str):
     return model.get_system_health()
 
 
+@app.get(
+    "/matter/{matter_id}/so-scorecard",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_so_scorecard(matter_id: str):
+    """Return Sacred Outcome metrics with targets and pass/fail status.
+
+    Each metric maps to a specific SO: assertion structure (SO-2),
+    source calibration (SO-5), issue coverage (SO-4), reuse rate (SO-1),
+    steerability (SO-3), belief revision (SO-2), provenance attribution (SO-2),
+    numeric extraction (SO-6), gap surface ratio (SO-7)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_so_metrics()
+
+
 # ---------------------------------------------------------------------------
 # Visual Work Product — Timeline view (Priority 2)
 # ---------------------------------------------------------------------------

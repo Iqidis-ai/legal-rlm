@@ -237,6 +237,10 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/system-health")
         return result if isinstance(result, dict) else {}
 
+    async def get_so_scorecard(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/so-scorecard")
+        return result if isinstance(result, dict) else {}
+
     async def list_llm_calls(
         self,
         matter_id: str,

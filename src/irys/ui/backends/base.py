@@ -225,3 +225,8 @@ class UIBackend(ABC):
     async def get_system_health(self, matter_id: str) -> dict:
         """Return system health diagnostics."""
         ...
+
+    @abstractmethod
+    async def get_so_scorecard(self, matter_id: str) -> dict:
+        """Return Sacred Outcome metrics with targets and pass/fail status."""
+        ...

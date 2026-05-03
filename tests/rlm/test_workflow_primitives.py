@@ -579,3 +579,113 @@ def test_fmt_system_health_panel_missing_fields():
     result = _fmt_system_health_panel({"health_score": "good"})
     assert "Truth Maintenance Health" in result
     assert "0" in result
+
+
+def test_fmt_so_scorecard_panel_empty():
+    from irys.ui.app import _fmt_so_scorecard_panel
+    result = _fmt_so_scorecard_panel({})
+    assert "viz-empty" in result
+
+
+def test_fmt_so_scorecard_panel_none():
+    from irys.ui.app import _fmt_so_scorecard_panel
+    result = _fmt_so_scorecard_panel(None)
+    assert "viz-empty" in result
+
+
+def test_fmt_so_scorecard_panel_with_data():
+    from irys.ui.app import _fmt_so_scorecard_panel
+    so = {
+        "assertion_structure_rate": 1.0,
+        "source_role_known_rate": 0.95,
+        "issue_coverage_avg": 0.85,
+        "reuse_rate": 0.72,
+        "steerability": True,
+        "belief_revision": True,
+        "provenance_attribution_rate": 0.92,
+        "numeric_extraction_rate": 0.88,
+        "gap_surface_ratio": 0.3,
+        "targets": {
+            "assertion_structure_rate": 1.0,
+            "source_role_known_rate": 0.9,
+            "issue_coverage_avg": 0.8,
+            "reuse_rate": 0.7,
+            "numeric_extraction_rate": 0.9,
+            "provenance_attribution_rate": 0.9,
+            "steerability": True,
+            "belief_revision": True,
+        },
+        "targets_met": {
+            "assertion_structure_rate": True,
+            "source_role_known_rate": True,
+            "issue_coverage_avg": True,
+            "reuse_rate": True,
+            "numeric_extraction_rate": False,
+            "provenance_attribution_rate": True,
+            "steerability": True,
+            "belief_revision": True,
+        },
+    }
+    result = _fmt_so_scorecard_panel(so)
+    assert "Sacred Outcomes Scorecard" in result
+    assert "7/8 passing" in result
+    assert "pill-green" in result
+    assert "pill-red" in result
+    assert "100.0%" in result
+    assert "95.0%" in result
+
+
+def test_fmt_so_scorecard_panel_all_passing():
+    from irys.ui.app import _fmt_so_scorecard_panel
+    so = {
+        "assertion_structure_rate": 1.0,
+        "source_role_known_rate": 0.95,
+        "issue_coverage_avg": 0.85,
+        "reuse_rate": 0.72,
+        "steerability": True,
+        "belief_revision": True,
+        "provenance_attribution_rate": 0.92,
+        "numeric_extraction_rate": 0.95,
+        "gap_surface_ratio": 0.3,
+        "targets": {
+            "assertion_structure_rate": 1.0,
+            "source_role_known_rate": 0.9,
+            "issue_coverage_avg": 0.8,
+            "reuse_rate": 0.7,
+            "numeric_extraction_rate": 0.9,
+            "provenance_attribution_rate": 0.9,
+            "steerability": True,
+            "belief_revision": True,
+        },
+        "targets_met": {
+            "assertion_structure_rate": True,
+            "source_role_known_rate": True,
+            "issue_coverage_avg": True,
+            "reuse_rate": True,
+            "numeric_extraction_rate": True,
+            "provenance_attribution_rate": True,
+            "steerability": True,
+            "belief_revision": True,
+        },
+    }
+    result = _fmt_so_scorecard_panel(so)
+    assert "8/8 passing" in result
+    assert "pill-green" in result
+
+
+def test_fmt_so_scorecard_panel_finance_domain():
+    from irys.ui.app import _fmt_so_scorecard_panel
+    so = {
+        "targets": {},
+        "targets_met": {},
+    }
+    result = _fmt_so_scorecard_panel(so, domain="finance")
+    assert "Analysis Quality Scorecard" in result
+    assert "Durability" in result
+
+
+def test_fmt_so_scorecard_panel_missing_targets():
+    from irys.ui.app import _fmt_so_scorecard_panel
+    result = _fmt_so_scorecard_panel({"targets": {}, "targets_met": {}})
+    assert "Sacred Outcomes Scorecard" in result
+    assert "0/0 passing" in result

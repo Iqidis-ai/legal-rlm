@@ -625,6 +625,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_system_health()
 
+    async def get_so_scorecard(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_so_metrics()
+
     async def list_llm_calls(
         self,
         matter_id: str,

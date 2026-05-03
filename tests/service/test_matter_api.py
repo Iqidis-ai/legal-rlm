@@ -1307,3 +1307,17 @@ def test_system_health_returns_data(client, register_model):
 def test_system_health_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/system-health")
     assert resp.status_code == 404
+
+
+def test_so_scorecard_returns_data(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/so-scorecard")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "targets" in data
+    assert "targets_met" in data
+    assert "counts" in data
+
+
+def test_so_scorecard_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/so-scorecard")
+    assert resp.status_code == 404

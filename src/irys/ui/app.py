@@ -2362,6 +2362,136 @@ def _fmt_system_health_panel(health: dict, domain: str = "legal") -> str:
     return f"<div class='viz-shell'>{header}{table}</div>"
 
 
+_SO_SCORECARD_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Sacred Outcomes Scorecard",
+        "subtitle": "Tracks whether the matter model meets quantitative success criteria.",
+        "so1": "SO-1 Durability",
+        "so2_struct": "SO-2 Structure",
+        "so2_revision": "SO-2 Revisions",
+        "so2_provenance": "SO-2 Provenance",
+        "so3": "SO-3 Steerability",
+        "so4": "SO-4 Coverage",
+        "so5": "SO-5 Calibration",
+        "so6": "SO-6 Quant Source",
+        "so7": "SO-7 Gap Surface",
+    },
+    "finance": {
+        "title": "Analysis Quality Scorecard",
+        "subtitle": "Tracks whether the analysis model meets quality criteria.",
+        "so1": "Durability",
+        "so2_struct": "Structure Rate",
+        "so2_revision": "Position Revisions",
+        "so2_provenance": "Provenance",
+        "so3": "Steerability",
+        "so4": "Coverage",
+        "so5": "Source Calibration",
+        "so6": "Numeric Sourcing",
+        "so7": "Gap Surface",
+    },
+    "coding": {
+        "title": "Analysis Quality Scorecard",
+        "subtitle": "Tracks whether the analysis model meets quality criteria.",
+        "so1": "Durability",
+        "so2_struct": "Structure Rate",
+        "so2_revision": "Finding Revisions",
+        "so2_provenance": "Provenance",
+        "so3": "Steerability",
+        "so4": "Coverage",
+        "so5": "Source Calibration",
+        "so6": "Numeric Sourcing",
+        "so7": "Gap Surface",
+    },
+    "academic_research": {
+        "title": "Analysis Quality Scorecard",
+        "subtitle": "Tracks whether the analysis model meets quality criteria.",
+        "so1": "Durability",
+        "so2_struct": "Structure Rate",
+        "so2_revision": "Claim Revisions",
+        "so2_provenance": "Provenance",
+        "so3": "Steerability",
+        "so4": "Coverage",
+        "so5": "Source Calibration",
+        "so6": "Numeric Sourcing",
+        "so7": "Gap Surface",
+    },
+    "biomedical": {
+        "title": "Analysis Quality Scorecard",
+        "subtitle": "Tracks whether the analysis model meets quality criteria.",
+        "so1": "Durability",
+        "so2_struct": "Structure Rate",
+        "so2_revision": "Finding Revisions",
+        "so2_provenance": "Provenance",
+        "so3": "Steerability",
+        "so4": "Coverage",
+        "so5": "Source Calibration",
+        "so6": "Numeric Sourcing",
+        "so7": "Gap Surface",
+    },
+}
+
+
+def _fmt_so_scorecard_panel(so: dict, domain: str = "legal") -> str:
+    labels = _SO_SCORECARD_LABELS.get(domain, _SO_SCORECARD_LABELS["legal"])
+    if not so or not isinstance(so, dict):
+        return "<div class='viz-empty'>No scorecard data available yet.</div>"
+
+    targets = so.get("targets", {})
+    met = so.get("targets_met", {})
+
+    def _row(label: str, metric_key: str, is_bool: bool = False) -> str:
+        val = so.get(metric_key)
+        target = targets.get(metric_key)
+        passed = met.get(metric_key)
+        if val is None:
+            val_str = "—"
+        elif is_bool:
+            val_str = "Yes" if val else "No"
+        else:
+            val_str = f"{float(val) * 100:.1f}%"
+        if target is None:
+            tgt_str = "—"
+        elif isinstance(target, bool):
+            tgt_str = "Yes" if target else "No"
+        else:
+            tgt_str = f"{float(target) * 100:.0f}%"
+        if passed is True:
+            pill = "<span class='pill pill-green'>Pass</span>"
+        elif passed is False:
+            pill = "<span class='pill pill-red'>Fail</span>"
+        else:
+            pill = "<span class='pill pill-neutral'>N/A</span>"
+        return f"<tr><td>{_escape(label)}</td><td>{val_str}</td><td>{tgt_str}</td><td>{pill}</td></tr>"
+
+    rows = (
+        _row(labels["so1"], "reuse_rate")
+        + _row(labels["so2_struct"], "assertion_structure_rate")
+        + _row(labels["so2_revision"], "belief_revision", is_bool=True)
+        + _row(labels["so2_provenance"], "provenance_attribution_rate")
+        + _row(labels["so3"], "steerability", is_bool=True)
+        + _row(labels["so4"], "issue_coverage_avg")
+        + _row(labels["so5"], "source_role_known_rate")
+        + _row(labels["so6"], "numeric_extraction_rate")
+        + _row(labels["so7"], "gap_surface_ratio")
+    )
+
+    passed_count = sum(1 for v in met.values() if v is True)
+    total_count = sum(1 for v in met.values() if v is not None)
+    score_pill = "pill-green" if passed_count == total_count and total_count > 0 else "pill-orange"
+
+    header = (
+        f"<div class='viz-header'><strong>{labels['title']}</strong>"
+        f" — <span class='pill {score_pill}'>{passed_count}/{total_count} passing</span></div>"
+        f"<div style='padding:4px 8px;font-size:0.9em;color:#666;'>{labels['subtitle']}</div>"
+    )
+    table = (
+        "<div class='table-wrap'><table class='viz-table'>"
+        "<thead><tr><th>Metric</th><th>Current</th><th>Target</th><th>Status</th></tr></thead>"
+        "<tbody>" + rows + "</tbody></table></div>"
+    )
+    return f"<div class='viz-shell'>{header}{table}</div>"
+
+
 def _fmt_communication_map_panel(graph: dict) -> str:
     actors = list(graph.get("actors", []) or [])
     documents = list(graph.get("documents", []) or [])
@@ -5289,6 +5419,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading system health: {_escape(exc)}</div>"
 
+    def load_so_scorecard(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_so_scorecard(matter_id))
+            return _fmt_so_scorecard_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading SO scorecard: {_escape(exc)}</div>"
+
     def set_policy_audience(self, label: str) -> str:
         """Called when the sidebar privilege-mode toggle flips. Returns
         a visible banner HTML so the reviewer always knows which mode
@@ -6294,6 +6433,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             system_health_html = gr.HTML("<div class='viz-empty'>System health diagnostics will appear here after an investigation.</div>")
             refresh_system_health_btn = gr.Button("Refresh System Health", variant="secondary", size="sm")
 
+        with gr.Accordion("SO Scorecard — Sacred Outcome metrics vs targets", open=False):
+            gr.Markdown(
+                "Shows each Sacred Outcome metric with its current value, target threshold, "
+                "and pass/fail status. Tracks analysis quality across all key dimensions."
+            )
+            so_scorecard_html = gr.HTML("<div class='viz-empty'>SO scorecard will appear here after an investigation.</div>")
+            refresh_so_scorecard_btn = gr.Button("Refresh SO Scorecard", variant="secondary", size="sm")
+
         with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
                 "Maps which people and companies appear in which documents and highlights "
@@ -6575,6 +6722,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             doc_versions = state.load_document_versions(mid, domain=domain)
             quant_thresholds = state.load_quant_thresholds(mid, domain=domain)
             system_health = state.load_system_health(mid, domain=domain)
+            so_scorecard = state.load_so_scorecard(mid, domain=domain)
             review_badge = state.load_review_count_badge(mid)
             doc_choices = state.load_document_picker_choices(mid)
             return (
@@ -6597,6 +6745,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 doc_versions,
                 quant_thresholds,
                 system_health,
+                so_scorecard,
                 top_issue,
                 gr.update(choices=doc_choices),
                 gr.update(choices=_correction_dropdown_choices(domain), value=None),
@@ -6662,6 +6811,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     doc_versions_html,
                     quant_thresholds_html,
                     system_health_html,
+                    so_scorecard_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -6695,6 +6845,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     doc_versions_html,
                     quant_thresholds_html,
                     system_health_html,
+                    so_scorecard_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -6725,6 +6876,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 doc_versions_html,
                 quant_thresholds_html,
                 system_health_html,
+                so_scorecard_html,
                 redirect_issue_id,
                 bulk_doc_ref,
                 correction_new_state,
@@ -6801,6 +6953,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_system_health(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[system_health_html],
+        )
+        refresh_so_scorecard_btn.click(
+            fn=lambda mid: state.load_so_scorecard(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[so_scorecard_html],
         )
         refresh_comm_btn.click(
             fn=lambda mid: state.load_communication_map(mid),
