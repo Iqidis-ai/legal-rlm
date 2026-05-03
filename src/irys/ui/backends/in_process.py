@@ -276,18 +276,18 @@ class InProcessBackend(UIBackend):
                 "composed_trust_weights": tw,
                 "primary_domain_profile_id": primary,
             }
-        except Exception:
-            pass
+        except _sqlite3.Error as _exc:
+            _log.warning("overview: domain_composition load failed: %s", _exc)
         contradiction_count = 0
         try:
             contradiction_count = len(model.assertions.find_contradictions())
-        except Exception:
-            pass
+        except _sqlite3.Error as _exc:
+            _log.warning("overview: contradiction count load failed: %s", _exc)
         version_chain_count = 0
         try:
             version_chain_count = len(model.list_version_families())
-        except Exception:
-            pass
+        except _sqlite3.Error as _exc:
+            _log.warning("overview: version chain count load failed: %s", _exc)
         return {
             "matter_id": matter_id,
             "stats": stats,
@@ -340,8 +340,8 @@ class InProcessBackend(UIBackend):
                     event = dict(row)
                     last_seq = event["seq_no"]
                     yield event
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.warning("stream_run_events: event fetch failed: %s", _exc)
 
             # Check terminal status
             try:
@@ -351,8 +351,8 @@ class InProcessBackend(UIBackend):
                 if run_row and run_row["status"] in terminal_statuses:
                     yield {"event": "run_terminal", "status": run_row["status"]}
                     break
-            except Exception:
-                pass
+            except Exception as _exc:
+                _log.warning("stream_run_events: terminal status check failed: %s", _exc)
 
             await asyncio.sleep(0.5)
 
@@ -955,7 +955,8 @@ class InProcessBackend(UIBackend):
                                 research_mode=research_mode,
                                 conversation_history=conversation_history,
                             )
-                    except Exception:
+                    except Exception as _exc:
+                        _log.warning("resume_investigation failed, falling back to fresh investigate: %s", _exc)
                         result = None
                 if result is None:
                     result = await irys.investigate(
