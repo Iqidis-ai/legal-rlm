@@ -4410,7 +4410,7 @@ _ORIGIN_LABELS: dict[str, str] = {
 }
 
 
-def _fmt_assertion_inspector(health: dict, domain: str = "legal") -> str:
+def _fmt_assertion_inspector(health: dict, history: list | None = None, domain: str = "legal") -> str:
     if health.get("error"):
         return f"<div class='viz-empty'>Assertion not found.</div>"
     aid = _escape(health.get("assertion_id", "?"))
@@ -4457,11 +4457,11 @@ def _fmt_assertion_inspector(health: dict, domain: str = "legal") -> str:
         "<div style='display:flex;gap:16px;margin-bottom:12px'>"
         f"<div style='flex:1;padding:8px;background:#f0fdf4;border-radius:6px;border-left:3px solid #16a34a'>"
         f"<div style='font-size:10px;color:#6b7280;text-transform:uppercase'>Supporting</div>"
-        f"<div style='font-size:18px;font-weight:600;color:#16a34a'>{support_count}</div>"
+        f"<div style='font-size:18px;font-weight:600;color:#16a34a'>{int(support_count) if isinstance(support_count, (int, float)) else 0}</div>"
         f"<div style='margin-top:4px'>{role_pills(support_roles)}</div></div>"
         f"<div style='flex:1;padding:8px;background:#fef2f2;border-radius:6px;border-left:3px solid #dc2626'>"
         f"<div style='font-size:10px;color:#6b7280;text-transform:uppercase'>Attacking</div>"
-        f"<div style='font-size:18px;font-weight:600;color:#dc2626'>{attack_count}</div>"
+        f"<div style='font-size:18px;font-weight:600;color:#dc2626'>{int(attack_count) if isinstance(attack_count, (int, float)) else 0}</div>"
         f"<div style='margin-top:4px'>{role_pills(attack_roles)}</div></div>"
         "</div>"
     )
@@ -4485,6 +4485,8 @@ def _fmt_assertion_inspector(health: dict, domain: str = "legal") -> str:
                 span_badge = "<span style='color:#16a34a;font-size:10px'> (span linked)</span>"
             elif span_status == "missing":
                 span_badge = "<span style='color:#d97706;font-size:10px'> (span missing)</span>"
+            elif span_status == "not_applicable":
+                span_badge = "<span style='color:#6b7280;font-size:10px'> (n/a)</span>"
             prov_rows += (
                 "<tr>"
                 f"<td style='font-size:11px;white-space:nowrap'>{ts[:19]}</td>"
@@ -4494,6 +4496,9 @@ def _fmt_assertion_inspector(health: dict, domain: str = "legal") -> str:
                 f"<td style='font-size:11px'>{source_ref}{span_badge}</td>"
                 "</tr>"
             )
+        if not prov_rows:
+            provenance = []
+    if provenance and prov_rows:
         prov_html = (
             "<div class='viz-header' style='margin-top:8px'><strong>Provenance Trail</strong></div>"
             "<div class='table-wrap'><table class='viz-table'>"
@@ -4503,11 +4508,44 @@ def _fmt_assertion_inspector(health: dict, domain: str = "legal") -> str:
     else:
         prov_html = "<div style='font-size:11px;color:#6b7280;margin-top:8px'>No provenance events recorded for this assertion.</div>"
 
+    history_html = ""
+    if history:
+        hist_rows = ""
+        for h in (history or []):
+            if not isinstance(h, dict):
+                continue
+            ts = _escape(str(h.get("created_at") or "—"))
+            field = _escape(str(h.get("changed_field") or "—"))
+            old_val = _escape(str(h.get("old_value") or "—")[:60])
+            new_val = _escape(str(h.get("new_value") or "—")[:60])
+            cause = _escape(str(h.get("cause") or "—"))
+            actor = _escape(str(h.get("actor_kind") or ""))
+            actor_ref = _escape(str(h.get("actor_ref") or ""))
+            actor_cell = f"{actor}" + (f":{actor_ref}" if actor_ref else "")
+            hist_rows += (
+                "<tr>"
+                f"<td style='font-size:11px;white-space:nowrap'>{ts[:19]}</td>"
+                f"<td style='font-size:11px'>{field}</td>"
+                f"<td style='font-size:11px;color:#6b7280'>{old_val}</td>"
+                f"<td style='font-size:11px;font-weight:600'>{new_val}</td>"
+                f"<td style='font-size:11px'>{cause}</td>"
+                f"<td style='font-size:11px;color:#6b7280'>{actor_cell}</td>"
+                "</tr>"
+            )
+        if hist_rows:
+            history_html = (
+                "<div class='viz-header' style='margin-top:12px'><strong>Revision History</strong></div>"
+                "<div class='table-wrap'><table class='viz-table'>"
+                "<thead><tr><th>When</th><th>Field</th><th>Old</th><th>New</th><th>Cause</th><th>Actor</th></tr></thead>"
+                "<tbody>" + hist_rows + "</tbody></table></div>"
+            )
+
     return (
         "<div class='viz-shell'>"
         + header
         + evidence_html
         + prov_html
+        + history_html
         + "</div>"
     )
 
@@ -5224,9 +5262,12 @@ class AppState:
         if not aid:
             return "<div class='viz-empty'>Enter an assertion ID to inspect.</div>"
         try:
-            health = _run_async(self.backend().get_assertion_health(matter_id, aid))
+            backend = self.backend()
+            health = _run_async(backend.get_assertion_health(matter_id, aid))
+            history_resp = _run_async(backend.get_assertion_history(matter_id, aid, limit=20))
+            history = history_resp.get("history", []) if isinstance(history_resp, dict) else []
             domain = self._detect_domain(matter_id)
-            return _fmt_assertion_inspector(health, domain=domain)
+            return _fmt_assertion_inspector(health, history=history, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error inspecting assertion: {_escape(str(exc))}</div>"
 

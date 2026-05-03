@@ -3106,6 +3106,53 @@ class MatterModel:
         """Return document version families with operative HEAD marked."""
         return self.inventory.list_version_families()
 
+    def list_assertion_history(self, assertion_id: str, limit: int = 20) -> dict:
+        """Return field-level revision history for an assertion (SO-2)."""
+        import json as _json
+        limit = max(1, min(limit, 500))
+        row = self.db.execute(
+            "SELECT id FROM assertion WHERE id=? AND matter_id=?",
+            (assertion_id, self.matter_id),
+        ).fetchone()
+        if row is None:
+            return {"assertion_id": assertion_id, "history": [], "count": 0}
+        rev_rows = self.db.execute(
+            """SELECT ar.id, ar.batch_id, ar.changed_field,
+                      ar.old_value_json, ar.new_value_json,
+                      ar.actor_kind, ar.actor_ref, ar.cause,
+                      ar.run_id, ar.note, ar.created_at
+               FROM assertion_revision ar
+               WHERE ar.assertion_id=?
+               ORDER BY ar.created_at DESC, ar.batch_id DESC, ar.id DESC
+               LIMIT ?""",
+            (assertion_id, limit),
+        ).fetchall()
+
+        def _decode(raw):
+            if not raw:
+                return None
+            try:
+                return _json.loads(raw)
+            except (_json.JSONDecodeError, TypeError):
+                return raw
+
+        history = [
+            {
+                "id": r["id"],
+                "changed_field": r["changed_field"],
+                "old_value": _decode(r["old_value_json"]),
+                "new_value": _decode(r["new_value_json"]),
+                "actor_kind": r["actor_kind"],
+                "actor_ref": r["actor_ref"],
+                "cause": r["cause"],
+                "run_id": r["run_id"],
+                "note": r["note"],
+                "created_at": r["created_at"],
+            }
+            for r in rev_rows
+        ]
+        return {"assertion_id": assertion_id, "history": history, "count": len(history)}
+
     def get_assertion_health(self, assertion_id: str) -> dict:
         """Return assertion health: oscillation, neighbors, provenance (SO-2 + SO-5)."""
         record = self.assertions.get(assertion_id)

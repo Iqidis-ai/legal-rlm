@@ -232,6 +232,17 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/assertion/{aid_enc}/health")
         return result if isinstance(result, dict) else {}
 
+    async def get_assertion_history(self, matter_id: str, assertion_id: str, limit: int = 20) -> dict:
+        aid_enc = _url_quote(assertion_id, safe="")
+        result = await self._get(
+            f"/matter/{matter_id}/assertions/{aid_enc}/history",
+            {"limit": str(limit)},
+        )
+        if not isinstance(result, dict):
+            _log.warning("get_assertion_history: unexpected response type %s", type(result).__name__)
+            return {"assertion_id": assertion_id, "history": [], "count": 0}
+        return result
+
     async def get_quant_thresholds(self, matter_id: str, currency: str = "USD") -> list[dict]:
         result = await self._get(f"/matter/{matter_id}/quant-thresholds", {"currency": currency})
         return result if isinstance(result, list) else []

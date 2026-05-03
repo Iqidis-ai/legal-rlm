@@ -1092,3 +1092,87 @@ def test_fmt_assertion_inspector_non_dict_provenance():
     result = _fmt_assertion_inspector(health)
     assert "Provenance Trail" in result
     assert "AI-Extracted" in result
+
+
+def test_fmt_assertion_inspector_all_non_dict_provenance():
+    from irys.ui.app import _fmt_assertion_inspector
+    health = {
+        "assertion_id": "a-x",
+        "proposition_text": "Test",
+        "belief_state": "accepted",
+        "confidence": 0.5,
+        "oscillating": False,
+        "support_count": 0,
+        "attack_count": 0,
+        "has_superseding": False,
+        "support_source_roles": [],
+        "attack_source_roles": [],
+        "provenance": ["bad", 42],
+    }
+    result = _fmt_assertion_inspector(health)
+    assert "No provenance events" in result
+
+
+def test_fmt_assertion_inspector_with_history():
+    from irys.ui.app import _fmt_assertion_inspector
+    health = {
+        "assertion_id": "a-hist",
+        "proposition_text": "Amount was $50,000",
+        "belief_state": "supported",
+        "confidence": 0.75,
+        "oscillating": False,
+        "support_count": 1,
+        "attack_count": 0,
+        "has_superseding": False,
+        "support_source_roles": [],
+        "attack_source_roles": [],
+        "provenance": [],
+    }
+    history = [
+        {
+            "changed_field": "belief_state",
+            "old_value": "undetermined",
+            "new_value": "supported",
+            "cause": "evidence_update",
+            "actor_kind": "system",
+            "actor_ref": "engine",
+            "created_at": "2026-05-01T12:00:00",
+        },
+        {
+            "changed_field": "confidence",
+            "old_value": 0.5,
+            "new_value": 0.75,
+            "cause": "evidence_update",
+            "actor_kind": "system",
+            "actor_ref": "engine",
+            "created_at": "2026-05-01T12:00:00",
+        },
+    ]
+    result = _fmt_assertion_inspector(health, history=history)
+    assert "Revision History" in result
+    assert "belief_state" in result
+    assert "undetermined" in result
+    assert "supported" in result
+    assert "evidence_update" in result
+    assert "system" in result
+
+
+def test_fmt_assertion_inspector_history_non_dict_items():
+    from irys.ui.app import _fmt_assertion_inspector
+    health = {
+        "assertion_id": "a-h2",
+        "proposition_text": "Test",
+        "belief_state": "accepted",
+        "confidence": 0.8,
+        "oscillating": False,
+        "support_count": 0,
+        "attack_count": 0,
+        "has_superseding": False,
+        "support_source_roles": [],
+        "attack_source_roles": [],
+        "provenance": [],
+    }
+    history = ["bad", {"changed_field": "confidence", "old_value": 0.5, "new_value": 0.8, "cause": "correction", "created_at": "2026-01-01"}]
+    result = _fmt_assertion_inspector(health, history=history)
+    assert "Revision History" in result
+    assert "confidence" in result
