@@ -2293,6 +2293,87 @@ def _domain_belief_label(state_raw: str, domain: str) -> str:
     return profile_map.get(state_raw.lower(), state_raw.replace("_", " ").title())
 
 
+_LEGAL_BELIEF_DESCRIPTIONS: dict[str, str] = {
+    "alleged": "claimed but not proven",
+    "argued": "legal argument, not fact",
+    "admitted": "acknowledged by opposing party",
+    "operative": "from a binding document",
+    "performed": "action that occurred",
+    "disputed": "parties disagree",
+    "superseded": "replaced by later document",
+    "withdrawn": "retracted by source",
+    "inferred": "deduced from other facts",
+    "resolved": "settled or decided",
+}
+
+_DOMAIN_BELIEF_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    "finance": {
+        "alleged": "reported but unverified",
+        "argued": "projected or forecast",
+        "admitted": "confirmed by counterparty",
+        "operative": "from audited filing",
+        "performed": "transaction executed",
+        "disputed": "challenged or contested",
+        "superseded": "revised in later filing",
+        "withdrawn": "retracted by issuer",
+        "inferred": "derived from data",
+        "resolved": "settled or finalized",
+    },
+    "coding": {
+        "alleged": "claimed in documentation",
+        "argued": "asserted without test coverage",
+        "admitted": "acknowledged by maintainer",
+        "operative": "established in codebase",
+        "performed": "implemented and tested",
+        "disputed": "contested in review",
+        "superseded": "deprecated by newer version",
+        "withdrawn": "removed from codebase",
+        "inferred": "inferred from behavior",
+        "resolved": "fixed or resolved",
+    },
+    "academic_research": {
+        "alleged": "hypothesized",
+        "argued": "argued in literature",
+        "admitted": "accepted by community",
+        "operative": "established finding",
+        "performed": "demonstrated experimentally",
+        "disputed": "disputed in literature",
+        "superseded": "superseded by later study",
+        "withdrawn": "retracted by authors",
+        "inferred": "derived from analysis",
+        "resolved": "confirmed by replication",
+    },
+    "biomedical": {
+        "alleged": "reported in study",
+        "argued": "argued in publication",
+        "admitted": "acknowledged by investigators",
+        "operative": "established in guidelines",
+        "performed": "observed in trial",
+        "disputed": "contested in literature",
+        "superseded": "superseded by later evidence",
+        "withdrawn": "withdrawn by authors",
+        "inferred": "inferred from data",
+        "resolved": "confirmed by meta-analysis",
+    },
+}
+
+_CORRECTION_STATES = [
+    "alleged", "argued", "admitted", "operative", "performed",
+    "disputed", "superseded", "withdrawn", "inferred", "resolved",
+]
+
+
+def _correction_dropdown_choices(domain: str = "legal") -> list[tuple[str, str]]:
+    descriptions = _DOMAIN_BELIEF_DESCRIPTIONS.get(domain, _LEGAL_BELIEF_DESCRIPTIONS)
+    choices = []
+    for state in _CORRECTION_STATES:
+        label = _domain_belief_label(state, domain)
+        desc = descriptions.get(state, "")
+        display = f"{label} — {desc}" if desc else label
+        choices.append((display, state))
+    return choices
+
+
 def _fmt_assertions(assertions: list, domain: str = "legal") -> str:
     if not assertions:
         return "<div class='viz-empty'>No assertions recorded yet.</div>"
@@ -4766,18 +4847,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     )
                     correction_new_state = gr.Dropdown(
                         label="Correct characterization",
-                        choices=[
-                            ("Alleged — claimed but not proven", "alleged"),
-                            ("Argued — legal argument, not fact", "argued"),
-                            ("Admitted — acknowledged by opposing party", "admitted"),
-                            ("Operative — from a binding document", "operative"),
-                            ("Performed — action that occurred", "performed"),
-                            ("Disputed — parties disagree", "disputed"),
-                            ("Superseded — replaced by later document", "superseded"),
-                            ("Withdrawn — retracted by source", "withdrawn"),
-                            ("Inferred — deduced from other facts", "inferred"),
-                            ("Resolved — settled or decided", "resolved"),
-                        ],
+                        choices=_correction_dropdown_choices("legal"),
                         scale=1,
                     )
                 gr.HTML(
@@ -5209,6 +5279,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             llm_analytics = state.load_llm_analytics(mid)
             review_badge = state.load_review_count_badge(mid)
             doc_choices = state.load_document_picker_choices(mid)
+            domain = "legal"
+            if mid and mid != "—":
+                try:
+                    ov_data = _run_async(state.backend().get_overview(mid))
+                    dc = ov_data.get("domain_composition", {}) if isinstance(ov_data, dict) else {}
+                    domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
+                except Exception:
+                    pass
             return (
                 review_badge,
                 overview,
@@ -5223,6 +5301,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 llm_analytics,
                 top_issue,
                 gr.update(choices=doc_choices),
+                gr.update(choices=_correction_dropdown_choices(domain), value=None),
             )
 
         # --- Investigation stream ---
@@ -5279,6 +5358,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     llm_analytics_html,
                     redirect_issue_id,
                     bulk_doc_ref,
+                    correction_new_state,
                 ],
             )
         else:
@@ -5287,8 +5367,6 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 inputs=[query, repo_path, research_mode],
                 outputs=run_outputs,
             ).then(
-                # Auto-refresh all panels once synthesis completes.
-                # Lawyers shouldn't need to click individual Refresh buttons.
                 fn=_refresh_all,
                 inputs=[matter_id_box],
                 outputs=[
@@ -5305,6 +5383,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     llm_analytics_html,
                     redirect_issue_id,
                     bulk_doc_ref,
+                    correction_new_state,
                 ],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
@@ -5326,6 +5405,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 llm_analytics_html,
                 redirect_issue_id,
                 bulk_doc_ref,
+                correction_new_state,
             ],
         )
 
