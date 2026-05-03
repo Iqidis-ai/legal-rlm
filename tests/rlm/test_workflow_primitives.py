@@ -689,3 +689,43 @@ def test_fmt_so_scorecard_panel_missing_targets():
     result = _fmt_so_scorecard_panel({"targets": {}, "targets_met": {}})
     assert "Sacred Outcomes Scorecard" in result
     assert "0/0 passing" in result
+
+
+def test_fmt_trust_overrides_empty():
+    from irys.ui.app import _fmt_trust_overrides
+    result = _fmt_trust_overrides([])
+    assert "viz-empty" in result
+    assert "No trust overrides" in result
+
+
+def test_fmt_trust_overrides_with_data():
+    from irys.ui.app import _fmt_trust_overrides
+    overrides = [
+        {
+            "id": "ov1",
+            "document_pattern": "contract_v1.pdf",
+            "trust_level": "low",
+            "note": "Client disputes this version",
+            "created_at": "2026-05-01T10:30:00",
+        },
+        {
+            "id": "ov2",
+            "document_pattern": "signed_agreement.pdf",
+            "trust_level": "high",
+            "note": "Verified original",
+            "created_at": "2026-05-02T14:00:00",
+        },
+    ]
+    result = _fmt_trust_overrides(overrides)
+    assert "2 active" in result
+    assert "contract_v1.pdf" in result
+    assert "signed_agreement.pdf" in result
+    assert "pill-red" in result
+    assert "pill-green" in result
+    assert "Client disputes" in result
+
+
+def test_fmt_trust_overrides_skips_non_dict():
+    from irys.ui.app import _fmt_trust_overrides
+    result = _fmt_trust_overrides(["bad", None])
+    assert "viz-empty" in result

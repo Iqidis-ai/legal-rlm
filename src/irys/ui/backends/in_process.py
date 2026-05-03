@@ -635,6 +635,20 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.answer_clarification(question_id, answer_text)
 
+    async def list_trust_overrides(self, matter_id: str) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.trust_overrides.list_all()
+
+    async def set_trust_override(
+        self, matter_id: str, document_pattern: str, trust_level: str, note: str = ""
+    ) -> str:
+        model = self._get_matter_model(matter_id)
+        return model.set_trust_override(document_pattern, trust_level, note=note or None)
+
+    async def delete_trust_override(self, matter_id: str, document_pattern: str) -> bool:
+        model = self._get_matter_model(matter_id)
+        return model.delete_trust_override(document_pattern)
+
     async def list_llm_calls(
         self,
         matter_id: str,

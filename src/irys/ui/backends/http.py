@@ -251,6 +251,29 @@ class HttpBackend(UIBackend):
         )
         return bool(result.get("found", False)) if isinstance(result, dict) else False
 
+    async def list_trust_overrides(self, matter_id: str) -> list[dict]:
+        result = await self._get(f"/matter/{matter_id}/trust-overrides")
+        if isinstance(result, dict):
+            return result.get("overrides", [])
+        return result if isinstance(result, list) else []
+
+    async def set_trust_override(
+        self, matter_id: str, document_pattern: str, trust_level: str, note: str = ""
+    ) -> str:
+        result = await self._post(
+            f"/matter/{matter_id}/trust-overrides",
+            {"document_pattern": document_pattern, "trust_level": trust_level, "note": note or None},
+        )
+        return result.get("override_id", "") if isinstance(result, dict) else ""
+
+    async def delete_trust_override(self, matter_id: str, document_pattern: str) -> bool:
+        pattern_enc = _url_quote(document_pattern, safe="")
+        try:
+            await self._client.delete(f"/matter/{matter_id}/trust-overrides/{pattern_enc}")
+            return True
+        except Exception:
+            return False
+
     async def list_llm_calls(
         self,
         matter_id: str,

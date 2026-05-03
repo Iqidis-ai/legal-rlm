@@ -237,3 +237,20 @@ class UIBackend(ABC):
     ) -> bool:
         """Answer a pending clarification question. Returns True if found."""
         ...
+
+    @abstractmethod
+    async def list_trust_overrides(self, matter_id: str) -> list[dict]:
+        """Return all document trust overrides."""
+        ...
+
+    @abstractmethod
+    async def set_trust_override(
+        self, matter_id: str, document_pattern: str, trust_level: str, note: str = ""
+    ) -> str:
+        """Set a trust override. Returns the override_id."""
+        ...
+
+    @abstractmethod
+    async def delete_trust_override(self, matter_id: str, document_pattern: str) -> bool:
+        """Delete a trust override. Returns True if deleted."""
+        ...

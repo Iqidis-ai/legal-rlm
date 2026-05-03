@@ -2492,6 +2492,45 @@ def _fmt_so_scorecard_panel(so: dict, domain: str = "legal") -> str:
     return f"<div class='viz-shell'>{header}{table}</div>"
 
 
+_TRUST_LEVEL_PILLS = {
+    "low": ("Low", "pill-red"),
+    "normal": ("Normal", "pill-neutral"),
+    "high": ("High", "pill-green"),
+}
+
+
+def _fmt_trust_overrides(overrides: list[dict]) -> str:
+    if not overrides:
+        return "<div class='viz-empty'>No trust overrides set.</div>"
+    rows = ""
+    for ov in overrides:
+        if not isinstance(ov, dict):
+            continue
+        pattern = _escape(str(ov.get("document_pattern", "—")))
+        level = str(ov.get("trust_level", "normal"))
+        label, cls = _TRUST_LEVEL_PILLS.get(level, ("Unknown", "pill-neutral"))
+        note = _escape(str(ov.get("note") or "—")[:120])
+        created = _escape(str(ov.get("created_at", "—"))[:19])
+        rows += (
+            f"<tr>"
+            f"<td>{pattern}</td>"
+            f"<td><span class='pill {cls}'>{label}</span></td>"
+            f"<td>{note}</td>"
+            f"<td style='font-size:11px;color:#6b7280'>{created}</td>"
+            f"</tr>"
+        )
+    if not rows:
+        return "<div class='viz-empty'>No trust overrides set.</div>"
+    count = rows.count("<tr>")
+    header = f"<div class='viz-header'><strong>Document Trust Overrides</strong> — {count} active</div>"
+    table = (
+        "<div class='table-wrap'><table class='viz-table'>"
+        "<thead><tr><th>Document</th><th>Trust</th><th>Reason</th><th>Set</th></tr></thead>"
+        "<tbody>" + rows + "</tbody></table></div>"
+    )
+    return f"<div class='viz-shell'>{header}{table}</div>"
+
+
 def _fmt_communication_map_panel(graph: dict) -> str:
     actors = list(graph.get("actors", []) or [])
     documents = list(graph.get("documents", []) or [])
@@ -5460,6 +5499,34 @@ class AppState:
         except Exception as exc:
             return f"Error: {exc}"
 
+    def load_trust_overrides(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().list_trust_overrides(matter_id))
+            return _fmt_trust_overrides(data)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading trust overrides: {_escape(exc)}</div>"
+
+    def do_set_trust_override(
+        self, matter_id: str, document_pattern: str, trust_level: str, note: str
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first."
+        if not document_pattern or not document_pattern.strip():
+            return "Enter a document pattern."
+        if trust_level not in ("low", "normal", "high"):
+            return "Select a valid trust level."
+        try:
+            override_id = _run_async(self.backend().set_trust_override(
+                matter_id, document_pattern.strip(), trust_level, note=(note or "").strip()
+            ))
+            if override_id:
+                return f"Trust override set (ID: {override_id[:8]}…). Belief revision triggered on affected assertions."
+            return "Override set."
+        except Exception as exc:
+            return f"Error: {exc}"
+
     def set_policy_audience(self, label: str) -> str:
         """Called when the sidebar privilege-mode toggle flips. Returns
         a visible banner HTML so the reviewer always knows which mode
@@ -6530,6 +6597,32 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 )
             answer_clarification_btn = gr.Button("Submit Answer", variant="primary", size="sm")
             answer_clarification_result = gr.Textbox(label="Result", interactive=False)
+            gr.Markdown("---")
+            gr.Markdown("#### Document Trust Overrides")
+            gr.Markdown(
+                "Override how much the system trusts a specific document. "
+                "**Low** demotes all assertions from that document to alleged status. "
+                "**High** promotes them to operative. **Normal** resets to automatic calibration."
+            )
+            trust_overrides_html = gr.HTML("<div class='viz-empty'>No trust overrides set.</div>")
+            with gr.Row():
+                trust_doc_pattern = gr.Textbox(
+                    label="Document Pattern",
+                    placeholder="e.g. contract_v1.pdf",
+                )
+                trust_level_dropdown = gr.Dropdown(
+                    label="Trust Level",
+                    choices=[("Low — demote to alleged", "low"), ("Normal — reset to auto", "normal"), ("High — promote to operative", "high")],
+                    value="low",
+                )
+            trust_note = gr.Textbox(
+                label="Reason (optional)",
+                placeholder="Why are you overriding trust for this document?",
+            )
+            with gr.Row():
+                set_trust_btn = gr.Button("Set Trust Override", variant="primary", size="sm")
+                refresh_trust_btn = gr.Button("Refresh Overrides", variant="secondary", size="sm")
+            trust_override_result = gr.Textbox(label="Result", interactive=False)
 
         # ==================================================================
         # WIRING
@@ -7249,9 +7342,24 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box, clarification_dropdown, clarification_answer_input],
             outputs=[answer_clarification_result],
         ).then(
-            fn=lambda mid: gr.update(choices=state.load_clarification_choices(mid)),
+            fn=lambda mid: gr.update(choices=state.load_clarification_choices(mid), value=None),
             inputs=[matter_id_box],
             outputs=[clarification_dropdown],
+        )
+
+        set_trust_btn.click(
+            fn=lambda mid, pat, lvl, note: state.do_set_trust_override(mid, pat, lvl, note),
+            inputs=[matter_id_box, trust_doc_pattern, trust_level_dropdown, trust_note],
+            outputs=[trust_override_result],
+        ).then(
+            fn=lambda mid: state.load_trust_overrides(mid),
+            inputs=[matter_id_box],
+            outputs=[trust_overrides_html],
+        )
+        refresh_trust_btn.click(
+            fn=lambda mid: state.load_trust_overrides(mid),
+            inputs=[matter_id_box],
+            outputs=[trust_overrides_html],
         )
 
         # Inject JS: clicking an assertions row fills the Fact ID textbox

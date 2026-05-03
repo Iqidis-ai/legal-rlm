@@ -1321,3 +1321,31 @@ def test_so_scorecard_returns_data(client, register_model):
 def test_so_scorecard_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/so-scorecard")
     assert resp.status_code == 404
+
+
+def test_trust_overrides_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/trust-overrides")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "overrides" in data
+    assert data["overrides"] == []
+
+
+def test_trust_overrides_set_and_list(client, register_model):
+    resp = client.post(
+        f"/matter/{MATTER_ID}/trust-overrides",
+        json={"document_pattern": "test.pdf", "trust_level": "low", "note": "test"},
+    )
+    assert resp.status_code == 200
+    assert "override_id" in resp.json()
+    resp = client.get(f"/matter/{MATTER_ID}/trust-overrides")
+    assert resp.status_code == 200
+    overrides = resp.json()["overrides"]
+    assert len(overrides) == 1
+    assert overrides[0]["document_pattern"] == "test.pdf"
+    assert overrides[0]["trust_level"] == "low"
+
+
+def test_trust_overrides_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/trust-overrides")
+    assert resp.status_code == 404
