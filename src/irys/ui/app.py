@@ -837,6 +837,25 @@ def _fmt_overview_panel(data: dict) -> str:
             )
         )
 
+    # Domain composition panel
+    domain_comp = data.get("domain_composition", {})
+    domain_facets = domain_comp.get("facets", []) if isinstance(domain_comp, dict) else []
+    primary_domain = domain_comp.get("primary_domain_profile_id", "legal") if isinstance(domain_comp, dict) else "legal"
+    domain_facet_rows: list[str] = []
+    for facet in domain_facets:
+        pid = facet.get("domain_profile_id", "unknown")
+        conf = _safe_float(facet.get("confidence", 0.0))
+        label = pid.replace("_", " ").title()
+        if pid == primary_domain:
+            label += " (primary)"
+        review_roles = facet.get("requires_review_roles")
+        meta = _fmt_percent_html(conf)
+        if review_roles:
+            meta += f" | review: {', '.join(review_roles[:3])}"
+        domain_facet_rows.append(
+            _bar_row(label, conf, 1.0, meta, tone="green")
+        )
+
     gap_items = "".join(
         f"<li>{_escape(g.get('description') or g.get('gap_type') or 'Gap')}</li>"
         for g in gaps
@@ -880,6 +899,14 @@ def _fmt_overview_panel(data: dict) -> str:
             else ""
         )
         + "</div>"
+        + "</div>"
+        + "<div class='viz-panel'>"
+        + "<div class='viz-panel-title'>Domain composition</div>"
+        + (
+            "".join(domain_facet_rows)
+            if domain_facet_rows
+            else "<div class='viz-empty'>Legal (default). Domain detection runs on document ingest.</div>"
+        )
         + "</div>"
         + "<div class='viz-two-col'>"
         + "<div class='viz-panel'>"

@@ -2158,12 +2158,16 @@ class MatterModel:
         return self.assertions.search(queries, issue_id=issue_id, limit=limit)
 
     def _ensure_belief_trust_weights(self) -> None:
-        """Load composed trust weights into the belief engine if not yet set."""
-        if self.belief.trust_weights is not None:
+        """Load composed trust weights into the belief engine, refreshing on facet changes."""
+        broker = self.memory_broker
+        current_rev = broker.get_namespace_revision("domain_facets", "*", "*")
+        last = getattr(self, "_belief_tw_facet_rev", -1)
+        if self.belief.trust_weights is not None and current_rev == last:
             return
         _, tw, _ = self._read_matter_domain_composition()
         if tw:
             self.belief.trust_weights = tw
+        self._belief_tw_facet_rev = current_rev
 
     def apply_revision(
         self,
@@ -3607,6 +3611,17 @@ class MatterModel:
                 val = analysis.get(key)
                 if val and isinstance(val, str):
                     text_parts.append(val)
+            for key in ("key_facts", "quotes", "entities", "numeric_facts"):
+                val = analysis.get(key)
+                if isinstance(val, list):
+                    for item in val:
+                        if isinstance(item, str):
+                            text_parts.append(item)
+                        elif isinstance(item, dict):
+                            text_parts.extend(
+                                str(v) for v in item.values()
+                                if isinstance(v, str)
+                            )
             text = " ".join(text_parts)
             if not text.strip():
                 return
@@ -3666,6 +3681,7 @@ class MatterModel:
         "criteria:*", "entities:*", "artifacts:*", "clarifications:*",
         "annotations:*", "assumptions:*", "support_edges:*",
         "guidance:*", "spans:*", "proof_state:*",
+        "domain_facets:*", "domain_detection:*", "domain_profiles:*",
     )
 
     def build_semantic_cache_manifest(

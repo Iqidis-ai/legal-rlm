@@ -3090,6 +3090,17 @@ async def get_matter_overview(matter_id: str):
     except Exception:
         pass
 
+    domain_composition = {}
+    try:
+        facets, tw, primary = model._read_matter_domain_composition()
+        domain_composition = {
+            "facets": facets,
+            "composed_trust_weights": tw,
+            "primary_domain_profile_id": primary,
+        }
+    except Exception:
+        pass
+
     return {
         "matter_id": matter_id,
         "stats": stats,
@@ -3098,6 +3109,41 @@ async def get_matter_overview(matter_id: str):
         "weakest_issues": weakest_issues,
         "top_gaps": top_gaps,
         "pending_clarifications": clarifications,
+        "domain_composition": domain_composition,
+    }
+
+
+@app.get(
+    "/matter/{matter_id}/domain-composition",
+    tags=["UI"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_domain_composition(matter_id: str):
+    """Return the active domain facets, composed trust weights, and detection events."""
+    model = await _get_matter_model_or_404(matter_id)
+    facets, tw, primary = model._read_matter_domain_composition()
+    broker = model.memory_broker
+
+    detection_events = []
+    try:
+        rows = model.db.execute(
+            """SELECT id, target_kind, target_id, candidate_profile_id,
+                      confidence, signals_json, evidence_refs_json, created_at
+               FROM domain_detection_event
+               WHERE matter_id=?
+               ORDER BY created_at DESC LIMIT 50""",
+            (model.matter_id,),
+        ).fetchall()
+        detection_events = [dict(r) for r in rows]
+    except Exception:
+        pass
+
+    return {
+        "matter_id": matter_id,
+        "primary_domain_profile_id": primary,
+        "facets": facets,
+        "composed_trust_weights": tw,
+        "detection_events": detection_events,
     }
 
 
