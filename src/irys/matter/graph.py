@@ -4707,6 +4707,10 @@ class ReasoningCacheStore:
     def __init__(self, db: SQLiteMatterDB, matter_id: str):
         self.db = db
         self.matter_id = matter_id
+        self._broker: "MemoryBrokerStore | None" = None
+
+    def set_broker(self, broker: "MemoryBrokerStore") -> None:
+        self._broker = broker
 
     # ----- P0.4 trust revision helpers --------------------------------
     def current_trust_revision(self) -> int:
@@ -4809,15 +4813,20 @@ class ReasoningCacheStore:
             return None
         return cached.get(cls._BROKER_PAYLOAD_KEY)
 
-    @classmethod
-    def _broker_manifest_is_valid(cls, meta: dict[str, Any]) -> bool:
-        """Validate broker-authored cache metadata.
+    def _broker_manifest_is_valid(self, meta: dict[str, Any]) -> bool:
+        """Validate broker-authored cache metadata against the manifest store.
 
-        There is not yet a durable broker manifest store to resolve and verify.
-        Until that exists, semantic cache reuse stays disabled even when row JSON
-        self-attests `broker_validated`.
+        Returns True only when the stored manifest_hash resolves to a recorded
+        manifest whose namespace dependencies are still fresh.
         """
-        return False
+        manifest_hash = meta.get("dependency_manifest_hash")
+        if not manifest_hash:
+            return False
+        broker = self._broker
+        if broker is None:
+            return False
+        result = broker.validate_dependency_manifest(manifest_hash)
+        return result.valid
 
     def get(self, stage: str, cache_key: str) -> Optional[Any]:
         """Return cached plan dict or None on cache miss or DB error.
@@ -6457,6 +6466,9 @@ class MemoryBrokerStore:
                            signals_json=?, evidence_refs_json=?, updated_at=?
                        WHERE id=?""",
                     (signals_json, evidence_refs_json, now, existing["id"]),
+                )
+                self.bump_namespace_revision(
+                    "unknown_domains", "cluster", evidence_cluster_hash,
                 )
                 return existing["id"]
             row_id = _id()

@@ -547,3 +547,102 @@ def test_facet_status_filter():
 
     all_facets = broker.get_object_domain_facets("claim", "c1", status=None)
     assert len(all_facets) == 2
+
+
+def test_unknown_domain_candidate_namespace_bump_on_update():
+    """Occurrence count update should bump the unknown_domains namespace."""
+    db, broker, _ = _setup_broker()
+    rid1 = broker.record_unknown_domain_candidate(
+        evidence_cluster_hash="hash_bump_test",
+        signals_json='{"lexical": ["x"]}',
+    )
+    rev1 = broker.get_namespace_revision("unknown_domains", "cluster", "hash_bump_test")
+
+    rid2 = broker.record_unknown_domain_candidate(
+        evidence_cluster_hash="hash_bump_test",
+        signals_json='{"lexical": ["x", "y"]}',
+    )
+    rev2 = broker.get_namespace_revision("unknown_domains", "cluster", "hash_bump_test")
+    assert rid1 == rid2
+    assert rev2 > rev1, "Namespace should bump on occurrence update"
+
+
+# --- Trust composition edge cases (PR Gate 4 #1, #3, #7) ---
+
+
+def _setup_model_with_facets(facets):
+    """Helper: create MatterModel and upsert workspace-level facets."""
+    model = MatterModel.open_in_memory()
+    broker = model.memory_broker
+    for f in facets:
+        broker.upsert_object_domain_facet(
+            target_kind="workspace",
+            target_id=model.matter_id,
+            domain_profile_id=f["profile_id"],
+            domain_profile_version=f.get("version", 1),
+            profile_mapping_hash=f.get("mapping_hash", "sha256:test"),
+            confidence=f["confidence"],
+            status=f.get("status", "active"),
+        )
+    return model
+
+
+def test_composition_no_facets_falls_back_to_legal():
+    model = MatterModel.open_in_memory()
+    facets, tw, primary = model._read_matter_domain_composition()
+    assert facets == []
+    assert primary == "legal"
+    assert len(tw) > 0
+
+
+def test_composition_single_profile_preserves_weights():
+    model = _setup_model_with_facets([{"profile_id": "legal", "confidence": 0.9}])
+    facets, tw, primary = model._read_matter_domain_composition()
+    assert primary == "legal"
+    legal_tw = model.memory_broker.get_profile_trust_weights("legal")
+    for role, val in legal_tw.items():
+        assert abs(tw[role] - val) < 1e-6, f"Single-profile role {role} should be exact"
+
+
+def test_composition_role_local_normalization():
+    """A role defined in only one profile should not be diluted by others."""
+    model = _setup_model_with_facets([
+        {"profile_id": "legal", "confidence": 0.8},
+        {"profile_id": "coding", "confidence": 0.7},
+    ])
+    _, tw, _ = model._read_matter_domain_composition()
+    legal_tw = model.memory_broker.get_profile_trust_weights("legal")
+    coding_tw = model.memory_broker.get_profile_trust_weights("coding")
+    legal_only_roles = set(legal_tw) - set(coding_tw)
+    for role in legal_only_roles:
+        assert abs(tw[role] - legal_tw[role]) < 1e-6, (
+            f"Role '{role}' only in legal should not be diluted"
+        )
+
+
+def test_composition_disagreement_flag():
+    """When profiles disagree on a role by >0.25, requires_review is flagged."""
+    model = _setup_model_with_facets([
+        {"profile_id": "legal", "confidence": 0.8},
+        {"profile_id": "finance", "confidence": 0.8},
+    ])
+    facets, tw, _ = model._read_matter_domain_composition()
+    legal_tw = model.memory_broker.get_profile_trust_weights("legal")
+    finance_tw = model.memory_broker.get_profile_trust_weights("finance")
+    shared_roles = set(legal_tw) & set(finance_tw)
+    disagreeing = {r for r in shared_roles if abs(legal_tw[r] - finance_tw[r]) > 0.25}
+    if disagreeing:
+        for fd in facets:
+            assert "requires_review_roles" in fd
+            for role in disagreeing:
+                assert role in fd["requires_review_roles"]
+
+
+def test_composition_zero_confidence_falls_back():
+    """All-zero confidence facets should fallback to legal."""
+    model = _setup_model_with_facets([
+        {"profile_id": "legal", "confidence": 0.0},
+    ])
+    facets, tw, primary = model._read_matter_domain_composition()
+    assert primary == "legal"
+    assert len(tw) > 0

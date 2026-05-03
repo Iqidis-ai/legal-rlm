@@ -33,7 +33,7 @@ from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
 from .enums import (
     BeliefState, AssertionLinkType, RevisionCause,
-    LedgerEventType, GapType,
+    LedgerEventType, GapType, SOURCE_TRUST_WEIGHTS,
 )
 from .models import (
     AssertionCandidate, AssertionRecord, RevisionResult,
@@ -119,6 +119,7 @@ class MatterModel:
         self.content_policy = ContentPolicyGuard(db, matter_id)
         self.memory_broker = MemoryBrokerStore(db, matter_id)
         self.memory_broker.ensure_builtin_domain_profiles()
+        self.cache.set_broker(self.memory_broker)
         # In-memory snapshot of assertion counts captured at run start.
         # Keyed by run_id.  Allows complete_run() to compute reuse_rate without
         # an extra SELECT round-trip (DB is the authoritative fallback).
@@ -3539,6 +3540,8 @@ class MatterModel:
         domain_facets, composed_trust, primary_profile = (
             self._read_matter_domain_composition()
         )
+        if composed_trust:
+            self.belief.trust_weights = composed_trust
 
         return QueryMatterContext(
             matter_id=self.matter_id,
@@ -3560,6 +3563,8 @@ class MatterModel:
             primary_domain_profile_id=primary_profile,
         )
 
+    _TRUST_DISAGREEMENT_THRESHOLD = 0.25
+
     def _read_matter_domain_composition(
         self,
     ) -> tuple[list[dict], dict[str, float], str | None]:
@@ -3567,14 +3572,28 @@ class MatterModel:
 
         Returns (facet_list, composed_trust_weights, primary_profile_id).
         Reads only — no fresh detection (per Design Gate 3 §3).
+
+        Composition uses role-local normalization: each role is averaged only
+        across profiles that define that role, so single-profile roles are not
+        diluted by unrelated facets. When profiles disagree on a role by more
+        than _TRUST_DISAGREEMENT_THRESHOLD, the role is flagged requires_review
+        in the facet metadata.
         """
         broker = self.memory_broker
         facet_rows = broker.get_object_domain_facets(
             "workspace", self.matter_id, status="active",
         )
-        if not facet_rows:
+
+        def _legal_fallback() -> dict[str, float]:
             tw = broker.get_profile_trust_weights("legal")
-            return [], tw, "legal"
+            return tw if tw else dict(SOURCE_TRUST_WEIGHTS)
+
+        if not facet_rows:
+            return [], _legal_fallback(), "legal"
+
+        total_conf = sum(f["confidence"] for f in facet_rows)
+        if total_conf <= 0:
+            return [], _legal_fallback(), "legal"
 
         primary_profile: str | None = None
         best_conf = -1.0
@@ -3583,14 +3602,25 @@ class MatterModel:
                 best_conf = f["confidence"]
                 primary_profile = f["domain_profile_id"]
 
+        role_contributions: dict[str, list[tuple[float, float]]] = {}
+        for f in facet_rows:
+            tw = broker.get_profile_trust_weights(f["domain_profile_id"])
+            conf = f["confidence"]
+            for role, val in tw.items():
+                role_contributions.setdefault(role, []).append((conf, val))
+
         composed: dict[str, float] = {}
-        total_conf = sum(f["confidence"] for f in facet_rows)
-        if total_conf > 0:
-            for f in facet_rows:
-                weight = f["confidence"] / total_conf
-                tw = broker.get_profile_trust_weights(f["domain_profile_id"])
-                for role, val in tw.items():
-                    composed[role] = composed.get(role, 0.0) + val * weight
+        review_roles: set[str] = set()
+        for role, contributions in role_contributions.items():
+            role_total_conf = sum(c for c, _ in contributions)
+            if role_total_conf <= 0:
+                continue
+            weighted_val = sum(c * v for c, v in contributions) / role_total_conf
+            composed[role] = weighted_val
+            if len(contributions) > 1:
+                vals = [v for _, v in contributions]
+                if max(vals) - min(vals) > self._TRUST_DISAGREEMENT_THRESHOLD:
+                    review_roles.add(role)
 
         facets = [
             {
@@ -3601,6 +3631,9 @@ class MatterModel:
             }
             for f in facet_rows
         ]
+        if review_roles:
+            for fd in facets:
+                fd["requires_review_roles"] = sorted(review_roles)
         return facets, composed, primary_profile
 
     @staticmethod

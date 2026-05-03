@@ -37,8 +37,10 @@ def test_detection_signals_empty():
 
 def test_legal_text_detected():
     text = (
-        "The plaintiff filed a motion to compel discovery. The court ruled that "
-        "pursuant to Rule 37, the defendant must produce the deposition transcripts. "
+        "The plaintiff filed a motion to compel discovery in the "
+        "UNITED STATES DISTRICT COURT for the Southern District. "
+        "Pursuant to 500 U.S. 123, the court ruled that "
+        "the defendant must produce the deposition transcripts. "
         "The verdict was in favor of the plaintiff, damages awarded."
     )
     candidates = detect_domain_signals(text)
@@ -196,3 +198,62 @@ def test_legal_citation_signals():
     legal = [c for c in candidates if c.profile_id == "legal"]
     assert len(legal) >= 1
     assert any("citation" in ref for ref in legal[0].evidence_refs)
+
+
+# --- Adversarial generic-text false-positive tests (PR Gate 4 #5) ---
+
+
+def test_generic_prose_no_false_positive():
+    """Generic English prose should not trigger any domain detection."""
+    text = (
+        "The weather was pleasant today and the children played in the park. "
+        "We had dinner at the restaurant and then watched a movie at home. "
+        "The flowers in the garden are blooming beautifully this spring."
+    )
+    candidates = detect_domain_signals(text)
+    active = [c for c in candidates if c.is_active]
+    assert len(active) == 0, f"Generic prose triggered: {[(c.profile_id, c.confidence) for c in active]}"
+
+
+def test_repeated_option_does_not_false_positive_finance():
+    """Repeating broad terms like 'option' should not push finance above active."""
+    text = " ".join(["We have the option to choose from various options."] * 10)
+    candidates = detect_domain_signals(text)
+    finance = [c for c in candidates if c.profile_id == "finance" and c.is_active]
+    assert len(finance) == 0, f"Repeated 'option' false positive: conf={finance[0].confidence if finance else 0}"
+
+
+def test_repeated_function_does_not_false_positive_coding():
+    """Repeating 'function' in prose shouldn't push coding above active."""
+    text = " ".join(["The function of this function is to function properly."] * 10)
+    candidates = detect_domain_signals(text)
+    coding = [c for c in candidates if c.profile_id == "coding" and c.is_active]
+    assert len(coding) == 0, f"Repeated 'function' false positive: conf={coding[0].confidence if coding else 0}"
+
+
+def test_repeated_patient_does_not_false_positive_biomedical():
+    """Repeating 'patient' in non-medical context shouldn't push biomedical above active."""
+    text = " ".join(["The patient teacher was very patient with the patient students."] * 10)
+    candidates = detect_domain_signals(text)
+    bio = [c for c in candidates if c.profile_id == "biomedical" and c.is_active]
+    assert len(bio) == 0, f"Repeated 'patient' false positive: conf={bio[0].confidence if bio else 0}"
+
+
+def test_numbered_list_does_not_false_positive_research():
+    """Numbered items like [1], [2] should not push research above active."""
+    text = " ".join([f"[{i}] Some numbered item about general topics." for i in range(20)])
+    candidates = detect_domain_signals(text)
+    research = [c for c in candidates if c.profile_id == "research" and c.is_active]
+    assert len(research) == 0, f"Numbered list false positive: conf={research[0].confidence if research else 0}"
+
+
+def test_single_category_score_cap_prevents_over_promotion():
+    """Even with massive lexical hits, single-category cap should limit score."""
+    text = " ".join(["court judgment plaintiff defendant"] * 50)
+    candidates = detect_domain_signals(text)
+    legal = [c for c in candidates if c.profile_id == "legal"]
+    assert len(legal) >= 1
+    # Should be capped — single category (lexical) can't reach 1.0 alone
+    assert legal[0].confidence < 0.70, (
+        f"Single-category should be below active: conf={legal[0].confidence}"
+    )

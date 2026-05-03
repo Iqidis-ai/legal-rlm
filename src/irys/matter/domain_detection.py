@@ -291,6 +291,9 @@ _CATEGORY_DIVERSITY_BONUS = 0.12
 _DENSITY_THRESHOLD = 5
 _DENSITY_BONUS = 0.15
 
+# Per-category score cap: prevents single-category repetition from reaching active threshold
+_CATEGORY_SCORE_CAP = 0.45
+
 # Metadata signal bonus per hit
 _METADATA_BONUS = 0.15
 
@@ -319,6 +322,7 @@ def detect_domain_signals(
         evidence_refs: list[str] = []
         raw_score = 0.0
         active_categories: set[str] = set()
+        category_scores: dict[str, float] = {}
 
         for category, label, pattern in detectors:
             matches = _count_matches(pattern, text)
@@ -330,7 +334,10 @@ def detect_domain_signals(
                 score = base * min(n, 3) + base * 0.5 * max(min(n, 10) - 3, 0)
                 if n >= _DENSITY_THRESHOLD:
                     score += _DENSITY_BONUS
-                raw_score += score
+                prev = category_scores.get(category, 0.0)
+                capped = min(prev + score, _CATEGORY_SCORE_CAP) - prev
+                category_scores[category] = prev + capped
+                raw_score += capped
                 evidence_refs.append(f"{category}:{label}:{n}")
 
         # Metadata-based signals
