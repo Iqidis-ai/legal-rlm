@@ -275,7 +275,7 @@ USER-OBJECTIVE ALIGNMENT:
 - Favor the highest-yield next step, not the most intellectually interesting one.
 """.strip()
 
-ORIENTATION_PROMPT = """You are an expert legal analyst conducting due diligence on a document repository.
+ORIENTATION_PROMPT = """You are an expert analyst conducting due diligence on a document repository.
 
 Repository Structure:
 {structure}
@@ -287,13 +287,13 @@ Total files: {total_files}
 
 User Query: {query}
 {matter_context}
-Your task is to create a strategic research plan. Think like an experienced litigator or investigator.
+Your task is to create a strategic research plan. Think like an experienced investigator.
 
 {research_alignment_guidance}
 
 Consider:
 1. READ THE DOCUMENT LISTING CAREFULLY. File names reveal what each document IS (e.g., "Master_Service_Agreement.pdf" is a contract, "Complaint_Filed_2024.pdf" is a pleading, "Invoice_March.xlsx" is financial). Use file names to identify the MOST IMPORTANT documents.
-2. What are the CORE legal issues that need to be established?
+2. What are the CORE issues that need to be established?
 3. Which specific documents from the listing are MOST LIKELY to contain direct evidence? Name them explicitly in your search terms.
 4. What SPECIFIC search terms will find relevant passages? Use party names, document-specific terms, and key phrases you expect to find IN those documents.
 5. What is your preliminary hypothesis based on the query and the document names?
@@ -311,7 +311,7 @@ Respond in JSON format:
     "issues": [
         {{
             "title": "issue description",
-            "type": "claim|defense|damages|contract_question|procedural|evidentiary|condition_precedent|waiver|diligence_red_flag|compliance_failure",
+            "type": "claim|defense|exposure|interpretation|procedural|evidentiary|condition_precedent|waiver|diligence_red_flag|compliance_failure",
             "predicates": ["testable element 1", "testable element 2"]
         }}
     ],
@@ -327,11 +327,11 @@ For target_documents: list the EXACT filenames from the Document Listing above t
 believe are the highest-value retrieval targets. These should be specific files, not types.
 Maximum 10 filenames. These will be used as durable retrieval targets throughout the investigation.
 
-Issue types: claim=a party's primary legal claim, defense=an affirmative defense,
-damages=a damages component or exposure, contract_question=a disputed contract interpretation,
+Issue types: claim=a primary assertion or position, defense=a counterargument or defense,
+exposure=a risk, liability, or cost component, interpretation=a disputed interpretation of terms,
 procedural=a procedural barrier or threshold issue, evidentiary=an evidentiary bottleneck,
-condition_precedent=a condition that must be satisfied, waiver=a waiver/estoppel defense,
-diligence_red_flag=a due-diligence risk item, compliance_failure=a regulatory violation.
+condition_precedent=a condition that must be satisfied, waiver=a waiver or estoppel defense,
+diligence_red_flag=a due-diligence risk item, compliance_failure=a regulatory or policy violation.
 
 For each issue, include 2-4 "predicates": the specific testable elements that must be
 established to prove or defeat that issue (e.g., for breach of contract: ["contract
@@ -478,7 +478,7 @@ Respond in COMPACT JSON (under 2500 chars):
 }}
 """
 
-REASON_FINDINGS_PROMPT = """You are a senior legal analyst reasoning over pre-extracted facts. You do not re-read source documents — everything you need is below.
+REASON_FINDINGS_PROMPT = """You are a senior analyst reasoning over pre-extracted facts. You do not re-read source documents — everything you need is below.
 
 Investigation query: {query}
 Current hypothesis: {hypothesis}
@@ -537,7 +537,7 @@ _ANALYZE_PROMPT_VER = _hashlib.sha256(
 ).hexdigest()[:12]
 del _hashlib  # avoid polluting module namespace
 
-DEEP_READ_PROMPT = """You are an expert legal analyst performing detailed document review.
+DEEP_READ_PROMPT = """You are an expert analyst performing detailed document review.
 
 Document: {filename}
 Page Range: {page_range}
@@ -548,7 +548,7 @@ Content:
 Query Context: {query}
 Current Investigation Focus: {focus}
 
-CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters total.
+CONDUCT A FOCUSED ANALYSIS. IMPORTANT: Keep response under 4000 characters total.
 
 1. KEY FACTS (STRICT LIMIT: 15 maximum facts): Extract facts that are:
    - Directly relevant to the query/focus
@@ -606,13 +606,13 @@ CONDUCT A FOCUSED LEGAL ANALYSIS. IMPORTANT: Keep response under 4000 characters
 
 8. DOC SOURCE ROLE (SO-5 — classify this document by its content, NOT its filename):
    Choose exactly one of: advocacy, operative, authoritative, procedural, informal, draft, post_hoc, unknown
-   - advocacy: pleadings, demand letters, briefs, position papers authored by a party to advance their interest
-   - operative: signed contracts, executed agreements, court orders, deeds, leases with binding effect
-   - authoritative: statutes, regulations, binding case law, official government publications
-   - procedural: court filings, discovery materials, motions, notices, subpoenas
-   - informal: emails, messages, notes, chats, texts, internal memos not constituting operative documents
+   - advocacy: position papers, briefs, proposals authored to advance a party's interest
+   - operative: signed agreements, executed contracts, official orders with binding effect
+   - authoritative: statutes, regulations, standards, published guidelines, peer-reviewed findings
+   - procedural: filings, applications, process documents, compliance submissions
+   - informal: emails, messages, notes, chats, internal memos, correspondence
    - draft: unsigned or unapproved versions — not yet operative
-   - post_hoc: expert reports, declarations, analysis written after the events to explain or opine
+   - post_hoc: analysis, reports, expert opinions written after the events to explain or assess
    - unknown: cannot determine from document content alone
 
 9. DOCUMENT CARD (classify this document for the matter model):
@@ -1196,12 +1196,12 @@ Respond in JSON format:
     "explanation": "Why these contradict or don't",
     "reconciliation_possible": true/false,
     "reconciliation_theory": "How these could both be true (if applicable)",
-    "legal_significance": "Why this matters for the matter",
+    "significance": "Why this matters for the matter",
     "follow_up_needed": ["additional verification steps"]
 }}
 """
 
-TIMELINE_EXTRACTION_PROMPT = """You are a legal analyst constructing a chronology from documents.
+TIMELINE_EXTRACTION_PROMPT = """You are an analyst constructing a chronology from documents.
 
 Documents Analyzed:
 {document_list}
@@ -1209,7 +1209,7 @@ Documents Analyzed:
 Events Found:
 {events}
 
-CONSTRUCT A LEGAL CHRONOLOGY:
+CONSTRUCT A CHRONOLOGY:
 
 1. Order events by date (earliest to latest)
 2. Identify causal relationships between events
@@ -1220,7 +1220,7 @@ CONSTRUCT A LEGAL CHRONOLOGY:
 For each event, assess:
 - Certainty of date (exact vs. approximate)
 - Source reliability
-- Legal significance
+- Significance
 - Relationship to other events
 
 Respond in JSON format:
@@ -1232,7 +1232,7 @@ Respond in JSON format:
             "event": "description",
             "source_doc": "filename",
             "source_page": N,
-            "legal_significance": "why this matters",
+            "significance": "why this matters",
             "related_events": ["event_ids that connect"],
             "is_deadline": true/false
         }}
@@ -1249,7 +1249,7 @@ Respond in JSON format:
 }}
 """
 
-EVIDENCE_ASSESSMENT_PROMPT = """You are a senior litigator assessing the strength of evidence.
+EVIDENCE_ASSESSMENT_PROMPT = """You are a senior analyst assessing the strength of evidence.
 
 Claim Being Assessed: {claim}
 
@@ -1266,9 +1266,9 @@ ASSESS EVIDENCE STRENGTH:
    - What is circumstantial?
 
 2. PRIMARY vs. SECONDARY SOURCES
-   - Contracts, signed documents = primary
-   - Emails, notes = secondary
-   - Testimony, recollections = tertiary
+   - Signed documents, official records = primary
+   - Correspondence, notes = secondary
+   - Recollections, informal accounts = tertiary
 
 3. CORROBORATION
    - Is evidence corroborated by multiple sources?
@@ -1278,9 +1278,9 @@ ASSESS EVIDENCE STRENGTH:
    - Can this evidence be authenticated?
    - Who would authenticate it?
 
-5. HEARSAY ISSUES
-   - What statements are hearsay?
-   - Any exceptions applicable?
+5. RELIABILITY CONCERNS
+   - What statements lack direct sourcing?
+   - What evidence depends on unverified claims?
 
 6. OVERALL ASSESSMENT
    - Rate claim as: Strongly Supported / Moderately Supported / Weakly Supported / Contradicted
@@ -1293,7 +1293,7 @@ Respond in JSON format:
         "circumstantial": ["evidence3"],
         "primary_sources": ["doc1"],
         "secondary_sources": ["doc2"],
-        "hearsay_concerns": ["statement1"]
+        "reliability_concerns": ["statement1"]
     }},
     "corroboration_level": "high/medium/low/none",
     "authentication_assessment": "easily authenticated/challengeable/problematic",
@@ -2625,7 +2625,9 @@ class RLMEngine:
                 "claim": IssueType.CLAIM,
                 "defense": IssueType.DEFENSE,
                 "damages": IssueType.DAMAGES,
+                "exposure": IssueType.DAMAGES,
                 "contract_question": IssueType.CONTRACT_QUESTION,
+                "interpretation": IssueType.CONTRACT_QUESTION,
                 "procedural": IssueType.PROCEDURAL_BARRIER,
                 "evidentiary": IssueType.EVIDENTIARY_BOTTLENECK,
                 "condition_precedent": IssueType.CONDITION_PRECEDENT,
@@ -7750,7 +7752,7 @@ Return:
             "explanation": "Unable to analyze",
             "reconciliation_possible": True,
             "reconciliation_theory": None,
-            "legal_significance": "Unknown",
+            "significance": "Unknown",
             "follow_up_needed": [],
         }
 
@@ -7868,7 +7870,7 @@ Return:
                 "circumstantial": [],
                 "primary_sources": [],
                 "secondary_sources": [],
-                "hearsay_concerns": [],
+                "reliability_concerns": [],
             },
             "corroboration_level": "unknown",
             "authentication_assessment": "unknown",
