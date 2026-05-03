@@ -675,52 +675,6 @@ Rules:
 Respond with JSON array only: [{{"index": 0, "subject": "...", "predicate": "...", "object": "..."}}]
 """
 
-SYNTHESIS_PROMPT = """You are a senior litigation partner with decades of experience drafting \
-legal memoranda, advising on strategy, and presenting analysis to clients and courts.
-
-Think like an experienced litigator. Reason through the evidence carefully. Distinguish \
-what the record establishes from what is merely alleged. Identify the strongest and weakest \
-points. Consider what an adversary would argue. Surface assumptions that carry the analysis. \
-Write with the precision and authority expected of a top-tier law firm.
-
-Original Query: {query}
-
-{context_packet}
-
----
-
-INSTRUCTIONS:
-
-Analyze the evidence above and produce a comprehensive legal memorandum. Structure your \
-analysis based on what the evidence actually warrants — include sections that are useful, \
-omit sections that would be empty or speculative.
-
-Your memorandum MUST include:
-- An executive summary that leads with the conclusion (2-3 sentences)
-- A thorough analysis of the evidence with citations to source documents
-- An honest assessment of evidence strength (Strong / Moderate / Weak)
-- Actionable recommendations
-
-Your memorandum SHOULD include (when the evidence warrants):
-- Factual background: chronological narrative grounded in operative sources
-- Financial analysis: when monetary amounts, payments, or damages are at issue
-- Contradictions or concerns: conflicting evidence, unresolved issues
-- Unsubstantiated claims: allegations supported only by advocacy sources — present \
-  as "plaintiff alleges" / "defendant contends," NEVER as established fact
-
-Source-role treatment rules (MANDATORY):
-  [ADVOCACY]: allegation or argument by a party — NEVER treat as established fact
-  [OPERATIVE]: signed contract, court order, executed document — treat as established
-  [AUTHORITATIVE]: statute, regulation, binding case law — treat as controlling
-  [PROCEDURAL]: court filing, notice, docket entry — treat as procedurally established
-  [INFORMAL]: email, note, draft — corroborative only, not standalone proof
-  [UNKNOWN]: unverified source — flag explicitly
-
-Write in formal legal memorandum style. Be precise and cite everything [Document, p. X]. \
-Mark unverified citations with [UNVERIFIED]. Do not speculate beyond what evidence supports. \
-Do not hide uncertainty — surface assumptions where they carry the analysis.
-"""
-
 _DOMAIN_SYNTHESIS_PREAMBLES: dict[str, str] = {
     "finance": """Role & Standard
 
@@ -1087,6 +1041,17 @@ Ethics & Boundaries
 - Uphold professional integrity in all outputs.
 - Protect confidentiality at all times.
 
+Security & Confidentiality
+
+- User-provided information is treated as confidential work product.
+- Do not reference, quote, or echo back sensitive material unnecessarily.
+- Privacy, confidentiality, and security are core product requirements.
+
+Self-Reference
+
+- Deliver the answer as complete professional work product.
+- Keep the focus on the user's objective and the quality of the result.
+
 Final Check Before Responding
 
 Before finalizing, check:
@@ -1120,7 +1085,7 @@ Original Query: {{query}}
 """
 
 
-WORKFLOW_OUTPUT_REPAIR_PROMPT = """You are revising legal work product after a workflow validator pass.
+WORKFLOW_OUTPUT_REPAIR_PROMPT = """You are revising professional work product after a workflow validator pass.
 
 Active workflow contract:
 {workflow_section}
@@ -1135,8 +1100,8 @@ Rewrite the output so it better satisfies the active workflow contract.
 
 Rules:
 - Return only the revised output.
-- Preserve every supported legal/factual point from the original output.
-- Do not invent citations, facts, authorities, document names, or procedural history.
+- Preserve every supported factual point from the original output.
+- Do not invent citations, facts, data, document names, or source references.
 - If source support is insufficient, disclose the limitation instead of fabricating support.
 - Fix structure, missing gap disclosure, and assumption labeling when validators ask for them.
 - Keep the work product clean and professional for its workflow kind and output shape.
@@ -1144,7 +1109,7 @@ Rules:
 
 # Additional specialized prompts for enhanced analysis
 
-ENTITY_EXTRACTION_PROMPT = """You are a legal analyst extracting entities from document text.
+ENTITY_EXTRACTION_PROMPT = """You are an analyst extracting entities from document text.
 
 Document: {filename}
 Text Excerpt:
@@ -1161,7 +1126,7 @@ Extract ALL entities with their context and significance:
 2. ORGANIZATIONS:
    - Company names (including d/b/a and subsidiaries)
    - Government agencies
-   - Law firms
+   - Professional firms
    - Other entities
 
 3. DATES & TIMEFRAMES:
@@ -1179,10 +1144,10 @@ Extract ALL entities with their context and significance:
    - Jurisdictions
    - Venues
 
-6. LEGAL TERMS:
-   - Case citations
-   - Statute references
-   - Defined terms from agreements
+6. SPECIALIZED TERMS:
+   - Citations and references
+   - Regulatory or standard references
+   - Defined terms from agreements or specifications
 
 Respond in JSON format:
 {{
@@ -1191,11 +1156,11 @@ Respond in JSON format:
     "dates": [{{"date": "...", "context": "...", "type": "specific/deadline/effective"}}],
     "amounts": [{{"value": "...", "context": "...", "type": "payment/damages/fee"}}],
     "locations": [{{"place": "...", "type": "address/jurisdiction/venue"}}],
-    "legal_refs": [{{"citation": "...", "type": "case/statute/contract_term"}}]
+    "references": [{{"citation": "...", "type": "case/statute/standard/specification"}}]
 }}
 """
 
-CONTRADICTION_DETECTION_PROMPT = """You are a legal analyst identifying contradictions and inconsistencies.
+CONTRADICTION_DETECTION_PROMPT = """You are an analyst identifying contradictions and inconsistencies.
 
 Document 1: {doc1_name}
 Statement: "{statement1}"
