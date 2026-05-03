@@ -191,3 +191,64 @@ def test_profile_hashes_are_deterministic():
 def test_legal_profile_json_raises_for_canonical():
     with pytest.raises(ValueError, match="Legal profile JSON is owned"):
         canonical_profile_json("legal")
+
+
+def test_vocabulary_reader_finance():
+    model = _open_model()
+    broker = model.memory_broker
+    tw = broker.get_profile_trust_weights("finance")
+    assert "auditor" in tw
+    assert tw["auditor"] == 0.9
+    assert tw["investor"] == 0.35
+
+    roles = broker.get_profile_source_roles("finance")
+    assert "auditor" in roles
+    assert "regulator" in roles
+    assert len(roles) == 10
+
+    states = broker.get_profile_belief_states("finance")
+    assert "audited" in states
+    assert "unsupported" in states
+
+    taints = broker.get_profile_taint_classes("finance")
+    assert "material_nonpublic" in taints
+    assert "unknown_taint" in taints
+
+    acts = broker.get_profile_speech_acts("finance")
+    assert "audit_opinion" in acts
+
+
+def test_vocabulary_reader_coding():
+    model = _open_model()
+    broker = model.memory_broker
+    tw = broker.get_profile_trust_weights("coding")
+    assert tw["automated_test"] == 0.85
+    assert tw["issue_reporter"] == 0.38
+
+    roles = broker.get_profile_source_roles("coding")
+    assert "ci_system" in roles
+    assert "security_scanner" in roles
+
+
+def test_vocabulary_reader_returns_empty_for_missing():
+    model = _open_model()
+    broker = model.memory_broker
+    assert broker.get_profile_trust_weights("nonexistent") == {}
+    assert broker.get_profile_source_roles("nonexistent") == []
+    assert broker.get_profile_belief_states("nonexistent") == []
+    assert broker.get_profile_taint_classes("nonexistent") == []
+    assert broker.get_profile_speech_acts("nonexistent") == []
+
+
+def test_vocabulary_reader_all_profiles():
+    model = _open_model()
+    broker = model.memory_broker
+    for pid in DOMAIN_PROFILE_IDS:
+        vocab = broker.get_profile_vocabulary(pid)
+        assert vocab is not None, f"Profile {pid} vocabulary should exist"
+        assert "neutral_kernel" in vocab
+        if pid != "legal":
+            assert "trust_weights" in vocab
+            assert "source_roles" in vocab
+            assert len(vocab["trust_weights"]) >= 5
+            assert len(vocab["source_roles"]) >= 5

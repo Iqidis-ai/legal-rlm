@@ -5599,6 +5599,76 @@ class MemoryBrokerStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def get_profile_vocabulary(
+        self,
+        profile_id: str,
+        profile_version: int | None = None,
+    ) -> dict | None:
+        """Parse profile_json and return the full vocabulary dict.
+
+        Returns None if the profile doesn't exist. The returned dict has
+        keys like neutral_kernel, source_roles, belief_states, trust_weights,
+        taint_classes, speech_acts — whatever the profile declares.
+        """
+        profile = self.get_domain_profile(profile_id, profile_version)
+        if profile is None:
+            return None
+        return _json_mod.loads(profile["profile_json"])
+
+    def get_profile_trust_weights(
+        self,
+        profile_id: str,
+        profile_version: int | None = None,
+    ) -> dict[str, float]:
+        """Return source_role → weight mapping from a domain profile.
+
+        Returns empty dict if profile doesn't exist or has no trust_weights.
+        """
+        vocab = self.get_profile_vocabulary(profile_id, profile_version)
+        if vocab is None:
+            return {}
+        return {str(k): float(v) for k, v in vocab.get("trust_weights", {}).items()}
+
+    def get_profile_source_roles(
+        self,
+        profile_id: str,
+        profile_version: int | None = None,
+    ) -> list[str]:
+        vocab = self.get_profile_vocabulary(profile_id, profile_version)
+        if vocab is None:
+            return []
+        return list(vocab.get("source_roles", []))
+
+    def get_profile_belief_states(
+        self,
+        profile_id: str,
+        profile_version: int | None = None,
+    ) -> list[str]:
+        vocab = self.get_profile_vocabulary(profile_id, profile_version)
+        if vocab is None:
+            return []
+        return list(vocab.get("belief_states", []))
+
+    def get_profile_taint_classes(
+        self,
+        profile_id: str,
+        profile_version: int | None = None,
+    ) -> list[str]:
+        vocab = self.get_profile_vocabulary(profile_id, profile_version)
+        if vocab is None:
+            return []
+        return list(vocab.get("taint_classes", []))
+
+    def get_profile_speech_acts(
+        self,
+        profile_id: str,
+        profile_version: int | None = None,
+    ) -> list[str]:
+        vocab = self.get_profile_vocabulary(profile_id, profile_version)
+        if vocab is None:
+            return []
+        return list(vocab.get("speech_acts", []))
+
     def record_profile_mapping(
         self,
         *,
@@ -5969,22 +6039,30 @@ class MemoryBrokerStore:
                 f"domain_profile {manifest.domain_profile_id}:{manifest.domain_profile_version} not found"
             )
 
-        # Validate profile mapping hash freshness
+        # Validate profile mapping hash is bound to the manifest's profile
         if manifest.profile_mapping_hash:
             mapping_row = self.db.execute(
-                """SELECT id FROM profile_mapping
-                   WHERE matter_id=? AND source_mapping_hash=?""",
-                (self.matter_id, manifest.profile_mapping_hash),
+                """SELECT id, compatibility_status FROM profile_mapping
+                   WHERE matter_id=?
+                     AND (source_domain_profile_id=? OR target_domain_profile_id=?)
+                     AND (source_mapping_hash=? OR target_mapping_hash=?)""",
+                (
+                    self.matter_id,
+                    manifest.domain_profile_id,
+                    manifest.domain_profile_id,
+                    manifest.profile_mapping_hash,
+                    manifest.profile_mapping_hash,
+                ),
             ).fetchone()
             if mapping_row is None:
-                mapping_row = self.db.execute(
-                    """SELECT id FROM profile_mapping
-                       WHERE matter_id=? AND target_mapping_hash=?""",
-                    (self.matter_id, manifest.profile_mapping_hash),
-                ).fetchone()
-            if mapping_row is None:
                 stale_reasons.append(
-                    f"profile_mapping_hash {manifest.profile_mapping_hash} not found"
+                    f"profile_mapping_hash {manifest.profile_mapping_hash} "
+                    f"not found for profile {manifest.domain_profile_id}"
+                )
+            elif mapping_row["compatibility_status"] == "incompatible":
+                stale_reasons.append(
+                    f"profile_mapping_hash {manifest.profile_mapping_hash} "
+                    f"has incompatible status for profile {manifest.domain_profile_id}"
                 )
 
         # Validate object dependencies (row digests, versions, belief/verification states)
@@ -6025,35 +6103,75 @@ class MemoryBrokerStore:
         kind = obj_dep.target_kind
         oid = obj_dep.target_id
 
-        if kind == "assertions" or kind == "claim":
+        if kind in ("assertions", "claim"):
             row = self.db.execute(
-                """SELECT id, verification_state FROM assertion
+                """SELECT id, belief_state, updated_at FROM assertion
                    WHERE matter_id=? AND id=?""",
                 (self.matter_id, oid),
             ).fetchone()
             if row is None:
                 issues.append(f"object_dep {kind}:{oid} not found")
-            elif obj_dep.verification_state and row["verification_state"] != obj_dep.verification_state:
+                return issues
+            if obj_dep.belief_state and row["belief_state"] != obj_dep.belief_state:
                 issues.append(
-                    f"object_dep {kind}:{oid} verification_state changed: "
-                    f"expected {obj_dep.verification_state}, current {row['verification_state']}"
+                    f"object_dep {kind}:{oid} belief_state changed: "
+                    f"expected {obj_dep.belief_state}, current {row['belief_state']}"
                 )
-        elif kind == "objective_nodes" or kind == "issue":
+            if obj_dep.verification_state:
+                vs_row = self.db.execute(
+                    """SELECT status FROM verification_event
+                       WHERE matter_id=? AND target_kind='assertion' AND target_id=?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (self.matter_id, oid),
+                ).fetchone()
+                current_vs = vs_row["status"] if vs_row else "unverified"
+                if current_vs != obj_dep.verification_state:
+                    issues.append(
+                        f"object_dep {kind}:{oid} verification_state changed: "
+                        f"expected {obj_dep.verification_state}, current {current_vs}"
+                    )
+        elif kind in ("objective_nodes", "issue"):
             row = self.db.execute(
-                """SELECT id FROM issue WHERE matter_id=? AND id=?""",
+                """SELECT id, updated_at FROM issue WHERE matter_id=? AND id=?""",
                 (self.matter_id, oid),
             ).fetchone()
             if row is None:
                 issues.append(f"object_dep {kind}:{oid} not found")
-        elif kind == "evidence_edges" or kind == "support_edge":
+        elif kind in ("evidence_edges", "support_edge"):
             row = self.db.execute(
-                """SELECT id FROM evidence_edge WHERE matter_id=? AND id=?""",
+                """SELECT id, updated_at FROM evidence_edge WHERE matter_id=? AND id=?""",
                 (self.matter_id, oid),
             ).fetchone()
             if row is None:
                 issues.append(f"object_dep {kind}:{oid} not found")
-        else:
-            pass
+        elif kind in ("actors", "entity"):
+            row = self.db.execute(
+                """SELECT id FROM actor WHERE matter_id=? AND id=?""",
+                (self.matter_id, oid),
+            ).fetchone()
+            if row is None:
+                issues.append(f"object_dep {kind}:{oid} not found")
+        elif kind in ("documents", "artifact"):
+            row = self.db.execute(
+                """SELECT id FROM document WHERE matter_id=? AND id=?""",
+                (self.matter_id, oid),
+            ).fetchone()
+            if row is None:
+                issues.append(f"object_dep {kind}:{oid} not found")
+        elif kind in ("issue_predicates", "criterion"):
+            row = self.db.execute(
+                """SELECT id FROM issue_predicate WHERE matter_id=? AND id=?""",
+                (self.matter_id, oid),
+            ).fetchone()
+            if row is None:
+                issues.append(f"object_dep {kind}:{oid} not found")
+        elif kind in ("gaps", "gap"):
+            row = self.db.execute(
+                """SELECT id FROM gap WHERE matter_id=? AND id=?""",
+                (self.matter_id, oid),
+            ).fetchone()
+            if row is None:
+                issues.append(f"object_dep {kind}:{oid} not found")
         return issues
 
     def record_memory_packet_event(self, packet) -> str:
