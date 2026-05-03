@@ -1154,6 +1154,7 @@ class InvestigationState:
     llm_calls_avoided: int = 0
     llm_calls_required: int = 0
     llm_usage: dict[str, Any] = field(default_factory=dict)
+    cache_manifest_hash: Optional[str] = None
 
     # Status
     status: str = "initialized"

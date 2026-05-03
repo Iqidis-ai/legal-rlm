@@ -3563,6 +3563,53 @@ class MatterModel:
             primary_domain_profile_id=primary_profile,
         )
 
+    _SEMANTIC_CACHE_NAMESPACES = (
+        "claims:*", "claim_occurrences:*", "objective_nodes:*",
+        "criteria:*", "entities:*", "artifacts:*", "clarifications:*",
+        "annotations:*", "assumptions:*", "support_edges:*",
+        "guidance:*", "spans:*", "proof_state:*",
+    )
+
+    def build_semantic_cache_manifest(
+        self,
+        *,
+        purpose: str = "semantic_cache",
+        policy_audience: str = "clean",
+        taint_class: str = "public_clean",
+    ) -> str:
+        """Build and record a DependencyManifest for semantic cache writes.
+
+        Returns the manifest hash. The engine calls this once per run when
+        context is built, then passes the hash to put_brokered() for each
+        semantic stage. The manifest captures namespace revisions at
+        snapshot time so cached plans are automatically invalidated when
+        the underlying data changes.
+        """
+        from .memory_contracts import DependencyManifest
+
+        broker = self.memory_broker
+        ns_deps = broker.namespace_dependencies_for_keys(
+            self._SEMANTIC_CACHE_NAMESPACES
+        )
+        mapping_hash = broker.current_profile_mapping_hash(
+            domain_profile_id="legal",
+            domain_profile_version=1,
+            target_kind="clarification",
+            target_namespace="clarifications",
+        )
+        manifest = DependencyManifest(
+            matter_id=self.matter_id,
+            namespace_dependencies=ns_deps,
+            domain_profile_id="legal",
+            domain_profile_version=1,
+            profile_mapping_hash=mapping_hash,
+            purpose=purpose,
+            policy_audience=policy_audience,
+            taint_class=taint_class,
+        )
+        broker.record_dependency_manifest(manifest)
+        return manifest.manifest_hash()
+
     _TRUST_DISAGREEMENT_THRESHOLD = 0.25
 
     def _read_matter_domain_composition(

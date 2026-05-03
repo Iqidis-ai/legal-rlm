@@ -202,7 +202,17 @@ class Irys:
         # clarification (`clarify`). See src/irys/rlm/governance.py
         # and docs/PROJECT_CONTEXT.md for the architecture summary.
         matter_model = self._engine._matter_model
-        governor = CascadeGovernor(client=self._client, matter_model=matter_model)
+        _cache_mh = None
+        if matter_model is not None:
+            try:
+                _cache_mh = matter_model.build_semantic_cache_manifest()
+            except Exception:
+                pass
+        governor = CascadeGovernor(
+            client=self._client,
+            matter_model=matter_model,
+            cache_manifest_hash=_cache_mh,
+        )
         decision = await governor.decide(
             query=query,
             conversation_history=conversation_history,

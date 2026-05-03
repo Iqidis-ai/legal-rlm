@@ -2279,6 +2279,14 @@ class RLMEngine:
         if matter_ctx is not None and matter_ctx.existing_assertion_count > 0:
             self._hydrate_from_matter_model(state)
 
+        if self._matter_model is not None:
+            try:
+                state.cache_manifest_hash = (
+                    self._matter_model.build_semantic_cache_manifest()
+                )
+            except Exception:
+                pass
+
         # MVP.6: cap the durable matter_context block so new stores
         # can't silently inflate the orientation prompt. The repo file
         # listing stays uncapped — it's a direct structural signal the
@@ -2366,7 +2374,13 @@ class RLMEngine:
             plan = self._parse_json_safe(response, _plan_defaults)
             # Persist for future warm runs
             if self._matter_model is not None:
-                self._matter_model.cache.put("orient", _orient_key, plan)
+                _mh = state.cache_manifest_hash
+                if _mh:
+                    self._matter_model.cache.put_brokered(
+                        "orient", _orient_key, plan, manifest_hash=_mh,
+                    )
+                else:
+                    self._matter_model.cache.put("orient", _orient_key, plan)
         else:
             state.llm_calls_avoided += 1  # SO-1 telemetry
             self._emit_step(
@@ -3718,7 +3732,14 @@ class RLMEngine:
             # Cache the merged analysis for warm runs.
             if self._matter_model is not None:
                 try:
-                    self._matter_model.cache.put("search_analysis", _analysis_key, analysis)
+                    _mh = state.cache_manifest_hash
+                    if _mh:
+                        self._matter_model.cache.put_brokered(
+                            "search_analysis", _analysis_key, analysis,
+                            manifest_hash=_mh,
+                        )
+                    else:
+                        self._matter_model.cache.put("search_analysis", _analysis_key, analysis)
                 except Exception:
                     pass
 
@@ -5428,7 +5449,14 @@ Return:
             )
             if self._matter_model is not None:
                 try:
-                    self._matter_model.cache.put("synthesis", _syn_key, response)
+                    _mh = state.cache_manifest_hash
+                    if _mh:
+                        self._matter_model.cache.put_brokered(
+                            "synthesis", _syn_key, response,
+                            manifest_hash=_mh,
+                        )
+                    else:
+                        self._matter_model.cache.put("synthesis", _syn_key, response)
                 except Exception:
                     pass
 

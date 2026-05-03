@@ -227,9 +227,11 @@ class CascadeGovernor:
         self,
         client: GeminiClient,
         matter_model: Any = None,  # MatterModel or None for fresh matters
+        cache_manifest_hash: Optional[str] = None,
     ) -> None:
         self.client = client
         self.matter_model = matter_model
+        self.cache_manifest_hash = cache_manifest_hash
 
     # MVI-2b (Fix D): decision-cache stage name for reasoning_cache.
     _CACHE_STAGE = "cascade_decision"
@@ -353,13 +355,20 @@ class CascadeGovernor:
         mm = self.matter_model
         if mm is None or not hasattr(mm, "cache"):
             return
+        payload = {
+            "family": family,
+            "confidence": float(confidence),
+            "rationale": rationale,
+            "schema_version": CLASSIFIER_SCHEMA_VERSION,
+        }
         try:
-            mm.cache.put(self._CACHE_STAGE, cache_key, {
-                "family": family,
-                "confidence": float(confidence),
-                "rationale": rationale,
-                "schema_version": CLASSIFIER_SCHEMA_VERSION,
-            })
+            _mh = self.cache_manifest_hash
+            if _mh:
+                mm.cache.put_brokered(
+                    self._CACHE_STAGE, cache_key, payload, manifest_hash=_mh,
+                )
+            else:
+                mm.cache.put(self._CACHE_STAGE, cache_key, payload)
         except Exception:
             pass
 
