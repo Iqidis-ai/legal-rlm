@@ -4169,6 +4169,8 @@ def _fmt_assertions(assertions: list, domain: str = "legal") -> str:
         return "<div class='viz-empty'>No assertions recorded yet.</div>"
     rows_html = ""
     for a in assertions:
+        if not isinstance(a, dict):
+            continue
         assertion_id = _escape(a.get("id", "?"))
         prop = _escape(a.get("proposition_text") or "")
         state_raw = a.get("belief_state") or "—"
@@ -4569,6 +4571,8 @@ def _fmt_review_queue(queue: list[dict]) -> str:
         )
     rows_html = []
     for row in queue:
+        if not isinstance(row, dict):
+            continue
         bucket = row.get("priority_bucket", 6)
         score = row.get("priority_score", 0.0)
         kind = row.get("target_kind", "unknown")
@@ -4777,6 +4781,8 @@ def _fmt_steering(actions: list) -> str:
         return "No steering recommendations available."
     lines = ["### Steering Recommendations\n"]
     for a in actions:
+        if not isinstance(a, dict):
+            continue
         action_type = a.get("action_type", "unknown")
         description = a.get("description", "")
         rationale = a.get("rationale", "")
