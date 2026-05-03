@@ -2635,6 +2635,8 @@ def _fmt_duplicate_actors_panel(pairs: list[dict], domain: str = "legal") -> str
             f"<td>{_escape(a.get('actor_type', ''))}</td>"
             "</tr>"
         )
+    if not rows:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
     return (
         "<div class='viz-shell'>"
         f"<div class='viz-panel-title'>{labels['title']}</div>"
@@ -5743,13 +5745,17 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error scanning for duplicates: {_escape(exc)}</div>"
 
-    def do_merge_actors(self, matter_id: str, keep_id: str, merge_id: str) -> tuple[str, str]:
+    def do_merge_actors(self, matter_id: str, keep_id: str, merge_id: str, confirmed: bool = False) -> tuple[str, str]:
         if not matter_id or matter_id == "—":
             return "Load a matter first.", ""
         if not keep_id or not keep_id.strip():
             return "Enter the ID of the actor to keep.", ""
         if not merge_id or not merge_id.strip():
             return "Enter the ID of the actor to merge away.", ""
+        if keep_id.strip() == merge_id.strip():
+            return "Cannot merge an actor with itself.", ""
+        if not confirmed:
+            return "Check the confirmation box before merging.", ""
         try:
             _run_async(self.backend().merge_actors(matter_id, keep_id.strip(), merge_id.strip()))
             refreshed = self.load_duplicate_actors(matter_id)
@@ -6932,6 +6938,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             with gr.Row():
                 merge_keep_id = gr.Textbox(label="Keep actor ID", placeholder="ID of the actor to keep")
                 merge_discard_id = gr.Textbox(label="Merge (discard) actor ID", placeholder="ID of the actor to merge away")
+            merge_confirm = gr.Checkbox(label="I understand this permanently merges these actors", value=False)
             merge_actors_btn = gr.Button("Merge Actors", variant="stop", size="sm")
             merge_result = gr.Markdown("")
 
@@ -7602,8 +7609,8 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[actor_duplicates_html],
         )
         merge_actors_btn.click(
-            fn=lambda mid, keep, merge: state.do_merge_actors(mid, keep, merge),
-            inputs=[matter_id_box, merge_keep_id, merge_discard_id],
+            fn=lambda mid, keep, merge, confirmed: state.do_merge_actors(mid, keep, merge, confirmed),
+            inputs=[matter_id_box, merge_keep_id, merge_discard_id, merge_confirm],
             outputs=[merge_result, actor_duplicates_html],
         )
         refresh_llm_btn.click(

@@ -6,12 +6,15 @@ engine restarts cleanly.
 """
 
 import json
+import logging
 from typing import Any, AsyncIterator, Optional
 from urllib.parse import quote as _url_quote
 
 import httpx
 
 from .base import UIBackend
+
+_log = logging.getLogger(__name__)
 
 
 class HttpBackend(UIBackend):
@@ -235,21 +238,33 @@ class HttpBackend(UIBackend):
 
     async def get_amount_conflicts(self, matter_id: str) -> list[dict]:
         result = await self._get(f"/matter/{matter_id}/reconciliation/conflicts")
-        return result if isinstance(result, list) else []
+        if not isinstance(result, list):
+            _log.warning("get_amount_conflicts: unexpected response type %s", type(result).__name__)
+            return []
+        return result
 
     async def detect_quant_conflicts(self, matter_id: str) -> list[str]:
         result = await self._post(f"/matter/{matter_id}/detect-quant-conflicts", {})
         if isinstance(result, dict):
             return result.get("gap_ids", [])
-        return result if isinstance(result, list) else []
+        if not isinstance(result, list):
+            _log.warning("detect_quant_conflicts: unexpected response type %s", type(result).__name__)
+            return []
+        return result
 
     async def get_reconciliation(self, matter_id: str, currency: str = "USD") -> dict:
         result = await self._get(f"/matter/{matter_id}/reconciliation", {"currency": currency})
-        return result if isinstance(result, dict) else {}
+        if not isinstance(result, dict):
+            _log.warning("get_reconciliation: unexpected response type %s", type(result).__name__)
+            return {}
+        return result
 
     async def get_invoice_chain(self, matter_id: str, currency: str = "USD") -> list:
         result = await self._get(f"/matter/{matter_id}/reconciliation/invoices", {"currency": currency})
-        return result if isinstance(result, list) else []
+        if not isinstance(result, list):
+            _log.warning("get_invoice_chain: unexpected response type %s", type(result).__name__)
+            return []
+        return result
 
     async def get_system_health(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/system-health")
@@ -321,14 +336,20 @@ class HttpBackend(UIBackend):
             f"/matter/{matter_id}/actors/duplicates",
             {"min_prefix_len": min_prefix_len},
         )
-        return result if isinstance(result, list) else []
+        if not isinstance(result, list):
+            _log.warning("find_duplicate_actors: unexpected response type %s", type(result).__name__)
+            return []
+        return result
 
     async def merge_actors(self, matter_id: str, keep_id: str, merge_id: str) -> dict:
         result = await self._post(
             f"/matter/{matter_id}/actors/{_url_quote(keep_id, safe='')}/merge/{_url_quote(merge_id, safe='')}",
             {},
         )
-        return result if isinstance(result, dict) else {}
+        if not isinstance(result, dict):
+            _log.warning("merge_actors: unexpected response type %s", type(result).__name__)
+            return {}
+        return result
 
     async def get_decision_context(self, matter_id: str) -> "dict | None":
         result = await self._get(f"/matter/{matter_id}/decision-context")

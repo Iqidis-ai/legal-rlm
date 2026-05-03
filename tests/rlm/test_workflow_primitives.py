@@ -844,4 +844,4 @@ def test_fmt_duplicate_actors_panel_with_data():
 def test_fmt_duplicate_actors_panel_skips_non_dict():
     from irys.ui.app import _fmt_duplicate_actors_panel
     result = _fmt_duplicate_actors_panel(["not-a-dict", None])
-    assert "viz-empty" not in result
+    assert "viz-empty" in result

@@ -1898,13 +1898,11 @@ class ActorStore:
             if len(n_a) < min_prefix_len:
                 continue
             a_prefix = n_a[:min_prefix_len]
-            # Actors are sorted by normalized_name so all potential matches are
-            # adjacent.  Stop scanning forward as soon as the shared min-prefix
-            # is no longer satisfied.
-            for b in actors[i + 1:]:
+            for j in range(i + 1, len(actors)):
+                b = actors[j]
                 n_b = b.get("normalized_name") or ""
                 if len(n_b) < min_prefix_len or n_b[:min_prefix_len] != a_prefix:
-                    break  # sorted order guarantees no further matches
+                    break
                 # Compute full common prefix length.
                 prefix_len = 0
                 for ca, cb in zip(n_a, n_b):
