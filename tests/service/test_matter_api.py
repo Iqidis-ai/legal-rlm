@@ -1193,6 +1193,25 @@ def test_document_versions_with_data(client, register_model):
     assert operative[0]["relative_path"] == "contract_v2.pdf"
 
 
+def test_document_versions_via_refresh_families(client, register_model):
+    """Integration: refresh_document_families detects chains and the endpoint returns them."""
+    model = register_model
+    model.inventory.upsert("agreement_v1.pdf", sha256="aaa", size_bytes=100)
+    model.inventory.upsert("agreement_v2.pdf", sha256="bbb", size_bytes=200)
+    model.refresh_document_families()
+    resp = client.get(f"/matter/{MATTER_ID}/document-versions")
+    assert resp.status_code == 200
+    families = resp.json()
+    assert len(families) >= 1
+    fam = families[0]
+    paths = {m["relative_path"] for m in fam["members"]}
+    assert "agreement_v1.pdf" in paths
+    assert "agreement_v2.pdf" in paths
+    operative = [m for m in fam["members"] if m["is_operative"]]
+    assert len(operative) == 1
+    assert operative[0]["relative_path"] == "agreement_v2.pdf"
+
+
 def test_document_versions_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/document-versions")
     assert resp.status_code == 404
