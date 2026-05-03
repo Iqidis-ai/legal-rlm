@@ -758,3 +758,30 @@ def test_fmt_annotations_panel_skips_non_dict():
     from irys.ui.app import _fmt_annotations_panel
     result = _fmt_annotations_panel(["bad", None])
     assert "viz-empty" in result
+
+
+# ---------------------------------------------------------------------------
+# Decision context formatter
+# ---------------------------------------------------------------------------
+
+def test_fmt_decision_context_none():
+    from irys.ui.app import _fmt_decision_context
+    result = _fmt_decision_context(None)
+    assert "viz-empty" in result
+
+
+def test_fmt_decision_context_with_data():
+    from irys.ui.app import _fmt_decision_context
+    result = _fmt_decision_context({
+        "decision_maker_type": "judge",
+        "decision_maker_name": "Judge Smith",
+        "objective": "motion_practice",
+        "strategic_notes": "Focus on damages",
+        "scope_narrow": True,
+        "updated_at": "2026-01-01T12:00:00",
+    })
+    assert "Judge" in result
+    assert "Judge Smith" in result
+    assert "Motion Practice" in result
+    assert "Focus on damages" in result
+    assert "Yes" in result

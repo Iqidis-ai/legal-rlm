@@ -2531,6 +2531,41 @@ def _fmt_trust_overrides(overrides: list[dict]) -> str:
     return f"<div class='viz-shell'>{header}{table}</div>"
 
 
+_DECISION_MAKER_LABELS = {
+    "judge": "Judge", "partner": "Partner", "client": "Client",
+    "mediator": "Mediator", "arbitrator": "Arbitrator",
+    "regulator": "Regulator", "unknown": "Other",
+}
+_OBJECTIVE_LABELS = {
+    "motion_practice": "Motion Practice", "settlement": "Settlement",
+    "diligence": "Due Diligence", "audit": "Audit", "advisory": "Advisory",
+    "trial_prep": "Trial Prep", "regulatory_response": "Regulatory Response",
+    "transactional": "Transactional", "unknown": "Other",
+}
+
+
+def _fmt_decision_context(ctx: "dict | None") -> str:
+    if not ctx or not isinstance(ctx, dict):
+        return "<div class='viz-empty'>No decision context set. Set one above to adjust how Irys frames its analysis.</div>"
+    maker = _DECISION_MAKER_LABELS.get(ctx.get("decision_maker_type", ""), ctx.get("decision_maker_type", "—"))
+    obj = _OBJECTIVE_LABELS.get(ctx.get("objective", ""), ctx.get("objective", "—"))
+    name = _escape(ctx.get("decision_maker_name") or "—")
+    notes = _escape(ctx.get("strategic_notes") or "—")
+    narrow = "Yes" if ctx.get("scope_narrow") else "No"
+    updated = _escape(str(ctx.get("updated_at", "—"))[:19])
+    rows = (
+        f"<tr><td><strong>Decision-maker</strong></td><td>{_escape(maker)}</td></tr>"
+        f"<tr><td><strong>Name</strong></td><td>{name}</td></tr>"
+        f"<tr><td><strong>Objective</strong></td><td>{_escape(obj)}</td></tr>"
+        f"<tr><td><strong>Strategic notes</strong></td><td>{notes}</td></tr>"
+        f"<tr><td><strong>Narrow scope</strong></td><td>{narrow}</td></tr>"
+        f"<tr><td><strong>Last updated</strong></td><td style='font-size:11px;color:#6b7280'>{updated}</td></tr>"
+    )
+    header = "<div class='viz-header'><strong>Active Decision Context</strong></div>"
+    table = f"<div class='table-wrap'><table class='viz-table'><tbody>{rows}</tbody></table></div>"
+    return f"<div class='viz-shell'>{header}{table}</div>"
+
+
 _ANNOTATION_TYPE_PILLS = {
     "strategic": ("Strategic", "pill-blue"),
     "reliability": ("Reliability", "pill-amber"),
@@ -5660,6 +5695,43 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading LLM analytics: {_escape(exc)}</div>"
 
+    def load_decision_context(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            ctx = _run_async(self.backend().get_decision_context(matter_id))
+            return _fmt_decision_context(ctx)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
+    def do_set_decision_context(
+        self, matter_id: str, maker_type: str, objective: str,
+        name: str, notes: str, narrow: bool,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        try:
+            _run_async(self.backend().set_decision_context(
+                matter_id,
+                decision_maker_type=maker_type or None,
+                decision_maker_name=name.strip() or None,
+                objective=objective or None,
+                strategic_notes=notes.strip() or None,
+                scope_narrow=narrow,
+            ))
+            return "Decision context updated.", self.load_decision_context(matter_id)
+        except Exception as exc:
+            return f"Error: {_escape(str(exc))}", ""
+
+    def do_clear_decision_context(self, matter_id: str) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        try:
+            _run_async(self.backend().clear_decision_context(matter_id))
+            return "Decision context cleared.", "<div class='viz-empty'>No decision context set.</div>"
+        except Exception as exc:
+            return f"Error: {_escape(str(exc))}", ""
+
     def load_annotations(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -6843,6 +6915,44 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 set_trust_btn = gr.Button("Set Trust Override", variant="primary", size="sm")
                 refresh_trust_btn = gr.Button("Refresh Overrides", variant="secondary", size="sm")
             trust_override_result = gr.Textbox(label="Result", interactive=False)
+            gr.Markdown("---")
+            gr.Markdown("#### Decision Context — who is the decision-maker and what are they trying to do?")
+            gr.Markdown(
+                "Setting a decision context adjusts how Irys frames its synthesis and recommendations. "
+                "The record model and assertions are not changed — only the presentation layer adapts."
+            )
+            decision_context_html = gr.HTML("<div class='viz-empty'>No decision context set.</div>")
+            with gr.Row():
+                dc_maker_type = gr.Dropdown(
+                    label="Decision-maker role",
+                    choices=[
+                        ("Judge", "judge"), ("Partner", "partner"), ("Client", "client"),
+                        ("Mediator", "mediator"), ("Arbitrator", "arbitrator"),
+                        ("Regulator", "regulator"), ("Other", "unknown"),
+                    ],
+                    value=None,
+                    scale=1,
+                )
+                dc_objective = gr.Dropdown(
+                    label="Objective",
+                    choices=[
+                        ("Motion practice", "motion_practice"), ("Settlement", "settlement"),
+                        ("Due diligence", "diligence"), ("Audit", "audit"),
+                        ("Advisory", "advisory"), ("Trial prep", "trial_prep"),
+                        ("Regulatory response", "regulatory_response"),
+                        ("Transactional", "transactional"), ("Other", "unknown"),
+                    ],
+                    value=None,
+                    scale=1,
+                )
+            dc_name = gr.Textbox(label="Decision-maker name (optional)", placeholder="e.g. Judge Martinez")
+            dc_notes = gr.Textbox(label="Strategic notes (optional)", placeholder="Focus on damages claims under §10.2", lines=2)
+            dc_narrow = gr.Checkbox(label="Narrow scope — only surface issues directly relevant to the objective", value=False)
+            with gr.Row():
+                set_dc_btn = gr.Button("Set Context", variant="primary", size="sm")
+                clear_dc_btn = gr.Button("Clear Context", variant="secondary", size="sm")
+                refresh_dc_btn = gr.Button("Refresh", variant="secondary", size="sm")
+            dc_result = gr.Markdown("")
 
         # ==================================================================
         # WIRING
@@ -7271,6 +7381,21 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, doc, text, ann_type: state.do_add_annotation(mid, doc, text, ann_type),
             inputs=[matter_id_box, annotation_doc, annotation_text, annotation_type],
             outputs=[annotation_result, annotations_html],
+        )
+        refresh_dc_btn.click(
+            fn=lambda mid: state.load_decision_context(mid),
+            inputs=[matter_id_box],
+            outputs=[decision_context_html],
+        )
+        set_dc_btn.click(
+            fn=lambda mid, mt, obj, nm, nt, nr: state.do_set_decision_context(mid, mt, obj, nm, nt, nr),
+            inputs=[matter_id_box, dc_maker_type, dc_objective, dc_name, dc_notes, dc_narrow],
+            outputs=[dc_result, decision_context_html],
+        )
+        clear_dc_btn.click(
+            fn=lambda mid: state.do_clear_decision_context(mid),
+            inputs=[matter_id_box],
+            outputs=[dc_result, decision_context_html],
         )
 
         # --- Detail panel refreshes ---

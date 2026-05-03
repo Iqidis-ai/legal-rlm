@@ -1515,3 +1515,45 @@ def test_annotations_delete(client, register_model):
 def test_annotations_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/annotations")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Decision context
+# ---------------------------------------------------------------------------
+
+def test_decision_context_get_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/decision-context")
+    assert resp.status_code == 200
+    assert resp.json() is None
+
+
+def test_decision_context_set_and_get(client, register_model):
+    resp = client.put(
+        f"/matter/{MATTER_ID}/decision-context",
+        json={"decision_maker_type": "judge", "objective": "motion_practice", "strategic_notes": "Focus on §10"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    resp = client.get(f"/matter/{MATTER_ID}/decision-context")
+    assert resp.status_code == 200
+    ctx = resp.json()
+    assert ctx["decision_maker_type"] == "judge"
+    assert ctx["objective"] == "motion_practice"
+    assert ctx["strategic_notes"] == "Focus on §10"
+
+
+def test_decision_context_clear(client, register_model):
+    client.put(
+        f"/matter/{MATTER_ID}/decision-context",
+        json={"decision_maker_type": "client"},
+    )
+    resp = client.delete(f"/matter/{MATTER_ID}/decision-context")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cleared"
+    resp = client.get(f"/matter/{MATTER_ID}/decision-context")
+    assert resp.json() is None
+
+
+def test_decision_context_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/decision-context")
+    assert resp.status_code == 404

@@ -657,6 +657,32 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.search_assertions([query], limit=limit)
 
+    async def get_decision_context(self, matter_id: str) -> "dict | None":
+        model = self._get_matter_model(matter_id)
+        return model.decision_context.get()
+
+    async def set_decision_context(
+        self, matter_id: str,
+        decision_maker_type: Optional[str] = None,
+        decision_maker_name: Optional[str] = None,
+        objective: Optional[str] = None,
+        strategic_notes: Optional[str] = None,
+        scope_narrow: bool = False,
+    ) -> str:
+        model = self._get_matter_model(matter_id)
+        return model.decision_context.set(
+            decision_maker_type=decision_maker_type,
+            decision_maker_name=decision_maker_name,
+            objective=objective,
+            strategic_notes=strategic_notes,
+            scope_narrow=scope_narrow,
+        )
+
+    async def clear_decision_context(self, matter_id: str) -> bool:
+        model = self._get_matter_model(matter_id)
+        model.decision_context.clear()
+        return True
+
     async def list_annotations(self, matter_id: str, document: Optional[str] = None) -> list[dict]:
         model = self._get_matter_model(matter_id)
         if document:

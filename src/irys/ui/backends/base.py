@@ -266,6 +266,32 @@ class UIBackend(ABC):
         ...
 
     # ------------------------------------------------------------------ #
+    # Decision context (SO-3)                                              #
+    # ------------------------------------------------------------------ #
+
+    @abstractmethod
+    async def get_decision_context(self, matter_id: str) -> "dict | None":
+        """Return the decision context overlay, or None if not set."""
+        ...
+
+    @abstractmethod
+    async def set_decision_context(
+        self, matter_id: str,
+        decision_maker_type: Optional[str] = None,
+        decision_maker_name: Optional[str] = None,
+        objective: Optional[str] = None,
+        strategic_notes: Optional[str] = None,
+        scope_narrow: bool = False,
+    ) -> str:
+        """Set the decision context. Returns context_id."""
+        ...
+
+    @abstractmethod
+    async def clear_decision_context(self, matter_id: str) -> bool:
+        """Clear the decision context overlay."""
+        ...
+
+    # ------------------------------------------------------------------ #
     # Document annotations (SO-3)                                          #
     # ------------------------------------------------------------------ #
 

@@ -298,6 +298,43 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/assertions/search", {"q": query, "limit": limit})
         return result if isinstance(result, list) else []
 
+    async def get_decision_context(self, matter_id: str) -> "dict | None":
+        result = await self._get(f"/matter/{matter_id}/decision-context")
+        return result if isinstance(result, dict) else None
+
+    async def set_decision_context(
+        self, matter_id: str,
+        decision_maker_type: Optional[str] = None,
+        decision_maker_name: Optional[str] = None,
+        objective: Optional[str] = None,
+        strategic_notes: Optional[str] = None,
+        scope_narrow: bool = False,
+    ) -> str:
+        body: dict = {"scope_narrow": scope_narrow}
+        if decision_maker_type:
+            body["decision_maker_type"] = decision_maker_type
+        if decision_maker_name:
+            body["decision_maker_name"] = decision_maker_name
+        if objective:
+            body["objective"] = objective
+        if strategic_notes:
+            body["strategic_notes"] = strategic_notes
+        result = await self._client.put(
+            f"/matter/{matter_id}/decision-context",
+            json=body,
+        )
+        result.raise_for_status()
+        data = result.json()
+        return data.get("id", "") if isinstance(data, dict) else ""
+
+    async def clear_decision_context(self, matter_id: str) -> bool:
+        try:
+            r = await self._client.delete(f"/matter/{matter_id}/decision-context")
+            r.raise_for_status()
+            return True
+        except Exception:
+            return False
+
     async def list_annotations(self, matter_id: str, document: Optional[str] = None) -> list[dict]:
         params = {}
         if document:
