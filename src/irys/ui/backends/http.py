@@ -310,6 +310,20 @@ class HttpBackend(UIBackend):
             return {}
         return result
 
+    async def list_documents_needing_profile(
+        self, matter_id: str, limit: int = 50
+    ) -> list[dict]:
+        result = await self._get(
+            f"/matter/{matter_id}/document-triage", {"limit": limit}
+        )
+        if isinstance(result, dict):
+            docs = result.get("documents", [])
+            return docs if isinstance(docs, list) else []
+        if isinstance(result, list):
+            return result
+        _log.warning("list_documents_needing_profile: unexpected type %s", type(result).__name__)
+        return []
+
     async def answer_clarification(
         self, matter_id: str, question_id: str, answer_text: str
     ) -> bool:

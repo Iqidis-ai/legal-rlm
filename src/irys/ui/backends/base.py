@@ -269,6 +269,13 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def list_documents_needing_profile(
+        self, matter_id: str, limit: int = 50
+    ) -> list[dict]:
+        """Return documents not yet fully profiled, ordered by salience."""
+        ...
+
+    @abstractmethod
     async def answer_clarification(
         self, matter_id: str, question_id: str, answer_text: str
     ) -> bool:

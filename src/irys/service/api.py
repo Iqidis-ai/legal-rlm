@@ -3236,6 +3236,23 @@ async def get_so_scorecard(matter_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/document-triage",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_document_triage(
+    matter_id: str,
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """Return documents that have not yet been fully profiled (SO-7).
+
+    Ordered by salience so the most important documents surface first."""
+    model = await _get_matter_model_or_404(matter_id)
+    docs = model.list_documents_needing_profile(limit=limit)
+    return {"documents": docs, "count": len(docs)}
+
+
+@app.get(
     "/matter/{matter_id}/domain-profile",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

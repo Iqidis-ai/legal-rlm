@@ -2491,6 +2491,106 @@ _DOMAIN_PROFILE_LABELS: dict[str, dict[str, str]] = {
 }
 
 
+_DOC_TRIAGE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Document Triage Queue",
+        "empty": "All documents have been profiled.",
+        "header_path": "Document",
+        "header_type": "Type",
+        "header_size": "Size",
+        "header_salience": "Salience",
+        "header_status": "Ingest Status",
+    },
+    "finance": {
+        "title": "Document Triage Queue",
+        "empty": "All financial documents have been profiled.",
+        "header_path": "Document",
+        "header_type": "Type",
+        "header_size": "Size",
+        "header_salience": "Salience",
+        "header_status": "Ingest Status",
+    },
+    "coding": {
+        "title": "Artifact Triage Queue",
+        "empty": "All code artifacts have been profiled.",
+        "header_path": "Artifact",
+        "header_type": "Type",
+        "header_size": "Size",
+        "header_salience": "Salience",
+        "header_status": "Ingest Status",
+    },
+    "academic_research": {
+        "title": "Document Triage Queue",
+        "empty": "All research documents have been profiled.",
+        "header_path": "Document",
+        "header_type": "Type",
+        "header_size": "Size",
+        "header_salience": "Salience",
+        "header_status": "Ingest Status",
+    },
+    "biomedical": {
+        "title": "Document Triage Queue",
+        "empty": "All biomedical documents have been profiled.",
+        "header_path": "Document",
+        "header_type": "Type",
+        "header_size": "Size",
+        "header_salience": "Salience",
+        "header_status": "Ingest Status",
+    },
+}
+
+
+def _fmt_doc_triage_panel(docs: list, domain: str = "legal") -> str:
+    labels = _DOC_TRIAGE_LABELS.get(domain, _DOC_TRIAGE_LABELS["legal"])
+    if not docs or not isinstance(docs, list):
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    valid = [d for d in docs if isinstance(d, dict)]
+    if not valid:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    def _fmt_size(b):
+        if not isinstance(b, (int, float)) or b <= 0:
+            return "—"
+        if b < 1024:
+            return f"{int(b)} B"
+        if b < 1024 * 1024:
+            return f"{b / 1024:.1f} KB"
+        return f"{b / (1024 * 1024):.1f} MB"
+
+    parts = [
+        f"<h3 style='margin:0 0 8px 0;'>{_escape(labels['title'])}</h3>",
+        f"<div style='color:#666;font-size:0.9em;margin-bottom:8px;'>{len(valid)} document{'s' if len(valid) != 1 else ''} pending profiling</div>",
+        "<table style='border-collapse:collapse;width:100%;font-size:0.9em;'>",
+        f"<tr style='background:#f1f5f9;'>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(labels['header_path'])}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(labels['header_type'])}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(labels['header_size'])}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(labels['header_salience'])}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(labels['header_status'])}</th>"
+        f"</tr>",
+    ]
+    for doc in valid:
+        path = _escape(str(doc.get("relative_path", "—")))
+        ftype = _escape(str(doc.get("file_type", "—")))
+        size = _fmt_size(doc.get("size_bytes"))
+        salience = float(doc.get("salience_score", 0)) if isinstance(doc.get("salience_score"), (int, float)) else 0.0
+        sal_color = "#22c55e" if salience >= 0.7 else "#eab308" if salience >= 0.4 else "#94a3b8"
+        ingest = _escape(str(doc.get("ingest_status", "—")))
+        parts.append(
+            f"<tr>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{path}</td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{ftype}</td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{size}</td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>"
+            f"<span style='color:{sal_color};font-weight:600;'>{salience:.2f}</span></td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{ingest}</td>"
+            f"</tr>"
+        )
+    parts.append("</table>")
+    return "\n".join(parts)
+
+
 def _fmt_domain_profile_panel(summary: dict, domain: str = "legal") -> str:
     labels = _DOMAIN_PROFILE_LABELS.get(domain, _DOMAIN_PROFILE_LABELS["legal"])
     if not summary or not isinstance(summary, dict):
@@ -6310,6 +6410,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading domain profile: {_escape(exc)}</div>"
 
+    def load_document_triage(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().list_documents_needing_profile(matter_id))
+            return _fmt_doc_triage_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading document triage: {_escape(exc)}</div>"
+
     def load_clarification_choices(self, matter_id: str) -> list:
         if not matter_id or matter_id == "—":
             return []
@@ -7635,6 +7744,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 refresh_doc_versions_btn = gr.Button("Refresh Document Versions", variant="secondary", size="sm")
                 detect_versions_btn = gr.Button("Detect Version Chains", variant="primary", size="sm")
 
+        with gr.Accordion("Document Triage — documents awaiting profiling", open=False):
+            gr.Markdown(
+                "Shows documents that have been ingested but not yet fully profiled. "
+                "Higher-salience documents are listed first. Profiling enriches the matter "
+                "model with document-level intelligence that improves reasoning quality."
+            )
+            doc_triage_html = gr.HTML("<div class='viz-empty'>Document triage queue will appear here after an investigation.</div>")
+            refresh_doc_triage_btn = gr.Button("Refresh Document Triage", variant="secondary", size="sm")
+
         with gr.Accordion("Financial Health Alerts — quantitative threshold violations", open=False):
             gr.Markdown(
                 "Detects financial exposure, disputed amount fractions, and numeric conflicts. "
@@ -8175,6 +8293,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_profile_html],
+            ).then(
+                fn=lambda mid: state.load_document_triage(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[doc_triage_html],
             )
         else:
             submit_btn.click(
@@ -8225,6 +8347,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_profile_html],
+            ).then(
+                fn=lambda mid: state.load_document_triage(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[doc_triage_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -8276,6 +8402,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[domain_profile_html],
+        ).then(
+            fn=lambda mid: state.load_document_triage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[doc_triage_html],
         )
 
         export_report_btn.click(
@@ -8419,6 +8549,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[domain_profile_html],
+        )
+        refresh_doc_triage_btn.click(
+            fn=lambda mid: state.load_document_triage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[doc_triage_html],
         )
         refresh_content_policy_btn.click(
             fn=lambda mid: state.load_content_policy_audit(mid, domain=state._detect_domain(mid)),

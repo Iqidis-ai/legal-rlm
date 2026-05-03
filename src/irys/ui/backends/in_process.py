@@ -659,6 +659,12 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_domain_profile_summary(profile_id=profile_id)
 
+    async def list_documents_needing_profile(
+        self, matter_id: str, limit: int = 50
+    ) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.list_documents_needing_profile(limit=limit)
+
     async def answer_clarification(
         self, matter_id: str, question_id: str, answer_text: str
     ) -> bool:

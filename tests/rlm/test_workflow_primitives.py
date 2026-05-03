@@ -1498,3 +1498,104 @@ def test_fmt_domain_profile_panel_trust_weight_bar_colors():
     assert "#22c55e" in result
     assert "#eab308" in result
     assert "#ef4444" in result
+
+
+# ── Document Triage panel tests ──────────────────────────────────────
+
+def test_fmt_doc_triage_panel_empty():
+    from irys.ui.app import _fmt_doc_triage_panel
+    result = _fmt_doc_triage_panel([])
+    assert "profiled" in result.lower()
+
+
+def test_fmt_doc_triage_panel_none():
+    from irys.ui.app import _fmt_doc_triage_panel
+    result = _fmt_doc_triage_panel(None)
+    assert "profiled" in result.lower()
+
+
+def test_fmt_doc_triage_panel_basic():
+    from irys.ui.app import _fmt_doc_triage_panel
+    docs = [
+        {
+            "id": "d1",
+            "relative_path": "contracts/agreement.pdf",
+            "file_type": "pdf",
+            "size_bytes": 1048576,
+            "salience_score": 0.85,
+            "ingest_status": "ready",
+        },
+        {
+            "id": "d2",
+            "relative_path": "emails/thread.eml",
+            "file_type": "eml",
+            "size_bytes": 2048,
+            "salience_score": 0.3,
+            "ingest_status": "ready",
+        },
+    ]
+    result = _fmt_doc_triage_panel(docs, domain="legal")
+    assert "Document Triage Queue" in result
+    assert "contracts/agreement.pdf" in result
+    assert "emails/thread.eml" in result
+    assert "1.0 MB" in result
+    assert "2.0 KB" in result
+    assert "0.85" in result
+    assert "2 documents" in result
+
+
+def test_fmt_doc_triage_panel_coding_domain():
+    from irys.ui.app import _fmt_doc_triage_panel
+    docs = [{"id": "d1", "relative_path": "src/main.py", "file_type": "py",
+             "size_bytes": 500, "salience_score": 0.5, "ingest_status": "ready"}]
+    result = _fmt_doc_triage_panel(docs, domain="coding")
+    assert "Artifact Triage Queue" in result
+    assert "1 document" in result
+
+
+def test_fmt_doc_triage_panel_skips_non_dict():
+    from irys.ui.app import _fmt_doc_triage_panel
+    docs = ["not-a-dict", 42, {"id": "d1", "relative_path": "a.pdf",
+             "file_type": "pdf", "size_bytes": 100, "salience_score": 0.5,
+             "ingest_status": "ready"}]
+    result = _fmt_doc_triage_panel(docs, domain="legal")
+    assert "a.pdf" in result
+    assert "1 document" in result
+
+
+def test_fmt_doc_triage_panel_all_non_dict():
+    from irys.ui.app import _fmt_doc_triage_panel
+    result = _fmt_doc_triage_panel(["a", "b", 3])
+    assert "profiled" in result.lower()
+
+
+def test_fmt_doc_triage_panel_xss():
+    from irys.ui.app import _fmt_doc_triage_panel
+    xss = '<img src=x onerror=alert(1)>'
+    docs = [{
+        "id": "d1",
+        "relative_path": xss,
+        "file_type": xss,
+        "size_bytes": 100,
+        "salience_score": 0.5,
+        "ingest_status": xss,
+    }]
+    result = _fmt_doc_triage_panel(docs, domain="legal")
+    assert "<img" not in result
+    assert "&lt;img" in result
+
+
+def test_fmt_doc_triage_panel_salience_colors():
+    from irys.ui.app import _fmt_doc_triage_panel
+    docs = [
+        {"id": "d1", "relative_path": "high.pdf", "file_type": "pdf",
+         "size_bytes": 100, "salience_score": 0.9, "ingest_status": "ready"},
+        {"id": "d2", "relative_path": "med.pdf", "file_type": "pdf",
+         "size_bytes": 100, "salience_score": 0.5, "ingest_status": "ready"},
+        {"id": "d3", "relative_path": "low.pdf", "file_type": "pdf",
+         "size_bytes": 100, "salience_score": 0.2, "ingest_status": "ready"},
+    ]
+    result = _fmt_doc_triage_panel(docs, domain="legal")
+    assert "#22c55e" in result
+    assert "#eab308" in result
+    assert "#94a3b8" in result

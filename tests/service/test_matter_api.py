@@ -1668,3 +1668,26 @@ def test_domain_profile_summary_with_profile_id(client, register_model):
 def test_domain_profile_summary_404(client):
     resp = client.get("/matter/unknown/domain-profile")
     assert resp.status_code == 404
+
+
+# ── Document Triage endpoint tests ───────────────────────────────────
+
+def test_document_triage_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/document-triage")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "documents" in data
+    assert "count" in data
+    assert isinstance(data["documents"], list)
+
+
+def test_document_triage_with_limit(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/document-triage", params={"limit": 5})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "documents" in data
+
+
+def test_document_triage_404(client):
+    resp = client.get("/matter/unknown/document-triage")
+    assert resp.status_code == 404
