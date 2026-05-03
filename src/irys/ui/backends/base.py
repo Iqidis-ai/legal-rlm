@@ -220,3 +220,8 @@ class UIBackend(ABC):
     async def get_quant_thresholds(self, matter_id: str, currency: str = "USD") -> list[dict]:
         """Return quantitative threshold violations."""
         ...
+
+    @abstractmethod
+    async def get_system_health(self, matter_id: str) -> dict:
+        """Return system health diagnostics."""
+        ...

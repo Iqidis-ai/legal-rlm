@@ -3126,6 +3126,50 @@ class MatterModel:
             "provenance": self.get_provenance("assertion", assertion_id, limit=10),
         }
 
+    def get_system_health(self) -> dict:
+        """Return system health diagnostics for the truth maintenance panel (SO-2)."""
+        assertion_count = self.assertions.count()
+        disputed_row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM assertion WHERE matter_id=? AND belief_state='disputed'",
+            (self.matter_id,),
+        ).fetchone()
+        disputed_count = int(disputed_row["n"]) if disputed_row else 0
+
+        revision_row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM belief_revision_event",
+        ).fetchone()
+        revision_count = int(revision_row["n"]) if revision_row else 0
+
+        gap_count = self.gaps.count_open()
+        contradiction_count = len(self.assertions.find_contradictions(limit=500))
+        version_chain_count = len(self.list_version_families())
+
+        oscillating_count = 0
+        if assertion_count <= 200:
+            aids = self.db.execute(
+                "SELECT id FROM assertion WHERE matter_id=? LIMIT 200",
+                (self.matter_id,),
+            ).fetchall()
+            oscillating_count = sum(
+                1 for row in aids if self.assertions.detect_oscillation(row["id"])
+            )
+
+        return {
+            "assertion_count": assertion_count,
+            "disputed_count": disputed_count,
+            "disputed_fraction": round(disputed_count / assertion_count, 4) if assertion_count else 0,
+            "revision_count": revision_count,
+            "open_gap_count": gap_count,
+            "contradiction_count": contradiction_count,
+            "version_chain_count": version_chain_count,
+            "oscillating_count": oscillating_count,
+            "health_score": "good" if (
+                oscillating_count == 0 and (
+                    disputed_count / assertion_count < 0.3 if assertion_count else True
+                )
+            ) else "attention_needed",
+        }
+
     def compute_quant_thresholds(self, currency: str = "USD") -> list[dict]:
         """Detect quantitative threshold violations and record them as gaps (SO-6).
 

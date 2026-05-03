@@ -494,3 +494,88 @@ def test_fmt_quant_thresholds_panel_missing_fields():
     from irys.ui.app import _fmt_quant_thresholds_panel
     result = _fmt_quant_thresholds_panel([{"threshold": None}])
     assert "1 violation" in result
+
+
+def test_fmt_system_health_panel_empty():
+    from irys.ui.app import _fmt_system_health_panel
+    result = _fmt_system_health_panel({})
+    assert "viz-empty" in result
+
+
+def test_fmt_system_health_panel_empty_finance():
+    from irys.ui.app import _fmt_system_health_panel
+    result = _fmt_system_health_panel({}, domain="finance")
+    assert "viz-empty" in result
+
+
+def test_fmt_system_health_panel_none():
+    from irys.ui.app import _fmt_system_health_panel
+    result = _fmt_system_health_panel(None)
+    assert "viz-empty" in result
+
+
+def test_fmt_system_health_panel_good():
+    from irys.ui.app import _fmt_system_health_panel
+    health = {
+        "assertion_count": 50,
+        "disputed_count": 5,
+        "disputed_fraction": 0.1,
+        "revision_count": 12,
+        "open_gap_count": 3,
+        "contradiction_count": 2,
+        "version_chain_count": 1,
+        "oscillating_count": 0,
+        "health_score": "good",
+    }
+    result = _fmt_system_health_panel(health)
+    assert "Truth Maintenance Health" in result
+    assert "pill-green" in result
+    assert "50" in result
+    assert "10.0%" in result
+    assert "All systems healthy" in result
+
+
+def test_fmt_system_health_panel_attention_needed():
+    from irys.ui.app import _fmt_system_health_panel
+    health = {
+        "assertion_count": 100,
+        "disputed_count": 40,
+        "disputed_fraction": 0.4,
+        "revision_count": 30,
+        "open_gap_count": 8,
+        "contradiction_count": 5,
+        "version_chain_count": 2,
+        "oscillating_count": 3,
+        "health_score": "attention_needed",
+    }
+    result = _fmt_system_health_panel(health)
+    assert "Attention Needed" in result
+    assert "pill-orange" in result
+    assert "pill-red" in result
+    assert "40.0%" in result
+
+
+def test_fmt_system_health_panel_finance_domain():
+    from irys.ui.app import _fmt_system_health_panel
+    health = {
+        "assertion_count": 10,
+        "disputed_count": 1,
+        "disputed_fraction": 0.1,
+        "revision_count": 3,
+        "open_gap_count": 0,
+        "contradiction_count": 0,
+        "version_chain_count": 0,
+        "oscillating_count": 0,
+        "health_score": "good",
+    }
+    result = _fmt_system_health_panel(health, domain="finance")
+    assert "Analysis Health" in result
+    assert "Total Claims" in result
+    assert "Position Revisions" in result
+
+
+def test_fmt_system_health_panel_missing_fields():
+    from irys.ui.app import _fmt_system_health_panel
+    result = _fmt_system_health_panel({"health_score": "good"})
+    assert "Truth Maintenance Health" in result
+    assert "0" in result

@@ -621,6 +621,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.compute_quant_thresholds(currency=currency)
 
+    async def get_system_health(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_system_health()
+
     async def list_llm_calls(
         self,
         matter_id: str,

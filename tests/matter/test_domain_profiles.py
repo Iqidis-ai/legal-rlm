@@ -288,6 +288,7 @@ def test_ui_domain_label_dicts_cover_all_profiles():
         _DOMAIN_SPEECH_ACT_LABELS,
         _PROOF_PANEL_LABELS,
         _QUANT_THRESHOLD_LABELS,
+        _SYSTEM_HEALTH_LABELS,
     )
 
     expected = {"legal", "finance", "coding", "academic_research", "biomedical"}
@@ -303,6 +304,7 @@ def test_ui_domain_label_dicts_cover_all_profiles():
         ("_CONTRADICTION_PANEL_LABELS", _CONTRADICTION_PANEL_LABELS),
         ("_DOCUMENT_VERSION_LABELS", _DOCUMENT_VERSION_LABELS),
         ("_QUANT_THRESHOLD_LABELS", _QUANT_THRESHOLD_LABELS),
+        ("_SYSTEM_HEALTH_LABELS", _SYSTEM_HEALTH_LABELS),
     ]:
         missing = expected - set(d.keys())
         assert not missing, f"{name} missing domains: {missing}"

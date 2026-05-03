@@ -2253,6 +2253,115 @@ def _fmt_quant_thresholds_panel(violations: list[dict], domain: str = "legal") -
     return f"<div class='viz-shell'>{header}{table}</div>"
 
 
+_SYSTEM_HEALTH_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Truth Maintenance Health",
+        "good": "All systems healthy — no oscillating assertions, dispute rate within bounds.",
+        "attention": "Attention needed — review disputed assertions and oscillation patterns.",
+        "row_assertions": "Total Assertions",
+        "row_disputed": "Disputed",
+        "row_dispute_rate": "Dispute Rate",
+        "row_revisions": "Belief Revisions",
+        "row_gaps": "Open Gaps",
+        "row_contradictions": "Contradictions",
+        "row_versions": "Version Chains",
+        "row_oscillating": "Oscillating Assertions",
+    },
+    "finance": {
+        "title": "Analysis Health",
+        "good": "All systems healthy — positions are stable, no oscillating claims.",
+        "attention": "Attention needed — review disputed positions and oscillation patterns.",
+        "row_assertions": "Total Claims",
+        "row_disputed": "Disputed",
+        "row_dispute_rate": "Dispute Rate",
+        "row_revisions": "Position Revisions",
+        "row_gaps": "Open Gaps",
+        "row_contradictions": "Contradictions",
+        "row_versions": "Version Chains",
+        "row_oscillating": "Oscillating Claims",
+    },
+    "coding": {
+        "title": "Analysis Health",
+        "good": "All systems healthy — no oscillating findings, dispute rate within bounds.",
+        "attention": "Attention needed — review disputed findings and oscillation patterns.",
+        "row_assertions": "Total Findings",
+        "row_disputed": "Disputed",
+        "row_dispute_rate": "Dispute Rate",
+        "row_revisions": "Finding Revisions",
+        "row_gaps": "Open Gaps",
+        "row_contradictions": "Contradictions",
+        "row_versions": "Version Chains",
+        "row_oscillating": "Oscillating Findings",
+    },
+    "academic_research": {
+        "title": "Analysis Health",
+        "good": "All systems healthy — no oscillating claims, dispute rate within bounds.",
+        "attention": "Attention needed — review disputed claims and oscillation patterns.",
+        "row_assertions": "Total Claims",
+        "row_disputed": "Disputed",
+        "row_dispute_rate": "Dispute Rate",
+        "row_revisions": "Claim Revisions",
+        "row_gaps": "Open Gaps",
+        "row_contradictions": "Contradictions",
+        "row_versions": "Version Chains",
+        "row_oscillating": "Oscillating Claims",
+    },
+    "biomedical": {
+        "title": "Analysis Health",
+        "good": "All systems healthy — no oscillating findings, dispute rate within bounds.",
+        "attention": "Attention needed — review disputed findings and oscillation patterns.",
+        "row_assertions": "Total Findings",
+        "row_disputed": "Disputed",
+        "row_dispute_rate": "Dispute Rate",
+        "row_revisions": "Finding Revisions",
+        "row_gaps": "Open Gaps",
+        "row_contradictions": "Contradictions",
+        "row_versions": "Version Chains",
+        "row_oscillating": "Oscillating Findings",
+    },
+}
+
+
+def _fmt_system_health_panel(health: dict, domain: str = "legal") -> str:
+    labels = _SYSTEM_HEALTH_LABELS.get(domain, _SYSTEM_HEALTH_LABELS["legal"])
+    if not health or not isinstance(health, dict):
+        return "<div class='viz-empty'>No health data available yet.</div>"
+
+    score = health.get("health_score", "good")
+    pill_class = "pill-green" if score == "good" else "pill-orange"
+    banner_text = labels["good"] if score == "good" else labels["attention"]
+    header = (
+        f"<div class='viz-header'><strong>{labels['title']}</strong>"
+        f" — <span class='pill {pill_class}'>{_escape(score.replace('_', ' ').title())}</span></div>"
+        f"<div style='padding:4px 8px;font-size:0.9em;color:#666;'>{banner_text}</div>"
+    )
+
+    dispute_rate = health.get("disputed_fraction", 0)
+    rate_pct = f"{dispute_rate * 100:.1f}%"
+    rate_pill = "pill-green" if dispute_rate < 0.15 else ("pill-orange" if dispute_rate < 0.3 else "pill-red")
+
+    osc = health.get("oscillating_count", 0)
+    osc_pill = "pill-green" if osc == 0 else "pill-red"
+
+    rows = (
+        f"<tr><td>{labels['row_assertions']}</td><td><strong>{health.get('assertion_count', 0)}</strong></td></tr>"
+        f"<tr><td>{labels['row_disputed']}</td><td>{health.get('disputed_count', 0)}</td></tr>"
+        f"<tr><td>{labels['row_dispute_rate']}</td><td><span class='pill {rate_pill}'>{rate_pct}</span></td></tr>"
+        f"<tr><td>{labels['row_revisions']}</td><td>{health.get('revision_count', 0)}</td></tr>"
+        f"<tr><td>{labels['row_gaps']}</td><td>{health.get('open_gap_count', 0)}</td></tr>"
+        f"<tr><td>{labels['row_contradictions']}</td><td>{health.get('contradiction_count', 0)}</td></tr>"
+        f"<tr><td>{labels['row_versions']}</td><td>{health.get('version_chain_count', 0)}</td></tr>"
+        f"<tr><td>{labels['row_oscillating']}</td><td><span class='pill {osc_pill}'>{osc}</span></td></tr>"
+    )
+
+    table = (
+        "<div class='table-wrap'><table class='viz-table'>"
+        "<thead><tr><th>Metric</th><th>Value</th></tr></thead>"
+        "<tbody>" + rows + "</tbody></table></div>"
+    )
+    return f"<div class='viz-shell'>{header}{table}</div>"
+
+
 def _fmt_communication_map_panel(graph: dict) -> str:
     actors = list(graph.get("actors", []) or [])
     documents = list(graph.get("documents", []) or [])
@@ -5171,6 +5280,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading quant thresholds: {_escape(exc)}</div>"
 
+    def load_system_health(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_system_health(matter_id))
+            return _fmt_system_health_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading system health: {_escape(exc)}</div>"
+
     def set_policy_audience(self, label: str) -> str:
         """Called when the sidebar privilege-mode toggle flips. Returns
         a visible banner HTML so the reviewer always knows which mode
@@ -6168,6 +6286,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             quant_thresholds_html = gr.HTML("<div class='viz-empty'>Financial health alerts will appear here after an investigation.</div>")
             refresh_quant_thresholds_btn = gr.Button("Refresh Financial Health", variant="secondary", size="sm")
 
+        with gr.Accordion("System Health — truth maintenance diagnostics", open=False):
+            gr.Markdown(
+                "Monitors assertion stability: dispute rate, belief oscillation, open gaps, "
+                "and contradictions. A healthy system has low dispute rates and zero oscillating assertions."
+            )
+            system_health_html = gr.HTML("<div class='viz-empty'>System health diagnostics will appear here after an investigation.</div>")
+            refresh_system_health_btn = gr.Button("Refresh System Health", variant="secondary", size="sm")
+
         with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
                 "Maps which people and companies appear in which documents and highlights "
@@ -6448,6 +6574,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             contradictions = state.load_contradictions(mid, domain=domain)
             doc_versions = state.load_document_versions(mid, domain=domain)
             quant_thresholds = state.load_quant_thresholds(mid, domain=domain)
+            system_health = state.load_system_health(mid, domain=domain)
             review_badge = state.load_review_count_badge(mid)
             doc_choices = state.load_document_picker_choices(mid)
             return (
@@ -6469,6 +6596,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 contradictions,
                 doc_versions,
                 quant_thresholds,
+                system_health,
                 top_issue,
                 gr.update(choices=doc_choices),
                 gr.update(choices=_correction_dropdown_choices(domain), value=None),
@@ -6533,6 +6661,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     contradiction_html,
                     doc_versions_html,
                     quant_thresholds_html,
+                    system_health_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -6565,6 +6694,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     contradiction_html,
                     doc_versions_html,
                     quant_thresholds_html,
+                    system_health_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -6594,6 +6724,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 contradiction_html,
                 doc_versions_html,
                 quant_thresholds_html,
+                system_health_html,
                 redirect_issue_id,
                 bulk_doc_ref,
                 correction_new_state,
@@ -6665,6 +6796,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_quant_thresholds(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[quant_thresholds_html],
+        )
+        refresh_system_health_btn.click(
+            fn=lambda mid: state.load_system_health(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[system_health_html],
         )
         refresh_comm_btn.click(
             fn=lambda mid: state.load_communication_map(mid),

@@ -1287,3 +1287,23 @@ def test_quant_thresholds_empty(client, register_model):
 def test_quant_thresholds_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/quant-thresholds")
     assert resp.status_code == 404
+
+
+def test_system_health_returns_data(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/system-health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "assertion_count" in data
+    assert "disputed_count" in data
+    assert "disputed_fraction" in data
+    assert "revision_count" in data
+    assert "open_gap_count" in data
+    assert "contradiction_count" in data
+    assert "version_chain_count" in data
+    assert "oscillating_count" in data
+    assert data["health_score"] in ("good", "attention_needed")
+
+
+def test_system_health_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/system-health")
+    assert resp.status_code == 404

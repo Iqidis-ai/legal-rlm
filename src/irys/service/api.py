@@ -3114,6 +3114,19 @@ async def get_quant_thresholds(
     return model.compute_quant_thresholds(currency=currency)
 
 
+@app.get(
+    "/matter/{matter_id}/system-health",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_system_health(matter_id: str):
+    """Return system health diagnostics: assertion counts, dispute rate,
+    oscillation detection, gap/contradiction/version-chain counts, and
+    an overall health score.  Powers the truth-maintenance dashboard."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_system_health()
+
+
 # ---------------------------------------------------------------------------
 # Visual Work Product — Timeline view (Priority 2)
 # ---------------------------------------------------------------------------
