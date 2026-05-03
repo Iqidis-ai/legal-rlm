@@ -5499,6 +5499,17 @@ class AppState:
         except Exception as exc:
             return f"Error: {exc}"
 
+    def do_generate_clarifications(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first."
+        try:
+            ids = _run_async(self.backend().generate_clarifications(matter_id))
+            if ids:
+                return f"Generated {len(ids)} clarification question{'s' if len(ids) != 1 else ''}."
+            return "No new questions generated — all high-materiality gaps already have pending questions."
+        except Exception as exc:
+            return f"Error: {exc}"
+
     def load_trust_overrides(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -6595,7 +6606,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     placeholder="Type your answer to the selected clarification question...",
                     lines=2,
                 )
-            answer_clarification_btn = gr.Button("Submit Answer", variant="primary", size="sm")
+            with gr.Row():
+                answer_clarification_btn = gr.Button("Submit Answer", variant="primary", size="sm")
+                generate_clarifications_btn = gr.Button("Generate Questions from Gaps", variant="secondary", size="sm")
             answer_clarification_result = gr.Textbox(label="Result", interactive=False)
             gr.Markdown("---")
             gr.Markdown("#### Document Trust Overrides")
@@ -7340,6 +7353,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         answer_clarification_btn.click(
             fn=lambda mid, qid, ans: state.do_answer_clarification(mid, qid, ans),
             inputs=[matter_id_box, clarification_dropdown, clarification_answer_input],
+            outputs=[answer_clarification_result],
+        ).then(
+            fn=lambda mid: gr.update(choices=state.load_clarification_choices(mid), value=None),
+            inputs=[matter_id_box],
+            outputs=[clarification_dropdown],
+        )
+
+        generate_clarifications_btn.click(
+            fn=lambda mid: state.do_generate_clarifications(mid),
+            inputs=[matter_id_box],
             outputs=[answer_clarification_result],
         ).then(
             fn=lambda mid: gr.update(choices=state.load_clarification_choices(mid), value=None),

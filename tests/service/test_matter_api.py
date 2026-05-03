@@ -1349,3 +1349,17 @@ def test_trust_overrides_set_and_list(client, register_model):
 def test_trust_overrides_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/trust-overrides")
     assert resp.status_code == 404
+
+
+def test_generate_clarifications_empty(client, register_model):
+    resp = client.post(f"/matter/{MATTER_ID}/generate-clarifications")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "question_ids" in data
+    assert "count" in data
+    assert data["count"] == 0
+
+
+def test_generate_clarifications_404_for_unknown_matter(client):
+    resp = client.post("/matter/unknown/generate-clarifications")
+    assert resp.status_code == 404

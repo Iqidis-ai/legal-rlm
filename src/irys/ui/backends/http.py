@@ -269,10 +269,18 @@ class HttpBackend(UIBackend):
     async def delete_trust_override(self, matter_id: str, document_pattern: str) -> bool:
         pattern_enc = _url_quote(document_pattern, safe="")
         try:
-            await self._client.delete(f"/matter/{matter_id}/trust-overrides/{pattern_enc}")
+            r = await self._client.delete(f"/matter/{matter_id}/trust-overrides/{pattern_enc}")
+            r.raise_for_status()
             return True
         except Exception:
             return False
+
+    async def generate_clarifications(self, matter_id: str, top_n: int = 3) -> list[str]:
+        result = await self._post(
+            f"/matter/{matter_id}/generate-clarifications",
+            {"top_n": top_n},
+        )
+        return result.get("question_ids", []) if isinstance(result, dict) else []
 
     async def list_llm_calls(
         self,

@@ -3143,6 +3143,21 @@ async def get_so_scorecard(matter_id: str):
     return model.get_so_metrics()
 
 
+@app.post(
+    "/matter/{matter_id}/generate-clarifications",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def generate_clarifications(matter_id: str, top_n: int = Query(default=3, ge=1, le=10)):
+    """Generate clarification questions from the highest-materiality open gaps (SO-7).
+
+    Creates up to top_n clarification questions for gaps that don't already
+    have a pending question. Returns the list of new question_ids."""
+    model = await _get_matter_model_or_404(matter_id)
+    question_ids = model.generate_clarifications_from_gaps(top_n=top_n)
+    return {"question_ids": question_ids, "count": len(question_ids)}
+
+
 # ---------------------------------------------------------------------------
 # Visual Work Product — Timeline view (Priority 2)
 # ---------------------------------------------------------------------------

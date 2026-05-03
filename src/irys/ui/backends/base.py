@@ -254,3 +254,8 @@ class UIBackend(ABC):
     async def delete_trust_override(self, matter_id: str, document_pattern: str) -> bool:
         """Delete a trust override. Returns True if deleted."""
         ...
+
+    @abstractmethod
+    async def generate_clarifications(self, matter_id: str, top_n: int = 3) -> list[str]:
+        """Generate clarification questions from gaps. Returns new question_ids."""
+        ...

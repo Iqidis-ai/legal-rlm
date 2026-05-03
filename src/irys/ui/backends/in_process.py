@@ -649,6 +649,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.delete_trust_override(document_pattern)
 
+    async def generate_clarifications(self, matter_id: str, top_n: int = 3) -> list[str]:
+        model = self._get_matter_model(matter_id)
+        return model.generate_clarifications_from_gaps(top_n=top_n)
+
     async def list_llm_calls(
         self,
         matter_id: str,
