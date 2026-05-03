@@ -1305,3 +1305,21 @@ def test_fmt_assumptions_skips_non_dict():
     from irys.ui.app import _fmt_assumptions
     result = _fmt_assumptions(["bad", None])
     assert "viz-empty" in result
+
+
+def test_fmt_assumptions_xss_escape():
+    from irys.ui.app import _fmt_assumptions
+    xss = '<img src=x onerror=alert(1)>'
+    result = _fmt_assumptions([
+        {"statement": xss, "status": "provisional", "invalidation_condition": xss, "rationale": xss},
+    ])
+    assert "<img" not in result
+    assert "&lt;img" in result
+
+
+def test_fmt_assumptions_xss_in_status():
+    from irys.ui.app import _fmt_assumptions
+    result = _fmt_assumptions([
+        {"statement": "Test", "status": '<script>alert(1)</script>'},
+    ])
+    assert "<script>" not in result

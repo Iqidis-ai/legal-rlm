@@ -3846,7 +3846,7 @@ def _fmt_assumptions(assumptions: list, domain: str = "legal") -> str:
             conf_count += 1
         elif status == "invalidated":
             inv_count += 1
-        pill_text, pill_cls = _ASSUMPTION_STATUS_PILLS.get(status, (status.replace("_", " ").title(), "pill-neutral"))
+        pill_text, pill_cls = _ASSUMPTION_STATUS_PILLS.get(status, (_escape(status.replace("_", " ").title()), "pill-neutral"))
         stmt = _escape(str(a.get("statement") or "?"))
         cond = _escape(str(a.get("invalidation_condition") or ""))
         rationale = _escape(str(a.get("rationale") or ""))
@@ -8064,6 +8064,18 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: gr.update(choices=state.load_clarification_choices(mid)),
             inputs=[matter_id_box],
             outputs=[clarification_dropdown],
+        ).then(
+            fn=lambda mid: state.load_assumptions(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[assumptions_detail_html],
+        ).then(
+            fn=lambda mid: state.load_content_policy_audit(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[content_policy_html],
+        ).then(
+            fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[gaps_detail_html],
         )
 
         export_report_btn.click(
