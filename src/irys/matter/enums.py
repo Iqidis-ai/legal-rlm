@@ -40,9 +40,8 @@ class SourceRole(str, Enum):
     UNKNOWN = "unknown"
 
 
-# Canonical trust weights for source roles (SO-5).
-# Lower weight = evidence is less dispositive in belief revision and proof state.
-# Imported by belief_revision.py and graph.py — ONE definition, no duplication.
+# Legacy legal-domain trust weights (SO-5 fallback).
+# New code should use composed weights from domain facets.
 SOURCE_TRUST_WEIGHTS: dict[str, float] = {
     "operative": 1.0,
     "authoritative": 1.0,

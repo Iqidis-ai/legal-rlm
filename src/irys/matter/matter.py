@@ -3535,6 +3535,11 @@ class MatterModel:
         # Document intelligence: count of documents with structured cards
         doc_card_count = self.document_cards.count()
 
+        # Domain composition: read already-recorded facets (no fresh detection)
+        domain_facets, composed_trust, primary_profile = (
+            self._read_matter_domain_composition()
+        )
+
         return QueryMatterContext(
             matter_id=self.matter_id,
             matter_name=matter_name,
@@ -3550,7 +3555,53 @@ class MatterModel:
             key_predicates=key_predicates,
             active_assumptions=active_assumptions,
             document_card_count=doc_card_count,
+            domain_facets=domain_facets,
+            composed_trust_weights=composed_trust,
+            primary_domain_profile_id=primary_profile,
         )
+
+    def _read_matter_domain_composition(
+        self,
+    ) -> tuple[list[dict], dict[str, float], str | None]:
+        """Read recorded domain facets at matter level and compose trust weights.
+
+        Returns (facet_list, composed_trust_weights, primary_profile_id).
+        Reads only — no fresh detection (per Design Gate 3 §3).
+        """
+        broker = self.memory_broker
+        facet_rows = broker.get_object_domain_facets(
+            "workspace", self.matter_id, status="active",
+        )
+        if not facet_rows:
+            tw = broker.get_profile_trust_weights("legal")
+            return [], tw, "legal"
+
+        primary_profile: str | None = None
+        best_conf = -1.0
+        for f in facet_rows:
+            if f["confidence"] > best_conf:
+                best_conf = f["confidence"]
+                primary_profile = f["domain_profile_id"]
+
+        composed: dict[str, float] = {}
+        total_conf = sum(f["confidence"] for f in facet_rows)
+        if total_conf > 0:
+            for f in facet_rows:
+                weight = f["confidence"] / total_conf
+                tw = broker.get_profile_trust_weights(f["domain_profile_id"])
+                for role, val in tw.items():
+                    composed[role] = composed.get(role, 0.0) + val * weight
+
+        facets = [
+            {
+                "domain_profile_id": f["domain_profile_id"],
+                "domain_profile_version": f["domain_profile_version"],
+                "confidence": f["confidence"],
+                "status": f["status"],
+            }
+            for f in facet_rows
+        ]
+        return facets, composed, primary_profile
 
     @staticmethod
     def _coverage_fraction(weighted_support: float, predicate_count: int) -> float:

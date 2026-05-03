@@ -73,6 +73,7 @@ def _compute_belief_state(
     support_source_roles: "list[str] | None" = None,
     attack_source_roles: "list[str] | None" = None,
     superseding_states: "list[BeliefState] | None" = None,
+    trust_weights: "dict[str, float] | None" = None,
 ) -> tuple[BeliefState, float]:
     """
     Compute new belief state and confidence from support/attack/supersedes graph.
@@ -137,13 +138,14 @@ def _compute_belief_state(
             f"attack_source_roles length {len(attack_source_roles)} != "
             f"attack_states length {len(attack_states)}"
         )
+    _tw = trust_weights if trust_weights is not None else _SOURCE_TRUST
     sup_weights = (
-        [_SOURCE_TRUST.get(r, 0.5) for r in support_source_roles]
+        [_tw.get(r, 0.5) for r in support_source_roles]
         if support_source_roles is not None
         else [1.0] * len(support_states)
     )
     atk_weights = (
-        [_SOURCE_TRUST.get(r, 0.5) for r in attack_source_roles]
+        [_tw.get(r, 0.5) for r in attack_source_roles]
         if attack_source_roles is not None
         else [1.0] * len(attack_states)
     )
@@ -233,10 +235,12 @@ class BeliefRevisionEngine:
         db: SQLiteMatterDB,
         assertion_store: AssertionStore,
         ledger: "Optional[ReasoningLedgerStore]" = None,
+        trust_weights: "dict[str, float] | None" = None,
     ):
         self.db = db
         self.assertion_store = assertion_store
         self._ledger = ledger
+        self.trust_weights = trust_weights
 
     def _apply_with_truncation(
         self,
@@ -596,6 +600,7 @@ class BeliefRevisionEngine:
             support_source_roles=neighbors["support_source_roles"],
             attack_source_roles=neighbors["attack_source_roles"],
             superseding_states=neighbors.get("superseding_states"),
+            trust_weights=self.trust_weights,
         )
 
         # Performance fast-path: skip BEGIN IMMEDIATE when the pre-tx snapshot

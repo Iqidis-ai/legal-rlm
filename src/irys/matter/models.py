@@ -317,6 +317,10 @@ class QueryMatterContext:
     key_predicates: list[str] = field(default_factory=list)
     # Document intelligence: how many documents have structured cards
     document_card_count: int = 0
+    # Domain composition: active facets and composed vocabulary from recorded detections
+    domain_facets: list[dict] = field(default_factory=list)
+    composed_trust_weights: dict[str, float] = field(default_factory=dict)
+    primary_domain_profile_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
