@@ -7995,6 +7995,18 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     bulk_doc_ref,
                     correction_new_state,
                 ],
+            ).then(
+                fn=lambda mid: state.load_assumptions(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[assumptions_detail_html],
+            ).then(
+                fn=lambda mid: state.load_content_policy_audit(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[content_policy_html],
+            ).then(
+                fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[gaps_detail_html],
             )
         else:
             submit_btn.click(
@@ -8029,6 +8041,18 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     bulk_doc_ref,
                     correction_new_state,
                 ],
+            ).then(
+                fn=lambda mid: state.load_assumptions(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[assumptions_detail_html],
+            ).then(
+                fn=lambda mid: state.load_content_policy_audit(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[content_policy_html],
+            ).then(
+                fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[gaps_detail_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
