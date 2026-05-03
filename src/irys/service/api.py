@@ -2994,6 +2994,26 @@ async def get_contradictions(matter_id: str, limit: int = Query(default=100, ge=
 
 
 # ---------------------------------------------------------------------------
+# Document Version Chains (SO-5 sourcing transparency)
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/matter/{matter_id}/document-versions",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_document_versions(matter_id: str):
+    """Return document version families with operative HEAD marked.
+
+    Each family groups documents that are versions of each other (e.g.
+    contract_v1.pdf → contract_v2.pdf).  The operative (latest) version is
+    flagged so downstream consumers know which document to cite.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    return model.list_version_families()
+
+
+# ---------------------------------------------------------------------------
 # Visual Work Product — Timeline view (Priority 2)
 # ---------------------------------------------------------------------------
 

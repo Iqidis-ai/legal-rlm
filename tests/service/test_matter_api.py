@@ -1163,3 +1163,36 @@ def test_contradictions_with_data(client, register_model):
 def test_contradictions_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/contradictions")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/document-versions — version chain families
+# ---------------------------------------------------------------------------
+
+def test_document_versions_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/document-versions")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_document_versions_with_data(client, register_model):
+    model = register_model
+    d1_id, _ = model.inventory.upsert("contract_v1.pdf", sha256="aaa", size_bytes=100)
+    d2_id, _ = model.inventory.upsert("contract_v2.pdf", sha256="bbb", size_bytes=200)
+    model.inventory.link_documents(d2_id, d1_id, "version_of", confidence=0.9)
+    model.inventory.set_family_membership([d1_id, d2_id], family_id=d1_id)
+    resp = client.get(f"/matter/{MATTER_ID}/document-versions")
+    assert resp.status_code == 200
+    families = resp.json()
+    assert len(families) == 1
+    fam = families[0]
+    assert fam["family_id"] == d1_id
+    assert len(fam["members"]) == 2
+    operative = [m for m in fam["members"] if m["is_operative"]]
+    assert len(operative) == 1
+    assert operative[0]["relative_path"] == "contract_v2.pdf"
+
+
+def test_document_versions_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/document-versions")
+    assert resp.status_code == 404

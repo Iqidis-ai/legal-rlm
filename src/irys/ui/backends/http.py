@@ -205,6 +205,10 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/contradictions", {"limit": limit})
         return result if isinstance(result, list) else []
 
+    async def get_document_versions(self, matter_id: str) -> list[dict]:
+        result = await self._get(f"/matter/{matter_id}/document-versions")
+        return result if isinstance(result, list) else []
+
     async def list_llm_calls(
         self,
         matter_id: str,

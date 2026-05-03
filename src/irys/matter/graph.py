@@ -3820,6 +3820,40 @@ class DocumentInventoryStore:
                 (family_id, version_chain_id, doc_id),
             )
 
+    def list_version_families(self) -> list[dict]:
+        """Return all document version families with operative HEAD marked.
+
+        Each family dict: {family_id, members: [{id, relative_path, is_operative}]}
+        Only includes families with 2+ members (singleton docs are not version chains).
+        """
+        rows = self.db.execute(
+            """SELECT id, relative_path, family_id
+               FROM document_inventory
+               WHERE matter_id=? AND family_id IS NOT NULL
+               ORDER BY family_id, relative_path""",
+            (self.matter_id,),
+        ).fetchall()
+        if not rows:
+            return []
+
+        from collections import defaultdict
+        groups: dict[str, list[dict]] = defaultdict(list)
+        for r in rows:
+            groups[r["family_id"]].append({
+                "id": r["id"],
+                "relative_path": r["relative_path"],
+            })
+
+        families = []
+        for fid, members in groups.items():
+            if len(members) < 2:
+                continue
+            operative_id = self.get_operative_version(members[0]["id"])
+            for m in members:
+                m["is_operative"] = m["id"] == operative_id
+            families.append({"family_id": fid, "members": members})
+        return families
+
     # ------------------------------------------------------------------
     # Document relations and version-chain detection (spec §14, §26)
     # ------------------------------------------------------------------

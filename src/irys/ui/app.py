@@ -2070,6 +2070,96 @@ def _fmt_contradiction_panel(contradictions: list[dict], domain: str = "legal") 
     return f"<div class='viz-shell'>{header}{table}</div>"
 
 
+# ---------------------------------------------------------------------------
+# Document Version Chains panel (SO-5 sourcing transparency)
+# ---------------------------------------------------------------------------
+
+_DOCUMENT_VERSION_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Document Version Chains",
+        "doc_col": "Document",
+        "status_col": "Version Status",
+        "empty": "No document version chains detected. Documents have not been grouped into version families.",
+    },
+    "finance": {
+        "title": "Filing Version History",
+        "doc_col": "Filing / Report",
+        "status_col": "Version Status",
+        "empty": "No filing version chains detected.",
+    },
+    "coding": {
+        "title": "Artifact Version Chains",
+        "doc_col": "Artifact",
+        "status_col": "Version Status",
+        "empty": "No artifact version chains detected.",
+    },
+    "academic_research": {
+        "title": "Manuscript Version History",
+        "doc_col": "Manuscript / Dataset",
+        "status_col": "Version Status",
+        "empty": "No manuscript version chains detected.",
+    },
+    "biomedical": {
+        "title": "Protocol Version History",
+        "doc_col": "Protocol / Study Document",
+        "status_col": "Version Status",
+        "empty": "No protocol version chains detected.",
+    },
+}
+
+
+def _fmt_document_versions_panel(families: list[dict], domain: str = "legal") -> str:
+    labels = _DOCUMENT_VERSION_LABELS.get(domain, _DOCUMENT_VERSION_LABELS["legal"])
+    if not families:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    families_html = ""
+    total_docs = 0
+    for fam in families:
+        if not isinstance(fam, dict):
+            continue
+        members = fam.get("members") or []
+        if not members:
+            continue
+        total_docs += len(members)
+        rows = ""
+        for m in members:
+            if not isinstance(m, dict):
+                continue
+            path = m.get("relative_path") or "—"
+            short_name = _escape(path.rsplit("/", 1)[-1] if "/" in str(path) else str(path))
+            full_path = _escape(str(path))
+            is_op = m.get("is_operative", False)
+            if is_op:
+                badge = "<span class='pill pill-green'>Operative (Current)</span>"
+            else:
+                badge = "<span class='pill pill-neutral'>Superseded</span>"
+            rows += (
+                f"<tr>"
+                f"<td title='{full_path}'>{short_name}</td>"
+                f"<td>{badge}</td>"
+                f"</tr>"
+            )
+        if rows:
+            families_html += (
+                f"<table class='viz-table' style='margin-bottom:12px'>"
+                f"<thead><tr><th>{labels['doc_col']}</th>"
+                f"<th>{labels['status_col']}</th></tr></thead>"
+                f"<tbody>{rows}</tbody></table>"
+            )
+
+    if not families_html:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    fam_count = len([f for f in families if isinstance(f, dict) and (f.get("members") or [])])
+    header = (
+        f"<div class='viz-header'><strong>{labels['title']}</strong>"
+        f" — {fam_count} version chain{'s' if fam_count != 1 else ''}, "
+        f"{total_docs} document{'s' if total_docs != 1 else ''}</div>"
+    )
+    return f"<div class='viz-shell'>{header}<div class='table-wrap'>{families_html}</div></div>"
+
+
 def _fmt_communication_map_panel(graph: dict) -> str:
     actors = list(graph.get("actors", []) or [])
     documents = list(graph.get("documents", []) or [])
@@ -4950,6 +5040,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading contradictions: {_escape(exc)}</div>"
 
+    def load_document_versions(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_document_versions(matter_id))
+            return _fmt_document_versions_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading document versions: {_escape(exc)}</div>"
+
     def set_policy_audience(self, label: str) -> str:
         """Called when the sidebar privilege-mode toggle flips. Returns
         a visible banner HTML so the reviewer always knows which mode
@@ -5927,6 +6026,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             contradiction_html = gr.HTML("<div class='viz-empty'>Contradiction analysis will appear here after an investigation.</div>")
             refresh_contradiction_btn = gr.Button("Refresh Contradictions", variant="secondary", size="sm")
 
+        with gr.Accordion("Document Version Chains — which documents supersede each other", open=False):
+            gr.Markdown(
+                "Groups documents that are versions of each other (e.g. contract_v1.pdf → contract_v2.pdf). "
+                "The operative (current) version is highlighted so you know which document to cite."
+            )
+            doc_versions_html = gr.HTML("<div class='viz-empty'>Document version chains will appear here after an investigation.</div>")
+            refresh_doc_versions_btn = gr.Button("Refresh Document Versions", variant="secondary", size="sm")
+
         with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
                 "Maps which people and companies appear in which documents and highlights "
@@ -6205,6 +6312,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             doc_intel = state.load_document_intelligence(mid, domain=domain)
             belief_revisions = state.load_belief_revisions(mid, domain=domain)
             contradictions = state.load_contradictions(mid, domain=domain)
+            doc_versions = state.load_document_versions(mid, domain=domain)
             review_badge = state.load_review_count_badge(mid)
             doc_choices = state.load_document_picker_choices(mid)
             return (
@@ -6224,6 +6332,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 doc_intel,
                 belief_revisions,
                 contradictions,
+                doc_versions,
                 top_issue,
                 gr.update(choices=doc_choices),
                 gr.update(choices=_correction_dropdown_choices(domain), value=None),
@@ -6286,6 +6395,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     doc_intel_html,
                     belief_revision_html,
                     contradiction_html,
+                    doc_versions_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -6316,6 +6426,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     doc_intel_html,
                     belief_revision_html,
                     contradiction_html,
+                    doc_versions_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -6394,6 +6505,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_contradictions(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[contradiction_html],
+        )
+        refresh_doc_versions_btn.click(
+            fn=lambda mid: state.load_document_versions(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[doc_versions_html],
         )
         refresh_comm_btn.click(
             fn=lambda mid: state.load_communication_map(mid),

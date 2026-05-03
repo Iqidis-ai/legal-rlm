@@ -190,3 +190,8 @@ class UIBackend(ABC):
     async def get_contradictions(self, matter_id: str, limit: int = 100) -> list[dict]:
         """Return active contradiction pairs in the assertion graph."""
         ...
+
+    @abstractmethod
+    async def get_document_versions(self, matter_id: str) -> list[dict]:
+        """Return document version families with operative HEAD marked."""
+        ...

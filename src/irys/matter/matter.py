@@ -3102,6 +3102,10 @@ class MatterModel:
         """
         return self.inventory.get_operative_version(doc_id)
 
+    def list_version_families(self) -> list[dict]:
+        """Return document version families with operative HEAD marked."""
+        return self.inventory.list_version_families()
+
     def compute_quant_thresholds(self, currency: str = "USD") -> list[dict]:
         """Detect quantitative threshold violations and record them as gaps (SO-6).
 

@@ -282,6 +282,7 @@ def test_ui_domain_label_dicts_cover_all_profiles():
         _BELIEF_REVISION_LABELS,
         _CONTRADICTION_PANEL_LABELS,
         _DOC_PANEL_LABELS,
+        _DOCUMENT_VERSION_LABELS,
         _DOMAIN_BELIEF_LABELS,
         _DOMAIN_SOURCE_LABELS,
         _DOMAIN_SPEECH_ACT_LABELS,
@@ -299,6 +300,7 @@ def test_ui_domain_label_dicts_cover_all_profiles():
         ("_DOMAIN_BELIEF_LABELS", _DOMAIN_BELIEF_LABELS),
         ("_BELIEF_REVISION_LABELS", _BELIEF_REVISION_LABELS),
         ("_CONTRADICTION_PANEL_LABELS", _CONTRADICTION_PANEL_LABELS),
+        ("_DOCUMENT_VERSION_LABELS", _DOCUMENT_VERSION_LABELS),
     ]:
         missing = expected - set(d.keys())
         assert not missing, f"{name} missing domains: {missing}"

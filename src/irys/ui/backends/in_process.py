@@ -595,6 +595,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.assertions.find_contradictions(limit=limit)
 
+    async def get_document_versions(self, matter_id: str) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.list_version_families()
+
     async def list_llm_calls(
         self,
         matter_id: str,

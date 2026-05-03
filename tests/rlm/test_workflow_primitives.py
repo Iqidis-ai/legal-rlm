@@ -365,3 +365,77 @@ def test_fmt_contradiction_panel_missing_fields():
     from irys.ui.app import _fmt_contradiction_panel
     result = _fmt_contradiction_panel([{"attacker_prop": None}])
     assert "1 active conflict" in result
+
+
+# ---------------------------------------------------------------------------
+# Document Version Chains panel formatter tests
+# ---------------------------------------------------------------------------
+
+
+def test_fmt_document_versions_panel_empty():
+    from irys.ui.app import _fmt_document_versions_panel
+    result = _fmt_document_versions_panel([])
+    assert "viz-empty" in result
+    assert "No document version chains" in result
+
+
+def test_fmt_document_versions_panel_empty_finance():
+    from irys.ui.app import _fmt_document_versions_panel
+    result = _fmt_document_versions_panel([], domain="finance")
+    assert "No filing version chains" in result
+
+
+def test_fmt_document_versions_panel_with_data():
+    from irys.ui.app import _fmt_document_versions_panel
+    families = [
+        {
+            "family_id": "fam-1",
+            "members": [
+                {"id": "d1", "relative_path": "contract_v1.pdf", "is_operative": False},
+                {"id": "d2", "relative_path": "contract_v2.pdf", "is_operative": True},
+            ],
+        },
+    ]
+    result = _fmt_document_versions_panel(families)
+    assert "1 version chain" in result
+    assert "2 documents" in result
+    assert "contract_v1.pdf" in result
+    assert "contract_v2.pdf" in result
+    assert "Operative (Current)" in result
+    assert "Superseded" in result
+
+
+def test_fmt_document_versions_panel_skips_non_dict():
+    from irys.ui.app import _fmt_document_versions_panel
+    result = _fmt_document_versions_panel(["bad", None, 42])
+    assert "viz-empty" in result
+
+
+def test_fmt_document_versions_panel_missing_fields():
+    from irys.ui.app import _fmt_document_versions_panel
+    families = [{"family_id": "f1", "members": [{"id": "d1"}]}]
+    result = _fmt_document_versions_panel(families)
+    assert "1 version chain" in result
+
+
+def test_fmt_document_versions_panel_multiple_families():
+    from irys.ui.app import _fmt_document_versions_panel
+    families = [
+        {
+            "family_id": "fam-1",
+            "members": [
+                {"id": "d1", "relative_path": "lease_v1.pdf", "is_operative": False},
+                {"id": "d2", "relative_path": "lease_v2.pdf", "is_operative": True},
+            ],
+        },
+        {
+            "family_id": "fam-2",
+            "members": [
+                {"id": "d3", "relative_path": "memo_draft.docx", "is_operative": False},
+                {"id": "d4", "relative_path": "memo_final.docx", "is_operative": True},
+            ],
+        },
+    ]
+    result = _fmt_document_versions_panel(families)
+    assert "2 version chains" in result
+    assert "4 documents" in result
