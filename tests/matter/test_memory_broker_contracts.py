@@ -1025,3 +1025,146 @@ def test_legacy_delete_trust_override_works_without_revisions():
     model.set_trust_override("doc1.pdf", "low")
     model.delete_trust_override("doc1.pdf")
     assert model.trust_overrides.list_all() == []
+
+
+def test_brokered_set_trust_override_rejects_stale_cache_records():
+    """Stale cache_records namespace should trigger CAS mismatch."""
+    from irys.matter.graph import MemoryBrokerCASMismatch
+
+    model, _a_id = _make_model_with_assertion()
+    revisions = model.trust_override_revision_keys("doc1.pdf")
+
+    model.memory_broker.bump_namespace_revision("cache_records")
+
+    with pytest.raises(MemoryBrokerCASMismatch):
+        model.set_trust_override(
+            "doc1.pdf", "high",
+            expected_revisions=revisions,
+        )
+
+
+def test_brokered_set_trust_override_rejects_stale_specific_doc_key():
+    """Stale specific document key should trigger CAS mismatch."""
+    from irys.matter.graph import MemoryBrokerCASMismatch
+
+    model, _a_id = _make_model_with_assertion()
+    revisions = model.trust_override_revision_keys("doc1.pdf")
+
+    model.memory_broker.bump_namespace_revision(
+        "trust_overrides", "document", "doc1.pdf",
+    )
+
+    with pytest.raises(MemoryBrokerCASMismatch):
+        model.set_trust_override(
+            "doc1.pdf", "high",
+            expected_revisions=revisions,
+        )
+
+
+def _make_model_with_issue_linked_assertion():
+    """Create a model with an assertion linked to an issue for proof_state tests."""
+    import uuid
+    from irys.matter.models import AssertionCandidate
+    from irys.matter.enums import (
+        AssertionKind, ModelLayer, OriginKind, SourceRole, SpeechAct, IssueType,
+    )
+
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("test")
+    a_id, _ = model.record_assertion(
+        AssertionCandidate(
+            proposition_text="Defendant breached the contract on Jan 1.",
+            model_layer=ModelLayer.RECORD,
+            assertion_kind=AssertionKind.FACTUAL,
+            speech_act=SpeechAct.ALLEGED,
+            source_role=SourceRole.OPERATIVE,
+            origin_kind=OriginKind.EXTRACTED,
+            document_id="doc1.pdf",
+        ),
+        run_id=run_id,
+    )
+    issue_id, _ = model.issues.upsert_issue("Test Issue", IssueType.CLAIM)
+    model.db.execute(
+        "INSERT INTO assertion_issue_link (id, assertion_id, issue_id, relation_type, created_at)"
+        " VALUES (?,?,?,?,datetime('now'))",
+        (str(uuid.uuid4()), a_id, issue_id, "supports"),
+    )
+    model.complete_run(run_id)
+    return model, a_id, issue_id
+
+
+def test_brokered_set_trust_override_bumps_proof_state_when_issues_recompute():
+    """proof_state namespace should bump only when issue-linked assertions exist."""
+    model, _a_id, _iid = _make_model_with_issue_linked_assertion()
+    broker = model.memory_broker
+
+    ps_before = broker.get_namespace_revision("proof_state")
+
+    revisions = model.trust_override_revision_keys("doc1.pdf")
+    model.set_trust_override(
+        "doc1.pdf", "high",
+        expected_revisions=revisions,
+    )
+
+    assert broker.get_namespace_revision("proof_state") > ps_before
+
+
+def test_brokered_set_trust_override_no_proof_state_bump_without_linked_issues():
+    """proof_state should NOT bump when no assertions are linked to issues."""
+    model, _a_id = _make_model_with_assertion()
+    broker = model.memory_broker
+
+    ps_before = broker.get_namespace_revision("proof_state")
+
+    revisions = model.trust_override_revision_keys("unrelated_doc.pdf")
+    model.set_trust_override(
+        "unrelated_doc.pdf", "high",
+        expected_revisions=revisions,
+    )
+
+    assert broker.get_namespace_revision("proof_state") == ps_before
+
+
+def test_brokered_delete_trust_override_bumps_broad_and_specific():
+    """Brokered delete should bump both broad and specific trust_overrides."""
+    model, _a_id = _make_model_with_assertion()
+    model.set_trust_override("doc1.pdf", "low")
+    broker = model.memory_broker
+
+    broad_before = broker.get_namespace_revision("trust_overrides")
+    specific_before = broker.get_namespace_revision(
+        "trust_overrides", "document", "doc1.pdf",
+    )
+
+    revisions = model.trust_override_revision_keys("doc1.pdf")
+    model.delete_trust_override("doc1.pdf", expected_revisions=revisions)
+
+    assert broker.get_namespace_revision("trust_overrides") > broad_before
+    assert broker.get_namespace_revision(
+        "trust_overrides", "document", "doc1.pdf",
+    ) > specific_before
+
+
+def test_brokered_delete_noop_with_expected_revisions():
+    """Deleting a non-existent override with expected_revisions should not raise."""
+    model, _a_id = _make_model_with_assertion()
+
+    revisions = model.trust_override_revision_keys("nonexistent.pdf")
+    model.delete_trust_override("nonexistent.pdf", expected_revisions=revisions)
+    assert model.trust_overrides.list_all() == []
+
+
+def test_brokered_set_trust_override_bumps_cache_records():
+    """Brokered set should bump cache_records namespace."""
+    model, _a_id = _make_model_with_assertion()
+    broker = model.memory_broker
+
+    cr_before = broker.get_namespace_revision("cache_records")
+
+    revisions = model.trust_override_revision_keys("doc1.pdf")
+    model.set_trust_override(
+        "doc1.pdf", "high",
+        expected_revisions=revisions,
+    )
+
+    assert broker.get_namespace_revision("cache_records") > cr_before
