@@ -2185,6 +2185,51 @@ def _domain_source_label(role: str, domain: str) -> str:
     return profile_map.get(role.lower(), role.replace("_", " ").title())
 
 
+_DOMAIN_SPEECH_ACT_LABELS: dict[str, dict[str, str]] = {
+    "finance": {
+        "alleged": "Reported", "argued": "Projected", "denied": "Disputed",
+        "admitted": "Disclosed", "ordered": "Mandated", "performed": "Executed",
+        "paid": "Settled", "requested": "Filed", "threatened": "Warned",
+        "promised": "Committed", "estimated": "Estimated", "calculated": "Modeled",
+        "observed": "Measured", "testified": "Attested", "stipulated": "Agreed",
+        "amended": "Restated", "waived": "Waived", "terminated": "Closed",
+        "inferred": "Derived", "operative": "Contractual", "extracted": "Extracted",
+    },
+    "coding": {
+        "alleged": "Claimed", "argued": "Proposed", "denied": "Rejected",
+        "admitted": "Confirmed", "ordered": "Required", "performed": "Implemented",
+        "paid": "Completed", "requested": "Requested", "threatened": "Flagged",
+        "promised": "Planned", "estimated": "Estimated", "calculated": "Computed",
+        "observed": "Traced", "testified": "Documented", "stipulated": "Specified",
+        "amended": "Patched", "waived": "Deferred", "terminated": "Deprecated",
+        "inferred": "Inferred", "operative": "Defined", "extracted": "Extracted",
+    },
+    "academic_research": {
+        "alleged": "Hypothesized", "argued": "Argued", "denied": "Refuted",
+        "admitted": "Accepted", "ordered": "Prescribed", "performed": "Conducted",
+        "paid": "Funded", "requested": "Proposed", "threatened": "Cautioned",
+        "promised": "Predicted", "estimated": "Estimated", "calculated": "Computed",
+        "observed": "Observed", "testified": "Reported", "stipulated": "Defined",
+        "amended": "Corrected", "waived": "Excluded", "terminated": "Retracted",
+        "inferred": "Derived", "operative": "Methodological", "extracted": "Extracted",
+    },
+    "biomedical": {
+        "alleged": "Reported", "argued": "Hypothesized", "denied": "Contradicted",
+        "admitted": "Acknowledged", "ordered": "Prescribed", "performed": "Administered",
+        "paid": "Completed", "requested": "Recommended", "threatened": "Warned",
+        "promised": "Indicated", "estimated": "Estimated", "calculated": "Modeled",
+        "observed": "Observed", "testified": "Documented", "stipulated": "Protocol",
+        "amended": "Revised", "waived": "Excluded", "terminated": "Discontinued",
+        "inferred": "Inferred", "operative": "Indicated", "extracted": "Extracted",
+    },
+}
+
+
+def _domain_speech_act_label(act: str, domain: str) -> str:
+    profile_map = _DOMAIN_SPEECH_ACT_LABELS.get(domain, {})
+    return profile_map.get(act.lower(), act.replace("_", " ").title())
+
+
 def _trust_icon(role: str) -> str:
     """Return a colored dot indicating source trust level."""
     return _TRUST_ICONS.get(role.upper(), "⚪") if role else "⚪"
@@ -2280,7 +2325,8 @@ def _fmt_assertions(assertions: list, domain: str = "legal") -> str:
             src_role = a.get("source_role") or a.get("primary_source_role") or "—"
             icon = _trust_icon(src_role)
             src = _escape(_domain_source_label(src_role, domain) if src_role != "—" else "—")
-        speech = _escape(a.get("speech_act") or a.get("primary_speech_act") or "—")
+        _speech_raw = a.get("speech_act") or a.get("primary_speech_act") or "—"
+        speech = _escape(_domain_speech_act_label(_speech_raw, domain) if _speech_raw != "—" else "—")
         # Verification pill as a compact prefix on the proposition
         # cell so the new responsive table layout keeps room for
         # human-review signal alongside the clickable-row fact-edit.
@@ -3746,7 +3792,8 @@ class AppState:
             prop = str(r.get("proposition_text") or "").strip() or "(no text)"
             _raw_role = str(r.get("primary_source_role") or "unknown")
             role = _domain_source_label(_raw_role, _batch_domain).upper()
-            speech_act = str(r.get("primary_speech_act") or "").lower() or "extracted"
+            _raw_speech = str(r.get("primary_speech_act") or "").lower() or "extracted"
+            speech_act = _domain_speech_act_label(_raw_speech, _batch_domain)
             conf_raw = r.get("confidence")
             try:
                 conf_str = f"{float(conf_raw):.0%}" if conf_raw is not None else "—"
