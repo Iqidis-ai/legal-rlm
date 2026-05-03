@@ -461,3 +461,52 @@ def test_api_authority_search(api_client):
     results = resp.json()
     assert len(results) == 1
     assert "Twombly" in results[0]["citation"]
+
+
+def test_get_network_empty():
+    m = MatterModel.open_in_memory()
+    net = m.authority.get_network()
+    assert net["authorities"] == []
+    assert net["issue_links"] == {}
+
+
+def test_get_network_with_links():
+    m = MatterModel.open_in_memory()
+    aid, _ = m.authority.upsert("Twombly, 550 U.S. 544", weight="binding")
+    iid, _ = m.issues.upsert_issue("Plausibility", IssueType.CLAIM)
+    m.authority.link_to_issue(aid, iid, relevance="supporting")
+    net = m.authority.get_network(issue_titles={iid: "Plausibility"})
+    assert len(net["authorities"]) == 1
+    assert aid in net["issue_links"]
+    link = net["issue_links"][aid][0]
+    assert link["issue_id"] == iid
+    assert link["issue_title"] == "Plausibility"
+    assert link["relevance"] == "supporting"
+
+
+def test_get_network_multiple_authorities_and_issues():
+    m = MatterModel.open_in_memory()
+    a1, _ = m.authority.upsert("Case A", weight="binding")
+    a2, _ = m.authority.upsert("Statute B", authority_type="statute", weight="persuasive")
+    i1, _ = m.issues.upsert_issue("Issue 1", IssueType.CLAIM)
+    i2, _ = m.issues.upsert_issue("Issue 2", IssueType.CLAIM)
+    m.authority.link_to_issue(a1, i1, relevance="supporting")
+    m.authority.link_to_issue(a1, i2, relevance="attacking")
+    m.authority.link_to_issue(a2, i1, relevance="neutral")
+    net = m.authority.get_network()
+    assert len(net["authorities"]) == 2
+    assert len(net["issue_links"][a1]) == 2
+    assert len(net["issue_links"][a2]) == 1
+
+
+def test_api_authority_network(api_client):
+    client, active = api_client
+    m = MatterModel.open_in_memory()
+    mid = _reg(active, m)
+    client.post(f"/matter/{mid}/authorities", json={"citation": "Twombly"})
+    resp = client.get(f"/matter/{mid}/authority-network")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "authorities" in data
+    assert "issue_links" in data
+    assert len(data["authorities"]) == 1

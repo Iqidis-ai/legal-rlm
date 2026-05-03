@@ -124,8 +124,9 @@ matter model substrate. Three dimensions:
 
 3. **Auditability**: Every user-facing answer should trace back to exactly which
    matter objects it consumed, at which revision, under which domain profile.
-   The `OutputEnvelope` carries a `dependency_manifest_hash` field; the actual
-   manifest store is the next build target.
+   The `OutputEnvelope` carries a `dependency_manifest_hash` field; the
+   `dependency_manifest` table and `DependencyManifest` class persist the full
+   audit trail of what each output consumed.
 
 Substrate tables (schema v59-v61): `namespace_revision`, `object_taint`,
 `domain_profile`, `profile_mapping`. Current state: 1 pilot brokered CAS writer
