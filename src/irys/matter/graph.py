@@ -4794,13 +4794,12 @@ class ReasoningCacheStore:
             cls._BROKER_PAYLOAD_KEY: plan,
         }
 
-    @classmethod
-    def _unwrap_for_read(cls, stage: str, cached: Any) -> Any:
-        if stage not in cls._BROKER_REQUIRED_STAGES:
+    def _unwrap_for_read(self, stage: str, cached: Any) -> Any:
+        if stage not in self._BROKER_REQUIRED_STAGES:
             return cached
         if not isinstance(cached, dict):
             return None
-        meta = cached.get(cls._BROKER_META_KEY)
+        meta = cached.get(self._BROKER_META_KEY)
         if not isinstance(meta, dict):
             return None
         if meta.get("broker_status") != "broker_validated":
@@ -4809,9 +4808,73 @@ class ReasoningCacheStore:
             return None
         if meta.get("taint_class") == "unknown_taint":
             return None
-        if not cls._broker_manifest_is_valid(meta):
+        if not self._broker_manifest_is_valid(meta):
             return None
-        return cached.get(cls._BROKER_PAYLOAD_KEY)
+        return cached.get(self._BROKER_PAYLOAD_KEY)
+
+    @classmethod
+    def _wrap_for_brokered_storage(
+        cls,
+        stage: str,
+        plan: Any,
+        *,
+        manifest_hash: str,
+        taint_class: str = "public_clean",
+    ) -> Any:
+        if stage not in cls._BROKER_REQUIRED_STAGES:
+            return plan
+        return {
+            cls._BROKER_META_KEY: {
+                "broker_status": "broker_validated",
+                "taint_class": taint_class,
+                "dependency_manifest_hash": manifest_hash,
+                "dependency_manifest_validation_status": "valid",
+            },
+            cls._BROKER_PAYLOAD_KEY: plan,
+        }
+
+    def put_brokered(
+        self,
+        stage: str,
+        cache_key: str,
+        plan: dict,
+        *,
+        manifest_hash: str,
+        taint_class: str = "public_clean",
+    ) -> None:
+        """Write a broker-validated cache entry that can be read back.
+
+        Unlike put(), this stamps the entry with a validated manifest hash
+        and taint class so _unwrap_for_read accepts it.
+        """
+        import json
+        scoped = self._scoped_key(cache_key)
+        try:
+            now = _now()
+            wrapped = self._wrap_for_brokered_storage(
+                stage, plan,
+                manifest_hash=manifest_hash,
+                taint_class=taint_class,
+            )
+            self.db.execute(
+                """INSERT INTO reasoning_cache
+                   (id, matter_id, stage, cache_key, plan_json, created_at, last_hit_at)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(matter_id, stage, cache_key)
+                   DO UPDATE SET plan_json=excluded.plan_json,
+                                 last_hit_at=excluded.last_hit_at""",
+                (
+                    _id(),
+                    self.matter_id,
+                    stage,
+                    scoped,
+                    json.dumps(wrapped),
+                    now,
+                    now,
+                ),
+            )
+        except Exception:
+            pass
 
     def _broker_manifest_is_valid(self, meta: dict[str, Any]) -> bool:
         """Validate broker-authored cache metadata against the manifest store.

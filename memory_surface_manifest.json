@@ -1428,6 +1428,16 @@
     {
       "source": "src/irys/matter/graph.py",
       "writes": [
+        "cache_records"
+      ],
+      "broker_status": "broker_validated",
+      "taint_behavior": "broker_validated_manifest",
+      "profile_behavior": "profile_bound",
+      "surface": "ReasoningCacheStore.put_brokered"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
         "spans"
       ],
       "broker_status": "legacy_direct_writer",

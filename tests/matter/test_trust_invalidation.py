@@ -101,6 +101,54 @@ def test_semantic_reasoning_cache_rejects_forged_broker_validated_row(model):
     assert model.cache.get("orient", "forged_key") is None
 
 
+def _make_cache_manifest(model):
+    broker = model.memory_broker
+    ns_deps = broker.namespace_dependencies_for_keys(("claims:*",))
+    mapping_hash = broker.current_profile_mapping_hash(
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        target_kind="clarification",
+        target_namespace="clarifications",
+    )
+    from irys.matter.memory_contracts import DependencyManifest
+    manifest = DependencyManifest(
+        matter_id=model.matter_id,
+        namespace_dependencies=ns_deps,
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash=mapping_hash,
+        purpose="cache_test",
+        policy_audience="clean",
+        taint_class="public_clean",
+    )
+    broker.record_dependency_manifest(manifest)
+    return manifest.manifest_hash()
+
+
+def test_brokered_cache_round_trip(model):
+    """A properly brokered semantic cache write is readable back."""
+    mhash = _make_cache_manifest(model)
+    model.cache.put_brokered(
+        "orient", "brokered_key", {"plan": "valid"},
+        manifest_hash=mhash,
+    )
+    got = model.cache.get("orient", "brokered_key")
+    assert got == {"plan": "valid"}
+
+
+def test_brokered_cache_invalidated_by_namespace_bump(model):
+    """Brokered cache entry becomes invalid after a namespace mutation."""
+    mhash = _make_cache_manifest(model)
+    model.cache.put_brokered(
+        "orient", "brokered_key2", {"plan": "valid"},
+        manifest_hash=mhash,
+    )
+    assert model.cache.get("orient", "brokered_key2") is not None
+
+    model.memory_broker.bump_namespace_revision("claims", "*", "*")
+    assert model.cache.get("orient", "brokered_key2") is None
+
+
 def test_mark_stale_stores_reason(model):
     """mark_stale persists stale_reason on the verification_state row
     so audit can tell a document-hash-change stale from a
