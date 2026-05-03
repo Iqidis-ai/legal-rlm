@@ -270,7 +270,7 @@ USER-OBJECTIVE ALIGNMENT:
 - Keep the investigation anchored to the user's actual objective and requested direction.
 - Prioritize the lines of inquiry most likely to answer the user's question or support the requested work product.
 - Do not let one interesting tangent, repeated search hit, or advocacy framing pull the investigation away from the user's objective.
-- Apply pragmatic legal judgment when choosing what to pursue next, including procedural posture, litigation risk, timing, remedy exposure, commercial realities, and business constraints.
+- Apply pragmatic judgment when choosing what to pursue next, including risk exposure, timing, commercial realities, and domain-specific constraints.
 - If the record points in a different direction than the user's apparent assumption, surface that clearly, but still organize the research around answering the user's question.
 - Favor the highest-yield next step, not the most intellectually interesting one.
 """.strip()
@@ -368,7 +368,7 @@ def _format_matter_context(ctx) -> str:
         lines.append(f"- Known facts already recorded: {ctx.existing_assertion_count}")
     if ctx.open_issues:
         issue_titles = [i.get("title", "") for i in ctx.open_issues[:5]]
-        lines.append(f"- Open legal issues: {', '.join(t for t in issue_titles if t)}")
+        lines.append(f"- Open issues: {', '.join(t for t in issue_titles if t)}")
     if ctx.weakest_issue_id:
         weakest_titles = [i.get("title", "") for i in ctx.open_issues
                           if i.get("id") == ctx.weakest_issue_id]
@@ -566,7 +566,7 @@ CONDUCT A FOCUSED ANALYSIS. IMPORTANT: Keep response under 4000 characters total
    - Direct admissions or acknowledgments
    - Terms that define obligations or rights
    - Statements of fact that support/contradict claims
-   - Language that creates legal obligations
+   - Language that creates binding obligations
 
 3. ENTITIES: Extract with role/context:
    - People: name, role, significance
@@ -602,7 +602,7 @@ CONDUCT A FOCUSED ANALYSIS. IMPORTANT: Keep response under 4000 characters total
    - Ambiguous or potentially misleading language
    - Missing expected provisions
    - Contradictions within the document
-   - Issues requiring legal interpretation
+   - Issues requiring interpretation or expert judgment
 
 8. DOC SOURCE ROLE (SO-5 — classify this document by its content, NOT its filename):
    Choose exactly one of: advocacy, operative, authoritative, procedural, informal, draft, post_hoc, unknown
@@ -657,7 +657,7 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
 # Used when the primary extraction returned zero SPO triples (SO-2 validated extraction).
 # A single targeted retry extracts structured triples from the already-extracted fact texts,
 # without re-reading the source document.
-SPO_RETRY_PROMPT = """Extract subject-predicate-object triples from these legal facts.
+SPO_RETRY_PROMPT = """Extract subject-predicate-object triples from these facts.
 
 For each fact that has a clear entity relationship, output:
 {{"index": N, "subject": "entity name", "predicate": "action_in_snake_case", "object": "target or value"}}
@@ -2126,7 +2126,7 @@ class RLMEngine:
         Run full recursive investigation.
 
         Args:
-            query: The legal question to investigate
+            query: The question to investigate
             repository_path: Path to document repository
 
         Returns:
@@ -4823,29 +4823,28 @@ class RLMEngine:
         _mm.inventory.mark_profile_started(doc_id)
         try:
             excerpt = content.full_text[:3000]
-            prompt = f"""Classify this legal document. Respond in JSON only.
+            prompt = f"""Classify this document. Respond in JSON only.
 
 Document: {_fp.name}
 Content (excerpt):
 {excerpt}
 
 Privilege classification guidance (MVP.4 SO-5):
-- privilege_flag=true when the document appears to be attorney-client
-  privileged or attorney work-product (e.g. internal legal memo,
-  counsel-to-client email, litigation strategy note, settlement memo).
+- privilege_flag=true when the document appears to be restricted or
+  privileged (e.g. internal strategy memo, confidential correspondence,
+  privileged work-product, material non-public information).
 - privilege_flag=unknown when the document has attributes suggesting
-  privilege but classification cannot be reliably determined (ambiguous
-  internal memo, unsigned legal-looking memo, internal email of
-  unknown participants). Unknown is treated as contained in clean
-  mode until human review.
-- privilege_flag=false only when the document is plainly non-privileged
-  (signed contract, opposing-party pleading, public filing, invoice
-  from a third party, authoritative statute).
+  restricted handling but classification cannot be reliably determined
+  (ambiguous internal memo, unclear provenance, unknown participants).
+  Unknown is treated as contained in clean mode until human review.
+- privilege_flag=false only when the document is plainly unrestricted
+  (signed agreement, public filing, published report, third-party
+  invoice, authoritative reference).
 
 Return:
 {{
-    "doc_type": "contract|pleading|correspondence|invoice|court_order|memo|report|notice|exhibit|other",
-    "doc_subtype": "specific subtype (e.g. services_agreement, demand_letter)",
+    "doc_type": "contract|filing|correspondence|invoice|order|memo|report|notice|exhibit|other",
+    "doc_subtype": "specific subtype (e.g. services_agreement, demand_letter, audit_report)",
     "title": "descriptive title",
     "doc_source_role": "advocacy|operative|authoritative|procedural|informal|draft|post_hoc|unknown",
     "author": "author name or null",
@@ -7091,8 +7090,8 @@ Return:
             summaries.append(f"- {key}: {preview}...")
 
         prompt = (
-            "You are preparing a context packet for a senior attorney who will "
-            "analyze evidence and write a legal memorandum.\n\n"
+            "You are preparing a context packet for a senior analyst who will "
+            "analyze evidence and write a professional memorandum.\n\n"
             f"Query: {query}\n\n"
             "Available context sections:\n"
             + "\n".join(summaries)
@@ -8491,7 +8490,7 @@ Return:
     # engine stamps state.early_terminate_reason, writes the probe's
     # answer to state.findings['final_output'], and the termination
     # controller exits the loop — overriding contract.min_iter.
-    _SUFFICIENCY_PROBE_PROMPT = """You are a cost-governance probe inside an investigation loop for a legal-matter intelligence system. Your job is to decide whether the matter state ALREADY contains enough to answer the user's query, so the loop can stop early instead of running more expensive iterations.
+    _SUFFICIENCY_PROBE_PROMPT = """You are a cost-governance probe inside an investigation loop for a matter intelligence system. Your job is to decide whether the matter state ALREADY contains enough to answer the user's query, so the loop can stop early instead of running more expensive iterations.
 
 User's query: {query}
 
@@ -8753,12 +8752,14 @@ Respond as JSON only:
             if w[0].isupper() and len(w) > 2:
                 priority_words.append(w)
 
-        # 3. Legal-specific terms
-        legal_terms = {'contract', 'agreement', 'breach', 'damages', 'liability',
-                       'warranty', 'negligence', 'fraud', 'misrepresentation',
-                       'estimate', 'inspection', 'maintenance', 'invoice', 'payment'}
+        # 3. Domain-relevant terms
+        domain_terms = {'contract', 'agreement', 'breach', 'damages', 'liability',
+                        'warranty', 'negligence', 'fraud', 'misrepresentation',
+                        'estimate', 'inspection', 'maintenance', 'invoice', 'payment',
+                        'revenue', 'compliance', 'specification', 'requirement',
+                        'finding', 'conclusion', 'diagnosis', 'assessment'}
         for w in words:
-            if w.lower() in legal_terms:
+            if w.lower() in domain_terms:
                 priority_words.append(w)
 
         # Use the highest priority word found, or fall back to first meaningful word
@@ -9432,13 +9433,13 @@ Respond as JSON only:
         Decompose a compound query into sub-queries.
 
         Args:
-            query: The potentially compound legal query
+            query: The potentially compound query
 
         Returns:
             List of sub-queries with metadata:
             [{"query": "...", "priority": 0-1, "depends_on": None or query_id}]
         """
-        prompt = f"""You are a legal research assistant. Analyze this query and determine if it should be broken into sub-queries.
+        prompt = f"""You are a research assistant. Analyze this query and determine if it should be broken into sub-queries.
 
 Query: {query}
 
@@ -9541,7 +9542,7 @@ If not compound, return the original query as a single sub_query with priority 1
         3. Merges results into a unified response
 
         Args:
-            query: The legal query (may be compound)
+            query: The query (may be compound)
             repository_path: Path to document repository
 
         Returns:
