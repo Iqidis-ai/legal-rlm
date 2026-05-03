@@ -73,9 +73,12 @@ The memory broker provides domain portability through three mechanisms:
   `(source_profile, target_profile, target_kind, target_namespace)`. Enables
   cross-domain reasoning (e.g., financial fraud = legal + finance profiles).
 
-Currently only the default `legal:1` profile exists with identity mappings for
-`clarification/clarifications`. Expanding profile coverage to all target kinds
-and all five domains is a prerequisite for multi-domain deployment.
+All five domain profiles are installed: `legal:1`, `finance:1`, `coding:1`,
+`academic_research:1`, `biomedical:1`. Each carries full vocabulary (source
+roles, belief states, trust weights, taint classes, speech acts). Identity and
+cross-domain compatible mappings are registered for all 10 bidirectional pairs
+across 8 target kinds. Domain detection signals score content against all
+profiles, and the composition substrate merges active vocabularies.
 
 ## Current Architecture
 
@@ -230,10 +233,10 @@ little data can legitimately report `None` for some metrics.
   current FastAPI app exposes unprefixed runtime routes.
 - Full test runs in this OneDrive-backed environment can hit temp-directory
   cleanup permission issues. Targeted tests are usually more reliable.
-- Domain profiles exist only for legal:1. Multi-domain deployment requires
-  profile templates and mappings for finance, coding, research, and biomedical.
-- Source trust weights, belief state enums, and speech act vocabularies are
-  currently legal-specific. Domain-parameterized versions are needed.
+- All five domain profiles are implemented with full vocabulary, trust weights,
+  and cross-domain mappings. LLM prompts are domain-neutral with per-domain
+  synthesis preambles. UI labels are domain-aware. Remaining gap: extraction
+  prompts do not yet inject domain-specific vocabulary from the active profile.
 
 ## Maintenance Rules
 
