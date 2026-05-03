@@ -209,6 +209,14 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/document-versions")
         return result if isinstance(result, list) else []
 
+    async def mine_contradictions(self, matter_id: str) -> list[dict]:
+        result = await self._post(f"/matter/{matter_id}/mine-contradictions")
+        return result if isinstance(result, list) else []
+
+    async def get_provenance(self, matter_id: str, target_kind: str, target_id: str, limit: int = 50) -> list[dict]:
+        result = await self._get(f"/matter/{matter_id}/provenance/{target_kind}/{target_id}", {"limit": limit})
+        return result if isinstance(result, list) else []
+
     async def list_llm_calls(
         self,
         matter_id: str,

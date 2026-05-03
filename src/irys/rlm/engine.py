@@ -2474,8 +2474,9 @@ class RLMEngine:
                     logger.warning("Contradiction mining failed, continuing: %s", _mc_exc)
                 try:
                     # Background maintenance: detect document version chains (SO-1) —
-                    # links versioned documents and records gaps for missing base versions.
-                    self._matter_model.detect_document_version_chains()
+                    # links versioned documents, persists family_id, and records gaps
+                    # for missing base versions.
+                    self._matter_model.refresh_document_families()
                 except Exception as _vc_exc:
                     logger.warning(
                         "Version chain detection failed, continuing: %s", _vc_exc
@@ -9469,7 +9470,7 @@ Respond as JSON only:
                     except Exception as _mc_exc:
                         logger.warning("Contradiction mining failed, continuing: %s", _mc_exc)
                     try:
-                        self._matter_model.detect_document_version_chains()
+                        self._matter_model.refresh_document_families()
                     except Exception as _vc_exc:
                         logger.warning("Version chain detection failed, continuing: %s", _vc_exc)
 

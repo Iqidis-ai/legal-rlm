@@ -6454,6 +6454,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 doc_intel_html,
                 belief_revision_html,
                 contradiction_html,
+                doc_versions_html,
                 redirect_issue_id,
                 bulk_doc_ref,
                 correction_new_state,

@@ -2993,6 +2993,22 @@ async def get_contradictions(matter_id: str, limit: int = Query(default=100, ge=
     return model.assertions.find_contradictions(limit=limit)
 
 
+@app.post(
+    "/matter/{matter_id}/mine-contradictions",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def mine_contradictions(matter_id: str):
+    """Trigger an on-demand contradiction mining pass.
+
+    Detects heuristic contradictions among active assertions, marks attacked
+    assertions as DISPUTED when the attacker is high-trust, and records
+    UNRESOLVED_CONTRADICTION gaps.  Returns the list of contradictions found.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    return model.mine_contradictions()
+
+
 # ---------------------------------------------------------------------------
 # Document Version Chains (SO-5 sourcing transparency)
 # ---------------------------------------------------------------------------
@@ -3011,6 +3027,30 @@ async def get_document_versions(matter_id: str):
     """
     model = await _get_matter_model_or_404(matter_id)
     return model.list_version_families()
+
+
+# ---------------------------------------------------------------------------
+# Provenance Trail (SO-5 sourcing transparency)
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/matter/{matter_id}/provenance/{target_kind}/{target_id}",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_provenance(
+    matter_id: str,
+    target_kind: str,
+    target_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """Return the provenance trail for a specific object (assertion, issue, gap, etc.).
+
+    Each entry shows which LLM call or user action produced the target object,
+    including the model tier, run_id, timestamp, and the generating prompt excerpt.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_provenance(target_kind, target_id, limit=limit)
 
 
 # ---------------------------------------------------------------------------

@@ -195,3 +195,13 @@ class UIBackend(ABC):
     async def get_document_versions(self, matter_id: str) -> list[dict]:
         """Return document version families with operative HEAD marked."""
         ...
+
+    @abstractmethod
+    async def mine_contradictions(self, matter_id: str) -> list[dict]:
+        """Trigger on-demand contradiction mining pass."""
+        ...
+
+    @abstractmethod
+    async def get_provenance(self, matter_id: str, target_kind: str, target_id: str, limit: int = 50) -> list[dict]:
+        """Return provenance trail for a specific object."""
+        ...

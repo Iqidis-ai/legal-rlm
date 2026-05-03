@@ -1196,3 +1196,33 @@ def test_document_versions_with_data(client, register_model):
 def test_document_versions_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/document-versions")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /matter/{matter_id}/mine-contradictions — on-demand mining
+# ---------------------------------------------------------------------------
+
+def test_mine_contradictions_empty(client, register_model):
+    resp = client.post(f"/matter/{MATTER_ID}/mine-contradictions")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_mine_contradictions_404_for_unknown_matter(client):
+    resp = client.post("/matter/unknown/mine-contradictions")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/provenance/{target_kind}/{target_id}
+# ---------------------------------------------------------------------------
+
+def test_provenance_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/provenance/assertion/nonexistent")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_provenance_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/provenance/assertion/test-id")
+    assert resp.status_code == 404
