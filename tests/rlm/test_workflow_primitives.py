@@ -1178,6 +1178,32 @@ def test_fmt_assertion_inspector_history_non_dict_items():
     assert "confidence" in result
 
 
+def test_fmt_assertion_inspector_xss_escape():
+    from irys.ui.app import _fmt_assertion_inspector
+    xss = '<script>alert("xss")</script>'
+    health = {
+        "assertion_id": xss,
+        "proposition_text": xss,
+        "belief_state": "accepted",
+        "confidence": 0.5,
+        "oscillating": False,
+        "support_count": 0,
+        "attack_count": 0,
+        "has_superseding": False,
+        "support_source_roles": [xss],
+        "attack_source_roles": [],
+        "provenance": [
+            {"event_kind": xss, "writer_name": xss, "model_id": xss, "created_at": xss, "source_document_ref": xss},
+        ],
+    }
+    history = [
+        {"changed_field": xss, "old_value": xss, "new_value": xss, "cause": xss, "actor_kind": xss, "created_at": xss},
+    ]
+    result = _fmt_assertion_inspector(health, history=history)
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
 # ---------------------------------------------------------------------------
 # Content Policy Audit panel (SO-5)
 # ---------------------------------------------------------------------------
