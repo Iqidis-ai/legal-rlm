@@ -310,3 +310,141 @@ class HttpBackend(UIBackend):
         if isinstance(result, dict):
             return result
         return {"authorities": [], "issue_links": {}}
+
+    # ------------------------------------------------------------------ #
+    # Cost analytics                                                       #
+    # ------------------------------------------------------------------ #
+
+    async def get_cost_breakdown(
+        self, matter_id: str, run_id: Optional[str] = None
+    ) -> dict:
+        params = {}
+        if run_id:
+            params["run_id"] = run_id
+        result = await self._get(f"/matter/{matter_id}/cost-breakdown", params)
+        return result if isinstance(result, dict) else {}
+
+    async def get_cost_anomalies(
+        self, matter_id: str, limit: int = 10, run_id: Optional[str] = None
+    ) -> list[dict]:
+        params: dict = {"limit": limit}
+        if run_id:
+            params["run_id"] = run_id
+        result = await self._get(f"/matter/{matter_id}/cost-anomalies", params)
+        return result if isinstance(result, list) else []
+
+    # ------------------------------------------------------------------ #
+    # Review queue (SO-3)                                                  #
+    # ------------------------------------------------------------------ #
+
+    async def get_review_queue(
+        self, matter_id: str, limit: int = 50, offset: int = 0,
+        target_kind: Optional[str] = None,
+    ) -> list[dict]:
+        params: dict = {"limit": limit, "offset": offset}
+        if target_kind:
+            params["target_kind"] = target_kind
+        result = await self._get(f"/matter/{matter_id}/review-queue", params)
+        return result if isinstance(result, list) else []
+
+    async def count_review_queue(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/review-queue/count")
+        return result if isinstance(result, dict) else {}
+
+    async def verify_target(
+        self, matter_id: str, target_kind: str, target_id: str,
+        *, reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
+    ) -> str:
+        body: dict = {
+            "target_kind": target_kind,
+            "target_id": target_id,
+            "status": "verified",
+            "reviewed_by_kind": reviewed_by_kind,
+            "review_scope": review_scope,
+        }
+        if reviewed_by_id:
+            body["reviewed_by_id"] = reviewed_by_id
+        if review_note:
+            body["review_note"] = review_note
+        result = await self._post(f"/matter/{matter_id}/verify", body)
+        return result.get("verification_id", "") if isinstance(result, dict) else ""
+
+    async def reject_target(
+        self, matter_id: str, target_kind: str, target_id: str,
+        *, rejection_reason: str,
+        reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+    ) -> str:
+        body: dict = {
+            "target_kind": target_kind,
+            "target_id": target_id,
+            "status": "rejected",
+            "reviewed_by_kind": reviewed_by_kind,
+            "rejection_reason": rejection_reason,
+        }
+        if reviewed_by_id:
+            body["reviewed_by_id"] = reviewed_by_id
+        if review_note:
+            body["review_note"] = review_note
+        result = await self._post(f"/matter/{matter_id}/verify", body)
+        return result.get("verification_id", "") if isinstance(result, dict) else ""
+
+    async def bulk_verify_by_document(
+        self, matter_id: str, document_ref: str,
+        *, reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+    ) -> list[str]:
+        body: dict = {
+            "document_ref": document_ref,
+            "reviewed_by_kind": reviewed_by_kind,
+        }
+        if reviewed_by_id:
+            body["reviewed_by_id"] = reviewed_by_id
+        result = await self._post(f"/matter/{matter_id}/verify/bulk-by-document", body)
+        return result.get("verification_ids", []) if isinstance(result, dict) else []
+
+    async def bulk_verify_assertion_ids(
+        self, matter_id: str, assertion_ids: list[str],
+        *, reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+    ) -> list[str]:
+        body: dict = {
+            "assertion_ids": assertion_ids,
+            "reviewed_by_kind": reviewed_by_kind,
+        }
+        if reviewed_by_id:
+            body["reviewed_by_id"] = reviewed_by_id
+        if review_note:
+            body["review_note"] = review_note
+        result = await self._post(f"/matter/{matter_id}/verify/bulk-by-ids", body)
+        return result.get("verification_ids", []) if isinstance(result, dict) else []
+
+    async def list_candidate_assertions_for_document(
+        self, matter_id: str, document_ref: str,
+    ) -> list[dict]:
+        result = await self._get(
+            f"/matter/{matter_id}/review-queue",
+            {"target_kind": "assertion", "document_ref": document_ref},
+        )
+        return result if isinstance(result, list) else []
+
+    async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
+        result = await self._get(f"/matter/{matter_id}/review-queue", {"limit": 500})
+        return result if isinstance(result, list) else []
+
+    async def get_verification_events(
+        self, matter_id: str, target_kind: Optional[str] = None,
+        target_id: Optional[str] = None, limit: int = 50,
+    ) -> list[dict]:
+        params: dict = {"limit": limit}
+        if target_kind:
+            params["target_kind"] = target_kind
+        if target_id:
+            params["target_id"] = target_id
+        result = await self._get(f"/matter/{matter_id}/verification-events", params)
+        return result if isinstance(result, list) else []

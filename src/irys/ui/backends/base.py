@@ -264,3 +264,99 @@ class UIBackend(ABC):
     async def search_assertions(self, matter_id: str, query: str, limit: int = 20) -> list[dict]:
         """Search assertions by text."""
         ...
+
+    # ------------------------------------------------------------------ #
+    # Cost analytics                                                       #
+    # ------------------------------------------------------------------ #
+
+    @abstractmethod
+    async def get_cost_breakdown(
+        self, matter_id: str, run_id: Optional[str] = None
+    ) -> dict:
+        """Return cost breakdown with percentiles, cache rate, trend, and burn projection."""
+        ...
+
+    @abstractmethod
+    async def get_cost_anomalies(
+        self, matter_id: str, limit: int = 10, run_id: Optional[str] = None
+    ) -> list[dict]:
+        """Return outlier LLM calls flagged by z-score."""
+        ...
+
+    # ------------------------------------------------------------------ #
+    # Review queue (SO-3)                                                  #
+    # ------------------------------------------------------------------ #
+
+    @abstractmethod
+    async def get_review_queue(
+        self, matter_id: str, limit: int = 50, offset: int = 0,
+        target_kind: Optional[str] = None,
+    ) -> list[dict]:
+        """Return prioritized review queue items."""
+        ...
+
+    @abstractmethod
+    async def count_review_queue(self, matter_id: str) -> dict:
+        """Return review queue counts by verification bucket."""
+        ...
+
+    @abstractmethod
+    async def verify_target(
+        self, matter_id: str, target_kind: str, target_id: str,
+        *, reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
+    ) -> str:
+        """Verify a review target. Returns verification_id."""
+        ...
+
+    @abstractmethod
+    async def reject_target(
+        self, matter_id: str, target_kind: str, target_id: str,
+        *, rejection_reason: str,
+        reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+    ) -> str:
+        """Reject a review target. Returns verification_id."""
+        ...
+
+    @abstractmethod
+    async def bulk_verify_by_document(
+        self, matter_id: str, document_ref: str,
+        *, reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+    ) -> list[str]:
+        """Bulk-verify all candidate assertions for a document."""
+        ...
+
+    @abstractmethod
+    async def bulk_verify_assertion_ids(
+        self, matter_id: str, assertion_ids: list[str],
+        *, reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+    ) -> list[str]:
+        """Bulk-verify specific assertion IDs."""
+        ...
+
+    @abstractmethod
+    async def list_candidate_assertions_for_document(
+        self, matter_id: str, document_ref: str,
+    ) -> list[dict]:
+        """Return candidate assertions for a document review flow."""
+        ...
+
+    @abstractmethod
+    async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
+        """Return documents with pending/verified counts for the review picker."""
+        ...
+
+    @abstractmethod
+    async def get_verification_events(
+        self, matter_id: str, target_kind: Optional[str] = None,
+        target_id: Optional[str] = None, limit: int = 50,
+    ) -> list[dict]:
+        """Return verification event history."""
+        ...
