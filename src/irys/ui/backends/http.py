@@ -97,10 +97,22 @@ class HttpBackend(UIBackend):
     # ------------------------------------------------------------------ #
 
     async def list_runs(self, matter_id: str, limit: int = 10) -> list[dict]:
-        return await self._get(f"/matter/{matter_id}/runs", {"limit": limit})
+        result = await self._get(f"/matter/{matter_id}/runs", {"limit": limit})
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            return result.get("runs", [])
+        _log.warning("list_runs: expected list, got %s", type(result).__name__)
+        return []
 
     async def get_run_events(self, matter_id: str, run_id: str) -> list[dict]:
-        return await self._get(f"/matter/{matter_id}/runs/{run_id}/events")
+        result = await self._get(f"/matter/{matter_id}/runs/{run_id}/events")
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            return result.get("events", [])
+        _log.warning("get_run_events: expected list, got %s", type(result).__name__)
+        return []
 
     async def list_issues(self, matter_id: str) -> list[dict]:
         return await self._get(f"/matter/{matter_id}/issues")
