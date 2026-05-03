@@ -1672,6 +1672,134 @@ def _fmt_authority_panel(data: dict, domain: str = "legal") -> str:
     return f"<div class='viz-shell'>{header}{table}</div>"
 
 
+_DOC_PANEL_LABELS = {
+    "legal": {"title": "Document Intelligence", "empty": "No document profiles yet. Run an investigation to analyze your documents."},
+    "finance": {"title": "Document Intelligence", "empty": "No document profiles yet. Run an investigation to analyze your filings."},
+    "coding": {"title": "Source Intelligence", "empty": "No source profiles yet. Run an investigation to analyze your codebase."},
+    "academic_research": {"title": "Document Intelligence", "empty": "No document profiles yet. Run an investigation to analyze your papers."},
+    "biomedical": {"title": "Document Intelligence", "empty": "No document profiles yet. Run an investigation to analyze your reports."},
+}
+
+
+def _fmt_document_intelligence_panel(data: dict, domain: str = "legal") -> str:
+    """Render the document intelligence panel (SO-5)."""
+    cards = data.get("cards", [])
+    total_inv = data.get("total_inventory", 0)
+    ingested = data.get("ingested_count", 0)
+    labels = _DOC_PANEL_LABELS.get(domain, _DOC_PANEL_LABELS["legal"])
+
+    if not cards and total_inv == 0:
+        return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+
+    by_type: dict[str, int] = {}
+    by_side: dict[str, int] = {}
+    priv_count = 0
+    for c in cards:
+        t = c.get("doc_type") or "unknown"
+        by_type[t] = by_type.get(t, 0) + 1
+        s = c.get("source_side") or "unknown"
+        by_side[s] = by_side.get(s, 0) + 1
+        if c.get("privilege_flag"):
+            priv_count += 1
+
+    header = (
+        "<div style='display:flex;gap:24px;flex-wrap:wrap;margin-bottom:16px;'>"
+        f"<div style='text-align:center;'>"
+        f"<div style='font-size:28px;font-weight:700;color:#1e293b;'>{total_inv}</div>"
+        f"<div style='font-size:11px;color:#6b7280;'>Total Documents</div></div>"
+        f"<div style='text-align:center;'>"
+        f"<div style='font-size:28px;font-weight:700;color:#16a34a;'>{ingested}</div>"
+        f"<div style='font-size:11px;color:#6b7280;'>Ingested</div></div>"
+        f"<div style='text-align:center;'>"
+        f"<div style='font-size:28px;font-weight:700;color:#2563eb;'>{len(cards)}</div>"
+        f"<div style='font-size:11px;color:#6b7280;'>Profiled</div></div>"
+    )
+    if priv_count:
+        header += (
+            f"<div style='text-align:center;'>"
+            f"<div style='font-size:20px;font-weight:600;color:#dc2626;'>{priv_count}</div>"
+            f"<div style='font-size:11px;color:#6b7280;'>Restricted</div></div>"
+        )
+    for t, count in sorted(by_type.items(), key=lambda x: -x[1])[:6]:
+        header += (
+            f"<div style='text-align:center;'>"
+            f"<div style='font-size:16px;font-weight:500;color:#475569;'>{count}</div>"
+            f"<div style='font-size:11px;color:#6b7280;'>{_escape(t.replace('_', ' ').title())}</div></div>"
+        )
+    header += "</div>"
+
+    operative_colors = {
+        "operative": "#16a34a", "superseded": "#d97706", "draft": "#6b7280",
+        "unknown": "#94a3b8", "revoked": "#dc2626",
+    }
+
+    rows_html = ""
+    for c in cards:
+        path = c.get("relative_path") or "—"
+        title = c.get("title") or ""
+        doc_type = c.get("doc_type") or "—"
+        source_side = c.get("source_side") or "—"
+        author = c.get("author") or "—"
+        operative = c.get("operative_status") or "unknown"
+        priv = c.get("privilege_flag", False)
+        salience = _safe_float(c.get("salience_score", 0.0))
+        flags = c.get("unresolved_flags") or []
+        flag_count = len(flags) if isinstance(flags, list) else 0
+
+        op_color = operative_colors.get(operative, "#94a3b8")
+        display_path = _escape(path.rsplit("/", 1)[-1][:30])
+        display_title = f"<div style='font-size:10px;color:#6b7280;'>{_escape(title[:35])}</div>" if title else ""
+
+        priv_badge = ""
+        if priv:
+            priv_badge = (
+                "<span style='margin-left:4px;padding:1px 5px;border-radius:8px;"
+                "background:#fef2f2;color:#dc2626;font-size:9px;font-weight:700;"
+                "text-transform:uppercase;'>restricted</span>"
+            )
+        flag_badge = ""
+        if flag_count:
+            flag_badge = (
+                f"<span style='margin-left:4px;padding:1px 5px;border-radius:8px;"
+                f"background:#fef3c7;color:#92400e;font-size:9px;font-weight:700;'>"
+                f"{flag_count} flag{'s' if flag_count > 1 else ''}</span>"
+            )
+
+        rows_html += (
+            f"<tr>"
+            f"<td style='max-width:200px;overflow:hidden;text-overflow:ellipsis;"
+            f"white-space:nowrap;' title='{_escape(path)}'>{display_path}{display_title}{priv_badge}</td>"
+            f"<td style='font-size:11px;'>{_escape(doc_type.replace('_', ' '))}</td>"
+            f"<td style='font-size:11px;'>{_escape(source_side)}</td>"
+            f"<td style='font-size:11px;max-width:100px;overflow:hidden;"
+            f"text-overflow:ellipsis;white-space:nowrap;'>{_escape(author)}</td>"
+            f"<td><span style='display:inline-block;padding:1px 8px;border-radius:8px;"
+            f"background:{op_color}22;color:{op_color};font-size:11px;"
+            f"font-weight:600;'>{_escape(operative)}</span></td>"
+            f"<td style='text-align:center;font-size:11px;'>{salience:.2f}</td>"
+            f"<td>{flag_badge}</td>"
+            f"</tr>"
+        )
+
+    table = (
+        "<div style='overflow-x:auto;'>"
+        "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
+        "<thead><tr style='border-bottom:2px solid #e2e8f0;text-align:left;'>"
+        "<th style='padding:6px 8px;'>Document</th>"
+        "<th style='padding:6px 8px;'>Type</th>"
+        "<th style='padding:6px 8px;'>Side</th>"
+        "<th style='padding:6px 8px;'>Author</th>"
+        "<th style='padding:6px 8px;'>Status</th>"
+        "<th style='padding:6px 8px;text-align:center;'>Salience</th>"
+        "<th style='padding:6px 8px;'>Flags</th>"
+        "</tr></thead><tbody>"
+        + rows_html
+        + "</tbody></table></div>"
+    )
+
+    return f"<div class='viz-shell'>{header}{table}</div>"
+
+
 def _fmt_communication_map_panel(graph: dict) -> str:
     actors = list(graph.get("actors", []) or [])
     documents = list(graph.get("documents", []) or [])
@@ -4429,6 +4557,22 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading authorities: {_escape(exc)}</div>"
 
+    def load_document_intelligence(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_document_intelligence(matter_id))
+            domain = "legal"
+            try:
+                ov = _run_async(self.backend().get_overview(matter_id))
+                dc = ov.get("domain_composition", {}) if isinstance(ov, dict) else {}
+                domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
+            except Exception:
+                pass
+            return _fmt_document_intelligence_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading document intelligence: {_escape(exc)}</div>"
+
     def set_policy_audience(self, label: str) -> str:
         """Called when the sidebar privilege-mode toggle flips. Returns
         a visible banner HTML so the reviewer always knows which mode
@@ -5382,6 +5526,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             authority_html = gr.HTML("<div class='viz-empty'>Authority data will appear here after an investigation.</div>")
             refresh_authority_btn = gr.Button("Refresh Authorities", variant="secondary", size="sm")
 
+        with gr.Accordion("Document Intelligence — what the system knows about each source", open=False):
+            gr.Markdown(
+                "Per-document profile cards: type classification, source side, author, "
+                "operative status, privilege flags, salience score, and unresolved issues."
+            )
+            doc_intel_html = gr.HTML("<div class='viz-empty'>Document intelligence will appear here after an investigation.</div>")
+            refresh_doc_intel_btn = gr.Button("Refresh Documents", variant="secondary", size="sm")
+
         with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
                 "Maps which people and companies appear in which documents and highlights "
@@ -5656,6 +5808,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             llm_analytics = state.load_llm_analytics(mid)
             proof_state = state.load_proof_state(mid)
             authority = state.load_authority_network(mid)
+            doc_intel = state.load_document_intelligence(mid)
             review_badge = state.load_review_count_badge(mid)
             doc_choices = state.load_document_picker_choices(mid)
             domain = "legal"
@@ -5680,6 +5833,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 llm_analytics,
                 proof_state,
                 authority,
+                doc_intel,
                 top_issue,
                 gr.update(choices=doc_choices),
                 gr.update(choices=_correction_dropdown_choices(domain), value=None),
@@ -5739,6 +5893,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     llm_analytics_html,
                     proof_state_html,
                     authority_html,
+                    doc_intel_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -5766,6 +5921,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     llm_analytics_html,
                     proof_state_html,
                     authority_html,
+                    doc_intel_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -5825,6 +5981,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_authority_network(mid),
             inputs=[matter_id_box],
             outputs=[authority_html],
+        )
+        refresh_doc_intel_btn.click(
+            fn=lambda mid: state.load_document_intelligence(mid),
+            inputs=[matter_id_box],
+            outputs=[doc_intel_html],
         )
         refresh_comm_btn.click(
             fn=lambda mid: state.load_communication_map(mid),

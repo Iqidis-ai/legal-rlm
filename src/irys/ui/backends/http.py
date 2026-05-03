@@ -209,6 +209,10 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/llm-calls", params)
         return result if isinstance(result, list) else []
 
+    async def get_document_intelligence(self, matter_id: str) -> dict:
+        cards = await self._get(f"/matter/{matter_id}/documents/cards")
+        return cards if isinstance(cards, dict) else {"cards": [], "total_inventory": 0, "ingested_count": 0}
+
     async def get_proof_state_summary(self, matter_id: str) -> dict:
         return await self._get(f"/matter/{matter_id}/proof-state")
 

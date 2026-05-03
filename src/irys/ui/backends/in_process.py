@@ -564,6 +564,17 @@ class InProcessBackend(UIBackend):
             })
         return {"authorities": authorities, "issue_links": issue_links}
 
+    async def get_document_intelligence(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        cards = model.document_cards.list_candidates(limit=200)
+        total_docs = model.inventory.count()
+        ingested_paths = model.inventory.get_ingested_paths()
+        return {
+            "cards": cards,
+            "total_inventory": total_docs,
+            "ingested_count": len(ingested_paths),
+        }
+
     async def get_proof_state_summary(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         summary = model.proof_state.get_summary()
