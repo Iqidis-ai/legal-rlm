@@ -1619,3 +1619,27 @@ def test_actor_duplicates_404(client):
 def test_merge_actors_404(client):
     resp = client.post("/matter/unknown/actors/keep1/merge/merge1")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Content Policy Audit (SO-5)
+# ---------------------------------------------------------------------------
+
+def test_content_policy_audit_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/content-policy-audit")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "decisions" in data
+    assert isinstance(data["decisions"], list)
+
+
+def test_content_policy_audit_with_limit(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/content-policy-audit", params={"limit": 5})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "decisions" in data
+
+
+def test_content_policy_audit_404(client):
+    resp = client.get("/matter/unknown/content-policy-audit")
+    assert resp.status_code == 404

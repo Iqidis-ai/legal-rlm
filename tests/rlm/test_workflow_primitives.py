@@ -1250,3 +1250,24 @@ def test_fmt_content_policy_panel_privilege_badge():
     ]
     result = _fmt_content_policy_panel(decisions)
     assert "PRIV" in result
+
+
+def test_fmt_content_policy_panel_xss_escape():
+    from irys.ui.app import _fmt_content_policy_panel
+    xss = '<script>alert("xss")</script>'
+    decisions = [
+        {
+            "action": "allow",
+            "purpose": xss,
+            "target_kind": xss,
+            "target_id": xss,
+            "reason_code": xss,
+            "trust_bucket": xss,
+            "policy_audience": xss,
+            "privilege_flag": None,
+            "created_at": xss,
+        },
+    ]
+    result = _fmt_content_policy_panel(decisions)
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result

@@ -3139,6 +3139,7 @@ class MatterModel:
         history = [
             {
                 "id": r["id"],
+                "batch_id": r["batch_id"],
                 "changed_field": r["changed_field"],
                 "old_value": _decode(r["old_value_json"]),
                 "new_value": _decode(r["new_value_json"]),
@@ -3151,11 +3152,16 @@ class MatterModel:
             }
             for r in rev_rows
         ]
-        return {"assertion_id": assertion_id, "history": history, "count": len(history)}
+        return {
+            "assertion_id": assertion_id,
+            "history": history,
+            "count": len(history),
+            "history_note": "Revision history since schema v34.",
+        }
 
     def list_content_policy_decisions(self, limit: int = 50) -> list[dict]:
         """Return recent content policy audit decisions (SO-5)."""
-        return self.content_policy.list_decisions(limit=limit)
+        return self.content_policy.list_decisions(limit=max(1, min(limit, 500)))
 
     def get_assertion_health(self, assertion_id: str) -> dict:
         """Return assertion health: oscillation, neighbors, provenance (SO-2 + SO-5)."""
