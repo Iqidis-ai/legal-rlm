@@ -3798,28 +3798,83 @@ def _fmt_assertions(assertions: list, domain: str = "legal") -> str:
     )
 
 
-_ASSUMPTION_STATUS_ICONS = {
-    "provisional": "⏳", "confirmed": "✅", "invalidated": "❌",
+_ASSUMPTION_STATUS_PILLS: dict[str, tuple[str, str]] = {
+    "provisional": ("Provisional", "pill-orange"),
+    "confirmed": ("Confirmed", "pill-green"),
+    "invalidated": ("Invalidated", "pill-red"),
 }
 
-def _fmt_assumptions(assumptions: list) -> str:
+_ASSUMPTION_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Working Assumptions",
+        "empty": "No assumptions recorded yet. Irys will log assumptions as it builds its analysis.",
+    },
+    "finance": {
+        "title": "Working Assumptions",
+        "empty": "No assumptions recorded yet. Irys will log assumptions as it builds its analysis.",
+    },
+    "coding": {
+        "title": "Working Assumptions",
+        "empty": "No assumptions recorded yet. Irys will log assumptions as it builds its analysis.",
+    },
+    "academic_research": {
+        "title": "Working Assumptions",
+        "empty": "No assumptions recorded yet. Irys will log assumptions as it builds its analysis.",
+    },
+    "biomedical": {
+        "title": "Working Assumptions",
+        "empty": "No assumptions recorded yet. Irys will log assumptions as it builds its analysis.",
+    },
+}
+
+
+def _fmt_assumptions(assumptions: list, domain: str = "legal") -> str:
+    labels = _ASSUMPTION_LABELS.get(domain, _ASSUMPTION_LABELS["legal"])
     if not assumptions:
-        return "*No assumptions recorded yet.*"
-    lines = ["These are the working assumptions Irys is using. "
-             "If any are wrong, the conclusions that depend on them may change.\n"]
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+    rows = ""
+    prov_count = 0
+    conf_count = 0
+    inv_count = 0
     for a in assumptions:
-        status = a.get("status", "provisional")
-        icon = _ASSUMPTION_STATUS_ICONS.get(status, "⏳")
-        stmt = a.get("statement") or "?"
-        cond = a.get("invalidation_condition") or ""
-        line = f"- {icon} **{stmt}**"
+        if not isinstance(a, dict):
+            continue
+        status = str(a.get("status") or "provisional")
+        if status == "provisional":
+            prov_count += 1
+        elif status == "confirmed":
+            conf_count += 1
+        elif status == "invalidated":
+            inv_count += 1
+        pill_text, pill_cls = _ASSUMPTION_STATUS_PILLS.get(status, (status.replace("_", " ").title(), "pill-neutral"))
+        stmt = _escape(str(a.get("statement") or "?"))
+        cond = _escape(str(a.get("invalidation_condition") or ""))
+        rationale = _escape(str(a.get("rationale") or ""))
+        detail = ""
         if cond:
-            line += f"  \n  *Would be invalidated if: {cond}*"
-        rationale = a.get("rationale") or ""
+            detail += f"<div style='font-size:11px;color:#dc2626;margin-top:2px'>Invalidated if: {cond}</div>"
         if rationale:
-            line += f"  \n  *Rationale: {rationale}*"
-        lines.append(line)
-    return "\n".join(lines)
+            detail += f"<div style='font-size:11px;color:#6b7280;margin-top:2px'>Rationale: {rationale}</div>"
+        rows += (
+            "<tr>"
+            f"<td><span class='pill {pill_cls}'>{pill_text}</span></td>"
+            f"<td><strong>{stmt}</strong>{detail}</td>"
+            "</tr>"
+        )
+    if not rows:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+    total = prov_count + conf_count + inv_count
+    subtitle = f"{total} assumption{'s' if total != 1 else ''}"
+    if inv_count:
+        subtitle += f" ({inv_count} invalidated)"
+    return (
+        "<div class='viz-shell'>"
+        f"<div class='viz-header'><strong>{labels['title']}</strong> — {subtitle}</div>"
+        "<div class='table-wrap'><table class='viz-table'>"
+        "<thead><tr><th>Status</th><th>Assumption</th></tr></thead>"
+        "<tbody>" + rows + "</tbody></table></div>"
+        "</div>"
+    )
 
 
 _GAP_LABELS: dict[str, dict[str, object]] = {
@@ -5928,14 +5983,14 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading gaps: {_escape(exc)}</div>"
 
-    def load_assumptions(self, matter_id: str) -> str:
+    def load_assumptions(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
-            return "No matter loaded."
+            return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             assumptions = _run_async(self.backend().list_assumptions(matter_id))
-            return _fmt_assumptions(assumptions)
+            return _fmt_assumptions(assumptions, domain=domain)
         except Exception as exc:
-            return f"Error loading assumptions: {exc}"
+            return f"<div class='viz-empty'>Error loading assumptions: {_escape(str(exc))}</div>"
 
     def load_quant(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
@@ -7315,6 +7370,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             steering_panel_html = gr.HTML("<div class='viz-empty'>Recommendations will appear here after an investigation.</div>")
             refresh_steering_btn = gr.Button("Refresh Recommendations", variant="secondary", size="sm")
 
+        with gr.Accordion("Working Assumptions — what Irys is taking as given", open=False):
+            gr.Markdown(
+                "Irys logs every assumption it makes during analysis. If an assumption "
+                "is wrong, the conclusions that depend on it may change. Invalidated "
+                "assumptions are flagged so you can see what shifted."
+            )
+            assumptions_detail_html = gr.HTML("<div class='viz-empty'>Assumptions will appear here after an investigation.</div>")
+            refresh_assumptions_btn = gr.Button("Refresh Assumptions", variant="secondary", size="sm")
+
         with gr.Accordion("Financials — payments, damages, and numeric disputes", open=False):
             gr.Markdown(
                 "Invoices, payments, damages claims, and numeric conflicts — "
@@ -8058,6 +8122,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_steering_panel(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[steering_panel_html],
+        )
+        refresh_assumptions_btn.click(
+            fn=lambda mid: state.load_assumptions(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[assumptions_detail_html],
         )
         refresh_quant_btn.click(
             fn=lambda mid: state.load_quant(mid),

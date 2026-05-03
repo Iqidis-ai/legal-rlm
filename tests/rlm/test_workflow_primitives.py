@@ -1271,3 +1271,37 @@ def test_fmt_content_policy_panel_xss_escape():
     result = _fmt_content_policy_panel(decisions)
     assert "<script>" not in result
     assert "&lt;script&gt;" in result
+
+
+# ---------------------------------------------------------------------------
+# Working Assumptions panel (SO-7 adjacent)
+# ---------------------------------------------------------------------------
+
+def test_fmt_assumptions_empty():
+    from irys.ui.app import _fmt_assumptions
+    result = _fmt_assumptions([])
+    assert "viz-empty" in result
+    assert "No assumptions" in result
+
+
+def test_fmt_assumptions_with_data():
+    from irys.ui.app import _fmt_assumptions
+    assumptions = [
+        {"statement": "Contract was signed by authorized parties", "status": "confirmed", "rationale": "Signature page verified"},
+        {"statement": "Delivery occurred on schedule", "status": "provisional", "invalidation_condition": "Late delivery evidence found"},
+        {"statement": "Warranty period has expired", "status": "invalidated", "rationale": "Extended warranty clause found"},
+    ]
+    result = _fmt_assumptions(assumptions)
+    assert "Confirmed" in result
+    assert "Provisional" in result
+    assert "Invalidated" in result
+    assert "Contract was signed" in result
+    assert "3 assumptions" in result
+    assert "1 invalidated" in result
+    assert "Late delivery evidence" in result
+
+
+def test_fmt_assumptions_skips_non_dict():
+    from irys.ui.app import _fmt_assumptions
+    result = _fmt_assumptions(["bad", None])
+    assert "viz-empty" in result
