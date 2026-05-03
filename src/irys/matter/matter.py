@@ -4279,6 +4279,42 @@ class MatterModel:
                 fd["requires_review_roles"] = sorted(review_roles)
         return facets, composed, primary_profile
 
+    def get_domain_profile_summary(
+        self,
+        profile_id: str | None = None,
+    ) -> dict:
+        """Return a comprehensive summary of the active domain profile.
+
+        If *profile_id* is None, uses the primary detected profile.
+        """
+        broker = self.memory_broker
+        facets, composed_weights, primary = self._read_matter_domain_composition()
+        pid = profile_id or primary or "legal"
+
+        profile = broker.get_domain_profile(pid)
+        vocab = broker.get_profile_vocabulary(pid) if profile else None
+
+        source_roles = list(vocab.get("source_roles", [])) if vocab else []
+        belief_states = list(vocab.get("belief_states", [])) if vocab else []
+        taint_classes = list(vocab.get("taint_classes", [])) if vocab else []
+        speech_acts = list(vocab.get("speech_acts", [])) if vocab else []
+        neutral_kernel = dict(vocab.get("neutral_kernel", {})) if vocab else {}
+
+        return {
+            "profile_id": pid,
+            "profile_version": int(profile["profile_version"]) if profile else 1,
+            "profile_kind": profile.get("profile_kind", pid) if profile else pid,
+            "status": profile.get("status", "unknown") if profile else "not_found",
+            "is_primary": pid == primary,
+            "facets": facets,
+            "composed_trust_weights": composed_weights,
+            "neutral_kernel": neutral_kernel,
+            "source_roles": source_roles,
+            "belief_states": belief_states,
+            "taint_classes": taint_classes,
+            "speech_acts": speech_acts,
+        }
+
     @staticmethod
     def _coverage_fraction(weighted_support: float, predicate_count: int) -> float:
         """Compute evidence coverage fraction for a single issue.

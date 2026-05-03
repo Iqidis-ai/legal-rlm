@@ -298,6 +298,18 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/so-scorecard")
         return result if isinstance(result, dict) else {}
 
+    async def get_domain_profile_summary(
+        self, matter_id: str, profile_id: str | None = None
+    ) -> dict:
+        params = {}
+        if profile_id is not None:
+            params["profile_id"] = profile_id
+        result = await self._get(f"/matter/{matter_id}/domain-profile", params)
+        if not isinstance(result, dict):
+            _log.warning("get_domain_profile_summary: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def answer_clarification(
         self, matter_id: str, question_id: str, answer_text: str
     ) -> bool:

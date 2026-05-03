@@ -1349,3 +1349,152 @@ def test_fmt_assumptions_xss_in_status():
         {"statement": "Test", "status": '<script>alert(1)</script>'},
     ])
     assert "<script>" not in result
+
+
+# ── Domain Profile panel tests ───────────────────────────────────────
+
+def test_fmt_domain_profile_panel_empty():
+    from irys.ui.app import _fmt_domain_profile_panel
+    result = _fmt_domain_profile_panel({})
+    assert "No domain profile loaded" in result
+
+
+def test_fmt_domain_profile_panel_not_found():
+    from irys.ui.app import _fmt_domain_profile_panel
+    result = _fmt_domain_profile_panel({"status": "not_found"})
+    assert "No domain profile loaded" in result
+
+
+def test_fmt_domain_profile_panel_none():
+    from irys.ui.app import _fmt_domain_profile_panel
+    result = _fmt_domain_profile_panel(None)
+    assert "No domain profile loaded" in result
+
+
+def test_fmt_domain_profile_panel_basic():
+    from irys.ui.app import _fmt_domain_profile_panel
+    summary = {
+        "profile_id": "legal",
+        "profile_version": 1,
+        "profile_kind": "legal",
+        "status": "current",
+        "is_primary": True,
+        "neutral_kernel": {
+            "claim": "legal_proposition",
+            "entity": "party",
+        },
+        "composed_trust_weights": {
+            "judge": 0.92,
+            "witness": 0.55,
+        },
+        "source_roles": ["judge", "witness", "attorney"],
+        "belief_states": ["operative", "alleged"],
+        "taint_classes": ["public_clean", "privileged"],
+        "speech_acts": ["testimony", "ruling"],
+        "facets": [],
+    }
+    result = _fmt_domain_profile_panel(summary, domain="legal")
+    assert "Domain Profile" in result
+    assert "PRIMARY" in result
+    assert "legal" in result
+    assert "legal_proposition" in result
+    assert "0.92" in result
+    assert "Judge" in result
+    assert "Witness" in result
+    assert "Operative" in result
+    assert "Testimony" in result
+
+
+def test_fmt_domain_profile_panel_finance():
+    from irys.ui.app import _fmt_domain_profile_panel
+    summary = {
+        "profile_id": "finance",
+        "profile_version": 1,
+        "profile_kind": "finance",
+        "status": "current",
+        "is_primary": True,
+        "neutral_kernel": {"claim": "financial_claim"},
+        "composed_trust_weights": {"auditor": 0.9},
+        "source_roles": ["auditor", "analyst"],
+        "belief_states": ["reported"],
+        "taint_classes": [],
+        "speech_acts": [],
+        "facets": [
+            {"domain_profile_id": "finance", "domain_profile_version": 1, "confidence": 0.85, "status": "active"},
+        ],
+    }
+    result = _fmt_domain_profile_panel(summary, domain="finance")
+    assert "Finance" in result
+    assert "Auditor" in result
+    assert "0.85" in result
+    assert "Domain Facets" in result
+
+
+def test_fmt_domain_profile_panel_non_dict_facets():
+    from irys.ui.app import _fmt_domain_profile_panel
+    summary = {
+        "profile_id": "legal",
+        "profile_version": 1,
+        "profile_kind": "legal",
+        "status": "current",
+        "is_primary": False,
+        "neutral_kernel": {},
+        "composed_trust_weights": {},
+        "source_roles": [],
+        "belief_states": [],
+        "taint_classes": [],
+        "speech_acts": [],
+        "facets": ["not-a-dict", 42, None],
+    }
+    result = _fmt_domain_profile_panel(summary, domain="legal")
+    assert "Domain Profile" in result
+
+
+def test_fmt_domain_profile_panel_xss():
+    from irys.ui.app import _fmt_domain_profile_panel
+    xss = '<img src=x onerror=alert(1)>'
+    summary = {
+        "profile_id": xss,
+        "profile_version": 1,
+        "profile_kind": xss,
+        "status": xss,
+        "is_primary": True,
+        "neutral_kernel": {xss: xss},
+        "composed_trust_weights": {xss: 0.5},
+        "source_roles": [xss],
+        "belief_states": [xss],
+        "taint_classes": [xss],
+        "speech_acts": [xss],
+        "facets": [
+            {"domain_profile_id": xss, "domain_profile_version": 1, "confidence": 0.5, "status": xss},
+        ],
+    }
+    result = _fmt_domain_profile_panel(summary, domain="legal")
+    assert "<img" not in result
+    assert "&lt;img" in result
+
+
+def test_fmt_domain_profile_panel_trust_weight_bar_colors():
+    from irys.ui.app import _fmt_domain_profile_panel
+    summary = {
+        "profile_id": "legal",
+        "profile_version": 1,
+        "profile_kind": "legal",
+        "status": "current",
+        "is_primary": True,
+        "neutral_kernel": {},
+        "composed_trust_weights": {
+            "high": 0.9,
+            "medium": 0.6,
+            "low": 0.3,
+        },
+        "source_roles": [],
+        "belief_states": [],
+        "taint_classes": [],
+        "speech_acts": [],
+        "facets": [],
+    }
+    result = _fmt_domain_profile_panel(summary, domain="legal")
+    assert "#22c55e" in result
+    assert "#eab308" in result
+    assert "#ef4444" in result

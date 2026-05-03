@@ -262,6 +262,13 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_domain_profile_summary(
+        self, matter_id: str, profile_id: str | None = None
+    ) -> dict:
+        """Return comprehensive domain profile configuration summary."""
+        ...
+
+    @abstractmethod
     async def answer_clarification(
         self, matter_id: str, question_id: str, answer_text: str
     ) -> bool:

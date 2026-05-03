@@ -3235,6 +3235,24 @@ async def get_so_scorecard(matter_id: str):
     return model.get_so_metrics()
 
 
+@app.get(
+    "/matter/{matter_id}/domain-profile",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_domain_profile_summary(
+    matter_id: str,
+    profile_id: str | None = Query(default=None),
+):
+    """Return a comprehensive summary of the active domain profile configuration.
+
+    Includes neutral kernel mappings, source roles, belief states, trust weights,
+    taint classes, and speech acts. If profile_id is omitted, returns the
+    primary detected profile."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_domain_profile_summary(profile_id=profile_id)
+
+
 @app.post(
     "/matter/{matter_id}/generate-clarifications",
     tags=["Matter Model"],

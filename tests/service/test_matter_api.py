@@ -1643,3 +1643,28 @@ def test_content_policy_audit_with_limit(client, register_model):
 def test_content_policy_audit_404(client):
     resp = client.get("/matter/unknown/content-policy-audit")
     assert resp.status_code == 404
+
+
+# ── Domain Profile endpoint tests ────────────────────────────────────
+
+def test_domain_profile_summary(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/domain-profile")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "profile_id" in data
+    assert "composed_trust_weights" in data
+    assert "source_roles" in data
+    assert "belief_states" in data
+    assert isinstance(data["composed_trust_weights"], dict)
+
+
+def test_domain_profile_summary_with_profile_id(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/domain-profile", params={"profile_id": "legal"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["profile_id"] == "legal"
+
+
+def test_domain_profile_summary_404(client):
+    resp = client.get("/matter/unknown/domain-profile")
+    assert resp.status_code == 404

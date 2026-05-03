@@ -653,6 +653,12 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_so_metrics()
 
+    async def get_domain_profile_summary(
+        self, matter_id: str, profile_id: str | None = None
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_domain_profile_summary(profile_id=profile_id)
+
     async def answer_clarification(
         self, matter_id: str, question_id: str, answer_text: str
     ) -> bool:

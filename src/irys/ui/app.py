@@ -2437,6 +2437,152 @@ _SO_SCORECARD_LABELS: dict[str, dict[str, str]] = {
 }
 
 
+_DOMAIN_PROFILE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Domain Profile — Legal",
+        "empty": "No domain profile loaded.",
+        "kernel_header": "Neutral Kernel Mappings",
+        "trust_header": "Source Trust Weights",
+        "roles_header": "Source Roles",
+        "belief_header": "Belief States",
+        "taint_header": "Taint Classes",
+        "speech_header": "Speech Acts",
+    },
+    "finance": {
+        "title": "Domain Profile — Finance",
+        "empty": "No domain profile loaded.",
+        "kernel_header": "Neutral Kernel Mappings",
+        "trust_header": "Source Trust Weights",
+        "roles_header": "Source Roles",
+        "belief_header": "Belief States",
+        "taint_header": "Taint Classes",
+        "speech_header": "Speech Acts",
+    },
+    "coding": {
+        "title": "Domain Profile — Coding",
+        "empty": "No domain profile loaded.",
+        "kernel_header": "Neutral Kernel Mappings",
+        "trust_header": "Source Trust Weights",
+        "roles_header": "Component Roles",
+        "belief_header": "Belief States",
+        "taint_header": "Sensitivity Classes",
+        "speech_header": "Speech Acts",
+    },
+    "academic_research": {
+        "title": "Domain Profile — Academic Research",
+        "empty": "No domain profile loaded.",
+        "kernel_header": "Neutral Kernel Mappings",
+        "trust_header": "Source Trust Weights",
+        "roles_header": "Source Roles",
+        "belief_header": "Evidence States",
+        "taint_header": "Access Classes",
+        "speech_header": "Speech Acts",
+    },
+    "biomedical": {
+        "title": "Domain Profile — Biomedical",
+        "empty": "No domain profile loaded.",
+        "kernel_header": "Neutral Kernel Mappings",
+        "trust_header": "Source Trust Weights",
+        "roles_header": "Evidence Sources",
+        "belief_header": "Clinical States",
+        "taint_header": "Sensitivity Classes",
+        "speech_header": "Speech Acts",
+    },
+}
+
+
+def _fmt_domain_profile_panel(summary: dict, domain: str = "legal") -> str:
+    labels = _DOMAIN_PROFILE_LABELS.get(domain, _DOMAIN_PROFILE_LABELS["legal"])
+    if not summary or not isinstance(summary, dict):
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    status = summary.get("status", "unknown")
+    if status == "not_found":
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    pid = _escape(summary.get("profile_id", "unknown"))
+    pver = int(summary.get("profile_version", 1)) if isinstance(summary.get("profile_version"), (int, float)) else 1
+    pkind = _escape(summary.get("profile_kind", pid))
+    is_primary = summary.get("is_primary", False)
+
+    primary_badge = "<span style='background:#2563eb;color:white;padding:2px 8px;border-radius:10px;font-size:0.8em;margin-left:8px;'>PRIMARY</span>" if is_primary else ""
+
+    parts = [
+        f"<div style='margin-bottom:16px;'>",
+        f"<h3 style='margin:0 0 4px 0;'>{_escape(labels['title'])}{primary_badge}</h3>",
+        f"<div style='color:#666;font-size:0.9em;'>Profile: <b>{pid}</b> v{pver} · Kind: <b>{pkind}</b> · Status: <b>{_escape(status)}</b></div>",
+        f"</div>",
+    ]
+
+    kernel = summary.get("neutral_kernel", {})
+    if isinstance(kernel, dict) and kernel:
+        parts.append(f"<h4 style='margin:12px 0 4px 0;'>{_escape(labels['kernel_header'])}</h4>")
+        parts.append("<table style='border-collapse:collapse;width:100%;font-size:0.9em;'>")
+        parts.append("<tr style='background:#f1f5f9;'><th style='text-align:left;padding:4px 8px;'>Canonical</th><th style='text-align:left;padding:4px 8px;'>Domain Term</th></tr>")
+        for canonical, domain_term in sorted(kernel.items()):
+            parts.append(f"<tr><td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{_escape(str(canonical))}</td>"
+                         f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{_escape(str(domain_term))}</td></tr>")
+        parts.append("</table>")
+
+    tw = summary.get("composed_trust_weights", {})
+    if isinstance(tw, dict) and tw:
+        parts.append(f"<h4 style='margin:12px 0 4px 0;'>{_escape(labels['trust_header'])}</h4>")
+        parts.append("<table style='border-collapse:collapse;width:100%;font-size:0.9em;'>")
+        parts.append("<tr style='background:#f1f5f9;'><th style='text-align:left;padding:4px 8px;'>Source Role</th><th style='text-align:left;padding:4px 8px;'>Weight</th><th style='text-align:left;padding:4px 8px;'>Bar</th></tr>")
+        for role, weight in sorted(tw.items(), key=lambda x: -float(x[1]) if isinstance(x[1], (int, float)) else 0):
+            w = float(weight) if isinstance(weight, (int, float)) else 0.0
+            bar_width = int(w * 100)
+            color = "#22c55e" if w >= 0.7 else "#eab308" if w >= 0.5 else "#ef4444"
+            parts.append(
+                f"<tr><td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{_escape(str(role))}</td>"
+                f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{w:.2f}</td>"
+                f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>"
+                f"<div style='background:#e2e8f0;border-radius:4px;height:12px;width:100px;'>"
+                f"<div style='background:{color};border-radius:4px;height:12px;width:{bar_width}px;'></div>"
+                f"</div></td></tr>"
+            )
+        parts.append("</table>")
+
+    for field, header_key in [
+        ("source_roles", "roles_header"),
+        ("belief_states", "belief_header"),
+        ("taint_classes", "taint_header"),
+        ("speech_acts", "speech_header"),
+    ]:
+        items = summary.get(field, [])
+        if isinstance(items, list) and items:
+            parts.append(f"<h4 style='margin:12px 0 4px 0;'>{_escape(labels[header_key])}</h4>")
+            pills = []
+            for item in items:
+                if not isinstance(item, str):
+                    continue
+                display = _escape(item.replace("_", " ").title())
+                pills.append(f"<span style='display:inline-block;background:#e2e8f0;padding:2px 10px;border-radius:10px;margin:2px 4px 2px 0;font-size:0.85em;'>{display}</span>")
+            parts.append("<div style='margin-bottom:8px;'>" + "".join(pills) + "</div>")
+
+    facets = summary.get("facets", [])
+    if isinstance(facets, list) and facets:
+        parts.append("<h4 style='margin:12px 0 4px 0;'>Domain Facets</h4>")
+        parts.append("<table style='border-collapse:collapse;width:100%;font-size:0.9em;'>")
+        parts.append("<tr style='background:#f1f5f9;'><th style='text-align:left;padding:4px 8px;'>Profile</th><th style='text-align:left;padding:4px 8px;'>Version</th><th style='text-align:left;padding:4px 8px;'>Confidence</th><th style='text-align:left;padding:4px 8px;'>Status</th></tr>")
+        for facet in facets:
+            if not isinstance(facet, dict):
+                continue
+            fpid = _escape(str(facet.get("domain_profile_id", "?")))
+            fver = _escape(str(facet.get("domain_profile_version", "?")))
+            fconf = float(facet.get("confidence", 0)) if isinstance(facet.get("confidence"), (int, float)) else 0.0
+            fstatus = _escape(str(facet.get("status", "?")))
+            parts.append(
+                f"<tr><td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{fpid}</td>"
+                f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{fver}</td>"
+                f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{fconf:.2f}</td>"
+                f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{fstatus}</td></tr>"
+            )
+        parts.append("</table>")
+
+    return "\n".join(parts)
+
+
 def _fmt_so_scorecard_panel(so: dict, domain: str = "legal") -> str:
     labels = _SO_SCORECARD_LABELS.get(domain, _SO_SCORECARD_LABELS["legal"])
     if not so or not isinstance(so, dict):
@@ -6155,6 +6301,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading SO scorecard: {_escape(exc)}</div>"
 
+    def load_domain_profile(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_domain_profile_summary(matter_id))
+            return _fmt_domain_profile_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading domain profile: {_escape(exc)}</div>"
+
     def load_clarification_choices(self, matter_id: str) -> list:
         if not matter_id or matter_id == "—":
             return []
@@ -7504,6 +7659,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             so_scorecard_html = gr.HTML("<div class='viz-empty'>SO scorecard will appear here after an investigation.</div>")
             refresh_so_scorecard_btn = gr.Button("Refresh SO Scorecard", variant="secondary", size="sm")
 
+        with gr.Accordion("Domain Profile — how Irys interprets this subject area", open=False):
+            gr.Markdown(
+                "Shows the active domain profile: which vocabulary maps concepts to domain terms, "
+                "how sources are weighted for trustworthiness, and what sensitivity classes apply. "
+                "Multi-domain matters blend profiles by detection confidence."
+            )
+            domain_profile_html = gr.HTML("<div class='viz-empty'>Domain profile will appear here after an investigation.</div>")
+            refresh_domain_profile_btn = gr.Button("Refresh Domain Profile", variant="secondary", size="sm")
+
         with gr.Accordion("Content Policy Audit — what Irys allowed, blocked, or withheld", open=False):
             gr.Markdown(
                 "Every time Irys decides whether to include or redact content for a given "
@@ -8007,6 +8171,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[gaps_detail_html],
+            ).then(
+                fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[domain_profile_html],
             )
         else:
             submit_btn.click(
@@ -8053,6 +8221,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[gaps_detail_html],
+            ).then(
+                fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[domain_profile_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -8100,6 +8272,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[gaps_detail_html],
+        ).then(
+            fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[domain_profile_html],
         )
 
         export_report_btn.click(
@@ -8238,6 +8414,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_so_scorecard(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[so_scorecard_html],
+        )
+        refresh_domain_profile_btn.click(
+            fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[domain_profile_html],
         )
         refresh_content_policy_btn.click(
             fn=lambda mid: state.load_content_policy_audit(mid, domain=state._detect_domain(mid)),
