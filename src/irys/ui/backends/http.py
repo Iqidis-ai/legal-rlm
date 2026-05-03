@@ -243,6 +243,19 @@ class HttpBackend(UIBackend):
             return {"assertion_id": assertion_id, "history": [], "count": 0}
         return result
 
+    async def list_content_policy_decisions(self, matter_id: str, limit: int = 50) -> list[dict]:
+        result = await self._get(
+            f"/matter/{matter_id}/content-policy-audit",
+            {"limit": str(limit)},
+        )
+        if isinstance(result, dict):
+            decisions = result.get("decisions", [])
+            return decisions if isinstance(decisions, list) else []
+        if not isinstance(result, list):
+            _log.warning("list_content_policy_decisions: unexpected response type %s", type(result).__name__)
+            return []
+        return result
+
     async def get_quant_thresholds(self, matter_id: str, currency: str = "USD") -> list[dict]:
         result = await self._get(f"/matter/{matter_id}/quant-thresholds", {"currency": currency})
         return result if isinstance(result, list) else []

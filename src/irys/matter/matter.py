@@ -3153,6 +3153,10 @@ class MatterModel:
         ]
         return {"assertion_id": assertion_id, "history": history, "count": len(history)}
 
+    def list_content_policy_decisions(self, limit: int = 50) -> list[dict]:
+        """Return recent content policy audit decisions (SO-5)."""
+        return self.content_policy.list_decisions(limit=limit)
+
     def get_assertion_health(self, assertion_id: str) -> dict:
         """Return assertion health: oscillation, neighbors, provenance (SO-2 + SO-5)."""
         record = self.assertions.get(assertion_id)

@@ -222,6 +222,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def list_content_policy_decisions(self, matter_id: str, limit: int = 50) -> list[dict]:
+        """Return recent content policy audit decisions."""
+        ...
+
+    @abstractmethod
     async def get_quant_thresholds(self, matter_id: str, currency: str = "USD") -> list[dict]:
         """Return quantitative threshold violations."""
         ...

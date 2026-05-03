@@ -1176,3 +1176,77 @@ def test_fmt_assertion_inspector_history_non_dict_items():
     result = _fmt_assertion_inspector(health, history=history)
     assert "Revision History" in result
     assert "confidence" in result
+
+
+# ---------------------------------------------------------------------------
+# Content Policy Audit panel (SO-5)
+# ---------------------------------------------------------------------------
+
+def test_fmt_content_policy_panel_empty():
+    from irys.ui.app import _fmt_content_policy_panel
+    result = _fmt_content_policy_panel([])
+    assert "viz-empty" in result
+    assert "No content policy decisions" in result
+
+
+def test_fmt_content_policy_panel_with_decisions():
+    from irys.ui.app import _fmt_content_policy_panel
+    decisions = [
+        {
+            "action": "allow",
+            "purpose": "synthesis_context",
+            "target_kind": "assertion",
+            "target_id": "a-001",
+            "reason_code": "verified_clean",
+            "trust_bucket": "high",
+            "policy_audience": "clean",
+            "privilege_flag": None,
+            "created_at": "2026-05-01T10:00:00",
+        },
+        {
+            "action": "block",
+            "purpose": "export",
+            "target_kind": "assertion",
+            "target_id": "a-002",
+            "reason_code": "unverified_candidate",
+            "trust_bucket": "low",
+            "policy_audience": "clean",
+            "privilege_flag": None,
+            "created_at": "2026-05-01T10:01:00",
+        },
+        {
+            "action": "withhold",
+            "purpose": "chat_response",
+            "target_kind": "assertion",
+            "target_id": "a-003",
+            "reason_code": "privilege_flagged",
+            "trust_bucket": "medium",
+            "policy_audience": "clean",
+            "privilege_flag": 1,
+            "created_at": "2026-05-01T10:02:00",
+        },
+    ]
+    result = _fmt_content_policy_panel(decisions)
+    assert "ALLOW" in result
+    assert "BLOCK" in result
+    assert "WITHHOLD" in result
+    assert "1 blocked" in result
+    assert "1 withheld" in result
+    assert "PRIV" in result
+    assert "synthesis_context" in result
+    assert "3 decisions" in result
+
+
+def test_fmt_content_policy_panel_skips_non_dict():
+    from irys.ui.app import _fmt_content_policy_panel
+    result = _fmt_content_policy_panel(["bad", None])
+    assert "viz-empty" in result
+
+
+def test_fmt_content_policy_panel_privilege_badge():
+    from irys.ui.app import _fmt_content_policy_panel
+    decisions = [
+        {"action": "withhold", "purpose": "export", "target_kind": "assertion", "target_id": "a-1", "reason_code": "priv", "trust_bucket": "high", "policy_audience": "clean", "privilege_flag": True, "created_at": "2026-01-01"},
+    ]
+    result = _fmt_content_policy_panel(decisions)
+    assert "PRIV" in result

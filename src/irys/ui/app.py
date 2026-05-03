@@ -4550,6 +4550,101 @@ def _fmt_assertion_inspector(health: dict, history: list | None = None, domain: 
     )
 
 
+_POLICY_ACTION_COLORS: dict[str, tuple[str, str]] = {
+    "allow": ("#16a34a", "white"),
+    "block": ("#dc2626", "white"),
+    "withhold": ("#d97706", "white"),
+}
+
+_CONTENT_POLICY_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Content Policy Audit",
+        "empty": "No content policy decisions recorded yet.",
+    },
+    "finance": {
+        "title": "Content Policy Audit",
+        "empty": "No content policy decisions recorded yet.",
+    },
+    "coding": {
+        "title": "Content Policy Audit",
+        "empty": "No content policy decisions recorded yet.",
+    },
+    "academic_research": {
+        "title": "Content Policy Audit",
+        "empty": "No content policy decisions recorded yet.",
+    },
+    "biomedical": {
+        "title": "Content Policy Audit",
+        "empty": "No content policy decisions recorded yet.",
+    },
+}
+
+
+def _fmt_content_policy_panel(decisions: list[dict], domain: str = "legal") -> str:
+    labels = _CONTENT_POLICY_LABELS.get(domain, _CONTENT_POLICY_LABELS["legal"])
+    if not decisions:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+    rows = ""
+    allow_count = 0
+    block_count = 0
+    withhold_count = 0
+    for d in decisions:
+        if not isinstance(d, dict):
+            continue
+        action = str(d.get("action") or "unknown")
+        if action == "allow":
+            allow_count += 1
+        elif action == "block":
+            block_count += 1
+        elif action == "withhold":
+            withhold_count += 1
+        bg, fg = _POLICY_ACTION_COLORS.get(action, ("#6b7280", "white"))
+        action_pill = f"<span style='background:{bg};color:{fg};padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600'>{_escape(action.upper())}</span>"
+        purpose = _escape(str(d.get("purpose") or "—"))
+        target_kind = _escape(str(d.get("target_kind") or "—"))
+        target_id = _escape(str(d.get("target_id") or "—"))[:24]
+        reason = _escape(str(d.get("reason_code") or "—"))
+        trust = _escape(str(d.get("trust_bucket") or "—"))
+        audience = _escape(str(d.get("policy_audience") or "—"))
+        ts = _escape(str(d.get("created_at") or "—"))
+        priv_flag = d.get("privilege_flag")
+        priv_badge = ""
+        if priv_flag == 1 or priv_flag is True:
+            priv_badge = " <span style='background:#7c3aed;color:white;padding:1px 4px;border-radius:3px;font-size:9px'>PRIV</span>"
+        rows += (
+            "<tr>"
+            f"<td style='font-size:11px;white-space:nowrap'>{ts[:19]}</td>"
+            f"<td>{action_pill}</td>"
+            f"<td style='font-size:11px'>{purpose}</td>"
+            f"<td style='font-size:11px'>{target_kind}:{target_id}</td>"
+            f"<td style='font-size:11px'>{reason}</td>"
+            f"<td style='font-size:11px'>{trust}{priv_badge}</td>"
+            f"<td style='font-size:11px'>{audience}</td>"
+            "</tr>"
+        )
+    if not rows:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+    total = allow_count + block_count + withhold_count
+    subtitle = f"{total} decisions"
+    if block_count:
+        subtitle += f" ({block_count} blocked)"
+    if withhold_count:
+        subtitle += f" ({withhold_count} withheld)"
+    return (
+        "<div class='viz-shell'>"
+        f"<div class='viz-header'><strong>{labels['title']}</strong> — {subtitle}</div>"
+        "<div style='display:flex;gap:12px;margin-bottom:8px'>"
+        f"<div style='font-size:11px'><span style='color:#16a34a;font-weight:600'>{allow_count}</span> allowed</div>"
+        f"<div style='font-size:11px'><span style='color:#dc2626;font-weight:600'>{block_count}</span> blocked</div>"
+        f"<div style='font-size:11px'><span style='color:#d97706;font-weight:600'>{withhold_count}</span> withheld</div>"
+        "</div>"
+        "<div class='table-wrap'><table class='viz-table'>"
+        "<thead><tr><th>When</th><th>Action</th><th>Purpose</th><th>Target</th><th>Reason</th><th>Trust</th><th>Audience</th></tr></thead>"
+        "<tbody>" + rows + "</tbody></table></div>"
+        "</div>"
+    )
+
+
 def _fmt_quant(payment_recon: dict, damages: list) -> str:
     """Format quant reconciliation and damages waterfall (SO-6)."""
     parts = []
@@ -5270,6 +5365,15 @@ class AppState:
             return _fmt_assertion_inspector(health, history=history, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error inspecting assertion: {_escape(str(exc))}</div>"
+
+    def load_content_policy_audit(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            decisions = _run_async(self.backend().list_content_policy_decisions(matter_id, limit=50))
+            return _fmt_content_policy_panel(decisions, domain=domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading content policy audit: {_escape(str(exc))}</div>"
 
     def load_review_queue(self, matter_id: str) -> tuple[str, gr.update]:
         """Return (html_render, dropdown_update) for the review queue.
@@ -7336,6 +7440,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             so_scorecard_html = gr.HTML("<div class='viz-empty'>SO scorecard will appear here after an investigation.</div>")
             refresh_so_scorecard_btn = gr.Button("Refresh SO Scorecard", variant="secondary", size="sm")
 
+        with gr.Accordion("Content Policy Audit — what Irys allowed, blocked, or withheld", open=False):
+            gr.Markdown(
+                "Every time Irys decides whether to include or redact content for a given "
+                "audience mode, the decision is logged here. Use this to audit privilege "
+                "redaction behavior and verify that sensitive material is handled correctly."
+            )
+            content_policy_html = gr.HTML("<div class='viz-empty'>Content policy audit will appear here after an investigation.</div>")
+            refresh_content_policy_btn = gr.Button("Refresh Content Policy Audit", variant="secondary", size="sm")
+
         with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
                 "Maps which people and companies appear in which documents and highlights "
@@ -8020,6 +8133,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_so_scorecard(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[so_scorecard_html],
+        )
+        refresh_content_policy_btn.click(
+            fn=lambda mid: state.load_content_policy_audit(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[content_policy_html],
         )
         refresh_comm_btn.click(
             fn=lambda mid: state.load_communication_map(mid),

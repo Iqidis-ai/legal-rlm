@@ -621,6 +621,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.list_assertion_history(assertion_id, limit=limit)
 
+    async def list_content_policy_decisions(self, matter_id: str, limit: int = 50) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.list_content_policy_decisions(limit=limit)
+
     async def get_quant_thresholds(self, matter_id: str, currency: str = "USD") -> list[dict]:
         model = self._get_matter_model(matter_id)
         return model.compute_quant_thresholds(currency=currency)

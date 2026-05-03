@@ -3163,6 +3163,28 @@ async def get_assertion_health(matter_id: str, assertion_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Content Policy Audit Trail (SO-5)
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/matter/{matter_id}/content-policy-audit",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_content_policy_audit(
+    matter_id: str,
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """Return recent content policy decisions for transparency (SO-5).
+
+    Each row shows what was allowed, blocked, or withheld, and why —
+    enabling attorneys to audit Irys's redaction and privilege behavior.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    return {"decisions": model.list_content_policy_decisions(limit=limit)}
+
+
+# ---------------------------------------------------------------------------
 # Quantitative Threshold Violations (SO-6)
 # ---------------------------------------------------------------------------
 
