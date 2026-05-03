@@ -729,3 +729,32 @@ def test_fmt_trust_overrides_skips_non_dict():
     from irys.ui.app import _fmt_trust_overrides
     result = _fmt_trust_overrides(["bad", None])
     assert "viz-empty" in result
+
+
+# ---------------------------------------------------------------------------
+# Annotations formatter
+# ---------------------------------------------------------------------------
+
+def test_fmt_annotations_panel_empty():
+    from irys.ui.app import _fmt_annotations_panel
+    result = _fmt_annotations_panel([])
+    assert "viz-empty" in result
+
+
+def test_fmt_annotations_panel_with_data():
+    from irys.ui.app import _fmt_annotations_panel
+    result = _fmt_annotations_panel([
+        {"document_pattern": "contract.pdf", "annotation_text": "Key document", "annotation_type": "strategic", "created_at": "2026-01-01T00:00:00"},
+        {"document_pattern": "report.pdf", "annotation_text": "Unreliable source", "annotation_type": "reliability", "created_at": "2026-01-02T00:00:00"},
+    ])
+    assert "contract.pdf" in result
+    assert "Key document" in result
+    assert "Strategic" in result
+    assert "Reliability" in result
+    assert "2 note" in result
+
+
+def test_fmt_annotations_panel_skips_non_dict():
+    from irys.ui.app import _fmt_annotations_panel
+    result = _fmt_annotations_panel(["bad", None])
+    assert "viz-empty" in result

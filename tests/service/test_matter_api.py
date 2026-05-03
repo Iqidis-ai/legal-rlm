@@ -1465,3 +1465,53 @@ def test_bulk_verify_by_ids_404_for_unknown_matter(client):
         json={"assertion_ids": ["fake"]},
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Annotations
+# ---------------------------------------------------------------------------
+
+def test_annotations_add_and_list(client, register_model):
+    resp = client.post(
+        f"/matter/{MATTER_ID}/annotations",
+        json={"document_pattern": "contract.pdf", "annotation_text": "Key document", "annotation_type": "strategic"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "annotation_id" in data
+    resp = client.get(f"/matter/{MATTER_ID}/annotations")
+    assert resp.status_code == 200
+    annotations = resp.json()["annotations"]
+    assert len(annotations) >= 1
+    assert any(a["document_pattern"] == "contract.pdf" for a in annotations)
+
+
+def test_annotations_filter_by_document(client, register_model):
+    client.post(
+        f"/matter/{MATTER_ID}/annotations",
+        json={"document_pattern": "contract.pdf", "annotation_text": "A note"},
+    )
+    client.post(
+        f"/matter/{MATTER_ID}/annotations",
+        json={"document_pattern": "report.pdf", "annotation_text": "Another note"},
+    )
+    resp = client.get(f"/matter/{MATTER_ID}/annotations", params={"document": "contract.pdf"})
+    assert resp.status_code == 200
+    annotations = resp.json()["annotations"]
+    assert all(a["document_pattern"] == "contract.pdf" for a in annotations)
+
+
+def test_annotations_delete(client, register_model):
+    resp = client.post(
+        f"/matter/{MATTER_ID}/annotations",
+        json={"document_pattern": "temp.pdf", "annotation_text": "Delete me"},
+    )
+    ann_id = resp.json()["annotation_id"]
+    resp = client.delete(f"/matter/{MATTER_ID}/annotations/{ann_id}")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "deleted"
+
+
+def test_annotations_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/annotations")
+    assert resp.status_code == 404
