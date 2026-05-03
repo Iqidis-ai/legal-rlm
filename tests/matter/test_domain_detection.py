@@ -324,3 +324,195 @@ def test_legal_profile_trust_weights_fallback():
     assert len(tw) > 0
     for role, val in SOURCE_TRUST_WEIGHTS.items():
         assert tw[role] == val
+
+
+# --- End-to-end multi-domain pipeline validation ---
+
+
+def _ingest_finance_matter():
+    """Set up a matter with finance documents and return the model."""
+    from irys.matter import MatterModel
+
+    model = MatterModel.open_in_memory()
+    model.inventory.upsert(
+        relative_path="financials/10K_2025.pdf",
+        sha256="sha256:fin001",
+    )
+    model.upsert_document_profile(
+        relative_path="financials/10K_2025.pdf",
+        analysis={
+            "title": "Annual Report 10-K SEC Filing FY2025",
+            "doc_type": "10-K",
+            "purpose": "Revenue disclosure and EBITDA margin analysis. "
+                       "Earnings per share beat analyst estimates. "
+                       "Management provided forward guidance for fiscal year 2026.",
+            "key_facts": [
+                "Revenue increased 12% year-over-year to $2.4B",
+                "EBITDA margin improved to 25%",
+                "Earnings per share of $3.42 vs $3.10 estimate",
+            ],
+            "numeric_facts": [
+                {"label": "Revenue", "value": "2.4B", "currency": "USD"},
+                {"label": "EBITDA margin", "value": "25%"},
+            ],
+        },
+    )
+    return model
+
+
+def test_e2e_finance_document_produces_domain_composition():
+    """Full pipeline: ingest finance doc → detection → facets → composed trust weights."""
+    model = _ingest_finance_matter()
+    facets, tw, primary = model._read_matter_domain_composition()
+
+    assert primary == "finance"
+    assert len(tw) > 0
+    assert "auditor" in tw or "regulator" in tw
+
+
+def test_e2e_finance_trust_weights_differ_from_legal():
+    """Composed trust weights for a finance matter should include finance-specific roles."""
+    model = _ingest_finance_matter()
+    _, tw, _ = model._read_matter_domain_composition()
+
+    finance_roles = {"auditor", "regulator", "issuer_management", "analyst", "rating_agency"}
+    assert finance_roles & set(tw), f"Expected finance roles, got: {set(tw)}"
+
+
+def test_e2e_mixed_domain_produces_multi_profile_composition():
+    """Ingest both legal and finance docs → composition should include both profiles."""
+    from irys.matter import MatterModel
+
+    model = MatterModel.open_in_memory()
+    model.inventory.upsert(
+        relative_path="pleadings/complaint.pdf",
+        sha256="sha256:leg001",
+    )
+    model.upsert_document_profile(
+        relative_path="pleadings/complaint.pdf",
+        analysis={
+            "title": "Complaint for Breach of Contract filed in UNITED STATES DISTRICT COURT",
+            "doc_type": "complaint",
+            "purpose": "Plaintiff alleges defendant breached pursuant to 500 U.S. 123. "
+                       "Motion for summary judgment on damages.",
+        },
+    )
+    model.inventory.upsert(
+        relative_path="financials/10K_2025.pdf",
+        sha256="sha256:fin002",
+    )
+    model.upsert_document_profile(
+        relative_path="financials/10K_2025.pdf",
+        analysis={
+            "title": "Annual Report 10-K SEC Filing FY2025",
+            "doc_type": "10-K",
+            "purpose": "Revenue disclosure and EBITDA margin analysis. "
+                       "EBITDA margin improved. Earnings per share beat estimates. "
+                       "Management provided forward guidance.",
+        },
+    )
+    facets, tw, primary = model._read_matter_domain_composition()
+    facet_profiles = {f["domain_profile_id"] for f in facets}
+    assert "legal" in facet_profiles
+    assert "finance" in facet_profiles
+    assert len(tw) > 0
+    assert "operative" in tw or "auditor" in tw
+
+
+def test_e2e_belief_engine_receives_composed_weights():
+    """After ingest, belief engine trust_weights should be populated from composition."""
+    from irys.matter.models import AssertionCandidate
+    from irys.matter.enums import (
+        AssertionKind, BeliefState, ModelLayer, OriginKind, SourceRole, SpeechAct,
+    )
+
+    model = _ingest_finance_matter()
+    run_id = model.start_run("test_finance")
+    a_id, _ = model.record_assertion(
+        AssertionCandidate(
+            proposition_text="Revenue increased 12% year-over-year.",
+            model_layer=ModelLayer.RECORD,
+            assertion_kind=AssertionKind.QUANTITATIVE,
+            speech_act=SpeechAct.ALLEGED,
+            source_role=SourceRole.OPERATIVE,
+            origin_kind=OriginKind.EXTRACTED,
+            document_id="financials/10K_2025.pdf",
+        ),
+        run_id=run_id,
+    )
+    model._ensure_belief_trust_weights()
+    assert model.belief.trust_weights is not None
+    assert len(model.belief.trust_weights) > 0
+
+
+def test_e2e_brokered_correction_on_finance_matter():
+    """CAS-protected correction works on a finance-domain matter."""
+    from irys.matter.models import AssertionCandidate
+    from irys.matter.enums import (
+        AssertionKind, BeliefState, ModelLayer, OriginKind, SourceRole, SpeechAct,
+    )
+
+    model = _ingest_finance_matter()
+    run_id = model.start_run("test_finance")
+    a_id, _ = model.record_assertion(
+        AssertionCandidate(
+            proposition_text="EBITDA margin improved to 25%.",
+            model_layer=ModelLayer.RECORD,
+            assertion_kind=AssertionKind.QUANTITATIVE,
+            speech_act=SpeechAct.ALLEGED,
+            source_role=SourceRole.OPERATIVE,
+            origin_kind=OriginKind.EXTRACTED,
+            document_id="financials/10K_2025.pdf",
+        ),
+        run_id=run_id,
+    )
+    model.complete_run(run_id)
+
+    revisions = model.correct_assertion_revision_keys(a_id)
+    result = model.correct_assertion(
+        assertion_id=a_id,
+        new_state=BeliefState.OPERATIVE,
+        note="Confirmed by auditor",
+        expected_revisions=revisions,
+    )
+    assert result.assertion_id == a_id
+
+    row = model.db.execute(
+        "SELECT belief_state FROM assertion WHERE id=?", (a_id,)
+    ).fetchone()
+    assert row["belief_state"] == "operative"
+
+
+def test_e2e_coding_domain_detection_and_composition():
+    """Ingest a code artifact → detection → coding profile facets."""
+    from irys.matter import MatterModel
+
+    model = MatterModel.open_in_memory()
+    model.inventory.upsert(
+        relative_path="src/auth_handler.py",
+        sha256="sha256:code001",
+    )
+    model.upsert_document_profile(
+        relative_path="src/auth_handler.py",
+        analysis={
+            "title": "Authentication Handler Module",
+            "doc_type": "source_code",
+            "purpose": "Handles JWT token validation and session management. "
+                       "Uses async def verify_token() with proper locking. "
+                       "Race condition fix in connection pool. "
+                       "```python\ndef authenticate(request):\n    pass\n```",
+            "key_facts": [
+                "Implements OAuth2 bearer token flow",
+                "Uses asyncio.Lock for thread safety",
+                "API endpoint /api/v2/auth handles refresh tokens",
+            ],
+        },
+    )
+    broker = model.memory_broker
+    facets = broker.get_object_domain_facets(
+        "workspace", model.matter_id, status="active",
+    )
+    coding_facets = [f for f in facets if f["domain_profile_id"] == "coding"]
+    assert len(coding_facets) >= 1, (
+        f"Expected coding facet, got: {[f['domain_profile_id'] for f in facets]}"
+    )

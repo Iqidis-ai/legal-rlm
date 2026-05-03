@@ -6448,6 +6448,7 @@ class MemoryBrokerStore:
                     ),
                 )
             self.bump_namespace_revision("domain_facets", target_kind, target_id)
+            self.bump_namespace_revision("domain_facets")
         return row_id
 
     def get_object_domain_facets(

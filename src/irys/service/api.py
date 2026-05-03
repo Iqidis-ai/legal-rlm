@@ -2459,7 +2459,10 @@ async def get_correction_revisions(matter_id: str, assertion_id: str):
     as expected_revisions in the POST .../correct request body.
     """
     model = await _get_matter_model_or_404(matter_id)
-    return model.correct_assertion_revision_keys(assertion_id)
+    try:
+        return model.correct_assertion_revision_keys(assertion_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.post(

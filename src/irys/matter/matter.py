@@ -2342,7 +2342,7 @@ class MatterModel:
                 )
 
     _CORRECT_ASSERTION_CAS_NAMESPACES = (
-        "assertions", "claim_occurrences", "proof_state",
+        "assertions", "claim_occurrences",
         "cache_records", "object_taint",
     )
 
@@ -2510,6 +2510,7 @@ class MatterModel:
                         self.proof_state.compute_and_store(
                             _iid, _preloaded_overrides=_overrides
                         )
+            self.memory_broker.bump_namespace_revision("proof_state")
         except Exception as exc:
             _log.warning(
                 "proof_state recompute after correct_assertion failed for %r: %s",
@@ -2528,7 +2529,14 @@ class MatterModel:
 
         Callers (e.g. the REST API) call this before presenting the correction
         form, then pass the result as expected_revisions to correct_assertion().
+        Raises ValueError if the assertion does not exist.
         """
+        row = self.db.execute(
+            "SELECT 1 FROM assertion WHERE id=? AND matter_id=?",
+            (assertion_id, self.matter_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Assertion {assertion_id} not found")
         broker = self.memory_broker
         revisions: dict[str, int] = {}
         for ns in self._CORRECT_ASSERTION_CAS_NAMESPACES:
