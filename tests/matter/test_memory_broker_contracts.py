@@ -386,3 +386,164 @@ def test_validation_checks_mapping_hash():
     result = broker.validate_dependency_manifest(manifest.manifest_hash())
     assert result.valid is False
     assert any("profile_mapping_hash" in r for r in result.stale_reasons)
+
+
+def test_record_and_get_domain_detection_event():
+    db, broker, matter_id = _setup_broker()
+    event_id = broker.record_domain_detection_event(
+        target_kind="artifact",
+        target_id="doc1",
+        candidate_profile_id="legal",
+        candidate_profile_version=1,
+        confidence=0.85,
+        signals_json='{"lexical":["plaintiff","defendant"]}',
+        evidence_refs_json='["lexical:legal_term:5"]',
+        detector_version="v1",
+    )
+    assert event_id
+    rev = broker.get_namespace_revision("domain_detection", "artifact", "doc1")
+    assert rev >= 1
+
+
+def test_upsert_and_get_object_domain_facets():
+    db, broker, matter_id = _setup_broker()
+    profile = broker.get_domain_profile("legal", 1)
+    facet_id = broker.upsert_object_domain_facet(
+        target_kind="claim",
+        target_id="c1",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash=profile["mapping_hash"],
+        confidence=0.9,
+        status="active",
+    )
+    assert facet_id
+
+    facets = broker.get_object_domain_facets("claim", "c1")
+    assert len(facets) == 1
+    assert facets[0]["domain_profile_id"] == "legal"
+    assert facets[0]["confidence"] == 0.9
+
+    broker.upsert_object_domain_facet(
+        target_kind="claim",
+        target_id="c1",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash=profile["mapping_hash"],
+        confidence=0.95,
+        status="active",
+    )
+    facets = broker.get_object_domain_facets("claim", "c1")
+    assert len(facets) == 1
+    assert facets[0]["confidence"] == 0.95
+
+
+def test_multi_profile_facets_on_same_object():
+    db, broker, matter_id = _setup_broker()
+    legal_profile = broker.get_domain_profile("legal", 1)
+    finance_profile = broker.get_domain_profile("finance", 1)
+
+    broker.upsert_object_domain_facet(
+        target_kind="claim",
+        target_id="c1",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash=legal_profile["mapping_hash"],
+        confidence=0.8,
+    )
+    broker.upsert_object_domain_facet(
+        target_kind="claim",
+        target_id="c1",
+        domain_profile_id="finance",
+        domain_profile_version=1,
+        profile_mapping_hash=finance_profile["mapping_hash"],
+        confidence=0.6,
+    )
+    facets = broker.get_object_domain_facets("claim", "c1")
+    assert len(facets) == 2
+    assert facets[0]["confidence"] > facets[1]["confidence"]
+    profile_ids = {f["domain_profile_id"] for f in facets}
+    assert profile_ids == {"legal", "finance"}
+
+
+def test_record_and_get_domain_composition():
+    db, broker, matter_id = _setup_broker()
+    comp_hash = "sha256:test_comp_hash"
+    comp_id = broker.record_domain_composition(
+        composition_hash=comp_hash,
+        primary_profile_id="legal",
+        facets_json='[{"domain_profile_id":"legal","confidence":0.9}]',
+        composed_vocabulary_json='{"merged":true}',
+    )
+    assert comp_id
+
+    comp = broker.get_domain_composition(comp_hash)
+    assert comp is not None
+    assert comp["primary_profile_id"] == "legal"
+    assert comp["composition_hash"] == comp_hash
+
+    comp_id2 = broker.record_domain_composition(
+        composition_hash=comp_hash,
+        primary_profile_id="legal",
+        facets_json='[{"domain_profile_id":"legal","confidence":0.9}]',
+    )
+    assert comp_id2 == comp_id
+
+
+def test_get_domain_composition_not_found():
+    db, broker, matter_id = _setup_broker()
+    assert broker.get_domain_composition("sha256:nonexistent") is None
+
+
+def test_record_unknown_domain_candidate():
+    db, broker, matter_id = _setup_broker()
+    cluster_hash = "sha256:unknown_cluster_1"
+    cand_id = broker.record_unknown_domain_candidate(
+        evidence_cluster_hash=cluster_hash,
+        signals_json='{"lexical":["unknown_term1","unknown_term2"]}',
+        evidence_refs_json='["lexical:unknown:3"]',
+    )
+    assert cand_id
+
+    cand_id2 = broker.record_unknown_domain_candidate(
+        evidence_cluster_hash=cluster_hash,
+        signals_json='{"lexical":["unknown_term1","unknown_term2","unknown_term3"]}',
+        evidence_refs_json='["lexical:unknown:5"]',
+    )
+    assert cand_id2 == cand_id
+
+    row = broker.db.execute(
+        "SELECT occurrence_count FROM unknown_domain_candidate WHERE id=?",
+        (cand_id,),
+    ).fetchone()
+    assert row["occurrence_count"] == 2
+
+
+def test_facet_status_filter():
+    db, broker, matter_id = _setup_broker()
+    profile = broker.get_domain_profile("legal", 1)
+    broker.upsert_object_domain_facet(
+        target_kind="claim",
+        target_id="c1",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash=profile["mapping_hash"],
+        confidence=0.9,
+        status="active",
+    )
+    broker.upsert_object_domain_facet(
+        target_kind="claim",
+        target_id="c1",
+        domain_profile_id="finance",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:fin_hash",
+        confidence=0.5,
+        status="candidate",
+    )
+
+    active = broker.get_object_domain_facets("claim", "c1", status="active")
+    assert len(active) == 1
+    assert active[0]["domain_profile_id"] == "legal"
+
+    all_facets = broker.get_object_domain_facets("claim", "c1", status=None)
+    assert len(all_facets) == 2

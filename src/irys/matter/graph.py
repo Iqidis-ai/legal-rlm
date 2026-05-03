@@ -6280,6 +6280,202 @@ class MemoryBrokerStore:
         d["model_call_id"] = row["model_call_id"]
         return MemoryPacket.from_dict(d)
 
+    # ------------------------------------------------------------------
+    # Domain facet / composition broker methods (Phase 2)
+    # ------------------------------------------------------------------
+
+    def record_domain_detection_event(
+        self,
+        *,
+        target_kind: str,
+        target_id: str,
+        candidate_profile_id: str,
+        candidate_profile_version: int,
+        confidence: float,
+        signals_json: str = "{}",
+        evidence_refs_json: str = "[]",
+        detector_version: str = "v0",
+        span_id: str | None = None,
+    ) -> str:
+        row_id = _id()
+        now = _now()
+        self.db.execute(
+            """INSERT INTO domain_detection_event
+               (id, matter_id, target_kind, target_id, span_id,
+                candidate_profile_id, candidate_profile_version,
+                confidence, signals_json, evidence_refs_json,
+                detector_version, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                row_id, self.matter_id, target_kind, target_id, span_id,
+                candidate_profile_id, int(candidate_profile_version),
+                float(confidence), signals_json, evidence_refs_json,
+                detector_version, now,
+            ),
+        )
+        self.bump_namespace_revision("domain_detection", target_kind, target_id)
+        return row_id
+
+    def upsert_object_domain_facet(
+        self,
+        *,
+        target_kind: str,
+        target_id: str,
+        domain_profile_id: str,
+        domain_profile_version: int,
+        profile_mapping_hash: str,
+        confidence: float,
+        status: str = "active",
+        detection_event_id: str | None = None,
+    ) -> str:
+        now = _now()
+        version = int(domain_profile_version)
+        with self.db.transaction():
+            existing = self.db.execute(
+                """SELECT id FROM object_domain_facet
+                   WHERE matter_id=? AND target_kind=? AND target_id=?
+                     AND domain_profile_id=? AND domain_profile_version=?
+                     AND profile_mapping_hash=?""",
+                (
+                    self.matter_id, target_kind, target_id,
+                    domain_profile_id, version, profile_mapping_hash,
+                ),
+            ).fetchone()
+            if existing:
+                self.db.execute(
+                    """UPDATE object_domain_facet
+                       SET confidence=?, status=?, detection_event_id=?
+                       WHERE id=?""",
+                    (float(confidence), status, detection_event_id, existing["id"]),
+                )
+                row_id = existing["id"]
+            else:
+                row_id = _id()
+                self.db.execute(
+                    """INSERT INTO object_domain_facet
+                       (id, matter_id, target_kind, target_id,
+                        domain_profile_id, domain_profile_version,
+                        profile_mapping_hash, confidence, status,
+                        detection_event_id, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        row_id, self.matter_id, target_kind, target_id,
+                        domain_profile_id, version, profile_mapping_hash,
+                        float(confidence), status, detection_event_id, now,
+                    ),
+                )
+            self.bump_namespace_revision("domain_facets", target_kind, target_id)
+        return row_id
+
+    def get_object_domain_facets(
+        self,
+        target_kind: str,
+        target_id: str,
+        *,
+        status: str | None = "active",
+    ) -> list[dict]:
+        if status:
+            rows = self.db.execute(
+                """SELECT * FROM object_domain_facet
+                   WHERE matter_id=? AND target_kind=? AND target_id=? AND status=?
+                   ORDER BY confidence DESC""",
+                (self.matter_id, target_kind, target_id, status),
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                """SELECT * FROM object_domain_facet
+                   WHERE matter_id=? AND target_kind=? AND target_id=?
+                   ORDER BY confidence DESC""",
+                (self.matter_id, target_kind, target_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_domain_composition(
+        self,
+        *,
+        composition_hash: str,
+        primary_profile_id: str | None,
+        facets_json: str,
+        composed_vocabulary_json: str = "{}",
+        status: str = "current",
+    ) -> str:
+        now = _now()
+        with self.db.transaction():
+            existing = self.db.execute(
+                """SELECT id FROM domain_composition
+                   WHERE matter_id=? AND composition_hash=?""",
+                (self.matter_id, composition_hash),
+            ).fetchone()
+            if existing:
+                return existing["id"]
+            row_id = _id()
+            self.db.execute(
+                """INSERT INTO domain_composition
+                   (id, matter_id, composition_hash, primary_profile_id,
+                    facets_json, composed_vocabulary_json, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    row_id, self.matter_id, composition_hash,
+                    primary_profile_id, facets_json,
+                    composed_vocabulary_json, status, now,
+                ),
+            )
+            self.bump_namespace_revision(
+                "domain_compositions", "composition", composition_hash,
+            )
+        return row_id
+
+    def get_domain_composition(
+        self,
+        composition_hash: str,
+    ) -> dict | None:
+        row = self.db.execute(
+            """SELECT * FROM domain_composition
+               WHERE matter_id=? AND composition_hash=?""",
+            (self.matter_id, composition_hash),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def record_unknown_domain_candidate(
+        self,
+        *,
+        evidence_cluster_hash: str,
+        signals_json: str = "{}",
+        evidence_refs_json: str = "[]",
+    ) -> str:
+        now = _now()
+        with self.db.transaction():
+            existing = self.db.execute(
+                """SELECT id, occurrence_count FROM unknown_domain_candidate
+                   WHERE matter_id=? AND evidence_cluster_hash=?""",
+                (self.matter_id, evidence_cluster_hash),
+            ).fetchone()
+            if existing:
+                self.db.execute(
+                    """UPDATE unknown_domain_candidate
+                       SET occurrence_count=occurrence_count+1,
+                           signals_json=?, evidence_refs_json=?, updated_at=?
+                       WHERE id=?""",
+                    (signals_json, evidence_refs_json, now, existing["id"]),
+                )
+                return existing["id"]
+            row_id = _id()
+            self.db.execute(
+                """INSERT INTO unknown_domain_candidate
+                   (id, matter_id, evidence_cluster_hash,
+                    signals_json, evidence_refs_json,
+                    occurrence_count, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, 1, 'pending', ?, ?)""",
+                (
+                    row_id, self.matter_id, evidence_cluster_hash,
+                    signals_json, evidence_refs_json, now, now,
+                ),
+            )
+            self.bump_namespace_revision(
+                "unknown_domains", "cluster", evidence_cluster_hash,
+            )
+        return row_id
+
 
 class TrustOverrideStore:
     """User-set trust overrides for specific documents (SO-3 trust steering, SO-5 calibration).
