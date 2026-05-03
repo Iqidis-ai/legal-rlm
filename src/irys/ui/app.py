@@ -2178,7 +2178,44 @@ def _verification_pill(status: str | None) -> str:
     )
 
 
-def _fmt_assertions(assertions: list) -> str:
+_DOMAIN_BELIEF_LABELS: dict[str, dict[str, str]] = {
+    "finance": {
+        "alleged": "Reported", "argued": "Projected", "admitted": "Confirmed",
+        "operative": "Established", "performed": "Executed",
+        "not_performed": "Unexecuted", "disputed": "Challenged",
+        "superseded": "Revised", "withdrawn": "Retracted",
+        "inferred": "Derived", "resolved": "Settled", "unknown": "Undetermined",
+    },
+    "coding": {
+        "alleged": "Claimed", "argued": "Asserted", "admitted": "Acknowledged",
+        "operative": "Established", "performed": "Implemented",
+        "not_performed": "Not Implemented", "disputed": "Contested",
+        "superseded": "Deprecated", "withdrawn": "Removed",
+        "inferred": "Inferred", "resolved": "Resolved", "unknown": "Unknown",
+    },
+    "academic_research": {
+        "alleged": "Hypothesized", "argued": "Argued", "admitted": "Accepted",
+        "operative": "Established", "performed": "Demonstrated",
+        "not_performed": "Not Demonstrated", "disputed": "Disputed",
+        "superseded": "Superseded", "withdrawn": "Retracted",
+        "inferred": "Derived", "resolved": "Confirmed", "unknown": "Unknown",
+    },
+    "biomedical": {
+        "alleged": "Reported", "argued": "Argued", "admitted": "Acknowledged",
+        "operative": "Established", "performed": "Observed",
+        "not_performed": "Not Observed", "disputed": "Contested",
+        "superseded": "Superseded", "withdrawn": "Withdrawn",
+        "inferred": "Inferred", "resolved": "Confirmed", "unknown": "Undetermined",
+    },
+}
+
+
+def _domain_belief_label(state_raw: str, domain: str) -> str:
+    profile_map = _DOMAIN_BELIEF_LABELS.get(domain, {})
+    return profile_map.get(state_raw.lower(), state_raw.replace("_", " ").title())
+
+
+def _fmt_assertions(assertions: list, domain: str = "legal") -> str:
     if not assertions:
         return "<div class='viz-empty'>No assertions recorded yet.</div>"
     rows_html = ""
@@ -2187,8 +2224,9 @@ def _fmt_assertions(assertions: list) -> str:
         prop = _escape(a.get("proposition_text") or "")
         state_raw = a.get("belief_state") or "—"
         state_cls = state_raw.lower() if state_raw != "—" else "unknown"
+        state_label = _domain_belief_label(state_raw, domain) if state_raw != "—" else "—"
         state_cell = (
-            f"<span class='belief-pill belief-{state_cls}'>{_escape(state_raw)}</span>"
+            f"<span class='belief-pill belief-{state_cls}'>{_escape(state_label)}</span>"
             if state_raw != "—" else "—"
         )
         conf = f"{float(a.get('confidence', 0)):.2f}" if a.get("confidence") is not None else "—"
@@ -3279,8 +3317,12 @@ class AppState:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
-            assertions = _run_async(self.backend().list_assertions(matter_id, limit=50))
-            return _fmt_assertions(assertions)
+            backend = self.backend()
+            assertions = _run_async(backend.list_assertions(matter_id, limit=50))
+            overview = _run_async(backend.get_overview(matter_id))
+            dc = overview.get("domain_composition", {}) if isinstance(overview, dict) else {}
+            domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
+            return _fmt_assertions(assertions, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading assertions: {_escape(str(exc))}</div>"
 
@@ -3512,10 +3554,16 @@ class AppState:
                 "came from and every review action on it.</div>"
             )
 
+        _ov_domain = "legal"
+        if not isinstance(overview, BaseException) and isinstance(overview, dict):
+            _dc = overview.get("domain_composition", {})
+            if isinstance(_dc, dict):
+                _ov_domain = _dc.get("primary_domain_profile_id", "legal")
+
         assertions_html = (
             _err_html("assertions", assertions)
             if isinstance(assertions, BaseException)
-            else _fmt_assertions(assertions)
+            else _fmt_assertions(assertions, domain=_ov_domain)
         )
         issues_html = (
             _err_html("issues", issues)
