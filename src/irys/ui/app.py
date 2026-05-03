@@ -6885,51 +6885,57 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
         # --- Sidebar refresh (all panels at once) ---
         def _refresh_all(mid):
+            from concurrent.futures import ThreadPoolExecutor
+
             domain = state._detect_domain(mid)
-            overview = state.load_overview(mid)
-            issues = state.load_issues(mid)
-            gaps_text, top_issue = state.load_gaps(mid)
-            assumptions = state.load_assumptions(mid)
-            assertions = state.load_assertions(mid)
-            quant = state.load_quant(mid)
-            timeline = state.load_timeline(mid)
-            evidence = state.load_evidence_matrix(mid)
-            communication = state.load_communication_map(mid)
-            llm_analytics = state.load_llm_analytics(mid)
-            proof_state = state.load_proof_state(mid, domain=domain)
-            authority = state.load_authority_network(mid, domain=domain)
-            doc_intel = state.load_document_intelligence(mid, domain=domain)
-            belief_revisions = state.load_belief_revisions(mid, domain=domain)
-            contradictions = state.load_contradictions(mid, domain=domain)
-            doc_versions = state.load_document_versions(mid, domain=domain)
-            quant_thresholds = state.load_quant_thresholds(mid, domain=domain)
-            system_health = state.load_system_health(mid, domain=domain)
-            so_scorecard = state.load_so_scorecard(mid, domain=domain)
-            review_badge = state.load_review_count_badge(mid)
-            doc_choices = state.load_document_picker_choices(mid)
+
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                f_overview = pool.submit(state.load_overview, mid)
+                f_issues = pool.submit(state.load_issues, mid)
+                f_gaps = pool.submit(state.load_gaps, mid)
+                f_assumptions = pool.submit(state.load_assumptions, mid)
+                f_assertions = pool.submit(state.load_assertions, mid)
+                f_quant = pool.submit(state.load_quant, mid)
+                f_timeline = pool.submit(state.load_timeline, mid)
+                f_evidence = pool.submit(state.load_evidence_matrix, mid)
+                f_communication = pool.submit(state.load_communication_map, mid)
+                f_llm = pool.submit(state.load_llm_analytics, mid)
+                f_proof = pool.submit(state.load_proof_state, mid, domain=domain)
+                f_authority = pool.submit(state.load_authority_network, mid, domain=domain)
+                f_doc_intel = pool.submit(state.load_document_intelligence, mid, domain=domain)
+                f_belief = pool.submit(state.load_belief_revisions, mid, domain=domain)
+                f_contradictions = pool.submit(state.load_contradictions, mid, domain=domain)
+                f_doc_versions = pool.submit(state.load_document_versions, mid, domain=domain)
+                f_quant_thresh = pool.submit(state.load_quant_thresholds, mid, domain=domain)
+                f_sys_health = pool.submit(state.load_system_health, mid, domain=domain)
+                f_so_scorecard = pool.submit(state.load_so_scorecard, mid, domain=domain)
+                f_review = pool.submit(state.load_review_count_badge, mid)
+                f_docs = pool.submit(state.load_document_picker_choices, mid)
+
+            gaps_text, top_issue = f_gaps.result()
             return (
-                review_badge,
-                overview,
-                issues,
+                f_review.result(),
+                f_overview.result(),
+                f_issues.result(),
                 gaps_text,
-                assumptions,
-                assertions,
-                quant,
-                timeline,
-                evidence,
-                communication,
-                llm_analytics,
-                proof_state,
-                authority,
-                doc_intel,
-                belief_revisions,
-                contradictions,
-                doc_versions,
-                quant_thresholds,
-                system_health,
-                so_scorecard,
+                f_assumptions.result(),
+                f_assertions.result(),
+                f_quant.result(),
+                f_timeline.result(),
+                f_evidence.result(),
+                f_communication.result(),
+                f_llm.result(),
+                f_proof.result(),
+                f_authority.result(),
+                f_doc_intel.result(),
+                f_belief.result(),
+                f_contradictions.result(),
+                f_doc_versions.result(),
+                f_quant_thresh.result(),
+                f_sys_health.result(),
+                f_so_scorecard.result(),
                 top_issue,
-                gr.update(choices=doc_choices),
+                gr.update(choices=f_docs.result()),
                 gr.update(choices=_correction_dropdown_choices(domain), value=None),
             )
 
