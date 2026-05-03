@@ -6,9 +6,9 @@ specified later in this document are a target shape, not the runtime.
 `/matter/{matter_id}/...`. Those are the real production surface — read
 section "Current Implementation Status" below for what clients can actually
 call today.
-Date: 2026-04-15. Updated 2026-04-18 (adv#11 Fix 3 reconciliation — +3
-endpoints: review-queue/count, cost-breakdown, cost-anomalies; +route and
-family_payload fields on investigate responses).
+Date: 2026-04-15. Updated 2026-05-03 (CAS revision endpoints for
+correct/verify/reject, domain-composition endpoint, verify/revisions
+target validation).
 
 ## Current Implementation Status
 
@@ -31,7 +31,10 @@ spec row below so the two stay in sync.
 - `GET /matter/{matter_id}` (stats), `/overview`
 - `GET /matter/{matter_id}/issues`
 - `GET /matter/{matter_id}/assertions`, `/assertions/{assertion_id}/history`
-- `POST /matter/{matter_id}/assertions/{assertion_id}/correct`
+- `POST /matter/{matter_id}/assertions/{assertion_id}/correct` —
+  CAS-protected when `expected_revisions` provided (409 on stale view)
+- `GET /matter/{matter_id}/assertions/{assertion_id}/correct/revisions`
+  — snapshot namespace revisions for CAS-protected correction
 - `GET /matter/{matter_id}/gaps`
 - `GET /matter/{matter_id}/clarifications`,
   `POST /clarifications/{question_id}/answer`
@@ -42,7 +45,11 @@ spec row below so the two stay in sync.
 - `GET /matter/{matter_id}/review-queue`
 - `GET /matter/{matter_id}/review-queue/count` — cheap unread count for
   the sidebar badge (OPT-2a)
-- `POST /matter/{matter_id}/verify`
+- `POST /matter/{matter_id}/verify` — CAS-protected when
+  `expected_revisions` provided (409 on stale view)
+- `GET /matter/{matter_id}/verify/revisions` — snapshot namespace
+  revisions for CAS-protected verify/reject (validates target existence
+  for concrete kinds: assertion, evidence_edge, quant_fact)
 - `POST /matter/{matter_id}/verify/bulk-by-document`
 - `POST /matter/{matter_id}/verify/bulk-by-span`
 - `GET /matter/{matter_id}/verification-events`
@@ -63,6 +70,10 @@ spec row below so the two stay in sync.
 - `GET /matter/{matter_id}/steering-surface`
 - `POST /matter/{matter_id}/trust-overrides` (+ `GET`, `DELETE`)
 - `POST /matter/{matter_id}/annotations` (+ `GET`, `DELETE`)
+
+**Domain composition (SO-5)**
+- `GET /matter/{matter_id}/domain-composition` — primary domain,
+  facets with confidence, composed trust weights, detection events
 
 **SO-6 quantitative**
 - `GET /matter/{matter_id}/reconciliation`, `/reconciliation/invoices`,
