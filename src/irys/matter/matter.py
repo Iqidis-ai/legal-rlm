@@ -118,7 +118,7 @@ class MatterModel:
         self.provenance = ProvenanceStore(db, matter_id)
         self.content_policy = ContentPolicyGuard(db, matter_id)
         self.memory_broker = MemoryBrokerStore(db, matter_id)
-        self.memory_broker.ensure_default_legal_profile()
+        self.memory_broker.ensure_builtin_domain_profiles()
         # In-memory snapshot of assertion counts captured at run start.
         # Keyed by run_id.  Allows complete_run() to compute reuse_rate without
         # an extra SELECT round-trip (DB is the authoritative fallback).

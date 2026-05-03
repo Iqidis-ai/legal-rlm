@@ -224,6 +224,9 @@ def test_memory_broker_store_round_trips_substrate_state():
     source_mapping_profile_rev_before = broker.get_namespace_revision(
         "profile_mappings", "profile", "legal"
     )
+    finance_profile_rev_before = broker.get_namespace_revision(
+        "profile_mappings", "profile", "finance"
+    )
     mapping_id = broker.record_profile_mapping(
         source_domain_profile_id="legal",
         source_domain_profile_version=1,
@@ -239,7 +242,7 @@ def test_memory_broker_store_round_trips_substrate_state():
     assert mappings[0]["id"] == mapping_id
     assert mappings[0]["compatibility_status"] == "requires_transform"
     assert broker.get_namespace_revision("profile_mappings") == mapping_rev_before + 1
-    assert broker.get_namespace_revision("profile_mappings", "profile", "finance") == 1
+    assert broker.get_namespace_revision("profile_mappings", "profile", "finance") == finance_profile_rev_before + 1
     assert (
         broker.get_namespace_revision("profile_mappings", "profile", "legal")
         == source_mapping_profile_rev_before + 1
@@ -381,11 +384,11 @@ def test_answer_clarification_does_not_create_or_overwrite_profile_mapping():
     model = MatterModel.open_in_memory()
     broker = model.memory_broker
     broker.upsert_domain_profile(
-        profile_id="finance",
+        profile_id="custom_unknown",
         profile_version=1,
-        profile_kind="finance",
+        profile_kind="custom_unknown",
         profile_json='{"metric":"revenue"}',
-        mapping_hash="sha256:finance-real",
+        mapping_hash="sha256:custom-unknown-real",
     )
     q_id = model.clarifications.add_question("Is revenue recognized ratably?")
 
@@ -393,16 +396,16 @@ def test_answer_clarification_does_not_create_or_overwrite_profile_mapping():
         model.answer_clarification(
             q_id,
             "Yes.",
-            domain_profile_id="finance",
+            domain_profile_id="custom_unknown",
             domain_profile_version=1,
         )
 
-    profile = broker.get_domain_profile("finance", 1)
+    profile = broker.get_domain_profile("custom_unknown", 1)
     assert profile is not None
     assert profile["profile_json"] == '{"metric":"revenue"}'
-    assert profile["mapping_hash"] == "sha256:finance-real"
+    assert profile["mapping_hash"] == "sha256:custom-unknown-real"
     assert broker.list_profile_mappings(
-        "finance",
+        "custom_unknown",
         target_kind="clarification",
         target_namespace="clarifications",
     ) == []

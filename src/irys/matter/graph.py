@@ -5790,6 +5790,44 @@ class MemoryBrokerStore:
             compatibility_status="identity",
         )
 
+    def ensure_builtin_domain_profiles(self) -> None:
+        from .domain_profiles import (
+            iter_builtin_domain_profiles,
+            iter_builtin_profile_mappings,
+        )
+
+        self.ensure_default_legal_profile()
+
+        for pid, pver, pkind, pjson, phash in iter_builtin_domain_profiles():
+            existing = self.get_domain_profile(pid, pver)
+            if existing is None:
+                self.upsert_domain_profile(
+                    profile_id=pid,
+                    profile_version=pver,
+                    profile_kind=pkind,
+                    profile_json=pjson,
+                    mapping_hash=phash,
+                )
+
+        legal_hash = self.default_legal_profile_hash()
+        for mapping in iter_builtin_profile_mappings(legal_hash):
+            existing_mappings = self.list_profile_mappings(
+                mapping["target_domain_profile_id"],
+                target_kind=mapping["target_kind"],
+                target_namespace=mapping["target_namespace"],
+            )
+            skip = False
+            for em in existing_mappings:
+                if (
+                    em.get("source_domain_profile_id") == mapping["source_domain_profile_id"]
+                    and int(em.get("source_domain_profile_version") or 0) == mapping["source_domain_profile_version"]
+                    and int(em.get("target_domain_profile_version") or 0) == mapping["target_domain_profile_version"]
+                ):
+                    skip = True
+                    break
+            if not skip:
+                self.record_profile_mapping(**mapping)
+
     # ----- Dependency manifest + memory packet methods --------------------
 
     def namespace_dependencies_for_keys(
