@@ -3006,12 +3006,103 @@ _OBJECTIVE_LABELS = {
     "transactional": "Transactional", "unknown": "Other",
 }
 
+_DOMAIN_DECISION_MAKER_CHOICES: dict[str, list[tuple[str, str]]] = {
+    "legal": [
+        ("Judge", "judge"), ("Partner", "partner"), ("Client", "client"),
+        ("Mediator", "mediator"), ("Arbitrator", "arbitrator"),
+        ("Regulator", "regulator"), ("Other", "unknown"),
+    ],
+    "finance": [
+        ("Portfolio Manager", "portfolio_manager"), ("Risk Officer", "risk_officer"),
+        ("Compliance Officer", "compliance_officer"), ("Auditor", "auditor"),
+        ("Board Member", "board_member"), ("Regulator", "regulator"),
+        ("Investor", "investor"), ("Other", "unknown"),
+    ],
+    "coding": [
+        ("Tech Lead", "tech_lead"), ("Product Manager", "product_manager"),
+        ("DevOps Engineer", "devops"), ("Security Engineer", "security"),
+        ("QA Engineer", "qa"), ("Architect", "architect"), ("Other", "unknown"),
+    ],
+    "academic_research": [
+        ("Principal Investigator", "pi"), ("Co-Investigator", "co_investigator"),
+        ("Peer Reviewer", "peer_reviewer"), ("Funding Agency", "funding_agency"),
+        ("Ethics Board", "ethics_board"), ("Department Head", "department_head"),
+        ("Other", "unknown"),
+    ],
+    "biomedical": [
+        ("Clinician", "clinician"), ("Trial Investigator", "trial_investigator"),
+        ("IRB / Ethics Board", "irb"), ("Regulator", "regulator"),
+        ("Patient Advocate", "patient_advocate"), ("Sponsor", "sponsor"),
+        ("Other", "unknown"),
+    ],
+}
 
-def _fmt_decision_context(ctx: "dict | None") -> str:
+_DOMAIN_OBJECTIVE_CHOICES: dict[str, list[tuple[str, str]]] = {
+    "legal": [
+        ("Motion Practice", "motion_practice"), ("Settlement", "settlement"),
+        ("Due Diligence", "diligence"), ("Audit", "audit"),
+        ("Advisory", "advisory"), ("Trial Prep", "trial_prep"),
+        ("Regulatory Response", "regulatory_response"),
+        ("Transactional", "transactional"), ("Other", "unknown"),
+    ],
+    "finance": [
+        ("Due Diligence", "diligence"), ("Audit", "audit"),
+        ("Compliance Review", "compliance_review"),
+        ("Portfolio Analysis", "portfolio_analysis"),
+        ("Risk Assessment", "risk_assessment"),
+        ("Valuation", "valuation"), ("Regulatory Filing", "regulatory_filing"),
+        ("Other", "unknown"),
+    ],
+    "coding": [
+        ("Bug Triage", "bug_triage"), ("Code Review", "code_review"),
+        ("Architecture Decision", "architecture_decision"),
+        ("Release Readiness", "release_readiness"),
+        ("Security Audit", "security_audit"),
+        ("Performance Analysis", "performance_analysis"), ("Other", "unknown"),
+    ],
+    "academic_research": [
+        ("Literature Review", "literature_review"),
+        ("Methodology Audit", "methodology_audit"),
+        ("Grant Writing", "grant_writing"), ("Replication Study", "replication"),
+        ("Systematic Review", "systematic_review"),
+        ("Ethics Review", "ethics_review"), ("Other", "unknown"),
+    ],
+    "biomedical": [
+        ("Clinical Trial Assessment", "clinical_trial"),
+        ("Drug Safety Review", "drug_safety"),
+        ("Protocol Review", "protocol_review"),
+        ("Regulatory Submission", "regulatory_submission"),
+        ("Literature Synthesis", "literature_synthesis"),
+        ("Diagnostic Workup", "diagnostic_workup"), ("Other", "unknown"),
+    ],
+}
+
+
+def _decision_maker_choices_for_domain(domain: str) -> list[tuple[str, str]]:
+    return _DOMAIN_DECISION_MAKER_CHOICES.get(
+        domain, _DOMAIN_DECISION_MAKER_CHOICES["legal"]
+    )
+
+
+def _objective_choices_for_domain(domain: str) -> list[tuple[str, str]]:
+    return _DOMAIN_OBJECTIVE_CHOICES.get(
+        domain, _DOMAIN_OBJECTIVE_CHOICES["legal"]
+    )
+
+
+def _fmt_decision_context(ctx: "dict | None", domain: str = "legal") -> str:
     if not ctx or not isinstance(ctx, dict):
         return "<div class='viz-empty'>No decision context set. Set one above to adjust how Irys frames its analysis.</div>"
-    maker = _DECISION_MAKER_LABELS.get(ctx.get("decision_maker_type", ""), ctx.get("decision_maker_type", "—"))
-    obj = _OBJECTIVE_LABELS.get(ctx.get("objective", ""), ctx.get("objective", "—"))
+    maker_choices = dict(
+        (v, k) for k, v in _decision_maker_choices_for_domain(domain)
+    )
+    obj_choices = dict(
+        (v, k) for k, v in _objective_choices_for_domain(domain)
+    )
+    maker_raw = ctx.get("decision_maker_type", "")
+    obj_raw = ctx.get("objective", "")
+    maker = maker_choices.get(maker_raw, _DECISION_MAKER_LABELS.get(maker_raw, maker_raw or "—"))
+    obj = obj_choices.get(obj_raw, _OBJECTIVE_LABELS.get(obj_raw, obj_raw or "—"))
     name = _escape(ctx.get("decision_maker_name") or "—")
     notes = _escape(ctx.get("strategic_notes") or "—")
     narrow = "Yes" if ctx.get("scope_narrow") else "No"
@@ -6667,6 +6758,15 @@ class AppState:
         except Exception:
             return []
 
+    def get_domain_dropdown_updates(self, matter_id: str) -> tuple:
+        domain = self._detect_domain(matter_id)
+        maker_choices = _decision_maker_choices_for_domain(domain)
+        obj_choices = _objective_choices_for_domain(domain)
+        return (
+            gr.update(choices=maker_choices, value=None),
+            gr.update(choices=obj_choices, value=None),
+        )
+
     def do_answer_clarification(
         self, matter_id: str, question_id: str, answer_text: str
     ) -> str:
@@ -6814,12 +6914,12 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading LLM analytics: {_escape(exc)}</div>"
 
-    def load_decision_context(self, matter_id: str) -> str:
+    def load_decision_context(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             ctx = _run_async(self.backend().get_decision_context(matter_id))
-            return _fmt_decision_context(ctx)
+            return _fmt_decision_context(ctx, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
@@ -6838,7 +6938,8 @@ class AppState:
                 strategic_notes=notes.strip() or None,
                 scope_narrow=narrow,
             ))
-            return "Decision context updated.", self.load_decision_context(matter_id)
+            domain = self._detect_domain(matter_id)
+            return "Decision context updated.", self.load_decision_context(matter_id, domain=domain)
         except Exception as exc:
             return f"Error: {_escape(str(exc))}", ""
 
@@ -8559,6 +8660,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[investigation_history_html],
+            ).then(
+                fn=lambda mid: state.get_domain_dropdown_updates(mid),
+                inputs=[matter_id_box],
+                outputs=[dc_maker_type, dc_objective],
             )
         else:
             submit_btn.click(
@@ -8621,6 +8726,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[investigation_history_html],
+            ).then(
+                fn=lambda mid: state.get_domain_dropdown_updates(mid),
+                inputs=[matter_id_box],
+                outputs=[dc_maker_type, dc_objective],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -8684,6 +8793,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[investigation_history_html],
+        ).then(
+            fn=lambda mid: state.get_domain_dropdown_updates(mid),
+            inputs=[matter_id_box],
+            outputs=[dc_maker_type, dc_objective],
         )
 
         export_report_btn.click(
@@ -8702,7 +8815,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[annotation_result, annotations_html],
         )
         refresh_dc_btn.click(
-            fn=lambda mid: state.load_decision_context(mid),
+            fn=lambda mid: state.load_decision_context(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[decision_context_html],
         )

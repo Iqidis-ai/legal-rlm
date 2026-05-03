@@ -787,6 +787,54 @@ def test_fmt_decision_context_with_data():
     assert "Yes" in result
 
 
+def test_fmt_decision_context_finance_domain():
+    from irys.ui.app import _fmt_decision_context
+    result = _fmt_decision_context({
+        "decision_maker_type": "risk_officer",
+        "objective": "compliance_review",
+    }, domain="finance")
+    assert "Risk Officer" in result
+    assert "Compliance" in result
+
+
+def test_fmt_decision_context_coding_domain():
+    from irys.ui.app import _fmt_decision_context
+    result = _fmt_decision_context({
+        "decision_maker_type": "tech_lead",
+        "objective": "code_review",
+    }, domain="coding")
+    assert "Tech Lead" in result
+    assert "Code Review" in result
+
+
+def test_fmt_decision_context_biomedical_domain():
+    from irys.ui.app import _fmt_decision_context
+    result = _fmt_decision_context({
+        "decision_maker_type": "clinician",
+        "objective": "drug_safety",
+    }, domain="biomedical")
+    assert "Clinician" in result
+    assert "Drug Safety" in result
+
+
+def test_decision_maker_choices_all_domains():
+    from irys.ui.app import _decision_maker_choices_for_domain
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        choices = _decision_maker_choices_for_domain(domain)
+        assert len(choices) >= 5, f"{domain} has too few choices"
+        values = [v for _, v in choices]
+        assert "unknown" in values, f"{domain} missing 'Other' fallback"
+
+
+def test_objective_choices_all_domains():
+    from irys.ui.app import _objective_choices_for_domain
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        choices = _objective_choices_for_domain(domain)
+        assert len(choices) >= 5, f"{domain} has too few choices"
+        values = [v for _, v in choices]
+        assert "unknown" in values, f"{domain} missing 'Other' fallback"
+
+
 # ---------------------------------------------------------------------------
 # Quantitative panel (SO-6)
 # ---------------------------------------------------------------------------
