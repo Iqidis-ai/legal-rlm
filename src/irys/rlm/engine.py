@@ -547,6 +547,7 @@ Content:
 
 Query Context: {query}
 Current Investigation Focus: {focus}
+{domain_vocabulary}
 
 CONDUCT A FOCUSED ANALYSIS. IMPORTANT: Keep response under 4000 characters total.
 
@@ -653,6 +654,67 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
     "unresolved_flags": ["any open questions about this document"]
 }}
 """
+
+_DOMAIN_DEEP_READ_VOCABULARY = {
+    "legal": (
+        "DOMAIN CONTEXT: Legal matter analysis.\n"
+        "- doc_type priorities: contract, filing, correspondence, order, memo, exhibit, report, invoice, notice\n"
+        "- Source roles: advocacy (briefs, motions), operative (executed agreements, orders), "
+        "authoritative (statutes, regulations), procedural (filings, applications)\n"
+        "- Key predicates: agreed_to_pay, breached_obligation, executed_contract, filed_motion, "
+        "disputes_claim, owes_damages, failed_to_perform, warranted_condition\n"
+        "- Numeric focus: damages, payment amounts, contract values, deadlines, limitation periods"
+    ),
+    "finance": (
+        "DOMAIN CONTEXT: Financial analysis.\n"
+        "- doc_type priorities: report (10-K, 10-Q, annual report), correspondence (analyst note, "
+        "earnings call transcript), filing (SEC filing, regulatory submission), memo (investment memo, "
+        "credit memo), invoice, notice (guidance update, earnings warning)\n"
+        "- Source roles: advocacy (management commentary, investor presentations), operative (loan "
+        "agreements, indentures), authoritative (auditor opinions, regulatory standards), "
+        "informal (analyst estimates, market commentary)\n"
+        "- Key predicates: reported_revenue, recognized_expense, disclosed_risk, restated_earnings, "
+        "breached_covenant, exceeded_guidance, downgraded_rating, missed_estimate\n"
+        "- Numeric focus: revenue, EBITDA, margins, debt/equity ratios, guidance ranges, EPS"
+    ),
+    "coding": (
+        "DOMAIN CONTEXT: Software engineering analysis.\n"
+        "- doc_type priorities: report (design doc, architecture doc, test report), filing (PR, issue, "
+        "RFC), correspondence (code review, commit message), memo (decision record, postmortem), "
+        "notice (deprecation notice, security advisory)\n"
+        "- Source roles: advocacy (proposal, RFC), operative (merged PR, release notes), "
+        "authoritative (specification, standard, official documentation), "
+        "informal (commit message, chat, code comment)\n"
+        "- Key predicates: introduced_bug, fixed_issue, deprecated_api, changed_behavior, "
+        "added_dependency, removed_feature, violated_constraint, passed_test\n"
+        "- Numeric focus: latency, error rates, test coverage, LOC, version numbers, SLA thresholds"
+    ),
+    "academic_research": (
+        "DOMAIN CONTEXT: Academic research analysis.\n"
+        "- doc_type priorities: report (journal article, conference paper, thesis), filing (grant "
+        "proposal, IRB submission), memo (research note, lab notebook), notice (retraction, "
+        "correction, erratum), correspondence (peer review, editorial decision)\n"
+        "- Source roles: advocacy (grant proposal, position paper), operative (published findings, "
+        "accepted methodology), authoritative (peer-reviewed journal, systematic review, meta-analysis), "
+        "post_hoc (commentary, retrospective analysis)\n"
+        "- Key predicates: demonstrated_effect, found_no_significance, replicated_finding, "
+        "contradicted_hypothesis, measured_outcome, controlled_for_variable\n"
+        "- Numeric focus: p-values, effect sizes, confidence intervals, sample sizes, R-squared"
+    ),
+    "biomedical": (
+        "DOMAIN CONTEXT: Biomedical / clinical analysis.\n"
+        "- doc_type priorities: report (clinical trial report, case study, lab results), filing (FDA "
+        "submission, IND application, NDA), memo (clinical protocol, investigator brochure), "
+        "correspondence (FDA letter, DSMB report), notice (safety alert, label change)\n"
+        "- Source roles: advocacy (sponsor materials, marketing claims), operative (FDA-approved label, "
+        "clinical protocol), authoritative (clinical guideline, systematic review, Phase III results), "
+        "post_hoc (case report, retrospective analysis, real-world evidence)\n"
+        "- Key predicates: demonstrated_efficacy, showed_adverse_event, met_primary_endpoint, "
+        "failed_safety_threshold, exceeded_non_inferiority_margin, achieved_response_rate\n"
+        "- Numeric focus: hazard ratios, odds ratios, NNT, p-values, survival rates, dosage, AE frequency"
+    ),
+}
+
 
 # Used when the primary extraction returned zero SPO triples (SO-2 validated extraction).
 # A single targeted retry extracts structured triples from the already-extracted fact texts,
@@ -5245,12 +5307,22 @@ Return:
                 _excerpt_chars = self.config.excerpt_chars
             content = doc.get_excerpt(_excerpt_chars)
 
+            _domain = "legal"
+            try:
+                _, _, _primary = self._matter_model._read_matter_domain_composition()
+                if _primary:
+                    _domain = _primary
+            except Exception:
+                pass
+            _vocab = _DOMAIN_DEEP_READ_VOCABULARY.get(_domain, _DOMAIN_DEEP_READ_VOCABULARY["legal"])
+
             prompt = DEEP_READ_PROMPT.format(
                 filename=doc.filename,
                 page_range=f"1-{doc.page_count}",
                 content=content,
                 query=state.query,
                 focus=state.hypothesis or state.query,
+                domain_vocabulary=_vocab,
             )
 
             # Use LITE for bulk reading; JSON mode forces valid JSON output
