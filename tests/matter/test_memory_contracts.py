@@ -265,3 +265,72 @@ def test_namespace_dependency_revision_key():
     assert d1.revision_key() == "claims:*"
     d2 = NamespaceDependency("claims", "assertion", "a1", 2)
     assert d2.revision_key() == "claims:assertion:a1"
+
+
+def test_section_audit_dict_includes_text():
+    sec = MemoryPacketSection(
+        section_id="s1",
+        section_kind="assertions",
+        text="important content here",
+        text_hash="sha256:abc",
+        token_estimate=10,
+        materiality="high",
+        policy_status="clean",
+        selector_reason="relevant",
+    )
+    canonical = sec.to_canonical_dict()
+    assert "text" not in canonical
+    audit = sec.to_audit_dict()
+    assert audit["text"] == "important content here"
+    assert audit["section_id"] == "s1"
+
+
+def test_packet_audit_dict_includes_text_and_ids():
+    sec = MemoryPacketSection(
+        section_id="s1",
+        section_kind="assertions",
+        text="the full text",
+        text_hash="sha256:txt",
+        token_estimate=5,
+        materiality="high",
+        policy_status="clean",
+        selector_reason="relevant",
+    )
+    p = MemoryPacket(
+        packet_id="pk1",
+        matter_id="m1",
+        request_hash="sha256:req",
+        purpose="test",
+        policy_audience="internal",
+        taint_class="clean",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:map",
+        dependency_manifest_hash="sha256:dm",
+        sections=(sec,),
+        run_id="run1",
+        model_call_id="mc1",
+    )
+    audit = p.to_audit_dict()
+    assert audit["packet_id"] == "pk1"
+    assert audit["run_id"] == "run1"
+    assert audit["model_call_id"] == "mc1"
+    assert audit["sections"][0]["text"] == "the full text"
+
+    audit_json = p.to_audit_json()
+    parsed = json.loads(audit_json)
+    assert parsed["sections"][0]["text"] == "the full text"
+    recovered = MemoryPacket.from_dict(parsed)
+    assert recovered.sections[0].text == "the full text"
+    assert recovered.packet_hash() == p.packet_hash()
+
+
+def test_canonical_json_rejects_nan():
+    from irys.matter.memory_contracts import _canonical_json
+    import math
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError):
+        _canonical_json({"val": float("nan")})
+    with _pytest.raises(ValueError):
+        _canonical_json({"val": math.inf})

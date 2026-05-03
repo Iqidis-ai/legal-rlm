@@ -233,3 +233,156 @@ def test_manifest_idempotent_insert():
     id1 = broker.record_dependency_manifest(manifest)
     id2 = broker.record_dependency_manifest(manifest)
     assert id1 == id2
+
+
+def test_manifest_idempotent_insert_does_not_bump_namespace():
+    db, broker, matter_id = _setup_broker()
+    manifest = _make_manifest(broker, matter_id)
+    broker.record_dependency_manifest(manifest)
+    rev_after_first = broker.get_namespace_revision("dependency_manifests")
+    broker.record_dependency_manifest(manifest)
+    rev_after_second = broker.get_namespace_revision("dependency_manifests")
+    assert rev_after_first == rev_after_second
+
+
+def test_packet_idempotent_by_hash_returns_existing():
+    db, broker, matter_id = _setup_broker()
+    manifest = _make_manifest(broker, matter_id)
+    broker.record_dependency_manifest(manifest)
+    manifest_hash = manifest.manifest_hash()
+    profile = broker.get_domain_profile("legal", 1)
+    mapping_hash = broker.current_profile_mapping_hash(
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        target_kind="clarification",
+        target_namespace="clarifications",
+    )
+
+    kwargs = dict(
+        matter_id=matter_id,
+        request_hash="sha256:req1",
+        purpose="synthesis",
+        policy_audience="internal",
+        taint_class="clean",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash=mapping_hash or profile["mapping_hash"],
+        dependency_manifest_hash=manifest_hash,
+    )
+    p1 = MemoryPacket(packet_id="pk-1", **kwargs)
+    id1 = broker.record_memory_packet_event(p1)
+    p2 = MemoryPacket(packet_id="pk-2", **kwargs)
+    id2 = broker.record_memory_packet_event(p2)
+    assert id1 == id2
+
+
+def test_packet_idempotent_insert_does_not_bump_namespace():
+    db, broker, matter_id = _setup_broker()
+    manifest = _make_manifest(broker, matter_id)
+    broker.record_dependency_manifest(manifest)
+    manifest_hash = manifest.manifest_hash()
+    profile = broker.get_domain_profile("legal", 1)
+    mapping_hash = broker.current_profile_mapping_hash(
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        target_kind="clarification",
+        target_namespace="clarifications",
+    )
+
+    p = MemoryPacket(
+        packet_id="pk-1",
+        matter_id=matter_id,
+        request_hash="sha256:req1",
+        purpose="synthesis",
+        policy_audience="internal",
+        taint_class="clean",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash=mapping_hash or profile["mapping_hash"],
+        dependency_manifest_hash=manifest_hash,
+    )
+    broker.record_memory_packet_event(p)
+    rev_after_first = broker.get_namespace_revision("memory_packets")
+    broker.record_memory_packet_event(p)
+    rev_after_second = broker.get_namespace_revision("memory_packets")
+    assert rev_after_first == rev_after_second
+
+
+def test_packet_event_persists_section_text():
+    db, broker, matter_id = _setup_broker()
+    manifest = _make_manifest(broker, matter_id)
+    broker.record_dependency_manifest(manifest)
+    manifest_hash = manifest.manifest_hash()
+    profile = broker.get_domain_profile("legal", 1)
+    mapping_hash = broker.current_profile_mapping_hash(
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        target_kind="clarification",
+        target_namespace="clarifications",
+    )
+
+    sec = MemoryPacketSection(
+        section_id="s1",
+        section_kind="assertions",
+        text="important legal text that must survive persistence",
+        text_hash="sha256:content",
+        token_estimate=10,
+        materiality="high",
+        policy_status="clean",
+        selector_reason="relevant",
+    )
+    p = MemoryPacket(
+        packet_id="pk-1",
+        matter_id=matter_id,
+        request_hash="sha256:req1",
+        purpose="synthesis",
+        policy_audience="internal",
+        taint_class="clean",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash=mapping_hash or profile["mapping_hash"],
+        dependency_manifest_hash=manifest_hash,
+        sections=(sec,),
+    )
+    broker.record_memory_packet_event(p)
+    loaded = broker.get_memory_packet_event(packet_id="pk-1")
+    assert loaded is not None
+    assert loaded.sections[0].text == "important legal text that must survive persistence"
+
+
+def test_validation_checks_profile_existence():
+    db, broker, matter_id = _setup_broker()
+    ns_deps = broker.namespace_dependencies_for_keys(("claims:*",))
+    manifest = DependencyManifest(
+        matter_id=matter_id,
+        purpose="test",
+        policy_audience="internal",
+        taint_class="clean",
+        domain_profile_id="nonexistent_domain",
+        domain_profile_version=99,
+        profile_mapping_hash="sha256:fake",
+        namespace_dependencies=tuple(ns_deps),
+    )
+    broker.record_dependency_manifest(manifest)
+    result = broker.validate_dependency_manifest(manifest.manifest_hash())
+    assert result.valid is False
+    assert any("domain_profile" in r for r in result.stale_reasons)
+
+
+def test_validation_checks_mapping_hash():
+    db, broker, matter_id = _setup_broker()
+    ns_deps = broker.namespace_dependencies_for_keys(("claims:*",))
+    manifest = DependencyManifest(
+        matter_id=matter_id,
+        purpose="test",
+        policy_audience="internal",
+        taint_class="clean",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:nonexistent_mapping",
+        namespace_dependencies=tuple(ns_deps),
+    )
+    broker.record_dependency_manifest(manifest)
+    result = broker.validate_dependency_manifest(manifest.manifest_hash())
+    assert result.valid is False
+    assert any("profile_mapping_hash" in r for r in result.stale_reasons)

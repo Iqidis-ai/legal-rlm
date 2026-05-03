@@ -16,7 +16,7 @@ BROKER_VERSION = "memory_coordination_v15"
 
 
 def _canonical_json(obj: Any) -> str:
-    return _json_mod.dumps(obj, sort_keys=True, separators=(",", ":"))
+    return _json_mod.dumps(obj, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _sha256(payload: str) -> str:
@@ -217,6 +217,11 @@ class MemoryPacketSection:
             "token_estimate": self.token_estimate,
         }
 
+    def to_audit_dict(self) -> dict:
+        d = self.to_canonical_dict()
+        d["text"] = self.text
+        return d
+
     def to_json(self) -> str:
         return _canonical_json(self.to_canonical_dict())
 
@@ -314,6 +319,22 @@ class MemoryPacket:
 
     def to_json(self) -> str:
         return _canonical_json(self.to_canonical_dict())
+
+    def to_audit_dict(self) -> dict:
+        d = self.to_canonical_dict()
+        d["sections"] = sorted(
+            [s.to_audit_dict() for s in self.sections],
+            key=lambda x: x["section_id"],
+        )
+        d["packet_id"] = self.packet_id
+        if self.run_id is not None:
+            d["run_id"] = self.run_id
+        if self.model_call_id is not None:
+            d["model_call_id"] = self.model_call_id
+        return d
+
+    def to_audit_json(self) -> str:
+        return _canonical_json(self.to_audit_dict())
 
     def packet_hash(self) -> str:
         return _sha256(self.to_json())

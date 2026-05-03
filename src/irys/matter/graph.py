@@ -5797,28 +5797,30 @@ class MemoryBrokerStore:
     ) -> list:
         from .memory_contracts import NamespaceDependency
 
+        key_list = list(keys)
         result = []
-        for key in keys:
-            namespace, target_kind, target_id = self.parse_revision_key(key)
-            revision = self._get_namespace_revision_in_tx(
-                namespace, target_kind, target_id
-            )
-            result.append(NamespaceDependency(
-                namespace=namespace,
-                target_kind=target_kind,
-                target_id=target_id,
-                revision=revision,
-            ))
+        with self.db.transaction():
+            for key in key_list:
+                namespace, target_kind, target_id = self.parse_revision_key(key)
+                revision = self._get_namespace_revision_in_tx(
+                    namespace, target_kind, target_id
+                )
+                result.append(NamespaceDependency(
+                    namespace=namespace,
+                    target_kind=target_kind,
+                    target_id=target_id,
+                    revision=revision,
+                ))
         return result
 
     def record_dependency_manifest(self, manifest) -> str:
-        from .memory_contracts import DependencyManifest, BROKER_VERSION
+        from .memory_contracts import BROKER_VERSION
 
         row_id = _id()
         now = _now()
         manifest_hash = manifest.manifest_hash()
         with self.db.write_transaction():
-            self.db.execute(
+            cursor = self.db.execute(
                 """INSERT INTO dependency_manifest
                    (id, matter_id, manifest_hash, broker_version, purpose,
                     policy_audience, taint_class, domain_profile_id,
@@ -5845,10 +5847,11 @@ class MemoryBrokerStore:
                     now,
                 ),
             )
-            self._bump_namespace_revision_in_tx("dependency_manifests", now=now)
-            self._bump_namespace_revision_in_tx(
-                "dependency_manifests", "manifest", manifest_hash, now=now
-            )
+            if cursor.rowcount > 0:
+                self._bump_namespace_revision_in_tx("dependency_manifests", now=now)
+                self._bump_namespace_revision_in_tx(
+                    "dependency_manifests", "manifest", manifest_hash, now=now
+                )
         row = self.db.execute(
             """SELECT id FROM dependency_manifest
                WHERE matter_id=? AND manifest_hash=?""",
@@ -5904,19 +5907,64 @@ class MemoryBrokerStore:
                     f"policy_audience {manifest.policy_audience} != {required_policy_audience}"
                 )
 
-        for ns_dep in manifest.namespace_dependencies:
-            namespace, target_kind, target_id = (
-                ns_dep.namespace,
-                ns_dep.target_kind,
-                ns_dep.target_id,
-            )
-            current = self.get_namespace_revision(namespace, target_kind, target_id)
-            key = ns_dep.revision_key()
-            current_revisions[key] = current
-            if current != ns_dep.revision:
-                stale_reasons.append(
-                    f"namespace {key}: expected {ns_dep.revision}, current {current}"
+        # Batch-load namespace revisions in a single read transaction
+        with self.db.transaction():
+            for ns_dep in manifest.namespace_dependencies:
+                key = ns_dep.revision_key()
+                current = self._get_namespace_revision_in_tx(
+                    ns_dep.namespace, ns_dep.target_kind, ns_dep.target_id
                 )
+                current_revisions[key] = current
+                if current != ns_dep.revision:
+                    stale_reasons.append(
+                        f"namespace {key}: expected {ns_dep.revision}, current {current}"
+                    )
+
+        # Validate domain profile currentness
+        profile_row = self.db.execute(
+            """SELECT mapping_hash FROM domain_profile
+               WHERE matter_id=? AND profile_id=? AND profile_version=?""",
+            (self.matter_id, manifest.domain_profile_id, manifest.domain_profile_version),
+        ).fetchone()
+        if profile_row is None:
+            stale_reasons.append(
+                f"domain_profile {manifest.domain_profile_id}:{manifest.domain_profile_version} not found"
+            )
+
+        # Validate profile mapping hash freshness
+        if manifest.profile_mapping_hash:
+            mapping_row = self.db.execute(
+                """SELECT id FROM profile_mapping
+                   WHERE matter_id=? AND source_mapping_hash=?""",
+                (self.matter_id, manifest.profile_mapping_hash),
+            ).fetchone()
+            if mapping_row is None:
+                mapping_row = self.db.execute(
+                    """SELECT id FROM profile_mapping
+                       WHERE matter_id=? AND target_mapping_hash=?""",
+                    (self.matter_id, manifest.profile_mapping_hash),
+                ).fetchone()
+            if mapping_row is None:
+                stale_reasons.append(
+                    f"profile_mapping_hash {manifest.profile_mapping_hash} not found"
+                )
+
+        # Validate object dependencies (row digests, versions, belief/verification states)
+        for obj_dep in manifest.object_dependencies:
+            obj_issues = self._validate_object_dependency(obj_dep)
+            stale_reasons.extend(obj_issues)
+
+        # Validate negative dependencies (namespace hasn't changed since predicate was checked)
+        with self.db.transaction():
+            for neg_dep in manifest.negative_dependencies:
+                current = self._get_namespace_revision_in_tx(
+                    neg_dep.namespace, "*", "*"
+                )
+                if current != neg_dep.revision:
+                    stale_reasons.append(
+                        f"negative_dep {neg_dep.namespace}:{neg_dep.query_predicate}: "
+                        f"expected revision {neg_dep.revision}, current {current}"
+                    )
 
         if stale_reasons:
             return DependencyValidationResult(
@@ -5934,8 +5982,44 @@ class MemoryBrokerStore:
             current_revisions=current_revisions,
         )
 
+    def _validate_object_dependency(self, obj_dep) -> list[str]:
+        issues: list[str] = []
+        kind = obj_dep.target_kind
+        oid = obj_dep.target_id
+
+        if kind == "assertions" or kind == "claim":
+            row = self.db.execute(
+                """SELECT id, verification_state FROM assertion
+                   WHERE matter_id=? AND id=?""",
+                (self.matter_id, oid),
+            ).fetchone()
+            if row is None:
+                issues.append(f"object_dep {kind}:{oid} not found")
+            elif obj_dep.verification_state and row["verification_state"] != obj_dep.verification_state:
+                issues.append(
+                    f"object_dep {kind}:{oid} verification_state changed: "
+                    f"expected {obj_dep.verification_state}, current {row['verification_state']}"
+                )
+        elif kind == "objective_nodes" or kind == "issue":
+            row = self.db.execute(
+                """SELECT id FROM issue WHERE matter_id=? AND id=?""",
+                (self.matter_id, oid),
+            ).fetchone()
+            if row is None:
+                issues.append(f"object_dep {kind}:{oid} not found")
+        elif kind == "evidence_edges" or kind == "support_edge":
+            row = self.db.execute(
+                """SELECT id FROM evidence_edge WHERE matter_id=? AND id=?""",
+                (self.matter_id, oid),
+            ).fetchone()
+            if row is None:
+                issues.append(f"object_dep {kind}:{oid} not found")
+        else:
+            pass
+        return issues
+
     def record_memory_packet_event(self, packet) -> str:
-        from .memory_contracts import MemoryPacket, BROKER_VERSION
+        from .memory_contracts import BROKER_VERSION
 
         row_id = _id()
         now = _now()
@@ -5952,8 +6036,18 @@ class MemoryBrokerStore:
                 f"{packet.dependency_manifest_hash}"
             )
 
+        # Check for existing row with same packet_hash but different packet_id
+        existing_by_hash = self.db.execute(
+            """SELECT id, packet_id FROM memory_packet_event
+               WHERE matter_id=? AND packet_hash=?""",
+            (self.matter_id, packet_hash),
+        ).fetchone()
+        if existing_by_hash is not None:
+            if existing_by_hash["packet_id"] != packet.packet_id:
+                return existing_by_hash["id"]
+
         with self.db.write_transaction():
-            self.db.execute(
+            cursor = self.db.execute(
                 """INSERT INTO memory_packet_event
                    (id, matter_id, packet_id, packet_hash, request_hash,
                     broker_version, purpose, policy_audience, taint_class,
@@ -5977,7 +6071,7 @@ class MemoryBrokerStore:
                     int(packet.domain_profile_version),
                     packet.profile_mapping_hash,
                     packet.dependency_manifest_hash,
-                    packet.to_json(),
+                    packet.to_audit_json(),
                     len(packet.sections),
                     len(packet.omitted_sections),
                     packet.answerability_state,
@@ -5986,10 +6080,11 @@ class MemoryBrokerStore:
                     now,
                 ),
             )
-            self._bump_namespace_revision_in_tx("memory_packets", now=now)
-            self._bump_namespace_revision_in_tx(
-                "memory_packets", "packet", packet.packet_id, now=now
-            )
+            if cursor.rowcount > 0:
+                self._bump_namespace_revision_in_tx("memory_packets", now=now)
+                self._bump_namespace_revision_in_tx(
+                    "memory_packets", "packet", packet.packet_id, now=now
+                )
         row = self.db.execute(
             """SELECT id FROM memory_packet_event
                WHERE matter_id=? AND packet_id=?""",
