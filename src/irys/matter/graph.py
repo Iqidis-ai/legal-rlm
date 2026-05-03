@@ -12,7 +12,7 @@ import json as _json_mod
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 _log = logging.getLogger(__name__)
 
@@ -5789,6 +5789,245 @@ class MemoryBrokerStore:
             target_namespace="clarifications",
             compatibility_status="identity",
         )
+
+    # ----- Dependency manifest + memory packet methods --------------------
+
+    def namespace_dependencies_for_keys(
+        self, keys: "Iterable[str]",
+    ) -> list:
+        from .memory_contracts import NamespaceDependency
+
+        result = []
+        for key in keys:
+            namespace, target_kind, target_id = self.parse_revision_key(key)
+            revision = self._get_namespace_revision_in_tx(
+                namespace, target_kind, target_id
+            )
+            result.append(NamespaceDependency(
+                namespace=namespace,
+                target_kind=target_kind,
+                target_id=target_id,
+                revision=revision,
+            ))
+        return result
+
+    def record_dependency_manifest(self, manifest) -> str:
+        from .memory_contracts import DependencyManifest, BROKER_VERSION
+
+        row_id = _id()
+        now = _now()
+        manifest_hash = manifest.manifest_hash()
+        with self.db.write_transaction():
+            self.db.execute(
+                """INSERT INTO dependency_manifest
+                   (id, matter_id, manifest_hash, broker_version, purpose,
+                    policy_audience, taint_class, domain_profile_id,
+                    domain_profile_version, profile_mapping_hash,
+                    manifest_json, namespace_fingerprint_json,
+                    object_dependency_count, negative_dependency_count, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(matter_id, manifest_hash) DO NOTHING""",
+                (
+                    row_id,
+                    self.matter_id,
+                    manifest_hash,
+                    BROKER_VERSION,
+                    manifest.purpose,
+                    manifest.policy_audience,
+                    manifest.taint_class,
+                    manifest.domain_profile_id,
+                    int(manifest.domain_profile_version),
+                    manifest.profile_mapping_hash,
+                    manifest.to_json(),
+                    manifest.namespace_fingerprint_json(),
+                    len(manifest.object_dependencies),
+                    len(manifest.negative_dependencies),
+                    now,
+                ),
+            )
+            self._bump_namespace_revision_in_tx("dependency_manifests", now=now)
+            self._bump_namespace_revision_in_tx(
+                "dependency_manifests", "manifest", manifest_hash, now=now
+            )
+        row = self.db.execute(
+            """SELECT id FROM dependency_manifest
+               WHERE matter_id=? AND manifest_hash=?""",
+            (self.matter_id, manifest_hash),
+        ).fetchone()
+        return row["id"] if row else row_id
+
+    def get_dependency_manifest(self, manifest_hash: str):
+        from .memory_contracts import DependencyManifest
+
+        row = self.db.execute(
+            """SELECT manifest_json FROM dependency_manifest
+               WHERE matter_id=? AND manifest_hash=?""",
+            (self.matter_id, manifest_hash),
+        ).fetchone()
+        if row is None:
+            return None
+        return DependencyManifest.from_dict(_json_mod.loads(row["manifest_json"]))
+
+    def validate_dependency_manifest(
+        self,
+        manifest_hash: str,
+        *,
+        allowed_taint_classes: set[str] | None = None,
+        required_policy_audience: str | None = None,
+    ):
+        from .memory_contracts import DependencyValidationResult
+
+        manifest = self.get_dependency_manifest(manifest_hash)
+        if manifest is None:
+            return DependencyValidationResult(
+                manifest_hash=manifest_hash,
+                valid=False,
+                status="not_found",
+                stale_reasons=("manifest not found",),
+            )
+
+        stale_reasons: list[str] = []
+        current_revisions: dict[str, int] = {}
+
+        if manifest.taint_class == "unknown_taint":
+            stale_reasons.append("unknown_taint never validates")
+
+        if allowed_taint_classes is not None:
+            if manifest.taint_class not in allowed_taint_classes:
+                stale_reasons.append(
+                    f"taint_class {manifest.taint_class} not in allowed set"
+                )
+
+        if required_policy_audience is not None:
+            if manifest.policy_audience != required_policy_audience:
+                stale_reasons.append(
+                    f"policy_audience {manifest.policy_audience} != {required_policy_audience}"
+                )
+
+        for ns_dep in manifest.namespace_dependencies:
+            namespace, target_kind, target_id = (
+                ns_dep.namespace,
+                ns_dep.target_kind,
+                ns_dep.target_id,
+            )
+            current = self.get_namespace_revision(namespace, target_kind, target_id)
+            key = ns_dep.revision_key()
+            current_revisions[key] = current
+            if current != ns_dep.revision:
+                stale_reasons.append(
+                    f"namespace {key}: expected {ns_dep.revision}, current {current}"
+                )
+
+        if stale_reasons:
+            return DependencyValidationResult(
+                manifest_hash=manifest_hash,
+                valid=False,
+                status="stale",
+                stale_reasons=tuple(stale_reasons),
+                current_revisions=current_revisions,
+            )
+
+        return DependencyValidationResult(
+            manifest_hash=manifest_hash,
+            valid=True,
+            status="valid",
+            current_revisions=current_revisions,
+        )
+
+    def record_memory_packet_event(self, packet) -> str:
+        from .memory_contracts import MemoryPacket, BROKER_VERSION
+
+        row_id = _id()
+        now = _now()
+        packet_hash = packet.packet_hash()
+
+        manifest_row = self.db.execute(
+            """SELECT id FROM dependency_manifest
+               WHERE matter_id=? AND manifest_hash=?""",
+            (self.matter_id, packet.dependency_manifest_hash),
+        ).fetchone()
+        if manifest_row is None:
+            raise MemoryBrokerPolicyError(
+                "Memory packet requires a persisted dependency manifest: "
+                f"{packet.dependency_manifest_hash}"
+            )
+
+        with self.db.write_transaction():
+            self.db.execute(
+                """INSERT INTO memory_packet_event
+                   (id, matter_id, packet_id, packet_hash, request_hash,
+                    broker_version, purpose, policy_audience, taint_class,
+                    domain_profile_id, domain_profile_version, profile_mapping_hash,
+                    dependency_manifest_hash, packet_json,
+                    section_count, omitted_section_count, answerability_state,
+                    run_id, model_call_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(matter_id, packet_id) DO NOTHING""",
+                (
+                    row_id,
+                    self.matter_id,
+                    packet.packet_id,
+                    packet_hash,
+                    packet.request_hash,
+                    BROKER_VERSION,
+                    packet.purpose,
+                    packet.policy_audience,
+                    packet.taint_class,
+                    packet.domain_profile_id,
+                    int(packet.domain_profile_version),
+                    packet.profile_mapping_hash,
+                    packet.dependency_manifest_hash,
+                    packet.to_json(),
+                    len(packet.sections),
+                    len(packet.omitted_sections),
+                    packet.answerability_state,
+                    packet.run_id,
+                    packet.model_call_id,
+                    now,
+                ),
+            )
+            self._bump_namespace_revision_in_tx("memory_packets", now=now)
+            self._bump_namespace_revision_in_tx(
+                "memory_packets", "packet", packet.packet_id, now=now
+            )
+        row = self.db.execute(
+            """SELECT id FROM memory_packet_event
+               WHERE matter_id=? AND packet_id=?""",
+            (self.matter_id, packet.packet_id),
+        ).fetchone()
+        return row["id"] if row else row_id
+
+    def get_memory_packet_event(
+        self,
+        *,
+        packet_hash: str | None = None,
+        packet_id: str | None = None,
+    ):
+        from .memory_contracts import MemoryPacket
+
+        if packet_hash is not None:
+            row = self.db.execute(
+                """SELECT packet_id, packet_json, run_id, model_call_id
+                   FROM memory_packet_event
+                   WHERE matter_id=? AND packet_hash=?""",
+                (self.matter_id, packet_hash),
+            ).fetchone()
+        elif packet_id is not None:
+            row = self.db.execute(
+                """SELECT packet_id, packet_json, run_id, model_call_id
+                   FROM memory_packet_event
+                   WHERE matter_id=? AND packet_id=?""",
+                (self.matter_id, packet_id),
+            ).fetchone()
+        else:
+            return None
+        if row is None:
+            return None
+        d = _json_mod.loads(row["packet_json"])
+        d["packet_id"] = row["packet_id"]
+        d["run_id"] = row["run_id"]
+        d["model_call_id"] = row["model_call_id"]
+        return MemoryPacket.from_dict(d)
 
 
 class TrustOverrideStore:

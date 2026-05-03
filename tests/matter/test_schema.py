@@ -32,6 +32,8 @@ def test_in_memory_db_creates_schema():
         # Memory broker substrate
         "namespace_revision", "object_taint",
         "domain_profile", "profile_mapping",
+        # v62: broker contracts
+        "dependency_manifest", "memory_packet_event",
     ]:
         assert required in tables, f"Missing table: {required}"
 
@@ -59,6 +61,20 @@ def test_memory_broker_substrate_tables_exist():
             "target_domain_profile_id",
             "compatibility_status",
             "target_namespace",
+        },
+        "dependency_manifest": {
+            "matter_id", "manifest_hash", "broker_version", "purpose",
+            "policy_audience", "taint_class", "domain_profile_id",
+            "domain_profile_version", "profile_mapping_hash",
+            "manifest_json", "namespace_fingerprint_json",
+            "object_dependency_count", "negative_dependency_count",
+        },
+        "memory_packet_event": {
+            "matter_id", "packet_id", "packet_hash", "request_hash",
+            "broker_version", "purpose", "policy_audience", "taint_class",
+            "domain_profile_id", "domain_profile_version",
+            "profile_mapping_hash", "dependency_manifest_hash",
+            "packet_json", "section_count", "omitted_section_count",
         },
     }
     for table, columns in expected_columns.items():

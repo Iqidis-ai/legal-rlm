@@ -4,7 +4,7 @@ Portable reference for the current Irys RLM implementation.
 
 Date captured: 2026-05-03 (updated from 2026-04-23)
 
-Current schema version: 61
+Current schema version: 62
 
 This file is intentionally standalone. It is written so it can be copied out of
 this repository and used as the basis for discussing a general-purpose ontology
@@ -187,7 +187,7 @@ This is important because conflict propagation is graph-shaped and can exceed a 
 
 ## 5. Exact Current SQLite Schema
 
-This section lists the live tables and columns after applying migrations for schema version 61.
+This section lists the live tables and columns after applying migrations for schema version 62.
 
 ### `actor`
 
@@ -1111,6 +1111,62 @@ created_at TEXT
 UNIQUE(matter_id, source_domain_profile_id, source_domain_profile_version,
        target_domain_profile_id, target_domain_profile_version,
        target_kind, target_namespace)
+```
+
+### `dependency_manifest` (v62)
+
+Purpose: persists a dependency manifest that records which namespace revisions,
+object states, and negative dependencies a reasoning computation depended on.
+Used for cache validation and audit.
+
+```text
+id TEXT PK
+matter_id TEXT
+manifest_hash TEXT
+broker_version TEXT
+purpose TEXT
+policy_audience TEXT
+taint_class TEXT
+domain_profile_id TEXT
+domain_profile_version INTEGER
+profile_mapping_hash TEXT
+manifest_json TEXT
+namespace_fingerprint_json TEXT
+object_dependency_count INTEGER
+negative_dependency_count INTEGER
+created_at TEXT
+UNIQUE(matter_id, manifest_hash)
+```
+
+### `memory_packet_event` (v62)
+
+Purpose: records the complete memory packet delivered to a reasoning stage,
+including which sections were included, which were omitted (and why), and
+the dependency manifest hash that binds it to broker freshness state.
+
+```text
+id TEXT PK
+matter_id TEXT
+packet_id TEXT
+packet_hash TEXT
+request_hash TEXT
+broker_version TEXT
+purpose TEXT
+policy_audience TEXT
+taint_class TEXT
+domain_profile_id TEXT
+domain_profile_version INTEGER
+profile_mapping_hash TEXT
+dependency_manifest_hash TEXT
+packet_json TEXT
+section_count INTEGER
+omitted_section_count INTEGER
+answerability_state TEXT
+run_id TEXT
+model_call_id TEXT
+created_at TEXT
+UNIQUE(matter_id, packet_id)
+UNIQUE(matter_id, packet_hash)
 ```
 
 ## 6. Core Enums And Vocabularies

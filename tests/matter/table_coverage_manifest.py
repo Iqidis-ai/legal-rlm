@@ -175,4 +175,15 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
         writers=("irys.matter.graph:MemoryBrokerStore.record_profile_mapping",),
         readers=("irys.matter.graph:MemoryBrokerStore.list_profile_mappings",),
     ),
+    "dependency_manifest": TableCoverageSpec(
+        writers=("irys.matter.graph:MemoryBrokerStore.record_dependency_manifest",),
+        readers=(
+            "irys.matter.graph:MemoryBrokerStore.get_dependency_manifest",
+            "irys.matter.graph:MemoryBrokerStore.validate_dependency_manifest",
+        ),
+    ),
+    "memory_packet_event": TableCoverageSpec(
+        writers=("irys.matter.graph:MemoryBrokerStore.record_memory_packet_event",),
+        readers=("irys.matter.graph:MemoryBrokerStore.get_memory_packet_event",),
+    ),
 }

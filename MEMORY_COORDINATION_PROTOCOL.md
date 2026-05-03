@@ -385,6 +385,8 @@ Required namespaces:
 - inference_calls
 - schema_state
 - migrations
+- dependency_manifests
+- memory_packets
 
 Every canonical table and read surface maps to one or more required namespaces.
 There is no "where practical" exception for migrated paths.
@@ -456,6 +458,8 @@ python tools\check_memory_namespace_coverage.py
 | `object_taint` | `object_taint:*`, `object_taint:<target_kind>:<target_id>`, `policy:*` |
 | `domain_profile` | `domain_profiles:*`, `domain_profiles:profile:<domain_profile_id>` |
 | `profile_mapping` | `profile_mappings:*`, `profile_mappings:profile:<domain_profile_id>`, `profile_mappings:mapping:<profile_mapping_hash>` |
+| `dependency_manifest` | `dependency_manifests:*`, `dependency_manifests:manifest:<manifest_hash>` |
+| `memory_packet_event` | `memory_packets:*`, `memory_packets:packet:<packet_id>` |
 
 Legacy canonical writes in a migrated namespace must either bump the required
 namespace revisions and carry taint/provenance, or be invisible to brokered

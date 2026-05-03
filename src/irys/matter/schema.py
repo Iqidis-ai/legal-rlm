@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 61
+SCHEMA_VERSION = 62
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -2964,6 +2964,70 @@ def _migration_v61(conn) -> None:
     conn.commit()
 
 
+def _migration_v62(conn) -> None:
+    """Add dependency_manifest and memory_packet_event tables for broker contracts."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS dependency_manifest (
+            id                      TEXT PRIMARY KEY,
+            matter_id               TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            manifest_hash           TEXT NOT NULL,
+            broker_version          TEXT NOT NULL,
+            purpose                 TEXT NOT NULL,
+            policy_audience         TEXT NOT NULL,
+            taint_class             TEXT NOT NULL,
+            domain_profile_id       TEXT NOT NULL,
+            domain_profile_version  INTEGER NOT NULL,
+            profile_mapping_hash    TEXT NOT NULL,
+            manifest_json           TEXT NOT NULL,
+            namespace_fingerprint_json TEXT NOT NULL,
+            object_dependency_count INTEGER NOT NULL DEFAULT 0,
+            negative_dependency_count INTEGER NOT NULL DEFAULT 0,
+            created_at              TEXT NOT NULL,
+            UNIQUE(matter_id, manifest_hash)
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_dependency_manifest_lookup"
+        " ON dependency_manifest(matter_id, manifest_hash)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_dependency_manifest_profile"
+        " ON dependency_manifest(matter_id, domain_profile_id,"
+        " domain_profile_version, profile_mapping_hash)"
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS memory_packet_event (
+            id                      TEXT PRIMARY KEY,
+            matter_id               TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            packet_id               TEXT NOT NULL,
+            packet_hash             TEXT NOT NULL,
+            request_hash            TEXT NOT NULL,
+            broker_version          TEXT NOT NULL,
+            purpose                 TEXT NOT NULL,
+            policy_audience         TEXT NOT NULL,
+            taint_class             TEXT NOT NULL,
+            domain_profile_id       TEXT NOT NULL,
+            domain_profile_version  INTEGER NOT NULL,
+            profile_mapping_hash    TEXT NOT NULL,
+            dependency_manifest_hash TEXT NOT NULL,
+            packet_json             TEXT NOT NULL,
+            section_count           INTEGER NOT NULL DEFAULT 0,
+            omitted_section_count   INTEGER NOT NULL DEFAULT 0,
+            answerability_state     TEXT,
+            run_id                  TEXT,
+            model_call_id           TEXT,
+            created_at              TEXT NOT NULL,
+            UNIQUE(matter_id, packet_id),
+            UNIQUE(matter_id, packet_hash)
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_memory_packet_event_manifest"
+        " ON memory_packet_event(matter_id, dependency_manifest_hash)"
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -3029,6 +3093,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (59, _migration_v59),
     (60, _migration_v60),
     (61, _migration_v61),
+    (62, _migration_v62),
 ]
 
 

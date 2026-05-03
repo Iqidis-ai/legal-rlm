@@ -24,6 +24,17 @@ from .graph import AssertionStore, GapStore, ActorStore, IssueStore, Clarificati
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
 from .runtime import MatterRuntimeAdapter, NullMatterAdapter, infer_source_role
+from .memory_contracts import (
+    BROKER_VERSION,
+    NamespaceDependency,
+    NegativeDependency,
+    ObjectDependency,
+    DependencyManifest,
+    MemoryPacketSection,
+    OmittedSection,
+    MemoryPacket,
+    DependencyValidationResult,
+)
 
 __all__ = [
     "MatterModel",
@@ -41,4 +52,9 @@ __all__ = [
     "BeliefRevisionEngine",
     # Runtime
     "MatterRuntimeAdapter", "NullMatterAdapter", "infer_source_role",
+    # Broker contracts
+    "BROKER_VERSION",
+    "NamespaceDependency", "NegativeDependency", "ObjectDependency",
+    "DependencyManifest", "MemoryPacketSection", "OmittedSection",
+    "MemoryPacket", "DependencyValidationResult",
 ]
