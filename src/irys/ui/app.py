@@ -1673,11 +1673,36 @@ def _fmt_authority_panel(data: dict, domain: str = "legal") -> str:
 
 
 _DOC_PANEL_LABELS = {
-    "legal": {"title": "Document Intelligence", "empty": "No document profiles yet. Run an investigation to analyze your documents."},
-    "finance": {"title": "Document Intelligence", "empty": "No document profiles yet. Run an investigation to analyze your filings."},
-    "coding": {"title": "Source Intelligence", "empty": "No source profiles yet. Run an investigation to analyze your codebase."},
-    "academic_research": {"title": "Document Intelligence", "empty": "No document profiles yet. Run an investigation to analyze your papers."},
-    "biomedical": {"title": "Document Intelligence", "empty": "No document profiles yet. Run an investigation to analyze your reports."},
+    "legal": {
+        "empty": "No document profiles yet. Run an investigation to analyze your documents.",
+        "total": "Total Documents", "ingested": "Ingested", "profiled": "Profiled",
+        "restricted": "Privileged", "doc_col": "Document", "type_col": "Type",
+        "side_col": "Source Side", "author_col": "Author",
+    },
+    "finance": {
+        "empty": "No document profiles yet. Run an investigation to analyze your filings.",
+        "total": "Total Filings", "ingested": "Ingested", "profiled": "Profiled",
+        "restricted": "MNPI-Flagged", "doc_col": "Filing", "type_col": "Type",
+        "side_col": "Source", "author_col": "Issuer",
+    },
+    "coding": {
+        "empty": "No source profiles yet. Run an investigation to analyze your codebase.",
+        "total": "Total Sources", "ingested": "Indexed", "profiled": "Profiled",
+        "restricted": "Restricted", "doc_col": "Source", "type_col": "Type",
+        "side_col": "Scope", "author_col": "Author",
+    },
+    "academic_research": {
+        "empty": "No document profiles yet. Run an investigation to analyze your papers.",
+        "total": "Total Papers", "ingested": "Ingested", "profiled": "Profiled",
+        "restricted": "Embargoed", "doc_col": "Paper", "type_col": "Type",
+        "side_col": "Source", "author_col": "Author",
+    },
+    "biomedical": {
+        "empty": "No document profiles yet. Run an investigation to analyze your reports.",
+        "total": "Total Reports", "ingested": "Ingested", "profiled": "Profiled",
+        "restricted": "Patient-Protected", "doc_col": "Report", "type_col": "Type",
+        "side_col": "Source", "author_col": "Author",
+    },
 }
 
 
@@ -1706,19 +1731,19 @@ def _fmt_document_intelligence_panel(data: dict, domain: str = "legal") -> str:
         "<div style='display:flex;gap:24px;flex-wrap:wrap;margin-bottom:16px;'>"
         f"<div style='text-align:center;'>"
         f"<div style='font-size:28px;font-weight:700;color:#1e293b;'>{total_inv}</div>"
-        f"<div style='font-size:11px;color:#6b7280;'>Total Documents</div></div>"
+        f"<div style='font-size:11px;color:#6b7280;'>{_escape(labels['total'])}</div></div>"
         f"<div style='text-align:center;'>"
         f"<div style='font-size:28px;font-weight:700;color:#16a34a;'>{ingested}</div>"
-        f"<div style='font-size:11px;color:#6b7280;'>Ingested</div></div>"
+        f"<div style='font-size:11px;color:#6b7280;'>{_escape(labels['ingested'])}</div></div>"
         f"<div style='text-align:center;'>"
         f"<div style='font-size:28px;font-weight:700;color:#2563eb;'>{len(cards)}</div>"
-        f"<div style='font-size:11px;color:#6b7280;'>Profiled</div></div>"
+        f"<div style='font-size:11px;color:#6b7280;'>{_escape(labels['profiled'])}</div></div>"
     )
     if priv_count:
         header += (
             f"<div style='text-align:center;'>"
             f"<div style='font-size:20px;font-weight:600;color:#dc2626;'>{priv_count}</div>"
-            f"<div style='font-size:11px;color:#6b7280;'>Restricted</div></div>"
+            f"<div style='font-size:11px;color:#6b7280;'>{_escape(labels['restricted'])}</div></div>"
         )
     for t, count in sorted(by_type.items(), key=lambda x: -x[1])[:6]:
         header += (
@@ -1785,10 +1810,10 @@ def _fmt_document_intelligence_panel(data: dict, domain: str = "legal") -> str:
         "<div style='overflow-x:auto;'>"
         "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
         "<thead><tr style='border-bottom:2px solid #e2e8f0;text-align:left;'>"
-        "<th style='padding:6px 8px;'>Document</th>"
-        "<th style='padding:6px 8px;'>Type</th>"
-        "<th style='padding:6px 8px;'>Side</th>"
-        "<th style='padding:6px 8px;'>Author</th>"
+        f"<th style='padding:6px 8px;'>{_escape(labels['doc_col'])}</th>"
+        f"<th style='padding:6px 8px;'>{_escape(labels['type_col'])}</th>"
+        f"<th style='padding:6px 8px;'>{_escape(labels['side_col'])}</th>"
+        f"<th style='padding:6px 8px;'>{_escape(labels['author_col'])}</th>"
         "<th style='padding:6px 8px;'>Status</th>"
         "<th style='padding:6px 8px;text-align:center;'>Salience</th>"
         "<th style='padding:6px 8px;'>Flags</th>"
@@ -5945,6 +5970,8 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 communication_html,
                 llm_analytics_html,
                 proof_state_html,
+                authority_html,
+                doc_intel_html,
                 redirect_issue_id,
                 bulk_doc_ref,
                 correction_new_state,
