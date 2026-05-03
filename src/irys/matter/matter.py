@@ -5642,6 +5642,45 @@ class MatterModel:
             },
         }
 
+    def export_matter_summary(self) -> dict:
+        """Assemble a structured summary for report export.
+
+        Returns a dict with sections for issues, key assertions, gaps,
+        contradictions, timeline, financials, and SO metrics — everything
+        a professional needs for a snapshot report without opening the UI.
+        """
+        coverage = self.get_issue_coverage_report()
+        assertions = self.assertions.list_recent(limit=100)
+        gaps = self.gaps.open_gaps(limit=50)
+        contradictions = self.assertions.find_contradictions(limit=30)
+        timeline = self.get_timeline(limit=50)
+        so = self.get_so_metrics(_coverage_report=coverage)
+        stats = self.stats()
+
+        runs = self.ledger.recent_runs(limit=5)
+        run_summaries = []
+        for r in runs:
+            run_summaries.append({
+                "id": r.id,
+                "status": r.status,
+                "objective": r.objective,
+                "started_at": r.started_at,
+                "completed_at": r.completed_at,
+            })
+
+        return {
+            "matter_id": self.matter_id,
+            "generated_at": _now(),
+            "stats": stats,
+            "issues": coverage,
+            "assertions": assertions[:50],
+            "gaps": gaps,
+            "contradictions": contradictions,
+            "timeline": timeline[:30],
+            "so_metrics": so,
+            "recent_runs": run_summaries,
+        }
+
     def get_so_metrics(self, _coverage_report: "list[dict] | None" = None) -> dict:
         """Compute measurable Sacred Outcome success criteria from stored state.
 

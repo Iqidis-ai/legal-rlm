@@ -298,6 +298,10 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/assertions/search", {"q": query, "limit": limit})
         return result if isinstance(result, list) else []
 
+    async def export_matter_summary(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/export-summary")
+        return result if isinstance(result, dict) else {}
+
     async def get_document_intelligence(self, matter_id: str) -> dict:
         cards = await self._get(f"/matter/{matter_id}/documents/cards")
         return cards if isinstance(cards, dict) else {"cards": [], "total_inventory": 0, "ingested_count": 0}
@@ -345,6 +349,8 @@ class HttpBackend(UIBackend):
         if target_kind:
             params["target_kind"] = target_kind
         result = await self._get(f"/matter/{matter_id}/review-queue", params)
+        if isinstance(result, dict):
+            return result.get("queue", [])
         return result if isinstance(result, list) else []
 
     async def count_review_queue(self, matter_id: str) -> dict:
@@ -429,13 +435,33 @@ class HttpBackend(UIBackend):
     ) -> list[dict]:
         result = await self._get(
             f"/matter/{matter_id}/review-queue",
-            {"target_kind": "assertion", "document_ref": document_ref},
+            {"target_kind": "assertion", "limit": 500},
         )
-        return result if isinstance(result, list) else []
+        queue = result.get("queue", []) if isinstance(result, dict) else (result if isinstance(result, list) else [])
+        doc_norm = document_ref.replace("\\", "/")
+        return [
+            item for item in queue
+            if (item.get("document_id") or "").replace("\\", "/") == doc_norm
+        ]
 
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
-        result = await self._get(f"/matter/{matter_id}/review-queue", {"limit": 500})
-        return result if isinstance(result, list) else []
+        result = await self._get(
+            f"/matter/{matter_id}/review-queue",
+            {"limit": 500},
+        )
+        queue = result.get("queue", []) if isinstance(result, dict) else (result if isinstance(result, list) else [])
+        doc_counts: dict[str, dict] = {}
+        for item in queue:
+            doc = item.get("document_id") or "unknown"
+            if doc not in doc_counts:
+                doc_counts[doc] = {"path": doc, "pending": 0, "verified": 0, "total": 0}
+            doc_counts[doc]["total"] += 1
+            vs = (item.get("verification_state") or "").lower()
+            if vs == "verified":
+                doc_counts[doc]["verified"] += 1
+            else:
+                doc_counts[doc]["pending"] += 1
+        return sorted(doc_counts.values(), key=lambda d: d["pending"], reverse=True)
 
     async def get_verification_events(
         self, matter_id: str, target_kind: Optional[str] = None,
@@ -447,4 +473,6 @@ class HttpBackend(UIBackend):
         if target_id:
             params["target_id"] = target_id
         result = await self._get(f"/matter/{matter_id}/verification-events", params)
+        if isinstance(result, dict):
+            return result.get("events", [])
         return result if isinstance(result, list) else []

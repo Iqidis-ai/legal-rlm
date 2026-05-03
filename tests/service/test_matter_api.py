@@ -1396,3 +1396,60 @@ def test_search_assertions_requires_min_length(client, register_model):
 def test_search_assertions_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/assertions/search", params={"q": "test"})
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/export-summary
+# ---------------------------------------------------------------------------
+
+def test_export_summary_returns_structure(client, register_model):
+    model = register_model
+    _add_assertion(model, text="Payment was due January 15.")
+    resp = client.get(f"/matter/{MATTER_ID}/export-summary")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "matter_id" in data
+    assert "stats" in data
+    assert "issues" in data
+    assert "assertions" in data
+    assert "gaps" in data
+    assert "so_metrics" in data
+    assert "generated_at" in data
+
+
+def test_export_summary_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/export-summary")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /matter/{matter_id}/verify/bulk-by-ids
+# ---------------------------------------------------------------------------
+
+def test_bulk_verify_by_ids_returns_results(client, register_model):
+    model = register_model
+    aid = _add_assertion(model, text="Test assertion for bulk verify.")
+    resp = client.post(
+        f"/matter/{MATTER_ID}/verify/bulk-by-ids",
+        json={"assertion_ids": [aid]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "verified_count" in data
+    assert "verification_ids" in data
+
+
+def test_bulk_verify_by_ids_empty_list_rejected(client, register_model):
+    resp = client.post(
+        f"/matter/{MATTER_ID}/verify/bulk-by-ids",
+        json={"assertion_ids": []},
+    )
+    assert resp.status_code == 422
+
+
+def test_bulk_verify_by_ids_404_for_unknown_matter(client):
+    resp = client.post(
+        "/matter/unknown/verify/bulk-by-ids",
+        json={"assertion_ids": ["fake"]},
+    )
+    assert resp.status_code == 404

@@ -64,6 +64,7 @@ from .models import (
     DocumentAnnotationRequest,
     VerifyTargetRequest,
     BulkVerifyByDocumentRequest,
+    BulkVerifyByIdsRequest,
     BulkVerifyBySpanRequest,
 )
 from .s3_repository import S3Repository
@@ -2066,6 +2067,17 @@ async def search_assertions(
 
 
 @app.get(
+    "/matter/{matter_id}/export-summary",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def export_matter_summary(matter_id: str):
+    """Return a structured summary for report export."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.export_matter_summary()
+
+
+@app.get(
     "/matter/{matter_id}/assertions/{assertion_id}/history",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
@@ -2348,6 +2360,32 @@ async def bulk_verify_by_span(matter_id: str, request: BulkVerifyBySpanRequest):
     return {
         "matter_id": matter_id,
         "span_id": request.span_id,
+        "verified_count": len(ids),
+        "verification_ids": ids,
+    }
+
+
+@app.post(
+    "/matter/{matter_id}/verify/bulk-by-ids",
+    tags=["Review Queue"],
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+async def bulk_verify_by_ids(matter_id: str, request: BulkVerifyByIdsRequest):
+    """Verify an explicit set of assertion IDs (SO-3 pick-and-choose flow)."""
+    model = await _get_matter_model_or_404(matter_id)
+    try:
+        ids = model.bulk_verify_assertion_ids(
+            request.assertion_ids,
+            reviewed_by_kind=request.reviewed_by_kind,
+            reviewed_by_id=request.reviewed_by_id,
+            review_note=request.review_note,
+            review_scope=request.review_scope,
+            run_id=request.run_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "matter_id": matter_id,
         "verified_count": len(ids),
         "verification_ids": ids,
     }

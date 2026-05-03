@@ -657,6 +657,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.search_assertions([query], limit=limit)
 
+    async def export_matter_summary(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.export_matter_summary()
+
     async def list_llm_calls(
         self,
         matter_id: str,

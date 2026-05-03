@@ -252,6 +252,17 @@ class BulkVerifyBySpanRequest(BaseModel):
     run_id: Optional[str] = Field(None, description="Active run ID for audit attribution")
 
 
+class BulkVerifyByIdsRequest(BaseModel):
+    """Bulk-verify an explicit list of assertion IDs (SO-3 reviewer
+    pick-and-choose flow)."""
+    assertion_ids: list[str] = Field(..., description="Assertion IDs to verify", min_length=1, max_length=200)
+    reviewed_by_kind: str = Field("user", description="Reviewer role (human only)")
+    reviewed_by_id: Optional[str] = Field(None, description="Reviewer identifier")
+    review_note: Optional[str] = Field(None, description="Optional reviewer note")
+    review_scope: str = Field("extraction_correct", description="What the review validated")
+    run_id: Optional[str] = Field(None, description="Active run ID for audit attribution")
+
+
 class BulkVerifyByDocumentRequest(BaseModel):
     """Bulk-verify every candidate assertion sourced from a single
     document in one operation (SO-3 reviewer convenience)."""

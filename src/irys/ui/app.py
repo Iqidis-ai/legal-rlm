@@ -5621,6 +5621,99 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading LLM analytics: {_escape(exc)}</div>"
 
+    def export_summary_report(self, matter_id: str) -> "str | None":
+        if not matter_id or matter_id == "—":
+            return None
+        try:
+            data = _run_async(self.backend().export_matter_summary(matter_id))
+        except Exception as exc:
+            logger.warning("Export failed: %s", exc)
+            return None
+        if not data or not isinstance(data, dict):
+            return None
+        import json as _json
+        import tempfile as _tempfile
+        lines: list[str] = []
+        lines.append(f"MATTER SUMMARY REPORT")
+        lines.append(f"Matter ID: {data.get('matter_id', '—')}")
+        lines.append(f"Generated: {data.get('generated_at', '—')}")
+        stats = data.get("stats", {})
+        lines.append(f"\n{'='*60}")
+        lines.append("OVERVIEW")
+        lines.append(f"{'='*60}")
+        lines.append(f"  Assertions:     {stats.get('assertion_count', 0)}")
+        lines.append(f"  Open issues:    {stats.get('open_issue_count', 0)}")
+        lines.append(f"  Open gaps:      {stats.get('open_gap_count', 0)}")
+        lines.append(f"  Actors:         {stats.get('actor_count', 0)}")
+        lines.append(f"  Clarifications: {stats.get('pending_clarifications', 0)} pending")
+        issues = data.get("issues", [])
+        if issues:
+            lines.append(f"\n{'='*60}")
+            lines.append("ISSUES BY EVIDENCE COVERAGE (weakest first)")
+            lines.append(f"{'='*60}")
+            for iss in issues[:20]:
+                cov = float(iss.get("coverage_fraction", 0))
+                gap_flag = " [PROOF GAP]" if iss.get("has_proof_gap") else ""
+                lines.append(
+                    f"  [{cov*100:.0f}%] {iss.get('title', '—')[:80]}{gap_flag}"
+                )
+        assertions = data.get("assertions", [])
+        if assertions:
+            lines.append(f"\n{'='*60}")
+            lines.append("KEY ASSERTIONS (first 50)")
+            lines.append(f"{'='*60}")
+            for a in assertions[:50]:
+                bs = a.get("belief_state", "—")
+                src = a.get("document_id") or "—"
+                text = (a.get("proposition_text") or "—")[:100]
+                lines.append(f"  [{bs}] {text}")
+                lines.append(f"         Source: {src}")
+        gaps = data.get("gaps", [])
+        if gaps:
+            lines.append(f"\n{'='*60}")
+            lines.append("OPEN GAPS")
+            lines.append(f"{'='*60}")
+            for g in gaps[:20]:
+                lines.append(f"  - {g.get('description', '—')[:100]}")
+        contradictions = data.get("contradictions", [])
+        if contradictions:
+            lines.append(f"\n{'='*60}")
+            lines.append("CONTRADICTIONS")
+            lines.append(f"{'='*60}")
+            for c in contradictions[:15]:
+                lines.append(f"  - {c.get('a_text', '—')[:60]}")
+                lines.append(f"    vs. {c.get('b_text', '—')[:60]}")
+        so = data.get("so_metrics", {})
+        if so:
+            lines.append(f"\n{'='*60}")
+            lines.append("SACRED OUTCOME SCORECARD")
+            lines.append(f"{'='*60}")
+            targets_met = so.get("targets_met", {})
+            for key, val in so.items():
+                if key in ("targets", "targets_met"):
+                    continue
+                if val is None:
+                    continue
+                passed = targets_met.get(key)
+                status = " ✓" if passed else (" ✗" if passed is False else "")
+                if isinstance(val, float):
+                    lines.append(f"  {key}: {val:.3f}{status}")
+                elif isinstance(val, bool):
+                    lines.append(f"  {key}: {'Yes' if val else 'No'}{status}")
+                else:
+                    lines.append(f"  {key}: {val}{status}")
+        lines.append(f"\n{'='*60}")
+        lines.append("END OF REPORT")
+        lines.append(f"{'='*60}\n")
+        content = "\n".join(lines)
+        fd = _tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", prefix=f"irys_report_{matter_id[:8]}_",
+            delete=False, encoding="utf-8",
+        )
+        fd.write(content)
+        fd.close()
+        return fd.name
+
     def do_correct_assertion(
         self, matter_id: str, assertion_id: str, new_state: str, reason: str
     ) -> str:
@@ -6306,7 +6399,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 gaps_md = gr.Markdown(visible=False)
                 assumptions_md = gr.Markdown(visible=False)
 
-                refresh_sidebar_btn = gr.Button("↻ Refresh", variant="secondary", size="sm")
+                with gr.Row():
+                    refresh_sidebar_btn = gr.Button("↻ Refresh", variant="secondary", size="sm")
+                    export_report_btn = gr.Button("Download Report", variant="secondary", size="sm")
+                export_report_file = gr.File(label="Report", visible=False)
 
         # ==================================================================
         # DETAIL ACCORDIONS (below main area)
@@ -7073,6 +7169,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: gr.update(choices=state.load_clarification_choices(mid)),
             inputs=[matter_id_box],
             outputs=[clarification_dropdown],
+        )
+
+        export_report_btn.click(
+            fn=lambda mid: state.export_summary_report(mid),
+            inputs=[matter_id_box],
+            outputs=[export_report_file],
         )
 
         # --- Detail panel refreshes ---
