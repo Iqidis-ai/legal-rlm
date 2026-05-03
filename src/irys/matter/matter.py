@@ -5660,13 +5660,22 @@ class MatterModel:
         runs = self.ledger.recent_runs(limit=5)
         run_summaries = []
         for r in runs:
-            run_summaries.append({
-                "id": r.id,
-                "status": r.status,
-                "objective": r.objective,
-                "started_at": r.started_at,
-                "completed_at": r.completed_at,
-            })
+            if isinstance(r, dict):
+                run_summaries.append({
+                    "id": r.get("id"),
+                    "status": r.get("status"),
+                    "objective": r.get("objective"),
+                    "started_at": r.get("started_at"),
+                    "completed_at": r.get("completed_at"),
+                })
+            else:
+                run_summaries.append({
+                    "id": r.id,
+                    "status": r.status,
+                    "objective": getattr(r, "objective", None),
+                    "started_at": r.started_at,
+                    "completed_at": getattr(r, "completed_at", None),
+                })
 
         return {
             "matter_id": self.matter_id,

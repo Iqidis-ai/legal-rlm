@@ -1417,6 +1417,18 @@ def test_export_summary_returns_structure(client, register_model):
     assert "generated_at" in data
 
 
+def test_export_summary_with_runs(client, register_model):
+    model = register_model
+    _add_assertion(model, text="Payment was due January 15.")
+    run_id = model.start_run("Test run", objective="test")
+    model.complete_run(run_id)
+    resp = client.get(f"/matter/{MATTER_ID}/export-summary")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "recent_runs" in data
+    assert len(data["recent_runs"]) >= 1
+
+
 def test_export_summary_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/export-summary")
     assert resp.status_code == 404
