@@ -5322,10 +5322,12 @@ Return:
                         _, _, _primary = self._matter_model._read_matter_domain_composition()
                         if _primary:
                             _domain = _primary
+                            state._cached_domain = _domain
                 except Exception:
                     pass
-                state._cached_domain = _domain
-            _vocab = _DOMAIN_DEEP_READ_VOCABULARY.get(state._cached_domain, _DOMAIN_DEEP_READ_VOCABULARY["legal"])
+            else:
+                _domain = state._cached_domain
+            _vocab = _DOMAIN_DEEP_READ_VOCABULARY.get(_domain, _DOMAIN_DEEP_READ_VOCABULARY["legal"])
 
             prompt = DEEP_READ_PROMPT.format(
                 filename=doc.filename,
@@ -7375,10 +7377,10 @@ Return:
                 _, _, _primary = self._matter_model._read_matter_domain_composition()
                 if _primary:
                     _domain = _primary
+                    if state is not None:
+                        state._cached_domain = _domain
             except Exception:
                 pass
-            if state is not None:
-                state._cached_domain = _domain
 
         _role_labels = _DOMAIN_ROLE_CALIBRATION_LABELS.get(_domain, _DOMAIN_ROLE_CALIBRATION_LABELS["legal"])
 

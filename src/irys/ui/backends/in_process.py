@@ -268,6 +268,16 @@ class InProcessBackend(UIBackend):
         except _sqlite3.Error as _exc:
             _log.warning("overview: pending clarifications load failed: %s", _exc)
             pass
+        domain_composition: dict = {}
+        try:
+            facets, tw, primary = model._read_matter_domain_composition()
+            domain_composition = {
+                "facets": facets,
+                "composed_trust_weights": tw,
+                "primary_domain_profile_id": primary,
+            }
+        except Exception:
+            pass
         return {
             "matter_id": matter_id,
             "stats": stats,
@@ -276,6 +286,7 @@ class InProcessBackend(UIBackend):
             "weakest_issues": weakest,
             "top_gaps": top_gaps,
             "pending_clarifications": clarifications,
+            "domain_composition": domain_composition,
         }
 
     # ------------------------------------------------------------------ #
@@ -541,28 +552,11 @@ class InProcessBackend(UIBackend):
 
     async def get_authority_network(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
-        authorities = model.authority.list_all(limit=200)
         issue_titles = {
             i["id"]: i.get("title", i["id"])
-            for i in model.issues.list_issues()
+            for i in model.issues.get_open_issues()
         }
-        link_rows = model.authority.db.execute(
-            """SELECT l.authority_id, l.issue_id, l.relevance
-               FROM authority_issue_link l
-               JOIN authority a ON a.id = l.authority_id
-               WHERE a.matter_id=?""",
-            (matter_id,),
-        ).fetchall()
-        issue_links: dict[str, list] = {}
-        for row in link_rows:
-            aid = row["authority_id"]
-            iid = row["issue_id"]
-            issue_links.setdefault(aid, []).append({
-                "issue_id": iid,
-                "issue_title": issue_titles.get(iid, iid),
-                "relevance": row["relevance"],
-            })
-        return {"authorities": authorities, "issue_links": issue_links}
+        return model.authority.get_network(issue_titles=issue_titles)
 
     async def get_document_intelligence(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
@@ -581,7 +575,7 @@ class InProcessBackend(UIBackend):
         all_states = model.proof_state.get_all()
         issue_titles = {
             i["id"]: i.get("title", i["id"])
-            for i in model.issues.list_issues()
+            for i in model.issues.get_open_issues()
         }
         for ps in all_states:
             ps["issue_title"] = issue_titles.get(ps.get("issue_id", ""), ps.get("issue_id", "?"))

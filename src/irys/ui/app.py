@@ -4570,52 +4570,41 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading evidence matrix: {_escape(exc)}</div>"
 
-    def load_proof_state(self, matter_id: str) -> str:
+    def _detect_domain(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "legal"
+        try:
+            ov = _run_async(self.backend().get_overview(matter_id))
+            dc = ov.get("domain_composition", {}) if isinstance(ov, dict) else {}
+            return dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
+        except Exception:
+            return "legal"
+
+    def load_proof_state(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             data = _run_async(self.backend().get_proof_state_summary(matter_id))
             summary = data.get("summary", {}) if isinstance(data, dict) else {}
             issues = data.get("issues", []) if isinstance(data, dict) else []
-            domain = "legal"
-            try:
-                ov = _run_async(self.backend().get_overview(matter_id))
-                dc = ov.get("domain_composition", {}) if isinstance(ov, dict) else {}
-                domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
-            except Exception:
-                pass
             return _fmt_proof_state_panel(summary, issues, domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading proof state: {_escape(exc)}</div>"
 
-    def load_authority_network(self, matter_id: str) -> str:
+    def load_authority_network(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             data = _run_async(self.backend().get_authority_network(matter_id))
-            domain = "legal"
-            try:
-                ov = _run_async(self.backend().get_overview(matter_id))
-                dc = ov.get("domain_composition", {}) if isinstance(ov, dict) else {}
-                domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
-            except Exception:
-                pass
             return _fmt_authority_panel(data, domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading authorities: {_escape(exc)}</div>"
 
-    def load_document_intelligence(self, matter_id: str) -> str:
+    def load_document_intelligence(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             data = _run_async(self.backend().get_document_intelligence(matter_id))
-            domain = "legal"
-            try:
-                ov = _run_async(self.backend().get_overview(matter_id))
-                dc = ov.get("domain_composition", {}) if isinstance(ov, dict) else {}
-                domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
-            except Exception:
-                pass
             return _fmt_document_intelligence_panel(data, domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading document intelligence: {_escape(exc)}</div>"
@@ -5843,6 +5832,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
         # --- Sidebar refresh (all panels at once) ---
         def _refresh_all(mid):
+            domain = state._detect_domain(mid)
             overview = state.load_overview(mid)
             issues = state.load_issues(mid)
             gaps_text, top_issue = state.load_gaps(mid)
@@ -5853,19 +5843,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             evidence = state.load_evidence_matrix(mid)
             communication = state.load_communication_map(mid)
             llm_analytics = state.load_llm_analytics(mid)
-            proof_state = state.load_proof_state(mid)
-            authority = state.load_authority_network(mid)
-            doc_intel = state.load_document_intelligence(mid)
+            proof_state = state.load_proof_state(mid, domain=domain)
+            authority = state.load_authority_network(mid, domain=domain)
+            doc_intel = state.load_document_intelligence(mid, domain=domain)
             review_badge = state.load_review_count_badge(mid)
             doc_choices = state.load_document_picker_choices(mid)
-            domain = "legal"
-            if mid and mid != "—":
-                try:
-                    ov_data = _run_async(state.backend().get_overview(mid))
-                    dc = ov_data.get("domain_composition", {}) if isinstance(ov_data, dict) else {}
-                    domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
-                except Exception:
-                    pass
             return (
                 review_badge,
                 overview,
@@ -6022,17 +6004,17 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[evidence_matrix_html],
         )
         refresh_proof_btn.click(
-            fn=lambda mid: state.load_proof_state(mid),
+            fn=lambda mid: state.load_proof_state(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[proof_state_html],
         )
         refresh_authority_btn.click(
-            fn=lambda mid: state.load_authority_network(mid),
+            fn=lambda mid: state.load_authority_network(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[authority_html],
         )
         refresh_doc_intel_btn.click(
-            fn=lambda mid: state.load_document_intelligence(mid),
+            fn=lambda mid: state.load_document_intelligence(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[doc_intel_html],
         )

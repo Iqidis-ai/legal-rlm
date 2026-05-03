@@ -7064,6 +7064,28 @@ class AuthorityStore:
         ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
+    def get_network(self, issue_titles: "Optional[dict[str, str]]" = None) -> dict:
+        """Return all authorities and their issue links in one round-trip."""
+        authorities = self.list_all()
+        link_rows = self.db.execute(
+            """SELECT l.authority_id, l.issue_id, l.relevance
+               FROM authority_issue_link l
+               JOIN authority a ON a.id = l.authority_id
+               WHERE a.matter_id=?""",
+            (self.matter_id,),
+        ).fetchall()
+        issue_links: dict[str, list] = {}
+        titles = issue_titles or {}
+        for row in link_rows:
+            aid = row["authority_id"]
+            iid = row["issue_id"]
+            issue_links.setdefault(aid, []).append({
+                "issue_id": iid,
+                "issue_title": titles.get(iid, iid),
+                "relevance": row["relevance"],
+            })
+        return {"authorities": authorities, "issue_links": issue_links}
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------

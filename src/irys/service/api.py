@@ -2849,6 +2849,25 @@ async def get_issue_authorities(matter_id: str, issue_id: str):
     return model.authority.list_for_issue(issue_id)
 
 
+@app.get(
+    "/matter/{matter_id}/authority-network",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_authority_network(matter_id: str):
+    """Return all authorities with their issue links in a single payload.
+
+    Avoids N+1 per-issue fetches. Returns {authorities: [...], issue_links: {aid: [...]}}
+    with issue titles resolved from the issue store.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    issue_titles = {
+        i["id"]: i.get("title", i["id"])
+        for i in model.issues.get_open_issues()
+    }
+    return model.authority.get_network(issue_titles=issue_titles)
+
+
 # ---------------------------------------------------------------------------
 # Proof-Aware Reasoning — ProofState endpoints (SO-4)
 # ---------------------------------------------------------------------------
@@ -2900,6 +2919,12 @@ async def get_proof_state_summary(matter_id: str):
     model = await _get_matter_model_or_404(matter_id)
     summary = model.proof_state.get_summary()
     all_states = model.proof_state.get_all()
+    issue_titles = {
+        i["id"]: i.get("title", i["id"])
+        for i in model.issues.get_open_issues()
+    }
+    for ps in all_states:
+        ps["issue_title"] = issue_titles.get(ps.get("issue_id", ""), ps.get("issue_id", "?"))
     return {"matter_id": matter_id, "summary": summary, "issues": all_states}
 
 
@@ -2996,6 +3021,33 @@ async def get_communication_map(matter_id: str):
     """
     model = await _get_matter_model_or_404(matter_id)
     return model.get_communication_map()
+
+
+# ---------------------------------------------------------------------------
+# Document Intelligence — document cards + inventory aggregates
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/matter/{matter_id}/documents/cards",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_document_cards(matter_id: str, limit: int = 200):
+    """Return document cards with inventory aggregates for the UI.
+
+    Each card includes doc_type, operative_status, salience_score, and
+    unresolved_flags.  Envelope includes total_inventory and ingested_count
+    so the UI can show coverage progress.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    cards = model.document_cards.list_candidates(limit=limit)
+    total_docs = model.inventory.count()
+    ingested_paths = model.inventory.get_ingested_paths()
+    return {
+        "cards": cards,
+        "total_inventory": total_docs,
+        "ingested_count": len(ingested_paths),
+    }
 
 
 @app.get(
