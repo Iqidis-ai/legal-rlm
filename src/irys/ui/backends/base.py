@@ -286,6 +286,20 @@ class UIBackend(ABC):
         ...
 
     # ------------------------------------------------------------------ #
+    # Actor resolution (SO-5)                                              #
+    # ------------------------------------------------------------------ #
+
+    @abstractmethod
+    async def find_duplicate_actors(self, matter_id: str, min_prefix_len: int = 6) -> list[dict]:
+        """Return potential duplicate actor pairs with shared prefix."""
+        ...
+
+    @abstractmethod
+    async def merge_actors(self, matter_id: str, keep_id: str, merge_id: str) -> dict:
+        """Merge merge_id into keep_id. Returns merge result."""
+        ...
+
+    # ------------------------------------------------------------------ #
     # Decision context (SO-3)                                              #
     # ------------------------------------------------------------------ #
 

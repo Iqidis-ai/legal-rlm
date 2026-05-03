@@ -316,6 +316,20 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/assertions/search", {"q": query, "limit": limit})
         return result if isinstance(result, list) else []
 
+    async def find_duplicate_actors(self, matter_id: str, min_prefix_len: int = 6) -> list[dict]:
+        result = await self._get(
+            f"/matter/{matter_id}/actors/duplicates",
+            {"min_prefix_len": min_prefix_len},
+        )
+        return result if isinstance(result, list) else []
+
+    async def merge_actors(self, matter_id: str, keep_id: str, merge_id: str) -> dict:
+        result = await self._post(
+            f"/matter/{matter_id}/actors/{_url_quote(keep_id, safe='')}/merge/{_url_quote(merge_id, safe='')}",
+            {},
+        )
+        return result if isinstance(result, dict) else {}
+
     async def get_decision_context(self, matter_id: str) -> "dict | None":
         result = await self._get(f"/matter/{matter_id}/decision-context")
         return result if isinstance(result, dict) else None

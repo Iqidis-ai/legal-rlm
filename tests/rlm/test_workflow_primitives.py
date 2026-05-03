@@ -814,3 +814,34 @@ def test_fmt_quant_panel_with_reconciliation():
     assert "Invoiced" in result
     assert "Paid" in result
     assert "Disputed" in result
+
+
+# ---------------------------------------------------------------------------
+# Actor duplicate detection panel (SO-5)
+# ---------------------------------------------------------------------------
+
+def test_fmt_duplicate_actors_panel_empty():
+    from irys.ui.app import _fmt_duplicate_actors_panel
+    result = _fmt_duplicate_actors_panel([])
+    assert "viz-empty" in result
+
+
+def test_fmt_duplicate_actors_panel_with_data():
+    from irys.ui.app import _fmt_duplicate_actors_panel
+    pairs = [
+        {
+            "actor_a": {"id": "a1", "canonical_name": "Acme Inc", "actor_type": "organization"},
+            "actor_b": {"id": "a2", "canonical_name": "Acme Corporation", "actor_type": "organization"},
+            "shared_prefix": "acme",
+        }
+    ]
+    result = _fmt_duplicate_actors_panel(pairs)
+    assert "Acme Inc" in result
+    assert "Acme Corporation" in result
+    assert "acme" in result
+
+
+def test_fmt_duplicate_actors_panel_skips_non_dict():
+    from irys.ui.app import _fmt_duplicate_actors_panel
+    result = _fmt_duplicate_actors_panel(["not-a-dict", None])
+    assert "viz-empty" not in result

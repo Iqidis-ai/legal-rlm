@@ -673,6 +673,15 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.search_assertions([query], limit=limit)
 
+    async def find_duplicate_actors(self, matter_id: str, min_prefix_len: int = 6) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.actors.find_possible_duplicates(min_prefix_len=min_prefix_len)
+
+    async def merge_actors(self, matter_id: str, keep_id: str, merge_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        model.actors.merge_actors(keep_id=keep_id, merge_id=merge_id)
+        return {"keep_id": keep_id, "merged_id": merge_id, "status": "merged"}
+
     async def get_decision_context(self, matter_id: str) -> "dict | None":
         model = self._get_matter_model(matter_id)
         return model.decision_context.get()

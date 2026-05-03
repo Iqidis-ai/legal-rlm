@@ -1599,3 +1599,23 @@ def test_invoice_chain_endpoint(client, register_model):
     resp = client.get(f"/matter/{MATTER_ID}/reconciliation/invoices")
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+# ---------------------------------------------------------------------------
+# Actor resolution (SO-5)
+# ---------------------------------------------------------------------------
+
+def test_actor_duplicates_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/actors/duplicates")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+def test_actor_duplicates_404(client):
+    resp = client.get("/matter/unknown/actors/duplicates")
+    assert resp.status_code == 404
+
+
+def test_merge_actors_404(client):
+    resp = client.post("/matter/unknown/actors/keep1/merge/merge1")
+    assert resp.status_code == 404

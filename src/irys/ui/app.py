@@ -2605,6 +2605,48 @@ def _fmt_annotations_panel(annotations: list[dict]) -> str:
     return f"<div class='viz-shell'>{header}{table}</div>"
 
 
+_ACTOR_TYPE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {"title": "Potential Duplicate Parties", "empty": "No duplicate parties detected."},
+    "finance": {"title": "Potential Duplicate Entities", "empty": "No duplicate entities detected."},
+    "coding": {"title": "Potential Duplicate Contributors", "empty": "No duplicate contributors detected."},
+    "academic_research": {"title": "Potential Duplicate Authors", "empty": "No duplicate authors detected."},
+    "biomedical": {"title": "Potential Duplicate Subjects", "empty": "No duplicate subjects detected."},
+}
+
+
+def _fmt_duplicate_actors_panel(pairs: list[dict], domain: str = "legal") -> str:
+    labels = _ACTOR_TYPE_LABELS.get(domain, _ACTOR_TYPE_LABELS["legal"])
+    if not pairs:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+    rows = ""
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        a = pair.get("actor_a", {}) or {}
+        b = pair.get("actor_b", {}) or {}
+        prefix = _escape(pair.get("shared_prefix", ""))
+        rows += (
+            "<tr>"
+            f"<td><strong>{_escape(a.get('canonical_name', ''))}</strong>"
+            f"<br><span class='dim'>{_escape(a.get('id', '')[:12])}</span></td>"
+            f"<td><strong>{_escape(b.get('canonical_name', ''))}</strong>"
+            f"<br><span class='dim'>{_escape(b.get('id', '')[:12])}</span></td>"
+            f"<td>{prefix}</td>"
+            f"<td>{_escape(a.get('actor_type', ''))}</td>"
+            "</tr>"
+        )
+    return (
+        "<div class='viz-shell'>"
+        f"<div class='viz-panel-title'>{labels['title']}</div>"
+        "<div class='viz-footnote'>Copy the IDs below into the merge fields to consolidate duplicates.</div>"
+        "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
+        "<th>Actor A</th><th>Actor B</th><th>Shared Prefix</th><th>Type</th>"
+        "</tr></thead><tbody>"
+        + rows
+        + "</tbody></table></div></div>"
+    )
+
+
 def _fmt_communication_map_panel(graph: dict) -> str:
     actors = list(graph.get("actors", []) or [])
     documents = list(graph.get("documents", []) or [])
@@ -5692,6 +5734,29 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading communication map: {_escape(exc)}</div>"
 
+    def load_duplicate_actors(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            pairs = _run_async(self.backend().find_duplicate_actors(matter_id))
+            return _fmt_duplicate_actors_panel(pairs, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error scanning for duplicates: {_escape(exc)}</div>"
+
+    def do_merge_actors(self, matter_id: str, keep_id: str, merge_id: str) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        if not keep_id or not keep_id.strip():
+            return "Enter the ID of the actor to keep.", ""
+        if not merge_id or not merge_id.strip():
+            return "Enter the ID of the actor to merge away.", ""
+        try:
+            _run_async(self.backend().merge_actors(matter_id, keep_id.strip(), merge_id.strip()))
+            refreshed = self.load_duplicate_actors(matter_id)
+            return f"Merged {merge_id.strip()[:12]} into {keep_id.strip()[:12]}.", refreshed
+        except Exception as exc:
+            return f"Error: {_escape(str(exc))}", ""
+
     def load_llm_analytics(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -6855,6 +6920,21 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             communication_html = gr.HTML("<div class='viz-empty'>Communication graph will appear here after an investigation.</div>")
             refresh_comm_btn = gr.Button("Refresh Communication Graph", variant="secondary", size="sm")
 
+        with gr.Accordion("Actor Resolution — detect and merge duplicate entities", open=False):
+            gr.Markdown(
+                "Finds actors whose names overlap (e.g. 'Acme Inc' vs. 'Acme Corporation'). "
+                "Merging consolidates all references so evidence is not split across duplicates."
+            )
+            actor_duplicates_html = gr.HTML("<div class='viz-empty'>Scan for duplicates to see results.</div>")
+            with gr.Row():
+                scan_duplicates_btn = gr.Button("Scan for Duplicates", variant="primary", size="sm")
+                refresh_duplicates_btn = gr.Button("Refresh", variant="secondary", size="sm")
+            with gr.Row():
+                merge_keep_id = gr.Textbox(label="Keep actor ID", placeholder="ID of the actor to keep")
+                merge_discard_id = gr.Textbox(label="Merge (discard) actor ID", placeholder="ID of the actor to merge away")
+            merge_actors_btn = gr.Button("Merge Actors", variant="stop", size="sm")
+            merge_result = gr.Markdown("")
+
         with gr.Accordion("LLM Analytics — cost, latency, and stage mix", open=False):
             gr.Markdown(
                 "Shows recent LLM calls, spend by stage, and the current tier mix."
@@ -7510,6 +7590,21 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_communication_map(mid),
             inputs=[matter_id_box],
             outputs=[communication_html],
+        )
+        scan_duplicates_btn.click(
+            fn=lambda mid: state.load_duplicate_actors(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[actor_duplicates_html],
+        )
+        refresh_duplicates_btn.click(
+            fn=lambda mid: state.load_duplicate_actors(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[actor_duplicates_html],
+        )
+        merge_actors_btn.click(
+            fn=lambda mid, keep, merge: state.do_merge_actors(mid, keep, merge),
+            inputs=[matter_id_box, merge_keep_id, merge_discard_id],
+            outputs=[merge_result, actor_duplicates_html],
         )
         refresh_llm_btn.click(
             fn=lambda mid: state.load_llm_analytics(mid),
