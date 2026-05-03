@@ -657,6 +657,23 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.search_assertions([query], limit=limit)
 
+    async def list_annotations(self, matter_id: str, document: Optional[str] = None) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        if document:
+            return model.annotations.get_for_document(document)
+        return model.annotations.list_recent()
+
+    async def add_annotation(
+        self, matter_id: str, document_pattern: str,
+        annotation_text: str, annotation_type: str = "strategic",
+    ) -> str:
+        model = self._get_matter_model(matter_id)
+        return model.annotations.add(document_pattern, annotation_text, annotation_type)
+
+    async def delete_annotation(self, matter_id: str, annotation_id: str) -> bool:
+        model = self._get_matter_model(matter_id)
+        return model.annotations.delete(annotation_id)
+
     async def export_matter_summary(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.export_matter_summary()

@@ -298,6 +298,34 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/assertions/search", {"q": query, "limit": limit})
         return result if isinstance(result, list) else []
 
+    async def list_annotations(self, matter_id: str, document: Optional[str] = None) -> list[dict]:
+        params = {}
+        if document:
+            params["document"] = document
+        result = await self._get(f"/matter/{matter_id}/annotations", params)
+        if isinstance(result, dict):
+            return result.get("annotations", [])
+        return result if isinstance(result, list) else []
+
+    async def add_annotation(
+        self, matter_id: str, document_pattern: str,
+        annotation_text: str, annotation_type: str = "strategic",
+    ) -> str:
+        result = await self._post(
+            f"/matter/{matter_id}/annotations",
+            {"document_pattern": document_pattern, "annotation_text": annotation_text, "annotation_type": annotation_type},
+        )
+        return result.get("annotation_id", "") if isinstance(result, dict) else ""
+
+    async def delete_annotation(self, matter_id: str, annotation_id: str) -> bool:
+        try:
+            r = await self._client.delete(f"/matter/{matter_id}/annotations/{_url_quote(annotation_id, safe='')}")
+            r.raise_for_status()
+            data = r.json()
+            return data.get("status") == "deleted" if isinstance(data, dict) else False
+        except Exception:
+            return False
+
     async def export_matter_summary(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/export-summary")
         return result if isinstance(result, dict) else {}

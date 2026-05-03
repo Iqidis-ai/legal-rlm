@@ -266,6 +266,28 @@ class UIBackend(ABC):
         ...
 
     # ------------------------------------------------------------------ #
+    # Document annotations (SO-3)                                          #
+    # ------------------------------------------------------------------ #
+
+    @abstractmethod
+    async def list_annotations(self, matter_id: str, document: Optional[str] = None) -> list[dict]:
+        """Return annotations, optionally filtered by document."""
+        ...
+
+    @abstractmethod
+    async def add_annotation(
+        self, matter_id: str, document_pattern: str,
+        annotation_text: str, annotation_type: str = "strategic",
+    ) -> str:
+        """Add a document annotation. Returns annotation_id."""
+        ...
+
+    @abstractmethod
+    async def delete_annotation(self, matter_id: str, annotation_id: str) -> bool:
+        """Delete an annotation. Returns True if deleted."""
+        ...
+
+    # ------------------------------------------------------------------ #
     # Report export                                                        #
     # ------------------------------------------------------------------ #
 

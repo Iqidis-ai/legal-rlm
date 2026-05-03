@@ -2531,6 +2531,45 @@ def _fmt_trust_overrides(overrides: list[dict]) -> str:
     return f"<div class='viz-shell'>{header}{table}</div>"
 
 
+_ANNOTATION_TYPE_PILLS = {
+    "strategic": ("Strategic", "pill-blue"),
+    "reliability": ("Reliability", "pill-amber"),
+    "scope": ("Scope", "pill-neutral"),
+}
+
+
+def _fmt_annotations_panel(annotations: list[dict]) -> str:
+    if not annotations:
+        return "<div class='viz-empty'>No document notes yet. Add one below to guide the investigation.</div>"
+    rows = ""
+    for a in annotations:
+        if not isinstance(a, dict):
+            continue
+        doc = _escape(str(a.get("document_pattern", "—")))
+        text = _escape(str(a.get("annotation_text", "—"))[:200])
+        ann_type = str(a.get("annotation_type", "strategic"))
+        label, cls = _ANNOTATION_TYPE_PILLS.get(ann_type, ("Note", "pill-neutral"))
+        created = _escape(str(a.get("created_at", "—"))[:19])
+        rows += (
+            f"<tr>"
+            f"<td>{doc}</td>"
+            f"<td><span class='pill {cls}'>{label}</span></td>"
+            f"<td>{text}</td>"
+            f"<td style='font-size:11px;color:#6b7280'>{created}</td>"
+            f"</tr>"
+        )
+    if not rows:
+        return "<div class='viz-empty'>No document notes yet.</div>"
+    count = rows.count("<tr>")
+    header = f"<div class='viz-header'><strong>Document Notes</strong> — {count} note{'s' if count != 1 else ''}</div>"
+    table = (
+        "<div class='table-wrap'><table class='viz-table'>"
+        "<thead><tr><th>Document</th><th>Type</th><th>Note</th><th>Added</th></tr></thead>"
+        "<tbody>" + rows + "</tbody></table></div>"
+    )
+    return f"<div class='viz-shell'>{header}{table}</div>"
+
+
 def _fmt_communication_map_panel(graph: dict) -> str:
     actors = list(graph.get("actors", []) or [])
     documents = list(graph.get("documents", []) or [])
@@ -5621,6 +5660,31 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading LLM analytics: {_escape(exc)}</div>"
 
+    def load_annotations(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            annotations = _run_async(self.backend().list_annotations(matter_id))
+            return _fmt_annotations_panel(annotations)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
+    def do_add_annotation(self, matter_id: str, doc: str, text: str, ann_type: str) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        if not doc or not doc.strip():
+            return "Enter a document name or pattern.", ""
+        if not text or not text.strip():
+            return "Enter your note text.", ""
+        try:
+            _run_async(self.backend().add_annotation(
+                matter_id, doc.strip(), text.strip(), ann_type or "strategic",
+            ))
+            refreshed = self.load_annotations(matter_id)
+            return "Note added.", refreshed
+        except Exception as exc:
+            return f"Error: {_escape(str(exc))}", ""
+
     def export_summary_report(self, matter_id: str) -> "str | None":
         if not matter_id or matter_id == "—":
             return None
@@ -6620,6 +6684,28 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             doc_intel_html = gr.HTML("<div class='viz-empty'>Document intelligence will appear here after an investigation.</div>")
             refresh_doc_intel_btn = gr.Button("Refresh Documents", variant="secondary", size="sm")
 
+            with gr.Accordion("Document Notes — attach strategic guidance to documents", open=False):
+                gr.Markdown(
+                    "Notes you add here are injected into the reasoning engine's context "
+                    "so Irys can use your domain knowledge during investigation. "
+                    "Use *strategic* for broad guidance, *reliability* for source quality notes, "
+                    "or *scope* to mark documents as irrelevant."
+                )
+                annotations_html = gr.HTML("<div class='viz-empty'>No notes yet.</div>")
+                refresh_annotations_btn = gr.Button("Refresh Notes", variant="secondary", size="sm")
+                gr.Markdown("#### Add a note")
+                with gr.Row():
+                    annotation_doc = gr.Textbox(label="Document name or pattern", placeholder="e.g. contract.pdf", scale=3)
+                    annotation_type = gr.Dropdown(
+                        label="Type",
+                        choices=[("Strategic guidance", "strategic"), ("Reliability concern", "reliability"), ("Scope / relevance", "scope")],
+                        value="strategic",
+                        scale=1,
+                    )
+                annotation_text = gr.Textbox(label="Your note", placeholder="e.g. This report overstates damages — focus on §4 corrections", lines=2)
+                add_annotation_btn = gr.Button("Add Note", variant="primary", size="sm")
+                annotation_result = gr.Markdown("")
+
         with gr.Accordion("Belief Revisions — how the system's understanding has changed over time", open=False):
             gr.Markdown(
                 "Every time an assertion's belief state or confidence changes, the revision "
@@ -7175,6 +7261,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.export_summary_report(mid),
             inputs=[matter_id_box],
             outputs=[export_report_file],
+        )
+        refresh_annotations_btn.click(
+            fn=lambda mid: state.load_annotations(mid),
+            inputs=[matter_id_box],
+            outputs=[annotations_html],
+        )
+        add_annotation_btn.click(
+            fn=lambda mid, doc, text, ann_type: state.do_add_annotation(mid, doc, text, ann_type),
+            inputs=[matter_id_box, annotation_doc, annotation_text, annotation_type],
+            outputs=[annotation_result, annotations_html],
         )
 
         # --- Detail panel refreshes ---
