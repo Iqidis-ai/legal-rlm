@@ -7,8 +7,8 @@ specified later in this document are a target shape, not the runtime.
 section "Current Implementation Status" below for what clients can actually
 call today.
 Date: 2026-04-15. Updated 2026-05-03 (CAS revision endpoints for
-correct/verify/reject, domain-composition endpoint, verify/revisions
-target validation).
+correct/verify/reject/trust-overrides, domain-composition endpoint,
+verify/revisions target validation).
 
 ## Current Implementation Status
 
@@ -68,7 +68,10 @@ spec row below so the two stay in sync.
 - `GET /matter/{matter_id}/runs`, `/runs/{run_id}/events`,
   `/runs/{run_id}/events/stream`
 - `GET /matter/{matter_id}/steering-surface`
-- `POST /matter/{matter_id}/trust-overrides` (+ `GET`, `DELETE`)
+- `POST /matter/{matter_id}/trust-overrides` (+ `GET`, `DELETE`) — CAS-protected
+  when `expected_revisions` provided (409 on stale view)
+- `GET /matter/{matter_id}/trust-overrides/revisions` — snapshot namespace
+  revisions for CAS-protected set/delete trust override
 - `POST /matter/{matter_id}/annotations` (+ `GET`, `DELETE`)
 
 **Domain composition (SO-5)**
