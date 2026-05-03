@@ -165,3 +165,8 @@ class UIBackend(ABC):
     ) -> list[dict]:
         """Return recent persisted LLM call rows for analytics."""
         ...
+
+    @abstractmethod
+    async def get_proof_state_summary(self, matter_id: str) -> dict:
+        """Return proof state summary and per-issue proof states."""
+        ...

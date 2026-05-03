@@ -1356,11 +1356,66 @@ def _fmt_evidence_matrix_panel(matrix: dict) -> str:
     )
 
 
+_PROOF_PANEL_LABELS = {
+    "legal": {
+        "issues_tracked": "Issues Reviewed",
+        "avg_sufficiency": "Evidence Coverage",
+        "gaps": "Evidence Gaps",
+        "predicates": "Elements",
+        "support": "Supporting",
+        "attack": "Contrary",
+        "balance": "Net Support",
+        "advocacy_badge": "one-sided sources",
+    },
+    "finance": {
+        "issues_tracked": "Theses Reviewed",
+        "avg_sufficiency": "Evidence Coverage",
+        "gaps": "Diligence Gaps",
+        "predicates": "Criteria",
+        "support": "Corroborating",
+        "attack": "Contrary",
+        "balance": "Net Support",
+        "advocacy_badge": "management only",
+    },
+    "coding": {
+        "issues_tracked": "Requirements Reviewed",
+        "avg_sufficiency": "Evidence Coverage",
+        "gaps": "Verification Gaps",
+        "predicates": "Conditions",
+        "support": "Confirming",
+        "attack": "Contradicting",
+        "balance": "Net Support",
+        "advocacy_badge": "author only",
+    },
+    "academic_research": {
+        "issues_tracked": "Questions Reviewed",
+        "avg_sufficiency": "Evidence Coverage",
+        "gaps": "Evidence Gaps",
+        "predicates": "Criteria",
+        "support": "Supporting",
+        "attack": "Contradicting",
+        "balance": "Net Support",
+        "advocacy_badge": "single-source",
+    },
+    "biomedical": {
+        "issues_tracked": "Endpoints Reviewed",
+        "avg_sufficiency": "Evidence Coverage",
+        "gaps": "Evidence Gaps",
+        "predicates": "Criteria",
+        "support": "Supporting",
+        "attack": "Contrary",
+        "balance": "Net Support",
+        "advocacy_badge": "sponsor only",
+    },
+}
+
+
 def _fmt_proof_state_panel(summary: dict, issues: list, domain: str = "legal") -> str:
     """Render the proof state analysis panel (SO-2 / SO-4)."""
     if not issues:
-        return "<div class='viz-empty'>No proof state computed yet. Run an investigation first.</div>"
+        return "<div class='viz-empty'>No evidence coverage data yet. Run an investigation first.</div>"
 
+    labels = _PROOF_PANEL_LABELS.get(domain, _PROOF_PANEL_LABELS["legal"])
     total = summary.get("total_issues_tracked", 0)
     avg_suf = summary.get("avg_sufficiency", 0.0)
     by_status = summary.get("by_status", {})
@@ -1377,14 +1432,14 @@ def _fmt_proof_state_panel(summary: dict, issues: list, domain: str = "legal") -
         "<div style='display:flex;gap:24px;flex-wrap:wrap;margin-bottom:16px;'>"
         f"<div style='text-align:center;'>"
         f"<div style='font-size:28px;font-weight:700;color:#1e293b;'>{total}</div>"
-        f"<div style='font-size:11px;color:#6b7280;'>Issues Tracked</div></div>"
+        f"<div style='font-size:11px;color:#6b7280;'>{_escape(labels['issues_tracked'])}</div></div>"
         f"<div style='text-align:center;'>"
         f"<div style='font-size:28px;font-weight:700;color:{'#16a34a' if avg_suf > 0.5 else '#d97706' if avg_suf > 0.25 else '#dc2626'};'>"
         f"{avg_suf:.0%}</div>"
-        f"<div style='font-size:11px;color:#6b7280;'>Avg Sufficiency</div></div>"
+        f"<div style='font-size:11px;color:#6b7280;'>{_escape(labels['avg_sufficiency'])}</div></div>"
         f"<div style='text-align:center;'>"
         f"<div style='font-size:28px;font-weight:700;color:#dc2626;'>{gap_count}</div>"
-        f"<div style='font-size:11px;color:#6b7280;'>Proof Gaps</div></div>"
+        f"<div style='font-size:11px;color:#6b7280;'>{_escape(labels['gaps'])}</div></div>"
     )
     for status, count in sorted(by_status.items()):
         color = status_colors.get(status, "#94a3b8")
@@ -1398,6 +1453,7 @@ def _fmt_proof_state_panel(summary: dict, issues: list, domain: str = "legal") -
     rows_html = ""
     for ps in issues:
         issue_id = ps.get("issue_id", "?")
+        issue_title = ps.get("issue_title") or issue_id
         sufficiency = max(0.0, min(1.0, _safe_float(ps.get("sufficiency", 0.0))))
         proof_status = ps.get("proof_status", "none")
         supporting = _safe_int(ps.get("supporting_count", 0))
@@ -1411,7 +1467,7 @@ def _fmt_proof_state_panel(summary: dict, issues: list, domain: str = "legal") -
         status_color = status_colors.get(proof_status, "#94a3b8")
         suf_pct = sufficiency * 100
 
-        issue_title = _escape(issue_id[:24])
+        display_title = _escape(issue_title[:40])
         pred_text = f"{satisfied_preds}/{total_preds}" if total_preds else "—"
         balance = trust_support - trust_attack
         balance_color = "#16a34a" if balance > 0.1 else "#dc2626" if balance < -0.1 else "#6b7280"
@@ -1421,13 +1477,13 @@ def _fmt_proof_state_panel(summary: dict, issues: list, domain: str = "legal") -
             adv_badge = (
                 "<span style='margin-left:6px;padding:1px 5px;border-radius:8px;"
                 "background:#fef3c7;color:#92400e;font-size:9px;font-weight:700;"
-                "text-transform:uppercase;'>advocacy only</span>"
+                f"text-transform:uppercase;'>{_escape(labels['advocacy_badge'])}</span>"
             )
 
         rows_html += (
             f"<tr>"
-            f"<td style='max-width:180px;overflow:hidden;text-overflow:ellipsis;"
-            f"white-space:nowrap;' title='{_escape(issue_id)}'>{issue_title}{adv_badge}</td>"
+            f"<td style='max-width:220px;overflow:hidden;text-overflow:ellipsis;"
+            f"white-space:nowrap;' title='{_escape(issue_title)}'>{display_title}{adv_badge}</td>"
             f"<td><span style='display:inline-block;padding:1px 8px;border-radius:8px;"
             f"background:{status_color}22;color:{status_color};font-size:11px;"
             f"font-weight:600;'>{_escape(proof_status)}</span></td>"
@@ -1451,11 +1507,11 @@ def _fmt_proof_state_panel(summary: dict, issues: list, domain: str = "legal") -
         "<thead><tr style='border-bottom:2px solid #e2e8f0;text-align:left;'>"
         "<th style='padding:6px 8px;'>Issue</th>"
         "<th style='padding:6px 8px;'>Status</th>"
-        "<th style='padding:6px 8px;'>Sufficiency</th>"
-        "<th style='padding:6px 8px;text-align:center;'>Predicates</th>"
-        "<th style='padding:6px 8px;text-align:center;'>Support</th>"
-        "<th style='padding:6px 8px;text-align:center;'>Attack</th>"
-        "<th style='padding:6px 8px;text-align:center;'>Balance</th>"
+        "<th style='padding:6px 8px;'>Coverage</th>"
+        f"<th style='padding:6px 8px;text-align:center;'>{_escape(labels['predicates'])}</th>"
+        f"<th style='padding:6px 8px;text-align:center;'>{_escape(labels['support'])}</th>"
+        f"<th style='padding:6px 8px;text-align:center;'>{_escape(labels['attack'])}</th>"
+        f"<th style='padding:6px 8px;text-align:center;'>{_escape(labels['balance'])}</th>"
         "</tr></thead><tbody>"
         + rows_html
         + "</tbody></table></div>"

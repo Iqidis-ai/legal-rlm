@@ -208,3 +208,6 @@ class HttpBackend(UIBackend):
             params["run_id"] = run_id
         result = await self._get(f"/matter/{matter_id}/llm-calls", params)
         return result if isinstance(result, list) else []
+
+    async def get_proof_state_summary(self, matter_id: str) -> dict:
+        return await self._get(f"/matter/{matter_id}/proof-state")

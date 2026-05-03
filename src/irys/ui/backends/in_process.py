@@ -543,6 +543,12 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         summary = model.proof_state.get_summary()
         all_states = model.proof_state.get_all()
+        issue_titles = {
+            i["id"]: i.get("title", i["id"])
+            for i in model.issues.list_issues()
+        }
+        for ps in all_states:
+            ps["issue_title"] = issue_titles.get(ps.get("issue_id", ""), ps.get("issue_id", "?"))
         return {"matter_id": matter_id, "summary": summary, "issues": all_states}
 
     async def list_llm_calls(
