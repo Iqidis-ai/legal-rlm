@@ -328,12 +328,9 @@ class HttpBackend(UIBackend):
         return data.get("id", "") if isinstance(data, dict) else ""
 
     async def clear_decision_context(self, matter_id: str) -> bool:
-        try:
-            r = await self._client.delete(f"/matter/{matter_id}/decision-context")
-            r.raise_for_status()
-            return True
-        except Exception:
-            return False
+        r = await self._client.delete(f"/matter/{matter_id}/decision-context")
+        r.raise_for_status()
+        return True
 
     async def list_annotations(self, matter_id: str, document: Optional[str] = None) -> list[dict]:
         params = {}
@@ -355,13 +352,10 @@ class HttpBackend(UIBackend):
         return result.get("annotation_id", "") if isinstance(result, dict) else ""
 
     async def delete_annotation(self, matter_id: str, annotation_id: str) -> bool:
-        try:
-            r = await self._client.delete(f"/matter/{matter_id}/annotations/{_url_quote(annotation_id, safe='')}")
-            r.raise_for_status()
-            data = r.json()
-            return data.get("status") == "deleted" if isinstance(data, dict) else False
-        except Exception:
-            return False
+        r = await self._client.delete(f"/matter/{matter_id}/annotations/{_url_quote(annotation_id, safe='')}")
+        r.raise_for_status()
+        data = r.json()
+        return data.get("status") == "deleted" if isinstance(data, dict) else False
 
     async def export_matter_summary(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/export-summary")

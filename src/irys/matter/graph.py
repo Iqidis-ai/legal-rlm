@@ -6753,12 +6753,12 @@ class DocumentAnnotationStore:
         return [dict(r) for r in rows]
 
     def delete(self, annotation_id: str) -> bool:
-        """Remove an annotation by id."""
-        self.db.execute(
+        """Remove an annotation by id. Returns True only if a row was deleted."""
+        cur = self.db.execute(
             "DELETE FROM document_annotation WHERE matter_id=? AND id=?",
             (self.matter_id, annotation_id),
         )
-        return True
+        return cur.rowcount > 0
 
 
 class DecisionContextStore:

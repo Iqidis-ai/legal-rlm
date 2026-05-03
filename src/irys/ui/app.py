@@ -5759,14 +5759,14 @@ class AppState:
 
     def export_summary_report(self, matter_id: str) -> "str | None":
         if not matter_id or matter_id == "—":
-            return None
+            raise gr.Error("Load a matter first before exporting.")
         try:
             data = _run_async(self.backend().export_matter_summary(matter_id))
         except Exception as exc:
             logger.warning("Export failed: %s", exc)
-            return None
+            raise gr.Error(f"Export failed: {exc}")
         if not data or not isinstance(data, dict):
-            return None
+            raise gr.Error("Export returned empty data.")
         import json as _json
         import tempfile as _tempfile
         lines: list[str] = []

@@ -1512,6 +1512,12 @@ def test_annotations_delete(client, register_model):
     assert resp.json()["status"] == "deleted"
 
 
+def test_annotations_delete_nonexistent(client, register_model):
+    resp = client.delete(f"/matter/{MATTER_ID}/annotations/no-such-id")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "not_found"
+
+
 def test_annotations_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/annotations")
     assert resp.status_code == 404
