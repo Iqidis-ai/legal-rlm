@@ -2166,14 +2166,14 @@ _DOMAIN_SOURCE_LABELS: dict[str, dict[str, str]] = {
         "post_hoc": "Post-mortem", "unknown": "Unclassified",
     },
     "academic_research": {
-        "operative": "Peer-Reviewed", "authoritative": "Systematic Review",
+        "operative": "Primary Source", "authoritative": "Systematic Review",
         "procedural": "Protocol", "informal": "Grey Literature",
         "draft": "Preprint", "advocacy": "Editorial/Opinion",
         "post_hoc": "Retrospective", "unknown": "Unclassified",
     },
     "biomedical": {
-        "operative": "Clinical Trial", "authoritative": "Meta-Analysis",
-        "procedural": "Guideline", "informal": "Case Report",
+        "operative": "Primary Evidence", "authoritative": "Meta-Analysis",
+        "procedural": "Guideline", "informal": "Correspondence",
         "draft": "Preprint", "advocacy": "Expert Opinion",
         "post_hoc": "Retrospective", "unknown": "Unclassified",
     },
@@ -2198,7 +2198,7 @@ _DOMAIN_SPEECH_ACT_LABELS: dict[str, dict[str, str]] = {
     "coding": {
         "alleged": "Claimed", "argued": "Proposed", "denied": "Rejected",
         "admitted": "Confirmed", "ordered": "Required", "performed": "Implemented",
-        "paid": "Completed", "requested": "Requested", "threatened": "Flagged",
+        "paid": "Delivered", "requested": "Requested", "threatened": "Flagged",
         "promised": "Planned", "estimated": "Estimated", "calculated": "Computed",
         "observed": "Traced", "testified": "Documented", "stipulated": "Specified",
         "amended": "Patched", "waived": "Deferred", "terminated": "Deprecated",
@@ -2216,11 +2216,11 @@ _DOMAIN_SPEECH_ACT_LABELS: dict[str, dict[str, str]] = {
     "biomedical": {
         "alleged": "Reported", "argued": "Hypothesized", "denied": "Contradicted",
         "admitted": "Acknowledged", "ordered": "Prescribed", "performed": "Administered",
-        "paid": "Completed", "requested": "Recommended", "threatened": "Warned",
+        "paid": "Fulfilled", "requested": "Recommended", "threatened": "Warned",
         "promised": "Indicated", "estimated": "Estimated", "calculated": "Modeled",
-        "observed": "Observed", "testified": "Documented", "stipulated": "Protocol",
+        "observed": "Observed", "testified": "Documented", "stipulated": "Specified",
         "amended": "Revised", "waived": "Excluded", "terminated": "Discontinued",
-        "inferred": "Inferred", "operative": "Indicated", "extracted": "Extracted",
+        "inferred": "Inferred", "operative": "Labeled", "extracted": "Extracted",
     },
 }
 
@@ -3399,9 +3399,13 @@ class AppState:
         try:
             backend = self.backend()
             assertions = _run_async(backend.list_assertions(matter_id, limit=50))
-            overview = _run_async(backend.get_overview(matter_id))
-            dc = overview.get("domain_composition", {}) if isinstance(overview, dict) else {}
-            domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
+            domain = "legal"
+            try:
+                overview = _run_async(backend.get_overview(matter_id))
+                dc = overview.get("domain_composition", {}) if isinstance(overview, dict) else {}
+                domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
+            except Exception:
+                pass
             return _fmt_assertions(assertions, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading assertions: {_escape(str(exc))}</div>"
