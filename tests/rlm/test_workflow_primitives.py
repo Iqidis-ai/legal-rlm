@@ -273,3 +273,51 @@ def test_fmt_output_envelope_summary_empty():
     from irys.ui.app import _fmt_output_envelope_summary
     assert _fmt_output_envelope_summary(None) == ""
     assert _fmt_output_envelope_summary({}) == ""
+
+
+def test_fmt_belief_revision_panel_empty():
+    from irys.ui.app import _fmt_belief_revision_panel
+    result = _fmt_belief_revision_panel([])
+    assert "viz-empty" in result
+    assert "No belief revisions recorded" in result
+
+
+def test_fmt_belief_revision_panel_empty_finance():
+    from irys.ui.app import _fmt_belief_revision_panel
+    result = _fmt_belief_revision_panel([], domain="finance")
+    assert "No revisions recorded" in result
+    assert "Financial facts" in result
+
+
+def test_fmt_belief_revision_panel_with_data():
+    from irys.ui.app import _fmt_belief_revision_panel
+    revisions = [
+        {
+            "proposition_text": "Defendant breached clause 4.2",
+            "old_belief_state": "believed",
+            "new_belief_state": "rejected",
+            "cause": "contradicted_by_new_evidence",
+            "old_confidence": 0.85,
+            "new_confidence": 0.20,
+        },
+        {
+            "proposition_text": "Payment was received on March 1",
+            "old_belief_state": "unknown",
+            "new_belief_state": "believed",
+            "cause": "user_correction",
+            "old_confidence": 0.0,
+            "new_confidence": 0.95,
+        },
+    ]
+    result = _fmt_belief_revision_panel(revisions)
+    assert "2 revisions" in result
+    assert "Defendant breached" in result
+    assert "believed" in result
+    assert "rejected" in result
+
+
+def test_fmt_belief_revision_panel_missing_fields():
+    from irys.ui.app import _fmt_belief_revision_panel
+    revisions = [{"proposition_text": None, "old_belief_state": None}]
+    result = _fmt_belief_revision_panel(revisions)
+    assert "1 revision" in result

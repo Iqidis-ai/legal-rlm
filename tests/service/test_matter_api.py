@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from irys.service.api import app, _active_matter_models
 from irys.matter import MatterModel, AssertionCandidate, SpeechAct, SourceRole
 from irys.matter import ModelLayer, AssertionKind, BeliefState
-from irys.matter.enums import OriginKind, IssueType, GapType
+from irys.matter.enums import OriginKind, IssueType, GapType, RevisionCause
 from irys.matter.reasoning import ReasoningLedgerStore
 
 
@@ -1077,3 +1077,43 @@ def test_overview_includes_domain_composition(client, register_model):
     assert "domain_composition" in data
     dc = data["domain_composition"]
     assert "primary_domain_profile_id" in dc
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/belief-revisions — belief revision audit trail
+# ---------------------------------------------------------------------------
+
+def test_belief_revisions_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/belief-revisions")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_belief_revisions_with_data(client, register_model):
+    model = register_model
+    aid, _ = model.assertions.upsert_occurrence(AssertionCandidate(
+        proposition_text="Delivery was on time.",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="doc.pdf",
+        speech_act=SpeechAct.EXTRACTED,
+        source_role=SourceRole.UNKNOWN,
+    ))
+    model.assertions.set_belief_state(aid, BeliefState.OPERATIVE, 0.9)
+    model.belief.force_state(
+        assertion_id=aid,
+        new_state=BeliefState.DISPUTED,
+        new_confidence=0.3,
+        cause=RevisionCause.CONFLICT_DETECTION,
+    )
+    resp = client.get(f"/matter/{MATTER_ID}/belief-revisions")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) >= 1
+    assert "proposition_text" in rows[0]
+    assert rows[0]["new_belief_state"] == "disputed"
+
+
+def test_belief_revisions_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/belief-revisions")
+    assert resp.status_code == 404

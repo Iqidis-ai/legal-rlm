@@ -1116,3 +1116,46 @@ def test_multiple_operative_supporters_accumulate_confidence():
     )
     assert abs(conf_one - 0.6) < 1e-9, f"Expected 0.6, got {conf_one}"
     assert abs(conf_two - 0.7) < 1e-9, f"Expected 0.7, got {conf_two}"
+
+
+def test_list_belief_revisions_empty(model):
+    """list_belief_revisions returns empty list when no revisions exist."""
+    result = model.list_belief_revisions()
+    assert result == []
+
+
+def test_list_belief_revisions_returns_rows(model):
+    """list_belief_revisions returns revision events with proposition text joined."""
+    aid = add(model, "Contract was signed on January 15.")
+    model.assertions.set_belief_state(aid, BeliefState.OPERATIVE, 0.9)
+    model.belief.force_state(
+        assertion_id=aid,
+        new_state=BeliefState.DISPUTED,
+        new_confidence=0.3,
+        cause=RevisionCause.CONFLICT_DETECTION,
+    )
+
+    rows = model.list_belief_revisions()
+    assert len(rows) >= 1
+    latest = rows[0]
+    assert "proposition_text" in latest
+    assert "Contract was signed" in latest["proposition_text"]
+    assert latest["new_belief_state"] in ("disputed", "DISPUTED")
+
+
+def test_list_belief_revisions_limit(model):
+    """list_belief_revisions respects the limit parameter."""
+    aid = add(model, "Amount due is $50,000.")
+    for i in range(5):
+        target = BeliefState.OPERATIVE if i % 2 == 0 else BeliefState.DISPUTED
+        model.belief.force_state(
+            assertion_id=aid,
+            new_state=target,
+            new_confidence=0.5,
+            cause=RevisionCause.NEW_EVIDENCE,
+        )
+
+    all_rows = model.list_belief_revisions(limit=100)
+    limited = model.list_belief_revisions(limit=2)
+    assert len(limited) <= 2
+    assert len(all_rows) >= len(limited)

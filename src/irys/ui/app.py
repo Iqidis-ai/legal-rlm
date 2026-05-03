@@ -1915,6 +1915,8 @@ def _fmt_belief_revision_panel(revisions: list[dict], domain: str = "legal") -> 
 
     rows_html = ""
     for rev in revisions:
+        if not isinstance(rev, dict):
+            continue
         text = _escape(str(rev.get("proposition_text") or "—")[:120])
         old_state = _escape(str(rev.get("old_belief_state") or "?"))
         new_state = _escape(str(rev.get("new_belief_state") or "?"))
