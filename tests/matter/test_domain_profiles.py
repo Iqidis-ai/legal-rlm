@@ -252,3 +252,49 @@ def test_vocabulary_reader_all_profiles():
             assert "source_roles" in vocab
             assert len(vocab["trust_weights"]) >= 5
             assert len(vocab["source_roles"]) >= 5
+
+
+def test_engine_domain_dicts_cover_all_profiles():
+    """Every engine-level domain vocabulary dict must have entries for all 5 profiles."""
+    from irys.rlm.engine import (
+        _DOMAIN_DEEP_READ_VOCABULARY,
+        _DOMAIN_OPERATING_REALITIES,
+        _DOMAIN_ROLE_CALIBRATION_LABELS,
+        _DOMAIN_TRUST_HIERARCHY,
+    )
+
+    expected = {"legal", "finance", "coding", "academic_research", "biomedical"}
+
+    for name, d in [
+        ("_DOMAIN_DEEP_READ_VOCABULARY", _DOMAIN_DEEP_READ_VOCABULARY),
+        ("_DOMAIN_OPERATING_REALITIES", _DOMAIN_OPERATING_REALITIES),
+        ("_DOMAIN_ROLE_CALIBRATION_LABELS", _DOMAIN_ROLE_CALIBRATION_LABELS),
+        ("_DOMAIN_TRUST_HIERARCHY", _DOMAIN_TRUST_HIERARCHY),
+    ]:
+        missing = expected - set(d.keys())
+        assert not missing, f"{name} missing domains: {missing}"
+
+
+def test_ui_domain_label_dicts_cover_all_profiles():
+    """Every UI-level domain label dict must have entries for all 5 profiles."""
+    from irys.ui.app import (
+        _AUTHORITY_PANEL_LABELS,
+        _DOC_PANEL_LABELS,
+        _DOMAIN_BELIEF_LABELS,
+        _DOMAIN_SOURCE_LABELS,
+        _DOMAIN_SPEECH_ACT_LABELS,
+        _PROOF_PANEL_LABELS,
+    )
+
+    expected = {"legal", "finance", "coding", "academic_research", "biomedical"}
+
+    for name, d in [
+        ("_PROOF_PANEL_LABELS", _PROOF_PANEL_LABELS),
+        ("_AUTHORITY_PANEL_LABELS", _AUTHORITY_PANEL_LABELS),
+        ("_DOC_PANEL_LABELS", _DOC_PANEL_LABELS),
+        ("_DOMAIN_SOURCE_LABELS", _DOMAIN_SOURCE_LABELS),
+        ("_DOMAIN_SPEECH_ACT_LABELS", _DOMAIN_SPEECH_ACT_LABELS),
+        ("_DOMAIN_BELIEF_LABELS", _DOMAIN_BELIEF_LABELS),
+    ]:
+        missing = expected - set(d.keys())
+        assert not missing, f"{name} missing domains: {missing}"

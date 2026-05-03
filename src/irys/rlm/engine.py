@@ -877,6 +877,14 @@ _DOMAIN_CITATION_SECTION: dict[str, str] = {
 }
 
 _DOMAIN_OPERATING_REALITIES: dict[str, str] = {
+    "legal": """Pragmatic Operating Realities
+
+- Account for the actual realities that shape litigation and transactional outcomes, including jurisdictional rules, burden of proof allocations, procedural posture, available remedies, settlement dynamics, and the distinction between what is legally correct and what is practically achievable.
+- Where procedural, evidentiary, or jurisdictional realities materially affect the analysis, integrate them directly.
+- When pure legal theory points one way but the practical litigation posture points another, explain that clearly and give the user the strategic view.
+- If the user provides information about jurisdiction, procedural stage, opposing counsel posture, or settlement context, weigh it heavily.
+- If those realities are missing and they would materially change the analysis, raise that directly.""",
+
     "finance": """Pragmatic Operating Realities
 
 - Account for the actual realities that shape financial outcomes, including market conditions, regulatory environment, capital structure constraints, counterparty dynamics, materiality thresholds, and time-sensitivity of capital markets.

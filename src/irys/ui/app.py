@@ -2622,6 +2622,12 @@ _TRUST_ICONS = {
 }
 
 _DOMAIN_SOURCE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "operative": "Operative", "authoritative": "Authoritative",
+        "procedural": "Procedural", "informal": "Informal",
+        "draft": "Draft", "advocacy": "Advocacy",
+        "post_hoc": "Post Hoc", "unknown": "Unclassified",
+    },
     "finance": {
         "operative": "Audited Filing", "authoritative": "Regulatory",
         "procedural": "Compliance", "informal": "Market Commentary",
@@ -2655,6 +2661,15 @@ def _domain_source_label(role: str, domain: str) -> str:
 
 
 _DOMAIN_SPEECH_ACT_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "alleged": "Alleged", "argued": "Argued", "denied": "Denied",
+        "admitted": "Admitted", "ordered": "Ordered", "performed": "Performed",
+        "paid": "Paid", "requested": "Requested", "threatened": "Threatened",
+        "promised": "Promised", "estimated": "Estimated", "calculated": "Calculated",
+        "observed": "Observed", "testified": "Testified", "stipulated": "Stipulated",
+        "amended": "Amended", "waived": "Waived", "terminated": "Terminated",
+        "inferred": "Inferred", "operative": "Operative", "extracted": "Extracted",
+    },
     "finance": {
         "alleged": "Reported", "argued": "Projected", "denied": "Disputed",
         "admitted": "Disclosed", "ordered": "Mandated", "performed": "Executed",
@@ -2726,6 +2741,13 @@ def _verification_pill(status: str | None) -> str:
 
 
 _DOMAIN_BELIEF_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "alleged": "Alleged", "argued": "Argued", "admitted": "Admitted",
+        "operative": "Operative", "performed": "Performed",
+        "not_performed": "Not Performed", "disputed": "Disputed",
+        "superseded": "Superseded", "withdrawn": "Withdrawn",
+        "inferred": "Inferred", "resolved": "Resolved", "unknown": "Unknown",
+    },
     "finance": {
         "alleged": "Reported", "argued": "Projected", "admitted": "Confirmed",
         "operative": "Established", "performed": "Executed",
