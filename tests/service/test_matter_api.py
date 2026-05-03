@@ -863,3 +863,217 @@ def test_bulk_verify_endpoint_404_for_unknown_matter(client):
         },
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/proof-state — proof state summary
+# ---------------------------------------------------------------------------
+
+def test_get_proof_state_summary_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/proof-state")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "summary" in data
+    assert "issues" in data
+    assert data["matter_id"] == MATTER_ID
+
+
+def test_get_proof_state_summary_with_issue(client, register_model):
+    model = register_model
+    issue_id, _ = model.issues.upsert_issue("Breach of contract", IssueType.CLAIM)
+    aid = _add_assertion(model)
+    model.issues.link_assertion(aid, issue_id, "supports")
+    model.proof_state.compute_and_store(issue_id)
+    resp = client.get(f"/matter/{MATTER_ID}/proof-state")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["issues"]) >= 1
+    ps = data["issues"][0]
+    assert ps["issue_id"] == issue_id
+    assert "issue_title" in ps
+    assert ps["issue_title"] == "Breach of contract"
+
+
+def test_get_proof_state_compute(client, register_model):
+    model = register_model
+    issue_id, _ = model.issues.upsert_issue("Payment due", IssueType.CLAIM)
+    resp = client.post(f"/matter/{MATTER_ID}/proof-state/compute")
+    assert resp.status_code == 200
+
+
+def test_get_issue_proof_state(client, register_model):
+    model = register_model
+    issue_id, _ = model.issues.upsert_issue("Damages claim", IssueType.CLAIM)
+    model.proof_state.compute_and_store(issue_id)
+    resp = client.get(f"/matter/{MATTER_ID}/issues/{issue_id}/proof-state")
+    assert resp.status_code == 200
+
+
+def test_proof_state_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/proof-state")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/authority-network — aggregate authority + issue links
+# ---------------------------------------------------------------------------
+
+def test_authority_network_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/authority-network")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["authorities"] == []
+    assert data["issue_links"] == {}
+
+
+def test_authority_network_with_linked_issue(client, register_model):
+    model = register_model
+    auth_id, _ = model.authority.upsert(
+        citation="Twombly, 550 U.S. 544",
+        authority_type="case",
+        weight="binding",
+    )
+    issue_id, _ = model.issues.upsert_issue("Plausibility standard", IssueType.CLAIM)
+    model.authority.link_to_issue(auth_id, issue_id, relevance="supporting")
+    resp = client.get(f"/matter/{MATTER_ID}/authority-network")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["authorities"]) == 1
+    assert data["authorities"][0]["citation"] == "Twombly, 550 U.S. 544"
+    assert auth_id in data["issue_links"]
+    links = data["issue_links"][auth_id]
+    assert len(links) == 1
+    assert links[0]["issue_id"] == issue_id
+    assert links[0]["relevance"] == "supporting"
+
+
+def test_authority_network_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/authority-network")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/documents/cards — document intelligence
+# ---------------------------------------------------------------------------
+
+def test_document_cards_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/documents/cards")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cards"] == []
+    assert data["total_inventory"] == 0
+    assert data["ingested_count"] == 0
+
+
+def test_document_cards_with_inventory(client, register_model):
+    model = register_model
+    inv_id, _ = model.inventory.upsert("contract.pdf", "a" * 64, size_bytes=1024)
+    model.inventory.mark_ingested(inv_id)
+    model.document_cards.upsert(
+        doc_id=inv_id, title="contract.pdf", doc_type="contract",
+    )
+    resp = client.get(f"/matter/{MATTER_ID}/documents/cards")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["cards"]) == 1
+    assert data["total_inventory"] >= 1
+    assert data["ingested_count"] >= 1
+    assert data["cards"][0]["title"] == "contract.pdf"
+
+
+def test_document_cards_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/documents/cards")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/timeline — timeline events
+# ---------------------------------------------------------------------------
+
+def test_timeline_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/timeline")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+
+
+def test_timeline_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/timeline")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/evidence-matrix — issue × document matrix
+# ---------------------------------------------------------------------------
+
+def test_evidence_matrix_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/evidence-matrix")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, dict)
+
+
+def test_evidence_matrix_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/evidence-matrix")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/communication-map — actor interaction graph
+# ---------------------------------------------------------------------------
+
+def test_communication_map_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/communication-map")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, dict)
+
+
+def test_communication_map_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/communication-map")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/damages-waterfall — quantitative breakdown
+# ---------------------------------------------------------------------------
+
+def test_damages_waterfall_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/damages-waterfall")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+
+
+def test_damages_waterfall_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/damages-waterfall")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/steering-surface — actionable steering actions
+# ---------------------------------------------------------------------------
+
+def test_steering_surface_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/steering-surface")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+
+
+def test_steering_surface_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/steering-surface")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/overview — overview with domain composition
+# ---------------------------------------------------------------------------
+
+def test_overview_includes_domain_composition(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/overview")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "domain_composition" in data
+    dc = data["domain_composition"]
+    assert "primary_domain_profile_id" in dc

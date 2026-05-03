@@ -201,8 +201,10 @@ Major capabilities present in the codebase:
 - Coverage-driven lead planning and proof-gap surfacing.
 - Memory broker substrate (namespace revision CAS, object taint with domain
   profile binding, semantic cache quarantine, taint-aware context assembly).
-- Gradio dashboard with matter intelligence panels, steering, review, trust
-  controls, privilege mode, and cost visibility.
+- Gradio dashboard with matter intelligence panels (proof state, authority
+  network, document intelligence, evidence matrix, communication map, timeline,
+  quant, LLM analytics), steering, review, trust controls, privilege mode, and
+  cost visibility.
 - Portable ontology reference (`docs/IMPLEMENTED_REASONING_SYSTEM_SCHEMA.md`)
   documenting the general-purpose substrate vs. legal-specific overlays.
 
@@ -235,8 +237,9 @@ little data can legitimately report `None` for some metrics.
   cleanup permission issues. Targeted tests are usually more reliable.
 - All five domain profiles are implemented with full vocabulary, trust weights,
   and cross-domain mappings. LLM prompts are domain-neutral with per-domain
-  synthesis preambles. UI labels are domain-aware. Remaining gap: extraction
-  prompts do not yet inject domain-specific vocabulary from the active profile.
+  synthesis preambles. Extraction (deep-read) prompts inject domain-specific
+  vocabulary from `_DOMAIN_DEEP_READ_VOCABULARY`. UI labels are domain-aware
+  across all panels. Domain detection is cached per-run on `InvestigationState`.
 
 ## Maintenance Rules
 
