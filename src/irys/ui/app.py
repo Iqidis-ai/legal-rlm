@@ -2299,11 +2299,13 @@ _LEGAL_BELIEF_DESCRIPTIONS: dict[str, str] = {
     "admitted": "acknowledged by opposing party",
     "operative": "from a binding document",
     "performed": "action that occurred",
+    "not_performed": "action did not occur",
     "disputed": "parties disagree",
     "superseded": "replaced by later document",
     "withdrawn": "retracted by source",
     "inferred": "deduced from other facts",
     "resolved": "settled or decided",
+    "unknown": "status cannot be determined",
 }
 
 _DOMAIN_BELIEF_DESCRIPTIONS: dict[str, dict[str, str]] = {
@@ -2313,11 +2315,13 @@ _DOMAIN_BELIEF_DESCRIPTIONS: dict[str, dict[str, str]] = {
         "admitted": "confirmed by counterparty",
         "operative": "from audited filing",
         "performed": "transaction executed",
+        "not_performed": "transaction not executed",
         "disputed": "challenged or contested",
         "superseded": "revised in later filing",
         "withdrawn": "retracted by issuer",
         "inferred": "derived from data",
         "resolved": "settled or finalized",
+        "unknown": "status undetermined",
     },
     "coding": {
         "alleged": "claimed in documentation",
@@ -2325,11 +2329,13 @@ _DOMAIN_BELIEF_DESCRIPTIONS: dict[str, dict[str, str]] = {
         "admitted": "acknowledged by maintainer",
         "operative": "established in codebase",
         "performed": "implemented and tested",
+        "not_performed": "not implemented",
         "disputed": "contested in review",
         "superseded": "deprecated by newer version",
         "withdrawn": "removed from codebase",
         "inferred": "inferred from behavior",
         "resolved": "fixed or resolved",
+        "unknown": "status unknown",
     },
     "academic_research": {
         "alleged": "hypothesized",
@@ -2337,11 +2343,13 @@ _DOMAIN_BELIEF_DESCRIPTIONS: dict[str, dict[str, str]] = {
         "admitted": "accepted by community",
         "operative": "established finding",
         "performed": "demonstrated experimentally",
+        "not_performed": "not demonstrated",
         "disputed": "disputed in literature",
         "superseded": "superseded by later study",
         "withdrawn": "retracted by authors",
         "inferred": "derived from analysis",
         "resolved": "confirmed by replication",
+        "unknown": "status unknown",
     },
     "biomedical": {
         "alleged": "reported in study",
@@ -2349,17 +2357,20 @@ _DOMAIN_BELIEF_DESCRIPTIONS: dict[str, dict[str, str]] = {
         "admitted": "acknowledged by investigators",
         "operative": "established in guidelines",
         "performed": "observed in trial",
+        "not_performed": "not observed",
         "disputed": "contested in literature",
         "superseded": "superseded by later evidence",
         "withdrawn": "withdrawn by authors",
         "inferred": "inferred from data",
         "resolved": "confirmed by meta-analysis",
+        "unknown": "status undetermined",
     },
 }
 
 _CORRECTION_STATES = [
     "alleged", "argued", "admitted", "operative", "performed",
-    "disputed", "superseded", "withdrawn", "inferred", "resolved",
+    "not_performed", "disputed", "superseded", "withdrawn",
+    "inferred", "resolved", "unknown",
 ]
 
 

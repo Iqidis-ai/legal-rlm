@@ -814,6 +814,40 @@ _DOMAIN_CITATION_SECTION: dict[str, str] = {
 - Where evidence needs confirmation from larger studies, say so clearly.""",
 }
 
+_DOMAIN_OPERATING_REALITIES: dict[str, str] = {
+    "finance": """Pragmatic Operating Realities
+
+- Account for the actual realities that shape financial outcomes, including market conditions, regulatory environment, capital structure constraints, counterparty dynamics, materiality thresholds, and time-sensitivity of capital markets.
+- Where commercial or regulatory realities materially affect the analysis, integrate them directly.
+- When purely theoretical analysis points one way but the practical financial posture points another, explain that clearly and give the user the commercial view.
+- If the user provides information about deal structure, counterparties, regulatory context, or strategic constraints, weigh it heavily.
+- If those realities are missing and they would materially change the analysis, raise that directly.""",
+
+    "coding": """Pragmatic Operating Realities
+
+- Account for the actual realities that shape technical outcomes, including deployment constraints, backward compatibility requirements, performance SLAs, dependency ecosystem health, security posture, and operational burden.
+- Where runtime, infrastructure, or ecosystem realities materially affect the analysis, integrate them directly.
+- When architecturally ideal solutions conflict with practical constraints (team capacity, migration risk, vendor lock-in), explain that clearly and give the user the pragmatic view.
+- If the user provides information about deployment targets, performance budgets, team expertise, or operational constraints, weigh it heavily.
+- If those realities are missing and they would materially change the recommendation, raise that directly.""",
+
+    "academic_research": """Pragmatic Operating Realities
+
+- Account for the actual realities that shape research outcomes, including statistical power, replication concerns, publication bias, methodological limitations, sample representativeness, and ethical constraints.
+- Where methodological or practical realities materially affect the conclusions, integrate them directly.
+- When theoretical significance diverges from practical or clinical significance, explain that clearly and give the user the measured view.
+- If the user provides information about study design, sample characteristics, funding context, or field-specific norms, weigh it heavily.
+- If those realities are missing and they would materially change the interpretation, raise that directly.""",
+
+    "biomedical": """Pragmatic Operating Realities
+
+- Account for the actual realities that shape clinical and biomedical outcomes, including regulatory pathway, evidence hierarchy position, patient population specificity, off-label considerations, safety monitoring requirements, and the distinction between clinical and statistical significance.
+- Where regulatory, patient-safety, or evidence-quality realities materially affect the analysis, integrate them directly.
+- When mechanistic plausibility diverges from clinical evidence, explain that clearly and give the user the evidence-based view.
+- If the user provides information about patient populations, treatment context, regulatory status, or clinical endpoints, weigh it heavily.
+- If those realities are missing and they would materially change the recommendation, raise that directly.""",
+}
+
 _DOMAIN_QUALITY_CHECK: dict[str, str] = {
     "finance": "- Is this strong enough that a demanding CFO or portfolio manager would trust it?",
     "coding": "- Is this strong enough that a demanding principal engineer would trust it?",
@@ -1071,11 +1105,14 @@ def _compose_synthesis_prompt(domain: str = "legal") -> str:
     source_treatment = _DOMAIN_SOURCE_TREATMENT.get(domain, "")
     citation = _DOMAIN_CITATION_SECTION.get(domain, "")
     quality_check = _DOMAIN_QUALITY_CHECK.get(domain, "")
+    operating_realities = _DOMAIN_OPERATING_REALITIES.get(domain, "")
     core = _SHARED_SYNTHESIS_CORE.format(quality_check=quality_check)
     return f"""{preamble}
 {core}
 
 {source_treatment}
+
+{operating_realities}
 
 {citation}
 

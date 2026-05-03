@@ -122,7 +122,7 @@ class GapType(str, Enum):
 
 
 class IssueType(str, Enum):
-    """The type of a legal issue node."""
+    """The type of an issue node."""
     CLAIM = "claim"
     DEFENSE = "defense"
     CONTRACT_QUESTION = "contract_question"
