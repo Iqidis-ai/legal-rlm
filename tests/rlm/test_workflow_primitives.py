@@ -228,3 +228,48 @@ def test_repair_output_skips_nonfixable_citation_floor_failure():
 
     assert output == "No citations here."
     assert client.calls == []
+
+
+def test_fmt_output_envelope_summary_clean():
+    from irys.ui.app import _fmt_output_envelope_summary
+
+    envelope = OutputEnvelope.create(
+        output_text="Analysis complete.",
+        workflow_kind="analysis",
+        output_shape="answer",
+        emitter="synthesis",
+    ).to_dict()
+    md = _fmt_output_envelope_summary(envelope)
+    assert "analysis" in md
+    assert "All output quality checks passed" in md
+
+
+def test_fmt_output_envelope_summary_with_warnings():
+    from irys.ui.app import _fmt_output_envelope_summary
+
+    vr = ValidationResult(
+        validator="citation_check",
+        passed=False,
+        score=0.3,
+        blocking_issues=["No citations found"],
+        warnings=["Output may lack supporting references"],
+    )
+    envelope = OutputEnvelope.create(
+        output_text="Draft answer.",
+        workflow_kind="analysis",
+        output_shape="answer",
+        emitter="synthesis",
+        validation_results=[vr],
+        review_required=True,
+    ).to_dict()
+    md = _fmt_output_envelope_summary(envelope)
+    assert "Review required" in md
+    assert "No citations found" in md
+    assert "citation_check" in md
+    assert "failed" in md
+
+
+def test_fmt_output_envelope_summary_empty():
+    from irys.ui.app import _fmt_output_envelope_summary
+    assert _fmt_output_envelope_summary(None) == ""
+    assert _fmt_output_envelope_summary({}) == ""

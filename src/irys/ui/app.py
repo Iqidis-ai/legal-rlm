@@ -533,6 +533,41 @@ def _split_run_output_sections(output: Any) -> tuple[str, str]:
     return text[:split_at].rstrip(), text[split_at:].strip()
 
 
+def _fmt_output_envelope_summary(envelope_dict: dict) -> str:
+    """Format the OutputEnvelope's quality metadata for display in the citations panel."""
+    if not envelope_dict or not isinstance(envelope_dict, dict):
+        return ""
+    parts: list[str] = []
+    wk = envelope_dict.get("workflow_kind", "")
+    shape = envelope_dict.get("output_shape", "")
+    if wk or shape:
+        parts.append(f"**Workflow**: {wk} → {shape}")
+    blocking = envelope_dict.get("blocking_issues", [])
+    warnings = envelope_dict.get("warnings", [])
+    review = envelope_dict.get("review_required", False)
+    validations = envelope_dict.get("validation_results", [])
+    if not blocking and not warnings and not review and not validations:
+        parts.append("✅ All output quality checks passed.")
+    else:
+        if review:
+            parts.append("⚠️ **Review required** — output flagged for human review.")
+        for issue in blocking:
+            parts.append(f"🚫 {issue}")
+        for w in warnings:
+            parts.append(f"⚠️ {w}")
+        for vr in validations:
+            if isinstance(vr, dict):
+                name = vr.get("validator", "check")
+                passed = vr.get("passed", False)
+                score = vr.get("score", 0)
+                icon = "✅" if passed else "❌"
+                parts.append(f"{icon} {name}: {'passed' if passed else 'failed'} (score: {score:.2f})")
+    dep_hash = envelope_dict.get("dependency_manifest_hash")
+    if dep_hash:
+        parts.append(f"*Manifest*: `{dep_hash[:16]}…`")
+    return "\n".join(parts)
+
+
 def _escape(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
@@ -3641,12 +3676,20 @@ class AppState:
                     if state.status == "completed" and self.final_output:
                         self.session_turns.append({"query": user_query, "answer": self.final_output})
                         self.session_turns = self.session_turns[-_SESSION_TURN_LIMIT:]
-                    supporting_text = "\n".join(call_citations) or "â€”"
-                    if self.final_diagnostics:
+                    supporting_text = "\n".join(call_citations) or "—"
+                    _envelope = (
+                        getattr(state, "findings", {}) or {}
+                    ).get("output_envelope")
+                    _envelope_md = _fmt_output_envelope_summary(_envelope) if _envelope else ""
+                    if _envelope_md or self.final_diagnostics:
+                        _diag_parts: list[str] = []
+                        if _envelope_md:
+                            _diag_parts.append("## Output Quality\n\n" + _envelope_md)
+                        if self.final_diagnostics:
+                            _diag_parts.append("## Run Diagnostics & Safeguards\n\n" + self.final_diagnostics)
                         supporting_text = (
-                            "## Run Diagnostics & Safeguards\n\n"
-                            + self.final_diagnostics
-                            + ("\n\n---\n\n" + supporting_text if supporting_text and supporting_text != "â€”" else "")
+                            "\n\n---\n\n".join(_diag_parts)
+                            + ("\n\n---\n\n" + supporting_text if supporting_text and supporting_text != "—" else "")
                         )
                     yield (
                         _build_chat_messages(self.session_turns),
@@ -3853,10 +3896,18 @@ class AppState:
                         self.session_turns = self.session_turns[-_SESSION_TURN_LIMIT:]
 
                     supporting_text = "\n".join(call_citations) or "—"
-                    if self.final_diagnostics:
+                    _envelope = (
+                        getattr(state, "findings", {}) or {}
+                    ).get("output_envelope")
+                    _envelope_md = _fmt_output_envelope_summary(_envelope) if _envelope else ""
+                    if _envelope_md or self.final_diagnostics:
+                        _diag_parts: list[str] = []
+                        if _envelope_md:
+                            _diag_parts.append("## Output Quality\n\n" + _envelope_md)
+                        if self.final_diagnostics:
+                            _diag_parts.append("## Run Diagnostics & Safeguards\n\n" + self.final_diagnostics)
                         supporting_text = (
-                            "## Run Diagnostics & Safeguards\n\n"
-                            + self.final_diagnostics
+                            "\n\n---\n\n".join(_diag_parts)
                             + ("\n\n---\n\n" + supporting_text if supporting_text and supporting_text != "—" else "")
                         )
 
