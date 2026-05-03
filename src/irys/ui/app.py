@@ -1,4 +1,4 @@
-"""Irys RLM Gradio UI — 6-panel legal intelligence dashboard.
+"""Irys RLM Gradio UI — 6-panel matter intelligence dashboard.
 
 Panels:
   1. Overview      — landing page: stats, weakest issues, gaps, SO metrics
@@ -905,7 +905,7 @@ def _fmt_overview_panel(data: dict) -> str:
         + (
             "".join(domain_facet_rows)
             if domain_facet_rows
-            else "<div class='viz-empty'>Legal (default). Domain detection runs on document ingest.</div>"
+            else "<div class='viz-empty'>Default profile. Domain detection runs on document ingest.</div>"
         )
         + "</div>"
         + "<div class='viz-two-col'>"
@@ -2514,7 +2514,7 @@ _REVIEW_BUCKET_LABELS = {
     2: ("Supports a claim", "#2563eb"),  # blue — issue-linked
     3: ("Element of proof", "#0d9488"),  # teal — predicate
     4: ("Number", "#7c3aed"),            # purple — quant
-    5: ("Legal citation", "#6b7280"),    # grey — authority
+    5: ("Citation / Authority", "#6b7280"),  # grey — authority
     6: ("Other", "#94a3b8"),             # light grey
 }
 
@@ -2626,7 +2626,7 @@ def _fmt_review_queue(queue: list[dict]) -> str:
             "evidence_edge": "Evidence link",
             "issue_predicate": "Proof element",
             "quant_fact": "Number",
-            "authority": "Legal citation",
+            "authority": "Citation / Authority",
             "document_card": "Document classification",
         }.get(kind, kind.replace("_", " ").title())
         truncated = _truncate(text, 180)
@@ -2802,7 +2802,7 @@ def _review_queue_choices(queue: list[dict]) -> list[tuple[str, str]]:
             "evidence_edge": "Evidence link",
             "issue_predicate": "Element of proof",
             "quant_fact": "Number",
-            "authority": "Legal citation",
+            "authority": "Citation / Authority",
             "document_card": "Document classification",
             "assertion_occurrence": "Quoted utterance",
         }.get(kind, kind.replace("_", " ").title())
@@ -4620,7 +4620,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
     state = AppState(api_key=api_key)
     _s3_mode = _get_storage_mode() == "s3"
 
-    with gr.Blocks(title="Irys — Legal Intelligence") as demo:
+    with gr.Blocks(title="Irys — Matter Intelligence") as demo:
 
         # Hidden matter_id state — auto-populated, never shown prominently
         matter_id_box = gr.Textbox(visible=False)
@@ -4630,7 +4630,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         # ==================================================================
         gr.Markdown(
             "# Irys\n"
-            "Analyze your legal matter. Point to a folder of case documents and "
+            "Analyze your matter. Point to a folder of documents and "
             "ask questions in plain English."
         )
 

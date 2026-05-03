@@ -180,7 +180,7 @@ def create_app(config: Optional[ServiceConfig] = None) -> FastAPI:
 
     app = FastAPI(
         title="Irys RLM API",
-        description="Legal document investigation service with recursive language model",
+        description="Multi-domain document investigation service with recursive language model",
         version=VERSION,
         lifespan=lifespan,
         docs_url="/docs",
