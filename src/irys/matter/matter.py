@@ -5511,6 +5511,27 @@ class MatterModel:
         actions.sort(key=lambda a: _priority_order.get(a["priority"], 99))
         return actions[:limit]
 
+    def list_belief_revisions(self, limit: int = 100) -> list[dict]:
+        """Return recent belief revision events with assertion context.
+
+        Each row includes the assertion text, old/new belief states, cause,
+        and timestamp — the full transparency trail for SO-2 truth maintenance.
+        """
+        rows = self.db.execute(
+            """SELECT bre.id, bre.assertion_id, bre.run_id, bre.cause,
+                      bre.old_belief_state, bre.new_belief_state,
+                      bre.old_confidence, bre.new_confidence,
+                      bre.note, bre.created_at,
+                      a.proposition_text
+               FROM belief_revision_event bre
+               JOIN assertion a ON a.id = bre.assertion_id
+               WHERE a.matter_id = ?
+               ORDER BY bre.created_at DESC
+               LIMIT ?""",
+            (self.matter_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------

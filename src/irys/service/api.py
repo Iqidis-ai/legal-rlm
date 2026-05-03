@@ -2955,6 +2955,26 @@ async def get_proof_gaps(matter_id: str, threshold: float = 0.25):
 
 
 # ---------------------------------------------------------------------------
+# Belief Revision Transparency — SO-2 truth maintenance audit trail
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/matter/{matter_id}/belief-revisions",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def list_belief_revisions(matter_id: str, limit: int = 100):
+    """Return the belief revision audit trail for a matter.
+
+    Each entry shows an assertion that changed state (e.g. supported → disputed),
+    the cause of the revision, and the confidence delta.  This is the transparency
+    surface for SO-2 truth maintenance.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    return model.list_belief_revisions(limit=limit)
+
+
+# ---------------------------------------------------------------------------
 # Visual Work Product — Timeline view (Priority 2)
 # ---------------------------------------------------------------------------
 

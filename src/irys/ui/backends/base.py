@@ -180,3 +180,8 @@ class UIBackend(ABC):
     async def get_document_intelligence(self, matter_id: str) -> dict:
         """Return document cards with inventory metadata for the document panel."""
         ...
+
+    @abstractmethod
+    async def list_belief_revisions(self, matter_id: str, limit: int = 100) -> list[dict]:
+        """Return belief revision events for the transparency panel."""
+        ...

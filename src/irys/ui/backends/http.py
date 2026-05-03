@@ -197,6 +197,10 @@ class HttpBackend(UIBackend):
     async def get_communication_map(self, matter_id: str) -> dict:
         return await self._get(f"/matter/{matter_id}/communication-map")
 
+    async def list_belief_revisions(self, matter_id: str, limit: int = 100) -> list[dict]:
+        result = await self._get(f"/matter/{matter_id}/belief-revisions", {"limit": limit})
+        return result if isinstance(result, list) else []
+
     async def list_llm_calls(
         self,
         matter_id: str,

@@ -538,32 +538,36 @@ def _fmt_output_envelope_summary(envelope_dict: dict) -> str:
     if not envelope_dict or not isinstance(envelope_dict, dict):
         return ""
     parts: list[str] = []
-    wk = envelope_dict.get("workflow_kind", "")
-    shape = envelope_dict.get("output_shape", "")
+    wk = str(envelope_dict.get("workflow_kind") or "")
+    shape = str(envelope_dict.get("output_shape") or "")
     if wk or shape:
         parts.append(f"**Workflow**: {wk} → {shape}")
-    blocking = envelope_dict.get("blocking_issues", [])
-    warnings = envelope_dict.get("warnings", [])
-    review = envelope_dict.get("review_required", False)
-    validations = envelope_dict.get("validation_results", [])
-    if not blocking and not warnings and not review and not validations:
+    blocking = list(envelope_dict.get("blocking_issues") or [])
+    warns = list(envelope_dict.get("warnings") or [])
+    review = bool(envelope_dict.get("review_required"))
+    validations = list(envelope_dict.get("validation_results") or [])
+    if not blocking and not warns and not review and not validations:
         parts.append("✅ All output quality checks passed.")
     else:
         if review:
             parts.append("⚠️ **Review required** — output flagged for human review.")
         for issue in blocking:
             parts.append(f"🚫 {issue}")
-        for w in warnings:
+        for w in warns:
             parts.append(f"⚠️ {w}")
         for vr in validations:
-            if isinstance(vr, dict):
-                name = vr.get("validator", "check")
-                passed = vr.get("passed", False)
-                score = vr.get("score", 0)
-                icon = "✅" if passed else "❌"
-                parts.append(f"{icon} {name}: {'passed' if passed else 'failed'} (score: {score:.2f})")
+            if not isinstance(vr, dict):
+                continue
+            name = str(vr.get("validator") or "check")
+            passed = bool(vr.get("passed"))
+            try:
+                score = float(vr.get("score") or 0)
+            except (TypeError, ValueError):
+                score = 0.0
+            icon = "✅" if passed else "❌"
+            parts.append(f"{icon} {name}: {'passed' if passed else 'failed'} (score: {score:.2f})")
     dep_hash = envelope_dict.get("dependency_manifest_hash")
-    if dep_hash:
+    if dep_hash and isinstance(dep_hash, str):
         parts.append(f"*Manifest*: `{dep_hash[:16]}…`")
     return "\n".join(parts)
 
@@ -1857,6 +1861,91 @@ def _fmt_document_intelligence_panel(data: dict, domain: str = "legal") -> str:
         + "</tbody></table></div>"
     )
 
+    return f"<div class='viz-shell'>{header}{table}</div>"
+
+
+_BELIEF_REVISION_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Truth Maintenance Trail",
+        "assertion_col": "Assertion",
+        "transition_col": "State Change",
+        "cause_col": "Cause",
+        "confidence_col": "Confidence",
+        "empty": "No belief revisions recorded. The assertion graph has not been corrected or challenged.",
+    },
+    "finance": {
+        "title": "Fact Revision Audit",
+        "assertion_col": "Financial Fact",
+        "transition_col": "Status Change",
+        "cause_col": "Trigger",
+        "confidence_col": "Confidence",
+        "empty": "No revisions recorded. Financial facts have not been challenged or restated.",
+    },
+    "coding": {
+        "title": "Knowledge Base Revisions",
+        "assertion_col": "Technical Fact",
+        "transition_col": "Status Change",
+        "cause_col": "Trigger",
+        "confidence_col": "Confidence",
+        "empty": "No revisions recorded. Extracted technical facts are unchanged.",
+    },
+    "academic_research": {
+        "title": "Evidence Revision History",
+        "assertion_col": "Research Finding",
+        "transition_col": "Evidence Status",
+        "cause_col": "Revision Cause",
+        "confidence_col": "Confidence",
+        "empty": "No revisions recorded. Research findings have not been challenged or superseded.",
+    },
+    "biomedical": {
+        "title": "Clinical Evidence Revisions",
+        "assertion_col": "Clinical Finding",
+        "transition_col": "Evidence Status",
+        "cause_col": "Revision Cause",
+        "confidence_col": "Confidence",
+        "empty": "No revisions recorded. Clinical evidence has not been revised or contradicted.",
+    },
+}
+
+
+def _fmt_belief_revision_panel(revisions: list[dict], domain: str = "legal") -> str:
+    labels = _BELIEF_REVISION_LABELS.get(domain, _BELIEF_REVISION_LABELS["legal"])
+    if not revisions:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    rows_html = ""
+    for rev in revisions:
+        text = _escape(str(rev.get("proposition_text") or "—")[:120])
+        old_state = _escape(str(rev.get("old_belief_state") or "?"))
+        new_state = _escape(str(rev.get("new_belief_state") or "?"))
+        cause = _escape(str(rev.get("cause") or "—"))
+        old_conf = _safe_float(rev.get("old_confidence"), 0)
+        new_conf = _safe_float(rev.get("new_confidence"), 0)
+        delta = new_conf - old_conf
+        delta_icon = "▲" if delta > 0 else ("▼" if delta < 0 else "—")
+        delta_class = "tone-green" if delta > 0 else ("tone-red" if delta < 0 else "")
+        transition = (
+            f"<span class='pill pill-neutral'>{old_state}</span>"
+            f" → "
+            f"<span class='pill pill-blue'>{new_state}</span>"
+        )
+        rows_html += (
+            f"<tr><td title='{text}'>{text}</td>"
+            f"<td>{transition}</td>"
+            f"<td>{cause}</td>"
+            f"<td class='{delta_class}'>{delta_icon} {new_conf:.2f}</td></tr>"
+        )
+
+    count = len(revisions)
+    header = f"<div class='viz-header'><strong>{labels['title']}</strong> — {count} revision{'s' if count != 1 else ''}</div>"
+    table = (
+        "<div class='table-wrap'><table class='viz-table'>"
+        f"<thead><tr><th>{labels['assertion_col']}</th><th>{labels['transition_col']}</th>"
+        f"<th>{labels['cause_col']}</th><th>{labels['confidence_col']}</th></tr></thead>"
+        "<tbody>"
+        + rows_html
+        + "</tbody></table></div>"
+    )
     return f"<div class='viz-shell'>{header}{table}</div>"
 
 
@@ -4660,6 +4749,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading document intelligence: {_escape(exc)}</div>"
 
+    def load_belief_revisions(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().list_belief_revisions(matter_id))
+            return _fmt_belief_revision_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading belief revisions: {_escape(exc)}</div>"
+
     def set_policy_audience(self, label: str) -> str:
         """Called when the sidebar privilege-mode toggle flips. Returns
         a visible banner HTML so the reviewer always knows which mode
@@ -5621,6 +5719,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             doc_intel_html = gr.HTML("<div class='viz-empty'>Document intelligence will appear here after an investigation.</div>")
             refresh_doc_intel_btn = gr.Button("Refresh Documents", variant="secondary", size="sm")
 
+        with gr.Accordion("Belief Revisions — how the system's understanding has changed over time", open=False):
+            gr.Markdown(
+                "Every time an assertion's belief state or confidence changes, the revision "
+                "is logged here. Shows the full audit trail of truth maintenance."
+            )
+            belief_revision_html = gr.HTML("<div class='viz-empty'>Belief revisions will appear here after an investigation.</div>")
+            refresh_belief_btn = gr.Button("Refresh Belief Revisions", variant="secondary", size="sm")
+
         with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
                 "Maps which people and companies appear in which documents and highlights "
@@ -5897,6 +6003,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             proof_state = state.load_proof_state(mid, domain=domain)
             authority = state.load_authority_network(mid, domain=domain)
             doc_intel = state.load_document_intelligence(mid, domain=domain)
+            belief_revisions = state.load_belief_revisions(mid, domain=domain)
             review_badge = state.load_review_count_badge(mid)
             doc_choices = state.load_document_picker_choices(mid)
             return (
@@ -5914,6 +6021,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 proof_state,
                 authority,
                 doc_intel,
+                belief_revisions,
                 top_issue,
                 gr.update(choices=doc_choices),
                 gr.update(choices=_correction_dropdown_choices(domain), value=None),
@@ -5974,6 +6082,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     proof_state_html,
                     authority_html,
                     doc_intel_html,
+                    belief_revision_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -6002,6 +6111,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     proof_state_html,
                     authority_html,
                     doc_intel_html,
+                    belief_revision_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -6027,6 +6137,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 proof_state_html,
                 authority_html,
                 doc_intel_html,
+                belief_revision_html,
                 redirect_issue_id,
                 bulk_doc_ref,
                 correction_new_state,
@@ -6068,6 +6179,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_document_intelligence(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[doc_intel_html],
+        )
+        refresh_belief_btn.click(
+            fn=lambda mid: state.load_belief_revisions(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[belief_revision_html],
         )
         refresh_comm_btn.click(
             fn=lambda mid: state.load_communication_map(mid),

@@ -581,6 +581,10 @@ class InProcessBackend(UIBackend):
             ps["issue_title"] = issue_titles.get(ps.get("issue_id", ""), ps.get("issue_id", "?"))
         return {"matter_id": matter_id, "summary": summary, "issues": all_states}
 
+    async def list_belief_revisions(self, matter_id: str, limit: int = 100) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.list_belief_revisions(limit=limit)
+
     async def list_llm_calls(
         self,
         matter_id: str,
