@@ -298,3 +298,21 @@ def test_ui_domain_label_dicts_cover_all_profiles():
     ]:
         missing = expected - set(d.keys())
         assert not missing, f"{name} missing domains: {missing}"
+
+
+def test_deep_read_prompt_formats_for_all_domains():
+    """DEEP_READ_PROMPT must format cleanly with every domain vocabulary."""
+    from irys.rlm.engine import DEEP_READ_PROMPT, _DOMAIN_DEEP_READ_VOCABULARY
+
+    for domain, vocab in _DOMAIN_DEEP_READ_VOCABULARY.items():
+        result = DEEP_READ_PROMPT.format(
+            filename="test.pdf",
+            page_range="1-10",
+            content="Sample content.",
+            query="Test query",
+            focus="Test focus",
+            domain_vocabulary=vocab,
+        )
+        assert len(result) > 500, f"Prompt for {domain} unexpectedly short"
+        assert "key_facts" in result
+        assert "DOMAIN CONTEXT" in result
