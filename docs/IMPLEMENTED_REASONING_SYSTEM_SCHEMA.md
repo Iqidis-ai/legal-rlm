@@ -2,11 +2,19 @@
 
 Portable reference for the current Irys RLM implementation.
 
-Date captured: 2026-04-23
+Date captured: 2026-05-03 (updated from 2026-04-23)
 
-Current schema version: 58
+Current schema version: 61
 
-This file is intentionally standalone. It is written so it can be copied out of this repository and used as the basis for discussing a general-purpose ontology mapping and reasoning system. It describes what is implemented now, not only what is intended.
+This file is intentionally standalone. It is written so it can be copied out of
+this repository and used as the basis for discussing a general-purpose ontology
+mapping and reasoning system. It describes what is implemented now, not only
+what is intended.
+
+The system currently targets five complex domains: legal (most mature), finance,
+coding, academic research, and biomedical sciences. The neutral kernel maps
+across all five; domain-specific vocabularies are parameterized through domain
+profiles rather than hardcoded.
 
 ## 1. System In One Sentence
 
@@ -65,7 +73,31 @@ These are currently legal-flavored:
 - Deliverable routes such as privilege logs.
 - The `legal` value in `model_layer`.
 
-For a general ontology mapper, these should become profile-defined vocabularies and templates over a stable reasoning kernel, rather than hardcoded legal enums.
+For a general ontology mapper, these should become profile-defined vocabularies
+and templates over a stable reasoning kernel, rather than hardcoded legal enums.
+
+### Cross-domain neutral kernel mapping
+
+| Neutral Kernel | Legal | Finance | Coding | Academic Research | Biomedical |
+| --- | --- | --- | --- | --- | --- |
+| workspace | matter | portfolio/coverage | project/repo | study/review | investigation/trial |
+| artifact | pleading, contract, exhibit | 10-K, transcript, analyst report | source file, PR, test suite | paper, dataset, preprint | trial report, FDA filing, lab result |
+| claim | assertion (with belief state) | financial statement, risk factor, guidance | behavior claim, design decision, bug report | hypothesis, finding, claim | clinical finding, mechanism hypothesis |
+| claim_occurrence | assertion_occurrence | statement occurrence in filing | code reference, test result | citation, figure, table | measurement, endpoint observation |
+| objective_node | legal issue (element to prove) | investment thesis, compliance question | feature requirement, bug, technical debt | research question, methodology concern | disease mechanism, treatment efficacy |
+| criterion | legal element/predicate | financial threshold, compliance rule | acceptance criterion, perf requirement | statistical significance, reproducibility | clinical endpoint, safety threshold |
+| entity | party, witness, judge | company, executive, analyst, regulator | developer, component, service | researcher, institution, funding body | patient cohort, compound, gene |
+| support_edge | evidence edge (supports/attacks) | supports/contradicts thesis | test proves/disproves behavior | replicates/contradicts finding | supports/contradicts mechanism |
+| gap | missing proof, absent authority | missing disclosure, unverified assumption | missing test coverage, unreviewed path | unexplored question, limitation | missing trial data, unexplored interaction |
+
+### Domain-specific vocabularies requiring parameterization
+
+| Concept | Legal | Finance | Coding | Research | Biomedical |
+| --- | --- | --- | --- | --- | --- |
+| Source roles | advocacy, operative, authoritative, procedural | management, auditor, analyst, regulator | author, reviewer, automated test, CI | first-author, peer-reviewer, replicator | clinician, researcher, regulatory body |
+| Belief states | operative, alleged, disputed, admitted, withdrawn | audited, estimated, guidance, restated, withdrawn | verified, claimed, disputed, deprecated | replicated, preprint, retracted, contested | confirmed, preliminary, retracted, inconclusive |
+| Trust weights | operative=1.0, advocacy=0.3 | audited=1.0, management=0.7, analyst=0.5 | automated-test=1.0, author=0.7, claim=0.4 | replicated=1.0, peer-reviewed=0.8, preprint=0.4 | phase-III=1.0, case-report=0.4, in-vitro=0.3 |
+| Taint classes | privileged, work-product, sealed | MNPI, restricted, embargoed | security-sensitive, internal | embargoed, under-review | patient-data, proprietary, pre-publication |
 
 ## 3. Main Runtime Flow
 
@@ -155,7 +187,7 @@ This is important because conflict propagation is graph-shaped and can exceed a 
 
 ## 5. Exact Current SQLite Schema
 
-This section lists the live tables and columns after applying migrations for schema version 58.
+This section lists the live tables and columns after applying migrations for schema version 61.
 
 ### `actor`
 
@@ -992,9 +1024,102 @@ created_at TEXT
 updated_at TEXT
 ```
 
+### `namespace_revision` (v59)
+
+Purpose: monotonic revision counter per (namespace, target_kind, target_id).
+Used by broker CAS writes for O(1) staleness detection. 41 required namespaces
+covering every canonical table.
+
+```text
+id TEXT PK
+matter_id TEXT
+namespace TEXT
+target_kind TEXT
+target_id TEXT
+revision INTEGER
+updated_at TEXT
+UNIQUE(matter_id, namespace, target_kind, target_id)
+```
+
+### `object_taint` (v59, restructured v61)
+
+Purpose: information-security classification for any matter object. Taint
+lattice: public_clean < clean_with_withheld < internal_work_product <
+sealed_privileged < unknown_taint. Merge rule: max(all inputs). Domain-profile
+scoped uniqueness constraint ensures taint rows are deduped per profile binding.
+
+```text
+id TEXT PK
+matter_id TEXT
+target_kind TEXT
+target_id TEXT
+taint_class TEXT
+domain_profile_id TEXT DEFAULT ''
+domain_profile_version INTEGER DEFAULT 0
+profile_mapping_hash TEXT DEFAULT ''
+source_packet_id TEXT DEFAULT ''
+provenance_event_id TEXT DEFAULT ''
+policy_decision_id TEXT
+derivation_reason TEXT
+created_at TEXT
+UNIQUE(matter_id, target_kind, target_id, taint_class,
+       domain_profile_id, domain_profile_version, profile_mapping_hash,
+       source_packet_id, provenance_event_id)
+```
+
+### `domain_profile` (v59)
+
+Purpose: declares the domain binding for a matter (legal, finance, code,
+research, biomedical). Contains a JSON blob with the neutral kernel mapping
+and a content hash for fast equality checks.
+
+```text
+id TEXT PK
+matter_id TEXT
+profile_id TEXT
+profile_version INTEGER
+profile_kind TEXT
+profile_json TEXT
+mapping_hash TEXT
+status TEXT DEFAULT 'current'
+created_at TEXT
+updated_at TEXT
+UNIQUE(matter_id, profile_id, profile_version)
+```
+
+### `profile_mapping` (v59)
+
+Purpose: declares compatibility between a source domain profile and a target
+domain profile for a specific (target_kind, target_namespace). Enables
+cross-domain reasoning (e.g., financial fraud = legal + finance profiles).
+
+```text
+id TEXT PK
+matter_id TEXT
+source_domain_profile_id TEXT
+source_domain_profile_version INTEGER
+target_domain_profile_id TEXT
+target_domain_profile_version INTEGER
+source_mapping_hash TEXT
+target_mapping_hash TEXT
+target_kind TEXT
+target_namespace TEXT
+compatibility_status TEXT
+required_transform_id TEXT
+reviewer_id TEXT
+created_at TEXT
+UNIQUE(matter_id, source_domain_profile_id, source_domain_profile_version,
+       target_domain_profile_id, target_domain_profile_version,
+       target_kind, target_namespace)
+```
+
 ## 6. Core Enums And Vocabularies
 
-These are hardcoded today. A general ontology mapping system should move most of these into a domain profile.
+These are hardcoded today as legal-flavored Python enums. A general ontology
+mapping system should move most of these into domain profile-defined
+vocabularies. See the cross-domain mapping tables at the top of this document
+for how these concepts translate across legal, finance, coding, research, and
+biomedical domains.
 
 ### SpeechAct
 
@@ -2538,11 +2663,21 @@ This section is intentionally explicit so the portable document does not oversta
 
 ### Legal naming is still embedded
 
-The live schema and Python APIs use legal-flavored terms. General-purpose ontology support is not implemented as a first-class profile system today.
+The live schema and Python APIs use legal-flavored terms. The neutral kernel
+mapping exists in `MemoryBrokerStore.TAINT_KIND_ALIASES` and in the domain
+profile JSON, but source roles, belief states, speech acts, and issue templates
+are still Python enums with legal values. Domain-parameterized versions are
+needed for finance, coding, research, and biomedical deployment.
 
-### Dynamic domain profiles are not implemented
+### Domain profiles are implemented but single-domain
 
-There is no implemented `domain_profile` table yet. Current vocabularies are Python enums and template registry code.
+The `domain_profile`, `profile_mapping`, `namespace_revision`, and
+`object_taint` tables exist as of schema v59-v61. The default `legal:1` profile
+is bootstrapped at matter construction. Profile mappings currently cover only
+`clarification/clarifications`. Expanding coverage to all target kinds and
+adding profile templates for finance, coding, research, and biomedical domains
+is required for multi-domain deployment. Runtime APIs do not yet expose dynamic
+domain profile switching as a user-facing feature.
 
 ### `authority` is legal-specific
 

@@ -1,7 +1,7 @@
 [project]
 name = "irys-rlm"
 version = "0.1.0"
-description = "Recursive Language Model system for legal document analysis"
+description = "Durable reasoning substrate for complex domain investigation"
 requires-python = ">=3.11"
 dependencies = [
     "google-genai>=1.51.0",

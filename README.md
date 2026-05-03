@@ -1,13 +1,18 @@
 # Irys RLM
 
-Recursive Language Model system for legal document investigation.
+Durable reasoning substrate for complex domain investigation.
 
-Irys RLM builds and maintains a persistent matter model from legal document
-repositories. Queries read from and write to that durable substrate instead of
-rediscovering stable structure from scratch.
+Irys RLM builds and maintains persistent matter models from document
+repositories across complex domains. Queries read from and write to that
+durable substrate instead of rediscovering stable structure from scratch.
+
+Currently legal-flavored; the neutral kernel (claims, objective nodes,
+entities, artifacts, support edges, criteria, gaps) is domain-general and
+targets finance, coding, academic research, and biomedical sciences.
 
 Current coding-agent context: [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)
 API contract and target route roadmap: [API_CONTRACTS.md](API_CONTRACTS.md)
+Portable ontology reference: [docs/IMPLEMENTED_REASONING_SYSTEM_SCHEMA.md](docs/IMPLEMENTED_REASONING_SYSTEM_SCHEMA.md)
 
 ## Architecture
 
@@ -22,7 +27,7 @@ Key components:
 - `src/irys/core`: Gemini client, document readers, repositories, and search.
 - `src/irys/rlm`: investigation engine, state, checkpoints, and cascade governance.
 - `src/irys/matter`: SQLite schema, matter model, stores, proof, trust, gaps,
-  quantitative data, and reasoning ledger.
+  quantitative data, memory broker, and reasoning ledger.
 - `src/irys/service`: FastAPI service layer and S3 repository support.
 - `src/irys/ui`: Gradio dashboard and UI backends.
 
