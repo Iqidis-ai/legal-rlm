@@ -603,6 +603,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.mine_contradictions()
 
+    async def refresh_document_families(self, matter_id: str) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.refresh_document_families()
+
     async def get_assertion_health(self, matter_id: str, assertion_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_assertion_health(assertion_id)

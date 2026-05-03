@@ -207,6 +207,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def refresh_document_families(self, matter_id: str) -> list[dict]:
+        """Trigger version chain detection and persist family membership."""
+        ...
+
+    @abstractmethod
     async def get_assertion_health(self, matter_id: str, assertion_id: str) -> dict:
         """Return health diagnostics for a single assertion."""
         ...

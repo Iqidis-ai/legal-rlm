@@ -220,6 +220,10 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/provenance/{kind_enc}/{id_enc}", {"limit": limit})
         return result if isinstance(result, list) else []
 
+    async def refresh_document_families(self, matter_id: str) -> list[dict]:
+        result = await self._post(f"/matter/{matter_id}/refresh-document-families")
+        return result if isinstance(result, list) else []
+
     async def get_assertion_health(self, matter_id: str, assertion_id: str) -> dict:
         aid_enc = _url_quote(assertion_id, safe="")
         result = await self._get(f"/matter/{matter_id}/assertion/{aid_enc}/health")

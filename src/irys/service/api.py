@@ -3029,6 +3029,22 @@ async def get_document_versions(matter_id: str):
     return model.list_version_families()
 
 
+@app.post(
+    "/matter/{matter_id}/refresh-document-families",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def refresh_document_families(matter_id: str):
+    """Trigger on-demand version chain detection and family persistence.
+
+    Detects versioned documents from filename patterns, creates version_of links,
+    and persists family_id/version_chain_id on matching inventory rows.
+    Returns the list of version links created.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    return model.refresh_document_families()
+
+
 # ---------------------------------------------------------------------------
 # Provenance Trail (SO-5 sourcing transparency)
 # ---------------------------------------------------------------------------

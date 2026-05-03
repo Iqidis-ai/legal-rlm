@@ -5129,6 +5129,16 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading contradictions: {_escape(exc)}</div>"
 
+    def mine_and_load_contradictions(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            _run_async(self.backend().mine_contradictions(matter_id))
+            data = _run_async(self.backend().get_contradictions(matter_id))
+            return _fmt_contradiction_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error mining contradictions: {_escape(exc)}</div>"
+
     def load_document_versions(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -5137,6 +5147,16 @@ class AppState:
             return _fmt_document_versions_panel(data, domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading document versions: {_escape(exc)}</div>"
+
+    def detect_and_load_document_versions(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            _run_async(self.backend().refresh_document_families(matter_id))
+            data = _run_async(self.backend().get_document_versions(matter_id))
+            return _fmt_document_versions_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error detecting version chains: {_escape(exc)}</div>"
 
     def load_quant_thresholds(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -6122,7 +6142,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "each other, their belief states, and whether the conflict is resolved or open."
             )
             contradiction_html = gr.HTML("<div class='viz-empty'>Contradiction analysis will appear here after an investigation.</div>")
-            refresh_contradiction_btn = gr.Button("Refresh Contradictions", variant="secondary", size="sm")
+            with gr.Row():
+                refresh_contradiction_btn = gr.Button("Refresh Contradictions", variant="secondary", size="sm")
+                mine_contradiction_btn = gr.Button("Run Contradiction Mining", variant="primary", size="sm")
 
         with gr.Accordion("Document Version Chains — which documents supersede each other", open=False):
             gr.Markdown(
@@ -6130,7 +6152,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "The operative (current) version is highlighted so you know which document to cite."
             )
             doc_versions_html = gr.HTML("<div class='viz-empty'>Document version chains will appear here after an investigation.</div>")
-            refresh_doc_versions_btn = gr.Button("Refresh Document Versions", variant="secondary", size="sm")
+            with gr.Row():
+                refresh_doc_versions_btn = gr.Button("Refresh Document Versions", variant="secondary", size="sm")
+                detect_versions_btn = gr.Button("Detect Version Chains", variant="primary", size="sm")
 
         with gr.Accordion("Financial Health Alerts — quantitative threshold violations", open=False):
             gr.Markdown(
@@ -6618,8 +6642,18 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box],
             outputs=[contradiction_html],
         )
+        mine_contradiction_btn.click(
+            fn=lambda mid: state.mine_and_load_contradictions(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[contradiction_html],
+        )
         refresh_doc_versions_btn.click(
             fn=lambda mid: state.load_document_versions(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[doc_versions_html],
+        )
+        detect_versions_btn.click(
+            fn=lambda mid: state.detect_and_load_document_versions(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[doc_versions_html],
         )
