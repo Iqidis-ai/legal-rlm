@@ -2870,6 +2870,12 @@ class MatterModel:
         base_salience = get_document_priority(relative_path) / 2.0  # normalize to [0,1]
         self.inventory.set_salience(doc_id, min(1.0, base_salience))
 
+        self._detect_and_record_domain_signals(
+            doc_id=doc_id,
+            analysis=analysis,
+            filename=relative_path,
+        )
+
         return card_id
 
     def upsert_document_profile(
@@ -2930,6 +2936,12 @@ class MatterModel:
 
         # Mark profiled in inventory
         self.inventory.mark_profile_complete(doc_id)
+
+        self._detect_and_record_domain_signals(
+            doc_id=doc_id,
+            analysis=analysis,
+            filename=relative_path,
+        )
 
         return {
             "card_id": card_id,
@@ -3572,6 +3584,82 @@ class MatterModel:
             composed_trust_weights=composed_trust,
             primary_domain_profile_id=primary_profile,
         )
+
+    def _detect_and_record_domain_signals(
+        self,
+        *,
+        doc_id: str,
+        analysis: dict,
+        filename: str = "",
+    ) -> None:
+        """Run deterministic domain detection on document metadata and record results.
+
+        Called from upsert_document_intelligence and upsert_document_profile
+        after the card is written. Records detection events and upserts
+        workspace-level facets so the matter's domain composition reflects
+        the documents ingested.
+        """
+        try:
+            from .domain_detection import detect_domain_signals, CONFIDENCE_ACTIVE
+
+            text_parts = []
+            for key in ("title", "doc_title", "purpose", "doc_type", "doc_subtype"):
+                val = analysis.get(key)
+                if val and isinstance(val, str):
+                    text_parts.append(val)
+            text = " ".join(text_parts)
+            if not text.strip():
+                return
+
+            source_type = analysis.get("doc_type") or ""
+            metadata = {
+                k: v for k, v in analysis.items()
+                if isinstance(v, (str, int, float, bool)) and v
+            }
+
+            candidates = detect_domain_signals(
+                text,
+                source_type=source_type,
+                filename=filename,
+                metadata=metadata,
+            )
+            if not candidates:
+                return
+
+            broker = self.memory_broker
+            import json as _jm
+
+            for candidate in candidates:
+                broker.record_domain_detection_event(
+                    target_kind="artifact",
+                    target_id=doc_id,
+                    candidate_profile_id=candidate.profile_id,
+                    candidate_profile_version=1,
+                    confidence=candidate.confidence,
+                    signals_json=_jm.dumps(candidate.signals.to_dict()),
+                    evidence_refs_json=_jm.dumps(candidate.evidence_refs),
+                )
+
+                if candidate.is_active:
+                    profile = broker.get_domain_profile(candidate.profile_id, 1)
+                    mapping_hash = profile["mapping_hash"] if profile else "sha256:unknown"
+                    broker.upsert_object_domain_facet(
+                        target_kind="workspace",
+                        target_id=self.matter_id,
+                        domain_profile_id=candidate.profile_id,
+                        domain_profile_version=1,
+                        profile_mapping_hash=mapping_hash,
+                        confidence=candidate.confidence,
+                        status="active",
+                    )
+                elif candidate.is_candidate:
+                    broker.record_unknown_domain_candidate(
+                        evidence_cluster_hash=f"{candidate.profile_id}:{doc_id}",
+                        signals_json=_jm.dumps(candidate.signals.to_dict()),
+                        evidence_refs_json=_jm.dumps(candidate.evidence_refs),
+                    )
+        except Exception as exc:
+            _log.debug("Domain detection failed for doc %s: %s", doc_id, exc)
 
     _SEMANTIC_CACHE_NAMESPACES = (
         "claims:*", "claim_occurrences:*", "objective_nodes:*",

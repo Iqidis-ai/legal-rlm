@@ -5699,12 +5699,18 @@ class MemoryBrokerStore:
     ) -> dict[str, float]:
         """Return source_role → weight mapping from a domain profile.
 
-        Returns empty dict if profile doesn't exist or has no trust_weights.
+        Falls back to SOURCE_TRUST_WEIGHTS for the legal profile whose
+        default JSON predates the trust_weights vocabulary field.
+        Returns empty dict if profile doesn't exist.
         """
         vocab = self.get_profile_vocabulary(profile_id, profile_version)
         if vocab is None:
             return {}
-        return {str(k): float(v) for k, v in vocab.get("trust_weights", {}).items()}
+        tw = {str(k): float(v) for k, v in vocab.get("trust_weights", {}).items()}
+        if not tw and profile_id == "legal":
+            from .enums import SOURCE_TRUST_WEIGHTS
+            return dict(SOURCE_TRUST_WEIGHTS)
+        return tw
 
     def get_profile_source_roles(
         self,

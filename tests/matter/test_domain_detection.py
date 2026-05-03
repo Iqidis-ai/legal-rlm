@@ -257,3 +257,70 @@ def test_single_category_score_cap_prevents_over_promotion():
     assert legal[0].confidence < 0.70, (
         f"Single-category should be below active: conf={legal[0].confidence}"
     )
+
+
+# --- Integration: detection wired into document ingest (Phase 4) ---
+
+
+def test_document_profile_triggers_domain_detection():
+    """upsert_document_profile with finance metadata creates workspace facets."""
+    from irys.matter import MatterModel
+
+    model = MatterModel.open_in_memory()
+    model.inventory.upsert(
+        relative_path="financials/10K_2025.pdf",
+        sha256="sha256:abc123",
+    )
+    model.upsert_document_profile(
+        relative_path="financials/10K_2025.pdf",
+        analysis={
+            "title": "Annual Report 10-K SEC Filing",
+            "doc_type": "10-K",
+            "purpose": "Revenue disclosure and EBITDA margin analysis for fiscal year 2025. "
+                       "Earnings per share improved. Management provided forward guidance.",
+        },
+    )
+    broker = model.memory_broker
+    facets = broker.get_object_domain_facets(
+        "workspace", model.matter_id, status="active",
+    )
+    finance_facets = [f for f in facets if f["domain_profile_id"] == "finance"]
+    assert len(finance_facets) >= 1, f"Expected finance facet, got: {[f['domain_profile_id'] for f in facets]}"
+
+
+def test_document_profile_legal_text_creates_facets():
+    """upsert_document_profile with legal metadata creates workspace facets."""
+    from irys.matter import MatterModel
+
+    model = MatterModel.open_in_memory()
+    model.inventory.upsert(
+        relative_path="pleadings/complaint.pdf",
+        sha256="sha256:def456",
+    )
+    model.upsert_document_profile(
+        relative_path="pleadings/complaint.pdf",
+        analysis={
+            "title": "Complaint for Breach of Contract filed in UNITED STATES DISTRICT COURT",
+            "doc_type": "complaint",
+            "purpose": "Plaintiff alleges defendant breached pursuant to 500 U.S. 123. "
+                       "Motion for summary judgment on damages.",
+        },
+    )
+    broker = model.memory_broker
+    facets = broker.get_object_domain_facets(
+        "workspace", model.matter_id, status="active",
+    )
+    legal_facets = [f for f in facets if f["domain_profile_id"] == "legal"]
+    assert len(legal_facets) >= 1
+
+
+def test_legal_profile_trust_weights_fallback():
+    """get_profile_trust_weights for legal returns SOURCE_TRUST_WEIGHTS fallback."""
+    from irys.matter import MatterModel
+    from irys.matter.enums import SOURCE_TRUST_WEIGHTS
+
+    model = MatterModel.open_in_memory()
+    tw = model.memory_broker.get_profile_trust_weights("legal")
+    assert len(tw) > 0
+    for role, val in SOURCE_TRUST_WEIGHTS.items():
+        assert tw[role] == val
