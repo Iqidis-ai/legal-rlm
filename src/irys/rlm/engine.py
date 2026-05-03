@@ -616,7 +616,7 @@ CONDUCT A FOCUSED ANALYSIS. IMPORTANT: Keep response under 4000 characters total
    - unknown: cannot determine from document content alone
 
 9. DOCUMENT CARD (classify this document for the matter model):
-   - doc_type: broad category — "contract", "pleading", "correspondence", "invoice", "court_order", "memo", "report", "notice", "exhibit", "other"
+   - doc_type: broad category — "contract", "filing", "correspondence", "invoice", "order", "memo", "report", "notice", "exhibit", "other"
    - doc_subtype: specific subtype — e.g. "services_agreement", "demand_letter", "email_chain", "expert_report"
    - title: document title or best descriptive label (e.g. "Master Services Agreement between Acme and Beta Corp")
    - author: primary author name if identifiable (null if unknown)
@@ -639,7 +639,7 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
     "connections": ["doc reference 1"],
     "concerns": ["issue 1"],
     "doc_source_role": "advocacy|operative|authoritative|procedural|informal|draft|post_hoc|unknown",
-    "doc_type": "contract|pleading|correspondence|invoice|court_order|memo|report|notice|exhibit|other",
+    "doc_type": "contract|filing|correspondence|invoice|order|memo|report|notice|exhibit|other",
     "doc_subtype": "specific_subtype_here",
     "title": "Descriptive document title",
     "author": "Author Name or null",
@@ -853,6 +853,148 @@ _DOMAIN_QUALITY_CHECK: dict[str, str] = {
     "coding": "- Is this strong enough that a demanding principal engineer would trust it?",
     "academic_research": "- Is this strong enough that a demanding peer reviewer would trust it?",
     "biomedical": "- Is this strong enough that a demanding clinical department chief would trust it?",
+}
+
+_DOMAIN_ROLE_CALIBRATION_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "advocacy": "ADVOCACY (pleadings, briefs — do NOT treat as established facts)",
+        "operative": "OPERATIVE (signed contracts, orders — treat as established)",
+        "authoritative": "AUTHORITATIVE (statutes, case law — treat as controlling)",
+        "procedural": "PROCEDURAL (court filings, notices — established procedurally)",
+        "informal": "INFORMAL (emails, notes — corroborative only)",
+        "draft": "DRAFT (unexecuted — treat as proposed, not operative)",
+        "post_hoc": "POST-HOC EXPLANATORY (created after events — limited weight)",
+        "unknown": "UNKNOWN SOURCE ROLE — verify before relying",
+    },
+    "finance": {
+        "advocacy": "ADVOCACY (investor presentations, pitchbooks — do NOT treat as established facts)",
+        "operative": "OPERATIVE (audited filings, executed agreements — treat as established)",
+        "authoritative": "AUTHORITATIVE (regulations, accounting standards — treat as controlling)",
+        "procedural": "PROCEDURAL (regulatory filings, compliance submissions — established procedurally)",
+        "informal": "INFORMAL (emails, internal memos — corroborative only)",
+        "draft": "DRAFT (preliminary, unaudited — treat as indicative, not authoritative)",
+        "post_hoc": "POST-HOC EXPLANATORY (management commentary, post-event analysis — limited weight)",
+        "unknown": "UNKNOWN SOURCE ROLE — verify before relying",
+    },
+    "coding": {
+        "advocacy": "ADVOCACY (proposals, opinion posts — do NOT treat as established facts)",
+        "operative": "OPERATIVE (source code, API contracts — treat as ground truth for behavior)",
+        "authoritative": "AUTHORITATIVE (specifications, standards — treat as authoritative)",
+        "procedural": "PROCEDURAL (CI logs, test results — established procedurally)",
+        "informal": "INFORMAL (issue discussions, chat messages — corroborative only)",
+        "draft": "DRAFT (RFCs, proposals — treat as intent, not implementation)",
+        "post_hoc": "POST-HOC EXPLANATORY (post-mortems, retrospectives — limited weight)",
+        "unknown": "UNKNOWN SOURCE ROLE — verify before relying",
+    },
+    "academic_research": {
+        "advocacy": "ADVOCACY (editorials, opinion pieces — do NOT treat as established findings)",
+        "operative": "OPERATIVE (peer-reviewed publications, replicated results — treat as established)",
+        "authoritative": "AUTHORITATIVE (systematic reviews, guidelines — treat as authoritative)",
+        "procedural": "PROCEDURAL (ethics approvals, data management plans — established procedurally)",
+        "informal": "INFORMAL (conference notes, correspondence — corroborative only)",
+        "draft": "DRAFT (preprints, working papers — treat as provisional)",
+        "post_hoc": "POST-HOC EXPLANATORY (retrospective analysis — limited weight)",
+        "unknown": "UNKNOWN SOURCE ROLE — verify before relying",
+    },
+    "biomedical": {
+        "advocacy": "ADVOCACY (sponsored communications, marketing — do NOT treat as clinical evidence)",
+        "operative": "OPERATIVE (trial results, guideline recommendations — treat as established)",
+        "authoritative": "AUTHORITATIVE (regulatory approvals, consensus guidelines — treat as authoritative)",
+        "procedural": "PROCEDURAL (trial registrations, regulatory submissions — established procedurally)",
+        "informal": "INFORMAL (clinical notes, case discussions — corroborative only)",
+        "draft": "DRAFT (study protocols, preliminary data — treat as provisional)",
+        "post_hoc": "POST-HOC EXPLANATORY (retrospective studies — limited weight vs. prospective)",
+        "unknown": "UNKNOWN SOURCE ROLE — verify before relying",
+    },
+}
+
+_DOMAIN_TRUST_HIERARCHY: dict[str, str] = {
+    "legal": (
+        "\n=== SOURCE TRUST HIERARCHY (MANDATORY — follow this ordering) ===\n"
+        "1. OPERATIVE (contracts, signed agreements, court orders) — highest trust\n"
+        "2. AUTHORITATIVE (statutes, regulations, published case law)\n"
+        "3. PROCEDURAL (filings, docket entries, certificates of service)\n"
+        "4. INFORMAL (emails, letters, meeting notes)\n"
+        "5. DRAFT (unsigned drafts, redline versions, proposals)\n"
+        "6. POST_HOC (post-hoc explanations, summaries written after events)\n"
+        "7. ADVOCACY (complaints, briefs, demand letters) — lowest trust\n"
+        "\nANTI-AMPLIFICATION RULES:\n"
+        "• NEVER present advocacy allegations as established fact.\n"
+        "• ALWAYS qualify advocacy-sourced claims with attribution.\n"
+        "• When advocacy and operative sources conflict, the operative source controls.\n"
+        "• Do NOT let advocacy material's confident tone inflate its weight.\n"
+        "• If the ONLY source for a proposition is advocacy, explicitly note that "
+        "it lacks independent corroboration.\n"
+        "• Facts corroborated by multiple source types are stronger than single-source facts."
+    ),
+    "finance": (
+        "\n=== SOURCE TRUST HIERARCHY (MANDATORY — follow this ordering) ===\n"
+        "1. OPERATIVE (audited financial statements, executed agreements) — highest trust\n"
+        "2. AUTHORITATIVE (regulations, accounting standards, official guidance)\n"
+        "3. PROCEDURAL (regulatory filings, compliance records)\n"
+        "4. INFORMAL (emails, internal memos, meeting notes)\n"
+        "5. DRAFT (preliminary financials, unaudited data, proposals)\n"
+        "6. POST_HOC (management commentary, post-event analysis)\n"
+        "7. ADVOCACY (investor presentations, pitchbooks, sell-side research) — lowest trust\n"
+        "\nANTI-AMPLIFICATION RULES:\n"
+        "• NEVER present management guidance or projections as established fact.\n"
+        "• ALWAYS distinguish audited from unaudited figures.\n"
+        "• When advocacy and operative sources conflict, the audited source controls.\n"
+        "• Do NOT let confident forecasting tone inflate the weight of projections.\n"
+        "• If the ONLY source for a figure is management commentary, note the lack of audit verification.\n"
+        "• Data corroborated by multiple independent sources is stronger than single-source data."
+    ),
+    "coding": (
+        "\n=== SOURCE TRUST HIERARCHY (MANDATORY — follow this ordering) ===\n"
+        "1. OPERATIVE (source code, API contracts, test results) — highest trust\n"
+        "2. AUTHORITATIVE (specifications, standards, official documentation)\n"
+        "3. PROCEDURAL (CI/CD logs, deployment records, issue trackers)\n"
+        "4. INFORMAL (discussions, chat messages, comments)\n"
+        "5. DRAFT (RFCs, design proposals, work-in-progress)\n"
+        "6. POST_HOC (post-mortems, retrospective analysis)\n"
+        "7. ADVOCACY (blog posts, opinion pieces, vendor claims) — lowest trust\n"
+        "\nANTI-AMPLIFICATION RULES:\n"
+        "• NEVER present claims from documentation as ground truth without code verification.\n"
+        "• ALWAYS distinguish documented behavior from actual tested behavior.\n"
+        "• When documentation and code conflict, the code is ground truth.\n"
+        "• Do NOT let confident documentation inflate untested claims.\n"
+        "• If the ONLY source for a behavior claim is informal discussion, note the lack of verification.\n"
+        "• Claims backed by test results are stronger than undocumented assertions."
+    ),
+    "academic_research": (
+        "\n=== SOURCE TRUST HIERARCHY (MANDATORY — follow this ordering) ===\n"
+        "1. OPERATIVE (peer-reviewed publications, replicated results) — highest trust\n"
+        "2. AUTHORITATIVE (systematic reviews, meta-analyses, consensus guidelines)\n"
+        "3. PROCEDURAL (ethics approvals, registered protocols, data plans)\n"
+        "4. INFORMAL (conference notes, correspondence, lab notebooks)\n"
+        "5. DRAFT (preprints, working papers, unpublished data)\n"
+        "6. POST_HOC (retrospective analyses, post-hoc subgroup analyses)\n"
+        "7. ADVOCACY (editorials, opinion pieces, funded commentary) — lowest trust\n"
+        "\nANTI-AMPLIFICATION RULES:\n"
+        "• NEVER present unreplicated findings as established fact.\n"
+        "• ALWAYS note sample size, effect size, and confidence intervals.\n"
+        "• When editorial opinion and primary data conflict, the data controls.\n"
+        "• Do NOT let p-value significance inflate the practical importance of findings.\n"
+        "• If the ONLY source for a claim is a single unreplicated study, note this limitation.\n"
+        "• Findings replicated across independent studies are stronger than single-study results."
+    ),
+    "biomedical": (
+        "\n=== SOURCE TRUST HIERARCHY (MANDATORY — follow this ordering) ===\n"
+        "1. OPERATIVE (phase III RCT results, guideline recommendations) — highest trust\n"
+        "2. AUTHORITATIVE (regulatory approvals, systematic reviews, consensus guidelines)\n"
+        "3. PROCEDURAL (trial registrations, regulatory submissions, safety reports)\n"
+        "4. INFORMAL (clinical notes, case discussions, expert consultations)\n"
+        "5. DRAFT (study protocols, preliminary data, interim analyses)\n"
+        "6. POST_HOC (retrospective studies, post-hoc subgroup analyses)\n"
+        "7. ADVOCACY (sponsored communications, marketing materials, KOL presentations) — lowest trust\n"
+        "\nANTI-AMPLIFICATION RULES:\n"
+        "• NEVER present preclinical findings as clinical evidence.\n"
+        "• ALWAYS distinguish clinical significance from statistical significance.\n"
+        "• When sponsor communications and trial data conflict, the registered trial data controls.\n"
+        "• Do NOT let confident mechanistic reasoning substitute for clinical evidence.\n"
+        "• If the ONLY evidence is from a single small trial, note the need for larger confirmation.\n"
+        "• Evidence from multiple independent trials is stronger than single-trial results."
+    ),
 }
 
 _LEGAL_SYNTHESIS_PROMPT = """Role & Standard
@@ -7097,7 +7239,7 @@ Return:
             + "\n".join(summaries)
             + "\n\nWhich sections are relevant to answering this query? "
             "Return ONLY a JSON array of the relevant section keys. "
-            "Include a section if it would help the attorney reason about "
+            "Include a section if it would help the analyst reason about "
             "the query. Exclude sections that are irrelevant or would be noise.\n"
             "Example: [\"entities\", \"citations\"]"
         )
@@ -7121,8 +7263,7 @@ Return:
         Build a source-role calibration block for the synthesis prompt (SO-5).
 
         Queries the matter model for assertion counts grouped by source_role so
-        the LLM knows which facts came from advocacy sources (complaints, briefs)
-        vs. operative sources (contracts, orders) before synthesizing.
+        the LLM knows which facts came from advocacy vs. operative sources.
         """
         if self._matter_model is None:
             return "No source-role data available — treat all facts with appropriate skepticism."
@@ -7143,17 +7284,15 @@ Return:
         if not rows:
             return "No assertions recorded in matter model yet."
 
-        # Role descriptions used to calibrate LLM trust
-        _role_labels = {
-            "advocacy": "ADVOCACY (alleged/argued — do NOT treat as established facts)",
-            "operative": "OPERATIVE (signed documents, orders — treat as established)",
-            "authoritative": "AUTHORITATIVE (statutes, case law — treat as controlling)",
-            "procedural": "PROCEDURAL (court filings, notices — established procedurally)",
-            "informal": "INFORMAL (emails, notes — corroborative only)",
-            "draft": "DRAFT (unexecuted — treat as proposed, not operative)",
-            "post_hoc": "POST-HOC EXPLANATORY (created after events — limited weight)",
-            "unknown": "UNKNOWN SOURCE ROLE — verify before relying",
-        }
+        _domain = "legal"
+        try:
+            _, _, _primary = self._matter_model._read_matter_domain_composition()
+            if _primary:
+                _domain = _primary
+        except Exception:
+            pass
+
+        _role_labels = _DOMAIN_ROLE_CALIBRATION_LABELS.get(_domain, _DOMAIN_ROLE_CALIBRATION_LABELS["legal"])
 
         lines = ["The following facts were extracted from documents with these source roles:"]
         for row in rows:
@@ -7161,7 +7300,6 @@ Return:
             label = _role_labels.get(role, f"{role.upper()} — calibrate appropriately")
             lines.append(f"  • {row['cnt']} assertions from {label}")
 
-        # Add litigation-side breakdown so the LLM knows whose documents produced facts (SO-5).
         try:
             side_rows = self._matter_model.db.execute(
                 """SELECT COALESCE(ao.source_side, 'neutral/unknown') AS side,
@@ -7173,15 +7311,12 @@ Return:
                 (self._matter_model.matter_id,),
             ).fetchall()
             if side_rows:
-                # Note: a fact corroborated by documents from multiple sides is counted
-                # once per side, so side totals may sum to more than total assertions.
-                lines.append("\nLitigation-side origin of extracted facts (may overlap):")
+                lines.append("\nStakeholder-side origin of extracted facts (may overlap):")
                 for sr in side_rows:
                     lines.append(f"  • {sr['cnt']} assertions from {sr['side']} documents")
         except Exception:
             pass
 
-        # Incorporate user-set trust overrides so the LLM respects explicit calibration (SO-5).
         try:
             overrides = self._matter_model.trust_overrides.list_all()
             if overrides:
@@ -7201,7 +7336,7 @@ Return:
                             "even if source role would suggest lower trust"
                         )
                     else:
-                        continue  # 'normal' resets to auto; no special instruction needed
+                        continue
                     line = f"  • [{level.upper()}] '{pattern}': {override_label}"
                     if note:
                         line += f" — Reason: {note}"
@@ -7209,8 +7344,6 @@ Return:
         except Exception:
             pass
 
-        # Incorporate user strategic annotations for named documents (SO-3 annotation).
-        # These guide the LLM on how to interpret facts from specific documents.
         try:
             annotations = self._matter_model.annotations.list_recent(limit=8)
             if annotations:
@@ -7223,25 +7356,7 @@ Return:
         except Exception:
             pass
 
-        lines.append(
-            "\n=== SOURCE TRUST HIERARCHY (MANDATORY — follow this ordering) ===\n"
-            "1. OPERATIVE (contracts, signed agreements, court orders) — highest trust\n"
-            "2. AUTHORITATIVE (statutes, regulations, published case law)\n"
-            "3. PROCEDURAL (filings, docket entries, certificates of service)\n"
-            "4. INFORMAL (emails, letters, meeting notes)\n"
-            "5. DRAFT (unsigned drafts, redline versions, proposals)\n"
-            "6. POST_HOC (post-hoc explanations, summaries written after events)\n"
-            "7. ADVOCACY (complaints, briefs, demand letters, pleadings) — lowest trust\n"
-            "\nANTI-AMPLIFICATION RULES:\n"
-            "• NEVER present advocacy allegations as established fact.\n"
-            "• ALWAYS qualify advocacy-sourced claims: 'Plaintiff alleges...', "
-            "'According to the complaint...', 'Defendant argues...'.\n"
-            "• When advocacy and operative sources conflict, the operative source controls.\n"
-            "• Do NOT let advocacy material's confident tone inflate its weight.\n"
-            "• If the ONLY source for a proposition is advocacy, explicitly note that "
-            "it lacks independent corroboration.\n"
-            "• Facts corroborated by multiple source types are stronger than single-source facts."
-        )
+        lines.append(_DOMAIN_TRUST_HIERARCHY.get(_domain, _DOMAIN_TRUST_HIERARCHY["legal"]))
         return "\n".join(lines)
 
     def _build_quant_summary(self) -> str:
@@ -8753,11 +8868,16 @@ Respond as JSON only:
                 priority_words.append(w)
 
         # 3. Domain-relevant terms
-        domain_terms = {'contract', 'agreement', 'breach', 'damages', 'liability',
-                        'warranty', 'negligence', 'fraud', 'misrepresentation',
-                        'estimate', 'inspection', 'maintenance', 'invoice', 'payment',
-                        'revenue', 'compliance', 'specification', 'requirement',
-                        'finding', 'conclusion', 'diagnosis', 'assessment'}
+        domain_terms = {
+            'contract', 'agreement', 'breach', 'damages', 'liability',
+            'warranty', 'negligence', 'fraud', 'misrepresentation',
+            'estimate', 'inspection', 'maintenance', 'invoice', 'payment',
+            'revenue', 'compliance', 'specification', 'requirement',
+            'finding', 'conclusion', 'diagnosis', 'assessment',
+            'margin', 'debt', 'valuation', 'guidance', 'cash',
+            'bug', 'error', 'latency', 'security', 'dependency', 'test',
+            'trial', 'study', 'endpoint', 'cohort', 'sample', 'safety',
+        }
         for w in words:
             if w.lower() in domain_terms:
                 priority_words.append(w)
