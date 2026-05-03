@@ -34,6 +34,9 @@ def test_in_memory_db_creates_schema():
         "domain_profile", "profile_mapping",
         # v62: broker contracts
         "dependency_manifest", "memory_packet_event",
+        # v63: domain composition substrate
+        "domain_detection_event", "object_domain_facet",
+        "domain_composition", "unknown_domain_candidate",
     ]:
         assert required in tables, f"Missing table: {required}"
 
@@ -83,6 +86,51 @@ def test_memory_broker_substrate_tables_exist():
             for row in db.execute(f"PRAGMA table_info({table})").fetchall()
         }
         assert columns <= live
+
+
+def test_domain_composition_substrate_tables_exist():
+    db = SQLiteMatterDB.in_memory()
+    expected_columns = {
+        "domain_detection_event": {
+            "matter_id", "target_kind", "target_id", "candidate_profile_id",
+            "candidate_profile_version", "confidence", "signals_json",
+            "evidence_refs_json", "detector_version",
+        },
+        "object_domain_facet": {
+            "matter_id", "target_kind", "target_id", "domain_profile_id",
+            "domain_profile_version", "profile_mapping_hash", "confidence",
+            "status", "detection_event_id",
+        },
+        "domain_composition": {
+            "matter_id", "composition_hash", "primary_profile_id",
+            "facets_json", "composed_vocabulary_json", "status",
+        },
+        "unknown_domain_candidate": {
+            "matter_id", "evidence_cluster_hash", "signals_json",
+            "evidence_refs_json", "occurrence_count", "status",
+            "draft_profile_json",
+        },
+    }
+    for table, columns in expected_columns.items():
+        live = {
+            row[1]
+            for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        assert columns <= live, f"Table {table} missing columns: {columns - live}"
+
+    manifest_cols = {
+        row[1]
+        for row in db.execute("PRAGMA table_info(dependency_manifest)").fetchall()
+    }
+    assert "domain_composition_hash" in manifest_cols
+    assert "domain_facets_json" in manifest_cols
+
+    packet_cols = {
+        row[1]
+        for row in db.execute("PRAGMA table_info(memory_packet_event)").fetchall()
+    }
+    assert "domain_composition_hash" in packet_cols
+    assert "domain_facets_json" in packet_cols
 
 
 def test_matter_model_bootstraps_default_legal_broker_profile():

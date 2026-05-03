@@ -116,6 +116,85 @@ class ObjectDependency:
 
 
 @dataclass(frozen=True)
+class DomainFacet:
+    domain_profile_id: str
+    domain_profile_version: int
+    profile_mapping_hash: str
+    confidence: float
+    evidence_refs: tuple[str, ...] = ()
+    detection_method: str = "manual"
+    role_bindings: dict[str, str] = field(default_factory=dict)
+
+    def to_canonical_dict(self) -> dict:
+        d: dict[str, Any] = {
+            "confidence": self.confidence,
+            "detection_method": self.detection_method,
+            "domain_profile_id": self.domain_profile_id,
+            "domain_profile_version": self.domain_profile_version,
+            "evidence_refs": sorted(self.evidence_refs),
+            "profile_mapping_hash": self.profile_mapping_hash,
+        }
+        if self.role_bindings:
+            d["role_bindings"] = dict(sorted(self.role_bindings.items()))
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> DomainFacet:
+        return cls(
+            domain_profile_id=d["domain_profile_id"],
+            domain_profile_version=int(d["domain_profile_version"]),
+            profile_mapping_hash=d["profile_mapping_hash"],
+            confidence=float(d["confidence"]),
+            evidence_refs=tuple(d.get("evidence_refs", ())),
+            detection_method=d.get("detection_method", "manual"),
+            role_bindings=dict(d.get("role_bindings", {})),
+        )
+
+
+@dataclass(frozen=True)
+class DomainComposition:
+    composition_id: str
+    facets: tuple[DomainFacet, ...] = ()
+    primary_profile_id: str | None = None
+    status: str = "current"
+
+    def composition_hash(self) -> str:
+        facet_dicts = sorted(
+            [f.to_canonical_dict() for f in self.facets],
+            key=lambda x: (x["domain_profile_id"], x["domain_profile_version"]),
+        )
+        payload = _canonical_json({
+            "facets": facet_dicts,
+            "primary_profile_id": self.primary_profile_id or "",
+        })
+        return _sha256(payload)
+
+    def to_canonical_dict(self) -> dict:
+        return {
+            "composition_hash": self.composition_hash(),
+            "composition_id": self.composition_id,
+            "facets": sorted(
+                [f.to_canonical_dict() for f in self.facets],
+                key=lambda x: (x["domain_profile_id"], x["domain_profile_version"]),
+            ),
+            "primary_profile_id": self.primary_profile_id or "",
+            "status": self.status,
+        }
+
+    def to_json(self) -> str:
+        return _canonical_json(self.to_canonical_dict())
+
+    @classmethod
+    def from_dict(cls, d: dict) -> DomainComposition:
+        return cls(
+            composition_id=d["composition_id"],
+            facets=tuple(DomainFacet.from_dict(f) for f in d.get("facets", ())),
+            primary_profile_id=d.get("primary_profile_id") or None,
+            status=d.get("status", "current"),
+        )
+
+
+@dataclass(frozen=True)
 class DependencyManifest:
     matter_id: str
     purpose: str
@@ -127,6 +206,8 @@ class DependencyManifest:
     namespace_dependencies: tuple[NamespaceDependency, ...] = ()
     object_dependencies: tuple[ObjectDependency, ...] = ()
     negative_dependencies: tuple[NegativeDependency, ...] = ()
+    domain_facets: tuple[DomainFacet, ...] = ()
+    domain_composition_hash: str = ""
 
     def to_canonical_dict(self) -> dict:
         ns_deps = sorted(
@@ -141,7 +222,11 @@ class DependencyManifest:
             [d.to_canonical_dict() for d in self.negative_dependencies],
             key=lambda x: (x["namespace"], x["query_predicate"]),
         )
-        return {
+        facets = sorted(
+            [f.to_canonical_dict() for f in self.domain_facets],
+            key=lambda x: (x["domain_profile_id"], x["domain_profile_version"]),
+        )
+        d: dict[str, Any] = {
             "broker_version": BROKER_VERSION,
             "domain_profile_id": self.domain_profile_id,
             "domain_profile_version": self.domain_profile_version,
@@ -154,6 +239,10 @@ class DependencyManifest:
             "purpose": self.purpose,
             "taint_class": self.taint_class,
         }
+        if facets:
+            d["domain_composition_hash"] = self.domain_composition_hash
+            d["domain_facets"] = facets
+        return d
 
     def to_json(self) -> str:
         return _canonical_json(self.to_canonical_dict())
@@ -190,6 +279,11 @@ class DependencyManifest:
                 NegativeDependency.from_dict(nd)
                 for nd in d.get("negative_dependencies", ())
             ),
+            domain_facets=tuple(
+                DomainFacet.from_dict(f)
+                for f in d.get("domain_facets", ())
+            ),
+            domain_composition_hash=d.get("domain_composition_hash", ""),
         )
 
 
@@ -286,6 +380,8 @@ class MemoryPacket:
     forbidden_internal_guidance_objects: tuple[str, ...] = ()
     run_id: str | None = None
     model_call_id: str | None = None
+    domain_facets: tuple[DomainFacet, ...] = ()
+    domain_composition_hash: str = ""
 
     def to_canonical_dict(self) -> dict:
         sections = sorted(
@@ -295,6 +391,10 @@ class MemoryPacket:
         omitted = sorted(
             [o.to_canonical_dict() for o in self.omitted_sections],
             key=lambda x: x["section_kind"],
+        )
+        facets = sorted(
+            [f.to_canonical_dict() for f in self.domain_facets],
+            key=lambda x: (x["domain_profile_id"], x["domain_profile_version"]),
         )
         d: dict[str, Any] = {
             "allowed_citation_objects": sorted(self.allowed_citation_objects),
@@ -315,6 +415,9 @@ class MemoryPacket:
         }
         if self.answerability_state is not None:
             d["answerability_state"] = self.answerability_state
+        if facets:
+            d["domain_composition_hash"] = self.domain_composition_hash
+            d["domain_facets"] = facets
         return d
 
     def to_json(self) -> str:
@@ -365,6 +468,10 @@ class MemoryPacket:
             ),
             run_id=d.get("run_id"),
             model_call_id=d.get("model_call_id"),
+            domain_facets=tuple(
+                DomainFacet.from_dict(f) for f in d.get("domain_facets", ())
+            ),
+            domain_composition_hash=d.get("domain_composition_hash", ""),
         )
 
 

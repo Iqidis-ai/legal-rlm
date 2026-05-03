@@ -29,6 +29,8 @@ from .memory_contracts import (
     NamespaceDependency,
     NegativeDependency,
     ObjectDependency,
+    DomainFacet,
+    DomainComposition,
     DependencyManifest,
     MemoryPacketSection,
     OmittedSection,
@@ -55,6 +57,7 @@ __all__ = [
     # Broker contracts
     "BROKER_VERSION",
     "NamespaceDependency", "NegativeDependency", "ObjectDependency",
+    "DomainFacet", "DomainComposition",
     "DependencyManifest", "MemoryPacketSection", "OmittedSection",
     "MemoryPacket", "DependencyValidationResult",
 ]

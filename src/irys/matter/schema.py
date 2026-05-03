@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 62
+SCHEMA_VERSION = 63
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -24,6 +24,8 @@ _MIGRATION_NAMES: dict[int, str] = {
     59: "memory_broker_substrate",
     60: "object_taint_profile_binding",
     61: "object_taint_profile_scoped_uniqueness",
+    62: "broker_dependency_manifest_and_packet",
+    63: "domain_composition_substrate",
 }
 
 
@@ -3028,6 +3030,107 @@ def _migration_v62(conn) -> None:
     conn.commit()
 
 
+def _migration_v63(conn) -> None:
+    """Add domain composition substrate: detection events, object facets, compositions, unknown candidates."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS domain_detection_event (
+            id                          TEXT PRIMARY KEY,
+            matter_id                   TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            target_kind                 TEXT NOT NULL,
+            target_id                   TEXT NOT NULL,
+            span_id                     TEXT,
+            candidate_profile_id        TEXT NOT NULL,
+            candidate_profile_version   INTEGER NOT NULL,
+            confidence                  REAL NOT NULL,
+            signals_json                TEXT NOT NULL DEFAULT '{}',
+            evidence_refs_json          TEXT NOT NULL DEFAULT '[]',
+            detector_version            TEXT NOT NULL DEFAULT 'v0',
+            created_at                  TEXT NOT NULL
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_domain_detection_event_target"
+        " ON domain_detection_event(matter_id, target_kind, target_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_domain_detection_event_profile"
+        " ON domain_detection_event(matter_id, candidate_profile_id, candidate_profile_version)"
+    )
+
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS object_domain_facet (
+            id                          TEXT PRIMARY KEY,
+            matter_id                   TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            target_kind                 TEXT NOT NULL,
+            target_id                   TEXT NOT NULL,
+            domain_profile_id           TEXT NOT NULL,
+            domain_profile_version      INTEGER NOT NULL,
+            profile_mapping_hash        TEXT NOT NULL,
+            confidence                  REAL NOT NULL,
+            status                      TEXT NOT NULL DEFAULT 'active',
+            detection_event_id          TEXT REFERENCES domain_detection_event(id),
+            created_at                  TEXT NOT NULL,
+            UNIQUE(matter_id, target_kind, target_id, domain_profile_id, domain_profile_version, profile_mapping_hash)
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_object_domain_facet_target"
+        " ON object_domain_facet(matter_id, target_kind, target_id, status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_object_domain_facet_profile"
+        " ON object_domain_facet(matter_id, domain_profile_id, domain_profile_version)"
+    )
+
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS domain_composition (
+            id                          TEXT PRIMARY KEY,
+            matter_id                   TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            composition_hash            TEXT NOT NULL,
+            primary_profile_id          TEXT,
+            facets_json                 TEXT NOT NULL DEFAULT '[]',
+            composed_vocabulary_json     TEXT NOT NULL DEFAULT '{}',
+            status                      TEXT NOT NULL DEFAULT 'current',
+            created_at                  TEXT NOT NULL,
+            UNIQUE(matter_id, composition_hash)
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_domain_composition_lookup"
+        " ON domain_composition(matter_id, composition_hash)"
+    )
+
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS unknown_domain_candidate (
+            id                          TEXT PRIMARY KEY,
+            matter_id                   TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            evidence_cluster_hash       TEXT NOT NULL,
+            signals_json                TEXT NOT NULL DEFAULT '{}',
+            evidence_refs_json          TEXT NOT NULL DEFAULT '[]',
+            occurrence_count            INTEGER NOT NULL DEFAULT 1,
+            status                      TEXT NOT NULL DEFAULT 'pending',
+            draft_profile_json          TEXT,
+            created_at                  TEXT NOT NULL,
+            updated_at                  TEXT NOT NULL,
+            UNIQUE(matter_id, evidence_cluster_hash)
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_unknown_domain_candidate_status"
+        " ON unknown_domain_candidate(matter_id, status)"
+    )
+
+    for alter in (
+        "ALTER TABLE dependency_manifest ADD COLUMN domain_composition_hash TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE dependency_manifest ADD COLUMN domain_facets_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE memory_packet_event ADD COLUMN domain_composition_hash TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE memory_packet_event ADD COLUMN domain_facets_json TEXT NOT NULL DEFAULT '[]'",
+    ):
+        _execute_allow_duplicate_column(conn, alter)
+
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -3094,6 +3197,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (60, _migration_v60),
     (61, _migration_v61),
     (62, _migration_v62),
+    (63, _migration_v63),
 ]
 
 

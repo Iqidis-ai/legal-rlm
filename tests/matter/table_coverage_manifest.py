@@ -186,4 +186,36 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
         writers=("irys.matter.graph:MemoryBrokerStore.record_memory_packet_event",),
         readers=("irys.matter.graph:MemoryBrokerStore.get_memory_packet_event",),
     ),
+    "domain_detection_event": TableCoverageSpec(
+        deferred_until="phase_2_domain_detection",
+        reason=(
+            "Schema v63 substrate table for domain detection events. "
+            "Broker methods (record_domain_detection_event, get) "
+            "will be added in Phase 2 with domain_detection.py."
+        ),
+    ),
+    "object_domain_facet": TableCoverageSpec(
+        deferred_until="phase_2_domain_detection",
+        reason=(
+            "Schema v63 substrate table for object-level domain facets. "
+            "Broker methods (upsert_object_domain_facet, get_object_domain_facets) "
+            "will be added in Phase 2 with facet broker methods."
+        ),
+    ),
+    "domain_composition": TableCoverageSpec(
+        deferred_until="phase_2_domain_detection",
+        reason=(
+            "Schema v63 substrate table for composed multi-domain vocabularies. "
+            "Broker methods (build_domain_composition, get_composed_profile_vocabulary) "
+            "will be added in Phase 2."
+        ),
+    ),
+    "unknown_domain_candidate": TableCoverageSpec(
+        deferred_until="phase_2_domain_detection",
+        reason=(
+            "Schema v63 substrate table for evidence clusters that do not fit "
+            "installed profiles. Writer surface deferred to self-expanding "
+            "ontology implementation."
+        ),
+    ),
 }

@@ -6,6 +6,8 @@ from irys.matter.memory_contracts import (
     BROKER_VERSION,
     DependencyManifest,
     DependencyValidationResult,
+    DomainComposition,
+    DomainFacet,
     MemoryPacket,
     MemoryPacketSection,
     NamespaceDependency,
@@ -334,3 +336,205 @@ def test_canonical_json_rejects_nan():
         _canonical_json({"val": float("nan")})
     with _pytest.raises(ValueError):
         _canonical_json({"val": math.inf})
+
+
+def _make_facet(profile_id="legal", version=1, confidence=0.85):
+    return DomainFacet(
+        domain_profile_id=profile_id,
+        domain_profile_version=version,
+        profile_mapping_hash=f"sha256:{profile_id}_v{version}",
+        confidence=confidence,
+        evidence_refs=("doc1", "span3"),
+        detection_method="lexical",
+        role_bindings={"regulator": "sec"},
+    )
+
+
+def test_domain_facet_round_trip():
+    f = _make_facet()
+    d = f.to_canonical_dict()
+    f2 = DomainFacet.from_dict(d)
+    assert f2.domain_profile_id == "legal"
+    assert f2.confidence == 0.85
+    assert f2.evidence_refs == ("doc1", "span3")
+    assert f2.role_bindings == {"regulator": "sec"}
+    assert f2.to_canonical_dict() == d
+
+
+def test_domain_facet_canonical_dict_sorts_evidence_refs():
+    f = DomainFacet(
+        domain_profile_id="finance",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:fin",
+        confidence=0.7,
+        evidence_refs=("z_doc", "a_doc"),
+        detection_method="structural",
+    )
+    d = f.to_canonical_dict()
+    assert d["evidence_refs"] == ["a_doc", "z_doc"]
+
+
+def test_domain_facet_defaults():
+    f = DomainFacet(
+        domain_profile_id="coding",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:code",
+        confidence=0.9,
+    )
+    assert f.evidence_refs == ()
+    assert f.detection_method == "manual"
+    assert f.role_bindings == {}
+    d = f.to_canonical_dict()
+    assert "role_bindings" not in d
+
+
+def test_domain_composition_hash_is_deterministic():
+    f1 = _make_facet("legal", 1, 0.8)
+    f2 = _make_facet("finance", 1, 0.6)
+    c1 = DomainComposition(composition_id="c1", facets=(f1, f2), primary_profile_id="legal")
+    c2 = DomainComposition(composition_id="c2", facets=(f2, f1), primary_profile_id="legal")
+    assert c1.composition_hash() == c2.composition_hash()
+
+
+def test_domain_composition_hash_changes_with_primary():
+    f1 = _make_facet("legal", 1, 0.8)
+    c1 = DomainComposition(composition_id="c1", facets=(f1,), primary_profile_id="legal")
+    c2 = DomainComposition(composition_id="c1", facets=(f1,), primary_profile_id="finance")
+    assert c1.composition_hash() != c2.composition_hash()
+
+
+def test_domain_composition_round_trip():
+    f1 = _make_facet("legal", 1, 0.8)
+    f2 = _make_facet("finance", 1, 0.6)
+    c = DomainComposition(
+        composition_id="c1",
+        facets=(f1, f2),
+        primary_profile_id="legal",
+        status="current",
+    )
+    j = c.to_json()
+    d = json.loads(j)
+    c2 = DomainComposition.from_dict({**d, "composition_id": "c1"})
+    assert c2.composition_hash() == c.composition_hash()
+    assert len(c2.facets) == 2
+    assert c2.primary_profile_id == "legal"
+    assert c2.status == "current"
+
+
+def test_manifest_with_facets_round_trip():
+    f1 = _make_facet("legal", 1, 0.8)
+    f2 = _make_facet("finance", 1, 0.6)
+    comp = DomainComposition(composition_id="c1", facets=(f1, f2), primary_profile_id="legal")
+    m = DependencyManifest(
+        matter_id="m1",
+        purpose="test",
+        policy_audience="internal",
+        taint_class="clean",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:abc",
+        domain_facets=(f1, f2),
+        domain_composition_hash=comp.composition_hash(),
+    )
+    d = m.to_canonical_dict()
+    assert "domain_facets" in d
+    assert "domain_composition_hash" in d
+    assert len(d["domain_facets"]) == 2
+
+    m2 = DependencyManifest.from_dict(d)
+    assert m2.manifest_hash() == m.manifest_hash()
+    assert len(m2.domain_facets) == 2
+    assert m2.domain_composition_hash == comp.composition_hash()
+
+
+def test_manifest_without_facets_omits_facet_fields():
+    m = _make_manifest()
+    d = m.to_canonical_dict()
+    assert "domain_facets" not in d
+    assert "domain_composition_hash" not in d
+
+
+def test_manifest_facets_affect_hash():
+    m_no_facets = _make_manifest()
+    f = _make_facet("legal", 1, 0.9)
+    m_with_facets = DependencyManifest(
+        matter_id="m1",
+        purpose="test",
+        policy_audience="internal",
+        taint_class="clean",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:abc",
+        domain_facets=(f,),
+        domain_composition_hash="sha256:comp1",
+    )
+    assert m_no_facets.manifest_hash() != m_with_facets.manifest_hash()
+
+
+def test_packet_with_facets_round_trip():
+    f1 = _make_facet("legal", 1, 0.8)
+    f2 = _make_facet("biomedical", 1, 0.5)
+    p = MemoryPacket(
+        packet_id="pk1",
+        matter_id="m1",
+        request_hash="sha256:req",
+        purpose="orient",
+        policy_audience="internal",
+        taint_class="clean",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:map",
+        dependency_manifest_hash="sha256:dm",
+        domain_facets=(f1, f2),
+        domain_composition_hash="sha256:comp1",
+    )
+    d = p.to_canonical_dict()
+    assert len(d["domain_facets"]) == 2
+
+    p2 = MemoryPacket.from_dict({**d, "packet_id": "pk1"})
+    assert p2.packet_hash() == p.packet_hash()
+    assert len(p2.domain_facets) == 2
+    assert p2.domain_composition_hash == "sha256:comp1"
+
+
+def test_packet_facets_affect_hash():
+    kwargs = dict(
+        matter_id="m1",
+        request_hash="sha256:req",
+        purpose="test",
+        policy_audience="internal",
+        taint_class="clean",
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:map",
+        dependency_manifest_hash="sha256:dm",
+    )
+    p_no = MemoryPacket(packet_id="p1", **kwargs)
+    f = _make_facet()
+    p_with = MemoryPacket(
+        packet_id="p2",
+        domain_facets=(f,),
+        domain_composition_hash="sha256:comp",
+        **kwargs,
+    )
+    assert p_no.packet_hash() != p_with.packet_hash()
+
+
+def test_legacy_manifest_from_dict_backward_compatible():
+    legacy_dict = {
+        "broker_version": BROKER_VERSION,
+        "matter_id": "m1",
+        "purpose": "test",
+        "policy_audience": "internal",
+        "taint_class": "clean",
+        "domain_profile_id": "legal",
+        "domain_profile_version": 1,
+        "profile_mapping_hash": "sha256:abc",
+        "namespace_dependencies": [],
+        "object_dependencies": [],
+        "negative_dependencies": [],
+    }
+    m = DependencyManifest.from_dict(legacy_dict)
+    assert m.domain_facets == ()
+    assert m.domain_composition_hash == ""
+    assert "domain_facets" not in m.to_canonical_dict()

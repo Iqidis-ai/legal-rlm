@@ -387,6 +387,10 @@ Required namespaces:
 - migrations
 - dependency_manifests
 - memory_packets
+- domain_detection
+- domain_facets
+- domain_compositions
+- unknown_domains
 
 Every canonical table and read surface maps to one or more required namespaces.
 There is no "where practical" exception for migrated paths.
@@ -460,6 +464,10 @@ python tools\check_memory_namespace_coverage.py
 | `profile_mapping` | `profile_mappings:*`, `profile_mappings:profile:<domain_profile_id>`, `profile_mappings:mapping:<profile_mapping_hash>` |
 | `dependency_manifest` | `dependency_manifests:*`, `dependency_manifests:manifest:<manifest_hash>` |
 | `memory_packet_event` | `memory_packets:*`, `memory_packets:packet:<packet_id>` |
+| `domain_detection_event` | `domain_detection:*`, `domain_detection:<target_kind>:<target_id>` |
+| `object_domain_facet` | `domain_facets:*`, `domain_facets:<target_kind>:<target_id>`, `domain_facets:profile:<domain_profile_id>` |
+| `domain_composition` | `domain_compositions:*`, `domain_compositions:composition:<composition_hash>` |
+| `unknown_domain_candidate` | `unknown_domains:*`, `unknown_domains:cluster:<evidence_cluster_hash>` |
 
 Legacy canonical writes in a migrated namespace must either bump the required
 namespace revisions and carry taint/provenance, or be invisible to brokered
