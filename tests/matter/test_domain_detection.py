@@ -516,3 +516,125 @@ def test_e2e_coding_domain_detection_and_composition():
     assert len(coding_facets) >= 1, (
         f"Expected coding facet, got: {[f['domain_profile_id'] for f in facets]}"
     )
+
+
+def test_e2e_academic_research_detection_and_composition():
+    """Ingest a research paper → detection → academic_research profile facets + trust weights."""
+    from irys.matter import MatterModel
+
+    model = MatterModel.open_in_memory()
+    model.inventory.upsert(
+        relative_path="papers/rct_cognition_2024.pdf",
+        sha256="sha256:res001",
+    )
+    model.upsert_document_profile(
+        relative_path="papers/rct_cognition_2024.pdf",
+        analysis={
+            "title": "Randomized Controlled Trial of Cognitive Enhancement",
+            "doc_type": "peer_reviewed_paper",
+            "purpose": "Results from RCT (n=500) show statistically significant effect "
+                       "(p < 0.001, 95% CI [0.12, 0.45]). Meta-analysis confirms effect "
+                       "size Cohen's d = 0.38. doi: 10.1234/cognition.2024",
+            "key_facts": [
+                "Hypothesis tested via randomized controlled trial",
+                "Effect replicated in independent cohort (Smith et al., 2024)",
+                "Methodology: double-blind placebo-controlled",
+            ],
+            "numeric_facts": [
+                {"label": "sample_size", "value": "500"},
+                {"label": "p_value", "value": "<0.001"},
+                {"label": "effect_size", "value": "0.38"},
+            ],
+        },
+    )
+    facets, tw, primary = model._read_matter_domain_composition()
+    assert primary == "academic_research", f"Expected academic_research primary, got {primary}"
+    research_roles = {"peer_reviewed_paper", "replication_study", "dataset", "preprint"}
+    assert research_roles & set(tw), f"Expected research roles, got: {set(tw)}"
+
+
+def test_e2e_biomedical_detection_and_composition():
+    """Ingest a clinical trial report → detection → biomedical profile facets + trust weights."""
+    from irys.matter import MatterModel
+
+    model = MatterModel.open_in_memory()
+    model.inventory.upsert(
+        relative_path="trials/phase3_mab_2025.pdf",
+        sha256="sha256:bio001",
+    )
+    model.upsert_document_profile(
+        relative_path="trials/phase3_mab_2025.pdf",
+        analysis={
+            "title": "Phase III Clinical Trial of Monoclonal Antibody NCT01234567",
+            "doc_type": "clinical_trial_report",
+            "purpose": "Phase III trial (NCT01234567) enrolled 240 patients receiving "
+                       "monoclonal antibody at 5 mg/kg. Primary endpoint: hazard ratio 0.65 "
+                       "(p=0.003). Adverse events consistent with known safety profile. "
+                       "FDA approved for new indication.",
+            "key_facts": [
+                "240 patients enrolled across 12 sites",
+                "Hazard ratio 0.65 for primary endpoint",
+                "FDA approval granted for expanded indication",
+            ],
+            "numeric_facts": [
+                {"label": "patients", "value": "240"},
+                {"label": "hazard_ratio", "value": "0.65"},
+                {"label": "p_value", "value": "0.003"},
+            ],
+        },
+    )
+    facets, tw, primary = model._read_matter_domain_composition()
+    assert primary == "biomedical", f"Expected biomedical primary, got {primary}"
+    biomed_roles = {"phase_iii_trial", "regulator", "clinical_guideline", "lab_result"}
+    assert biomed_roles & set(tw), f"Expected biomedical roles, got: {set(tw)}"
+
+
+def test_e2e_all_five_domains_compose_together():
+    """Ingest one doc from each of 5 domains → all detected, composition has multiple facets."""
+    from irys.matter import MatterModel
+
+    model = MatterModel.open_in_memory()
+    docs = [
+        ("pleadings/complaint.pdf", "sha256:d1", {
+            "title": "Complaint filed in UNITED STATES DISTRICT COURT",
+            "doc_type": "complaint",
+            "purpose": "Plaintiff alleges breach pursuant to 500 U.S. 123. Summary judgment motion.",
+        }),
+        ("financials/10K.pdf", "sha256:d2", {
+            "title": "10-K SEC Filing",
+            "doc_type": "10-K",
+            "purpose": "Revenue disclosure. EBITDA margin 25%. Earnings per share beat estimates. Forward guidance.",
+        }),
+        ("src/handler.py", "sha256:d3", {
+            "title": "Request Handler",
+            "doc_type": "source_code",
+            "purpose": "```python\nasync def handle(req):\n    pass\n```\nFix race condition in connection pool. Run npm test.",
+            "key_facts": ["OAuth2 bearer token flow", "asyncio.Lock for thread safety"],
+        }),
+        ("papers/rct.pdf", "sha256:d4", {
+            "title": "Randomized Controlled Trial",
+            "doc_type": "peer_reviewed_paper",
+            "purpose": "RCT (n=500) p < 0.001 CI [0.12, 0.45]. Meta-analysis. doi: 10.1234/x.2024",
+        }),
+        ("trials/phase3.pdf", "sha256:d5", {
+            "title": "Phase III Clinical Trial NCT01234567",
+            "doc_type": "clinical_trial_report",
+            "purpose": "Phase III trial NCT01234567 240 patients monoclonal antibody 5 mg/kg. "
+                       "Hazard ratio 0.65 p=0.003. FDA approved.",
+        }),
+    ]
+    for path, sha, analysis in docs:
+        model.inventory.upsert(relative_path=path, sha256=sha)
+        model.upsert_document_profile(relative_path=path, analysis=analysis)
+
+    broker = model.memory_broker
+    facets = broker.get_object_domain_facets(
+        "workspace", model.matter_id, status="active",
+    )
+    detected_profiles = {f["domain_profile_id"] for f in facets}
+    assert len(detected_profiles) >= 3, (
+        f"Expected at least 3 domain profiles detected, got: {detected_profiles}"
+    )
+    _, tw, primary = model._read_matter_domain_composition()
+    assert len(tw) > 0
+    assert primary is not None

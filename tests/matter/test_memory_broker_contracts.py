@@ -749,3 +749,62 @@ def test_legacy_correction_still_works_without_revisions():
         note="Legacy path",
     )
     assert result.assertion_id == a_id
+
+
+# --- Brokered CAS verify/reject tests ---
+
+
+def test_brokered_verify_succeeds_with_fresh_revisions():
+    """Verify with valid expected_revisions should succeed."""
+    model, a_id = _make_model_with_assertion()
+    revisions = model.verification_revision_keys("assertion", a_id)
+    assert len(revisions) > 0
+
+    vid = model.verify_target(
+        "assertion", a_id,
+        reviewed_by_kind="user",
+        review_note="CAS verify test",
+        expected_revisions=revisions,
+    )
+    assert vid is not None
+
+
+def test_brokered_verify_rejects_stale_revisions():
+    """Verify with stale revisions should raise CAS mismatch."""
+    from irys.matter.graph import MemoryBrokerCASMismatch
+
+    model, a_id = _make_model_with_assertion()
+    revisions = model.verification_revision_keys("assertion", a_id)
+
+    model.memory_broker.bump_namespace_revision("verification_state")
+
+    with pytest.raises(MemoryBrokerCASMismatch):
+        model.verify_target(
+            "assertion", a_id,
+            reviewed_by_kind="user",
+            expected_revisions=revisions,
+        )
+
+
+def test_brokered_reject_succeeds_with_fresh_revisions():
+    """Reject with valid expected_revisions should succeed."""
+    model, a_id = _make_model_with_assertion()
+    revisions = model.verification_revision_keys("assertion", a_id)
+
+    vid = model.reject_target(
+        "assertion", a_id,
+        reviewed_by_kind="attorney",
+        rejection_reason="Incorrect extraction",
+        expected_revisions=revisions,
+    )
+    assert vid is not None
+
+
+def test_legacy_verify_works_without_revisions():
+    """Verify without expected_revisions uses the legacy path."""
+    model, a_id = _make_model_with_assertion()
+    vid = model.verify_target(
+        "assertion", a_id,
+        reviewed_by_kind="user",
+    )
+    assert vid is not None
