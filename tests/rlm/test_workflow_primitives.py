@@ -925,3 +925,56 @@ def test_fmt_steering_panel_finance_domain():
     result = _fmt_steering_panel(actions, domain="finance")
     assert "Correct a Finding" in result
     assert "Recommended Actions" in result
+
+
+# ---------------------------------------------------------------------------
+# Gate 34 edge-case coverage: non-dict items and malformed fields
+# ---------------------------------------------------------------------------
+
+def test_fmt_gaps_skips_non_dict_items():
+    from irys.ui.app import _fmt_gaps
+    gaps = [
+        "bad-string",
+        {"description": "Missing contract", "gap_type": "missing_document", "materiality_score": 0.8},
+        42,
+    ]
+    result = _fmt_gaps(gaps, [])
+    assert "Missing contract" in result
+    assert "1 unresolved" in result
+
+
+def test_fmt_gaps_skips_non_dict_clarifications():
+    from irys.ui.app import _fmt_gaps
+    clarifications = ["not-a-dict", {"question_text": "When was delivery?"}]
+    result = _fmt_gaps([], clarifications)
+    assert "When was delivery?" in result
+
+
+def test_fmt_gaps_non_dict_dependencies():
+    from irys.ui.app import _fmt_gaps
+    gaps = [{"description": "Gap", "gap_type": "factual", "dependencies": ["bad", {"affected_type": "issue"}]}]
+    result = _fmt_gaps(gaps, [])
+    assert "issue" in result
+
+
+def test_fmt_steering_panel_non_dict_params():
+    from irys.ui.app import _fmt_steering_panel
+    actions = [
+        {"action_type": "redirect_focus", "description": "Test", "priority": "high", "params": "not-a-dict"},
+    ]
+    result = _fmt_steering_panel(actions)
+    assert "Test" in result
+    assert "<code>" not in result
+
+
+def test_fmt_steering_panel_non_string_action_type():
+    from irys.ui.app import _fmt_steering_panel
+    actions = [{"action_type": 123, "description": "Num type", "priority": "low"}]
+    result = _fmt_steering_panel(actions)
+    assert "Num type" in result
+
+
+def test_fmt_steering_panel_all_non_dict_returns_empty():
+    from irys.ui.app import _fmt_steering_panel
+    result = _fmt_steering_panel(["bad", 42, None])
+    assert "viz-empty" in result

@@ -3834,6 +3834,8 @@ def _fmt_gaps(gaps: list, clarifications: list) -> str:
     if gaps:
         gap_rows = ""
         for g in gaps:
+            if not isinstance(g, dict):
+                continue
             desc = _escape(str(g.get("description") or g.get("gap_type", "?")))
             gap_type = str(g.get("gap_type") or "")
             label, cls = _GAP_TYPE_PILLS.get(gap_type, (gap_type.replace("_", " ").title(), "pill-neutral"))
@@ -3848,7 +3850,7 @@ def _fmt_gaps(gaps: list, clarifications: list) -> str:
             deps = g.get("dependencies") or []
             dep_str = ""
             if deps:
-                dep_labels = [_escape(f"{d.get('affected_type','?')}") for d in deps[:3]]
+                dep_labels = [_escape(f"{d.get('affected_type','?')}") for d in deps[:3] if isinstance(d, dict)]
                 dep_str = f"<span style='font-size:10px;color:#6b7280'>{', '.join(dep_labels)}</span>"
             gap_rows += (
                 f"<tr>"
@@ -3858,7 +3860,7 @@ def _fmt_gaps(gaps: list, clarifications: list) -> str:
                 f"<td>{dep_str}</td>"
                 f"</tr>"
             )
-        gap_count = len(gaps)
+        gap_count = len([g for g in gaps if isinstance(g, dict)])
         parts.append(
             f"<div class='viz-header'><strong>Open Gaps</strong> — {gap_count} unresolved</div>"
             "<div class='table-wrap'><table class='viz-table'>"
@@ -3868,6 +3870,8 @@ def _fmt_gaps(gaps: list, clarifications: list) -> str:
     if clarifications:
         clar_items = ""
         for c in clarifications:
+            if not isinstance(c, dict):
+                continue
             q = _escape(str(c.get("question_text") or c.get("question", "?")))
             impact = _escape(str(c.get("expected_impact") or ""))
             clar_items += (
@@ -4278,16 +4282,16 @@ def _fmt_steering_panel(actions: list[dict], domain: str = "legal") -> str:
     for a in actions:
         if not isinstance(a, dict):
             continue
-        action_type = a.get("action_type", "unknown")
+        action_type = str(a.get("action_type", "unknown"))
         description = _escape(a.get("description", ""))
         rationale = _escape(a.get("rationale", ""))
         impact = _escape(a.get("impact", ""))
         priority = a.get("priority", "low")
         pill_text, pill_cls = _PRIORITY_PILLS.get(priority, ("—", "pill-neutral"))
         action_label = _escape(labels.get(action_type, action_type.replace("_", " ").title()))
-        params = a.get("params", {})
+        params = a.get("params") or {}
         param_html = ""
-        if params:
+        if isinstance(params, dict) and params:
             param_items = " ".join(
                 f"<code>{_escape(k)}={_escape(str(v)[:40])}</code>"
                 for k, v in params.items() if v
