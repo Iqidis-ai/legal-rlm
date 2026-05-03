@@ -2152,6 +2152,39 @@ _TRUST_ICONS = {
     "INFORMAL": "🟡", "DRAFT": "🟡", "POST_HOC": "🟠", "ADVOCACY": "🔴",
 }
 
+_DOMAIN_SOURCE_LABELS: dict[str, dict[str, str]] = {
+    "finance": {
+        "operative": "Audited Filing", "authoritative": "Regulatory",
+        "procedural": "Compliance", "informal": "Market Commentary",
+        "draft": "Preliminary", "advocacy": "Analyst Opinion",
+        "post_hoc": "Retrospective", "unknown": "Unclassified",
+    },
+    "coding": {
+        "operative": "Specification", "authoritative": "Documentation",
+        "procedural": "Standard", "informal": "Comment/Discussion",
+        "draft": "RFC/Proposal", "advocacy": "Opinion/Blog",
+        "post_hoc": "Post-mortem", "unknown": "Unclassified",
+    },
+    "academic_research": {
+        "operative": "Peer-Reviewed", "authoritative": "Systematic Review",
+        "procedural": "Protocol", "informal": "Grey Literature",
+        "draft": "Preprint", "advocacy": "Editorial/Opinion",
+        "post_hoc": "Retrospective", "unknown": "Unclassified",
+    },
+    "biomedical": {
+        "operative": "Clinical Trial", "authoritative": "Meta-Analysis",
+        "procedural": "Guideline", "informal": "Case Report",
+        "draft": "Preprint", "advocacy": "Expert Opinion",
+        "post_hoc": "Retrospective", "unknown": "Unclassified",
+    },
+}
+
+
+def _domain_source_label(role: str, domain: str) -> str:
+    profile_map = _DOMAIN_SOURCE_LABELS.get(domain, {})
+    return profile_map.get(role.lower(), role.replace("_", " ").title())
+
+
 def _trust_icon(role: str) -> str:
     """Return a colored dot indicating source trust level."""
     return _TRUST_ICONS.get(role.upper(), "⚪") if role else "⚪"
@@ -2238,14 +2271,15 @@ def _fmt_assertions(assertions: list, domain: str = "legal") -> str:
                 if r.upper() in _TRUST_ICONS else 99,
             )
             icon = _trust_icon(best)
-            src = _escape(f"MULTI[{','.join(src_roles)}]")
+            labels = [_domain_source_label(r, domain) for r in src_roles]
+            src = _escape(f"MULTI[{','.join(labels)}]")
         elif src_roles:
             icon = _trust_icon(src_roles[0])
-            src = _escape(src_roles[0])
+            src = _escape(_domain_source_label(src_roles[0], domain))
         else:
             src_role = a.get("source_role") or a.get("primary_source_role") or "—"
             icon = _trust_icon(src_role)
-            src = _escape(src_role)
+            src = _escape(_domain_source_label(src_role, domain) if src_role != "—" else "—")
         speech = _escape(a.get("speech_act") or a.get("primary_speech_act") or "—")
         # Verification pill as a compact prefix on the proposition
         # cell so the new responsive table layout keeps room for
@@ -3699,15 +3733,19 @@ class AppState:
                     visible=True,
                 ),
             )
-        # Build the checkbox choice list. Label embeds the proposition
-        # + full metadata (source role, speech act, confidence, doc)
-        # so the attorney has everything they need to accept/reject
-        # each row without opening a drawer. Value is the assertion id.
+        _batch_domain = "legal"
+        try:
+            _ov = _run_async(self.backend().get_overview(matter_id))
+            _dc = _ov.get("domain_composition", {}) if isinstance(_ov, dict) else {}
+            _batch_domain = _dc.get("primary_domain_profile_id", "legal") if isinstance(_dc, dict) else "legal"
+        except Exception:
+            pass
         choices: list[tuple[str, str]] = []
         detail_lines: list[str] = []
         for r in rows:
             prop = str(r.get("proposition_text") or "").strip() or "(no text)"
-            role = str(r.get("primary_source_role") or "unknown").upper()
+            _raw_role = str(r.get("primary_source_role") or "unknown")
+            role = _domain_source_label(_raw_role, _batch_domain).upper()
             speech_act = str(r.get("primary_speech_act") or "").lower() or "extracted"
             conf_raw = r.get("confidence")
             try:
