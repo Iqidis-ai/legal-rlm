@@ -5315,14 +5315,17 @@ Return:
                 _excerpt_chars = self.config.excerpt_chars
             content = doc.get_excerpt(_excerpt_chars)
 
-            _domain = "legal"
-            try:
-                _, _, _primary = self._matter_model._read_matter_domain_composition()
-                if _primary:
-                    _domain = _primary
-            except Exception:
-                pass
-            _vocab = _DOMAIN_DEEP_READ_VOCABULARY.get(_domain, _DOMAIN_DEEP_READ_VOCABULARY["legal"])
+            if state._cached_domain is None:
+                _domain = "legal"
+                try:
+                    if self._matter_model is not None:
+                        _, _, _primary = self._matter_model._read_matter_domain_composition()
+                        if _primary:
+                            _domain = _primary
+                except Exception:
+                    pass
+                state._cached_domain = _domain
+            _vocab = _DOMAIN_DEEP_READ_VOCABULARY.get(state._cached_domain, _DOMAIN_DEEP_READ_VOCABULARY["legal"])
 
             prompt = DEEP_READ_PROMPT.format(
                 filename=doc.filename,
@@ -7364,13 +7367,18 @@ Return:
         if not rows:
             return "No assertions recorded in matter model yet."
 
-        _domain = "legal"
-        try:
-            _, _, _primary = self._matter_model._read_matter_domain_composition()
-            if _primary:
-                _domain = _primary
-        except Exception:
-            pass
+        if state is not None and state._cached_domain is not None:
+            _domain = state._cached_domain
+        else:
+            _domain = "legal"
+            try:
+                _, _, _primary = self._matter_model._read_matter_domain_composition()
+                if _primary:
+                    _domain = _primary
+            except Exception:
+                pass
+            if state is not None:
+                state._cached_domain = _domain
 
         _role_labels = _DOMAIN_ROLE_CALIBRATION_LABELS.get(_domain, _DOMAIN_ROLE_CALIBRATION_LABELS["legal"])
 

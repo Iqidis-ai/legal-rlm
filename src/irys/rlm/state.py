@@ -1120,6 +1120,7 @@ class InvestigationState:
     # investigate() call when multiple parallel leads surface the same top-ranked file.
     # asyncio is single-threaded so a plain set is safe (check+add is atomic between awaits).
     _reading_in_progress: set = field(default_factory=set)
+    _cached_domain: Optional[str] = None
 
     # Metrics
     documents_read: int = 0
