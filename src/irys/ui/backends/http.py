@@ -65,14 +65,19 @@ class HttpBackend(UIBackend):
         )
 
     async def stop_run(self, matter_id: str, run_id: str) -> dict:
-        return await self._post(f"/matter/{matter_id}/runs/{run_id}/stop")
+        result = await self._post(f"/matter/{matter_id}/runs/{run_id}/stop")
+        return result if isinstance(result, dict) else {}
 
     # ------------------------------------------------------------------ #
     # Overview / dashboard                                                  #
     # ------------------------------------------------------------------ #
 
     async def get_overview(self, matter_id: str) -> dict:
-        return await self._get(f"/matter/{matter_id}/overview")
+        result = await self._get(f"/matter/{matter_id}/overview")
+        if not isinstance(result, dict):
+            _log.warning("get_overview: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
 
     # ------------------------------------------------------------------ #
     # Live ledger streaming                                                 #
@@ -115,7 +120,13 @@ class HttpBackend(UIBackend):
         return []
 
     async def list_issues(self, matter_id: str) -> list[dict]:
-        return await self._get(f"/matter/{matter_id}/issues")
+        result = await self._get(f"/matter/{matter_id}/issues")
+        if isinstance(result, dict):
+            return result.get("issues", [])
+        if not isinstance(result, list):
+            _log.warning("list_issues: expected list, got %s", type(result).__name__)
+            return []
+        return result
 
     async def list_assertions(
         self, matter_id: str, limit: int = 50, offset: int = 0
@@ -127,10 +138,22 @@ class HttpBackend(UIBackend):
         return result if isinstance(result, list) else []
 
     async def list_gaps(self, matter_id: str, limit: int = 50) -> list[dict]:
-        return await self._get(f"/matter/{matter_id}/gaps", {"limit": limit})
+        result = await self._get(f"/matter/{matter_id}/gaps", {"limit": limit})
+        if isinstance(result, dict):
+            return result.get("gaps", [])
+        if not isinstance(result, list):
+            _log.warning("list_gaps: expected list, got %s", type(result).__name__)
+            return []
+        return result
 
     async def list_clarifications(self, matter_id: str, limit: int = 20) -> list[dict]:
-        return await self._get(f"/matter/{matter_id}/clarifications", {"limit": limit})
+        result = await self._get(f"/matter/{matter_id}/clarifications", {"limit": limit})
+        if isinstance(result, dict):
+            return result.get("clarifications", [])
+        if not isinstance(result, list):
+            _log.warning("list_clarifications: expected list, got %s", type(result).__name__)
+            return []
+        return result
 
     # ------------------------------------------------------------------ #
     # User steering                                                        #
@@ -202,16 +225,36 @@ class HttpBackend(UIBackend):
         }
 
     async def list_assumptions(self, matter_id: str, limit: int = 30) -> list[dict]:
-        return await self._get(f"/matter/{matter_id}/assumptions?limit={limit}")
+        result = await self._get(f"/matter/{matter_id}/assumptions", {"limit": limit})
+        if isinstance(result, dict):
+            return result.get("assumptions", [])
+        if not isinstance(result, list):
+            _log.warning("list_assumptions: expected list, got %s", type(result).__name__)
+            return []
+        return result
 
     async def get_timeline(self, matter_id: str, limit: int = 80) -> list[dict]:
-        return await self._get(f"/matter/{matter_id}/timeline", {"limit": limit})
+        result = await self._get(f"/matter/{matter_id}/timeline", {"limit": limit})
+        if isinstance(result, dict):
+            return result.get("events", [])
+        if not isinstance(result, list):
+            _log.warning("get_timeline: expected list, got %s", type(result).__name__)
+            return []
+        return result
 
     async def get_evidence_matrix(self, matter_id: str) -> dict:
-        return await self._get(f"/matter/{matter_id}/evidence-matrix")
+        result = await self._get(f"/matter/{matter_id}/evidence-matrix")
+        if not isinstance(result, dict):
+            _log.warning("get_evidence_matrix: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
 
     async def get_communication_map(self, matter_id: str) -> dict:
-        return await self._get(f"/matter/{matter_id}/communication-map")
+        result = await self._get(f"/matter/{matter_id}/communication-map")
+        if not isinstance(result, dict):
+            _log.warning("get_communication_map: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
 
     async def list_belief_revisions(self, matter_id: str, limit: int = 100) -> list[dict]:
         result = await self._get(f"/matter/{matter_id}/belief-revisions", {"limit": limit})
@@ -492,7 +535,11 @@ class HttpBackend(UIBackend):
         return cards if isinstance(cards, dict) else {"cards": [], "total_inventory": 0, "ingested_count": 0}
 
     async def get_proof_state_summary(self, matter_id: str) -> dict:
-        return await self._get(f"/matter/{matter_id}/proof-state")
+        result = await self._get(f"/matter/{matter_id}/proof-state")
+        if not isinstance(result, dict):
+            _log.warning("get_proof_state_summary: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
 
     async def get_authority_network(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/authority-network")
