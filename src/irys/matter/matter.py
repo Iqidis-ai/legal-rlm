@@ -2809,6 +2809,7 @@ class MatterModel:
             broker._bump_namespace_revision_in_tx(
                 "trust_overrides", now=now,
             )
+            broker._bump_namespace_revision_in_tx("assertions", now=now)
 
         return override_id
 
@@ -2965,6 +2966,7 @@ class MatterModel:
             broker._bump_namespace_revision_in_tx(
                 "trust_overrides", now=now,
             )
+            broker._bump_namespace_revision_in_tx("assertions", now=now)
 
     def _delete_trust_override_inner(
         self,

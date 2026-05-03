@@ -981,6 +981,37 @@ def test_brokered_set_trust_override_bumps_broad_trust_overrides():
     ) > specific_before
 
 
+def test_brokered_set_trust_override_bumps_assertions_for_cross_surface():
+    """Brokered set_trust_override should bump assertions namespace
+    so correct_assertion CAS watchers detect the concurrent change."""
+    model, _a_id = _make_model_with_assertion()
+    broker = model.memory_broker
+
+    assertions_before = broker.get_namespace_revision("assertions")
+
+    revisions = model.trust_override_revision_keys("doc1.pdf")
+    model.set_trust_override(
+        "doc1.pdf", "high",
+        expected_revisions=revisions,
+    )
+
+    assert broker.get_namespace_revision("assertions") > assertions_before
+
+
+def test_brokered_delete_trust_override_bumps_assertions_for_cross_surface():
+    """Brokered delete_trust_override should bump assertions namespace."""
+    model, _a_id = _make_model_with_assertion()
+    model.set_trust_override("doc1.pdf", "low")
+    broker = model.memory_broker
+
+    assertions_before = broker.get_namespace_revision("assertions")
+
+    revisions = model.trust_override_revision_keys("doc1.pdf")
+    model.delete_trust_override("doc1.pdf", expected_revisions=revisions)
+
+    assert broker.get_namespace_revision("assertions") > assertions_before
+
+
 def test_legacy_set_trust_override_works_without_revisions():
     """Set trust override without expected_revisions uses the legacy path."""
     model, _a_id = _make_model_with_assertion()
