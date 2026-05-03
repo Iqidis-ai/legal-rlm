@@ -241,6 +241,16 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/so-scorecard")
         return result if isinstance(result, dict) else {}
 
+    async def answer_clarification(
+        self, matter_id: str, question_id: str, answer_text: str
+    ) -> bool:
+        qid_enc = _url_quote(question_id, safe="")
+        result = await self._post(
+            f"/matter/{matter_id}/clarifications/{qid_enc}/answer",
+            {"answer_text": answer_text},
+        )
+        return bool(result.get("found", False)) if isinstance(result, dict) else False
+
     async def list_llm_calls(
         self,
         matter_id: str,

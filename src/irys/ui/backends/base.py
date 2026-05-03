@@ -230,3 +230,10 @@ class UIBackend(ABC):
     async def get_so_scorecard(self, matter_id: str) -> dict:
         """Return Sacred Outcome metrics with targets and pass/fail status."""
         ...
+
+    @abstractmethod
+    async def answer_clarification(
+        self, matter_id: str, question_id: str, answer_text: str
+    ) -> bool:
+        """Answer a pending clarification question. Returns True if found."""
+        ...

@@ -629,6 +629,12 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_so_metrics()
 
+    async def answer_clarification(
+        self, matter_id: str, question_id: str, answer_text: str
+    ) -> bool:
+        model = self._get_matter_model(matter_id)
+        return model.answer_clarification(question_id, answer_text)
+
     async def list_llm_calls(
         self,
         matter_id: str,

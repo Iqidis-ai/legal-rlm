@@ -5428,6 +5428,38 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading SO scorecard: {_escape(exc)}</div>"
 
+    def load_clarification_choices(self, matter_id: str) -> list:
+        if not matter_id or matter_id == "—":
+            return []
+        try:
+            items = _run_async(self.backend().list_clarifications(matter_id))
+            return [
+                (f"{c.get('question_text', '?')[:80]}", c.get("id", ""))
+                for c in items
+                if isinstance(c, dict) and c.get("status") == "pending"
+            ]
+        except Exception:
+            return []
+
+    def do_answer_clarification(
+        self, matter_id: str, question_id: str, answer_text: str
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first."
+        if not question_id:
+            return "Select a clarification question first."
+        if not answer_text or not answer_text.strip():
+            return "Provide an answer text."
+        try:
+            found = _run_async(self.backend().answer_clarification(
+                matter_id, question_id, answer_text.strip()
+            ))
+            if found:
+                return "Answer recorded successfully."
+            return "Clarification question not found — it may have already been answered."
+        except Exception as exc:
+            return f"Error: {exc}"
+
     def set_policy_audience(self, label: str) -> str:
         """Called when the sidebar privilege-mode toggle flips. Returns
         a visible banner HTML so the reviewer always knows which mode
@@ -6479,6 +6511,25 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     )
                     resume_btn = gr.Button("Resume Last Investigation", variant="primary")
                     resume_result = gr.Textbox(label="Result", interactive=False)
+            gr.Markdown("---")
+            gr.Markdown("#### Answer a Clarification")
+            gr.Markdown(
+                "The system may generate clarification questions when it encounters gaps "
+                "in the available evidence. Select a pending question and provide your answer."
+            )
+            with gr.Row():
+                clarification_dropdown = gr.Dropdown(
+                    label="Pending Clarification",
+                    choices=[],
+                    interactive=True,
+                )
+                clarification_answer_input = gr.Textbox(
+                    label="Your Answer",
+                    placeholder="Type your answer to the selected clarification question...",
+                    lines=2,
+                )
+            answer_clarification_btn = gr.Button("Submit Answer", variant="primary", size="sm")
+            answer_clarification_result = gr.Textbox(label="Result", interactive=False)
 
         # ==================================================================
         # WIRING
@@ -6881,6 +6932,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 bulk_doc_ref,
                 correction_new_state,
             ],
+        ).then(
+            fn=lambda mid: gr.update(choices=state.load_clarification_choices(mid)),
+            inputs=[matter_id_box],
+            outputs=[clarification_dropdown],
         )
 
         # --- Detail panel refreshes ---
@@ -7187,6 +7242,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, mode: state.do_resume(mid, state.current_run_id or "", mode),
             inputs=[matter_id_box, research_mode],
             outputs=[resume_result],
+        )
+
+        answer_clarification_btn.click(
+            fn=lambda mid, qid, ans: state.do_answer_clarification(mid, qid, ans),
+            inputs=[matter_id_box, clarification_dropdown, clarification_answer_input],
+            outputs=[answer_clarification_result],
+        ).then(
+            fn=lambda mid: gr.update(choices=state.load_clarification_choices(mid)),
+            inputs=[matter_id_box],
+            outputs=[clarification_dropdown],
         )
 
         # Inject JS: clicking an assertions row fills the Fact ID textbox
