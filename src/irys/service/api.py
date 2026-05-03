@@ -3054,6 +3054,45 @@ async def get_provenance(
 
 
 # ---------------------------------------------------------------------------
+# Assertion Health Drill-down (SO-2 + SO-5)
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/matter/{matter_id}/assertion/{assertion_id}/health",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_assertion_health(matter_id: str, assertion_id: str):
+    """Return health diagnostics for a single assertion.
+
+    Combines oscillation detection (has the belief state cycled?), neighbor
+    analysis (support/attack counts and source roles), and provenance trail.
+    Used by domain professionals to understand why an assertion is disputed.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_assertion_health(assertion_id)
+
+
+# ---------------------------------------------------------------------------
+# Quantitative Threshold Violations (SO-6)
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/matter/{matter_id}/quant-thresholds",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_quant_thresholds(matter_id: str, currency: str = "USD"):
+    """Return quantitative threshold violations: exposure, dispute rate, numeric conflicts.
+
+    Each violation includes threshold name, severity level, description, and amount.
+    Used to surface financial health issues in the dashboard.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    return model.compute_quant_thresholds(currency=currency)
+
+
+# ---------------------------------------------------------------------------
 # Visual Work Product — Timeline view (Priority 2)
 # ---------------------------------------------------------------------------
 

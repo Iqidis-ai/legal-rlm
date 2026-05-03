@@ -3106,6 +3106,26 @@ class MatterModel:
         """Return document version families with operative HEAD marked."""
         return self.inventory.list_version_families()
 
+    def get_assertion_health(self, assertion_id: str) -> dict:
+        """Return assertion health: oscillation, neighbors, provenance (SO-2 + SO-5)."""
+        record = self.assertions.get(assertion_id)
+        if record is None:
+            return {"error": "assertion_not_found"}
+        neighbors = self.assertions.get_neighbor_belief_states(assertion_id)
+        return {
+            "assertion_id": assertion_id,
+            "proposition_text": record.proposition_text,
+            "belief_state": record.belief_state,
+            "confidence": record.confidence,
+            "oscillating": self.assertions.detect_oscillation(assertion_id),
+            "support_count": len(neighbors.get("support_states", [])),
+            "attack_count": len(neighbors.get("attack_states", [])),
+            "has_superseding": neighbors.get("has_superseding", False),
+            "support_source_roles": neighbors.get("support_source_roles", []),
+            "attack_source_roles": neighbors.get("attack_source_roles", []),
+            "provenance": self.get_provenance("assertion", assertion_id, limit=10),
+        }
+
     def compute_quant_thresholds(self, currency: str = "USD") -> list[dict]:
         """Detect quantitative threshold violations and record them as gaps (SO-6).
 

@@ -205,3 +205,13 @@ class UIBackend(ABC):
     async def get_provenance(self, matter_id: str, target_kind: str, target_id: str, limit: int = 50) -> list[dict]:
         """Return provenance trail for a specific object."""
         ...
+
+    @abstractmethod
+    async def get_assertion_health(self, matter_id: str, assertion_id: str) -> dict:
+        """Return health diagnostics for a single assertion."""
+        ...
+
+    @abstractmethod
+    async def get_quant_thresholds(self, matter_id: str, currency: str = "USD") -> list[dict]:
+        """Return quantitative threshold violations."""
+        ...

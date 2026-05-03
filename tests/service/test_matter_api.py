@@ -1245,3 +1245,46 @@ def test_provenance_empty(client, register_model):
 def test_provenance_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/provenance/assertion/test-id")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/assertion/{assertion_id}/health
+# ---------------------------------------------------------------------------
+
+def test_assertion_health_returns_data(client, register_model):
+    model = register_model
+    aid = _add_assertion(model)
+    resp = client.get(f"/matter/{MATTER_ID}/assertion/{aid}/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["assertion_id"] == aid
+    assert "oscillating" in data
+    assert "support_count" in data
+    assert "attack_count" in data
+    assert isinstance(data["provenance"], list)
+
+
+def test_assertion_health_not_found(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/assertion/nonexistent/health")
+    assert resp.status_code == 200
+    assert resp.json().get("error") == "assertion_not_found"
+
+
+def test_assertion_health_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/assertion/a1/health")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/quant-thresholds
+# ---------------------------------------------------------------------------
+
+def test_quant_thresholds_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/quant-thresholds")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_quant_thresholds_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/quant-thresholds")
+    assert resp.status_code == 404

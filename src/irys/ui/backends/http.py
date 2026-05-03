@@ -217,6 +217,14 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/provenance/{target_kind}/{target_id}", {"limit": limit})
         return result if isinstance(result, list) else []
 
+    async def get_assertion_health(self, matter_id: str, assertion_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/assertion/{assertion_id}/health")
+        return result if isinstance(result, dict) else {}
+
+    async def get_quant_thresholds(self, matter_id: str, currency: str = "USD") -> list[dict]:
+        result = await self._get(f"/matter/{matter_id}/quant-thresholds", {"currency": currency})
+        return result if isinstance(result, list) else []
+
     async def list_llm_calls(
         self,
         matter_id: str,

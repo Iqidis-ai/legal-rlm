@@ -607,6 +607,14 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_provenance(target_kind, target_id, limit=limit)
 
+    async def get_assertion_health(self, matter_id: str, assertion_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_assertion_health(assertion_id)
+
+    async def get_quant_thresholds(self, matter_id: str, currency: str = "USD") -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.compute_quant_thresholds(currency=currency)
+
     async def list_llm_calls(
         self,
         matter_id: str,
