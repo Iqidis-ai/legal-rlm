@@ -222,6 +222,26 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_amount_conflicts(self, matter_id: str) -> list[dict]:
+        """Return grouped amount conflicts for SO-6 transparency."""
+        ...
+
+    @abstractmethod
+    async def detect_quant_conflicts(self, matter_id: str) -> list[str]:
+        """Trigger conflict detection. Returns new gap_ids created."""
+        ...
+
+    @abstractmethod
+    async def get_reconciliation(self, matter_id: str, currency: str = "USD") -> dict:
+        """Return payment chain reconciliation (SO-6)."""
+        ...
+
+    @abstractmethod
+    async def get_invoice_chain(self, matter_id: str, currency: str = "USD") -> list:
+        """Return per-invoice reconciliation rows (SO-6)."""
+        ...
+
+    @abstractmethod
     async def get_system_health(self, matter_id: str) -> dict:
         """Return system health diagnostics."""
         ...

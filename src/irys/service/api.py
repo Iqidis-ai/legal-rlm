@@ -2483,6 +2483,23 @@ async def get_matter_amount_conflicts(matter_id: str):
     return model.get_amount_conflicts()
 
 
+@app.post(
+    "/matter/{matter_id}/detect-quant-conflicts",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def detect_matter_quant_conflicts(matter_id: str):
+    """Trigger quantitative conflict detection for a matter (SO-6).
+
+    Detects divergent amounts for same subject_type+currency, records
+    UNRESOLVED_CONTRADICTION gaps, wires contradicts links, and runs
+    belief revision on conflicting assertions.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    gap_ids = model.detect_quant_conflicts()
+    return {"gap_ids": gap_ids, "conflicts_found": len(gap_ids)}
+
+
 @app.get(
     "/matter/{matter_id}/metrics",
     tags=["Matter Model"],

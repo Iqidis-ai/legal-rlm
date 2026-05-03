@@ -785,3 +785,32 @@ def test_fmt_decision_context_with_data():
     assert "Motion Practice" in result
     assert "Focus on damages" in result
     assert "Yes" in result
+
+
+# ---------------------------------------------------------------------------
+# Quantitative panel (SO-6)
+# ---------------------------------------------------------------------------
+
+def test_fmt_quant_panel_empty():
+    from irys.ui.app import _fmt_quant_panel
+    result = _fmt_quant_panel({}, [], [], [])
+    assert "viz-empty" in result
+
+
+def test_fmt_quant_panel_with_conflicts():
+    from irys.ui.app import _fmt_quant_panel
+    conflicts = [
+        {"subject_type": "invoice_amount", "subject_id": "INV-001", "currency": "USD", "values": [5000.0, 7500.0]},
+    ]
+    result = _fmt_quant_panel({}, [], conflicts, [])
+    assert "invoice_amount" in result
+    assert "INV-001" in result
+
+
+def test_fmt_quant_panel_with_reconciliation():
+    from irys.ui.app import _fmt_quant_panel
+    recon = {"invoiced": 100000.0, "paid": 75000.0, "disputed": 10000.0, "exposure": 25000.0, "currency": "USD"}
+    result = _fmt_quant_panel(recon, [], [], [])
+    assert "Invoiced" in result
+    assert "Paid" in result
+    assert "Disputed" in result

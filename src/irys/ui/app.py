@@ -5427,6 +5427,20 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading quantitative data: {_escape(exc)}</div>"
 
+    def do_detect_quant_conflicts(self, matter_id: str) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        try:
+            gap_ids = _run_async(self.backend().detect_quant_conflicts(matter_id))
+            if gap_ids:
+                msg = f"Detected {len(gap_ids)} new conflict(s). Gaps recorded, assertions marked DISPUTED."
+            else:
+                msg = "No new conflicts detected. All amounts are consistent."
+            refreshed = self.load_quant(matter_id)
+            return msg, refreshed
+        except Exception as exc:
+            return f"Error: {_escape(str(exc))}", ""
+
     def load_timeline(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -6715,7 +6729,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "If two documents disagree on an amount, Irys flags the conflict."
             )
             quant_md = gr.HTML("<div class='viz-empty'>Financial data will appear here after an investigation.</div>")
-            refresh_quant_btn = gr.Button("Refresh Financials", variant="secondary", size="sm")
+            with gr.Row():
+                refresh_quant_btn = gr.Button("Refresh Financials", variant="secondary", size="sm")
+                detect_conflicts_btn = gr.Button("Detect Amount Conflicts", variant="primary", size="sm")
+            detect_conflicts_result = gr.Markdown("")
 
         with gr.Accordion("Timeline — dated events across the matter", open=False):
             gr.Markdown(
@@ -7418,6 +7435,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_quant(mid),
             inputs=[matter_id_box],
             outputs=[quant_md],
+        )
+        detect_conflicts_btn.click(
+            fn=lambda mid: state.do_detect_quant_conflicts(mid),
+            inputs=[matter_id_box],
+            outputs=[detect_conflicts_result, quant_md],
         )
         refresh_timeline_btn.click(
             fn=lambda mid: state.load_timeline(mid),

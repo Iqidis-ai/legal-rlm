@@ -1563,3 +1563,39 @@ def test_decision_context_clear(client, register_model):
 def test_decision_context_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/decision-context")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Quantitative conflict detection (SO-6)
+# ---------------------------------------------------------------------------
+
+def test_detect_quant_conflicts_empty(client, register_model):
+    resp = client.post(f"/matter/{MATTER_ID}/detect-quant-conflicts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "gap_ids" in data
+    assert "conflicts_found" in data
+    assert isinstance(data["gap_ids"], list)
+
+
+def test_detect_quant_conflicts_404(client):
+    resp = client.post("/matter/unknown/detect-quant-conflicts")
+    assert resp.status_code == 404
+
+
+def test_amount_conflicts_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/reconciliation/conflicts")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+def test_reconciliation_endpoint(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/reconciliation")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), dict)
+
+
+def test_invoice_chain_endpoint(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/reconciliation/invoices")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)

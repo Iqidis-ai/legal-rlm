@@ -621,6 +621,22 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.compute_quant_thresholds(currency=currency)
 
+    async def get_amount_conflicts(self, matter_id: str) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.get_amount_conflicts()
+
+    async def detect_quant_conflicts(self, matter_id: str) -> list[str]:
+        model = self._get_matter_model(matter_id)
+        return model.detect_quant_conflicts()
+
+    async def get_reconciliation(self, matter_id: str, currency: str = "USD") -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.reconcile_payment_chain(currency)
+
+    async def get_invoice_chain(self, matter_id: str, currency: str = "USD") -> list:
+        model = self._get_matter_model(matter_id)
+        return model.reconcile_invoice_chain(currency)
+
     async def get_system_health(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_system_health()
