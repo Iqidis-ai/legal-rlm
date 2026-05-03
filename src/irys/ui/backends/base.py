@@ -170,3 +170,8 @@ class UIBackend(ABC):
     async def get_proof_state_summary(self, matter_id: str) -> dict:
         """Return proof state summary and per-issue proof states."""
         ...
+
+    @abstractmethod
+    async def get_authority_network(self, matter_id: str) -> dict:
+        """Return authorities with issue links for the authority panel."""
+        ...

@@ -1520,6 +1520,158 @@ def _fmt_proof_state_panel(summary: dict, issues: list, domain: str = "legal") -
     return f"<div class='viz-shell'>{header}{table}</div>"
 
 
+_AUTHORITY_PANEL_LABELS = {
+    "legal": {
+        "title": "Authorities & Precedent",
+        "item": "Authority",
+        "type_label": "Type",
+        "weight_label": "Weight",
+        "jurisdiction_label": "Jurisdiction",
+        "linked_issues": "Linked Issues",
+        "empty": "No authorities cited yet. Run an investigation to discover relevant case law, statutes, and rules.",
+    },
+    "finance": {
+        "title": "Regulatory & Standards References",
+        "item": "Reference",
+        "type_label": "Type",
+        "weight_label": "Authority",
+        "jurisdiction_label": "Jurisdiction",
+        "linked_issues": "Linked Theses",
+        "empty": "No regulatory references found yet. Run an investigation to discover relevant standards and rulings.",
+    },
+    "coding": {
+        "title": "Specifications & Standards",
+        "item": "Specification",
+        "type_label": "Type",
+        "weight_label": "Authority",
+        "jurisdiction_label": "Scope",
+        "linked_issues": "Linked Requirements",
+        "empty": "No specifications referenced yet. Run an investigation to discover relevant RFCs, docs, and standards.",
+    },
+    "academic_research": {
+        "title": "Cited Works & Methodologies",
+        "item": "Citation",
+        "type_label": "Type",
+        "weight_label": "Impact",
+        "jurisdiction_label": "Field",
+        "linked_issues": "Linked Questions",
+        "empty": "No cited works found yet. Run an investigation to discover relevant papers and methodologies.",
+    },
+    "biomedical": {
+        "title": "Clinical Guidelines & Protocols",
+        "item": "Guideline",
+        "type_label": "Type",
+        "weight_label": "Evidence Level",
+        "jurisdiction_label": "Jurisdiction",
+        "linked_issues": "Linked Endpoints",
+        "empty": "No clinical guidelines found yet. Run an investigation to discover relevant protocols and guidance.",
+    },
+}
+
+
+def _fmt_authority_panel(data: dict, domain: str = "legal") -> str:
+    """Render the authority / reference network panel (SO-4)."""
+    authorities = data.get("authorities", [])
+    issue_links = data.get("issue_links", {})
+    labels = _AUTHORITY_PANEL_LABELS.get(domain, _AUTHORITY_PANEL_LABELS["legal"])
+
+    if not authorities:
+        return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+
+    by_type: dict[str, int] = {}
+    by_weight: dict[str, int] = {}
+    for auth in authorities:
+        t = auth.get("authority_type", "unknown")
+        w = auth.get("weight", "unknown")
+        by_type[t] = by_type.get(t, 0) + 1
+        by_weight[w] = by_weight.get(w, 0) + 1
+
+    weight_colors = {
+        "binding": "#16a34a",
+        "persuasive": "#2563eb",
+        "neutral": "#6b7280",
+        "unknown": "#94a3b8",
+    }
+
+    header = (
+        "<div style='display:flex;gap:24px;flex-wrap:wrap;margin-bottom:16px;'>"
+        f"<div style='text-align:center;'>"
+        f"<div style='font-size:28px;font-weight:700;color:#1e293b;'>{len(authorities)}</div>"
+        f"<div style='font-size:11px;color:#6b7280;'>Total</div></div>"
+    )
+    for w, count in sorted(by_weight.items()):
+        color = weight_colors.get(w, "#94a3b8")
+        header += (
+            f"<div style='text-align:center;'>"
+            f"<div style='font-size:20px;font-weight:600;color:{color};'>{count}</div>"
+            f"<div style='font-size:11px;color:#6b7280;'>{_escape(w.title())}</div></div>"
+        )
+    for t, count in sorted(by_type.items()):
+        header += (
+            f"<div style='text-align:center;'>"
+            f"<div style='font-size:16px;font-weight:500;color:#475569;'>{count}</div>"
+            f"<div style='font-size:11px;color:#6b7280;'>{_escape(t.title())}</div></div>"
+        )
+    header += "</div>"
+
+    relevance_colors = {"supporting": "#16a34a", "attacking": "#dc2626", "neutral": "#6b7280"}
+
+    rows_html = ""
+    for auth in authorities:
+        aid = auth.get("id", "")
+        citation = auth.get("citation", "—")
+        name = auth.get("name") or ""
+        auth_type = auth.get("authority_type", "unknown")
+        weight = auth.get("weight", "unknown")
+        jurisdiction = auth.get("jurisdiction") or "—"
+        w_color = weight_colors.get(weight, "#94a3b8")
+
+        links = issue_links.get(aid, [])
+        if links:
+            link_badges = " ".join(
+                f"<span style='display:inline-block;padding:1px 6px;border-radius:8px;"
+                f"background:{relevance_colors.get(lk.get('relevance', 'neutral'), '#6b7280')}18;"
+                f"color:{relevance_colors.get(lk.get('relevance', 'neutral'), '#6b7280')};"
+                f"font-size:10px;margin:1px;' title='{_escape(lk.get('relevance', 'neutral'))}'>"
+                f"{_escape((lk.get('issue_title') or lk.get('issue_id', '?'))[:20])}</span>"
+                for lk in links
+            )
+        else:
+            link_badges = "<span style='color:#94a3b8;font-size:11px;'>none</span>"
+
+        display_citation = _escape(citation[:50])
+        display_name = f"<div style='font-size:10px;color:#6b7280;'>{_escape(name[:40])}</div>" if name else ""
+
+        rows_html += (
+            f"<tr>"
+            f"<td style='max-width:240px;' title='{_escape(citation)}'>"
+            f"{display_citation}{display_name}</td>"
+            f"<td style='font-size:11px;'>{_escape(auth_type)}</td>"
+            f"<td><span style='display:inline-block;padding:1px 8px;border-radius:8px;"
+            f"background:{w_color}22;color:{w_color};font-size:11px;"
+            f"font-weight:600;'>{_escape(weight)}</span></td>"
+            f"<td style='font-size:11px;'>{_escape(jurisdiction)}</td>"
+            f"<td>{link_badges}</td>"
+            f"</tr>"
+        )
+
+    table = (
+        "<div style='overflow-x:auto;'>"
+        "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
+        "<thead><tr style='border-bottom:2px solid #e2e8f0;text-align:left;'>"
+        f"<th style='padding:6px 8px;'>{_escape(labels['item'])}</th>"
+        f"<th style='padding:6px 8px;'>{_escape(labels['type_label'])}</th>"
+        f"<th style='padding:6px 8px;'>{_escape(labels['weight_label'])}</th>"
+        f"<th style='padding:6px 8px;'>{_escape(labels['jurisdiction_label'])}</th>"
+        f"<th style='padding:6px 8px;'>{_escape(labels['linked_issues'])}</th>"
+        "</tr></thead><tbody>"
+        + rows_html
+        + "</tbody></table></div>"
+    )
+
+    return f"<div class='viz-shell'>{header}{table}</div>"
+
+
 def _fmt_communication_map_panel(graph: dict) -> str:
     actors = list(graph.get("actors", []) or [])
     documents = list(graph.get("documents", []) or [])
@@ -4261,6 +4413,22 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading proof state: {_escape(exc)}</div>"
 
+    def load_authority_network(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_authority_network(matter_id))
+            domain = "legal"
+            try:
+                ov = _run_async(self.backend().get_overview(matter_id))
+                dc = ov.get("domain_composition", {}) if isinstance(ov, dict) else {}
+                domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
+            except Exception:
+                pass
+            return _fmt_authority_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading authorities: {_escape(exc)}</div>"
+
     def set_policy_audience(self, label: str) -> str:
         """Called when the sidebar privilege-mode toggle flips. Returns
         a visible banner HTML so the reviewer always knows which mode
@@ -5206,6 +5374,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             proof_state_html = gr.HTML("<div class='viz-empty'>Proof state will appear here after an investigation.</div>")
             refresh_proof_btn = gr.Button("Refresh Proof State", variant="secondary", size="sm")
 
+        with gr.Accordion("Authorities & References — cited sources of law, standards, and precedent", open=False):
+            gr.Markdown(
+                "Authorities, standards, and references cited in the analysis, "
+                "with their weight, type, jurisdiction, and links to relevant issues."
+            )
+            authority_html = gr.HTML("<div class='viz-empty'>Authority data will appear here after an investigation.</div>")
+            refresh_authority_btn = gr.Button("Refresh Authorities", variant="secondary", size="sm")
+
         with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
                 "Maps which people and companies appear in which documents and highlights "
@@ -5479,6 +5655,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             communication = state.load_communication_map(mid)
             llm_analytics = state.load_llm_analytics(mid)
             proof_state = state.load_proof_state(mid)
+            authority = state.load_authority_network(mid)
             review_badge = state.load_review_count_badge(mid)
             doc_choices = state.load_document_picker_choices(mid)
             domain = "legal"
@@ -5502,6 +5679,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 communication,
                 llm_analytics,
                 proof_state,
+                authority,
                 top_issue,
                 gr.update(choices=doc_choices),
                 gr.update(choices=_correction_dropdown_choices(domain), value=None),
@@ -5560,6 +5738,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     communication_html,
                     llm_analytics_html,
                     proof_state_html,
+                    authority_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -5586,6 +5765,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     communication_html,
                     llm_analytics_html,
                     proof_state_html,
+                    authority_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -5640,6 +5820,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_proof_state(mid),
             inputs=[matter_id_box],
             outputs=[proof_state_html],
+        )
+        refresh_authority_btn.click(
+            fn=lambda mid: state.load_authority_network(mid),
+            inputs=[matter_id_box],
+            outputs=[authority_html],
         )
         refresh_comm_btn.click(
             fn=lambda mid: state.load_communication_map(mid),

@@ -211,3 +211,23 @@ class HttpBackend(UIBackend):
 
     async def get_proof_state_summary(self, matter_id: str) -> dict:
         return await self._get(f"/matter/{matter_id}/proof-state")
+
+    async def get_authority_network(self, matter_id: str) -> dict:
+        authorities = await self._get(f"/matter/{matter_id}/authorities")
+        issues = await self._get(f"/matter/{matter_id}/issues")
+        issue_links: dict[str, list] = {}
+        for issue in (issues if isinstance(issues, list) else []):
+            iid = issue.get("id") or issue.get("issue_id", "")
+            if iid:
+                linked = await self._get(f"/matter/{matter_id}/issues/{iid}/authorities")
+                for auth in (linked if isinstance(linked, list) else []):
+                    aid = auth.get("id", "")
+                    issue_links.setdefault(aid, []).append({
+                        "issue_id": iid,
+                        "issue_title": issue.get("title", iid),
+                        "relevance": auth.get("link_relevance", "neutral"),
+                    })
+        return {
+            "authorities": authorities if isinstance(authorities, list) else [],
+            "issue_links": issue_links,
+        }

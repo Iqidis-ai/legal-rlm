@@ -539,6 +539,31 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_communication_map()
 
+    async def get_authority_network(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        authorities = model.authority.list_all(limit=200)
+        issue_titles = {
+            i["id"]: i.get("title", i["id"])
+            for i in model.issues.list_issues()
+        }
+        link_rows = model.authority.db.execute(
+            """SELECT l.authority_id, l.issue_id, l.relevance
+               FROM authority_issue_link l
+               JOIN authority a ON a.id = l.authority_id
+               WHERE a.matter_id=?""",
+            (matter_id,),
+        ).fetchall()
+        issue_links: dict[str, list] = {}
+        for row in link_rows:
+            aid = row["authority_id"]
+            iid = row["issue_id"]
+            issue_links.setdefault(aid, []).append({
+                "issue_id": iid,
+                "issue_title": issue_titles.get(iid, iid),
+                "relevance": row["relevance"],
+            })
+        return {"authorities": authorities, "issue_links": issue_links}
+
     async def get_proof_state_summary(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         summary = model.proof_state.get_summary()
