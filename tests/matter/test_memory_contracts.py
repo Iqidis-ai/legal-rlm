@@ -396,6 +396,36 @@ def test_domain_composition_hash_is_deterministic():
     assert c1.composition_hash() == c2.composition_hash()
 
 
+def test_domain_composition_hash_same_profile_different_mapping():
+    f1 = DomainFacet(
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:mapping_a",
+        confidence=0.8,
+    )
+    f2 = DomainFacet(
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:mapping_b",
+        confidence=0.6,
+    )
+    c1 = DomainComposition(composition_id="c1", facets=(f1, f2), primary_profile_id="legal")
+    c2 = DomainComposition(composition_id="c2", facets=(f2, f1), primary_profile_id="legal")
+    assert c1.composition_hash() == c2.composition_hash()
+
+
+def test_domain_facet_role_bindings_sorted_on_init():
+    f = DomainFacet(
+        domain_profile_id="legal",
+        domain_profile_version=1,
+        profile_mapping_hash="sha256:test",
+        confidence=0.9,
+        role_bindings={"z_role": "val_z", "a_role": "val_a"},
+    )
+    keys = list(f.role_bindings.keys())
+    assert keys == ["a_role", "z_role"]
+
+
 def test_domain_composition_hash_changes_with_primary():
     f1 = _make_facet("legal", 1, 0.8)
     c1 = DomainComposition(composition_id="c1", facets=(f1,), primary_profile_id="legal")

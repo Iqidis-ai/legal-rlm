@@ -115,6 +115,16 @@ class ObjectDependency:
         )
 
 
+def _facet_sort_key(d: dict) -> tuple:
+    return (
+        d["domain_profile_id"],
+        d["domain_profile_version"],
+        d["profile_mapping_hash"],
+        d["detection_method"],
+        d["confidence"],
+    )
+
+
 @dataclass(frozen=True)
 class DomainFacet:
     domain_profile_id: str
@@ -124,6 +134,14 @@ class DomainFacet:
     evidence_refs: tuple[str, ...] = ()
     detection_method: str = "manual"
     role_bindings: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.role_bindings, dict):
+            object.__setattr__(self, "role_bindings", dict(self.role_bindings))
+        object.__setattr__(
+            self, "role_bindings",
+            dict(sorted(self.role_bindings.items())),
+        )
 
     def to_canonical_dict(self) -> dict:
         d: dict[str, Any] = {
@@ -161,7 +179,7 @@ class DomainComposition:
     def composition_hash(self) -> str:
         facet_dicts = sorted(
             [f.to_canonical_dict() for f in self.facets],
-            key=lambda x: (x["domain_profile_id"], x["domain_profile_version"]),
+            key=_facet_sort_key,
         )
         payload = _canonical_json({
             "facets": facet_dicts,
@@ -175,7 +193,7 @@ class DomainComposition:
             "composition_id": self.composition_id,
             "facets": sorted(
                 [f.to_canonical_dict() for f in self.facets],
-                key=lambda x: (x["domain_profile_id"], x["domain_profile_version"]),
+                key=_facet_sort_key,
             ),
             "primary_profile_id": self.primary_profile_id or "",
             "status": self.status,
@@ -224,7 +242,7 @@ class DependencyManifest:
         )
         facets = sorted(
             [f.to_canonical_dict() for f in self.domain_facets],
-            key=lambda x: (x["domain_profile_id"], x["domain_profile_version"]),
+            key=_facet_sort_key,
         )
         d: dict[str, Any] = {
             "broker_version": BROKER_VERSION,
@@ -394,7 +412,7 @@ class MemoryPacket:
         )
         facets = sorted(
             [f.to_canonical_dict() for f in self.domain_facets],
-            key=lambda x: (x["domain_profile_id"], x["domain_profile_version"]),
+            key=_facet_sort_key,
         )
         d: dict[str, Any] = {
             "allowed_citation_objects": sorted(self.allowed_citation_objects),
