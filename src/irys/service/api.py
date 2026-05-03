@@ -2158,7 +2158,10 @@ async def get_verification_revisions(
 ):
     """Snapshot namespace revisions for CAS-protected verify/reject."""
     model = await _get_matter_model_or_404(matter_id)
-    return model.verification_revision_keys(target_kind, target_id)
+    try:
+        return model.verification_revision_keys(target_kind, target_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.post(

@@ -680,11 +680,31 @@ class MatterModel:
         return row is not None
 
     _VERIFICATION_CAS_NAMESPACES = (
-        "verification_state", "proof_state", "cache_records",
+        "verification_state", "cache_records",
     )
 
+    _VERIFICATION_TARGET_TABLES: dict[str, str] = {
+        "assertion": "assertion",
+        "evidence_edge": "evidence_edge",
+        "quant_fact": "quant_fact",
+    }
+
     def verification_revision_keys(self, target_kind: str, target_id: str) -> dict[str, int]:
-        """Snapshot namespace revisions for CAS-protected verify/reject."""
+        """Snapshot namespace revisions for CAS-protected verify/reject.
+
+        Raises ValueError when target_kind maps to a concrete table and
+        the target row does not exist.
+        """
+        table = self._VERIFICATION_TARGET_TABLES.get(target_kind)
+        if table is not None:
+            row = self.db.execute(
+                f"SELECT 1 FROM {table} WHERE id=? AND matter_id=?",
+                (target_id, self.matter_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError(
+                    f"{target_kind} {target_id} not found"
+                )
         broker = self.memory_broker
         revisions: dict[str, int] = {}
         for ns in self._VERIFICATION_CAS_NAMESPACES:
@@ -768,6 +788,9 @@ class MatterModel:
             broker._bump_namespace_revision_in_tx(
                 "verification_state", target_kind, target_id, now=now,
             )
+            broker._bump_namespace_revision_in_tx(
+                "verification_state", now=now,
+            )
         return vid
 
     def _verify_target_inner(
@@ -807,14 +830,18 @@ class MatterModel:
                 changed_object_id=target_id,
             )
         import sqlite3 as _sqlite3
+        _any_recomputed = False
         for iid in self._issues_affected_by_target(target_kind, target_id):
             try:
                 self.proof_state.compute_and_store(iid, policy_audience="internal")
+                _any_recomputed = True
             except _sqlite3.Error as _exc:
                 _log.warning(
                     "verify_target: proof recompute failed for issue %s: %s",
                     iid, _exc,
                 )
+        if _any_recomputed:
+            self.memory_broker.bump_namespace_revision("proof_state")
         return vid
 
     def _verify_companion_edges(
@@ -945,6 +972,9 @@ class MatterModel:
             broker._bump_namespace_revision_in_tx(
                 "verification_state", target_kind, target_id, now=now,
             )
+            broker._bump_namespace_revision_in_tx(
+                "verification_state", now=now,
+            )
         return vid
 
     def _reject_target_inner(
@@ -978,14 +1008,18 @@ class MatterModel:
             )
         self._stale_rejection_dependents(target_kind, target_id)
         import sqlite3 as _sqlite3
+        _any_recomputed = False
         for iid in self._issues_affected_by_target(target_kind, target_id):
             try:
                 self.proof_state.compute_and_store(iid, policy_audience="internal")
+                _any_recomputed = True
             except _sqlite3.Error as _exc:
                 _log.warning(
                     "reject_target: proof recompute failed for issue %s: %s",
                     iid, _exc,
                 )
+        if _any_recomputed:
+            self.memory_broker.bump_namespace_revision("proof_state")
         # P0.4: human rejection is a trust-invalidation trigger.
         # Bump the matter's trust_revision so downstream reasoning
         # caches keyed on the old revision silently miss. Subsequent

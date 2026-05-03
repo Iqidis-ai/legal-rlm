@@ -808,3 +808,80 @@ def test_legacy_verify_works_without_revisions():
         reviewed_by_kind="user",
     )
     assert vid is not None
+
+
+def test_brokered_reject_rejects_stale_revisions():
+    """Reject with stale revisions should raise CAS mismatch."""
+    from irys.matter.graph import MemoryBrokerCASMismatch
+
+    model, a_id = _make_model_with_assertion()
+    revisions = model.verification_revision_keys("assertion", a_id)
+    model.memory_broker.bump_namespace_revision("verification_state")
+
+    with pytest.raises(MemoryBrokerCASMismatch):
+        model.reject_target(
+            "assertion", a_id,
+            reviewed_by_kind="attorney",
+            rejection_reason="Stale test",
+            expected_revisions=revisions,
+        )
+
+
+def test_brokered_verify_bumps_broad_verification_state():
+    """Brokered verify should bump the broad verification_state wildcard
+    to cover companion edge auto-verify fan-out."""
+    model, a_id = _make_model_with_assertion()
+    broker = model.memory_broker
+
+    broad_rev_before = broker.get_namespace_revision("verification_state")
+    specific_rev_before = broker.get_namespace_revision(
+        "verification_state", "assertion", a_id,
+    )
+
+    revisions = model.verification_revision_keys("assertion", a_id)
+    model.verify_target(
+        "assertion", a_id,
+        reviewed_by_kind="user",
+        expected_revisions=revisions,
+    )
+
+    assert broker.get_namespace_revision("verification_state") > broad_rev_before
+    assert broker.get_namespace_revision(
+        "verification_state", "assertion", a_id,
+    ) > specific_rev_before
+
+
+def test_brokered_reject_bumps_broad_verification_state():
+    """Brokered reject should bump the broad verification_state wildcard
+    to cover dependent-staling fan-out."""
+    model, a_id = _make_model_with_assertion()
+    broker = model.memory_broker
+
+    broad_rev_before = broker.get_namespace_revision("verification_state")
+
+    revisions = model.verification_revision_keys("assertion", a_id)
+    model.reject_target(
+        "assertion", a_id,
+        reviewed_by_kind="attorney",
+        rejection_reason="Test dependent staling",
+        expected_revisions=revisions,
+    )
+
+    assert broker.get_namespace_revision("verification_state") > broad_rev_before
+
+
+def test_verification_revision_keys_rejects_nonexistent_target():
+    """verification_revision_keys should raise ValueError for a
+    nonexistent assertion (PR Gate 8 LOW fix)."""
+    model = MatterModel.open_in_memory()
+    with pytest.raises(ValueError, match="not found"):
+        model.verification_revision_keys("assertion", "does-not-exist")
+
+
+def test_verification_revision_keys_allows_unknown_target_kind():
+    """Unknown target_kind (no table mapping) should still return
+    revisions — only concrete kinds are validated."""
+    model = MatterModel.open_in_memory()
+    revisions = model.verification_revision_keys("custom_kind", "any-id")
+    assert isinstance(revisions, dict)
+    assert len(revisions) > 0

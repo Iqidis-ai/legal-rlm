@@ -887,9 +887,11 @@
       "writes": [
         "artifact_cards",
         "cache_records",
+        "namespace_revision",
         "policy",
         "proof_state",
         "review_state",
+        "schema_state",
         "support_edges",
         "workspaces"
       ],
@@ -968,8 +970,10 @@
       "source": "src/irys/matter/matter.py",
       "writes": [
         "cache_records",
+        "namespace_revision",
         "proof_state",
         "review_state",
+        "schema_state",
         "support_edges",
         "workspaces"
       ],
@@ -1025,8 +1029,10 @@
       "surface": "MatterModel.verify_target",
       "source": "src/irys/matter/matter.py",
       "writes": [
+        "namespace_revision",
         "proof_state",
         "review_state",
+        "schema_state",
         "support_edges"
       ],
       "broker_status": "cas_brokered",
