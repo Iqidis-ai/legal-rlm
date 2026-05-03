@@ -5448,6 +5448,16 @@ class AppState:
                 break
         return "\n".join(sections), top_redirect_issue
 
+    def load_gaps_detail(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            gaps = _run_async(self.backend().list_gaps(matter_id))
+            clarifications = _run_async(self.backend().list_clarifications(matter_id))
+            return _fmt_gaps(gaps, clarifications)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading gaps: {_escape(exc)}</div>"
+
     def load_assumptions(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
             return "No matter loaded."
@@ -6793,6 +6803,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )
             batch_review_result = gr.Markdown("", visible=False)
 
+        with gr.Accordion("Gaps & Missingness — what the system knows it does not know", open=False):
+            gr.Markdown(
+                "Every gap represents something the matter model needs but does not have: "
+                "a missing document, an unresolved numeric conflict, a missing element of proof. "
+                "Higher materiality means the gap is more likely to affect conclusions."
+            )
+            gaps_detail_html = gr.HTML("<div class='viz-empty'>Gaps will appear here after an investigation.</div>")
+            refresh_gaps_btn = gr.Button("Refresh Gaps", variant="secondary", size="sm")
+
         with gr.Accordion("Financials — payments, damages, and numeric disputes", open=False):
             gr.Markdown(
                 "Invoices, payments, damages claims, and numeric conflicts — "
@@ -7517,6 +7536,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, q: state.search_assertions(mid, q),
             inputs=[matter_id_box, assertion_search_box],
             outputs=[assertions_md],
+        )
+        refresh_gaps_btn.click(
+            fn=lambda mid: state.load_gaps_detail(mid),
+            inputs=[matter_id_box],
+            outputs=[gaps_detail_html],
         )
         refresh_quant_btn.click(
             fn=lambda mid: state.load_quant(mid),

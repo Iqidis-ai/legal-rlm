@@ -845,3 +845,36 @@ def test_fmt_duplicate_actors_panel_skips_non_dict():
     from irys.ui.app import _fmt_duplicate_actors_panel
     result = _fmt_duplicate_actors_panel(["not-a-dict", None])
     assert "viz-empty" in result
+
+
+# ---------------------------------------------------------------------------
+# Gaps & missingness panel (SO-7)
+# ---------------------------------------------------------------------------
+
+def test_fmt_gaps_empty():
+    from irys.ui.app import _fmt_gaps
+    result = _fmt_gaps([], [])
+    assert "No open gaps" in result
+
+
+def test_fmt_gaps_with_data():
+    from irys.ui.app import _fmt_gaps
+    gaps = [
+        {"gap_type": "missing_document", "description": "Missing contract v2", "materiality_score": 0.8, "dependencies": []},
+        {"gap_type": "unresolved_contradiction", "description": "Amount conflict", "materiality_score": 0.6, "dependencies": [{"affected_type": "issue", "affected_id": "i1"}]},
+    ]
+    result = _fmt_gaps(gaps, [])
+    assert "Missing Document" in result
+    assert "Unresolved Conflict" in result
+    assert "Missing contract v2" in result
+    assert "2 unresolved" in result
+
+
+def test_fmt_gaps_with_clarifications():
+    from irys.ui.app import _fmt_gaps
+    clarifications = [
+        {"question_text": "What was the delivery date?", "expected_impact": "Resolves timeline gap"},
+    ]
+    result = _fmt_gaps([], clarifications)
+    assert "What was the delivery date?" in result
+    assert "Resolves timeline gap" in result
