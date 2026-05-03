@@ -358,7 +358,7 @@ def test_fmt_contradiction_panel_with_data():
 def test_fmt_contradiction_panel_skips_non_dict():
     from irys.ui.app import _fmt_contradiction_panel
     result = _fmt_contradiction_panel(["bad", None, 42])
-    assert "viz-empty" not in result or "0 active" in result
+    assert "viz-empty" in result
 
 
 def test_fmt_contradiction_panel_missing_fields():

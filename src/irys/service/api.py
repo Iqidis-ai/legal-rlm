@@ -32,7 +32,7 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, File, UploadFile, Form, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, File, UploadFile, Form, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, RedirectResponse
 import httpx
@@ -2983,7 +2983,7 @@ async def list_belief_revisions(matter_id: str, limit: int = 100):
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
 )
-async def get_contradictions(matter_id: str, limit: int = 100):
+async def get_contradictions(matter_id: str, limit: int = Query(default=100, ge=1, le=500)):
     """Return active contradiction pairs in the assertion graph.
 
     Each pair shows the attacker and attacked assertions, their proposition

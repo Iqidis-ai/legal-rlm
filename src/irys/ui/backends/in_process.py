@@ -278,6 +278,11 @@ class InProcessBackend(UIBackend):
             }
         except Exception:
             pass
+        contradiction_count = 0
+        try:
+            contradiction_count = len(model.assertions.find_contradictions())
+        except Exception:
+            pass
         return {
             "matter_id": matter_id,
             "stats": stats,
@@ -287,6 +292,7 @@ class InProcessBackend(UIBackend):
             "top_gaps": top_gaps,
             "pending_clarifications": clarifications,
             "domain_composition": domain_composition,
+            "contradiction_count": contradiction_count,
         }
 
     # ------------------------------------------------------------------ #

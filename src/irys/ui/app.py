@@ -2043,7 +2043,9 @@ def _fmt_contradiction_panel(contradictions: list[dict], domain: str = "legal") 
             f"</tr>"
         )
 
-    count = len(contradictions)
+    if not rows_html:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+    count = rows_html.count("<tr>")
     header = (
         f"<div class='viz-header'><strong>{labels['title']}</strong>"
         f" — {count} active conflict{'s' if count != 1 else ''}</div>"
@@ -2721,6 +2723,7 @@ def _fmt_overview(data: dict) -> str:
         f"**Gaps:** {stats.get('open_gap_count', 0)}",
         f"**Actors:** {stats.get('actor_count', 0)}  |  "
         f"**Quant facts:** {stats.get('quant_fact_count', 0)}  |  "
+        f"**Contradictions:** {data.get('contradiction_count', 0)}  |  "
         f"**Pending clarifications:** {stats.get('pending_clarifications', 0)}",
     ]
     if llm_totals.get("request_count", 0):
@@ -3156,7 +3159,17 @@ def _fmt_assertions(assertions: list, domain: str = "legal") -> str:
                    if a.get("rejection_reason") else "")
                 + "</span>"
             )
-        prop_cell = f"{vpill} {prop}{review_meta_html}".lstrip()
+        docs = a.get("documents") or []
+        doc_label = ""
+        if docs:
+            short_docs = [d.rsplit("/", 1)[-1] for d in docs[:3]]
+            doc_label = (
+                f"<div style='font-size:10px;color:#6b7280;margin-top:2px'>"
+                f"Source: {_escape(', '.join(short_docs))}"
+                + (f" +{len(docs)-3} more" if len(docs) > 3 else "")
+                + "</div>"
+            )
+        prop_cell = f"{vpill} {prop}{review_meta_html}{doc_label}".lstrip()
         rows_html += (
             f"<tr class='assertions-row' onclick='irysSelectFact(\"{assertion_id}\")' style='cursor:pointer'>"
             f"<td style='text-align:center'>{icon}</td>"
