@@ -280,6 +280,7 @@ def test_ui_domain_label_dicts_cover_all_profiles():
     from irys.ui.app import (
         _AUTHORITY_PANEL_LABELS,
         _BELIEF_REVISION_LABELS,
+        _CONTRADICTION_PANEL_LABELS,
         _DOC_PANEL_LABELS,
         _DOMAIN_BELIEF_LABELS,
         _DOMAIN_SOURCE_LABELS,
@@ -297,6 +298,7 @@ def test_ui_domain_label_dicts_cover_all_profiles():
         ("_DOMAIN_SPEECH_ACT_LABELS", _DOMAIN_SPEECH_ACT_LABELS),
         ("_DOMAIN_BELIEF_LABELS", _DOMAIN_BELIEF_LABELS),
         ("_BELIEF_REVISION_LABELS", _BELIEF_REVISION_LABELS),
+        ("_CONTRADICTION_PANEL_LABELS", _CONTRADICTION_PANEL_LABELS),
     ]:
         missing = expected - set(d.keys())
         assert not missing, f"{name} missing domains: {missing}"

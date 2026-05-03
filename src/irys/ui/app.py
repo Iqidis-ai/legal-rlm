@@ -1951,6 +1951,112 @@ def _fmt_belief_revision_panel(revisions: list[dict], domain: str = "legal") -> 
     return f"<div class='viz-shell'>{header}{table}</div>"
 
 
+_CONTRADICTION_PANEL_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Contradiction Analysis",
+        "attacker_col": "Challenging Assertion",
+        "attacked_col": "Challenged Assertion",
+        "link_col": "Conflict Type",
+        "status_col": "Status",
+        "empty": "No active contradictions found. The assertion graph has no unresolved conflicts.",
+    },
+    "finance": {
+        "title": "Conflicting Financial Claims",
+        "attacker_col": "Contrary Claim",
+        "attacked_col": "Challenged Claim",
+        "link_col": "Conflict Type",
+        "status_col": "Status",
+        "empty": "No conflicting financial claims detected.",
+    },
+    "coding": {
+        "title": "Conflicting Technical Facts",
+        "attacker_col": "Contradicting Fact",
+        "attacked_col": "Contradicted Fact",
+        "link_col": "Conflict Type",
+        "status_col": "Status",
+        "empty": "No conflicting technical facts detected.",
+    },
+    "academic_research": {
+        "title": "Conflicting Research Findings",
+        "attacker_col": "Contradicting Finding",
+        "attacked_col": "Contradicted Finding",
+        "link_col": "Conflict Type",
+        "status_col": "Status",
+        "empty": "No conflicting research findings detected.",
+    },
+    "biomedical": {
+        "title": "Conflicting Clinical Evidence",
+        "attacker_col": "Contradicting Evidence",
+        "attacked_col": "Contradicted Evidence",
+        "link_col": "Conflict Type",
+        "status_col": "Status",
+        "empty": "No conflicting clinical evidence detected.",
+    },
+}
+
+
+def _fmt_contradiction_panel(contradictions: list[dict], domain: str = "legal") -> str:
+    labels = _CONTRADICTION_PANEL_LABELS.get(domain, _CONTRADICTION_PANEL_LABELS["legal"])
+    if not contradictions:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    _BELIEF_PILLS = {
+        "operative": "pill-green",
+        "admitted": "pill-green",
+        "alleged": "pill-neutral",
+        "argued": "pill-neutral",
+        "inferred": "pill-neutral",
+        "disputed": "pill-orange",
+        "superseded": "pill-red",
+        "withdrawn": "pill-red",
+        "not_performed": "pill-red",
+    }
+
+    rows_html = ""
+    for c in contradictions:
+        if not isinstance(c, dict):
+            continue
+        attacker_prop = _escape(str(c.get("attacker_prop") or "—")[:120])
+        attacked_prop = _escape(str(c.get("attacked_prop") or "—")[:120])
+        link_type = _escape(str(c.get("link_type") or "—"))
+        attacker_belief = str(c.get("attacker_belief") or "unknown")
+        attacked_belief = str(c.get("attacked_belief") or "unknown")
+        a_pill = _BELIEF_PILLS.get(attacker_belief, "pill-neutral")
+        d_pill = _BELIEF_PILLS.get(attacked_belief, "pill-neutral")
+        status = "Open Conflict"
+        status_class = "pill-orange"
+        if attacked_belief == "disputed":
+            status = "Disputed"
+            status_class = "pill-orange"
+        elif attacked_belief in ("superseded", "withdrawn", "resolved"):
+            status = "Resolved"
+            status_class = "pill-green"
+
+        rows_html += (
+            f"<tr>"
+            f"<td title='{attacker_prop}'>{attacker_prop} "
+            f"<span class='pill {a_pill}'>{_escape(attacker_belief)}</span></td>"
+            f"<td title='{attacked_prop}'>{attacked_prop} "
+            f"<span class='pill {d_pill}'>{_escape(attacked_belief)}</span></td>"
+            f"<td><span class='pill pill-blue'>{link_type}</span></td>"
+            f"<td><span class='pill {status_class}'>{status}</span></td>"
+            f"</tr>"
+        )
+
+    count = len(contradictions)
+    header = (
+        f"<div class='viz-header'><strong>{labels['title']}</strong>"
+        f" — {count} active conflict{'s' if count != 1 else ''}</div>"
+    )
+    table = (
+        "<div class='table-wrap'><table class='viz-table'>"
+        f"<thead><tr><th>{labels['attacker_col']}</th><th>{labels['attacked_col']}</th>"
+        f"<th>{labels['link_col']}</th><th>{labels['status_col']}</th></tr></thead>"
+        "<tbody>" + rows_html + "</tbody></table></div>"
+    )
+    return f"<div class='viz-shell'>{header}{table}</div>"
+
+
 def _fmt_communication_map_panel(graph: dict) -> str:
     actors = list(graph.get("actors", []) or [])
     documents = list(graph.get("documents", []) or [])
@@ -4760,6 +4866,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading belief revisions: {_escape(exc)}</div>"
 
+    def load_contradictions(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_contradictions(matter_id))
+            return _fmt_contradiction_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading contradictions: {_escape(exc)}</div>"
+
     def set_policy_audience(self, label: str) -> str:
         """Called when the sidebar privilege-mode toggle flips. Returns
         a visible banner HTML so the reviewer always knows which mode
@@ -5729,6 +5844,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             belief_revision_html = gr.HTML("<div class='viz-empty'>Belief revisions will appear here after an investigation.</div>")
             refresh_belief_btn = gr.Button("Refresh Belief Revisions", variant="secondary", size="sm")
 
+        with gr.Accordion("Contradiction Analysis — conflicting assertions and open disputes", open=False):
+            gr.Markdown(
+                "Active contradiction pairs in the assertion graph. Shows which facts challenge "
+                "each other, their belief states, and whether the conflict is resolved or open."
+            )
+            contradiction_html = gr.HTML("<div class='viz-empty'>Contradiction analysis will appear here after an investigation.</div>")
+            refresh_contradiction_btn = gr.Button("Refresh Contradictions", variant="secondary", size="sm")
+
         with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
                 "Maps which people and companies appear in which documents and highlights "
@@ -6006,6 +6129,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             authority = state.load_authority_network(mid, domain=domain)
             doc_intel = state.load_document_intelligence(mid, domain=domain)
             belief_revisions = state.load_belief_revisions(mid, domain=domain)
+            contradictions = state.load_contradictions(mid, domain=domain)
             review_badge = state.load_review_count_badge(mid)
             doc_choices = state.load_document_picker_choices(mid)
             return (
@@ -6024,6 +6148,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 authority,
                 doc_intel,
                 belief_revisions,
+                contradictions,
                 top_issue,
                 gr.update(choices=doc_choices),
                 gr.update(choices=_correction_dropdown_choices(domain), value=None),
@@ -6085,6 +6210,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     authority_html,
                     doc_intel_html,
                     belief_revision_html,
+                    contradiction_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -6114,6 +6240,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     authority_html,
                     doc_intel_html,
                     belief_revision_html,
+                    contradiction_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -6140,6 +6267,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 authority_html,
                 doc_intel_html,
                 belief_revision_html,
+                contradiction_html,
                 redirect_issue_id,
                 bulk_doc_ref,
                 correction_new_state,
@@ -6186,6 +6314,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_belief_revisions(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[belief_revision_html],
+        )
+        refresh_contradiction_btn.click(
+            fn=lambda mid: state.load_contradictions(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[contradiction_html],
         )
         refresh_comm_btn.click(
             fn=lambda mid: state.load_communication_map(mid),

@@ -185,3 +185,8 @@ class UIBackend(ABC):
     async def list_belief_revisions(self, matter_id: str, limit: int = 100) -> list[dict]:
         """Return belief revision events for the transparency panel."""
         ...
+
+    @abstractmethod
+    async def get_contradictions(self, matter_id: str, limit: int = 100) -> list[dict]:
+        """Return active contradiction pairs in the assertion graph."""
+        ...

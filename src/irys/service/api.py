@@ -2975,6 +2975,25 @@ async def list_belief_revisions(matter_id: str, limit: int = 100):
 
 
 # ---------------------------------------------------------------------------
+# Contradiction Analysis (SO-2)
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/matter/{matter_id}/contradictions",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_contradictions(matter_id: str, limit: int = 100):
+    """Return active contradiction pairs in the assertion graph.
+
+    Each pair shows the attacker and attacked assertions, their proposition
+    text, belief states, and the link type (attacks/contradicts).
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    return model.assertions.find_contradictions(limit=limit)
+
+
+# ---------------------------------------------------------------------------
 # Visual Work Product — Timeline view (Priority 2)
 # ---------------------------------------------------------------------------
 

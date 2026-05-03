@@ -585,6 +585,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.list_belief_revisions(limit=limit)
 
+    async def get_contradictions(self, matter_id: str, limit: int = 100) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.assertions.find_contradictions(limit=limit)
+
     async def list_llm_calls(
         self,
         matter_id: str,

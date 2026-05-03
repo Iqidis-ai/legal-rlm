@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from irys.service.api import app, _active_matter_models
 from irys.matter import MatterModel, AssertionCandidate, SpeechAct, SourceRole
 from irys.matter import ModelLayer, AssertionKind, BeliefState
-from irys.matter.enums import OriginKind, IssueType, GapType, RevisionCause
+from irys.matter.enums import OriginKind, IssueType, GapType, RevisionCause, AssertionLinkType
 from irys.matter.reasoning import ReasoningLedgerStore
 
 
@@ -1116,4 +1116,50 @@ def test_belief_revisions_with_data(client, register_model):
 
 def test_belief_revisions_404_for_unknown_matter(client):
     resp = client.get("/matter/unknown/belief-revisions")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /matter/{matter_id}/contradictions — contradiction analysis
+# ---------------------------------------------------------------------------
+
+def test_contradictions_empty(client, register_model):
+    resp = client.get(f"/matter/{MATTER_ID}/contradictions")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_contradictions_with_data(client, register_model):
+    model = register_model
+    a1, _ = model.assertions.upsert_occurrence(AssertionCandidate(
+        proposition_text="Payment was received on March 1.",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="doc1.pdf",
+        speech_act=SpeechAct.EXTRACTED,
+        source_role=SourceRole.UNKNOWN,
+    ))
+    a2, _ = model.assertions.upsert_occurrence(AssertionCandidate(
+        proposition_text="Payment was never received.",
+        model_layer=ModelLayer.RECORD,
+        assertion_kind=AssertionKind.FACTUAL,
+        document_id="doc2.pdf",
+        speech_act=SpeechAct.EXTRACTED,
+        source_role=SourceRole.UNKNOWN,
+    ))
+    model.assertions.set_belief_state(a1, BeliefState.OPERATIVE, 0.9)
+    model.assertions.set_belief_state(a2, BeliefState.OPERATIVE, 0.8)
+    model.assertions.link(a2, a1, AssertionLinkType.CONTRADICTS)
+    resp = client.get(f"/matter/{MATTER_ID}/contradictions")
+    assert resp.status_code == 200
+    conflicts = resp.json()
+    assert len(conflicts) >= 1
+    c = conflicts[0]
+    assert "attacker_prop" in c
+    assert "attacked_prop" in c
+    assert c["link_type"] == "contradicts"
+
+
+def test_contradictions_404_for_unknown_matter(client):
+    resp = client.get("/matter/unknown/contradictions")
     assert resp.status_code == 404

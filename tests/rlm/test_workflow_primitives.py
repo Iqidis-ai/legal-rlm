@@ -321,3 +321,47 @@ def test_fmt_belief_revision_panel_missing_fields():
     revisions = [{"proposition_text": None, "old_belief_state": None}]
     result = _fmt_belief_revision_panel(revisions)
     assert "1 revision" in result
+
+
+def test_fmt_contradiction_panel_empty():
+    from irys.ui.app import _fmt_contradiction_panel
+    result = _fmt_contradiction_panel([])
+    assert "viz-empty" in result
+    assert "No active contradictions" in result
+
+
+def test_fmt_contradiction_panel_empty_finance():
+    from irys.ui.app import _fmt_contradiction_panel
+    result = _fmt_contradiction_panel([], domain="finance")
+    assert "No conflicting financial claims" in result
+
+
+def test_fmt_contradiction_panel_with_data():
+    from irys.ui.app import _fmt_contradiction_panel
+    conflicts = [
+        {
+            "attacker_prop": "Payment was never received",
+            "attacked_prop": "Payment was received on March 1",
+            "link_type": "contradicts",
+            "attacker_belief": "operative",
+            "attacked_belief": "disputed",
+        },
+    ]
+    result = _fmt_contradiction_panel(conflicts)
+    assert "1 active conflict" in result
+    assert "Payment was never received" in result
+    assert "Payment was received on March 1" in result
+    assert "contradicts" in result
+    assert "Disputed" in result
+
+
+def test_fmt_contradiction_panel_skips_non_dict():
+    from irys.ui.app import _fmt_contradiction_panel
+    result = _fmt_contradiction_panel(["bad", None, 42])
+    assert "viz-empty" not in result or "0 active" in result
+
+
+def test_fmt_contradiction_panel_missing_fields():
+    from irys.ui.app import _fmt_contradiction_panel
+    result = _fmt_contradiction_panel([{"attacker_prop": None}])
+    assert "1 active conflict" in result
