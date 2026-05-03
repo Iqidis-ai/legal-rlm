@@ -811,7 +811,11 @@ def _fmt_overview_panel(data: dict) -> str:
         _metric_card(
             "Open Issues",
             f"{_safe_int(stats.get('open_issue_count', 0)):,}",
-            detail=f"Gaps: {_safe_int(stats.get('open_gap_count', 0)):,}",
+            detail=(
+                f"Gaps: {_safe_int(stats.get('open_gap_count', 0)):,}"
+                + (f" | Conflicts: {_safe_int(data.get('contradiction_count', 0)):,}"
+                   if data.get("contradiction_count") else "")
+            ),
         ),
         _metric_card(
             "Actors",
@@ -895,10 +899,17 @@ def _fmt_overview_panel(data: dict) -> str:
             _bar_row(label, conf, 1.0, meta, tone="green")
         )
 
-    gap_items = "".join(
-        f"<li>{_escape(g.get('description') or g.get('gap_type') or 'Gap')}</li>"
-        for g in gaps
-    ) or "<li>No open gaps.</li>"
+    def _gap_li(g: dict) -> str:
+        gt = str(g.get("gap_type") or "")
+        label, cls = _GAP_TYPE_PILLS.get(gt, (gt.replace("_", " ").title() or "Gap", "pill-neutral"))
+        desc = _escape(str(g.get("description") or label))
+        mat = g.get("materiality_score") or g.get("materiality")
+        mat_tag = (
+            f" <span style='font-size:10px;color:#6b7280'>({float(mat):.1f})</span>"
+            if isinstance(mat, (int, float)) and mat else ""
+        )
+        return f"<li><span class='pill {cls}' style='font-size:9px;padding:1px 5px'>{_escape(label)}</span> {desc}{mat_tag}</li>"
+    gap_items = "".join(_gap_li(g) for g in gaps) or "<li>No open gaps.</li>"
     clarification_items = "".join(
         "<li>"
         f"{_escape(c.get('question_text') or c.get('question') or 'Clarification')}"
@@ -3226,22 +3237,73 @@ def _fmt_assumptions(assumptions: list) -> str:
     return "\n".join(lines)
 
 
+_GAP_TYPE_PILLS: dict[str, tuple[str, str]] = {
+    "missing_document": ("Missing Document", "pill-red"),
+    "missing_metadata": ("Missing Metadata", "pill-orange"),
+    "missing_issue_predicate": ("Missing Predicate", "pill-orange"),
+    "missing_authority": ("Missing Authority", "pill-orange"),
+    "missing_user_context": ("Missing Context", "pill-neutral"),
+    "missing_quantitative_input": ("Missing Number", "pill-orange"),
+    "unresolved_contradiction": ("Unresolved Conflict", "pill-red"),
+    "expected_absent_attachment": ("Expected Attachment", "pill-orange"),
+    "expected_absent_notice": ("Expected Notice", "pill-orange"),
+}
+
+
 def _fmt_gaps(gaps: list, clarifications: list) -> str:
-    parts = []
+    parts: list[str] = []
     if gaps:
-        parts.append("### Open Gaps")
+        gap_rows = ""
         for g in gaps:
-            desc = g.get("description") or g.get("gap_type", "?")
-            mat = g.get("materiality_score") or g.get("materiality") or ""
-            mat_str = f" [materiality: {mat:.2f}]" if isinstance(mat, (int, float)) else (f" [{mat}]" if mat else "")
-            parts.append(f"- {desc}{mat_str}")
+            desc = _escape(str(g.get("description") or g.get("gap_type", "?")))
+            gap_type = str(g.get("gap_type") or "")
+            label, cls = _GAP_TYPE_PILLS.get(gap_type, (gap_type.replace("_", " ").title(), "pill-neutral"))
+            mat = g.get("materiality_score") or g.get("materiality") or 0
+            mat_val = float(mat) if isinstance(mat, (int, float)) else 0.0
+            mat_pct = min(mat_val * 100, 100)
+            mat_bar = (
+                f"<div style='width:60px;height:8px;background:#e5e7eb;border-radius:4px;display:inline-block;vertical-align:middle'>"
+                f"<div style='width:{mat_pct:.0f}%;height:100%;background:{'#dc2626' if mat_val >= 0.7 else '#f59e0b' if mat_val >= 0.4 else '#6b7280'};border-radius:4px'></div>"
+                f"</div> {mat_val:.2f}"
+            )
+            deps = g.get("dependencies") or []
+            dep_str = ""
+            if deps:
+                dep_labels = [_escape(f"{d.get('affected_type','?')}") for d in deps[:3]]
+                dep_str = f"<span style='font-size:10px;color:#6b7280'>{', '.join(dep_labels)}</span>"
+            gap_rows += (
+                f"<tr>"
+                f"<td><span class='pill {cls}'>{_escape(label)}</span></td>"
+                f"<td>{desc}</td>"
+                f"<td>{mat_bar}</td>"
+                f"<td>{dep_str}</td>"
+                f"</tr>"
+            )
+        gap_count = len(gaps)
+        parts.append(
+            f"<div class='viz-header'><strong>Open Gaps</strong> — {gap_count} unresolved</div>"
+            "<div class='table-wrap'><table class='viz-table'>"
+            "<thead><tr><th>Type</th><th>Description</th><th>Materiality</th><th>Affects</th></tr></thead>"
+            "<tbody>" + gap_rows + "</tbody></table></div>"
+        )
     if clarifications:
-        parts.append("\n### Pending Clarifications")
+        clar_items = ""
         for c in clarifications:
-            q = c.get("question_text") or c.get("question", "?")
-            impact = c.get("expected_impact") or ""
-            parts.append(f"- **{q}**" + (f"\n  *Impact: {impact}*" if impact else ""))
-    return "\n".join(parts) if parts else "No open gaps or clarifications."
+            q = _escape(str(c.get("question_text") or c.get("question", "?")))
+            impact = _escape(str(c.get("expected_impact") or ""))
+            clar_items += (
+                f"<li><strong>{q}</strong>"
+                + (f"<br><span style='font-size:11px;color:#6b7280'>Impact: {impact}</span>" if impact else "")
+                + "</li>"
+            )
+        parts.append(
+            "<div class='viz-header' style='margin-top:12px'><strong>Pending Clarifications</strong></div>"
+            "<ul style='margin:4px 0;padding-left:20px'>" + clar_items + "</ul>"
+        )
+    return (
+        "<div class='viz-shell'>" + "".join(parts) + "</div>"
+        if parts else "No open gaps or clarifications."
+    )
 
 
 _REVIEW_BUCKET_LABELS = {
