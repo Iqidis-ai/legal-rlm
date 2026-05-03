@@ -3136,7 +3136,9 @@ class MatterModel:
         disputed_count = int(disputed_row["n"]) if disputed_row else 0
 
         revision_row = self.db.execute(
-            "SELECT COUNT(*) AS n FROM belief_revision_event",
+            "SELECT COUNT(*) AS n FROM belief_revision_event"
+            " WHERE assertion_id IN (SELECT id FROM assertion WHERE matter_id=?)",
+            (self.matter_id,),
         ).fetchone()
         revision_count = int(revision_row["n"]) if revision_row else 0
 
