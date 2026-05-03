@@ -973,7 +973,7 @@
         "support_edges",
         "workspaces"
       ],
-      "broker_status": "legacy_direct_writer",
+      "broker_status": "cas_brokered",
       "migration_owner": "memory_broker",
       "hard_expiry": "2026-05-31"
     },
@@ -1029,7 +1029,7 @@
         "review_state",
         "support_edges"
       ],
-      "broker_status": "legacy_direct_writer",
+      "broker_status": "cas_brokered",
       "migration_owner": "memory_broker",
       "hard_expiry": "2026-05-31"
     },

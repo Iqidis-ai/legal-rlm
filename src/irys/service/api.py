@@ -2148,6 +2148,19 @@ async def get_review_queue_count(matter_id: str):
     return model.count_review_queue()
 
 
+@app.get(
+    "/matter/{matter_id}/verify/revisions",
+    tags=["Review Queue"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_verification_revisions(
+    matter_id: str, target_kind: str, target_id: str,
+):
+    """Snapshot namespace revisions for CAS-protected verify/reject."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.verification_revision_keys(target_kind, target_id)
+
+
 @app.post(
     "/matter/{matter_id}/verify",
     tags=["Review Queue"],
@@ -2160,8 +2173,8 @@ async def verify_target(matter_id: str, request: VerifyTargetRequest):
     human reviewers (user or attorney) may act. For 'rejected', the
     same human-only rule applies AND rejection_reason is required.
 
-    Every transition appends a ledger audit event and triggers
-    proof-state recomputation for any open issues the target supports.
+    When expected_revisions is provided, the write is CAS-protected
+    against stale-view verifications (409 on conflict).
     """
     model = await _get_matter_model_or_404(matter_id)
     status = request.status.lower()
@@ -2180,6 +2193,7 @@ async def verify_target(matter_id: str, request: VerifyTargetRequest):
                 review_note=request.review_note,
                 review_scope=request.review_scope,
                 run_id=request.run_id,
+                expected_revisions=request.expected_revisions,
             )
         else:
             if not request.rejection_reason or not request.rejection_reason.strip():
@@ -2196,9 +2210,18 @@ async def verify_target(matter_id: str, request: VerifyTargetRequest):
                 review_note=request.review_note,
                 review_scope=request.review_scope,
                 run_id=request.run_id,
+                expected_revisions=request.expected_revisions,
             )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        if "CAS" in type(e).__name__ or "CASMismatch" in type(e).__name__:
+            raise HTTPException(
+                status_code=409,
+                detail="Namespace revision conflict — another write occurred since "
+                       "your revision snapshot. Re-fetch revisions and retry.",
+            )
+        raise
     return {
         "matter_id": matter_id,
         "verification_id": vid,

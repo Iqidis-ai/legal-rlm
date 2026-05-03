@@ -229,6 +229,11 @@ class VerifyTargetRequest(BaseModel):
         description="Required when status='rejected': why the target is being rejected",
     )
     run_id: Optional[str] = Field(None, description="Active run ID for audit attribution")
+    expected_revisions: Optional[dict[str, int]] = Field(
+        None,
+        description="Namespace revision snapshot for CAS protection; "
+                    "obtain from GET .../verify/revisions before submitting",
+    )
 
 
 class BulkVerifyBySpanRequest(BaseModel):

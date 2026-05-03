@@ -679,6 +679,23 @@ class MatterModel:
         ).fetchone()
         return row is not None
 
+    _VERIFICATION_CAS_NAMESPACES = (
+        "verification_state", "proof_state", "cache_records",
+    )
+
+    def verification_revision_keys(self, target_kind: str, target_id: str) -> dict[str, int]:
+        """Snapshot namespace revisions for CAS-protected verify/reject."""
+        broker = self.memory_broker
+        revisions: dict[str, int] = {}
+        for ns in self._VERIFICATION_CAS_NAMESPACES:
+            key = broker.revision_key(ns)
+            revisions[key] = broker.get_namespace_revision(ns)
+        key = broker.revision_key("verification_state", target_kind, target_id)
+        revisions[key] = broker.get_namespace_revision(
+            "verification_state", target_kind, target_id,
+        )
+        return revisions
+
     def verify_target(
         self,
         target_kind: str,
@@ -689,14 +706,81 @@ class MatterModel:
         review_note: Optional[str] = None,
         review_scope: str = "extraction_correct",
         run_id: Optional[str] = None,
+        expected_revisions: Optional[dict[str, int]] = None,
     ) -> str:
         """P0.3: promote a target to verified, append ledger audit
         event, recompute proof state for any open issues it supports.
-        review_scope records WHAT was validated (extraction, record
-        truth, inference, legal conclusion) so downstream audit can
-        tell a syntax-correct extraction apart from a
-        record-truth-validated fact.
+
+        When expected_revisions is provided, validates namespace revisions
+        before writing (CAS protection against stale-view verifications).
         """
+        if expected_revisions is not None:
+            return self._verify_target_brokered(
+                target_kind, target_id,
+                reviewed_by_kind=reviewed_by_kind,
+                reviewed_by_id=reviewed_by_id,
+                review_note=review_note,
+                review_scope=review_scope,
+                run_id=run_id,
+                expected_revisions=expected_revisions,
+            )
+        return self._verify_target_inner(
+            target_kind, target_id,
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+            review_note=review_note,
+            review_scope=review_scope,
+            run_id=run_id,
+        )
+
+    def _verify_target_brokered(
+        self,
+        target_kind: str,
+        target_id: str,
+        *,
+        reviewed_by_kind: str,
+        reviewed_by_id: Optional[str],
+        review_note: Optional[str],
+        review_scope: str,
+        run_id: Optional[str],
+        expected_revisions: dict[str, int],
+    ) -> str:
+        broker = self.memory_broker
+        required_keys = set()
+        for ns in self._VERIFICATION_CAS_NAMESPACES:
+            required_keys.add(broker.revision_key(ns))
+        required_keys.add(
+            broker.revision_key("verification_state", target_kind, target_id)
+        )
+        now = _now()
+        with self.db.write_transaction():
+            broker._assert_expected_revisions(expected_revisions, required_keys)
+            vid = self._verify_target_inner(
+                target_kind, target_id,
+                reviewed_by_kind=reviewed_by_kind,
+                reviewed_by_id=reviewed_by_id,
+                review_note=review_note,
+                review_scope=review_scope,
+                run_id=run_id,
+            )
+            for ns in self._VERIFICATION_CAS_NAMESPACES:
+                broker._bump_namespace_revision_in_tx(ns, now=now)
+            broker._bump_namespace_revision_in_tx(
+                "verification_state", target_kind, target_id, now=now,
+            )
+        return vid
+
+    def _verify_target_inner(
+        self,
+        target_kind: str,
+        target_id: str,
+        *,
+        reviewed_by_kind: str,
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
+        run_id: Optional[str] = None,
+    ) -> str:
         vid = self.verification.verify(
             target_kind, target_id,
             reviewed_by_kind=reviewed_by_kind,
@@ -705,12 +789,6 @@ class MatterModel:
             review_scope=review_scope,
             run_id=run_id,
         )
-        # Adversarial #8 fix: verifying an assertion must also promote
-        # its companion evidence_edge(s) to verified — otherwise the
-        # two-lane verified_coverage_fraction stays at 0 because
-        # TrustPolicy requires BOTH lanes to be verified, and the UI
-        # looks like it lied. We fan-out only on assertion + evidence_edge
-        # promotions; other kinds are leaves.
         if target_kind == "assertion":
             self._verify_companion_edges(
                 assertion_id=target_id,
@@ -720,11 +798,6 @@ class MatterModel:
                 review_scope=review_scope,
                 run_id=run_id,
             )
-        # verification_event (written by VerificationStateStore) is the
-        # canonical audit row. Mirror to the reasoning ledger only when
-        # a run_id is available — the schema enforces NOT NULL run_id
-        # on ledger_event, and human reviews often happen outside any
-        # run.
         if run_id is not None:
             self.ledger.append_event(
                 run_id=run_id,
@@ -733,12 +806,6 @@ class MatterModel:
                 changed_object_type=target_kind,
                 changed_object_id=target_id,
             )
-        # Promotion to verified changes the verified_supporting_count
-        # lane on any issue this target supports. Recompute affected
-        # proof states so coverage_report reflects the new lane.
-        # Narrow the fallback: sqlite errors during recompute are
-        # survivable (the next recompute will pick it up); every
-        # other exception is a real bug and should propagate.
         import sqlite3 as _sqlite3
         for iid in self._issues_affected_by_target(target_kind, target_id):
             try:
@@ -811,10 +878,87 @@ class MatterModel:
         review_note: Optional[str] = None,
         review_scope: str = "extraction_correct",
         run_id: Optional[str] = None,
+        expected_revisions: Optional[dict[str, int]] = None,
     ) -> str:
         """P0.3: reject a target, append ledger audit event, and
         recompute proof state for any open issues it supported so
-        their coverage drops accordingly."""
+        their coverage drops accordingly.
+
+        When expected_revisions is provided, validates namespace revisions
+        before writing (CAS protection against stale-view rejections).
+        """
+        if expected_revisions is not None:
+            return self._reject_target_brokered(
+                target_kind, target_id,
+                reviewed_by_kind=reviewed_by_kind,
+                rejection_reason=rejection_reason,
+                reviewed_by_id=reviewed_by_id,
+                review_note=review_note,
+                review_scope=review_scope,
+                run_id=run_id,
+                expected_revisions=expected_revisions,
+            )
+        return self._reject_target_inner(
+            target_kind, target_id,
+            reviewed_by_kind=reviewed_by_kind,
+            rejection_reason=rejection_reason,
+            reviewed_by_id=reviewed_by_id,
+            review_note=review_note,
+            review_scope=review_scope,
+            run_id=run_id,
+        )
+
+    def _reject_target_brokered(
+        self,
+        target_kind: str,
+        target_id: str,
+        *,
+        reviewed_by_kind: str,
+        rejection_reason: str,
+        reviewed_by_id: Optional[str],
+        review_note: Optional[str],
+        review_scope: str,
+        run_id: Optional[str],
+        expected_revisions: dict[str, int],
+    ) -> str:
+        broker = self.memory_broker
+        required_keys = set()
+        for ns in self._VERIFICATION_CAS_NAMESPACES:
+            required_keys.add(broker.revision_key(ns))
+        required_keys.add(
+            broker.revision_key("verification_state", target_kind, target_id)
+        )
+        now = _now()
+        with self.db.write_transaction():
+            broker._assert_expected_revisions(expected_revisions, required_keys)
+            vid = self._reject_target_inner(
+                target_kind, target_id,
+                reviewed_by_kind=reviewed_by_kind,
+                rejection_reason=rejection_reason,
+                reviewed_by_id=reviewed_by_id,
+                review_note=review_note,
+                review_scope=review_scope,
+                run_id=run_id,
+            )
+            for ns in self._VERIFICATION_CAS_NAMESPACES:
+                broker._bump_namespace_revision_in_tx(ns, now=now)
+            broker._bump_namespace_revision_in_tx(
+                "verification_state", target_kind, target_id, now=now,
+            )
+        return vid
+
+    def _reject_target_inner(
+        self,
+        target_kind: str,
+        target_id: str,
+        *,
+        reviewed_by_kind: str,
+        rejection_reason: str,
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
+        run_id: Optional[str] = None,
+    ) -> str:
         vid = self.verification.reject(
             target_kind, target_id,
             reviewed_by_kind=reviewed_by_kind,
@@ -832,13 +976,6 @@ class MatterModel:
                 changed_object_type=target_kind,
                 changed_object_id=target_id,
             )
-        # Adversarial #7 fix (SO-2 truth maintenance): rejection of a
-        # supporting target must stale its direct dependents so
-        # downstream reasoning re-evaluates. Previously we recomputed
-        # proof only; dependent edges and quants stayed candidate
-        # and silently re-entered consumers that don't read the
-        # assertion's verification row. This is a bounded fan-out —
-        # direct dependents only, no transitive walk.
         self._stale_rejection_dependents(target_kind, target_id)
         import sqlite3 as _sqlite3
         for iid in self._issues_affected_by_target(target_kind, target_id):
