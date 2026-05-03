@@ -1356,6 +1356,114 @@ def _fmt_evidence_matrix_panel(matrix: dict) -> str:
     )
 
 
+def _fmt_proof_state_panel(summary: dict, issues: list, domain: str = "legal") -> str:
+    """Render the proof state analysis panel (SO-2 / SO-4)."""
+    if not issues:
+        return "<div class='viz-empty'>No proof state computed yet. Run an investigation first.</div>"
+
+    total = summary.get("total_issues_tracked", 0)
+    avg_suf = summary.get("avg_sufficiency", 0.0)
+    by_status = summary.get("by_status", {})
+    gap_count = summary.get("gap_count", 0)
+
+    status_colors = {
+        "sufficient": "#16a34a",
+        "partial": "#d97706",
+        "insufficient": "#dc2626",
+        "none": "#94a3b8",
+    }
+
+    header = (
+        "<div style='display:flex;gap:24px;flex-wrap:wrap;margin-bottom:16px;'>"
+        f"<div style='text-align:center;'>"
+        f"<div style='font-size:28px;font-weight:700;color:#1e293b;'>{total}</div>"
+        f"<div style='font-size:11px;color:#6b7280;'>Issues Tracked</div></div>"
+        f"<div style='text-align:center;'>"
+        f"<div style='font-size:28px;font-weight:700;color:{'#16a34a' if avg_suf > 0.5 else '#d97706' if avg_suf > 0.25 else '#dc2626'};'>"
+        f"{avg_suf:.0%}</div>"
+        f"<div style='font-size:11px;color:#6b7280;'>Avg Sufficiency</div></div>"
+        f"<div style='text-align:center;'>"
+        f"<div style='font-size:28px;font-weight:700;color:#dc2626;'>{gap_count}</div>"
+        f"<div style='font-size:11px;color:#6b7280;'>Proof Gaps</div></div>"
+    )
+    for status, count in sorted(by_status.items()):
+        color = status_colors.get(status, "#94a3b8")
+        header += (
+            f"<div style='text-align:center;'>"
+            f"<div style='font-size:20px;font-weight:600;color:{color};'>{count}</div>"
+            f"<div style='font-size:11px;color:#6b7280;'>{_escape(status.title())}</div></div>"
+        )
+    header += "</div>"
+
+    rows_html = ""
+    for ps in issues:
+        issue_id = ps.get("issue_id", "?")
+        sufficiency = max(0.0, min(1.0, _safe_float(ps.get("sufficiency", 0.0))))
+        proof_status = ps.get("proof_status", "none")
+        supporting = _safe_int(ps.get("supporting_count", 0))
+        attacking = _safe_int(ps.get("attacking_count", 0))
+        total_preds = _safe_int(ps.get("total_predicate_count", 0))
+        satisfied_preds = _safe_int(ps.get("satisfied_predicate_count", 0))
+        trust_support = _safe_float(ps.get("trust_weighted_support", 0.0))
+        trust_attack = _safe_float(ps.get("trust_weighted_attack", 0.0))
+        advocacy_only = ps.get("advocacy_only", False)
+
+        status_color = status_colors.get(proof_status, "#94a3b8")
+        suf_pct = sufficiency * 100
+
+        issue_title = _escape(issue_id[:24])
+        pred_text = f"{satisfied_preds}/{total_preds}" if total_preds else "—"
+        balance = trust_support - trust_attack
+        balance_color = "#16a34a" if balance > 0.1 else "#dc2626" if balance < -0.1 else "#6b7280"
+
+        adv_badge = ""
+        if advocacy_only:
+            adv_badge = (
+                "<span style='margin-left:6px;padding:1px 5px;border-radius:8px;"
+                "background:#fef3c7;color:#92400e;font-size:9px;font-weight:700;"
+                "text-transform:uppercase;'>advocacy only</span>"
+            )
+
+        rows_html += (
+            f"<tr>"
+            f"<td style='max-width:180px;overflow:hidden;text-overflow:ellipsis;"
+            f"white-space:nowrap;' title='{_escape(issue_id)}'>{issue_title}{adv_badge}</td>"
+            f"<td><span style='display:inline-block;padding:1px 8px;border-radius:8px;"
+            f"background:{status_color}22;color:{status_color};font-size:11px;"
+            f"font-weight:600;'>{_escape(proof_status)}</span></td>"
+            f"<td style='width:120px;'>"
+            f"<div style='position:relative;height:8px;background:#f3f4f6;border-radius:4px;"
+            f"overflow:hidden;'>"
+            f"<div style='position:absolute;inset:0 auto 0 0;width:{suf_pct:.1f}%;"
+            f"background:{status_color};border-radius:4px;'></div></div>"
+            f"<span style='font-size:10px;color:#6b7280;'>{sufficiency:.0%}</span></td>"
+            f"<td style='text-align:center;'>{pred_text}</td>"
+            f"<td style='text-align:center;color:#16a34a;'>{supporting}</td>"
+            f"<td style='text-align:center;color:#dc2626;'>{attacking}</td>"
+            f"<td style='text-align:center;color:{balance_color};font-weight:600;'>"
+            f"{balance:+.2f}</td>"
+            f"</tr>"
+        )
+
+    table = (
+        "<div style='overflow-x:auto;'>"
+        "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
+        "<thead><tr style='border-bottom:2px solid #e2e8f0;text-align:left;'>"
+        "<th style='padding:6px 8px;'>Issue</th>"
+        "<th style='padding:6px 8px;'>Status</th>"
+        "<th style='padding:6px 8px;'>Sufficiency</th>"
+        "<th style='padding:6px 8px;text-align:center;'>Predicates</th>"
+        "<th style='padding:6px 8px;text-align:center;'>Support</th>"
+        "<th style='padding:6px 8px;text-align:center;'>Attack</th>"
+        "<th style='padding:6px 8px;text-align:center;'>Balance</th>"
+        "</tr></thead><tbody>"
+        + rows_html
+        + "</tbody></table></div>"
+    )
+
+    return f"<div class='viz-shell'>{header}{table}</div>"
+
+
 def _fmt_communication_map_panel(graph: dict) -> str:
     actors = list(graph.get("actors", []) or [])
     documents = list(graph.get("documents", []) or [])
@@ -4079,6 +4187,24 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading evidence matrix: {_escape(exc)}</div>"
 
+    def load_proof_state(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_proof_state_summary(matter_id))
+            summary = data.get("summary", {}) if isinstance(data, dict) else {}
+            issues = data.get("issues", []) if isinstance(data, dict) else []
+            domain = "legal"
+            try:
+                ov = _run_async(self.backend().get_overview(matter_id))
+                dc = ov.get("domain_composition", {}) if isinstance(ov, dict) else {}
+                domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
+            except Exception:
+                pass
+            return _fmt_proof_state_panel(summary, issues, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading proof state: {_escape(exc)}</div>"
+
     def set_policy_audience(self, label: str) -> str:
         """Called when the sidebar privilege-mode toggle flips. Returns
         a visible banner HTML so the reviewer always knows which mode
@@ -5016,6 +5142,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             evidence_matrix_html = gr.HTML("<div class='viz-empty'>Evidence matrix will appear here after an investigation.</div>")
             refresh_evidence_btn = gr.Button("Refresh Evidence Matrix", variant="secondary", size="sm")
 
+        with gr.Accordion("Proof State — sufficiency and predicate coverage by issue", open=False):
+            gr.Markdown(
+                "Per-issue proof analysis: sufficiency scores, predicate coverage, "
+                "trust-weighted support vs. attack balance, and advocacy-only warnings."
+            )
+            proof_state_html = gr.HTML("<div class='viz-empty'>Proof state will appear here after an investigation.</div>")
+            refresh_proof_btn = gr.Button("Refresh Proof State", variant="secondary", size="sm")
+
         with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
                 "Maps which people and companies appear in which documents and highlights "
@@ -5288,6 +5422,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             evidence = state.load_evidence_matrix(mid)
             communication = state.load_communication_map(mid)
             llm_analytics = state.load_llm_analytics(mid)
+            proof_state = state.load_proof_state(mid)
             review_badge = state.load_review_count_badge(mid)
             doc_choices = state.load_document_picker_choices(mid)
             domain = "legal"
@@ -5310,6 +5445,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 evidence,
                 communication,
                 llm_analytics,
+                proof_state,
                 top_issue,
                 gr.update(choices=doc_choices),
                 gr.update(choices=_correction_dropdown_choices(domain), value=None),
@@ -5367,6 +5503,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     evidence_matrix_html,
                     communication_html,
                     llm_analytics_html,
+                    proof_state_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -5392,6 +5529,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     evidence_matrix_html,
                     communication_html,
                     llm_analytics_html,
+                    proof_state_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -5414,6 +5552,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 evidence_matrix_html,
                 communication_html,
                 llm_analytics_html,
+                proof_state_html,
                 redirect_issue_id,
                 bulk_doc_ref,
                 correction_new_state,
@@ -5440,6 +5579,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_evidence_matrix(mid),
             inputs=[matter_id_box],
             outputs=[evidence_matrix_html],
+        )
+        refresh_proof_btn.click(
+            fn=lambda mid: state.load_proof_state(mid),
+            inputs=[matter_id_box],
+            outputs=[proof_state_html],
         )
         refresh_comm_btn.click(
             fn=lambda mid: state.load_communication_map(mid),

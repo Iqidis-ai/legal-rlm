@@ -539,6 +539,12 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_communication_map()
 
+    async def get_proof_state_summary(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        summary = model.proof_state.get_summary()
+        all_states = model.proof_state.get_all()
+        return {"matter_id": matter_id, "summary": summary, "issues": all_states}
+
     async def list_llm_calls(
         self,
         matter_id: str,
