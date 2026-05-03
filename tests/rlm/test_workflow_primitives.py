@@ -854,6 +854,7 @@ def test_fmt_duplicate_actors_panel_skips_non_dict():
 def test_fmt_gaps_empty():
     from irys.ui.app import _fmt_gaps
     result = _fmt_gaps([], [])
+    assert "viz-empty" in result
     assert "No open gaps" in result
 
 
@@ -868,6 +869,27 @@ def test_fmt_gaps_with_data():
     assert "Unresolved Conflict" in result
     assert "Missing contract v2" in result
     assert "2 unresolved" in result
+    assert "Open Gaps &" in result
+
+
+def test_fmt_gaps_finance_domain():
+    from irys.ui.app import _fmt_gaps
+    gaps = [
+        {"gap_type": "missing_document", "description": "Missing 10-K", "materiality_score": 0.9, "dependencies": []},
+        {"gap_type": "missing_quantitative_input", "description": "Revenue figure absent", "materiality_score": 0.5, "dependencies": []},
+    ]
+    result = _fmt_gaps(gaps, [], domain="finance")
+    assert "Missing Filing" in result
+    assert "Missing Figure" in result
+    assert "Open Gaps &" in result
+    assert "Missing Data" in result
+
+
+def test_fmt_gaps_biomedical_domain():
+    from irys.ui.app import _fmt_gaps
+    result = _fmt_gaps([], [], domain="biomedical")
+    assert "No open" in result
+    assert "pending queries" in result
 
 
 def test_fmt_gaps_with_clarifications():

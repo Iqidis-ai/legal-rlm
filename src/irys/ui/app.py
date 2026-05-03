@@ -903,9 +903,15 @@ def _fmt_overview_panel(data: dict) -> str:
             _bar_row(label, conf, 1.0, meta, tone="green")
         )
 
+    gap_labels = _GAP_LABELS.get(primary_domain, _GAP_LABELS["legal"])
+
     def _gap_li(g: dict) -> str:
         gt = str(g.get("gap_type") or "")
-        label, cls = _GAP_TYPE_PILLS.get(gt, (gt.replace("_", " ").title() or "Gap", "pill-neutral"))
+        pill = gap_labels.get(gt)
+        if isinstance(pill, tuple):
+            label, cls = pill
+        else:
+            label, cls = gt.replace("_", " ").title() or "Gap", "pill-neutral"
         desc = _escape(str(g.get("description") or label))
         mat = g.get("materiality_score") or g.get("materiality")
         mat_tag = (
@@ -3816,20 +3822,77 @@ def _fmt_assumptions(assumptions: list) -> str:
     return "\n".join(lines)
 
 
-_GAP_TYPE_PILLS: dict[str, tuple[str, str]] = {
-    "missing_document": ("Missing Document", "pill-red"),
-    "missing_metadata": ("Missing Metadata", "pill-orange"),
-    "missing_issue_predicate": ("Missing Predicate", "pill-orange"),
-    "missing_authority": ("Missing Authority", "pill-orange"),
-    "missing_user_context": ("Missing Context", "pill-neutral"),
-    "missing_quantitative_input": ("Missing Number", "pill-orange"),
-    "unresolved_contradiction": ("Unresolved Conflict", "pill-red"),
-    "expected_absent_attachment": ("Expected Attachment", "pill-orange"),
-    "expected_absent_notice": ("Expected Notice", "pill-orange"),
+_GAP_LABELS: dict[str, dict[str, object]] = {
+    "legal": {
+        "title": "Open Gaps & Missingness",
+        "empty": "No open gaps or pending clarifications.",
+        "missing_document": ("Missing Document", "pill-red"),
+        "missing_metadata": ("Missing Metadata", "pill-orange"),
+        "missing_issue_predicate": ("Missing Element of Proof", "pill-orange"),
+        "missing_authority": ("Missing Authority", "pill-orange"),
+        "missing_user_context": ("Missing Context", "pill-neutral"),
+        "missing_quantitative_input": ("Missing Amount", "pill-orange"),
+        "unresolved_contradiction": ("Unresolved Conflict", "pill-red"),
+        "expected_absent_attachment": ("Expected Exhibit", "pill-orange"),
+        "expected_absent_notice": ("Expected Notice", "pill-orange"),
+    },
+    "finance": {
+        "title": "Open Gaps & Missing Data",
+        "empty": "No open data gaps or pending queries.",
+        "missing_document": ("Missing Filing", "pill-red"),
+        "missing_metadata": ("Missing Metadata", "pill-orange"),
+        "missing_issue_predicate": ("Missing Condition", "pill-orange"),
+        "missing_authority": ("Missing Regulation", "pill-orange"),
+        "missing_user_context": ("Missing Context", "pill-neutral"),
+        "missing_quantitative_input": ("Missing Figure", "pill-orange"),
+        "unresolved_contradiction": ("Discrepancy", "pill-red"),
+        "expected_absent_attachment": ("Expected Schedule", "pill-orange"),
+        "expected_absent_notice": ("Expected Disclosure", "pill-orange"),
+    },
+    "coding": {
+        "title": "Open Gaps & Missing Information",
+        "empty": "No open gaps or pending clarifications.",
+        "missing_document": ("Missing Spec", "pill-red"),
+        "missing_metadata": ("Missing Metadata", "pill-orange"),
+        "missing_issue_predicate": ("Missing Acceptance Criteria", "pill-orange"),
+        "missing_authority": ("Missing Reference", "pill-orange"),
+        "missing_user_context": ("Missing Context", "pill-neutral"),
+        "missing_quantitative_input": ("Missing Metric", "pill-orange"),
+        "unresolved_contradiction": ("Conflicting Requirements", "pill-red"),
+        "expected_absent_attachment": ("Expected Artifact", "pill-orange"),
+        "expected_absent_notice": ("Expected Notification", "pill-orange"),
+    },
+    "academic_research": {
+        "title": "Open Gaps & Missing Evidence",
+        "empty": "No open gaps or pending clarifications.",
+        "missing_document": ("Missing Source", "pill-red"),
+        "missing_metadata": ("Missing Metadata", "pill-orange"),
+        "missing_issue_predicate": ("Missing Hypothesis Element", "pill-orange"),
+        "missing_authority": ("Missing Citation", "pill-orange"),
+        "missing_user_context": ("Missing Context", "pill-neutral"),
+        "missing_quantitative_input": ("Missing Data Point", "pill-orange"),
+        "unresolved_contradiction": ("Conflicting Findings", "pill-red"),
+        "expected_absent_attachment": ("Expected Appendix", "pill-orange"),
+        "expected_absent_notice": ("Expected Disclosure", "pill-orange"),
+    },
+    "biomedical": {
+        "title": "Open Gaps & Missing Data",
+        "empty": "No open gaps or pending queries.",
+        "missing_document": ("Missing Record", "pill-red"),
+        "missing_metadata": ("Missing Metadata", "pill-orange"),
+        "missing_issue_predicate": ("Missing Diagnostic Criterion", "pill-orange"),
+        "missing_authority": ("Missing Protocol Reference", "pill-orange"),
+        "missing_user_context": ("Missing Patient Context", "pill-neutral"),
+        "missing_quantitative_input": ("Missing Lab Value", "pill-orange"),
+        "unresolved_contradiction": ("Conflicting Results", "pill-red"),
+        "expected_absent_attachment": ("Expected Imaging", "pill-orange"),
+        "expected_absent_notice": ("Expected Consent", "pill-orange"),
+    },
 }
 
 
-def _fmt_gaps(gaps: list, clarifications: list) -> str:
+def _fmt_gaps(gaps: list, clarifications: list, domain: str = "legal") -> str:
+    labels = _GAP_LABELS.get(domain, _GAP_LABELS["legal"])
     parts: list[str] = []
     if gaps:
         gap_rows = ""
@@ -3838,7 +3901,11 @@ def _fmt_gaps(gaps: list, clarifications: list) -> str:
                 continue
             desc = _escape(str(g.get("description") or g.get("gap_type", "?")))
             gap_type = str(g.get("gap_type") or "")
-            label, cls = _GAP_TYPE_PILLS.get(gap_type, (gap_type.replace("_", " ").title(), "pill-neutral"))
+            pill = labels.get(gap_type)
+            if isinstance(pill, tuple):
+                label, cls = pill
+            else:
+                label, cls = gap_type.replace("_", " ").title(), "pill-neutral"
             mat = g.get("materiality_score") or g.get("materiality") or 0
             mat_val = float(mat) if isinstance(mat, (int, float)) else 0.0
             mat_pct = min(mat_val * 100, 100)
@@ -3862,7 +3929,7 @@ def _fmt_gaps(gaps: list, clarifications: list) -> str:
             )
         gap_count = len([g for g in gaps if isinstance(g, dict)])
         parts.append(
-            f"<div class='viz-header'><strong>Open Gaps</strong> — {gap_count} unresolved</div>"
+            f"<div class='viz-header'><strong>{labels['title']}</strong> — {gap_count} unresolved</div>"
             "<div class='table-wrap'><table class='viz-table'>"
             "<thead><tr><th>Type</th><th>Description</th><th>Materiality</th><th>Affects</th></tr></thead>"
             "<tbody>" + gap_rows + "</tbody></table></div>"
@@ -3885,7 +3952,7 @@ def _fmt_gaps(gaps: list, clarifications: list) -> str:
         )
     return (
         "<div class='viz-shell'>" + "".join(parts) + "</div>"
-        if parts else "No open gaps or clarifications."
+        if parts else f"<div class='viz-empty'>{labels['empty']}</div>"
     )
 
 
@@ -5539,10 +5606,11 @@ class AppState:
         """
         if not matter_id or matter_id == "—":
             return "No matter loaded.", ""
+        _domain = self._detect_domain(matter_id)
         try:
             gaps = _run_async(self.backend().list_gaps(matter_id))
             clarifications = _run_async(self.backend().list_clarifications(matter_id))
-            gap_section = _fmt_gaps(gaps, clarifications)
+            gap_section = _fmt_gaps(gaps, clarifications, domain=_domain)
         except Exception as exc:
             gap_section = f"⚠️ Error loading gaps: {exc}"
         actions: list = []
@@ -5573,13 +5641,13 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading recommendations: {_escape(exc)}</div>"
 
-    def load_gaps_detail(self, matter_id: str) -> str:
+    def load_gaps_detail(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             gaps = _run_async(self.backend().list_gaps(matter_id))
             clarifications = _run_async(self.backend().list_clarifications(matter_id))
-            return _fmt_gaps(gaps, clarifications)
+            return _fmt_gaps(gaps, clarifications, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading gaps: {_escape(exc)}</div>"
 
@@ -7672,7 +7740,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[assertions_md],
         )
         refresh_gaps_btn.click(
-            fn=lambda mid: state.load_gaps_detail(mid),
+            fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[gaps_detail_html],
         )
