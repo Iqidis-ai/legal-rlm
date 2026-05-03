@@ -1804,3 +1804,484 @@ def test_fmt_investigation_history_status_colors():
     assert "#22c55e" in result
     assert "#ef4444" in result
     assert "#3b82f6" in result
+
+
+# ------------------------------------------------------------------ #
+# _fmt_overview_panel tests                                            #
+# ------------------------------------------------------------------ #
+
+def test_fmt_overview_panel_empty():
+    from irys.ui.app import _fmt_overview_panel
+    result = _fmt_overview_panel({})
+    assert "Run your first investigation" in result
+
+
+def test_fmt_overview_panel_none():
+    from irys.ui.app import _fmt_overview_panel
+    result = _fmt_overview_panel(None)
+    assert "Run your first investigation" in result
+
+
+def test_fmt_overview_panel_basic():
+    from irys.ui.app import _fmt_overview_panel
+    data = {
+        "stats": {
+            "assertion_count": 42,
+            "open_issue_count": 5,
+            "open_gap_count": 3,
+            "actor_count": 10,
+            "quant_fact_count": 7,
+            "llm": {
+                "totals": {
+                    "estimated_cost_usd": 1.25,
+                    "request_count": 30,
+                    "by_tier": {},
+                }
+            },
+        },
+        "so_metrics": {
+            "issue_coverage_avg": 0.72,
+            "reuse_rate": 0.45,
+            "source_role_known_rate": 0.88,
+            "assertion_structure_rate": 0.76,
+        },
+        "coverage_report": [
+            {"id": "i1", "title": "Breach of contract", "coverage_fraction": 0.6},
+        ],
+        "weakest_issues": [],
+        "top_gaps": [],
+        "pending_clarifications": [],
+    }
+    result = _fmt_overview_panel(data)
+    assert "42" in result
+    assert "Assertions" in result
+    assert "Open Issues" in result
+    assert "Breach of contract" in result
+
+
+def test_fmt_overview_panel_xss():
+    from irys.ui.app import _fmt_overview_panel
+    data = {
+        "stats": {"assertion_count": 1, "open_issue_count": 0, "actor_count": 0},
+        "so_metrics": {},
+        "coverage_report": [
+            {"id": "i1", "title": "<script>alert(1)</script>", "coverage_fraction": 0.5},
+        ],
+        "weakest_issues": [],
+        "top_gaps": [],
+        "pending_clarifications": [],
+    }
+    result = _fmt_overview_panel(data)
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+# ------------------------------------------------------------------ #
+# _fmt_issues_panel tests                                              #
+# ------------------------------------------------------------------ #
+
+def test_fmt_issues_panel_empty():
+    from irys.ui.app import _fmt_issues_panel
+    result = _fmt_issues_panel([])
+    assert "No open issues" in result
+
+
+def test_fmt_issues_panel_basic():
+    from irys.ui.app import _fmt_issues_panel
+    issues = [
+        {
+            "id": "iss-1",
+            "title": "Breach of fiduciary duty",
+            "depth": 0,
+            "coverage_fraction": 0.65,
+            "verified_coverage_fraction": 0.3,
+            "verified_supporting_count": 2,
+            "candidate_supporting_count": 5,
+            "attacking_count": 1,
+            "proof_status": "partial",
+            "has_proof_gap": True,
+        },
+    ]
+    result = _fmt_issues_panel(issues)
+    assert "Breach of fiduciary duty" in result
+    assert "proof gap" in result
+    assert "2 verified" in result
+    assert "5 candidate" in result
+    assert "1 attack" in result
+    assert "Verified coverage" in result
+
+
+def test_fmt_issues_panel_skips_non_dict():
+    from irys.ui.app import _fmt_issues_panel
+    issues = [
+        {"id": "iss-1", "title": "Valid", "depth": 0, "coverage_fraction": 0.5},
+        "not-a-dict",
+        42,
+    ]
+    result = _fmt_issues_panel(issues)
+    assert "Valid" in result
+
+
+def test_fmt_issues_panel_xss():
+    from irys.ui.app import _fmt_issues_panel
+    issues = [
+        {
+            "id": "iss-1",
+            "title": "<img onerror=alert(1) src=x>",
+            "depth": 0,
+            "coverage_fraction": 0.5,
+        },
+    ]
+    result = _fmt_issues_panel(issues)
+    assert "<img onerror" not in result
+    assert "&lt;img" in result
+
+
+# ------------------------------------------------------------------ #
+# _fmt_timeline_panel tests                                            #
+# ------------------------------------------------------------------ #
+
+def test_fmt_timeline_panel_empty():
+    from irys.ui.app import _fmt_timeline_panel
+    result = _fmt_timeline_panel([])
+    assert "No timeline events" in result
+
+
+def test_fmt_timeline_panel_basic():
+    from irys.ui.app import _fmt_timeline_panel
+    events = [
+        {
+            "date": "2024-01-15",
+            "event": "Contract signed",
+            "kind": "agreement",
+            "source_doc": "contract_v1.pdf",
+            "subject": "Acme Corp",
+        },
+        {
+            "date": "2024-03-01",
+            "event": "Breach notice sent",
+            "kind": "communication",
+            "source_doc": "notice.pdf",
+        },
+    ]
+    result = _fmt_timeline_panel(events)
+    assert "Contract signed" in result
+    assert "Breach notice sent" in result
+    assert "2024-01-15" in result or "Jan" in result
+
+
+def test_fmt_timeline_panel_withheld():
+    from irys.ui.app import _fmt_timeline_panel
+    events = [
+        {"date": "2024-02-01", "event": "Privileged memo", "withheld": True},
+    ]
+    result = _fmt_timeline_panel(events)
+    assert "Withheld" in result or "withheld" in result
+    assert "1 event(s) withheld" in result
+
+
+def test_fmt_timeline_panel_xss():
+    from irys.ui.app import _fmt_timeline_panel
+    events = [
+        {"date": "2024-01-01", "event": "<script>alert(1)</script>", "kind": "test"},
+    ]
+    result = _fmt_timeline_panel(events)
+    assert "<script>" not in result
+
+
+# ------------------------------------------------------------------ #
+# _fmt_evidence_matrix_panel tests                                     #
+# ------------------------------------------------------------------ #
+
+def test_fmt_evidence_matrix_panel_empty():
+    from irys.ui.app import _fmt_evidence_matrix_panel
+    result = _fmt_evidence_matrix_panel({})
+    assert "Evidence matrix will populate" in result
+
+
+def test_fmt_evidence_matrix_panel_no_issues():
+    from irys.ui.app import _fmt_evidence_matrix_panel
+    result = _fmt_evidence_matrix_panel({"issues": [], "sources": ["doc.pdf"]})
+    assert "Evidence matrix will populate" in result
+
+
+def test_fmt_evidence_matrix_panel_basic():
+    from irys.ui.app import _fmt_evidence_matrix_panel
+    matrix = {
+        "issues": [{"id": "i1", "title": "Breach claim"}],
+        "sources": ["contract.pdf"],
+        "cells": {
+            "i1": {
+                "contract.pdf": {"supporting": 3, "attacking": 1, "total": 4},
+            },
+        },
+        "issue_totals": {"i1": {"supporting": 3, "attacking": 1}},
+        "source_totals": {"contract.pdf": {"supporting": 3, "attacking": 1}},
+    }
+    result = _fmt_evidence_matrix_panel(matrix)
+    assert "Breach claim" in result
+    assert "contract" in result.lower()
+
+
+def test_fmt_evidence_matrix_panel_xss():
+    from irys.ui.app import _fmt_evidence_matrix_panel
+    matrix = {
+        "issues": [{"id": "i1", "title": "<script>xss</script>"}],
+        "sources": ["<img src=x>"],
+        "cells": {"i1": {"<img src=x>": {"supporting": 1, "attacking": 0, "total": 1}}},
+        "issue_totals": {"i1": {"supporting": 1, "attacking": 0}},
+        "source_totals": {"<img src=x>": {"supporting": 1, "attacking": 0}},
+    }
+    result = _fmt_evidence_matrix_panel(matrix)
+    assert "<script>" not in result
+    assert "<img src=x>" not in result
+
+
+# ------------------------------------------------------------------ #
+# _fmt_authority_panel tests                                           #
+# ------------------------------------------------------------------ #
+
+def test_fmt_authority_panel_empty():
+    from irys.ui.app import _fmt_authority_panel
+    result = _fmt_authority_panel({"authorities": [], "issue_links": {}})
+    assert "No authorities" in result or "No legal authorities" in result
+
+
+def test_fmt_authority_panel_basic():
+    from irys.ui.app import _fmt_authority_panel
+    data = {
+        "authorities": [
+            {
+                "id": "auth-1",
+                "citation": "Smith v. Jones, 123 F.3d 456",
+                "name": "Smith case",
+                "authority_type": "case_law",
+                "weight": "binding",
+                "jurisdiction": "Federal",
+            },
+        ],
+        "issue_links": {
+            "auth-1": [
+                {"issue_id": "i1", "issue_title": "Breach", "relevance": "supporting"},
+            ],
+        },
+    }
+    result = _fmt_authority_panel(data)
+    assert "Smith v. Jones" in result
+    assert "binding" in result.lower()
+    assert "Breach" in result
+
+
+def test_fmt_authority_panel_finance_domain():
+    from irys.ui.app import _fmt_authority_panel
+    data = {
+        "authorities": [
+            {
+                "id": "auth-1",
+                "citation": "SEC Rule 10b-5",
+                "authority_type": "regulation",
+                "weight": "binding",
+            },
+        ],
+        "issue_links": {},
+    }
+    result = _fmt_authority_panel(data, domain="finance")
+    assert "SEC Rule 10b-5" in result
+
+
+def test_fmt_authority_panel_xss():
+    from irys.ui.app import _fmt_authority_panel
+    data = {
+        "authorities": [
+            {
+                "id": "auth-1",
+                "citation": "<script>alert(1)</script>",
+                "authority_type": "case_law",
+                "weight": "binding",
+            },
+        ],
+        "issue_links": {},
+    }
+    result = _fmt_authority_panel(data)
+    assert "<script>" not in result
+
+
+# ------------------------------------------------------------------ #
+# _fmt_communication_map_panel tests                                   #
+# ------------------------------------------------------------------ #
+
+def test_fmt_communication_map_panel_empty():
+    from irys.ui.app import _fmt_communication_map_panel
+    result = _fmt_communication_map_panel({})
+    assert "No communication graph" in result
+
+
+def test_fmt_communication_map_panel_no_edges():
+    from irys.ui.app import _fmt_communication_map_panel
+    result = _fmt_communication_map_panel({
+        "actors": [{"id": "a1", "name": "Alice"}],
+        "documents": ["doc.pdf"],
+        "actor_document_edges": [],
+    })
+    assert "No communication graph" in result
+
+
+def test_fmt_communication_map_panel_basic():
+    from irys.ui.app import _fmt_communication_map_panel
+    graph = {
+        "actors": [{"id": "a1", "name": "Alice"}, {"id": "a2", "name": "Bob"}],
+        "documents": ["contract.pdf", "memo.pdf"],
+        "actor_document_edges": [
+            {"actor_id": "a1", "document_id": "contract.pdf", "occurrence_count": 5},
+            {"actor_id": "a2", "document_id": "memo.pdf", "occurrence_count": 3},
+            {"actor_id": "a1", "document_id": "memo.pdf", "occurrence_count": 2},
+        ],
+        "actor_actor_edges": [],
+    }
+    result = _fmt_communication_map_panel(graph)
+    assert "Alice" in result
+    assert "Bob" in result
+
+
+def test_fmt_communication_map_panel_xss():
+    from irys.ui.app import _fmt_communication_map_panel
+    graph = {
+        "actors": [{"id": "a1", "name": "<script>xss</script>"}],
+        "documents": ["<img src=x onerror=alert(1)>"],
+        "actor_document_edges": [
+            {"actor_id": "a1", "document_id": "<img src=x onerror=alert(1)>", "occurrence_count": 1},
+        ],
+        "actor_actor_edges": [],
+    }
+    result = _fmt_communication_map_panel(graph)
+    assert "<script>" not in result
+    assert "<img src=x" not in result
+
+
+# ------------------------------------------------------------------ #
+# _fmt_llm_analytics_panel tests                                       #
+# ------------------------------------------------------------------ #
+
+def test_fmt_llm_analytics_panel_empty():
+    from irys.ui.app import _fmt_llm_analytics_panel
+    result = _fmt_llm_analytics_panel({}, [])
+    assert "No LLM cost" in result or "viz-empty" in result
+
+
+def test_fmt_llm_analytics_panel_basic():
+    from irys.ui.app import _fmt_llm_analytics_panel
+    summary = {"estimated_cost_usd": 2.50, "request_count": 15}
+    calls = [
+        {
+            "call_id": "c1",
+            "stage": "extraction",
+            "estimated_cost_usd": 1.20,
+            "model_tier": "mid",
+            "input_tokens": 500,
+            "output_tokens": 100,
+        },
+    ]
+    result = _fmt_llm_analytics_panel(summary, calls)
+    assert "Calls" in result
+    assert "Spend" in result
+    assert "$2.5000" in result
+
+
+# ------------------------------------------------------------------ #
+# _fmt_proof_state_panel tests                                         #
+# ------------------------------------------------------------------ #
+
+def test_fmt_proof_state_panel_empty():
+    from irys.ui.app import _fmt_proof_state_panel
+    result = _fmt_proof_state_panel({}, [])
+    assert "No proof state" in result or "viz-empty" in result
+
+
+def test_fmt_proof_state_panel_basic():
+    from irys.ui.app import _fmt_proof_state_panel
+    summary = {
+        "issues_total": 3,
+        "issues_sufficient": 1,
+        "issues_partial": 1,
+        "issues_insufficient": 1,
+        "average_sufficiency": 0.55,
+    }
+    issues = [
+        {
+            "id": "i1",
+            "title": "Negligence",
+            "coverage_fraction": 0.8,
+            "proof_status": "sufficient",
+        },
+    ]
+    result = _fmt_proof_state_panel(summary, issues)
+    assert "Negligence" in result or "3" in result
+
+
+def test_fmt_proof_state_panel_xss():
+    from irys.ui.app import _fmt_proof_state_panel
+    summary = {"issues_total": 1}
+    issues = [
+        {
+            "id": "i1",
+            "title": "<img onerror=alert(1)>",
+            "coverage_fraction": 0.5,
+            "proof_status": "partial",
+        },
+    ]
+    result = _fmt_proof_state_panel(summary, issues)
+    assert "onerror" not in result
+
+
+# ------------------------------------------------------------------ #
+# _fmt_document_intelligence_panel tests                               #
+# ------------------------------------------------------------------ #
+
+def test_fmt_document_intelligence_panel_empty():
+    from irys.ui.app import _fmt_document_intelligence_panel
+    result = _fmt_document_intelligence_panel({})
+    assert "viz-empty" in result
+
+
+def test_fmt_document_intelligence_panel_basic():
+    from irys.ui.app import _fmt_document_intelligence_panel
+    data = {
+        "cards": [
+            {
+                "relative_path": "docs/contract.pdf",
+                "doc_type": "contract",
+                "source_side": "plaintiff",
+                "author": "Smith LLP",
+                "operative_status": "operative",
+                "salience_score": 0.85,
+                "privilege_flag": False,
+            },
+        ],
+        "total_inventory": 5,
+        "ingested_count": 3,
+    }
+    result = _fmt_document_intelligence_panel(data)
+    assert "contract" in result.lower()
+    assert "Smith LLP" in result
+
+
+def test_fmt_document_intelligence_panel_xss():
+    from irys.ui.app import _fmt_document_intelligence_panel
+    data = {
+        "cards": [
+            {
+                "relative_path": "<script>alert(1)</script>",
+                "doc_type": "unknown",
+                "source_side": "unknown",
+                "author": "<img onerror=alert(1)>",
+                "operative_status": "unknown",
+                "salience_score": 0.0,
+            },
+        ],
+        "total_inventory": 1,
+        "ingested_count": 0,
+    }
+    result = _fmt_document_intelligence_panel(data)
+    assert "<script>" not in result
+    assert "<img " not in result
+    assert "&lt;script&gt;" in result

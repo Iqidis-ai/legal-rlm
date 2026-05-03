@@ -1017,6 +1017,8 @@ def _fmt_trust_notice(issues: list) -> str:
     no_support = 0
     issue_names: list[str] = []
     for issue in issues:
+        if not isinstance(issue, dict):
+            continue
         v = _safe_int(issue.get("verified_supporting_count", 0))
         c = _safe_int(issue.get("candidate_supporting_count", 0))
         has_gap = bool(issue.get("has_proof_gap"))
@@ -1069,7 +1071,7 @@ def _fmt_issues_panel(issues: list) -> str:
 
     rows: list[str] = []
     for issue in sorted(
-        issues,
+        (item for item in issues if isinstance(item, dict)),
         key=lambda item: (item.get("depth", 0), item.get("coverage_fraction", 0.0)),
     ):
         depth = max(0, _safe_int(issue.get("depth", 0)))
