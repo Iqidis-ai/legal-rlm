@@ -439,3 +439,58 @@ def test_fmt_document_versions_panel_multiple_families():
     result = _fmt_document_versions_panel(families)
     assert "2 version chains" in result
     assert "4 documents" in result
+
+
+# ---------------------------------------------------------------------------
+# Quantitative Threshold Violations panel formatter tests
+# ---------------------------------------------------------------------------
+
+
+def test_fmt_quant_thresholds_panel_empty():
+    from irys.ui.app import _fmt_quant_thresholds_panel
+    result = _fmt_quant_thresholds_panel([])
+    assert "viz-empty" in result
+    assert "No quantitative threshold violations" in result
+
+
+def test_fmt_quant_thresholds_panel_empty_finance():
+    from irys.ui.app import _fmt_quant_thresholds_panel
+    result = _fmt_quant_thresholds_panel([], domain="finance")
+    assert "No financial risk thresholds" in result
+
+
+def test_fmt_quant_thresholds_panel_with_data():
+    from irys.ui.app import _fmt_quant_thresholds_panel
+    violations = [
+        {
+            "threshold": "positive_exposure",
+            "level": "HIGH",
+            "description": "Claimed financial exposure: USD 50,000.00",
+            "amount": 50000.0,
+        },
+        {
+            "threshold": "disputed_fraction",
+            "level": "MED",
+            "description": "Disputed amounts represent 15% of total invoiced",
+            "amount": 7500.0,
+        },
+    ]
+    result = _fmt_quant_thresholds_panel(violations)
+    assert "2 violations" in result
+    assert "1 HIGH" in result
+    assert "Positive Exposure" in result
+    assert "Disputed Fraction" in result
+    assert "pill-red" in result
+    assert "pill-orange" in result
+
+
+def test_fmt_quant_thresholds_panel_skips_non_dict():
+    from irys.ui.app import _fmt_quant_thresholds_panel
+    result = _fmt_quant_thresholds_panel(["bad", None])
+    assert "viz-empty" in result
+
+
+def test_fmt_quant_thresholds_panel_missing_fields():
+    from irys.ui.app import _fmt_quant_thresholds_panel
+    result = _fmt_quant_thresholds_panel([{"threshold": None}])
+    assert "1 violation" in result

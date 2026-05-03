@@ -7,6 +7,7 @@ engine restarts cleanly.
 
 import json
 from typing import Any, AsyncIterator, Optional
+from urllib.parse import quote as _url_quote
 
 import httpx
 
@@ -214,11 +215,14 @@ class HttpBackend(UIBackend):
         return result if isinstance(result, list) else []
 
     async def get_provenance(self, matter_id: str, target_kind: str, target_id: str, limit: int = 50) -> list[dict]:
-        result = await self._get(f"/matter/{matter_id}/provenance/{target_kind}/{target_id}", {"limit": limit})
+        kind_enc = _url_quote(target_kind, safe="")
+        id_enc = _url_quote(target_id, safe="")
+        result = await self._get(f"/matter/{matter_id}/provenance/{kind_enc}/{id_enc}", {"limit": limit})
         return result if isinstance(result, list) else []
 
     async def get_assertion_health(self, matter_id: str, assertion_id: str) -> dict:
-        result = await self._get(f"/matter/{matter_id}/assertion/{assertion_id}/health")
+        aid_enc = _url_quote(assertion_id, safe="")
+        result = await self._get(f"/matter/{matter_id}/assertion/{aid_enc}/health")
         return result if isinstance(result, dict) else {}
 
     async def get_quant_thresholds(self, matter_id: str, currency: str = "USD") -> list[dict]:

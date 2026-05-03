@@ -3070,7 +3070,10 @@ async def get_assertion_health(matter_id: str, assertion_id: str):
     Used by domain professionals to understand why an assertion is disputed.
     """
     model = await _get_matter_model_or_404(matter_id)
-    return model.get_assertion_health(assertion_id)
+    result = model.get_assertion_health(assertion_id)
+    if result.get("error") == "assertion_not_found":
+        raise HTTPException(status_code=404, detail="Assertion not found")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -3082,7 +3085,10 @@ async def get_assertion_health(matter_id: str, assertion_id: str):
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
 )
-async def get_quant_thresholds(matter_id: str, currency: str = "USD"):
+async def get_quant_thresholds(
+    matter_id: str,
+    currency: str = Query(default="USD", pattern=r"^[A-Z]{3}$"),
+):
     """Return quantitative threshold violations: exposure, dispute rate, numeric conflicts.
 
     Each violation includes threshold name, severity level, description, and amount.

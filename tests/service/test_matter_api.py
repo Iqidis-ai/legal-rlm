@@ -1266,8 +1266,7 @@ def test_assertion_health_returns_data(client, register_model):
 
 def test_assertion_health_not_found(client, register_model):
     resp = client.get(f"/matter/{MATTER_ID}/assertion/nonexistent/health")
-    assert resp.status_code == 200
-    assert resp.json().get("error") == "assertion_not_found"
+    assert resp.status_code == 404
 
 
 def test_assertion_health_404_for_unknown_matter(client):

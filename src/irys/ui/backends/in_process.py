@@ -603,10 +603,6 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.mine_contradictions()
 
-    async def get_provenance(self, matter_id: str, target_kind: str, target_id: str, limit: int = 50) -> list[dict]:
-        model = self._get_matter_model(matter_id)
-        return model.get_provenance(target_kind, target_id, limit=limit)
-
     async def get_assertion_health(self, matter_id: str, assertion_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_assertion_health(assertion_id)

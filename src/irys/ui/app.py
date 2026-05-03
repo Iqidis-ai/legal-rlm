@@ -2160,6 +2160,95 @@ def _fmt_document_versions_panel(families: list[dict], domain: str = "legal") ->
     return f"<div class='viz-shell'>{header}<div class='table-wrap'>{families_html}</div></div>"
 
 
+# ---------------------------------------------------------------------------
+# Quantitative Threshold Violations panel (SO-6)
+# ---------------------------------------------------------------------------
+
+_QUANT_THRESHOLD_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Financial Health Alerts",
+        "threshold_col": "Threshold",
+        "level_col": "Severity",
+        "desc_col": "Finding",
+        "empty": "No quantitative threshold violations. Financial figures are consistent.",
+    },
+    "finance": {
+        "title": "Financial Risk Alerts",
+        "threshold_col": "Risk Metric",
+        "level_col": "Severity",
+        "desc_col": "Finding",
+        "empty": "No financial risk thresholds breached.",
+    },
+    "coding": {
+        "title": "Metric Threshold Alerts",
+        "threshold_col": "Metric",
+        "level_col": "Severity",
+        "desc_col": "Finding",
+        "empty": "No quantitative thresholds breached.",
+    },
+    "academic_research": {
+        "title": "Statistical Threshold Alerts",
+        "threshold_col": "Threshold",
+        "level_col": "Severity",
+        "desc_col": "Finding",
+        "empty": "No statistical thresholds breached.",
+    },
+    "biomedical": {
+        "title": "Clinical Threshold Alerts",
+        "threshold_col": "Threshold",
+        "level_col": "Severity",
+        "desc_col": "Finding",
+        "empty": "No clinical quantitative thresholds breached.",
+    },
+}
+
+_SEVERITY_PILLS = {
+    "HIGH": "pill-red",
+    "MED": "pill-orange",
+    "LOW": "pill-neutral",
+}
+
+
+def _fmt_quant_thresholds_panel(violations: list[dict], domain: str = "legal") -> str:
+    labels = _QUANT_THRESHOLD_LABELS.get(domain, _QUANT_THRESHOLD_LABELS["legal"])
+    if not violations:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    rows_html = ""
+    for v in violations:
+        if not isinstance(v, dict):
+            continue
+        threshold = _escape(str(v.get("threshold") or "—").replace("_", " ").title())
+        level = str(v.get("level") or "LOW")
+        pill_class = _SEVERITY_PILLS.get(level, "pill-neutral")
+        desc = _escape(str(v.get("description") or "—")[:200])
+        rows_html += (
+            f"<tr>"
+            f"<td>{threshold}</td>"
+            f"<td><span class='pill {pill_class}'>{_escape(level)}</span></td>"
+            f"<td>{desc}</td>"
+            f"</tr>"
+        )
+
+    if not rows_html:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    count = rows_html.count("<tr>")
+    high_count = sum(1 for v in violations if isinstance(v, dict) and v.get("level") == "HIGH")
+    severity_note = f" ({high_count} HIGH)" if high_count else ""
+    header = (
+        f"<div class='viz-header'><strong>{labels['title']}</strong>"
+        f" — {count} violation{'s' if count != 1 else ''}{severity_note}</div>"
+    )
+    table = (
+        "<div class='table-wrap'><table class='viz-table'>"
+        f"<thead><tr><th>{labels['threshold_col']}</th><th>{labels['level_col']}</th>"
+        f"<th>{labels['desc_col']}</th></tr></thead>"
+        "<tbody>" + rows_html + "</tbody></table></div>"
+    )
+    return f"<div class='viz-shell'>{header}{table}</div>"
+
+
 def _fmt_communication_map_panel(graph: dict) -> str:
     actors = list(graph.get("actors", []) or [])
     documents = list(graph.get("documents", []) or [])
@@ -5049,6 +5138,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading document versions: {_escape(exc)}</div>"
 
+    def load_quant_thresholds(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_quant_thresholds(matter_id))
+            return _fmt_quant_thresholds_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading quant thresholds: {_escape(exc)}</div>"
+
     def set_policy_audience(self, label: str) -> str:
         """Called when the sidebar privilege-mode toggle flips. Returns
         a visible banner HTML so the reviewer always knows which mode
@@ -6034,6 +6132,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             doc_versions_html = gr.HTML("<div class='viz-empty'>Document version chains will appear here after an investigation.</div>")
             refresh_doc_versions_btn = gr.Button("Refresh Document Versions", variant="secondary", size="sm")
 
+        with gr.Accordion("Financial Health Alerts — quantitative threshold violations", open=False):
+            gr.Markdown(
+                "Detects financial exposure, disputed amount fractions, and numeric conflicts. "
+                "Each alert indicates a threshold breach that requires attention in the analysis."
+            )
+            quant_thresholds_html = gr.HTML("<div class='viz-empty'>Financial health alerts will appear here after an investigation.</div>")
+            refresh_quant_thresholds_btn = gr.Button("Refresh Financial Health", variant="secondary", size="sm")
+
         with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
                 "Maps which people and companies appear in which documents and highlights "
@@ -6313,6 +6419,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             belief_revisions = state.load_belief_revisions(mid, domain=domain)
             contradictions = state.load_contradictions(mid, domain=domain)
             doc_versions = state.load_document_versions(mid, domain=domain)
+            quant_thresholds = state.load_quant_thresholds(mid, domain=domain)
             review_badge = state.load_review_count_badge(mid)
             doc_choices = state.load_document_picker_choices(mid)
             return (
@@ -6333,6 +6440,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 belief_revisions,
                 contradictions,
                 doc_versions,
+                quant_thresholds,
                 top_issue,
                 gr.update(choices=doc_choices),
                 gr.update(choices=_correction_dropdown_choices(domain), value=None),
@@ -6396,6 +6504,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     belief_revision_html,
                     contradiction_html,
                     doc_versions_html,
+                    quant_thresholds_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -6427,6 +6536,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     belief_revision_html,
                     contradiction_html,
                     doc_versions_html,
+                    quant_thresholds_html,
                     redirect_issue_id,
                     bulk_doc_ref,
                     correction_new_state,
@@ -6455,6 +6565,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 belief_revision_html,
                 contradiction_html,
                 doc_versions_html,
+                quant_thresholds_html,
                 redirect_issue_id,
                 bulk_doc_ref,
                 correction_new_state,
@@ -6511,6 +6622,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_document_versions(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[doc_versions_html],
+        )
+        refresh_quant_thresholds_btn.click(
+            fn=lambda mid: state.load_quant_thresholds(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[quant_thresholds_html],
         )
         refresh_comm_btn.click(
             fn=lambda mid: state.load_communication_map(mid),
