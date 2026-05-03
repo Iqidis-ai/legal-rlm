@@ -4202,13 +4202,124 @@ def _fmt_steering(actions: list) -> str:
         lines.append(f"**{action_type}**{priority_str}: {description}")
         if rationale:
             lines.append(f"  > {rationale}")
-        # Show action params useful for the UI (issue_id, gap_id, assertion_id)
         params = a.get("params", {})
         if params:
             param_str = " | ".join(f"`{k}: {str(v)}`" for k, v in params.items() if v)
             lines.append(f"  *Params: {param_str}*")
         lines.append("")
     return "\n".join(lines)
+
+
+_STEERING_ACTION_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Recommended Next Steps",
+        "empty": "No recommendations. The matter model is in good shape.",
+        "correct_assertion": "Correct a Fact",
+        "force_belief_state": "Override Belief State",
+        "redirect_focus": "Redirect Investigation",
+        "supply_document": "Supply Missing Document",
+        "answer_clarification": "Answer Clarification",
+        "set_trust_override": "Adjust Source Trust",
+    },
+    "finance": {
+        "title": "Recommended Actions",
+        "empty": "No recommendations. The analysis model is consistent.",
+        "correct_assertion": "Correct a Finding",
+        "force_belief_state": "Override Assessment",
+        "redirect_focus": "Redirect Analysis",
+        "supply_document": "Supply Missing Data",
+        "answer_clarification": "Clarify Assumption",
+        "set_trust_override": "Adjust Source Reliability",
+    },
+    "coding": {
+        "title": "Suggested Improvements",
+        "empty": "No suggestions. The code model is consistent.",
+        "correct_assertion": "Correct Finding",
+        "force_belief_state": "Override Status",
+        "redirect_focus": "Redirect Focus",
+        "supply_document": "Supply Missing File",
+        "answer_clarification": "Clarify Requirement",
+        "set_trust_override": "Adjust Source Trust",
+    },
+    "academic_research": {
+        "title": "Research Recommendations",
+        "empty": "No recommendations. The literature model is consistent.",
+        "correct_assertion": "Correct Claim",
+        "force_belief_state": "Override Assessment",
+        "redirect_focus": "Redirect Inquiry",
+        "supply_document": "Supply Missing Source",
+        "answer_clarification": "Clarify Methodology",
+        "set_trust_override": "Adjust Source Authority",
+    },
+    "biomedical": {
+        "title": "Clinical Recommendations",
+        "empty": "No recommendations. The clinical model is consistent.",
+        "correct_assertion": "Correct Finding",
+        "force_belief_state": "Override Determination",
+        "redirect_focus": "Redirect Analysis",
+        "supply_document": "Supply Missing Record",
+        "answer_clarification": "Clarify Protocol",
+        "set_trust_override": "Adjust Source Weight",
+    },
+}
+
+_PRIORITY_PILLS: dict[str, tuple[str, str]] = {
+    "high": ("HIGH", "pill-red"),
+    "medium": ("MEDIUM", "pill-orange"),
+    "low": ("LOW", "pill-neutral"),
+}
+
+
+def _fmt_steering_panel(actions: list[dict], domain: str = "legal") -> str:
+    labels = _STEERING_ACTION_LABELS.get(domain, _STEERING_ACTION_LABELS["legal"])
+    if not actions:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+    rows = ""
+    for a in actions:
+        if not isinstance(a, dict):
+            continue
+        action_type = a.get("action_type", "unknown")
+        description = _escape(a.get("description", ""))
+        rationale = _escape(a.get("rationale", ""))
+        impact = _escape(a.get("impact", ""))
+        priority = a.get("priority", "low")
+        pill_text, pill_cls = _PRIORITY_PILLS.get(priority, ("—", "pill-neutral"))
+        action_label = _escape(labels.get(action_type, action_type.replace("_", " ").title()))
+        params = a.get("params", {})
+        param_html = ""
+        if params:
+            param_items = " ".join(
+                f"<code>{_escape(k)}={_escape(str(v)[:40])}</code>"
+                for k, v in params.items() if v
+            )
+            param_html = f"<div style='margin-top:4px;font-size:11px;color:#6b7280'>{param_items}</div>"
+        rows += (
+            "<tr>"
+            f"<td><span class='pill {pill_cls}'>{pill_text}</span></td>"
+            f"<td><strong>{action_label}</strong></td>"
+            f"<td>{description}"
+            + (f"<br><span style='font-size:11px;color:#6b7280'>{rationale}</span>" if rationale else "")
+            + param_html
+            + "</td>"
+            f"<td style='font-size:12px'>{impact}</td>"
+            "</tr>"
+        )
+    if not rows:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+    count = len([a for a in actions if isinstance(a, dict)])
+    high_count = sum(1 for a in actions if isinstance(a, dict) and a.get("priority") == "high")
+    subtitle = f"{count} recommendation{'s' if count != 1 else ''}"
+    if high_count:
+        subtitle += f" ({high_count} high priority)"
+    return (
+        "<div class='viz-shell'>"
+        f"<div class='viz-header'><strong>{labels['title']}</strong> — {subtitle}</div>"
+        "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
+        "<th>Priority</th><th>Action</th><th>Details</th><th>Impact</th>"
+        "</tr></thead><tbody>"
+        + rows
+        + "</tbody></table></div></div>"
+    )
 
 
 def _fmt_quant(payment_recon: dict, damages: list) -> str:
@@ -5447,6 +5558,16 @@ class AppState:
                 top_redirect_issue = action.get("params", {}).get("issue_id", "")
                 break
         return "\n".join(sections), top_redirect_issue
+
+    def load_steering_panel(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            run_id = getattr(self, "current_run_id", None)
+            actions = _run_async(self.backend().get_steering_surface(matter_id, run_id=run_id))
+            return _fmt_steering_panel(actions, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading recommendations: {_escape(exc)}</div>"
 
     def load_gaps_detail(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
@@ -6812,6 +6933,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             gaps_detail_html = gr.HTML("<div class='viz-empty'>Gaps will appear here after an investigation.</div>")
             refresh_gaps_btn = gr.Button("Refresh Gaps", variant="secondary", size="sm")
 
+        with gr.Accordion("Next Steps — prioritized recommendations for your review", open=False):
+            gr.Markdown(
+                "Actionable recommendations derived from the current matter state: "
+                "conflicts to resolve, issues needing evidence, documents to supply, "
+                "and clarifications to answer. Ranked by impact on analysis quality."
+            )
+            steering_panel_html = gr.HTML("<div class='viz-empty'>Recommendations will appear here after an investigation.</div>")
+            refresh_steering_btn = gr.Button("Refresh Recommendations", variant="secondary", size="sm")
+
         with gr.Accordion("Financials — payments, damages, and numeric disputes", open=False):
             gr.Markdown(
                 "Invoices, payments, damages claims, and numeric conflicts — "
@@ -7541,6 +7671,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_gaps_detail(mid),
             inputs=[matter_id_box],
             outputs=[gaps_detail_html],
+        )
+        refresh_steering_btn.click(
+            fn=lambda mid: state.load_steering_panel(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[steering_panel_html],
         )
         refresh_quant_btn.click(
             fn=lambda mid: state.load_quant(mid),

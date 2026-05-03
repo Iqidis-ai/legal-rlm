@@ -878,3 +878,50 @@ def test_fmt_gaps_with_clarifications():
     result = _fmt_gaps([], clarifications)
     assert "What was the delivery date?" in result
     assert "Resolves timeline gap" in result
+
+
+# ---------------------------------------------------------------------------
+# Steering recommendations panel (SO-3)
+# ---------------------------------------------------------------------------
+
+def test_fmt_steering_panel_empty():
+    from irys.ui.app import _fmt_steering_panel
+    result = _fmt_steering_panel([])
+    assert "viz-empty" in result
+
+
+def test_fmt_steering_panel_with_actions():
+    from irys.ui.app import _fmt_steering_panel
+    actions = [
+        {
+            "action_type": "redirect_focus",
+            "description": "Investigate breach of contract claim",
+            "rationale": "Coverage below 30%",
+            "priority": "high",
+            "impact": "Improves issue coverage",
+            "params": {"issue_id": "iss-001"},
+        },
+        {
+            "action_type": "supply_document",
+            "description": "Provide the signed agreement",
+            "rationale": "Missing document gap recorded",
+            "priority": "medium",
+            "impact": "Closes missing-document gap",
+            "params": {},
+        },
+    ]
+    result = _fmt_steering_panel(actions)
+    assert "Redirect Investigation" in result
+    assert "Supply Missing Document" in result
+    assert "HIGH" in result
+    assert "MEDIUM" in result
+    assert "breach of contract" in result
+    assert "2 recommendations" in result
+
+
+def test_fmt_steering_panel_finance_domain():
+    from irys.ui.app import _fmt_steering_panel
+    actions = [{"action_type": "correct_assertion", "description": "Fix amount", "priority": "low", "params": {}}]
+    result = _fmt_steering_panel(actions, domain="finance")
+    assert "Correct a Finding" in result
+    assert "Recommended Actions" in result
