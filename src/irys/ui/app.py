@@ -2437,6 +2437,82 @@ _SO_SCORECARD_LABELS: dict[str, dict[str, str]] = {
 }
 
 
+_RUN_STATUS_COLORS: dict[str, str] = {
+    "completed": "#22c55e",
+    "running": "#3b82f6",
+    "stopped": "#eab308",
+    "failed": "#ef4444",
+    "error": "#ef4444",
+}
+
+_OPERATION_LABELS: dict[str, str] = {
+    "query": "Investigation",
+    "clarification_answer": "Clarification",
+    "redirect": "Redirect",
+    "resume": "Resume",
+    "correction": "Correction",
+    "verify": "Verification",
+}
+
+
+def _fmt_investigation_history_panel(runs: list, domain: str = "legal") -> str:
+    if not runs or not isinstance(runs, list):
+        return "<div class='viz-empty'>No investigation runs recorded yet.</div>"
+
+    valid = [r for r in runs if isinstance(r, dict)]
+    if not valid:
+        return "<div class='viz-empty'>No investigation runs recorded yet.</div>"
+
+    parts = [
+        "<h3 style='margin:0 0 8px 0;'>Investigation History</h3>",
+        f"<div style='color:#666;font-size:0.9em;margin-bottom:8px;'>{len(valid)} run{'s' if len(valid) != 1 else ''} recorded</div>",
+        "<table style='border-collapse:collapse;width:100%;font-size:0.85em;'>",
+        "<tr style='background:#f1f5f9;'>"
+        "<th style='text-align:left;padding:4px 8px;'>Query</th>"
+        "<th style='text-align:left;padding:4px 8px;'>Type</th>"
+        "<th style='text-align:left;padding:4px 8px;'>Status</th>"
+        "<th style='text-align:left;padding:4px 8px;'>Mode</th>"
+        "<th style='text-align:left;padding:4px 8px;'>LLM Calls</th>"
+        "<th style='text-align:left;padding:4px 8px;'>Cost</th>"
+        "<th style='text-align:left;padding:4px 8px;'>Reuse</th>"
+        "<th style='text-align:left;padding:4px 8px;'>Started</th>"
+        "</tr>",
+    ]
+    for run in valid:
+        query = _escape(str(run.get("query", "—"))[:60])
+        op_type = str(run.get("operation_type", "query"))
+        op_label = _escape(_OPERATION_LABELS.get(op_type, op_type.replace("_", " ").title()))
+        status = str(run.get("status", "unknown"))
+        status_color = _RUN_STATUS_COLORS.get(status, "#94a3b8")
+        status_display = _escape(status)
+        mode = _escape(str(run.get("research_mode", "—")))
+        llm_calls = int(run.get("llm_request_count", 0)) if isinstance(run.get("llm_request_count"), (int, float)) else 0
+        avoided = int(run.get("llm_calls_avoided", 0)) if isinstance(run.get("llm_calls_avoided"), (int, float)) else 0
+        calls_str = f"{llm_calls}"
+        if avoided > 0:
+            calls_str += f" <span style='color:#22c55e;font-size:0.85em;'>({avoided} cached)</span>"
+        cost = float(run.get("llm_estimated_cost_usd", 0)) if isinstance(run.get("llm_estimated_cost_usd"), (int, float)) else 0.0
+        cost_str = f"${cost:.4f}" if cost > 0 else "—"
+        reuse = run.get("reuse_rate")
+        reuse_str = f"{float(reuse) * 100:.0f}%" if isinstance(reuse, (int, float)) and reuse is not None else "—"
+        started = _escape(str(run.get("started_at", "?"))[:19])
+        parts.append(
+            f"<tr>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{query}</td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{op_label}</td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>"
+            f"<span style='background:{status_color};color:white;padding:1px 8px;border-radius:8px;font-size:0.85em;'>{status_display}</span></td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{mode}</td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{calls_str}</td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{cost_str}</td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{reuse_str}</td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;'>{started}</td>"
+            f"</tr>"
+        )
+    parts.append("</table>")
+    return "\n".join(parts)
+
+
 _DOMAIN_PROFILE_LABELS: dict[str, dict[str, str]] = {
     "legal": {
         "title": "Domain Profile — Legal",
@@ -6561,6 +6637,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading taint summary: {_escape(exc)}</div>"
 
+    def load_investigation_history(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            runs = _run_async(self.backend().list_runs(matter_id, limit=20))
+            return _fmt_investigation_history_panel(runs, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading investigation history: {_escape(exc)}</div>"
+
     def load_clarification_choices(self, matter_id: str) -> list:
         if not matter_id or matter_id == "—":
             return []
@@ -7977,6 +8062,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             llm_analytics_html = gr.HTML("<div class='viz-empty'>LLM analytics will appear here after an investigation.</div>")
             refresh_llm_btn = gr.Button("Refresh LLM Analytics", variant="secondary", size="sm")
 
+        with gr.Accordion("Investigation History — past runs and their outcomes", open=False):
+            gr.Markdown(
+                "Shows every investigation run recorded on this matter: what was queried, "
+                "how much it cost, how many LLM calls were made vs cached, and the "
+                "matter model reuse rate. Higher reuse means the durable matter model "
+                "is paying off across runs."
+            )
+            investigation_history_html = gr.HTML("<div class='viz-empty'>Investigation history will appear here after loading a matter.</div>")
+            refresh_history_btn = gr.Button("Refresh Investigation History", variant="secondary", size="sm")
+
         with gr.Accordion("Steering Controls — redirect or resume an investigation", open=False):
             gr.Markdown(
                 "**Redirect:** If Irys is investigating the wrong thing, redirect it to focus "
@@ -8452,6 +8547,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[taint_summary_html],
+            ).then(
+                fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[investigation_history_html],
             )
         else:
             submit_btn.click(
@@ -8510,6 +8609,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[taint_summary_html],
+            ).then(
+                fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[investigation_history_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -8569,6 +8672,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[taint_summary_html],
+        ).then(
+            fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[investigation_history_html],
         )
 
         export_report_btn.click(
@@ -8752,6 +8859,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_llm_analytics(mid),
             inputs=[matter_id_box],
             outputs=[llm_analytics_html],
+        )
+        refresh_history_btn.click(
+            fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[investigation_history_html],
         )
 
         # --- UI-6 privilege mode toggle + document picker ---

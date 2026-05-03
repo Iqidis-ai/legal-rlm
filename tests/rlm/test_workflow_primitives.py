@@ -1712,3 +1712,95 @@ def test_fmt_taint_summary_panel_class_colors():
     assert "#22c55e" in result
     assert "#ef4444" in result
     assert "#94a3b8" in result
+
+
+# ── Investigation History panel tests ─────────────────────────────────
+
+def test_fmt_investigation_history_empty():
+    from irys.ui.app import _fmt_investigation_history_panel
+    result = _fmt_investigation_history_panel([])
+    assert "No investigation runs" in result
+
+
+def test_fmt_investigation_history_none():
+    from irys.ui.app import _fmt_investigation_history_panel
+    result = _fmt_investigation_history_panel(None)
+    assert "No investigation runs" in result
+
+
+def test_fmt_investigation_history_basic():
+    from irys.ui.app import _fmt_investigation_history_panel
+    runs = [
+        {
+            "id": "r1",
+            "query": "What are the key terms of the contract?",
+            "operation_type": "query",
+            "status": "completed",
+            "research_mode": "deep",
+            "llm_request_count": 15,
+            "llm_calls_avoided": 5,
+            "llm_estimated_cost_usd": 0.0342,
+            "reuse_rate": 0.25,
+            "started_at": "2026-05-03T10:00:00",
+        },
+        {
+            "id": "r2",
+            "query": "Follow up on damages",
+            "operation_type": "redirect",
+            "status": "running",
+            "research_mode": "fast",
+            "llm_request_count": 3,
+            "llm_calls_avoided": 0,
+            "llm_estimated_cost_usd": 0.01,
+            "reuse_rate": None,
+            "started_at": "2026-05-03T11:00:00",
+        },
+    ]
+    result = _fmt_investigation_history_panel(runs)
+    assert "Investigation History" in result
+    assert "2 runs" in result
+    assert "What are the key terms" in result
+    assert "Investigation" in result
+    assert "Redirect" in result
+    assert "completed" in result
+    assert "running" in result
+    assert "$0.0342" in result
+    assert "25%" in result
+    assert "5 cached" in result
+
+
+def test_fmt_investigation_history_skips_non_dict():
+    from irys.ui.app import _fmt_investigation_history_panel
+    runs = ["not-a-dict", {"id": "r1", "query": "test", "status": "completed",
+            "started_at": "2026-05-03T10:00:00"}]
+    result = _fmt_investigation_history_panel(runs)
+    assert "1 run" in result
+
+
+def test_fmt_investigation_history_xss():
+    from irys.ui.app import _fmt_investigation_history_panel
+    xss = '<img src=x onerror=alert(1)>'
+    runs = [{
+        "id": "r1",
+        "query": xss,
+        "operation_type": xss,
+        "status": xss,
+        "research_mode": xss,
+        "started_at": xss,
+    }]
+    result = _fmt_investigation_history_panel(runs)
+    assert "<img" not in result
+    assert "&lt;img" in result
+
+
+def test_fmt_investigation_history_status_colors():
+    from irys.ui.app import _fmt_investigation_history_panel
+    runs = [
+        {"id": "r1", "query": "q1", "status": "completed", "started_at": "2026-05-03"},
+        {"id": "r2", "query": "q2", "status": "failed", "started_at": "2026-05-03"},
+        {"id": "r3", "query": "q3", "status": "running", "started_at": "2026-05-03"},
+    ]
+    result = _fmt_investigation_history_panel(runs)
+    assert "#22c55e" in result
+    assert "#ef4444" in result
+    assert "#3b82f6" in result
