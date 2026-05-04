@@ -3577,7 +3577,8 @@ class QuantStore:
         violations = []
         try:
             chain = self.reconcile_payment_chain(currency)
-        except Exception:
+        except Exception as exc:
+            _log.warning("reconcile_payment_chain failed: %s", exc)
             return violations
 
         exposure = chain.get("exposure", 0.0)
@@ -3599,8 +3600,8 @@ class QuantStore:
                     affected_type="quant",
                     affected_id="exposure",
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("gap_store.record(exposure) failed: %s", exc)
             violations.append({"threshold": "positive_exposure", "level": level,
                                 "description": desc, "amount": exposure})
 
@@ -3622,15 +3623,16 @@ class QuantStore:
                         affected_type="quant",
                         affected_id="disputed_fraction",
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.warning("gap_store.record(disputed_fraction) failed: %s", exc)
                 violations.append({"threshold": "disputed_fraction", "level": level,
                                     "description": desc, "amount": disputed})
 
         # Threshold 3: numeric conflicts
         try:
             conflicts = self.get_conflicts()
-        except Exception:
+        except Exception as exc:
+            _log.warning("get_conflicts failed: %s", exc)
             conflicts = []
         for conflict in conflicts[:5]:  # cap at 5 to bound gap store growth
             sid = conflict.get("subject_id") or conflict.get("subject_type", "unknown")
@@ -3647,8 +3649,8 @@ class QuantStore:
                     affected_type="quant",
                     affected_id=str(sid)[:64],
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("gap_store.record(numeric_conflict) failed: %s", exc)
             violations.append({"threshold": "numeric_conflict", "level": "HIGH",
                                 "description": desc, "amount": None})
 
