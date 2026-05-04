@@ -5364,6 +5364,57 @@ def _fmt_issue_assertions(
     return "\n".join(parts)
 
 
+_SOURCE_AGREEMENT_LABELS: dict[str, dict[str, str]] = {
+    "legal": {"title": "Source Agreement Analysis", "doc_col": "Document", "role_col": "Source Role", "empty": "No source data available for this issue."},
+    "finance": {"title": "Source Agreement Analysis", "doc_col": "Filing / Report", "role_col": "Source Type", "empty": "No source data available for this thesis."},
+    "coding": {"title": "Source Agreement Analysis", "doc_col": "Spec / Artifact", "role_col": "Source Type", "empty": "No source data available for this task."},
+    "academic_research": {"title": "Source Agreement Analysis", "doc_col": "Paper / Source", "role_col": "Source Type", "empty": "No source data available for this question."},
+    "biomedical": {"title": "Source Agreement Analysis", "doc_col": "Record / Source", "role_col": "Source Type", "empty": "No source data available for this hypothesis."},
+}
+
+
+def _fmt_source_agreement(sources: list, domain: str = "legal") -> str:
+    L = _SOURCE_AGREEMENT_LABELS.get(domain, _SOURCE_AGREEMENT_LABELS["legal"])
+    if not sources:
+        return f"<div class='viz-empty'>{L['empty']}</div>"
+    rows_html = ""
+    for s in sources:
+        if not isinstance(s, dict):
+            continue
+        label = _escape(str(s.get("doc_label", "—"))[:50])
+        role = _escape(str(s.get("source_role", "unknown")))
+        supports = int(s.get("supports", 0))
+        attacks = int(s.get("attacks", 0))
+        total = supports + attacks
+        bar_w = min(total * 8, 120)
+        sup_pct = (supports / total * 100) if total else 0
+        atk_pct = 100 - sup_pct
+        bar = (
+            f"<div style='display:inline-flex;height:10px;width:{bar_w}px;border-radius:3px;overflow:hidden'>"
+            f"<div style='width:{sup_pct:.0f}%;background:#16a34a'></div>"
+            f"<div style='width:{atk_pct:.0f}%;background:#dc2626'></div>"
+            "</div>"
+        ) if total else ""
+        rows_html += (
+            "<tr>"
+            f"<td style='font-size:11px'>{label}</td>"
+            f"<td style='font-size:11px'>{role}</td>"
+            f"<td style='font-size:11px;color:#16a34a;font-weight:600'>{supports}</td>"
+            f"<td style='font-size:11px;color:#dc2626;font-weight:600'>{attacks}</td>"
+            f"<td>{bar}</td>"
+            "</tr>"
+        )
+    if not rows_html:
+        return f"<div class='viz-empty'>{L['empty']}</div>"
+    return (
+        f"<div class='viz-shell'><div class='viz-header'><strong>{_escape(L['title'])}</strong></div>"
+        "<div class='table-wrap'><table class='viz-table'>"
+        f"<thead><tr><th>{_escape(L['doc_col'])}</th><th>{_escape(L['role_col'])}</th>"
+        "<th>Supports</th><th>Attacks</th><th>Balance</th></tr></thead>"
+        "<tbody>" + rows_html + "</tbody></table></div></div>"
+    )
+
+
 _ASSUMPTION_STATUS_PILLS: dict[str, tuple[str, str]] = {
     "provisional": ("Provisional", "pill-orange"),
     "confirmed": ("Confirmed", "pill-green"),
@@ -7247,6 +7298,20 @@ class AppState:
             return _fmt_issue_assertions(assertions, iid, authorities=authorities, domain=domain)
         except Exception as exc:
             logger.warning("load_issue_assertions failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
+    def load_source_agreement(self, matter_id: str, issue_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        iid = (issue_id or "").strip()
+        if not iid:
+            return "<div class='viz-empty'>Enter an issue ID to see source agreement.</div>"
+        try:
+            sources = _run_async(self.backend().get_source_agreement(matter_id, iid))
+            domain = self._detect_domain(matter_id)
+            return _fmt_source_agreement(sources, domain=domain)
+        except Exception as exc:
+            logger.warning("load_source_agreement failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
     def load_content_policy_audit(self, matter_id: str, domain: str = "legal") -> str:
@@ -9519,6 +9584,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             issue_assertions_html = gr.HTML(
                 "<div class='viz-empty'>Enter an issue ID to see its linked evidence.</div>"
             )
+            source_agreement_html = gr.HTML(
+                "<div class='viz-empty'>Source agreement analysis will appear after selecting an issue.</div>"
+            )
 
         # ==================================================================
         # REVIEW INBOX — what AI extractions need the attorney's sign-off
@@ -10979,11 +11047,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, iid: state.load_issue_assertions(mid, iid),
             inputs=[matter_id_box, issue_drilldown_id],
             outputs=[issue_assertions_html],
+        ).then(
+            fn=lambda mid, iid: state.load_source_agreement(mid, iid),
+            inputs=[matter_id_box, issue_drilldown_id],
+            outputs=[source_agreement_html],
         )
         issue_drilldown_id.submit(
             fn=lambda mid, iid: state.load_issue_assertions(mid, iid),
             inputs=[matter_id_box, issue_drilldown_id],
             outputs=[issue_assertions_html],
+        ).then(
+            fn=lambda mid, iid: state.load_source_agreement(mid, iid),
+            inputs=[matter_id_box, issue_drilldown_id],
+            outputs=[source_agreement_html],
         )
 
         # --- Review Inbox wiring ---

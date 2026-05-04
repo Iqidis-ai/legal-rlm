@@ -3185,6 +3185,46 @@ class MatterModel:
             "linked_issues": linked_issues,
         }
 
+    def get_source_agreement_for_issue(self, issue_id: str) -> list[dict]:
+        """Per-document support/attack breakdown for an issue (SO-5).
+
+        Groups assertions linked to the issue by their source document,
+        counting how many support vs attack the issue from each source.
+        """
+        rows = self.db.execute(
+            """SELECT di.id AS doc_id,
+                      COALESCE(di.relative_path, di.original_filename, di.id) AS doc_label,
+                      di.source_role,
+                      ail.relation_type,
+                      COUNT(*) AS cnt
+               FROM assertion_issue_link ail
+               JOIN assertion_occurrence ao ON ao.assertion_id = ail.assertion_id
+               JOIN document_inventory di ON di.id = ao.document_inventory_id
+               JOIN assertion a ON a.id = ail.assertion_id
+               WHERE ail.issue_id = ?
+                 AND a.belief_state NOT IN ('superseded', 'withdrawn')
+               GROUP BY di.id, ail.relation_type
+               ORDER BY di.source_role, di.id""",
+            (issue_id,),
+        ).fetchall()
+        doc_map: dict[str, dict] = {}
+        for r in rows:
+            did = r["doc_id"]
+            if did not in doc_map:
+                doc_map[did] = {
+                    "doc_id": did,
+                    "doc_label": r["doc_label"],
+                    "source_role": r["source_role"] or "unknown",
+                    "supports": 0,
+                    "attacks": 0,
+                }
+            rel = r["relation_type"] or ""
+            if rel in ("supports", "establishes"):
+                doc_map[did]["supports"] += r["cnt"]
+            elif rel in ("attacks", "negates"):
+                doc_map[did]["attacks"] += r["cnt"]
+        return sorted(doc_map.values(), key=lambda d: d["supports"] + d["attacks"], reverse=True)
+
     def get_system_health(self) -> dict:
         """Return system health diagnostics for the truth maintenance panel (SO-2)."""
         assertion_count = self.assertions.count()

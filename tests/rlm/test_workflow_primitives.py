@@ -3799,3 +3799,51 @@ def test_get_issues_for_assertion_graph_layer():
     empty = store.get_issues_for_assertion("nonexistent")
     assert empty == []
     conn.close()
+
+
+def test_fmt_source_agreement_basic():
+    from irys.ui.app import _fmt_source_agreement
+
+    sources = [
+        {"doc_id": "d1", "doc_label": "contract.pdf", "source_role": "CONTRACT", "supports": 5, "attacks": 1},
+        {"doc_id": "d2", "doc_label": "complaint.pdf", "source_role": "COMPLAINT", "supports": 0, "attacks": 3},
+    ]
+    result = _fmt_source_agreement(sources, domain="legal")
+    assert "Source Agreement Analysis" in result
+    assert "contract.pdf" in result
+    assert "complaint.pdf" in result
+    assert "CONTRACT" in result
+    assert "COMPLAINT" in result
+
+    result_finance = _fmt_source_agreement(sources, domain="finance")
+    assert "Filing / Report" in result_finance
+
+    result_empty = _fmt_source_agreement([], domain="legal")
+    assert "viz-empty" in result_empty
+    assert "No source data" in result_empty
+
+
+def test_fmt_source_agreement_non_dict_guard():
+    from irys.ui.app import _fmt_source_agreement
+
+    sources = [
+        "bad-entry",
+        None,
+        {"doc_id": "d1", "doc_label": "valid.pdf", "source_role": "EXHIBIT", "supports": 2, "attacks": 0},
+    ]
+    result = _fmt_source_agreement(sources, domain="legal")
+    assert "valid.pdf" in result
+    assert "bad-entry" not in result
+
+
+def test_fmt_source_agreement_domain_labels():
+    from irys.ui.app import _fmt_source_agreement
+
+    sources = [{"doc_id": "d1", "doc_label": "test.pdf", "source_role": "X", "supports": 1, "attacks": 0}]
+    for domain, expected_col in [
+        ("coding", "Spec / Artifact"),
+        ("academic_research", "Paper / Source"),
+        ("biomedical", "Record / Source"),
+    ]:
+        result = _fmt_source_agreement(sources, domain=domain)
+        assert expected_col in result

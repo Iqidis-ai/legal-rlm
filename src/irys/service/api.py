@@ -3054,6 +3054,17 @@ async def get_issue_assertions(matter_id: str, issue_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/issues/{issue_id}/source-agreement",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_source_agreement(matter_id: str, issue_id: str):
+    """Per-document support/attack breakdown for an issue (SO-5)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_source_agreement_for_issue(issue_id)
+
+
+@app.get(
     "/matter/{matter_id}/proof-state",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

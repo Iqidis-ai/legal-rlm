@@ -81,6 +81,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_source_agreement(self, matter_id: str, issue_id: str) -> list[dict]:
+        """Per-document support/attack breakdown for an issue (SO-5)."""
+        ...
+
+    @abstractmethod
     async def get_issue_authorities(self, matter_id: str, issue_id: str) -> list[dict]:
         """Return authorities linked to a specific issue with relevance (SO-4)."""
         ...
