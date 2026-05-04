@@ -1867,9 +1867,8 @@ def _fmt_source_calibration(data: dict, domain: str = "legal") -> str:
     L = _SOURCE_CALIBRATION_LABELS.get(domain, _SOURCE_CALIBRATION_LABELS["legal"])
     if not data or not isinstance(data, dict):
         return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
-
-    if "error" in data:
-        return f"<div class='viz-empty'>Error: {_escape(str(data['error']))}</div>"
+    if err := _error_html(data):
+        return err
 
     matrix = data.get("evidence_matrix", {})
     if not isinstance(matrix, dict):
@@ -2247,6 +2246,11 @@ _AUTHORITY_PANEL_LABELS = {
 
 def _fmt_authority_panel(data: dict, domain: str = "legal") -> str:
     """Render the authority / reference network panel (SO-4)."""
+    if not data or not isinstance(data, dict):
+        labels = _AUTHORITY_PANEL_LABELS.get(domain, _AUTHORITY_PANEL_LABELS["legal"])
+        return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+    if err := _error_html(data):
+        return err
     authorities = data.get("authorities", [])
     issue_links = data.get("issue_links", {})
     labels = _AUTHORITY_PANEL_LABELS.get(domain, _AUTHORITY_PANEL_LABELS["legal"])
@@ -2391,6 +2395,11 @@ _DOC_PANEL_LABELS = {
 
 def _fmt_document_intelligence_panel(data: dict, domain: str = "legal", trust_overrides: list | None = None) -> str:
     """Render the document intelligence panel (SO-5)."""
+    if not data or not isinstance(data, dict):
+        labels = _DOC_PANEL_LABELS.get(domain, _DOC_PANEL_LABELS["legal"])
+        return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+    if err := _error_html(data):
+        return err
     cards = data.get("cards", [])
     total_inv = data.get("total_inventory", 0)
     ingested = data.get("ingested_count", 0)
@@ -2866,9 +2875,8 @@ def _fmt_operative_version_result(data: dict, domain: str = "legal") -> str:
     L = _OPERATIVE_VERSION_LABELS.get(domain, _OPERATIVE_VERSION_LABELS["legal"])
     if not data or not isinstance(data, dict):
         return f"<div class='viz-empty'>{L['empty']}</div>"
-
-    if "error" in data:
-        return f"<div class='viz-empty'>Error: {_escape(str(data['error']))}</div>"
+    if err := _error_html(data):
+        return err
 
     doc_id = _escape(str(data.get("doc_id", "")))
     operative_id = _escape(str(data.get("operative_doc_id", "")))
@@ -3504,13 +3512,11 @@ _DOCUMENT_CARD_LABELS: dict[str, dict[str, str]] = {
 
 
 def _fmt_document_card(data: dict, domain: str = "legal") -> str:
-    if not data or not isinstance(data, dict):
-        L = _DOCUMENT_CARD_LABELS.get(domain, _DOCUMENT_CARD_LABELS["legal"])
-        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
-
     L = _DOCUMENT_CARD_LABELS.get(domain, _DOCUMENT_CARD_LABELS["legal"])
-    if data.get("error"):
-        return f"<div class='viz-empty'>Error: {_escape(str(data['error']))}</div>"
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+    if err := _error_html(data):
+        return err
     card = data.get("card")
     if not card or not isinstance(card, dict):
         return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
@@ -4178,9 +4184,8 @@ def _fmt_sensitivity_review_result(data: dict, domain: str = "legal") -> str:
     labels = _SENSITIVITY_REVIEW_LABELS.get(domain, _SENSITIVITY_REVIEW_LABELS["legal"])
     if not data or not isinstance(data, dict):
         return f"<div class='viz-empty'>{labels['empty']}</div>"
-
-    if "error" in data:
-        return f"<div class='viz-empty'>Error: {_escape(str(data['error']))}</div>"
+    if err := _error_html(data):
+        return err
 
     parts = [
         f"<h3 style='margin:0 0 8px 0;'>{_escape(labels['result_header'])}</h3>",
@@ -5635,6 +5640,10 @@ _ANSWER_AUDIT_LABELS: dict[str, dict[str, str]] = {
 
 def _fmt_answer_audit(data: dict, domain: str = "legal") -> str:
     labels = _ANSWER_AUDIT_LABELS.get(domain, _ANSWER_AUDIT_LABELS["legal"])
+    if not data or not isinstance(data, dict):
+        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+    if err := _error_html(data):
+        return err
     audits = data.get("audits", []) if isinstance(data, dict) else []
     if not audits:
         return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
@@ -7208,12 +7217,10 @@ def _fmt_scenario_deltas(deltas: list, domain: str = "legal") -> str:
 
 def _fmt_scenario_comparison(data: dict, domain: str = "legal") -> str:
     L = _SCENARIO_COMPARE_LABELS.get(domain, _SCENARIO_COMPARE_LABELS["legal"])
-
     if not data or not isinstance(data, dict):
         return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
-
-    if data.get("error"):
-        return f"<div class='viz-empty'>Error: {_escape(str(data['error']))}</div>"
+    if err := _error_html(data):
+        return err
 
     delta_count = _safe_int(data.get("delta_count", 0))
     if delta_count == 0:
@@ -9523,8 +9530,8 @@ _ISSUE_CLOSURE_LABELS: dict[str, dict[str, str]] = {
 def _fmt_issue_closure_workbench(data: dict, domain: str = "legal") -> str:
     if not data or not isinstance(data, dict):
         return "<div class='viz-empty'>No closure data available.</div>"
-    if data.get("error"):
-        return f"<div class='viz-empty'>{_escape(str(data['error']))}</div>"
+    if err := _error_html(data):
+        return err
 
     L = _ISSUE_CLOSURE_LABELS.get(domain, _ISSUE_CLOSURE_LABELS["legal"])
     title = _escape(str(data.get("title", "")))
@@ -10635,9 +10642,8 @@ def _fmt_query_context(data: dict, domain: str = "legal") -> str:
     L = _QUERY_CONTEXT_LABELS.get(domain, _QUERY_CONTEXT_LABELS["legal"])
     if not data or not isinstance(data, dict):
         return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
-
-    if "error" in data:
-        return f"<div class='viz-empty'>Error: {_escape(str(data['error']))}</div>"
+    if err := _error_html(data):
+        return err
 
     assertions = int(data.get("existing_assertion_count", 0)) if isinstance(data.get("existing_assertion_count"), (int, float)) and math.isfinite(float(data.get("existing_assertion_count", 0))) else 0
     actors = int(data.get("existing_actor_count", 0)) if isinstance(data.get("existing_actor_count"), (int, float)) and math.isfinite(float(data.get("existing_actor_count", 0))) else 0
@@ -11506,8 +11512,8 @@ _ASSERTION_TRACE_LABELS: dict[str, dict[str, str]] = {
 def _fmt_assertion_trace(data: dict, domain: str = "legal") -> str:
     if not data or not isinstance(data, dict):
         return "<div class='viz-empty'>No trace data available.</div>"
-    if data.get("error"):
-        return f"<div class='viz-empty'>{_escape(str(data['error']))}</div>"
+    if err := _error_html(data):
+        return err
 
     L = _ASSERTION_TRACE_LABELS.get(domain, _ASSERTION_TRACE_LABELS["legal"])
     prop = _escape(str(data.get("proposition_text", "")))

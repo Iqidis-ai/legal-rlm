@@ -9252,7 +9252,7 @@ def test_document_card_formatter_non_dict():
 def test_document_card_error_display():
     from irys.ui.app import _fmt_document_card
     html = _fmt_document_card({"error": "unexpected response type: list"})
-    assert "Error:" in html
+    assert "error:" in html.lower()
     assert "unexpected response type" in html
     assert "<script>" not in _fmt_document_card({"error": "<script>x</script>"})
 
