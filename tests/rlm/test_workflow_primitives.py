@@ -585,19 +585,19 @@ def test_fmt_system_health_panel_missing_fields():
 
 
 def test_fmt_so_scorecard_panel_empty():
-    from irys.ui.app import _fmt_so_scorecard_panel
+    from irys.ui.app import _fmt_so_scorecard_panel as _fmt_so_scorecard_panel
     result = _fmt_so_scorecard_panel({})
     assert "viz-empty" in result
 
 
 def test_fmt_so_scorecard_panel_none():
-    from irys.ui.app import _fmt_so_scorecard_panel
+    from irys.ui.app import _fmt_so_scorecard_panel as _fmt_so_scorecard_panel
     result = _fmt_so_scorecard_panel(None)
     assert "viz-empty" in result
 
 
 def test_fmt_so_scorecard_panel_with_data():
-    from irys.ui.app import _fmt_so_scorecard_panel
+    from irys.ui.app import _fmt_so_scorecard_panel as _fmt_so_scorecard_panel
     so = {
         "assertion_structure_rate": 1.0,
         "source_role_known_rate": 0.95,
@@ -639,7 +639,7 @@ def test_fmt_so_scorecard_panel_with_data():
 
 
 def test_fmt_so_scorecard_panel_all_passing():
-    from irys.ui.app import _fmt_so_scorecard_panel
+    from irys.ui.app import _fmt_so_scorecard_panel as _fmt_so_scorecard_panel
     so = {
         "assertion_structure_rate": 1.0,
         "source_role_known_rate": 0.95,
@@ -677,7 +677,7 @@ def test_fmt_so_scorecard_panel_all_passing():
 
 
 def test_fmt_so_scorecard_panel_finance_domain():
-    from irys.ui.app import _fmt_so_scorecard_panel
+    from irys.ui.app import _fmt_so_scorecard_panel as _fmt_so_scorecard_panel
     so = {
         "targets": {},
         "targets_met": {},
@@ -688,7 +688,7 @@ def test_fmt_so_scorecard_panel_finance_domain():
 
 
 def test_fmt_so_scorecard_panel_missing_targets():
-    from irys.ui.app import _fmt_so_scorecard_panel
+    from irys.ui.app import _fmt_so_scorecard_panel as _fmt_so_scorecard_panel
     result = _fmt_so_scorecard_panel({"targets": {}, "targets_met": {}})
     assert "Sacred Outcomes Scorecard" in result
     assert "0/0 passing" in result
@@ -6570,3 +6570,140 @@ def test_scenario_branch_unique_name():
         assert False, "Should have raised IntegrityError for duplicate name"
     except sqlite3.IntegrityError:
         pass
+
+
+# ---- SO Scorecard tests ----
+
+
+def test_so_scorecard_model_returns_dict():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_so_metrics()
+    assert isinstance(result, dict)
+    assert "targets" in result
+    assert "targets_met" in result
+    assert "counts" in result
+    assert isinstance(result["counts"], dict)
+
+
+def test_so_scorecard_formatter_empty():
+    from irys.ui.app import _fmt_so_scorecard_panel as _fmt_so_scorecard
+    html = _fmt_so_scorecard({}, domain="legal")
+    assert "viz-empty" in html
+
+
+def test_so_scorecard_formatter_renders():
+    from irys.ui.app import _fmt_so_scorecard_panel as _fmt_so_scorecard
+    data = {
+        "assertion_structure_rate": 0.95,
+        "source_role_known_rate": 0.88,
+        "issue_coverage_avg": 0.72,
+        "reuse_rate": 0.81,
+        "numeric_extraction_rate": 0.93,
+        "provenance_attribution_rate": 0.87,
+        "gap_surface_ratio": 0.3,
+        "steerability": True,
+        "belief_revision": False,
+        "targets": {
+            "assertion_structure_rate": 1.0,
+            "source_role_known_rate": 0.9,
+            "issue_coverage_avg": 0.8,
+            "reuse_rate": 0.7,
+            "numeric_extraction_rate": 0.9,
+            "provenance_attribution_rate": 0.9,
+            "steerability": True,
+            "belief_revision": True,
+        },
+        "targets_met": {
+            "assertion_structure_rate": False,
+            "source_role_known_rate": False,
+            "issue_coverage_avg": False,
+            "reuse_rate": True,
+            "numeric_extraction_rate": True,
+            "provenance_attribution_rate": False,
+            "steerability": True,
+            "belief_revision": False,
+        },
+    }
+    html = _fmt_so_scorecard(data, domain="legal")
+    assert "Sacred Outcomes" in html
+    assert "SO-2 Structure" in html
+    assert "SO-5 Calibration" in html
+    assert "95.0%" in html
+    assert "pill-green" in html
+    assert "pill-red" in html
+
+
+def test_so_scorecard_formatter_xss():
+    from irys.ui.app import _fmt_so_scorecard_panel as _fmt_so_scorecard
+    data = {
+        "reuse_rate": 0.5,
+        "targets": {"reuse_rate": 0.7},
+        "targets_met": {"reuse_rate": False},
+    }
+    html = _fmt_so_scorecard(data, domain="legal")
+    assert "<script>" not in html
+    assert "viz-shell" in html
+
+
+def test_so_scorecard_formatter_none_metrics():
+    from irys.ui.app import _fmt_so_scorecard_panel as _fmt_so_scorecard
+    data = {
+        "assertion_structure_rate": None,
+        "source_role_known_rate": None,
+        "issue_coverage_avg": None,
+        "reuse_rate": None,
+        "steerability": None,
+        "belief_revision": None,
+        "targets": {
+            "assertion_structure_rate": 1.0,
+            "source_role_known_rate": 0.9,
+            "issue_coverage_avg": 0.8,
+            "reuse_rate": 0.7,
+            "steerability": True,
+            "belief_revision": True,
+        },
+        "targets_met": {
+            "assertion_structure_rate": None,
+            "source_role_known_rate": None,
+            "issue_coverage_avg": None,
+            "reuse_rate": None,
+            "steerability": None,
+            "belief_revision": None,
+        },
+        "counts": {},
+    }
+    html = _fmt_so_scorecard(data, domain="legal")
+    assert "N/A" in html
+    assert "viz-shell" in html
+
+
+def test_so_scorecard_formatter_nan_value():
+    import math
+    from irys.ui.app import _fmt_so_scorecard_panel as _fmt_so_scorecard
+    data = {
+        "assertion_structure_rate": float("nan"),
+        "targets": {"assertion_structure_rate": 1.0},
+        "targets_met": {"assertion_structure_rate": False},
+        "counts": {},
+    }
+    html = _fmt_so_scorecard(data, domain="legal")
+    assert "nan%" not in html.lower()
+
+
+def test_so_scorecard_labels_all_five_domains():
+    from irys.ui.app import _SO_SCORECARD_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _SO_SCORECARD_LABELS[domain]
+        for key in ("title", "subtitle", "so1", "so2_struct", "so2_revision",
+                     "so2_provenance", "so3", "so4", "so5", "so6", "so7"):
+            assert key in labels, f"{domain} missing key {key}"
+
+
+def test_so_scorecard_backend_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    assert hasattr(UIBackend, "get_so_scorecard")
+    assert hasattr(InProcessBackend, "get_so_scorecard")
+    assert hasattr(HttpBackend, "get_so_scorecard")

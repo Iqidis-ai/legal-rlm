@@ -3772,7 +3772,11 @@ def _fmt_so_scorecard_panel(so: dict, domain: str = "legal") -> str:
         elif is_bool:
             val_str = "Yes" if val else "No"
         else:
-            val_str = f"{float(val) * 100:.1f}%"
+            try:
+                fval = float(val)
+                val_str = f"{fval * 100:.1f}%" if math.isfinite(fval) else "—"
+            except (TypeError, ValueError):
+                val_str = "—"
         if target is None:
             tgt_str = "—"
         elif isinstance(target, bool):
