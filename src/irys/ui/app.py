@@ -8011,6 +8011,10 @@ class AppState:
             return []
         try:
             items = _run_async(self.backend().list_clarifications(matter_id))
+            self._clarification_cache = {
+                c.get("id", ""): c for c in items
+                if isinstance(c, dict) and c.get("status") == "pending"
+            }
             return [
                 (f"{c.get('question_text', '?')[:80]}", c.get("id", ""))
                 for c in items
@@ -8019,6 +8023,39 @@ class AppState:
         except Exception as exc:
             logger.warning("Failed to load clarification choices for %s: %s", matter_id, exc)
             return []
+
+    def get_clarification_context(self, matter_id: str, question_id: str) -> str:
+        if not question_id or not matter_id or matter_id == "—":
+            return ""
+        cache = getattr(self, "_clarification_cache", {})
+        c = cache.get(question_id)
+        if not c or not isinstance(c, dict):
+            return ""
+        parts = []
+        full_q = _escape(str(c.get("question_text", "")))
+        if full_q:
+            parts.append(f"<div style='font-weight:600;margin-bottom:6px;'>{full_q}</div>")
+        why = _escape(str(c.get("why_it_matters") or ""))
+        if why:
+            parts.append(
+                f"<div style='background:#eff6ff;border-left:3px solid #3b82f6;padding:6px 10px;"
+                f"border-radius:4px;margin-bottom:6px;font-size:12px;'>"
+                f"<strong>Why it matters:</strong> {why}</div>"
+            )
+        impact = _escape(str(c.get("expected_impact") or ""))
+        if impact:
+            parts.append(
+                f"<div style='background:#f0fdf4;border-left:3px solid #22c55e;padding:6px 10px;"
+                f"border-radius:4px;margin-bottom:6px;font-size:12px;'>"
+                f"<strong>Expected impact:</strong> {impact}</div>"
+            )
+        gap_id = c.get("gap_id")
+        if gap_id:
+            parts.append(
+                f"<div style='font-size:11px;color:#6b7280;'>"
+                f"Linked gap: <code>{_escape(str(gap_id)[:16])}</code></div>"
+            )
+        return "".join(parts) if parts else ""
 
     def get_domain_dropdown_updates(self, matter_id: str) -> tuple:
         domain = self._detect_domain(matter_id)
@@ -9710,6 +9747,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     placeholder="Type your answer to the selected clarification question...",
                     lines=2,
                 )
+            clarification_context_html = gr.HTML("")
             with gr.Row():
                 answer_clarification_btn = gr.Button("Submit Answer", variant="primary", size="sm")
                 generate_clarifications_btn = gr.Button("Generate Questions from Gaps", variant="secondary", size="sm")
@@ -10880,6 +10918,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[domain_composition_html],
         )
 
+        clarification_dropdown.change(
+            fn=lambda mid, qid: state.get_clarification_context(mid, qid),
+            inputs=[matter_id_box, clarification_dropdown],
+            outputs=[clarification_context_html],
+        )
+
         answer_clarification_btn.click(
             fn=lambda mid, qid, ans: state.do_answer_clarification(mid, qid, ans),
             inputs=[matter_id_box, clarification_dropdown, clarification_answer_input],
@@ -10888,6 +10932,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: gr.update(choices=state.load_clarification_choices(mid), value=None),
             inputs=[matter_id_box],
             outputs=[clarification_dropdown],
+        ).then(
+            fn=lambda: "",
+            inputs=[],
+            outputs=[clarification_context_html],
         )
 
         generate_clarifications_btn.click(

@@ -3484,3 +3484,52 @@ def test_fmt_gaps_non_dict_guard_with_id():
     result = _fmt_gaps(gaps, [], domain="legal")
     assert "1 unresolved" in result
     assert "g1" in result
+
+
+def test_clarification_context_rendering():
+    """Clarification context shows why_it_matters and expected_impact."""
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state._clarification_cache = {
+        "q1": {
+            "id": "q1",
+            "question_text": "What was the contract date?",
+            "why_it_matters": "Statute of limitations depends on this date.",
+            "expected_impact": "Could resolve 2 open gaps.",
+            "gap_id": "gap-abc",
+            "status": "pending",
+        },
+    }
+    result = state.get_clarification_context("mid-1", "q1")
+    assert "What was the contract date?" in result
+    assert "Statute of limitations" in result
+    assert "Could resolve 2 open gaps" in result
+    assert "gap-abc" in result
+    assert "Why it matters" in result
+    assert "Expected impact" in result
+
+
+def test_clarification_context_empty_fields():
+    """Context with missing optional fields still renders question."""
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state._clarification_cache = {
+        "q2": {
+            "id": "q2",
+            "question_text": "Confirm amount?",
+            "status": "pending",
+        },
+    }
+    result = state.get_clarification_context("mid-1", "q2")
+    assert "Confirm amount?" in result
+    assert "Why it matters" not in result
+    assert "Expected impact" not in result
+
+
+def test_clarification_context_missing_id():
+    """Missing question ID returns empty string."""
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state._clarification_cache = {}
+    result = state.get_clarification_context("mid-1", "nonexistent")
+    assert result == ""
