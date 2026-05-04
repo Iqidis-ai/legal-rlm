@@ -197,6 +197,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_objective_coverage(self, matter_id: str) -> dict:
+        """Objective coverage workbench: per-objective criteria, support, gaps (SO-4)."""
+        ...
+
+    @abstractmethod
     async def get_assumption_review(self, matter_id: str) -> dict:
         """Assumption review workbench: lifecycle groups with impact data (SO-3, SO-7)."""
         ...

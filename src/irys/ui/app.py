@@ -5021,6 +5021,227 @@ def _fmt_answer_audit(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_OBJECTIVE_COVERAGE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Objective Coverage",
+        "empty": "No objectives defined yet. Run an investigation to generate the issue tree.",
+        "objective": "Claim / Issue",
+        "criteria": "Legal Elements",
+        "support": "Supporting Assertions",
+        "gaps": "Open Gaps",
+        "coverage": "Coverage",
+        "covered": "Covered",
+        "thin": "Thin Coverage",
+        "blocked": "Blocked",
+        "missing": "Missing Evidence",
+        "contradicted": "Contradicted",
+    },
+    "finance": {
+        "title": "Thesis Coverage",
+        "empty": "No thesis points defined. Run an investigation to generate the analysis tree.",
+        "objective": "Thesis Point",
+        "criteria": "Key Metrics / Criteria",
+        "support": "Supporting Evidence",
+        "gaps": "Open Gaps",
+        "coverage": "Coverage",
+        "covered": "Covered",
+        "thin": "Thin Coverage",
+        "blocked": "Blocked",
+        "missing": "Missing Data",
+        "contradicted": "Contradicted",
+    },
+    "coding": {
+        "title": "Requirement Coverage",
+        "empty": "No requirements defined. Run an investigation to generate the requirement tree.",
+        "objective": "Requirement",
+        "criteria": "Acceptance Criteria",
+        "support": "Supporting Evidence",
+        "gaps": "Open Gaps",
+        "coverage": "Coverage",
+        "covered": "Covered",
+        "thin": "Thin Coverage",
+        "blocked": "Blocked",
+        "missing": "Missing Tests / Evidence",
+        "contradicted": "Contradicted",
+    },
+    "academic_research": {
+        "title": "Research Question Coverage",
+        "empty": "No research questions defined. Run an investigation to generate the question tree.",
+        "objective": "Research Question",
+        "criteria": "Criteria / Hypotheses",
+        "support": "Supporting Findings",
+        "gaps": "Open Gaps",
+        "coverage": "Coverage",
+        "covered": "Covered",
+        "thin": "Thin Coverage",
+        "blocked": "Blocked",
+        "missing": "Missing Evidence",
+        "contradicted": "Contradicted",
+    },
+    "biomedical": {
+        "title": "Endpoint Coverage",
+        "empty": "No endpoints defined. Run an investigation to generate the assessment tree.",
+        "objective": "Endpoint / Outcome",
+        "criteria": "Assessment Criteria",
+        "support": "Supporting Evidence",
+        "gaps": "Open Gaps",
+        "coverage": "Coverage",
+        "covered": "Covered",
+        "thin": "Thin Coverage",
+        "blocked": "Blocked",
+        "missing": "Missing Data",
+        "contradicted": "Contradicted",
+    },
+}
+
+
+def _fmt_objective_coverage(data: dict, domain: str = "legal") -> str:
+    labels = _OBJECTIVE_COVERAGE_LABELS.get(domain, _OBJECTIVE_COVERAGE_LABELS["legal"])
+    if not isinstance(data, dict):
+        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+
+    objectives = data.get("objectives", [])
+    if not isinstance(objectives, list) or not objectives:
+        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+
+    summary = data.get("summary", {})
+    if not isinstance(summary, dict):
+        summary = {}
+
+    _raw_total = data.get("total", 0)
+    total = int(_raw_total) if isinstance(_raw_total, (int, float)) else 0
+
+    badge_colors = {
+        "covered": "#22c55e",
+        "thin": "#f59e0b",
+        "blocked": "#dc2626",
+        "missing": "#6b7280",
+        "contradicted": "#7c3aed",
+    }
+
+    def _safe_count(key: str) -> int:
+        v = summary.get(key, 0)
+        return int(v) if isinstance(v, (int, float)) else 0
+
+    parts = [
+        f"<h3 style='margin:0 0 8px;'>{_escape(labels['title'])}</h3>",
+        f"<div style='display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;'>",
+    ]
+    for badge_key in ("covered", "thin", "blocked", "missing", "contradicted"):
+        cnt = _safe_count(badge_key)
+        color = badge_colors.get(badge_key, "#6b7280")
+        lbl = _escape(labels.get(badge_key, badge_key))
+        parts.append(
+            f"<span style='background:{color};color:white;padding:2px 10px;"
+            f"border-radius:10px;font-size:0.85em;'>{cnt} {lbl}</span>"
+        )
+    parts.append(f"<span style='color:#6b7280;font-size:0.85em;padding:2px 0;'>{total} total</span>")
+    parts.append("</div>")
+
+    for obj in objectives:
+        if not isinstance(obj, dict):
+            continue
+
+        title = _escape(str(obj.get("title", "")))
+        oid = _escape(str(obj.get("id", ""))[:16])
+        full_oid = _escape(str(obj.get("id", "")))
+        issue_type = _escape(str(obj.get("issue_type", "")))
+        badge = obj.get("coverage_badge", "missing")
+        badge_label = _escape(labels.get(badge, badge))
+        badge_color = badge_colors.get(badge, "#6b7280")
+        mat = obj.get("materiality", 0.5)
+        materiality = float(mat) if isinstance(mat, (int, float)) else 0.5
+        cov_frac = obj.get("coverage_fraction", 0.0)
+        coverage = float(cov_frac) if isinstance(cov_frac, (int, float)) else 0.0
+        cov_pct = int(coverage * 100)
+        supporting = obj.get("supporting_count", 0)
+        supporting_ct = int(supporting) if isinstance(supporting, (int, float)) else 0
+
+        pred_total = obj.get("predicate_total", 0)
+        pt = int(pred_total) if isinstance(pred_total, (int, float)) else 0
+        pred_sat = obj.get("predicate_satisfied", 0)
+        ps = int(pred_sat) if isinstance(pred_sat, (int, float)) else 0
+
+        burden = _escape(str(obj.get("burden_side") or ""))
+
+        parts.append(
+            f"<div style='border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:10px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+            f"<div>"
+            f"<b>{title}</b>"
+            f" <span style='color:#9ca3af;font-size:0.8em;'>{issue_type}</span>"
+        )
+        if burden:
+            parts.append(f" <span style='color:#6b7280;font-size:0.75em;'>({burden})</span>")
+        parts.append(
+            f"</div>"
+            f"<span style='background:{badge_color};color:white;padding:2px 10px;"
+            f"border-radius:10px;font-size:0.8em;'>{badge_label}</span>"
+            f"</div>"
+        )
+
+        parts.append(
+            f"<div style='display:flex;gap:16px;margin-top:6px;font-size:0.85em;color:#4b5563;'>"
+            f"<span>{_escape(labels['coverage'])}: {cov_pct}%</span>"
+            f"<span>{_escape(labels['support'])}: {supporting_ct}</span>"
+            f"<span>{_escape(labels['criteria'])}: {ps}/{pt}</span>"
+            f"<span>Materiality: {int(materiality * 100)}%</span>"
+            f"<span style='color:#9ca3af;font-size:0.85em;cursor:pointer;' title='{full_oid}'>{oid}…</span>"
+            f"</div>"
+        )
+
+        cov_bar_color = badge_color
+        parts.append(
+            f"<div style='margin-top:6px;background:#e5e7eb;border-radius:4px;height:6px;'>"
+            f"<div style='background:{cov_bar_color};width:{cov_pct}%;height:100%;"
+            f"border-radius:4px;transition:width 0.3s;'></div></div>"
+        )
+
+        predicates = obj.get("predicates", [])
+        if isinstance(predicates, list) and predicates:
+            pred_status_colors = {
+                "open": "#3b82f6",
+                "resolved": "#22c55e",
+                "blocked": "#dc2626",
+                "contested": "#f59e0b",
+            }
+            parts.append(
+                f"<div style='margin-top:8px;font-size:0.82em;'>"
+                f"<b>{_escape(labels['criteria'])}:</b>"
+            )
+            for pred in predicates[:10]:
+                if not isinstance(pred, dict):
+                    continue
+                pdesc = _escape(str(pred.get("description", ""))[:100])
+                pstatus = str(pred.get("status", "open"))
+                pcolor = pred_status_colors.get(pstatus, "#6b7280")
+                parts.append(
+                    f"<div style='margin:2px 0;'>"
+                    f"<span style='color:{pcolor};'>●</span> {pdesc}"
+                    f" <span style='color:{pcolor};font-size:0.85em;'>[{_escape(pstatus)}]</span>"
+                    f"</div>"
+                )
+            parts.append("</div>")
+
+        gaps = obj.get("gaps", [])
+        if isinstance(gaps, list) and gaps:
+            parts.append(
+                f"<div style='margin-top:6px;font-size:0.82em;color:#dc2626;'>"
+                f"<b>{_escape(labels['gaps'])}:</b>"
+            )
+            for gap in gaps[:5]:
+                if not isinstance(gap, dict):
+                    continue
+                gdesc = _escape(str(gap.get("description", ""))[:100])
+                gtype = _escape(str(gap.get("gap_type", "")))
+                parts.append(f"<div>· {gtype}: {gdesc}</div>")
+            parts.append("</div>")
+
+        parts.append("</div>")
+
+    return "\n".join(parts)
+
+
 _KNOWLEDGE_SEED_LABELS: dict[str, dict[str, str]] = {
     "legal": {
         "title": "Reusable Intelligence Seeds",
@@ -9948,6 +10169,16 @@ class AppState:
             logger.warning("resolve_contradiction failed: %s", exc)
             return f"Error: {_escape(str(exc))}", ""
 
+    def load_objective_coverage(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_objective_coverage(matter_id))
+            return _fmt_objective_coverage(data if isinstance(data, dict) else {}, domain=domain)
+        except Exception as exc:
+            logger.warning("load_objective_coverage failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def load_knowledge_seeds(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -11978,6 +12209,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             so_scorecard_html = gr.HTML("<div class='viz-empty'>SO scorecard will appear here after an investigation.</div>")
             refresh_so_scorecard_btn = gr.Button("Refresh SO Scorecard", variant="secondary", size="sm")
 
+        with gr.Accordion("Objective Coverage — what are we proving and how far along", open=False):
+            gr.Markdown(
+                "Each objective represents something Irys is trying to prove, decide, or assess. "
+                "Coverage shows how well the evidence supports each objective, which criteria are "
+                "satisfied, and where gaps remain. This is the central map of analysis progress."
+            )
+            objective_coverage_html = gr.HTML("<div class='viz-empty'>Objective coverage will appear here after an investigation.</div>")
+            refresh_objective_coverage_btn = gr.Button("Refresh Coverage", variant="secondary", size="sm")
+
         with gr.Accordion("Answer Audit — freshness, sources, and policy for every answer", open=False):
             gr.Markdown(
                 "Every answer Irys produces is backed by a dependency manifest that tracks "
@@ -12598,6 +12838,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 inputs=[matter_id_box],
                 outputs=[domain_composition_html],
             ).then(
+                fn=lambda mid: state.load_objective_coverage(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[objective_coverage_html],
+            ).then(
                 fn=lambda mid: state.load_knowledge_seeds(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[knowledge_seeds_html],
@@ -12679,6 +12923,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_domain_composition(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_composition_html],
+            ).then(
+                fn=lambda mid: state.load_objective_coverage(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[objective_coverage_html],
             ).then(
                 fn=lambda mid: state.load_knowledge_seeds(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
@@ -12766,6 +13014,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_quant_ontology(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[quant_ontology_html, quant_alias_raw_dropdown],
+        ).then(
+            fn=lambda mid: state.load_objective_coverage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[objective_coverage_html],
         ).then(
             fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -13037,6 +13289,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_so_scorecard(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[so_scorecard_html],
+        )
+        refresh_objective_coverage_btn.click(
+            fn=lambda mid: state.load_objective_coverage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[objective_coverage_html],
         )
         refresh_answer_audit_btn.click(
             fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),

@@ -577,6 +577,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.assumptions.set_status(assumption_id, status, reason or None)
 
+    async def get_objective_coverage(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_objective_coverage_workbench()
+
     async def get_assumption_review(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_assumption_review_workbench()

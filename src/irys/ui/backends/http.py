@@ -283,6 +283,13 @@ class HttpBackend(UIBackend):
         )
         return bool(result.get("updated")) if isinstance(result, dict) else False
 
+    async def get_objective_coverage(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/objective-coverage")
+        if not isinstance(result, dict):
+            _log.warning("get_objective_coverage: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def get_assumption_review(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/assumption-review")
         if not isinstance(result, dict):

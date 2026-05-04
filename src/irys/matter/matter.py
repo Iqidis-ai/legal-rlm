@@ -3621,6 +3621,95 @@ class MatterModel:
         return {"success": True, "seed_id": seed_id, "seed_kind": seed_kind}
 
     # ------------------------------------------------------------------
+    # Objective coverage workbench (SO-4)
+    # ------------------------------------------------------------------
+
+    def get_objective_coverage_workbench(self) -> dict:
+        """Professional objective coverage dashboard: per-objective criteria,
+        support/attack counts, coverage badges, and open gaps."""
+        coverage_report = self.get_issue_coverage_report()
+        coverage_map = {r["id"]: r for r in coverage_report if isinstance(r, dict)}
+
+        open_issues = self.issues.get_open_issues(min_materiality=0.0)
+        objectives = []
+        for issue in open_issues:
+            if not isinstance(issue, dict):
+                continue
+            iid = issue["id"]
+            cov = coverage_map.get(iid, {})
+
+            predicates = self.issues.get_predicates(iid)
+            pred_total = len(predicates)
+            pred_satisfied = sum(1 for p in predicates if isinstance(p, dict) and p.get("status") == "resolved")
+            pred_blocked = sum(1 for p in predicates if isinstance(p, dict) and p.get("status") == "blocked")
+            pred_contested = sum(1 for p in predicates if isinstance(p, dict) and p.get("status") == "contested")
+
+            gap_rows = self.db.execute(
+                """SELECT g.id, g.gap_type, g.description, g.materiality_score
+                   FROM gap g JOIN gap_link gl ON gl.gap_id = g.id
+                   WHERE g.matter_id=? AND g.status='open'
+                     AND gl.affected_type='issue' AND gl.affected_id=?
+                   ORDER BY g.materiality_score DESC LIMIT 10""",
+                (self.matter_id, iid),
+            ).fetchall()
+            gaps = [dict(r) for r in gap_rows]
+
+            coverage_frac = float(cov.get("coverage_fraction", 0.0))
+            supporting = int(cov.get("supporting_count", 0))
+            has_proof_gap = bool(cov.get("has_proof_gap", False))
+
+            if coverage_frac >= 0.8 and not has_proof_gap and pred_blocked == 0:
+                badge = "covered"
+            elif pred_blocked > 0:
+                badge = "blocked"
+            elif has_proof_gap or len(gaps) > 0:
+                badge = "missing"
+            elif pred_contested > 0:
+                badge = "contradicted"
+            elif coverage_frac >= 0.3:
+                badge = "thin"
+            else:
+                badge = "missing"
+
+            objectives.append({
+                "id": iid,
+                "title": issue.get("title", ""),
+                "issue_type": issue.get("issue_type", ""),
+                "materiality": float(issue.get("materiality", 0.5)),
+                "salience": float(issue.get("salience", 0.5)),
+                "burden_side": issue.get("burden_side"),
+                "parent_issue_id": issue.get("parent_issue_id"),
+                "coverage_fraction": coverage_frac,
+                "coverage_badge": badge,
+                "supporting_count": supporting,
+                "predicate_total": pred_total,
+                "predicate_satisfied": pred_satisfied,
+                "predicate_blocked": pred_blocked,
+                "predicate_contested": pred_contested,
+                "predicates": predicates[:20],
+                "gaps": gaps,
+                "has_proof_gap": has_proof_gap,
+            })
+
+        covered = sum(1 for o in objectives if o["coverage_badge"] == "covered")
+        thin = sum(1 for o in objectives if o["coverage_badge"] == "thin")
+        blocked = sum(1 for o in objectives if o["coverage_badge"] == "blocked")
+        missing = sum(1 for o in objectives if o["coverage_badge"] == "missing")
+        contradicted = sum(1 for o in objectives if o["coverage_badge"] == "contradicted")
+
+        return {
+            "total": len(objectives),
+            "objectives": objectives,
+            "summary": {
+                "covered": covered,
+                "thin": thin,
+                "blocked": blocked,
+                "missing": missing,
+                "contradicted": contradicted,
+            },
+        }
+
+    # ------------------------------------------------------------------
     # Assumption lifecycle review (SO-3, SO-7)
     # ------------------------------------------------------------------
 
@@ -3696,8 +3785,8 @@ class MatterModel:
                             reason=f"Assumption invalidated: {reason or 'no reason'}",
                         )
                         blocked_count += 1
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        _log.warning("Failed to block predicate %s: %s", t.get("target_id"), exc)
             if blocked_count:
                 actions.append(f"Blocked {blocked_count} predicate(s)")
             stmt = assumption.get("statement", "")[:120]

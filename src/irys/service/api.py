@@ -2756,6 +2756,17 @@ async def review_assumption(
     )
 
 
+@app.get(
+    "/matter/{matter_id}/objective-coverage",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_objective_coverage(matter_id: str):
+    """Return objective coverage workbench: per-objective criteria, support counts, gaps, coverage badges."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_objective_coverage_workbench()
+
+
 _PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
 
 

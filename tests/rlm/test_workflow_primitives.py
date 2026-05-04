@@ -5244,3 +5244,154 @@ def test_assumption_review_invalidate_blocks_predicates():
     result = model.review_assumption(aid, "invalidated", reason="Data changed")
     assert result["success"]
     assert any("Blocked" in a for a in result.get("actions", []))
+
+
+# --- Objective Coverage Workbench tests ---
+
+
+def test_fmt_objective_coverage_empty_returns_placeholder():
+    from irys.ui.app import _fmt_objective_coverage
+    html = _fmt_objective_coverage({})
+    assert "No objectives" in html or "viz-empty" in html
+
+
+def test_fmt_objective_coverage_renders_objectives():
+    from irys.ui.app import _fmt_objective_coverage
+    data = {
+        "total": 2,
+        "objectives": [
+            {
+                "id": "obj1abc",
+                "title": "Breach of Contract",
+                "issue_type": "claim",
+                "materiality": 0.9,
+                "salience": 0.8,
+                "burden_side": "plaintiff",
+                "coverage_fraction": 0.85,
+                "coverage_badge": "covered",
+                "supporting_count": 5,
+                "predicate_total": 3,
+                "predicate_satisfied": 2,
+                "predicate_blocked": 0,
+                "predicate_contested": 0,
+                "predicates": [
+                    {"description": "Duty existed", "status": "resolved"},
+                    {"description": "Breach occurred", "status": "resolved"},
+                    {"description": "Damages resulted", "status": "open"},
+                ],
+                "gaps": [],
+                "has_proof_gap": False,
+            },
+            {
+                "id": "obj2def",
+                "title": "Revenue Recognition",
+                "issue_type": "claim",
+                "materiality": 0.7,
+                "salience": 0.5,
+                "burden_side": None,
+                "coverage_fraction": 0.2,
+                "coverage_badge": "missing",
+                "supporting_count": 1,
+                "predicate_total": 2,
+                "predicate_satisfied": 0,
+                "predicate_blocked": 1,
+                "predicate_contested": 0,
+                "predicates": [
+                    {"description": "Revenue is measurable", "status": "blocked"},
+                    {"description": "Revenue is earned", "status": "open"},
+                ],
+                "gaps": [{"gap_type": "missing_document", "description": "Need Q2 data"}],
+                "has_proof_gap": True,
+            },
+        ],
+        "summary": {
+            "covered": 1,
+            "thin": 0,
+            "blocked": 0,
+            "missing": 1,
+            "contradicted": 0,
+        },
+    }
+    html = _fmt_objective_coverage(data, domain="legal")
+    assert "Breach of Contract" in html
+    assert "Revenue Recognition" in html
+    assert "Covered" in html
+    assert "Missing" in html
+    assert "Duty existed" in html
+    assert "85%" in html
+
+
+def test_fmt_objective_coverage_xss_escapes():
+    from irys.ui.app import _fmt_objective_coverage
+    data = {
+        "total": 1,
+        "objectives": [
+            {
+                "id": "<script>alert(1)</script>",
+                "title": "<img onerror=evil>",
+                "issue_type": "claim",
+                "materiality": 0.5,
+                "salience": 0.5,
+                "burden_side": None,
+                "coverage_fraction": 0.5,
+                "coverage_badge": "thin",
+                "supporting_count": 1,
+                "predicate_total": 0,
+                "predicate_satisfied": 0,
+                "predicate_blocked": 0,
+                "predicate_contested": 0,
+                "predicates": [],
+                "gaps": [],
+                "has_proof_gap": False,
+            },
+        ],
+        "summary": {"covered": 0, "thin": 1, "blocked": 0, "missing": 0, "contradicted": 0},
+    }
+    html = _fmt_objective_coverage(data)
+    assert "<script>" not in html
+    assert "<img onerror" not in html
+
+
+def test_fmt_objective_coverage_non_dict_guard():
+    from irys.ui.app import _fmt_objective_coverage
+    data = {
+        "total": 1,
+        "objectives": ["not a dict", 42],
+        "summary": {},
+    }
+    html = _fmt_objective_coverage(data)
+    assert "Objective" in html or "0 total" in html
+
+
+def test_objective_coverage_labels_all_five_domains():
+    from irys.ui.app import _OBJECTIVE_COVERAGE_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        assert domain in _OBJECTIVE_COVERAGE_LABELS
+        labels = _OBJECTIVE_COVERAGE_LABELS[domain]
+        for key in ("title", "empty", "objective", "criteria", "support", "gaps", "covered", "missing"):
+            assert key in labels, f"Missing key {key} for {domain}"
+
+
+def test_objective_coverage_workbench_empty():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    wb = model.get_objective_coverage_workbench()
+    assert wb["total"] == 0
+    assert wb["objectives"] == []
+
+
+def test_objective_coverage_workbench_with_issues():
+    from irys.matter.matter import MatterModel
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid1, _ = model.issues.upsert_issue("Test claim", IssueType.CLAIM, materiality=0.9)
+    model.issues.add_predicate(iid1, "Element A", "plaintiff")
+    model.issues.add_predicate(iid1, "Element B", "plaintiff")
+    iid2, _ = model.issues.upsert_issue("Secondary claim", IssueType.CLAIM, materiality=0.5)
+    wb = model.get_objective_coverage_workbench()
+    assert wb["total"] == 2
+    objs = wb["objectives"]
+    assert len(objs) == 2
+    obj1 = next(o for o in objs if o["id"] == iid1)
+    assert obj1["predicate_total"] == 2
+    assert obj1["predicate_satisfied"] == 0
