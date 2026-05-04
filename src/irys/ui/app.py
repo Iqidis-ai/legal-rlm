@@ -5473,10 +5473,13 @@ def _fmt_quant_facts(data: dict, domain: str = "legal") -> str:
     if not isinstance(by_kind, list) or not by_kind:
         return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
 
-    _raw_total = data.get("total", 0)
-    total = int(_raw_total) if isinstance(_raw_total, (int, float)) else 0
-    _raw_conflicted = data.get("total_conflicted", 0)
-    total_conflicted = int(_raw_conflicted) if isinstance(_raw_conflicted, (int, float)) else 0
+    def _safe_int(v, default: int = 0) -> int:
+        if isinstance(v, (int, float)) and math.isfinite(v):
+            return max(0, int(v))
+        return default
+
+    total = _safe_int(data.get("total", 0))
+    total_conflicted = _safe_int(data.get("total_conflicted", 0))
 
     parts = [
         f"<h3 style='margin:0 0 8px;'>{_escape(labels['title'])}</h3>",
@@ -5503,8 +5506,8 @@ def _fmt_quant_facts(data: dict, domain: str = "legal") -> str:
         facts = group.get("facts", [])
         if not isinstance(facts, list) or not facts:
             continue
-        count = int(group.get("count", 0)) if isinstance(group.get("count"), (int, float)) else len(facts)
-        conflicted = int(group.get("conflicted", 0)) if isinstance(group.get("conflicted"), (int, float)) else 0
+        count = _safe_int(group.get("count"), len(facts))
+        conflicted = _safe_int(group.get("conflicted"))
         kind_label = _escape(labels.get(kind, kind.replace("_", " ").title()))
         kind_color = kind_colors.get(kind, "#6b7280")
 
