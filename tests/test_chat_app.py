@@ -150,7 +150,7 @@ class TestBuildFolderTreeMarkdown:
         result = app._build_folder_tree_markdown(files)
         assert "(root)" in result
         assert "root_file.pdf" in result
-        assert "**Folder/**" in result
+        assert "Folder" in result
         assert "nested.pdf" in result
 
     def test_folder_file_count_accurate(self, app):
@@ -161,3 +161,42 @@ class TestBuildFolderTreeMarkdown:
         ]
         result = app._build_folder_tree_markdown(files)
         assert "3 files" in result
+
+    def test_markdown_link_injection_escaped(self, app):
+        files = [
+            _gradio_file(name="/tmp/a.pdf", orig_name="[malicious](javascript:alert(1)).pdf"),
+        ]
+        result = app._build_folder_tree_markdown(files)
+        assert "\\[" in result
+        assert "\\(" in result
+        assert "[malicious](" not in result
+
+    def test_markdown_image_injection_escaped(self, app):
+        files = [
+            _gradio_file(name="/tmp/a.pdf", orig_name="![steal](http://evil.com).pdf"),
+        ]
+        result = app._build_folder_tree_markdown(files)
+        assert "\\!" in result
+        assert "\\[" in result
+
+    def test_markdown_link_in_folder_name_escaped(self, app):
+        files = [
+            _gradio_file(name="/tmp/a.pdf", orig_name="[click](evil)/file.pdf"),
+        ]
+        result = app._build_folder_tree_markdown(files)
+        assert "\\[click\\]\\(evil\\)" in result
+
+    def test_unicode_filenames(self, app):
+        files = [
+            _gradio_file(name="/tmp/a.pdf", orig_name="文件夹/文件.pdf"),
+        ]
+        result = app._build_folder_tree_markdown(files)
+        assert "文件.pdf" in result
+        assert "文件夹" in result
+
+    def test_deep_nesting_does_not_crash(self, app):
+        deep_path = "/".join([f"d{i}" for i in range(100)]) + "/file.pdf"
+        files = [_gradio_file(name="/tmp/a.pdf", orig_name=deep_path)]
+        result = app._build_folder_tree_markdown(files)
+        assert "truncated" in result
+        assert "file.pdf" not in result

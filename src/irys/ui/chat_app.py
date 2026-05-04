@@ -308,6 +308,14 @@ class ChatApp:
 
         return None
 
+    _MAX_TREE_DEPTH = 50
+
+    @staticmethod
+    def _escape_md(text: str) -> str:
+        """Escape Markdown link/image syntax so filenames render as plain text."""
+        import re
+        return re.sub(r'([\\`\[\]()!<>])', r'\\\1', text)
+
     def _build_folder_tree_markdown(self, uploaded_files: list | None) -> str:
         if not uploaded_files:
             return ""
@@ -332,7 +340,12 @@ class ChatApp:
                 node = node.setdefault(part, {})
             node[parts[-1]] = None  # leaf file
 
+        esc = self._escape_md
+        max_depth = self._MAX_TREE_DEPTH
+
         def _render(node: dict, indent: int) -> list[str]:
+            if indent > max_depth:
+                return [f"{'  ' * indent}- *(truncated — nesting too deep)*"]
             lines: list[str] = []
             folders = sorted(
                 ((k, v) for k, v in node.items() if v is not None),
@@ -344,20 +357,22 @@ class ChatApp:
             )
             prefix = "  " * indent
             for name, children in folders:
-                file_count = _count_leaves(children)
-                lines.append(f"{prefix}- **{name}/** ({file_count} file{'s' if file_count != 1 else ''})")
+                file_count = _count_leaves(children, 0)
+                lines.append(f"{prefix}- **{esc(name)}/** ({file_count} file{'s' if file_count != 1 else ''})")
                 lines.extend(_render(children, indent + 1))
             for name in files:
-                lines.append(f"{prefix}- {name}")
+                lines.append(f"{prefix}- {esc(name)}")
             return lines
 
-        def _count_leaves(node: dict) -> int:
+        def _count_leaves(node: dict, depth: int) -> int:
+            if depth > max_depth:
+                return 0
             total = 0
             for v in node.values():
                 if v is None:
                     total += 1
                 else:
-                    total += _count_leaves(v)
+                    total += _count_leaves(v, depth + 1)
             return total
 
         top_folders = [(k, v) for k, v in tree.items() if v is not None]
@@ -370,16 +385,16 @@ class ChatApp:
         if top_files and has_folders:
             lines.append(f"**(root)** ({len(top_files)} file{'s' if len(top_files) != 1 else ''})")
             for name in sorted(top_files, key=str.lower):
-                lines.append(f"  - {name}")
+                lines.append(f"  - {esc(name)}")
 
         for name, children in sorted(top_folders, key=lambda x: x[0].lower()):
-            count = _count_leaves(children)
-            lines.append(f"**{name}/** ({count} file{'s' if count != 1 else ''})")
+            count = _count_leaves(children, 0)
+            lines.append(f"**{esc(name)}/** ({count} file{'s' if count != 1 else ''})")
             lines.extend(_render(children, 1))
 
         if top_files and not has_folders:
             for name in sorted(top_files, key=str.lower):
-                lines.append(f"- {name}")
+                lines.append(f"- {esc(name)}")
 
         if unnamed_count:
             lines.append(f"*(unnamed)* ({unnamed_count} file{'s' if unnamed_count != 1 else ''})")
