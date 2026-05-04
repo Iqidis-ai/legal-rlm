@@ -2092,6 +2092,161 @@ def test_fmt_issues_panel_domain_empty():
 
 
 # ------------------------------------------------------------------ #
+# _fmt_trust_notice tests                                              #
+# ------------------------------------------------------------------ #
+
+def test_fmt_trust_notice_empty():
+    from irys.ui.app import _fmt_trust_notice
+    assert _fmt_trust_notice([]) == ""
+
+
+def test_fmt_trust_notice_all_verified():
+    from irys.ui.app import _fmt_trust_notice
+    issues = [
+        {"verified_supporting_count": 3, "candidate_supporting_count": 1, "has_proof_gap": False, "title": "Issue A"},
+    ]
+    result = _fmt_trust_notice(issues)
+    assert "verified support" in result
+    assert "#dcfce7" in result  # green banner
+
+
+def test_fmt_trust_notice_hedging():
+    from irys.ui.app import _fmt_trust_notice
+    issues = [
+        {"verified_supporting_count": 0, "candidate_supporting_count": 2, "has_proof_gap": False, "title": "Issue A"},
+        {"verified_supporting_count": 1, "candidate_supporting_count": 0, "has_proof_gap": True, "title": "Issue B"},
+    ]
+    result = _fmt_trust_notice(issues)
+    assert "2 of 2" in result or "Hedging" in result.lower() or "hedging" in result.lower()
+    assert "#fef3c7" in result  # amber banner
+    assert "Issue A" in result
+    assert "Issue B" in result
+
+
+def test_fmt_trust_notice_domain_labels():
+    from irys.ui.app import _fmt_trust_notice
+    issues = [
+        {"verified_supporting_count": 3, "candidate_supporting_count": 0, "has_proof_gap": False, "title": "Issue A"},
+    ]
+    result_legal = _fmt_trust_notice(issues, domain="legal")
+    result_finance = _fmt_trust_notice(issues, domain="finance")
+    result_coding = _fmt_trust_notice(issues, domain="coding")
+    assert "attorney" in result_legal.lower()
+    assert "analyst" in result_finance.lower()
+    assert "engineer" in result_coding.lower()
+
+
+def test_fmt_trust_notice_xss():
+    from irys.ui.app import _fmt_trust_notice
+    issues = [
+        {"verified_supporting_count": 0, "candidate_supporting_count": 1, "has_proof_gap": True, "title": "<script>xss</script>"},
+    ]
+    result = _fmt_trust_notice(issues)
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+def test_fmt_trust_notice_non_dict_guard():
+    from irys.ui.app import _fmt_trust_notice
+    issues = [
+        {"verified_supporting_count": 2, "candidate_supporting_count": 0, "has_proof_gap": False, "title": "Good"},
+        "not-a-dict",
+        None,
+    ]
+    result = _fmt_trust_notice(issues)
+    assert "#dcfce7" in result or result == ""
+
+
+# ------------------------------------------------------------------ #
+# _fmt_source_drawer tests                                             #
+# ------------------------------------------------------------------ #
+
+def test_fmt_source_drawer_empty():
+    from irys.ui.app import _fmt_source_drawer
+    result = _fmt_source_drawer("assertion", "a-1", [], [])
+    assert "No source or review history" in result
+
+
+def test_fmt_source_drawer_provenance():
+    from irys.ui.app import _fmt_source_drawer
+    prov = [
+        {
+            "source_document_ref": "contract.pdf",
+            "source_span_id": "p3-s2",
+            "source_span_status": "found",
+            "created_at": "2026-05-01T12:00:00",
+            "tier": "direct_extraction",
+        },
+    ]
+    result = _fmt_source_drawer("assertion", "a-1", prov, [])
+    assert "contract.pdf" in result
+    assert "Where this came from" in result
+
+
+def test_fmt_source_drawer_verification():
+    from irys.ui.app import _fmt_source_drawer
+    events = [
+        {
+            "new_status": "verified",
+            "reviewed_by_kind": "user",
+            "created_at": "2026-05-02T14:00:00",
+        },
+    ]
+    result = _fmt_source_drawer("assertion", "a-1", [], events)
+    assert "Review history" in result
+    assert "Verified" in result
+
+
+def test_fmt_source_drawer_xss():
+    from irys.ui.app import _fmt_source_drawer
+    prov = [
+        {
+            "source_document_ref": "<img src=x onerror=alert(1)>",
+            "created_at": "2026-05-01",
+            "tier": "direct_extraction",
+        },
+    ]
+    result = _fmt_source_drawer("assertion", "a-1", prov, [])
+    assert "<img src=x" not in result
+    assert "&lt;img" in result
+
+
+def test_fmt_source_drawer_non_dict_guard():
+    from irys.ui.app import _fmt_source_drawer
+    prov = [{"source_document_ref": "file.pdf", "created_at": "2026-05-01"}, "stale", None]
+    events = [{"new_status": "verified", "reviewed_by_kind": "user", "created_at": "2026-05-02"}, 42]
+    result = _fmt_source_drawer("assertion", "a-1", prov, events)
+    assert "file.pdf" in result
+    assert "stale" not in result
+
+
+# ------------------------------------------------------------------ #
+# _fmt_overview (markdown export) tests                                #
+# ------------------------------------------------------------------ #
+
+def test_fmt_overview_empty():
+    from irys.ui.app import _fmt_overview
+    result = _fmt_overview({})
+    assert "matter" in result.lower() or "investigation" in result.lower() or result.strip() == ""
+
+
+def test_fmt_overview_basic():
+    from irys.ui.app import _fmt_overview
+    data = {
+        "stats": {"assertion_count": 10, "open_issue_count": 3, "open_gap_count": 1, "actor_count": 5},
+        "coverage_report": [{"id": "i1", "title": "Issue One", "coverage_fraction": 0.7}],
+        "weakest_issues": [{"id": "i2", "title": "Weak One", "coverage_fraction": 0.1}],
+        "top_gaps": [{"description": "Missing contract"}],
+        "pending_clarifications": [{"question_text": "What date?"}],
+    }
+    result = _fmt_overview(data)
+    assert "10" in result
+    assert "Weak One" in result
+    assert "Missing contract" in result
+    assert "What date?" in result
+
+
+# ------------------------------------------------------------------ #
 # _fmt_timeline_panel tests                                            #
 # ------------------------------------------------------------------ #
 
