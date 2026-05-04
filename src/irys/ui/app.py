@@ -6617,6 +6617,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading proof state: {_escape(exc)}</div>"
 
+    def recompute_proof_state(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            _run_async(self.backend().compute_proof_state(matter_id))
+            return self.load_proof_state(matter_id, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error recomputing proof state: {_escape(exc)}</div>"
+
     def load_authority_network(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -6699,6 +6708,18 @@ class AppState:
             return _fmt_system_health_panel(data, domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading system health: {_escape(exc)}</div>"
+
+    def flush_pending_propagation(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            result = _run_async(self.backend().flush_pending(matter_id))
+            revised = result.get("revised_count", 0) if isinstance(result, dict) else 0
+            health_html = self.load_system_health(matter_id, domain)
+            status = f"<div class='status-badge' style='background:#059669;color:white;padding:4px 10px;border-radius:4px;margin-bottom:8px;display:inline-block;'>Flush complete — {revised} assertion(s) revised</div>"
+            return status + health_html
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error flushing pending propagation: {_escape(exc)}</div>"
 
     def load_so_scorecard(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -8012,7 +8033,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "trust-weighted support vs. attack balance, and advocacy-only warnings."
             )
             proof_state_html = gr.HTML("<div class='viz-empty'>Proof state will appear here after an investigation.</div>")
-            refresh_proof_btn = gr.Button("Refresh Proof State", variant="secondary", size="sm")
+            with gr.Row():
+                refresh_proof_btn = gr.Button("Refresh Proof State", variant="secondary", size="sm")
+                recompute_proof_btn = gr.Button("Recompute Proof State", variant="primary", size="sm")
 
         with gr.Accordion("Authorities & References — cited sources of law, standards, and precedent", open=False):
             gr.Markdown(
@@ -8103,7 +8126,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "and contradictions. A healthy system has low dispute rates and zero oscillating assertions."
             )
             system_health_html = gr.HTML("<div class='viz-empty'>System health diagnostics will appear here after an investigation.</div>")
-            refresh_system_health_btn = gr.Button("Refresh System Health", variant="secondary", size="sm")
+            with gr.Row():
+                refresh_system_health_btn = gr.Button("Refresh System Health", variant="secondary", size="sm")
+                flush_pending_btn = gr.Button("Flush Pending Propagation", variant="primary", size="sm")
 
         with gr.Accordion("SO Scorecard — Sacred Outcome metrics vs targets", open=False):
             gr.Markdown(
@@ -8886,6 +8911,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box],
             outputs=[proof_state_html],
         )
+        recompute_proof_btn.click(
+            fn=lambda mid: state.recompute_proof_state(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[proof_state_html],
+        )
         refresh_authority_btn.click(
             fn=lambda mid: state.load_authority_network(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -8928,6 +8958,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         )
         refresh_system_health_btn.click(
             fn=lambda mid: state.load_system_health(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[system_health_html],
+        )
+        flush_pending_btn.click(
+            fn=lambda mid: state.flush_pending_propagation(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[system_health_html],
         )

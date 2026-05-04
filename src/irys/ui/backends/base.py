@@ -257,6 +257,16 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def compute_proof_state(self, matter_id: str) -> dict:
+        """Recompute proof state for all open issues. Returns updated count."""
+        ...
+
+    @abstractmethod
+    async def flush_pending(self, matter_id: str) -> dict:
+        """Drain pending propagation queues for belief revision convergence."""
+        ...
+
+    @abstractmethod
     async def get_so_scorecard(self, matter_id: str) -> dict:
         """Return Sacred Outcome metrics with targets and pass/fail status."""
         ...

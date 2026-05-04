@@ -349,6 +349,20 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/system-health")
         return result if isinstance(result, dict) else {}
 
+    async def compute_proof_state(self, matter_id: str) -> dict:
+        result = await self._post(f"/matter/{matter_id}/proof-state/compute")
+        if not isinstance(result, dict):
+            _log.warning("compute_proof_state: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
+    async def flush_pending(self, matter_id: str) -> dict:
+        result = await self._post(f"/matter/{matter_id}/flush-pending")
+        if not isinstance(result, dict):
+            _log.warning("flush_pending: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def get_so_scorecard(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/so-scorecard")
         return result if isinstance(result, dict) else {}

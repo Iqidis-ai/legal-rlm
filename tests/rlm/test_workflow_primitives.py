@@ -2333,3 +2333,75 @@ def test_fmt_document_intelligence_panel_xss():
     assert "<script>" not in result
     assert "<img " not in result
     assert "&lt;script&gt;" in result
+
+
+# ------------------------------------------------------------------ #
+# Backend: compute_proof_state / flush_pending abstract compliance    #
+# ------------------------------------------------------------------ #
+
+def test_http_backend_compute_proof_state_type_guard():
+    """HttpBackend.compute_proof_state returns {} on non-dict response."""
+    from irys.ui.backends.http import HttpBackend
+    backend = HttpBackend.__new__(HttpBackend)
+    import asyncio
+
+    async def _mock_post(path, body=None):
+        return "unexpected string"
+
+    backend._post = _mock_post
+    result = asyncio.run(
+        backend.compute_proof_state("m1")
+    )
+    assert result == {}
+
+
+def test_http_backend_flush_pending_type_guard():
+    """HttpBackend.flush_pending returns {} on non-dict response."""
+    from irys.ui.backends.http import HttpBackend
+    backend = HttpBackend.__new__(HttpBackend)
+    import asyncio
+
+    async def _mock_post(path, body=None):
+        return [1, 2, 3]
+
+    backend._post = _mock_post
+    result = asyncio.run(
+        backend.flush_pending("m1")
+    )
+    assert result == {}
+
+
+def test_http_backend_compute_proof_state_passthrough():
+    """HttpBackend.compute_proof_state passes through dict response."""
+    from irys.ui.backends.http import HttpBackend
+    backend = HttpBackend.__new__(HttpBackend)
+    import asyncio
+
+    expected = {"matter_id": "m1", "updated_count": 3, "states": []}
+
+    async def _mock_post(path, body=None):
+        return expected
+
+    backend._post = _mock_post
+    result = asyncio.run(
+        backend.compute_proof_state("m1")
+    )
+    assert result == expected
+
+
+def test_http_backend_flush_pending_passthrough():
+    """HttpBackend.flush_pending passes through dict response."""
+    from irys.ui.backends.http import HttpBackend
+    backend = HttpBackend.__new__(HttpBackend)
+    import asyncio
+
+    expected = {"status": "ok", "revised_count": 5}
+
+    async def _mock_post(path, body=None):
+        return expected
+
+    backend._post = _mock_post
+    result = asyncio.run(
+        backend.flush_pending("m1")
+    )
+    assert result == expected

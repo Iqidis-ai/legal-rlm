@@ -649,6 +649,38 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_system_health()
 
+    async def compute_proof_state(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        states = model.proof_state.compute_all()
+        return {"matter_id": matter_id, "updated_count": len(states), "states": states}
+
+    async def flush_pending(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        from ...matter.runtime import MatterRuntimeAdapter
+        with model._flush_lock:
+            flush_run_id = model.start_run(
+                "UI flush", objective="manual_flush",
+                operation_type="maintenance", trigger="ui",
+            )
+            try:
+                adapter = MatterRuntimeAdapter(model, run_id=flush_run_id)
+                revised = adapter._flush_revisions_locked()
+            except Exception as exc:
+                try:
+                    model.fail_run(flush_run_id, str(exc))
+                except Exception as fe:
+                    _log.warning("flush_pending fail_run failed for %s run %s: %s", matter_id, flush_run_id, fe)
+                raise
+            try:
+                model.complete_run(flush_run_id)
+            except Exception as ce:
+                try:
+                    model.fail_run(flush_run_id, str(ce))
+                except Exception as fe:
+                    _log.warning("flush_pending terminal close failed for %s run %s: %s", matter_id, flush_run_id, fe)
+                raise
+        return {"status": "ok", "revised_count": revised}
+
     async def get_so_scorecard(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_so_metrics()
