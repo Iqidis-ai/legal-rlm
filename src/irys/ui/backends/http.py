@@ -897,7 +897,8 @@ class HttpBackend(UIBackend):
             body["jurisdiction"] = jurisdiction
         result = await self._post(f"/matter/{matter_id}/authorities", body)
         if not isinstance(result, dict):
-            return {}
+            _log.warning("upsert_authority: expected dict, got %s", type(result).__name__)
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         if "authority_id" not in result and "id" in result:
             result["authority_id"] = result["id"]
         return result

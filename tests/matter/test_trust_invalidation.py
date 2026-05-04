@@ -626,6 +626,45 @@ def test_reclassify_privilege_clears_taint_on_unmark(model):
     assert model.memory_broker.object_is_clean("assertion", aid)
 
 
+def test_reclassify_privilege_taints_relative_path(model):
+    """Privilege taint must cover both inventory ID and relative_path
+    so build_query_context filters on either identity."""
+    run_id = model.start_run("priv path")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    inv_id, _ = model.inventory.upsert("docs/priv-path.pdf", "d" * 64, size_bytes=1)
+    model.document_cards.upsert(
+        doc_id=inv_id, title="Path test", doc_type="internal",
+        privilege_flag=False,
+    )
+    adapter.record_fact("Path fact", "docs/priv-path.pdf")
+    model.reclassify_privilege(
+        "docs/priv-path.pdf", new_flag=True,
+        reviewed_by_kind="attorney", reviewed_by_id="a1",
+    )
+    # Both inventory ID and relative_path should be tainted.
+    assert not model.memory_broker.object_is_clean("artifact", inv_id)
+    assert not model.memory_broker.object_is_clean("artifact", "docs/priv-path.pdf")
+
+
+def test_reclassify_card_fields_propagates_privilege_taint(model):
+    """reclassify_document_card_fields with privilege_flag must also
+    propagate taint, not just stale downstream."""
+    run_id = model.start_run("card priv")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    inv_id, _ = model.inventory.upsert("card-priv.docx", "e" * 64, size_bytes=1)
+    model.document_cards.upsert(
+        doc_id=inv_id, title="Card priv", doc_type="internal",
+        privilege_flag=False,
+    )
+    aid = adapter.record_fact("Card fact", "card-priv.docx")
+    result = model.reclassify_document_card_fields(
+        "card-priv.docx", privilege_flag=True, reviewed_by_kind="user",
+    )
+    assert "privilege_flag" in result.get("changed_fields", [])
+    assert not model.memory_broker.object_is_clean("artifact", inv_id)
+    assert not model.memory_broker.object_is_clean("assertion", aid)
+
+
 def test_re_extraction_revives_stale_occurrence(model):
     """P0.4 review fix #1: re-extracting an existing (doc, span)
     occurrence slot must revive its stale verification to candidate.

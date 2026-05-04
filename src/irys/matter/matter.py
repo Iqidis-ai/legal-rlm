@@ -1659,13 +1659,14 @@ class MatterModel:
         no trust_revision bump).
         """
         inv = self.db.execute(
-            """SELECT id FROM document_inventory
+            """SELECT id, relative_path FROM document_inventory
                WHERE matter_id=? AND (id=? OR relative_path=?)""",
             (self.matter_id, doc_id, doc_id),
         ).fetchone()
         if inv is None:
             return 0
         inv_id = inv["id"]
+        rel_path = inv["relative_path"]
         card = self.document_cards.get_by_doc_id(inv_id)
         old_flag = card.get("privilege_flag") if card else None
         if old_flag == (1 if new_flag else 0):
@@ -1702,12 +1703,13 @@ class MatterModel:
         )
         # Propagate privilege taint to the document and all dependents
         # so the clean output pipeline filters them.
-        self._propagate_privilege_taint(inv_id, scope, new_flag)
+        self._propagate_privilege_taint(inv_id, rel_path, scope, new_flag)
         return staled
 
     def _propagate_privilege_taint(
         self,
         doc_id: str,
+        relative_path: str,
         scope: dict[str, set[str]],
         privileged: bool,
     ) -> None:
@@ -1721,7 +1723,11 @@ class MatterModel:
             "authority_ids": "authority",
         }
         broker = self.memory_broker
+        # Taint both the inventory ID and the relative path so
+        # build_query_context filters on either identity.
         targets: list[tuple[str, str]] = [("artifact", doc_id)]
+        if relative_path and relative_path != doc_id:
+            targets.append(("artifact", relative_path))
         for scope_key, target_kind in kind_map.items():
             for tid in scope.get(scope_key, set()):
                 targets.append((target_kind, tid))
@@ -6032,6 +6038,15 @@ class MatterModel:
                 scope,
                 reason=f"document_card_reclassified:{','.join(reason_parts)}",
             )
+            if "privilege_flag" in changed:
+                inv_row = self.db.execute(
+                    "SELECT relative_path FROM document_inventory WHERE id=?",
+                    (inv_id,),
+                ).fetchone()
+                rel_path = inv_row["relative_path"] if inv_row else ""
+                self._propagate_privilege_taint(
+                    inv_id, rel_path, scope, bool(privilege_flag),
+                )
 
         return {"changed_fields": changed, "staled_count": staled, "card_id": card_id}
 
