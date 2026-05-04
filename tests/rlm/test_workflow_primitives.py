@@ -2051,6 +2051,46 @@ def test_fmt_issues_panel_xss():
     assert "&lt;img" in result
 
 
+def test_fmt_issues_panel_domain_labels():
+    """Each domain renders its own terminology."""
+    from irys.ui.app import _fmt_issues_panel
+
+    issues = [
+        {
+            "id": "iss-1",
+            "title": "Test Issue",
+            "depth": 0,
+            "coverage_fraction": 0.5,
+            "verified_coverage_fraction": 0.3,
+            "verified_supporting_count": 2,
+            "candidate_supporting_count": 3,
+            "attacking_count": 1,
+            "has_proof_gap": True,
+        },
+    ]
+    domain_terms = {
+        "legal": ("verified", "attack", "proof gap"),
+        "finance": ("confirmed", "contradiction", "evidence gap"),
+        "coding": ("confirmed", "refutation", "verification gap"),
+        "academic_research": ("verified", "challenge", "evidence gap"),
+        "biomedical": ("verified", "contradiction", "evidence gap"),
+    }
+    for domain, (verified_label, attack_label, gap_label) in domain_terms.items():
+        result = _fmt_issues_panel(issues, domain=domain)
+        assert verified_label in result, f"{domain}: missing '{verified_label}'"
+        assert attack_label in result, f"{domain}: missing '{attack_label}'"
+        assert gap_label in result, f"{domain}: missing '{gap_label}'"
+
+
+def test_fmt_issues_panel_domain_empty():
+    """Empty states use domain-specific language."""
+    from irys.ui.app import _fmt_issues_panel
+
+    assert "No open theses" in _fmt_issues_panel([], domain="finance")
+    assert "No open hypotheses" in _fmt_issues_panel([], domain="coding")
+    assert "No open findings" in _fmt_issues_panel([], domain="biomedical")
+
+
 # ------------------------------------------------------------------ #
 # _fmt_timeline_panel tests                                            #
 # ------------------------------------------------------------------ #

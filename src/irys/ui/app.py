@@ -1145,9 +1145,74 @@ def _fmt_trust_notice(issues: list) -> str:
     )
 
 
-def _fmt_issues_panel(issues: list) -> str:
+_ISSUES_PANEL_LABELS = {
+    "legal": {
+        "empty": "No open issues.",
+        "issue_fallback": "Issue",
+        "verified": "verified",
+        "candidate": "candidate",
+        "attack": "attack",
+        "disputed": "disputed",
+        "blocked": "blocked",
+        "proof_gap": "proof gap",
+        "verified_cov": "Verified coverage",
+        "advisory_cov": "Advisory (candidate + verified)",
+    },
+    "finance": {
+        "empty": "No open theses.",
+        "issue_fallback": "Thesis",
+        "verified": "confirmed",
+        "candidate": "candidate",
+        "attack": "contradiction",
+        "disputed": "disputed",
+        "blocked": "blocked",
+        "proof_gap": "evidence gap",
+        "verified_cov": "Confirmed coverage",
+        "advisory_cov": "Advisory (candidate + confirmed)",
+    },
+    "coding": {
+        "empty": "No open hypotheses.",
+        "issue_fallback": "Hypothesis",
+        "verified": "confirmed",
+        "candidate": "candidate",
+        "attack": "refutation",
+        "disputed": "disputed",
+        "blocked": "blocked",
+        "proof_gap": "verification gap",
+        "verified_cov": "Confirmed coverage",
+        "advisory_cov": "Advisory (candidate + confirmed)",
+    },
+    "academic_research": {
+        "empty": "No open claims.",
+        "issue_fallback": "Claim",
+        "verified": "verified",
+        "candidate": "candidate",
+        "attack": "challenge",
+        "disputed": "disputed",
+        "blocked": "blocked",
+        "proof_gap": "evidence gap",
+        "verified_cov": "Verified coverage",
+        "advisory_cov": "Advisory (candidate + verified)",
+    },
+    "biomedical": {
+        "empty": "No open findings.",
+        "issue_fallback": "Finding",
+        "verified": "verified",
+        "candidate": "candidate",
+        "attack": "contradiction",
+        "disputed": "disputed",
+        "blocked": "blocked",
+        "proof_gap": "evidence gap",
+        "verified_cov": "Verified coverage",
+        "advisory_cov": "Advisory (candidate + verified)",
+    },
+}
+
+
+def _fmt_issues_panel(issues: list, domain: str = "legal") -> str:
+    labels = _ISSUES_PANEL_LABELS.get(domain, _ISSUES_PANEL_LABELS["legal"])
     if not issues:
-        return "<div class='viz-empty'>No open issues.</div>"
+        return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
 
     rows: list[str] = []
     for issue in sorted(
@@ -1163,27 +1228,27 @@ def _fmt_issues_panel(issues: list) -> str:
         verified_cov = max(0.0, min(1.0, _safe_float(issue.get("verified_coverage_fraction", 0.0))))
         verified_cnt = _safe_int(issue.get("verified_supporting_count", 0))
         candidate_cnt = _safe_int(issue.get("candidate_supporting_count", 0))
-        title = _escape(issue.get("title") or issue.get("id") or "Issue")
+        title = _escape(issue.get("title") or issue.get("id") or labels["issue_fallback"])
         proof = _escape(issue.get("proof_status", "none"))
         attack = _safe_int(issue.get("attacking_count", 0))
         contested = _safe_int(issue.get("contested_predicates", 0))
         blocked = _safe_int(issue.get("blocked_predicates", 0))
         details = [
-            f"{verified_cnt} verified",
-            f"{candidate_cnt} candidate",
-            f"{attack} attack" if attack else "",
+            f"{verified_cnt} {labels['verified']}",
+            f"{candidate_cnt} {labels['candidate']}",
+            f"{attack} {labels['attack']}" if attack else "",
         ]
         if contested:
-            details.append(f"{contested} disputed")
+            details.append(f"{contested} {labels['disputed']}")
         if blocked:
-            details.append(f"{blocked} blocked")
+            details.append(f"{blocked} {labels['blocked']}")
         details_str = " | ".join(d for d in details if d)
         gap_marker = ""
         if issue.get("has_proof_gap"):
             gap_marker = (
                 "<span style='margin-left:8px;padding:1px 6px;border-radius:8px;"
                 "background:#fee2e2;color:#991b1b;font-size:10px;font-weight:700;"
-                "text-transform:uppercase;letter-spacing:0.05em;'>proof gap</span>"
+                f"text-transform:uppercase;letter-spacing:0.05em;'>{_escape(labels['proof_gap'])}</span>"
             )
         # Two overlaid bars: thin dark verified bar inside a wider
         # light candidate-advisory bar. Legend below the track.
@@ -1214,10 +1279,10 @@ def _fmt_issues_panel(issues: list) -> str:
         "margin-bottom:8px;padding:0 4px;'>"
         "<span><span style='display:inline-block;width:10px;height:8px;"
         "background:#1d4ed8;border-radius:2px;vertical-align:middle;'></span>"
-        " Verified coverage</span>"
+        f" {_escape(labels['verified_cov'])}</span>"
         "<span><span style='display:inline-block;width:10px;height:8px;"
         "background:#bfdbfe;border-radius:2px;vertical-align:middle;'></span>"
-        " Advisory (candidate + verified)</span>"
+        f" {_escape(labels['advisory_cov'])}</span>"
         "</div>"
     )
     notice = _fmt_trust_notice(issues)
@@ -6185,12 +6250,12 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading overview: {_escape(exc)}</div>"
 
-    def load_issues(self, matter_id: str) -> str:
+    def load_issues(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             issues = _run_async(self.backend().list_issues(matter_id))
-            return _fmt_issues_panel(issues)
+            return _fmt_issues_panel(issues, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading issues: {_escape(exc)}</div>"
 
@@ -6488,7 +6553,7 @@ class AppState:
         issues_html = (
             _err_html("issues", issues)
             if isinstance(issues, BaseException)
-            else _fmt_issues_panel(issues)
+            else _fmt_issues_panel(issues, domain=_ov_domain)
         )
         overview_html = (
             _err_html("the overview", overview)
@@ -8800,7 +8865,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
             with ThreadPoolExecutor(max_workers=6) as pool:
                 f_overview = pool.submit(state.load_overview, mid, domain)
-                f_issues = pool.submit(state.load_issues, mid)
+                f_issues = pool.submit(state.load_issues, mid, domain)
                 f_gaps = pool.submit(state.load_gaps, mid)
                 f_assumptions = pool.submit(state.load_assumptions, mid)
                 f_assertions = pool.submit(state.load_assertions, mid)
@@ -9343,7 +9408,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 return (
                     _fmt_correction_result(result_text),
                     state.load_assertions(mid),
-                    state.load_issues(mid),
+                    state.load_issues(mid, domain=state._detect_domain(mid)),
                     state.load_overview(mid, domain=state._detect_domain(mid)),
                 )
             return _fmt_correction_result(result_text), gr.update(), gr.update(), gr.update()
@@ -9462,7 +9527,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 result, queue_html, dropdown_update,
                 state.load_review_count_badge(mid, domain=domain),
                 state.load_assertions(mid),
-                state.load_issues(mid),
+                state.load_issues(mid, domain=domain),
                 state.load_overview(mid, domain=domain),
             )
 
@@ -9499,7 +9564,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 dropdown_update,
                 state.load_review_count_badge(mid, domain=domain),
                 state.load_assertions(mid),
-                state.load_issues(mid),
+                state.load_issues(mid, domain=domain),
                 state.load_overview(mid, domain=domain),
             )
 
