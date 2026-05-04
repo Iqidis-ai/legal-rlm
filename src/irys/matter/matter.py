@@ -5062,7 +5062,11 @@ class MatterModel:
             d = dict(r)
             try:
                 d["payload"] = json.loads(d.pop("payload_json", "{}"))
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError) as exc:
+                _log.warning(
+                    "list_scenario_deltas: malformed payload_json for delta %s on branch %s: %s",
+                    d.get("id", "?"), branch_id, exc,
+                )
                 d["payload"] = {}
             result.append(d)
         return result

@@ -6572,10 +6572,9 @@ def _fmt_scenario_comparison(data: dict, domain: str = "legal") -> str:
     if isinstance(assumptions, list) and assumptions:
         body += f"<div style='margin-bottom:10px;'><strong>{_escape(L['assumptions'])}:</strong>"
         for a in assumptions[:10]:
-            if isinstance(a, dict):
-                text = _escape(str(a.get("text") or a.get("assumption") or str(a))[:150])
-            else:
-                text = _escape(str(a)[:150])
+            if not isinstance(a, dict):
+                continue
+            text = _escape(str(a.get("text") or a.get("assumption") or "")[:150])
             body += f"<div style='font-size:0.82em;color:#6b7280;padding-left:12px;'>&bull; {text}</div>"
         body += "</div>"
 
@@ -6619,12 +6618,11 @@ def _fmt_scenario_comparison(data: dict, domain: str = "legal") -> str:
             f"<strong style='color:#dc2626;'>{_escape(L['new_gaps'])} ({len(new_gaps)}):</strong>"
         )
         for g in new_gaps[:10]:
-            if isinstance(g, dict):
-                desc = _escape(str(g.get("description", ""))[:150])
-                gtype = _escape(str(g.get("gap_type", "")))
-                body += f"<div style='font-size:0.82em;color:#b91c1c;padding-left:12px;'>&#9888; [{gtype}] {desc}</div>"
-            else:
-                body += f"<div style='font-size:0.82em;color:#b91c1c;padding-left:12px;'>&#9888; {_escape(str(g)[:100])}</div>"
+            if not isinstance(g, dict):
+                continue
+            desc = _escape(str(g.get("description", ""))[:150])
+            gtype = _escape(str(g.get("gap_type", "")))
+            body += f"<div style='font-size:0.82em;color:#b91c1c;padding-left:12px;'>&#9888; [{gtype}] {desc}</div>"
         body += "</div>"
 
     resolved_gaps = data.get("resolved_gaps", [])
@@ -6634,11 +6632,10 @@ def _fmt_scenario_comparison(data: dict, domain: str = "legal") -> str:
             f"<strong style='color:#16a34a;'>{_escape(L['resolved_gaps'])} ({len(resolved_gaps)}):</strong>"
         )
         for rg in resolved_gaps[:10]:
-            if isinstance(rg, dict):
-                reason = _escape(str(rg.get("reason", ""))[:150])
-                body += f"<div style='font-size:0.82em;color:#047857;padding-left:12px;'>&#10003; {reason}</div>"
-            else:
-                body += f"<div style='font-size:0.82em;color:#047857;padding-left:12px;'>&#10003; {_escape(str(rg)[:100])}</div>"
+            if not isinstance(rg, dict):
+                continue
+            reason = _escape(str(rg.get("reason", ""))[:150])
+            body += f"<div style='font-size:0.82em;color:#047857;padding-left:12px;'>&#10003; {reason}</div>"
         body += "</div>"
 
     new_assertions = data.get("new_assertions", [])
@@ -6648,12 +6645,11 @@ def _fmt_scenario_comparison(data: dict, domain: str = "legal") -> str:
             f"<strong style='color:#2563eb;'>{_escape(L['new_assertions'])} ({len(new_assertions)}):</strong>"
         )
         for na in new_assertions[:10]:
-            if isinstance(na, dict):
-                prop = _escape(str(na.get("proposition", ""))[:150])
-                bs = _escape(str(na.get("belief_state", "")))
-                body += f"<div style='font-size:0.82em;padding-left:12px;'>+ {prop} [{bs}]</div>"
-            else:
-                body += f"<div style='font-size:0.82em;padding-left:12px;'>+ {_escape(str(na)[:100])}</div>"
+            if not isinstance(na, dict):
+                continue
+            prop = _escape(str(na.get("proposition", ""))[:150])
+            bs = _escape(str(na.get("belief_state", "")))
+            body += f"<div style='font-size:0.82em;padding-left:12px;'>+ {prop} [{bs}]</div>"
         body += "</div>"
 
     return f"{header}{body}</div>"
@@ -12426,6 +12422,7 @@ class AppState:
             data = _run_async(self.backend().compare_scenario_to_baseline(matter_id, bid))
             return _fmt_scenario_comparison(data, domain=domain)
         except Exception as exc:
+            logger.warning("load_scenario_comparison: %s", exc)
             return f"<div class='viz-empty'>Error comparing scenario: {_escape(str(exc))}</div>"
 
     def load_scenario_snapshot_history(
@@ -12440,6 +12437,7 @@ class AppState:
             data = _run_async(self.backend().list_scenario_snapshots(matter_id, bid))
             return _fmt_scenario_snapshot_history(data, domain=domain)
         except Exception as exc:
+            logger.warning("load_scenario_snapshot_history: %s", exc)
             return f"<div class='viz-empty'>Error loading snapshots: {_escape(str(exc))}</div>"
 
     def load_alternative_theories(self, matter_id: str, domain: str = "legal") -> str:
@@ -12951,6 +12949,7 @@ class AppState:
             ))
             return _fmt_operative_version_result(data, domain)
         except Exception as exc:
+            logger.warning("lookup_operative_version: %s", exc)
             return f"<div class='viz-empty'>Error looking up operative version: {_escape(str(exc))}</div>"
 
     def load_quant_thresholds(
@@ -13079,6 +13078,7 @@ class AppState:
             ))
             return _fmt_sensitivity_review_result(data, domain)
         except Exception as exc:
+            logger.warning("reclassify_document_sensitivity: %s", exc)
             return f"<div class='viz-empty'>Error reclassifying: {_escape(str(exc))}</div>"
 
     def mark_document_stale_action(
@@ -13094,6 +13094,7 @@ class AppState:
             ))
             return _fmt_sensitivity_review_result(data, domain)
         except Exception as exc:
+            logger.warning("mark_document_stale_action: %s", exc)
             return f"<div class='viz-empty'>Error marking stale: {_escape(str(exc))}</div>"
 
     def mark_span_stale_action(
@@ -13109,6 +13110,7 @@ class AppState:
             ))
             return _fmt_sensitivity_review_result(data, domain)
         except Exception as exc:
+            logger.warning("mark_span_stale_action: %s", exc)
             return f"<div class='viz-empty'>Error marking span stale: {_escape(str(exc))}</div>"
 
     def load_investigation_history(self, matter_id: str, domain: str = "legal") -> str:
