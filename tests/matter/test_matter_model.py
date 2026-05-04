@@ -285,6 +285,39 @@ def test_open_gaps_min_materiality_filters_low_materiality_gaps(model):
     assert high_gaps[0]["description"] == "Signed amendment not found"
 
 
+def test_gaps_for_issue_returns_linked_gaps(model):
+    """gaps_for_issue() must return only gaps linked to the specified issue."""
+    issue_id, _ = model.issues.upsert_issue(
+        "Test obligation", IssueType.CLAIM, materiality=0.8,
+    )
+    gap_id = model.record_gap(
+        gap_type=GapType.MISSING_DOCUMENT,
+        description="Contract missing for test",
+        materiality=0.8,
+        affected_type="issue",
+        affected_id=issue_id,
+    )
+    unlinked_gap_id = model.record_gap(
+        gap_type=GapType.MISSING_DOCUMENT,
+        description="Unrelated gap for test",
+        materiality=0.5,
+    )
+    result = model.gaps.gaps_for_issue(issue_id)
+    ids = [g["id"] for g in result]
+    assert gap_id in ids
+    assert unlinked_gap_id not in ids
+
+
+def test_count_contradictions_returns_aggregate(model):
+    """count_contradictions() must return integer count without fetching full rows."""
+    assert model.assertions.count_contradictions() == 0
+    a1 = _add_assertion(model, "Defendant breached the test contract")
+    a2 = _add_assertion(model, "Defendant performed all test obligations")
+    from irys.matter.enums import AssertionLinkType
+    model.assertions.link(a1, a2, AssertionLinkType.CONTRADICTS)
+    assert model.assertions.count_contradictions() >= 1
+
+
 # ---------------------------------------------------------------------------
 # Test 5: NullMatterAdapter is a safe no-op
 # ---------------------------------------------------------------------------
