@@ -9786,3 +9786,38 @@ def test_freshness_report_formatter_renders_table():
     assert "entities" in html
     assert "Namespace Freshness" in html
     assert "Hot-Answerable" in html
+
+
+def test_freshness_report_formatter_xss():
+    """_fmt_freshness_report escapes all namespace values."""
+    from irys.ui.app import _fmt_freshness_report
+    data = {
+        "matter_id": "test",
+        "namespace_count": 1,
+        "stale_namespaces": ["<script>alert(1)</script>"],
+        "is_hot_answerable": False,
+        "active_run_count": 0,
+        "last_update_at": "<img onerror=alert(1)>",
+        "namespaces": [
+            {
+                "namespace": "<script>xss</script>",
+                "revision": 1,
+                "state": "fresh",
+                "updated_at": "<b onmouseover=alert(1)>xss</b>",
+            },
+        ],
+    }
+    html = _fmt_freshness_report(data, domain="legal")
+    assert "<script>" not in html
+    assert "<img " not in html
+    assert "<b " not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_freshness_report_formatter_error_dict():
+    """_fmt_freshness_report surfaces error dicts from backend."""
+    from irys.ui.app import _fmt_freshness_report
+    data = {"error": "backend failed"}
+    html = _fmt_freshness_report(data, domain="legal")
+    assert "Backend error" in html
+    assert "backend failed" in html
