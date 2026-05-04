@@ -8906,3 +8906,92 @@ def test_query_context_safe_list_normalization():
     html = _fmt_query_context(data)
     assert "<strong>0</strong> documents" in html
     assert "<strong>0</strong> active assumptions" in html
+
+
+# ---------------------------------------------------------------------------
+# XSS regression tests for formatters previously lacking coverage
+# ---------------------------------------------------------------------------
+
+
+def test_belief_revision_panel_xss():
+    from irys.ui.app import _fmt_belief_revision_panel
+    revisions = [{
+        "proposition_text": "<script>alert('xss')</script>",
+        "old_belief_state": "<img onerror=alert(1)>",
+        "new_belief_state": "operative",
+        "cause": "<b>evil</b>",
+        "old_confidence": 0.5,
+        "new_confidence": 0.9,
+    }]
+    html = _fmt_belief_revision_panel(revisions)
+    assert "<script>" not in html
+    assert "<img onerror" not in html
+    assert "<b>evil</b>" not in html
+
+
+def test_contradiction_panel_xss():
+    from irys.ui.app import _fmt_contradiction_panel
+    contradictions = [{
+        "attacker_prop": "<script>alert(1)</script>",
+        "attacked_prop": "<img src=x onerror=alert(2)>",
+        "link_type": "<b>bad</b>",
+        "attacker_belief": "alleged",
+        "attacked_belief": "disputed",
+    }]
+    html = _fmt_contradiction_panel(contradictions)
+    assert "<script>" not in html
+    assert "<img src=x" not in html
+    assert "<b>bad</b>" not in html
+
+
+def test_document_versions_panel_xss():
+    from irys.ui.app import _fmt_document_versions_panel
+    families = [{
+        "members": [{
+            "relative_path": "<script>alert(1)</script>/evil.pdf",
+            "is_operative": True,
+        }]
+    }]
+    html = _fmt_document_versions_panel(families)
+    assert "<script>" not in html
+
+
+def test_quant_thresholds_panel_xss():
+    from irys.ui.app import _fmt_quant_thresholds_panel
+    violations = [{
+        "threshold": "<script>alert(1)</script>",
+        "level": "HIGH",
+        "description": "<img onerror=alert(2)>",
+        "amount": 100.0,
+    }]
+    html = _fmt_quant_thresholds_panel(violations)
+    assert "<script>" not in html
+    assert "<img onerror" not in html
+
+
+def test_system_health_panel_xss():
+    from irys.ui.app import _fmt_system_health_panel
+    health = {
+        "total_assertions": 10,
+        "disputed_assertions": 2,
+        "dispute_rate": 0.2,
+        "total_revisions": 5,
+        "open_gaps": 3,
+        "oscillating_assertions": ["<script>alert(1)</script>"],
+    }
+    html = _fmt_system_health_panel(health)
+    assert "<script>" not in html
+
+
+def test_domain_composition_panel_xss():
+    from irys.ui.app import _fmt_domain_composition_panel
+    data = {
+        "primary_profile": "<script>alert(1)</script>",
+        "detections": [{"domain_id": "<img onerror=alert(2)>", "confidence": 0.9}],
+        "source_roles": {"<b>evil</b>": 3},
+        "trust_weights": {"<script>x</script>": 0.5},
+    }
+    html = _fmt_domain_composition_panel(data)
+    assert "<script>" not in html
+    assert "<img onerror" not in html
+    assert "<b>evil</b>" not in html
