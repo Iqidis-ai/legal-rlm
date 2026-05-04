@@ -6181,12 +6181,17 @@ _BELIEF_STATE_COLORS: dict[str, str] = {
     "undetermined": "#6b7280",
 }
 
-_ORIGIN_LABELS: dict[str, str] = {
-    "ai_extracted": "AI-Extracted",
-    "attorney_annotated": "Attorney Note",
-    "system_inferred": "System Inferred",
-    "imported": "Imported",
-    "legacy_backfill": "Backfill",
+_ORIGIN_LABELS: dict[str, dict[str, str]] = {
+    "legal": {"ai_extracted": "AI-Extracted", "attorney_annotated": "Attorney Note",
+              "system_inferred": "System Inferred", "imported": "Imported", "legacy_backfill": "Backfill"},
+    "finance": {"ai_extracted": "AI-Extracted", "attorney_annotated": "Analyst Note",
+                "system_inferred": "System Inferred", "imported": "Imported", "legacy_backfill": "Backfill"},
+    "coding": {"ai_extracted": "AI-Extracted", "attorney_annotated": "Engineer Note",
+               "system_inferred": "System Inferred", "imported": "Imported", "legacy_backfill": "Backfill"},
+    "academic_research": {"ai_extracted": "AI-Extracted", "attorney_annotated": "Reviewer Note",
+                          "system_inferred": "System Inferred", "imported": "Imported", "legacy_backfill": "Backfill"},
+    "biomedical": {"ai_extracted": "AI-Extracted", "attorney_annotated": "Clinician Note",
+                   "system_inferred": "System Inferred", "imported": "Imported", "legacy_backfill": "Backfill"},
 }
 
 
@@ -6257,7 +6262,8 @@ def _fmt_assertion_inspector(health: dict, history: list | None = None, domain: 
             model_id = _escape(str(p.get("model_id") or "—"))
             model_tier = _escape(str(p.get("model_tier") or "—"))
             ts = _escape(str(p.get("created_at") or "—"))
-            origin = _escape(_ORIGIN_LABELS.get(event_kind, event_kind.replace("_", " ").title()))
+            _ol = _ORIGIN_LABELS.get(domain, _ORIGIN_LABELS["legal"])
+            origin = _escape(_ol.get(event_kind, event_kind.replace("_", " ").title()))
             source_ref = _escape(str(p.get("source_document_ref") or ""))
             span_status = p.get("source_span_status", "")
             span_badge = ""
