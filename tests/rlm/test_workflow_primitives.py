@@ -3736,6 +3736,95 @@ def test_fmt_gaps_missing_document_domain_labels():
     assert "Missing Records" in _fmt_gaps(gaps, [], domain="biomedical")
 
 
+def test_fmt_gap_workbench_basic():
+    from irys.ui.app import _fmt_gap_workbench
+    payload = {
+        "items": [
+            {
+                "gap_id": "g1",
+                "type": "missing_document",
+                "description": "Need employment contract",
+                "materiality_score": 0.8,
+                "blocker_score": 0.5,
+                "affected_issues": [{"affected_type": "issue", "affected_id": "i1", "title": "Wrongful termination"}],
+                "dependencies": [],
+                "missing_source_suggestion": "Upload the employment contract.",
+                "pending_clarifications": [{"question_text": "Was the contract verbal or written?"}],
+                "recommended_next_action": "clarify",
+            },
+        ],
+    }
+    result = _fmt_gap_workbench(payload)
+    assert "Need employment contract" in result
+    assert "Wrongful termination" in result
+    assert "Upload the employment contract" in result
+    assert "verbal or written" in result
+    assert "Answer clarification" in result
+    assert "0.80" in result
+
+
+def test_fmt_gap_workbench_empty():
+    from irys.ui.app import _fmt_gap_workbench
+    result = _fmt_gap_workbench({"items": []})
+    assert "No open gaps" in result
+
+
+def test_fmt_gap_workbench_domain_labels():
+    from irys.ui.app import _fmt_gap_workbench
+    payload = {
+        "items": [
+            {
+                "gap_id": "g1",
+                "type": "missing_spec",
+                "description": "Missing API spec",
+                "materiality_score": 0.5,
+                "blocker_score": 0.3,
+                "affected_issues": [],
+                "dependencies": [],
+                "missing_source_suggestion": "Provide spec.",
+                "pending_clarifications": [],
+                "recommended_next_action": "request_document",
+            },
+        ],
+    }
+    result_coding = _fmt_gap_workbench(payload, domain="coding")
+    assert "Missing specification" in result_coding or "Request spec" in result_coding
+    result_bio = _fmt_gap_workbench(payload, domain="biomedical")
+    assert "Missing record" in result_bio or "Request record" in result_bio
+
+
+def test_fmt_gap_workbench_non_dict_guard():
+    from irys.ui.app import _fmt_gap_workbench
+    payload = {"items": ["not-a-dict", None, 42]}
+    result = _fmt_gap_workbench(payload)
+    assert "No open gaps" in result or "0 open gap" in result
+
+
+def test_fmt_gap_workbench_xss():
+    from irys.ui.app import _fmt_gap_workbench
+    payload = {
+        "items": [
+            {
+                "gap_id": "g1",
+                "type": "missing_document",
+                "description": "<script>alert(1)</script>",
+                "materiality_score": 0.5,
+                "blocker_score": 0.3,
+                "affected_issues": [{"affected_type": "issue", "affected_id": "i1", "title": "<img onerror=x>"}],
+                "dependencies": [],
+                "missing_source_suggestion": "<b>bold</b>",
+                "pending_clarifications": [{"question_text": "<iframe>"}],
+                "recommended_next_action": "investigate",
+            },
+        ],
+    }
+    result = _fmt_gap_workbench(payload)
+    assert "<script>" not in result
+    assert "<img onerror" not in result
+    assert "<iframe>" not in result
+    assert "&lt;script&gt;" in result
+
+
 def test_doc_intel_trust_distribution():
     """Document intelligence panel shows trust override distribution."""
     from irys.ui.app import _fmt_document_intelligence_panel

@@ -2595,6 +2595,25 @@ async def clear_decision_context(matter_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/gap-workbench",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_gap_workbench(
+    matter_id: str,
+    min_materiality: float = 0.0,
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """Consolidated gap-to-action workbench: gaps + affected issues +
+    clarifications + next-action recommendations (SO-7, SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_gap_workbench(
+        min_materiality=min_materiality,
+        limit=limit,
+    )
+
+
+@app.get(
     "/matter/{matter_id}/gaps",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

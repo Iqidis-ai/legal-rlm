@@ -3310,6 +3310,19 @@ class MatterModel:
             affected_type=affected_type, affected_id=affected_id,
         )
 
+    def get_gap_workbench(
+        self,
+        min_materiality: float = 0.0,
+        limit: int = 50,
+    ) -> dict:
+        return {
+            "matter_id": self.matter_id,
+            "items": self.gaps.workbench(
+                min_materiality=min_materiality,
+                limit=limit,
+            ),
+        }
+
     # ------------------------------------------------------------------
     # Document intelligence (cards + spans)
     # ------------------------------------------------------------------

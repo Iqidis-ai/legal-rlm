@@ -162,6 +162,10 @@ class HttpBackend(UIBackend):
             return []
         return result
 
+    async def get_gap_workbench(self, matter_id: str, limit: int = 50) -> dict:
+        result = await self._get(f"/matter/{matter_id}/gap-workbench", {"limit": limit})
+        return result if isinstance(result, dict) else {"items": []}
+
     async def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str = "") -> bool:
         result = await self._post(f"/matter/{matter_id}/gaps/{gap_id}/resolve", {"resolution_note": resolution_note})
         return bool(result.get("resolved")) if isinstance(result, dict) else False

@@ -100,6 +100,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_gap_workbench(self, matter_id: str, limit: int = 50) -> dict:
+        """Consolidated gap-to-action workbench (SO-7, SO-3)."""
+        ...
+
+    @abstractmethod
     async def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str = "") -> bool:
         """Mark a gap as resolved with an optional note (SO-7)."""
         ...

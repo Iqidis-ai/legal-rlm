@@ -5703,6 +5703,141 @@ _MISSING_DOC_HEADER: dict[str, str] = {
 }
 
 
+_GAP_WORKBENCH_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Gap-to-Action Workbench",
+        "empty": "No open gaps or pending clarifications.",
+        "investigate": "Investigate",
+        "request_document": "Request document",
+        "clarify": "Answer clarification",
+        "escalate": "Escalate",
+        "affected": "Affected issues",
+        "source": "Missing source",
+        "clarifications": "Clarifications",
+    },
+    "finance": {
+        "title": "Gap-to-Action Workbench",
+        "empty": "No open gaps or pending items.",
+        "investigate": "Investigate",
+        "request_document": "Request filing",
+        "clarify": "Answer question",
+        "escalate": "Escalate",
+        "affected": "Affected positions",
+        "source": "Missing filing",
+        "clarifications": "Pending questions",
+    },
+    "coding": {
+        "title": "Gap-to-Action Workbench",
+        "empty": "No open gaps or pending items.",
+        "investigate": "Investigate",
+        "request_document": "Request spec",
+        "clarify": "Answer question",
+        "escalate": "Escalate",
+        "affected": "Affected requirements",
+        "source": "Missing specification",
+        "clarifications": "Pending questions",
+    },
+    "academic_research": {
+        "title": "Gap-to-Action Workbench",
+        "empty": "No open gaps or pending items.",
+        "investigate": "Investigate",
+        "request_document": "Request source",
+        "clarify": "Answer question",
+        "escalate": "Escalate",
+        "affected": "Affected claims",
+        "source": "Missing reference",
+        "clarifications": "Pending questions",
+    },
+    "biomedical": {
+        "title": "Gap-to-Action Workbench",
+        "empty": "No open gaps or pending items.",
+        "investigate": "Investigate",
+        "request_document": "Request record",
+        "clarify": "Answer question",
+        "escalate": "Escalate",
+        "affected": "Affected findings",
+        "source": "Missing record",
+        "clarifications": "Pending questions",
+    },
+}
+
+_GAP_ACTION_COLORS: dict[str, str] = {
+    "investigate": "#2563eb",
+    "request_document": "#d97706",
+    "clarify": "#7c3aed",
+    "escalate": "#dc2626",
+}
+
+
+def _fmt_gap_workbench(payload: dict, domain: str = "legal") -> str:
+    labels = _GAP_WORKBENCH_LABELS.get(domain, _GAP_WORKBENCH_LABELS["legal"])
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    if not items:
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    cards: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        action = item.get("recommended_next_action", "investigate")
+        action_label = labels.get(action, action.replace("_", " ").title())
+        action_color = _GAP_ACTION_COLORS.get(action, "#6b7280")
+        desc = _escape(str(item.get("description", "")))
+        typ = _escape(str(item.get("type", "")).replace("_", " ").title())
+        mat = _safe_float(item.get("materiality_score", 0))
+        mat_color = "#dc2626" if mat >= 0.7 else "#f59e0b" if mat >= 0.4 else "#6b7280"
+        source = _escape(str(item.get("missing_source_suggestion", "")))
+
+        issue_parts = []
+        for iss in (item.get("affected_issues") or [])[:4]:
+            if not isinstance(iss, dict):
+                continue
+            t = iss.get("title") or iss.get("affected_id", "")[:8]
+            issue_parts.append(_escape(str(t)))
+        issues_html = ", ".join(issue_parts) if issue_parts else "<span style='color:#9ca3af'>None linked</span>"
+
+        clar_items = []
+        for c in (item.get("pending_clarifications") or []):
+            if not isinstance(c, dict):
+                continue
+            q = _escape(str(c.get("question_text", "")))
+            if q:
+                clar_items.append(f"<li style='margin:2px 0;'>{q}</li>")
+        clar_html = (
+            f"<ul style='margin:4px 0;padding-left:16px;font-size:12px;'>{''.join(clar_items)}</ul>"
+            if clar_items
+            else "<span style='color:#9ca3af;font-size:12px;'>None pending</span>"
+        )
+
+        cards.append(
+            f"<div style='border-bottom:1px solid #e5e7eb;padding:12px 4px;'>"
+            f"<div style='display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:6px;'>"
+            f"<span class='pill pill-neutral'>{typ}</span>"
+            f"<span style='font-weight:700;color:{mat_color};'>{mat:.2f}</span>"
+            f"<span style='display:inline-block;padding:2px 10px;border-radius:10px;"
+            f"background:{action_color};color:white;font-size:11px;font-weight:600;'>"
+            f"{_escape(action_label)}</span>"
+            f"</div>"
+            f"<div style='color:#1f2937;line-height:1.5;margin-bottom:8px;'>{desc}</div>"
+            f"<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;font-size:12px;'>"
+            f"<div><div style='font-size:11px;color:#6b7280;font-weight:700;margin-bottom:2px;'>"
+            f"{labels['affected']}</div><div>{issues_html}</div></div>"
+            f"<div><div style='font-size:11px;color:#6b7280;font-weight:700;margin-bottom:2px;'>"
+            f"{labels['source']}</div><div style='color:#374151;'>{source}</div></div>"
+            f"<div><div style='font-size:11px;color:#6b7280;font-weight:700;margin-bottom:2px;'>"
+            f"{labels['clarifications']}</div>{clar_html}</div>"
+            f"</div></div>"
+        )
+
+    return (
+        f"<div style='max-height:620px;overflow-y:auto;'>"
+        f"<div class='viz-header'><strong>{labels['title']}</strong>"
+        f" &mdash; {len(cards)} open gap(s)</div>"
+        + "".join(cards)
+        + "</div>"
+    )
+
+
 def _fmt_gaps(gaps: list, clarifications: list, domain: str = "legal", issue_titles: dict | None = None) -> str:
     labels = _GAP_LABELS.get(domain, _GAP_LABELS["legal"])
     _titles = issue_titles or {}
@@ -8059,6 +8194,17 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading gaps: {_escape(exc)}</div>"
 
+    def load_gap_workbench(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            domain = self._detect_domain(matter_id)
+            payload = _run_async(self.backend().get_gap_workbench(matter_id, limit=50))
+            return _fmt_gap_workbench(payload, domain=domain)
+        except Exception as exc:
+            logger.warning("Gap workbench load failed: %s", exc)
+            return f"<div class='viz-empty'>Error loading gap workbench: {_escape(str(exc))}</div>"
+
     def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str) -> tuple[str, str]:
         if not matter_id or matter_id == "—":
             return "Load a matter first.", ""
@@ -9924,6 +10070,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )
             batch_review_result = gr.Markdown("", visible=False)
 
+        with gr.Accordion("Gap-to-Action Workbench — consolidated gap review", open=True):
+            gr.Markdown(
+                "Consolidated view of every open gap with affected issues, missing sources, "
+                "pending clarifications, and a recommended next action. Higher materiality "
+                "gaps appear first."
+            )
+            gap_workbench_html = gr.HTML(
+                "<div class='viz-empty'>Gap workbench will appear after investigation.</div>"
+            )
+            refresh_gap_workbench_btn = gr.Button(
+                "Refresh Workbench", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Gaps & Missingness — what the system knows it does not know", open=False):
             gr.Markdown(
                 "Every gap represents something the matter model needs but does not have: "
@@ -10985,6 +11144,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, q: state.search_assertions(mid, q),
             inputs=[matter_id_box, assertion_search_box],
             outputs=[assertions_md],
+        )
+        refresh_gap_workbench_btn.click(
+            fn=lambda mid: state.load_gap_workbench(mid),
+            inputs=[matter_id_box],
+            outputs=[gap_workbench_html],
         )
         refresh_gaps_btn.click(
             fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),

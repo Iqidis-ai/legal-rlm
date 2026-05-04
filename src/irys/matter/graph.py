@@ -1731,6 +1731,103 @@ class GapStore:
         ).fetchone()
         return row[0]
 
+    def workbench(self, min_materiality: float = 0.0, limit: int = 50) -> list[dict]:
+        """Consolidated gap-to-action workbench: gaps + affected issues +
+        clarifications + next-action recommendations (SO-7, SO-3)."""
+        gap_rows = self.db.execute(
+            """SELECT id, gap_type, description, expected_artifact,
+                      materiality_score, blocker_score, status, created_at, updated_at
+               FROM gap
+               WHERE matter_id=? AND status='open' AND materiality_score >= ?
+               ORDER BY materiality_score DESC, blocker_score DESC, created_at DESC
+               LIMIT ?""",
+            (self.matter_id, min_materiality, limit),
+        ).fetchall()
+        if not gap_rows:
+            return []
+
+        gap_ids = [r["id"] for r in gap_rows]
+        placeholders = ",".join("?" for _ in gap_ids)
+
+        link_rows = self.db.execute(
+            f"""SELECT gl.gap_id, gl.affected_type, gl.affected_id,
+                      i.title AS issue_title
+               FROM gap_link gl
+               LEFT JOIN issue i
+                 ON gl.affected_type='issue'
+                AND gl.affected_id=i.id
+                AND i.matter_id=?
+               WHERE gl.gap_id IN ({placeholders})
+               ORDER BY gl.created_at ASC""",
+            [self.matter_id] + gap_ids,
+        ).fetchall()
+
+        clarification_rows = self.db.execute(
+            f"""SELECT id, gap_id, question_text, why_it_matters,
+                      expected_impact, created_at
+               FROM clarification_question
+               WHERE matter_id=? AND status='pending'
+                 AND gap_id IN ({placeholders})
+               ORDER BY created_at DESC""",
+            [self.matter_id] + gap_ids,
+        ).fetchall()
+
+        links_by_gap: dict[str, list[dict]] = {}
+        for r in link_rows:
+            links_by_gap.setdefault(r["gap_id"], []).append({
+                "affected_type": r["affected_type"],
+                "affected_id": r["affected_id"],
+                "title": r["issue_title"],
+            })
+
+        clarifications_by_gap: dict[str, list[dict]] = {}
+        for r in clarification_rows:
+            clarifications_by_gap.setdefault(r["gap_id"], []).append(dict(r))
+
+        def _source_suggestion(g: dict) -> str:
+            if g.get("expected_artifact"):
+                return g["expected_artifact"]
+            gt = (g.get("gap_type") or "").lower()
+            if "document" in gt:
+                return "Upload or identify the missing source document."
+            if "predicate" in gt or "proof" in gt:
+                return "Provide evidence tied to the affected issue element."
+            if "contradiction" in gt:
+                return "Provide a controlling source or instruction resolving the conflict."
+            return "Provide the document, fact, or user instruction needed to close this gap."
+
+        def _next_action(g: dict, clars: list[dict]) -> str:
+            gt = (g.get("gap_type") or "").lower()
+            mat = float(g.get("materiality_score") or 0.0)
+            if clars:
+                return "clarify"
+            if "document" in gt:
+                return "request_document"
+            if mat >= 0.85 or float(g.get("blocker_score") or 0.0) >= 0.75:
+                return "escalate"
+            return "investigate"
+
+        items = []
+        for row in gap_rows:
+            g = dict(row)
+            clars = clarifications_by_gap.get(g["id"], [])
+            items.append({
+                "gap_id": g["id"],
+                "type": g["gap_type"],
+                "description": g["description"],
+                "materiality_score": g["materiality_score"],
+                "blocker_score": g["blocker_score"],
+                "affected_issues": [
+                    lnk for lnk in links_by_gap.get(g["id"], [])
+                    if lnk["affected_type"] == "issue"
+                ],
+                "dependencies": links_by_gap.get(g["id"], []),
+                "missing_source_suggestion": _source_suggestion(g),
+                "pending_clarifications": clars,
+                "recommended_next_action": _next_action(g, clars),
+            })
+        return items
+
 
 class ActorStore:
     """
