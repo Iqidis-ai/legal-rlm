@@ -3327,3 +3327,26 @@ def test_issue_assertions_backend_interface():
     params = list(sig.parameters.keys())
     assert "matter_id" in params
     assert "issue_id" in params
+    assert hasattr(UIBackend, "get_issue_authorities")
+    sig2 = inspect.signature(UIBackend.get_issue_authorities)
+    assert "issue_id" in list(sig2.parameters.keys())
+
+
+def test_fmt_issue_assertions_with_authorities():
+    from irys.ui.app import _fmt_issue_assertions
+    assertions = [
+        {"id": "a1", "proposition_text": "Claim", "relation_type": "supporting",
+         "belief_state": "accepted", "confidence": 0.8},
+    ]
+    authorities = [
+        {"citation": "Smith v. Jones, 123 F.3d 456", "authority_type": "case",
+         "weight": "binding", "relevance": "supporting"},
+        {"citation": "UCC § 2-207", "authority_type": "statute",
+         "weight": "authoritative", "relevance": "neutral"},
+    ]
+    result = _fmt_issue_assertions(assertions, "iss-1", authorities=authorities, domain="legal")
+    assert "Smith v. Jones" in result
+    assert "UCC" in result
+    assert "Linked Authorities" in result
+    assert "case" in result
+    assert "binding" in result

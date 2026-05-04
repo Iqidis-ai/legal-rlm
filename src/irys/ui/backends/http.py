@@ -141,6 +141,10 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/issues/{issue_id}/assertions")
         return result if isinstance(result, list) else []
 
+    async def get_issue_authorities(self, matter_id: str, issue_id: str) -> list[dict]:
+        result = await self._get(f"/matter/{matter_id}/issues/{issue_id}/authorities")
+        return result if isinstance(result, list) else []
+
     async def list_gaps(self, matter_id: str, limit: int = 50) -> list[dict]:
         result = await self._get(f"/matter/{matter_id}/gaps", {"limit": limit})
         if isinstance(result, dict):

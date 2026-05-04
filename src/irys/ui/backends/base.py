@@ -81,6 +81,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_issue_authorities(self, matter_id: str, issue_id: str) -> list[dict]:
+        """Return authorities linked to a specific issue with relevance (SO-4)."""
+        ...
+
+    @abstractmethod
     async def list_gaps(self, matter_id: str, limit: int = 50) -> list[dict]:
         ...
 

@@ -5108,9 +5108,11 @@ _ISSUE_ASSERTIONS_LABELS: dict[str, dict[str, str]] = {
 }
 
 
-def _fmt_issue_assertions(assertions: list, issue_id: str, domain: str = "legal") -> str:
+def _fmt_issue_assertions(
+    assertions: list, issue_id: str, authorities: list | None = None, domain: str = "legal"
+) -> str:
     L = _ISSUE_ASSERTIONS_LABELS.get(domain, _ISSUE_ASSERTIONS_LABELS["legal"])
-    if not assertions:
+    if not assertions and not authorities:
         return f"<div class='viz-empty'>{L['empty']}</div>"
 
     groups: dict[str, list[dict]] = {"supporting": [], "attacking": [], "neutral": []}
@@ -5163,6 +5165,33 @@ def _fmt_issue_assertions(assertions: list, issue_id: str, domain: str = "legal"
                 f"</div>"
             )
         parts.append("</div>")
+
+    if authorities:
+        auth_items = [a for a in authorities if isinstance(a, dict)]
+        if auth_items:
+            parts.append(
+                "<div style='margin-top:12px;border-top:1px solid #e5e7eb;padding-top:8px;'>"
+                "<div style='font-weight:600;font-size:13px;color:#7c3aed;margin-bottom:4px;'>"
+                f"Linked Authorities ({len(auth_items)})</div>"
+            )
+            for auth in auth_items:
+                cite = _escape((auth.get("citation") or "—")[:120])
+                atype = _escape(str(auth.get("authority_type") or "?"))
+                weight = _escape(str(auth.get("weight") or "?"))
+                relevance = _escape(str(auth.get("relevance") or "neutral"))
+                rel_color = "#16a34a" if relevance == "supporting" else (
+                    "#dc2626" if relevance == "opposing" else "#6b7280"
+                )
+                parts.append(
+                    f"<div style='padding:4px 10px;margin-bottom:3px;border-radius:6px;"
+                    f"background:#f5f3ff;border-left:3px solid #7c3aed;font-size:12px;'>"
+                    f"<div>{cite}</div>"
+                    f"<div style='font-size:11px;color:#6b7280;margin-top:2px;'>"
+                    f"{atype} · {weight} · "
+                    f"<span style='color:{rel_color};font-weight:600;'>{relevance}</span></div>"
+                    f"</div>"
+                )
+            parts.append("</div>")
 
     parts.append("</div></div>")
     return "\n".join(parts)
@@ -6925,11 +6954,17 @@ class AppState:
         if not iid:
             return "<div class='viz-empty'>Enter an issue ID to see its linked evidence.</div>"
         try:
-            assertions = _run_async(self.backend().get_issue_assertions(matter_id, iid))
-            if not assertions:
-                return f"<div class='viz-empty'>No assertions linked to issue {_escape(iid[:12])}.</div>"
+            backend = self.backend()
+            assertions = _run_async(backend.get_issue_assertions(matter_id, iid))
+            authorities = []
+            try:
+                authorities = _run_async(backend.get_issue_authorities(matter_id, iid))
+            except Exception as exc:
+                logger.warning("get_issue_authorities failed: %s", exc)
+            if not assertions and not authorities:
+                return f"<div class='viz-empty'>No assertions or authorities linked to issue {_escape(iid[:12])}.</div>"
             domain = self._detect_domain(matter_id)
-            return _fmt_issue_assertions(assertions, iid, domain=domain)
+            return _fmt_issue_assertions(assertions, iid, authorities=authorities, domain=domain)
         except Exception as exc:
             logger.warning("load_issue_assertions failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
