@@ -9662,7 +9662,7 @@ def _fmt_query_context(data: dict, domain: str = "legal") -> str:
     parts.append(f"<div style='font-size:12px;'>Known documents: <strong>{len(known_docs)}</strong></div>")
     if known_actors:
         parts.append(f"<div style='font-size:12px;'>{_escape(L['actors'])}: ")
-        actor_tags = ", ".join(_escape(str(a)[:30]) for a in known_actors[:10])
+        actor_tags = ", ".join(_escape(str(a)[:30]) for a in known_actors[:10] if not isinstance(a, dict))
         parts.append(f"<span style='color:#059669;'>{actor_tags}</span>")
         if len(known_actors) > 10:
             parts.append(f" <span style='color:#9ca3af;'>+{len(known_actors)-10} more</span>")
@@ -9679,6 +9679,8 @@ def _fmt_query_context(data: dict, domain: str = "legal") -> str:
         )
         parts.append("<div style='display:flex;flex-wrap:wrap;gap:4px;'>")
         for p in predicates[:15]:
+            if isinstance(p, dict):
+                continue
             parts.append(
                 f"<span style='display:inline-block;padding:2px 8px;background:#ddd6fe;border-radius:4px;"
                 f"font-size:11px;color:#5b21b6;'>{_escape(str(p)[:40])}</span>"
