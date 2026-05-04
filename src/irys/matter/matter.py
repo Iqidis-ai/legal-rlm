@@ -6738,8 +6738,13 @@ class MatterModel:
             if kind in ("assertion", "assertions", "claim"):
                 try:
                     row = self.db.execute(
-                        "SELECT belief_state, verification_state FROM assertion "
-                        "WHERE id=? AND matter_id=?",
+                        "SELECT a.belief_state, "
+                        "  (SELECT vs.status FROM verification_state vs "
+                        "   WHERE vs.target_kind='assertion' AND vs.target_id=a.id "
+                        "   AND vs.matter_id=a.matter_id "
+                        "   ORDER BY vs.reviewed_at DESC LIMIT 1) AS v_status "
+                        "FROM assertion a "
+                        "WHERE a.id=? AND a.matter_id=?",
                         (obj_id, self.matter_id),
                     ).fetchone()
                     if row:
@@ -6747,7 +6752,7 @@ class MatterModel:
                             target_kind=kind,
                             target_id=obj_id,
                             belief_state=row["belief_state"],
-                            verification_state=row["verification_state"],
+                            verification_state=row["v_status"],
                         )
                 except Exception:
                     pass

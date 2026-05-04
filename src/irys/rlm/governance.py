@@ -3012,9 +3012,10 @@ class DeliverableFamilyHandler:
                 escalation_reason="no matter model available",
             )
         domain, is_explicit = self._resolve_domain_strict()
-        if not is_explicit:
+        if not is_explicit and domain != "legal":
             logger.warning(
-                "Domain detection unavailable — blocking deliverable (SO-5 acceptance gate)"
+                "Domain detection unavailable for non-legal domain — "
+                "blocking deliverable (SO-5 acceptance gate)"
             )
             return DeliverableFamilyResult(
                 intent="",
@@ -3027,7 +3028,8 @@ class DeliverableFamilyHandler:
                     "domain profile explicitly."
                 ),
             )
-        self._cached_domain = domain
+        if is_explicit:
+            self._cached_domain = domain
         intent = await self._resolve_sub_intent(query)
         if intent == "privilege_log":
             return self._render_privilege_log()

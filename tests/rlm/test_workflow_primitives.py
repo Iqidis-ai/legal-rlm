@@ -10807,8 +10807,8 @@ def test_resolve_matter_domain_strict_unknown_cached_not_explicit():
     assert is_explicit is False
 
 
-def test_deliverable_handler_blocks_on_ambiguous_domain():
-    """DeliverableFamilyHandler.run() must escalate when domain is ambiguous."""
+def test_deliverable_handler_allows_legal_default():
+    """DeliverableFamilyHandler.run() allows legal default for backward compatibility."""
     from irys.rlm.governance import DeliverableFamilyHandler, ExecutionContract
 
     class _FakeModel:
@@ -10824,8 +10824,30 @@ def test_deliverable_handler_blocks_on_ambiguous_domain():
         )
     finally:
         loop.close()
-    assert result.escalation_needed is True
-    assert "domain" in result.escalation_reason.lower()
+    # Legal fallback is allowed — deliverable should NOT block on missing composition
+    # (escalates for other reasons, e.g. renderer not implemented)
+    assert "domain" not in result.escalation_reason.lower()
+
+
+def test_deliverable_handler_proceeds_with_explicit_finance():
+    """DeliverableFamilyHandler.run() proceeds with explicit finance domain."""
+    from irys.rlm.governance import DeliverableFamilyHandler, ExecutionContract
+
+    class _FakeModelFinance:
+        def _read_matter_domain_composition(self):
+            return [], {}, "finance"
+
+    handler = DeliverableFamilyHandler(matter_model=_FakeModelFinance())
+    contract = ExecutionContract(family="deliverable")
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(
+            handler.run("generate report", contract)
+        )
+    finally:
+        loop.close()
+    # Should NOT block on domain — finance is explicit
+    assert "domain" not in result.escalation_reason.lower()
 
 
 def test_deliverable_handler_proceeds_with_explicit_domain():
