@@ -233,8 +233,8 @@ class HttpBackend(UIBackend):
             return []
         return result
 
-    async def get_timeline(self, matter_id: str, limit: int = 80) -> list[dict]:
-        result = await self._get(f"/matter/{matter_id}/timeline", {"limit": limit})
+    async def get_timeline(self, matter_id: str, limit: int = 80, policy_audience: str = "clean") -> list[dict]:
+        result = await self._get(f"/matter/{matter_id}/timeline", {"limit": limit, "policy_audience": policy_audience})
         if isinstance(result, dict):
             return result.get("events", [])
         if not isinstance(result, list):
@@ -242,8 +242,8 @@ class HttpBackend(UIBackend):
             return []
         return result
 
-    async def get_evidence_matrix(self, matter_id: str) -> dict:
-        result = await self._get(f"/matter/{matter_id}/evidence-matrix")
+    async def get_evidence_matrix(self, matter_id: str, policy_audience: str = "clean") -> dict:
+        result = await self._get(f"/matter/{matter_id}/evidence-matrix", {"policy_audience": policy_audience})
         if not isinstance(result, dict):
             _log.warning("get_evidence_matrix: expected dict, got %s", type(result).__name__)
             return {}

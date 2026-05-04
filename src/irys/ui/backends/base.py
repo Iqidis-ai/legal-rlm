@@ -142,12 +142,12 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
-    async def get_timeline(self, matter_id: str, limit: int = 80) -> list[dict]:
+    async def get_timeline(self, matter_id: str, limit: int = 80, policy_audience: str = "clean") -> list[dict]:
         """Return timeline events for the matter."""
         ...
 
     @abstractmethod
-    async def get_evidence_matrix(self, matter_id: str) -> dict:
+    async def get_evidence_matrix(self, matter_id: str, policy_audience: str = "clean") -> dict:
         """Return issue x source evidence coverage data."""
         ...
 
