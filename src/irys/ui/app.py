@@ -3411,7 +3411,6 @@ _DOCUMENT_CARD_LABELS: dict[str, dict[str, str]] = {
         "privilege": "Privilege",
         "flags": "Unresolved Flags",
         "source_role": "Source Role",
-        "signatories": "Signatories",
         "dates": "Key Dates",
         "privileged": "PRIVILEGED",
         "not_privileged": "Not privileged",
@@ -3431,7 +3430,6 @@ _DOCUMENT_CARD_LABELS: dict[str, dict[str, str]] = {
         "privilege": "Confidentiality",
         "flags": "Unresolved Issues",
         "source_role": "Source Role",
-        "signatories": "Signatories",
         "dates": "Key Dates",
         "privileged": "CONFIDENTIAL",
         "not_privileged": "Not restricted",
@@ -3451,7 +3449,6 @@ _DOCUMENT_CARD_LABELS: dict[str, dict[str, str]] = {
         "privilege": "Access Level",
         "flags": "Unresolved Issues",
         "source_role": "Source Role",
-        "signatories": "Reviewers",
         "dates": "Key Dates",
         "privileged": "RESTRICTED",
         "not_privileged": "Public",
@@ -3471,7 +3468,6 @@ _DOCUMENT_CARD_LABELS: dict[str, dict[str, str]] = {
         "privilege": "Access",
         "flags": "Unresolved Issues",
         "source_role": "Source Role",
-        "signatories": "Co-authors",
         "dates": "Key Dates",
         "privileged": "EMBARGOED",
         "not_privileged": "Open access",
@@ -3491,7 +3487,6 @@ _DOCUMENT_CARD_LABELS: dict[str, dict[str, str]] = {
         "privilege": "Patient Privacy",
         "flags": "Unresolved Issues",
         "source_role": "Source Role",
-        "signatories": "Attestors",
         "dates": "Key Dates",
         "privileged": "PROTECTED",
         "not_privileged": "Not restricted",
@@ -3505,6 +3500,8 @@ def _fmt_document_card(data: dict, domain: str = "legal") -> str:
         return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
 
     L = _DOCUMENT_CARD_LABELS.get(domain, _DOCUMENT_CARD_LABELS["legal"])
+    if data.get("error"):
+        return f"<div class='viz-empty'>Error: {_escape(str(data['error']))}</div>"
     card = data.get("card")
     if not card or not isinstance(card, dict):
         return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
@@ -3575,21 +3572,6 @@ def _fmt_document_card(data: dict, domain: str = "legal") -> str:
     if recipient:
         party_rows.append((L["recipient"], recipient))
 
-    sigs_raw = card.get("signatories_json")
-    if sigs_raw:
-        try:
-            if isinstance(sigs_raw, str):
-                import json as _json_mod_local
-                sigs = _json_mod_local.loads(sigs_raw)
-            else:
-                sigs = sigs_raw
-            if isinstance(sigs, list):
-                sig_strs = [_escape(str(s)[:60]) for s in sigs if not isinstance(s, dict)][:6]
-                if sig_strs:
-                    party_rows.append((L["signatories"], ", ".join(sig_strs)))
-        except (ValueError, TypeError):
-            pass
-
     if party_rows:
         parts.append("<div style='margin-bottom:12px;'>")
         for label, val in party_rows:
@@ -3650,8 +3632,7 @@ def _fmt_document_card(data: dict, domain: str = "legal") -> str:
         flags = [_escape(str(f)[:80]) for f in flags_raw if isinstance(f, str)]
     elif isinstance(flags_raw, str):
         try:
-            import json as _json_mod_local
-            parsed = _json_mod_local.loads(flags_raw)
+            parsed = json.loads(flags_raw)
             if isinstance(parsed, list):
                 flags = [_escape(str(f)[:80]) for f in parsed if isinstance(f, str)]
         except (ValueError, TypeError):
@@ -13850,7 +13831,7 @@ class AppState:
     def load_document_card(self, matter_id: str, document_ref: str) -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
-        ref = (document_ref or "").strip()
+        ref = (document_ref or "").strip().replace("\\", "/")
         if not ref:
             return "<div class='viz-empty'>Select a document to view its card.</div>"
         try:

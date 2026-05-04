@@ -9249,6 +9249,14 @@ def test_document_card_formatter_non_dict():
     assert "viz-empty" in html
 
 
+def test_document_card_error_display():
+    from irys.ui.app import _fmt_document_card
+    html = _fmt_document_card({"error": "unexpected response type: list"})
+    assert "Error:" in html
+    assert "unexpected response type" in html
+    assert "<script>" not in _fmt_document_card({"error": "<script>x</script>"})
+
+
 def test_document_card_formatter_renders():
     from irys.ui.app import _fmt_document_card
     data = {
@@ -9270,7 +9278,6 @@ def test_document_card_formatter_renders():
             "privilege_flag": False,
             "unresolved_flags": ["missing_exhibit_A", "date_discrepancy"],
             "source_role": "operative",
-            "signatories_json": '["Jane Smith", "John Doe"]',
         }
     }
     html = _fmt_document_card(data)
@@ -9280,7 +9287,6 @@ def test_document_card_formatter_renders():
     assert "purchase" in html
     assert "plaintiff" in html
     assert "Jane Smith" in html
-    assert "John Doe" in html
     assert "Legal Dept" in html
     assert "Finance Dept" in html
     assert "2025-01-15" in html
@@ -9310,7 +9316,6 @@ def test_document_card_xss():
             "rhetorical_posture": "<b>bad</b>",
             "source_role": "<em>test</em>",
             "unresolved_flags": ["<script>flag</script>"],
-            "signatories_json": '["<b>sig</b>"]',
         }
     }
     html = _fmt_document_card(data)
@@ -9319,7 +9324,6 @@ def test_document_card_xss():
     assert "<b>evil</b>" not in html
     assert "<b>bad</b>" not in html
     assert "<em>test</em>" not in html
-    assert "<b>sig</b>" not in html
 
 
 def test_document_card_domain_labels():
@@ -9343,7 +9347,6 @@ def test_document_card_hidden_empty_fields():
     html = _fmt_document_card(data)
     assert "Sender" not in html
     assert "Recipient" not in html
-    assert "Signatories" not in html
 
 
 def test_document_card_malformed_flags():
