@@ -202,6 +202,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_decision_leverage(self, matter_id: str, top_n: int = 15) -> dict:
+        """Ranked leverage map: what to review next to shift outcomes (SO-2 through SO-7)."""
+        ...
+
+    @abstractmethod
     async def get_objective_coverage(self, matter_id: str) -> dict:
         """Objective coverage workbench: per-objective criteria, support, gaps (SO-4)."""
         ...

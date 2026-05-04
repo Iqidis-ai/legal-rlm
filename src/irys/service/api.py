@@ -2817,6 +2817,17 @@ async def get_quant_facts(matter_id: str, limit: int = Query(default=200, ge=1, 
     return model.get_quant_fact_workbench(limit=limit)
 
 
+@app.get(
+    "/matter/{matter_id}/decision-leverage",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_decision_leverage(matter_id: str, top_n: int = Query(default=15, ge=1, le=100)):
+    """Ranked leverage points: what a professional should review next to maximally shift outcomes (SO-2 through SO-7)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_decision_leverage_map(top_n=top_n)
+
+
 _PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
 
 

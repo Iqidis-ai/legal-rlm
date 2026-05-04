@@ -581,6 +581,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_quant_fact_workbench(limit=limit)
 
+    async def get_decision_leverage(self, matter_id: str, top_n: int = 15) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_decision_leverage_map(top_n=top_n)
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_objective_coverage_workbench()

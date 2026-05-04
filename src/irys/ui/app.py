@@ -5579,6 +5579,161 @@ def _fmt_quant_facts(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_DECISION_LEVERAGE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Decision Leverage Map",
+        "subtitle": "What to review next to shift the case outcome",
+        "empty": "No leverage points identified yet. Run an investigation first.",
+        "weak_objective": "Weak Objective",
+        "unreviewed_assumption": "Unreviewed Assumption",
+        "tainted_evidence": "Tainted Evidence",
+        "quant_conflict": "Numeric Conflict",
+        "open_gap": "Open Gap",
+        "pending_review": "Pending Review",
+        "blocker": "Blocker",
+        "impact": "Impact",
+        "action": "Recommended Action",
+    },
+    "finance": {
+        "title": "Decision Leverage Map",
+        "subtitle": "What to review next to shift the investment thesis",
+        "empty": "No leverage points identified yet. Run an investigation first.",
+        "weak_objective": "Weak Thesis Point",
+        "unreviewed_assumption": "Unverified Assumption",
+        "tainted_evidence": "Compromised Data",
+        "quant_conflict": "Numeric Discrepancy",
+        "open_gap": "Information Gap",
+        "pending_review": "Pending Verification",
+        "blocker": "Blocker",
+        "impact": "Impact",
+        "action": "Recommended Action",
+    },
+    "coding": {
+        "title": "Decision Leverage Map",
+        "subtitle": "What to review next to improve code quality",
+        "empty": "No leverage points identified yet. Run an investigation first.",
+        "weak_objective": "Weak Requirement",
+        "unreviewed_assumption": "Unverified Assumption",
+        "tainted_evidence": "Unreliable Source",
+        "quant_conflict": "Metric Conflict",
+        "open_gap": "Coverage Gap",
+        "pending_review": "Pending Review",
+        "blocker": "Blocker",
+        "impact": "Impact",
+        "action": "Recommended Action",
+    },
+    "academic_research": {
+        "title": "Decision Leverage Map",
+        "subtitle": "What to review next to strengthen the research position",
+        "empty": "No leverage points identified yet. Run an investigation first.",
+        "weak_objective": "Weak Hypothesis Support",
+        "unreviewed_assumption": "Untested Assumption",
+        "tainted_evidence": "Questionable Source",
+        "quant_conflict": "Statistical Conflict",
+        "open_gap": "Literature Gap",
+        "pending_review": "Pending Verification",
+        "blocker": "Blocker",
+        "impact": "Impact",
+        "action": "Recommended Action",
+    },
+    "biomedical": {
+        "title": "Decision Leverage Map",
+        "subtitle": "What to review next to shift clinical conclusions",
+        "empty": "No leverage points identified yet. Run an investigation first.",
+        "weak_objective": "Weak Endpoint",
+        "unreviewed_assumption": "Unverified Assumption",
+        "tainted_evidence": "Compromised Data",
+        "quant_conflict": "Measurement Conflict",
+        "open_gap": "Evidence Gap",
+        "pending_review": "Pending Review",
+        "blocker": "Blocker",
+        "impact": "Impact",
+        "action": "Recommended Action",
+    },
+}
+
+
+def _fmt_decision_leverage(data: dict, domain: str = "legal") -> str:
+    labels = _DECISION_LEVERAGE_LABELS.get(domain, _DECISION_LEVERAGE_LABELS["legal"])
+    if not isinstance(data, dict):
+        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+
+    items = data.get("items", [])
+    if not isinstance(items, list) or not items:
+        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+
+    kind_colors = {
+        "weak_objective": "#ef4444",
+        "unreviewed_assumption": "#f59e0b",
+        "tainted_evidence": "#dc2626",
+        "quant_conflict": "#8b5cf6",
+        "open_gap": "#3b82f6",
+        "pending_review": "#6b7280",
+    }
+
+    def _safe_float(v, default: float = 0.0) -> float:
+        if isinstance(v, (int, float)) and math.isfinite(v):
+            return max(0.0, min(1.0, float(v)))
+        return default
+
+    total = data.get("total", len(items))
+    if not isinstance(total, (int, float)) or not math.isfinite(total):
+        total = len(items)
+
+    parts = [
+        f"<div style='margin-bottom:12px;'>",
+        f"<h4 style='margin:0 0 4px 0;'>{_escape(labels['title'])}</h4>",
+        f"<p style='color:#6b7280;margin:0 0 12px 0;font-size:0.9em;'>"
+        f"{_escape(labels['subtitle'])} &mdash; {int(total)} item(s)</p>",
+    ]
+
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind", ""))
+        color = kind_colors.get(kind, "#6b7280")
+        kind_label = _escape(labels.get(kind, kind.replace("_", " ").title()))
+        title = _escape(str(item.get("title", ""))[:120])
+        blocker = _escape(str(item.get("blocker", ""))[:80])
+        impact = _safe_float(item.get("impact"))
+        detail = _escape(str(item.get("detail", ""))[:200])
+        action = _escape(str(item.get("action", ""))[:200])
+        item_id = _escape(str(item.get("id", ""))[:60])
+
+        impact_pct = int(impact * 100)
+        impact_color = "#dc2626" if impact >= 0.7 else "#f59e0b" if impact >= 0.4 else "#6b7280"
+
+        parts.append(
+            f"<div style='margin:6px 0;padding:10px 14px;background:#f9fafb;"
+            f"border-radius:6px;border-left:4px solid {color};'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+            f"<span style='font-weight:600;font-size:0.95em;'>"
+            f"<span style='color:{color};font-size:0.8em;'>{idx + 1}.</span> "
+            f"{title}</span>"
+            f"<span style='background:{impact_color};color:white;padding:2px 8px;"
+            f"border-radius:10px;font-size:0.8em;font-weight:500;'>"
+            f"{impact_pct}% {_escape(labels['impact'].lower())}</span>"
+            f"</div>"
+            f"<div style='margin-top:4px;font-size:0.85em;color:#4b5563;'>"
+            f"<span style='background:{color}22;color:{color};padding:1px 6px;"
+            f"border-radius:3px;font-size:0.85em;'>{kind_label}</span>"
+            f" &middot; {_escape(labels['blocker'])}: {blocker}"
+            f"</div>"
+            f"<div style='margin-top:4px;font-size:0.85em;color:#6b7280;'>{detail}</div>"
+            f"<div style='margin-top:4px;font-size:0.85em;color:#059669;font-weight:500;'>"
+            f"&#x2794; {action}</div>"
+        )
+        if item_id:
+            parts.append(
+                f"<div style='margin-top:2px;font-size:0.75em;color:#d1d5db;"
+                f"cursor:pointer;' title='{item_id}'>{item_id}</div>"
+            )
+        parts.append("</div>")
+
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
 def _fmt_quant_panel(
     payment_recon: dict,
     invoice_chain: list,
@@ -10093,6 +10248,19 @@ class AppState:
             logger.warning("load_quant_facts failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_decision_leverage(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_decision_leverage(matter_id))
+            if not isinstance(data, dict):
+                logger.warning("load_decision_leverage: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_decision_leverage(data, domain=domain)
+        except Exception as exc:
+            logger.warning("load_decision_leverage failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def load_quant_ontology(self, matter_id: str, domain: str = "legal") -> tuple[str, Any]:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>", gr.update(choices=[])
@@ -12232,6 +12400,17 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 )
                 refresh_quant_facts_btn = gr.Button("Refresh Quant Facts", variant="secondary", size="sm")
 
+        with gr.Accordion("Decision Leverage Map — what to review next", open=False):
+            gr.Markdown(
+                "Ranked leverage points: the interventions most likely to change the outcome. "
+                "Connects weak objectives, unreviewed assumptions, tainted evidence, numeric "
+                "conflicts, open gaps, and pending reviews into a single prioritized view."
+            )
+            decision_leverage_html = gr.HTML(
+                "<div class='viz-empty'>Leverage map will appear after an investigation.</div>"
+            )
+            refresh_leverage_btn = gr.Button("Refresh Leverage Map", variant="secondary", size="sm")
+
         with gr.Accordion("Timeline — dated events across the matter", open=False):
             gr.Markdown(
                 "Chronological events from dated facts and claims pinned to a point in time."
@@ -13146,6 +13325,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_quant_facts(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[quant_facts_html],
+            ).then(
+                fn=lambda mid: state.load_decision_leverage(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[decision_leverage_html],
             )
         else:
             submit_btn.click(
@@ -13236,6 +13419,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_quant_facts(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[quant_facts_html],
+            ).then(
+                fn=lambda mid: state.load_decision_leverage(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[decision_leverage_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -13335,6 +13522,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_quant_facts(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[quant_facts_html],
+        ).then(
+            fn=lambda mid: state.load_decision_leverage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[decision_leverage_html],
         )
 
         export_report_btn.click(
@@ -13467,6 +13658,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_quant_facts(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[quant_facts_html],
+        )
+        refresh_leverage_btn.click(
+            fn=lambda mid: state.load_decision_leverage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[decision_leverage_html],
         )
         refresh_timeline_btn.click(
             fn=lambda mid: state.load_timeline(mid, domain=state._detect_domain(mid)),

@@ -5654,3 +5654,126 @@ def test_backend_interface_balance_quant_facts():
         assert hasattr(UIBackend, method), f"UIBackend missing {method}"
         assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
         assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+# ── Decision Leverage Map tests ─────────────────────────────────────
+
+
+def test_decision_leverage_map_empty():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_decision_leverage_map()
+    assert isinstance(result, dict)
+    assert result["total"] == 0
+    assert isinstance(result["items"], list)
+
+
+def test_decision_leverage_map_with_data():
+    from irys.matter.matter import MatterModel
+    from irys.matter.enums import GapType, IssueType
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("leverage test")
+    iid, _ = model.issues.upsert_issue("Breach of contract", IssueType.CLAIM, materiality=0.9)
+    model.issues.add_predicate(iid, "Damages proved")
+    model.assumptions.upsert("Markets are efficient", source_kind="analyst")
+    model.gaps.record(GapType.MISSING_DOCUMENT, "Financial records for Q4", materiality=0.8)
+    model.complete_run(run_id)
+    result = model.get_decision_leverage_map()
+    assert result["total"] > 0
+    kinds = {item["kind"] for item in result["items"]}
+    assert "weak_objective" in kinds or "open_gap" in kinds
+    for item in result["items"]:
+        assert "kind" in item
+        assert "title" in item
+        assert "impact" in item
+        assert "action" in item
+        assert isinstance(item["impact"], (int, float))
+
+
+def test_decision_leverage_map_top_n():
+    from irys.matter.matter import MatterModel
+    from irys.matter.enums import GapType
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("leverage top_n")
+    for i in range(20):
+        model.gaps.record(GapType.MISSING_DOCUMENT, f"Gap {i}", materiality=0.5)
+    model.complete_run(run_id)
+    result = model.get_decision_leverage_map(top_n=5)
+    assert len(result["items"]) <= 5
+
+
+def test_decision_leverage_formatter_empty():
+    from irys.ui.app import _fmt_decision_leverage
+    html = _fmt_decision_leverage({}, domain="legal")
+    assert isinstance(html, str)
+    assert "No leverage" in html or "viz-empty" in html or "empty" in html.lower()
+
+
+def test_decision_leverage_formatter_renders():
+    from irys.ui.app import _fmt_decision_leverage
+    data = {
+        "total": 2,
+        "items": [
+            {"kind": "weak_objective", "id": "obj-1", "title": "Contract breach",
+             "blocker": "missing", "impact": 0.85, "detail": "2 blocked, 1 gap",
+             "action": "Strengthen evidence"},
+            {"kind": "open_gap", "id": "gap-1", "title": "Missing Q4 records",
+             "blocker": "missing_evidence", "impact": 0.6, "detail": "Gap type: missing_evidence",
+             "action": "Resolve or escalate"},
+        ],
+    }
+    html = _fmt_decision_leverage(data, domain="legal")
+    assert "Contract breach" in html
+    assert "Missing Q4 records" in html
+    assert "85%" in html
+    assert "Strengthen evidence" in html
+
+
+def test_decision_leverage_formatter_xss():
+    from irys.ui.app import _fmt_decision_leverage
+    data = {
+        "total": 1,
+        "items": [
+            {"kind": "weak_objective", "id": "xss-id",
+             "title": "<script>alert('xss')</script>",
+             "blocker": "<img onerror=alert(1)>", "impact": 0.5,
+             "detail": "<b>evil</b>", "action": "Do <script>bad</script> things"},
+        ],
+    }
+    html = _fmt_decision_leverage(data, domain="legal")
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_decision_leverage_formatter_non_dict_guard():
+    from irys.ui.app import _fmt_decision_leverage
+    data = {
+        "total": 3,
+        "items": ["not-a-dict", None, 42, {"kind": "open_gap", "id": "ok",
+                  "title": "Valid", "blocker": "x", "impact": 0.3,
+                  "detail": "d", "action": "a"}],
+    }
+    html = _fmt_decision_leverage(data, domain="legal")
+    assert "Valid" in html
+    assert isinstance(html, str)
+
+
+def test_decision_leverage_labels_all_five_domains():
+    from irys.ui.app import _DECISION_LEVERAGE_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        assert domain in _DECISION_LEVERAGE_LABELS, f"Missing domain '{domain}'"
+        labels = _DECISION_LEVERAGE_LABELS[domain]
+        for key in ("title", "subtitle", "empty", "weak_objective", "unreviewed_assumption",
+                     "tainted_evidence", "quant_conflict", "open_gap", "pending_review",
+                     "blocker", "impact", "action"):
+            assert key in labels, f"{domain} missing label '{key}'"
+
+
+def test_backend_interface_balance_decision_leverage():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("get_decision_leverage",):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"

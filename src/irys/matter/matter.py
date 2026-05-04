@@ -3295,6 +3295,128 @@ class MatterModel:
         )
 
     # ------------------------------------------------------------------
+    # Decision leverage map (SO-2, SO-3, SO-4, SO-5, SO-7)
+    # ------------------------------------------------------------------
+
+    def get_decision_leverage_map(self, top_n: int = 15) -> dict:
+        """Ranked leverage points: things a professional should review next
+        to maximally shift objective coverage or confidence."""
+        items: list[dict] = []
+
+        coverage_wb = self.get_objective_coverage_workbench()
+        for obj in coverage_wb.get("objectives", []):
+            if not isinstance(obj, dict):
+                continue
+            badge = obj.get("coverage_badge", "missing")
+            if badge in ("missing", "blocked", "contradicted", "thin"):
+                mat = float(obj.get("materiality", 0.5)) if isinstance(obj.get("materiality"), (int, float)) else 0.5
+                impact = mat * (1.0 - float(obj.get("coverage_fraction", 0.0)) if isinstance(obj.get("coverage_fraction"), (int, float)) else 1.0)
+                items.append({
+                    "kind": "weak_objective",
+                    "id": obj.get("id", ""),
+                    "title": obj.get("title", ""),
+                    "blocker": badge,
+                    "impact": round(impact, 3),
+                    "detail": f"{obj.get('predicate_blocked', 0)} blocked, {len(obj.get('gaps', []))} gaps",
+                    "action": "Strengthen evidence or resolve blocked criteria",
+                })
+
+        try:
+            assumption_wb = self.get_assumption_review_workbench()
+            for a in assumption_wb.get("provisional", []):
+                if not isinstance(a, dict):
+                    continue
+                linked = a.get("linked_target_count", 0)
+                if not isinstance(linked, (int, float)):
+                    linked = 0
+                if linked > 0:
+                    items.append({
+                        "kind": "unreviewed_assumption",
+                        "id": a.get("id", ""),
+                        "title": (a.get("statement") or "")[:100],
+                        "blocker": f"{int(linked)} linked target(s)",
+                        "impact": round(min(1.0, int(linked) * 0.15), 3),
+                        "detail": f"Provisional assumption with {int(linked)} dependent predicate(s)/assertion(s)",
+                        "action": "Confirm or invalidate this assumption",
+                    })
+        except Exception as exc:
+            _log.warning("leverage_map: assumption load failed: %s", exc)
+
+        try:
+            taint = self.summarize_taint(limit=10)
+            taint_total = taint.get("total", 0) if isinstance(taint, dict) else 0
+            if isinstance(taint_total, (int, float)) and taint_total > 0:
+                items.append({
+                    "kind": "tainted_evidence",
+                    "id": "",
+                    "title": f"{int(taint_total)} tainted evidence record(s)",
+                    "blocker": "Evidence integrity risk",
+                    "impact": round(min(1.0, int(taint_total) * 0.1), 3),
+                    "detail": "Tainted sources may undermine dependent assertions",
+                    "action": "Review taint summary and assess affected assertions",
+                })
+        except Exception as exc:
+            _log.warning("leverage_map: taint load failed: %s", exc)
+
+        try:
+            conflicts = self.quant.get_conflicts()
+            if conflicts:
+                items.append({
+                    "kind": "quant_conflict",
+                    "id": "",
+                    "title": f"{len(conflicts)} numeric conflict group(s)",
+                    "blocker": "Conflicting amounts",
+                    "impact": round(min(1.0, len(conflicts) * 0.12), 3),
+                    "detail": "Different values for the same entity undermine quantitative claims",
+                    "action": "Resolve conflicting amounts in the Quant Fact Review panel",
+                })
+        except Exception as exc:
+            _log.warning("leverage_map: quant conflict load failed: %s", exc)
+
+        try:
+            top_gaps = self.gaps.open_gaps(limit=10)
+            for gap in top_gaps:
+                if not isinstance(gap, dict):
+                    continue
+                mat = float(gap.get("materiality_score", 0.5)) if isinstance(gap.get("materiality_score"), (int, float)) else 0.5
+                items.append({
+                    "kind": "open_gap",
+                    "id": gap.get("id", ""),
+                    "title": (gap.get("description") or "")[:100],
+                    "blocker": gap.get("gap_type", "unknown"),
+                    "impact": round(mat * 0.8, 3),
+                    "detail": f"Gap type: {gap.get('gap_type', 'unknown')}",
+                    "action": "Resolve or escalate this gap",
+                })
+        except Exception as exc:
+            _log.warning("leverage_map: gaps load failed: %s", exc)
+
+        try:
+            review_counts = self.count_review_queue()
+            if isinstance(review_counts, dict):
+                pending = review_counts.get("candidate", 0)
+                if isinstance(pending, (int, float)) and pending > 0:
+                    items.append({
+                        "kind": "pending_review",
+                        "id": "",
+                        "title": f"{int(pending)} assertion(s) awaiting review",
+                        "blocker": "Unverified extractions",
+                        "impact": round(min(1.0, int(pending) * 0.02), 3),
+                        "detail": "Unreviewed assertions reduce confidence in dependent objectives",
+                        "action": "Verify or reject assertions in the Review Queue",
+                    })
+        except Exception as exc:
+            _log.warning("leverage_map: review queue load failed: %s", exc)
+
+        items.sort(key=lambda x: x.get("impact", 0), reverse=True)
+        items = items[:top_n]
+
+        return {
+            "total": len(items),
+            "items": items,
+        }
+
+    # ------------------------------------------------------------------
     # Quant fact review workbench (SO-6)
     # ------------------------------------------------------------------
 
