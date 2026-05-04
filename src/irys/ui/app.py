@@ -2012,7 +2012,7 @@ def _fmt_authority_panel(data: dict, domain: str = "legal") -> str:
                 f"<span style='display:inline-block;padding:1px 6px;border-radius:8px;"
                 f"background:{relevance_colors.get(lk.get('relevance', 'neutral'), '#6b7280')}18;"
                 f"color:{relevance_colors.get(lk.get('relevance', 'neutral'), '#6b7280')};"
-                f"font-size:10px;margin:1px;' title='{_escape(lk.get('relevance', 'neutral'))}'>"
+                f"font-size:10px;margin:1px;' title='{_escape(lk.get('relevance', 'neutral'))} · ID: {_escape(lk.get('issue_id', '?'))}'>"
                 f"{_escape((lk.get('issue_title') or lk.get('issue_id', '?'))[:20])}</span>"
                 for lk in links
             )
@@ -2022,8 +2022,10 @@ def _fmt_authority_panel(data: dict, domain: str = "legal") -> str:
         display_citation = _escape(citation[:50])
         display_name = f"<div style='font-size:10px;color:#6b7280;'>{_escape(name[:40])}</div>" if name else ""
 
+        short_id = _escape(str(aid)[:12])
         rows_html += (
             f"<tr>"
+            f"<td style='font-size:10px;color:#9ca3af;font-family:monospace' title='{_escape(str(aid))}'>{short_id}</td>"
             f"<td style='max-width:240px;' title='{_escape(citation)}'>"
             f"{display_citation}{display_name}</td>"
             f"<td style='font-size:11px;'>{_escape(auth_type)}</td>"
@@ -2039,6 +2041,7 @@ def _fmt_authority_panel(data: dict, domain: str = "legal") -> str:
         "<div style='overflow-x:auto;'>"
         "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
         "<thead><tr style='border-bottom:2px solid #e2e8f0;text-align:left;'>"
+        "<th style='padding:6px 8px;'>ID</th>"
         f"<th style='padding:6px 8px;'>{_escape(labels['item'])}</th>"
         f"<th style='padding:6px 8px;'>{_escape(labels['type_label'])}</th>"
         f"<th style='padding:6px 8px;'>{_escape(labels['weight_label'])}</th>"
