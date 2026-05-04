@@ -5810,6 +5810,8 @@ def _fmt_objective_coverage(data: dict, domain: str = "legal") -> str:
     labels = _OBJECTIVE_COVERAGE_LABELS.get(domain, _OBJECTIVE_COVERAGE_LABELS["legal"])
     if not isinstance(data, dict):
         return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+    if err := _error_html(data):
+        return err
 
     objectives = data.get("objectives", [])
     if not isinstance(objectives, list) or not objectives:
@@ -6023,6 +6025,8 @@ def _fmt_knowledge_seeds(data: dict, domain: str = "legal") -> str:
     labels = _KNOWLEDGE_SEED_LABELS.get(domain, _KNOWLEDGE_SEED_LABELS["legal"])
     if not isinstance(data, dict):
         return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+    if err := _error_html(data):
+        return err
 
     _raw_total = data.get("total", 0)
     total = int(_raw_total) if isinstance(_raw_total, (int, float)) else 0
@@ -6178,6 +6182,8 @@ def _fmt_quant_facts(data: dict, domain: str = "legal") -> str:
     labels = _QUANT_FACT_LABELS.get(domain, _QUANT_FACT_LABELS["legal"])
     if not isinstance(data, dict):
         return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+    if err := _error_html(data):
+        return err
 
     by_kind = data.get("by_kind", [])
     if not isinstance(by_kind, list) or not by_kind:
@@ -6367,6 +6373,8 @@ def _fmt_decision_leverage(data: dict, domain: str = "legal") -> str:
     labels = _DECISION_LEVERAGE_LABELS.get(domain, _DECISION_LEVERAGE_LABELS["legal"])
     if not isinstance(data, dict):
         return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+    if err := _error_html(data):
+        return err
 
     items = data.get("items", [])
     if not isinstance(items, list) or not items:
@@ -6507,6 +6515,8 @@ def _fmt_output_quality(data: dict, domain: str = "legal") -> str:
     labels = _OUTPUT_QUALITY_LABELS.get(domain, _OUTPUT_QUALITY_LABELS["legal"])
     if not isinstance(data, dict):
         return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+    if err := _error_html(data):
+        return err
 
     readiness = data.get("readiness", "unknown")
     blocker_count = data.get("blocker_count", 0)
@@ -6699,6 +6709,8 @@ def _fmt_deliverable_workbench(data: dict, domain: str = "legal") -> str:
     labels = _DELIVERABLE_LABELS.get(domain, _DELIVERABLE_LABELS["legal"])
     if not isinstance(data, dict):
         return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+    if err := _error_html(data):
+        return err
 
     issues = data.get("issues", [])
     gate = data.get("reliance_gate", "unknown")
@@ -6869,6 +6881,8 @@ def _fmt_scenario_workbench(data: dict, domain: str = "legal") -> str:
     labels = _SCENARIO_LABELS.get(domain, _SCENARIO_LABELS["legal"])
     if not isinstance(data, dict):
         return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+    if err := _error_html(data):
+        return err
 
     branches = data.get("branches", [])
     active_count = data.get("active_count", 0)
@@ -7380,6 +7394,8 @@ def _fmt_alternative_theories(data: dict, domain: str = "legal") -> str:
     L = _ALTERNATIVE_THEORY_LABELS.get(domain, _ALTERNATIVE_THEORY_LABELS["legal"])
     if not isinstance(data, dict):
         return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+    if err := _error_html(data):
+        return err
 
     theories = data.get("theories", [])
     if not theories or not isinstance(theories, list):
