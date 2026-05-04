@@ -2398,7 +2398,7 @@ async def bulk_verify_by_ids(matter_id: str, request: BulkVerifyByIdsRequest):
     tags=["Review Queue"],
     responses={404: {"model": ErrorResponse}},
 )
-async def list_reviewable_documents(matter_id: str, limit: int = 500):
+async def list_reviewable_documents(matter_id: str, limit: int = Query(default=500, ge=1, le=1000)):
     """Return documents with pending/verified counts for the review picker (SO-3)."""
     model = await _get_matter_model_or_404(matter_id)
     docs = model.list_reviewable_documents(limit=limit)

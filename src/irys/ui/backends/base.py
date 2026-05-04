@@ -100,7 +100,7 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
-    async def get_gap_workbench(self, matter_id: str, limit: int = 50) -> dict:
+    async def get_gap_workbench(self, matter_id: str, limit: int = 50, min_materiality: float = 0.0) -> dict:
         """Consolidated gap-to-action workbench (SO-7, SO-3)."""
         ...
 
