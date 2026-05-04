@@ -9732,3 +9732,57 @@ def test_dependency_manifest_hash_survives_working_set_roundtrip():
     assert data["dependency_manifest_hash"] == "sha256:test_hash_42"
     restored = WorkingSet.from_dict(data)
     assert restored.dependency_manifest_hash == "sha256:test_hash_42"
+
+
+def test_freshness_report_returns_namespace_data():
+    """MatterModel.get_freshness_report returns namespace revision data."""
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    report = model.get_freshness_report()
+    assert isinstance(report, dict)
+    assert "namespaces" in report
+    assert "stale_namespaces" in report
+    assert "is_hot_answerable" in report
+    assert isinstance(report["namespaces"], list)
+    assert len(report["namespaces"]) > 0
+    for ns in report["namespaces"]:
+        assert "namespace" in ns
+        assert "revision" in ns
+        assert "state" in ns
+
+
+def test_freshness_report_detects_fresh_namespaces():
+    """After bumping a namespace revision, freshness report shows it as fresh."""
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    broker = model.memory_broker
+    broker.bump_namespace_revision("claims")
+    report = model.get_freshness_report()
+    claims_ns = [ns for ns in report["namespaces"] if ns["namespace"] == "claims"]
+    assert len(claims_ns) == 1
+    assert claims_ns[0]["revision"] > 0
+    assert claims_ns[0]["state"] == "fresh"
+
+
+def test_freshness_report_formatter_renders_table():
+    """_fmt_freshness_report renders an HTML table with namespace rows."""
+    import importlib
+    app_mod = importlib.import_module("irys.ui.app")
+    fmt = app_mod._fmt_freshness_report
+    data = {
+        "matter_id": "test",
+        "namespace_count": 2,
+        "stale_namespaces": [],
+        "is_hot_answerable": True,
+        "active_run_count": 0,
+        "last_update_at": "2026-05-04T12:00:00",
+        "namespaces": [
+            {"namespace": "claims", "revision": 5, "state": "fresh", "updated_at": "2026-05-04T12:00:00"},
+            {"namespace": "entities", "revision": 0, "state": "missing", "updated_at": None},
+        ],
+    }
+    html = fmt(data, domain="legal")
+    assert "claims" in html
+    assert "entities" in html
+    assert "Namespace Freshness" in html
+    assert "Hot-Answerable" in html

@@ -7686,6 +7686,136 @@ def _fmt_manifest_inspector(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+# ── Freshness Report ────────────────────────────────────────────────
+_FRESHNESS_REPORT_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Namespace Freshness",
+        "subtitle": "Revision state of every matter intelligence namespace",
+        "empty": "No freshness data available. Load a matter first.",
+        "fresh": "Fresh", "missing": "Not Initialized", "stale": "Stale",
+        "hot": "Hot-Answerable", "not_hot": "Pending Work",
+        "active_runs": "Active Investigations", "last_update": "Last Updated",
+    },
+    "finance": {
+        "title": "Data Freshness",
+        "subtitle": "Revision state of every analysis namespace",
+        "empty": "No freshness data available. Load a matter first.",
+        "fresh": "Current", "missing": "Not Initialized", "stale": "Stale",
+        "hot": "Ready", "not_hot": "Pending Updates",
+        "active_runs": "Active Analyses", "last_update": "Last Updated",
+    },
+    "coding": {
+        "title": "Index Freshness",
+        "subtitle": "Revision state of every codebase analysis namespace",
+        "empty": "No freshness data. Load a project first.",
+        "fresh": "Current", "missing": "Not Indexed", "stale": "Stale",
+        "hot": "Index Current", "not_hot": "Indexing Required",
+        "active_runs": "Active Scans", "last_update": "Last Updated",
+    },
+    "academic_research": {
+        "title": "Corpus Freshness",
+        "subtitle": "Revision state of every research namespace",
+        "empty": "No freshness data. Load a corpus first.",
+        "fresh": "Current", "missing": "Not Populated", "stale": "Stale",
+        "hot": "Corpus Ready", "not_hot": "Updates Pending",
+        "active_runs": "Active Reviews", "last_update": "Last Updated",
+    },
+    "biomedical": {
+        "title": "Evidence Freshness",
+        "subtitle": "Revision state of every clinical evidence namespace",
+        "empty": "No freshness data. Load a dataset first.",
+        "fresh": "Current", "missing": "Not Populated", "stale": "Stale",
+        "hot": "Evidence Ready", "not_hot": "Updates Pending",
+        "active_runs": "Active Analyses", "last_update": "Last Updated",
+    },
+}
+
+
+def _fmt_freshness_report(data: dict, domain: str = "legal") -> str:
+    L = _FRESHNESS_REPORT_LABELS.get(domain, _FRESHNESS_REPORT_LABELS["legal"])
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+    if err := _error_html(data):
+        return err
+
+    namespaces = data.get("namespaces", [])
+    if not isinstance(namespaces, list) or not namespaces:
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    stale_list = data.get("stale_namespaces", [])
+    is_hot = data.get("is_hot_answerable", False)
+    active_runs = int(data.get("active_run_count", 0)) if isinstance(data.get("active_run_count"), (int, float)) else 0
+    last_update = _escape(str(data.get("last_update_at", ""))[:19])
+    ns_count = len(namespaces)
+    fresh_count = sum(1 for ns in namespaces if isinstance(ns, dict) and ns.get("state") == "fresh")
+    missing_count = ns_count - fresh_count
+
+    hot_pill = (
+        f"<span class='pill pill-green'>{_escape(L['hot'])}</span>"
+        if is_hot
+        else f"<span class='pill pill-orange'>{_escape(L['not_hot'])}</span>"
+    )
+
+    parts = [
+        "<div class='viz-shell'>",
+        f"<div class='viz-header'><strong>{_escape(L['title'])}</strong>"
+        f" &mdash; {_escape(L['subtitle'])}</div>",
+        f"<div style='margin:8px 0;font-size:0.9em;color:#6b7280;'>"
+        f"{hot_pill} &middot; "
+        f"<span class='pill pill-green'>{fresh_count} {_escape(L['fresh'])}</span> "
+        f"<span class='pill pill-neutral'>{missing_count} {_escape(L['missing'])}</span>"
+        f"</div>",
+    ]
+
+    if active_runs > 0:
+        parts.append(
+            f"<div style='font-size:0.85em;color:#6b7280;margin-bottom:6px;'>"
+            f"{_escape(L['active_runs'])}: <strong>{active_runs}</strong></div>"
+        )
+    if last_update:
+        parts.append(
+            f"<div style='font-size:0.82em;color:#9ca3af;margin-bottom:8px;'>"
+            f"{_escape(L['last_update'])}: {last_update}</div>"
+        )
+
+    parts.append(
+        "<table style='width:100%;border-collapse:collapse;font-size:0.85em;'>"
+        "<tr style='border-bottom:1px solid #e5e7eb;'>"
+        "<th style='text-align:left;padding:4px 8px;color:#6b7280;'>Namespace</th>"
+        "<th style='text-align:center;padding:4px 8px;color:#6b7280;'>Rev</th>"
+        "<th style='text-align:center;padding:4px 8px;color:#6b7280;'>State</th>"
+        "<th style='text-align:right;padding:4px 8px;color:#6b7280;'>Updated</th>"
+        "</tr>"
+    )
+
+    for ns in namespaces:
+        if not isinstance(ns, dict):
+            continue
+        name = _escape(str(ns.get("namespace", "")))
+        rev = int(ns.get("revision", 0)) if isinstance(ns.get("revision"), (int, float)) else 0
+        state = str(ns.get("state", "missing")).lower()
+        updated = _escape(str(ns.get("updated_at", "—"))[:19])
+
+        if state == "fresh":
+            pill = f"<span class='pill pill-green'>{_escape(L['fresh'])}</span>"
+        elif state == "stale":
+            pill = f"<span class='pill pill-red'>{_escape(L['stale'])}</span>"
+        else:
+            pill = f"<span class='pill pill-neutral'>{_escape(L['missing'])}</span>"
+
+        parts.append(
+            f"<tr style='border-bottom:1px solid #f3f4f6;'>"
+            f"<td style='padding:4px 8px;font-family:monospace;font-size:0.9em;'>{name}</td>"
+            f"<td style='text-align:center;padding:4px 8px;'>{rev}</td>"
+            f"<td style='text-align:center;padding:4px 8px;'>{pill}</td>"
+            f"<td style='text-align:right;padding:4px 8px;font-size:0.85em;color:#9ca3af;'>{updated}</td>"
+            f"</tr>"
+        )
+
+    parts.append("</table></div>")
+    return "\n".join(parts)
+
+
 # ── Steering Impact Preview ──────────────────────────────────────────
 _IMPACT_PREVIEW_LABELS: dict[str, dict[str, str]] = {
     "legal": {
@@ -13473,6 +13603,19 @@ class AppState:
             logger.warning("Manifest inspector load failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_freshness_report(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_freshness_report(matter_id))
+            if not isinstance(data, dict):
+                logger.warning("load_freshness_report: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_freshness_report(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Freshness report load failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def load_impact_preview(
         self, matter_id: str, action_type: str, payload_json: str, domain: str = "legal",
     ) -> str:
@@ -16517,6 +16660,18 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "Refresh Manifests", variant="secondary", size="sm",
             )
 
+        with gr.Accordion("Namespace Freshness — revision state of every intelligence namespace", open=False):
+            gr.Markdown(
+                "Shows which namespaces have been populated and their revision numbers. "
+                "A hot-answerable matter has all namespaces fresh with no active investigations."
+            )
+            freshness_report_html = gr.HTML(
+                "<div class='viz-empty'>Freshness report will appear here after loading a matter.</div>"
+            )
+            refresh_freshness_btn = gr.Button(
+                "Refresh Freshness", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Steering Impact Preview — project the effect of corrections before committing", open=False):
             gr.Markdown(
                 "Select a steering action type, provide the relevant payload as JSON, "
@@ -17294,6 +17449,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 inputs=[matter_id_box],
                 outputs=[manifest_inspector_html],
             ).then(
+                fn=lambda mid: state.load_freshness_report(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[freshness_report_html],
+            ).then(
                 fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_readiness_html],
@@ -17445,6 +17604,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[manifest_inspector_html],
+            ).then(
+                fn=lambda mid: state.load_freshness_report(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[freshness_report_html],
             ).then(
                 fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
@@ -17606,6 +17769,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[manifest_inspector_html],
+        ).then(
+            fn=lambda mid: state.load_freshness_report(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[freshness_report_html],
         ).then(
             fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -18064,6 +18231,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[manifest_inspector_html],
+        )
+        refresh_freshness_btn.click(
+            fn=lambda mid: state.load_freshness_report(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[freshness_report_html],
         )
         impact_preview_btn.click(
             fn=lambda mid, at, pj: state.load_impact_preview(
@@ -18609,6 +18781,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[manifest_inspector_html],
+        ).then(
+            fn=lambda mid: state.load_freshness_report(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[freshness_report_html],
         ).then(
             fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],

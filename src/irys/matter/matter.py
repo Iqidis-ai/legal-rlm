@@ -8976,5 +8976,59 @@ class MatterModel:
             },
         }
 
+    _FRESHNESS_NAMESPACES = (
+        "claims", "claim_occurrences", "objective_nodes", "criteria",
+        "entities", "artifacts", "clarifications", "annotations",
+        "assumptions", "support_edges", "guidance", "spans",
+        "proof_state", "verification_state", "object_taint", "policy",
+        "domain_profiles", "profile_mappings", "domain_facets",
+        "domain_detection", "domain_composition",
+    )
+
+    def get_freshness_report(self) -> dict:
+        broker = self.memory_broker
+        namespaces: list[dict] = []
+        stale_list: list[str] = []
+        for ns in self._FRESHNESS_NAMESPACES:
+            rev = broker.get_namespace_revision(ns)
+            row = self.db.execute(
+                """SELECT updated_at FROM namespace_revision
+                   WHERE matter_id=? AND namespace=? AND target_kind='*' AND target_id='*'""",
+                (self.matter_id, ns),
+            ).fetchone()
+            updated = row["updated_at"] if row else None
+            state = "fresh" if rev > 0 else "missing"
+            namespaces.append({
+                "namespace": ns,
+                "revision": rev,
+                "state": state,
+                "updated_at": updated,
+            })
+            if state == "missing":
+                stale_list.append(ns)
+
+        run_row = self.db.execute(
+            "SELECT COUNT(*) AS cnt FROM run_session WHERE matter_id=? AND status='running'",
+            (self.matter_id,),
+        ).fetchone()
+        active_runs = int(run_row["cnt"]) if run_row else 0
+
+        last_update_row = self.db.execute(
+            """SELECT MAX(updated_at) AS last_up FROM namespace_revision
+               WHERE matter_id=?""",
+            (self.matter_id,),
+        ).fetchone()
+        last_update = last_update_row["last_up"] if last_update_row else None
+
+        return {
+            "matter_id": self.matter_id,
+            "namespace_count": len(namespaces),
+            "stale_namespaces": stale_list,
+            "is_hot_answerable": len(stale_list) == 0 and active_runs == 0,
+            "active_run_count": active_runs,
+            "last_update_at": last_update,
+            "namespaces": namespaces,
+        }
+
     def __repr__(self) -> str:
         return f"MatterModel(matter_id={self.matter_id[:8]}..., db={self.db})"

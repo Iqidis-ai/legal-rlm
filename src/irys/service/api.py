@@ -2558,6 +2558,17 @@ async def get_matter_so_metrics(matter_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/freshness",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_freshness(matter_id: str):
+    """Return namespace-level freshness report for a matter (SO-1, SO-5)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_freshness_report()
+
+
+@app.get(
     "/matter/{matter_id}/decision-context",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
