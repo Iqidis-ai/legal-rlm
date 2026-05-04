@@ -146,6 +146,13 @@ one generic synthesis pass.
 Synthesis receives a mandatory Workflow Quality Contract section. After
 synthesis, the engine runs one focused repair pass for fixable structural misses.
 
+**Synthesis Context Principle:** Synthesis receives only answer ingredients —
+relevant assertions, facts, findings, and source references. It does NOT receive
+gap summaries, contradiction lists, issue status, proof state, or coverage
+reports unless the user's question explicitly asks about them. The investigative
+loop already handled those; injecting them makes the LLM hedge instead of
+producing a clean draft.
+
 The foreground cold path keeps corpus mapping separate from answer latency.
 Cheap inventory questions answer from repository path metadata. Substantive
 questions rank files by path/name signals before deep-reading a foreground slice.

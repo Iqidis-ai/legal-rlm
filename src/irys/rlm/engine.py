@@ -6073,7 +6073,14 @@ Return:
             )
 
     async def _synthesize(self, state: InvestigationState):
-        """Phase 3: Final synthesis using Pro model."""
+        """Phase 3: Final synthesis using Pro model.
+
+        SYNTHESIS CONTEXT PRINCIPLE: Pass only answer ingredients (assertions,
+        facts, findings, source refs). Do NOT include gap summaries,
+        contradiction lists, issue status, proof state, or coverage reports
+        unless the user's question explicitly asks about them. The
+        investigative loop already handled those artifacts.
+        """
         _adapter = getattr(state, "_matter_adapter", None)
         if _adapter is not None and _adapter.is_stop_requested():
             return  # Skip synthesis if user stopped the run

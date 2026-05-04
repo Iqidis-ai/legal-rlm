@@ -909,6 +909,11 @@ class ReadFamilyHandler:
     """Answers queries from existing matter state with one synth call.
     No loop, no search, no extraction. If the matter state doesn't
     contain enough to answer at the contract's floor, escalates to
+
+    SYNTHESIS CONTEXT PRINCIPLE: Pass only answer ingredients (assertions,
+    facts, findings, source refs). Do NOT include gap summaries,
+    contradiction lists, issue status, proof state, or coverage reports
+    unless the user's question explicitly asks about them.
     investigate via the caller."""
 
     # Mapping from the LLM's coarse label to a numeric score so the
