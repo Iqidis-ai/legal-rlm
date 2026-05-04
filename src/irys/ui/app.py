@@ -8070,6 +8070,74 @@ class AppState:
                     lines.append(f"  {key}: {'Yes' if val else 'No'}{status}")
                 else:
                     lines.append(f"  {key}: {val}{status}")
+        try:
+            proof = _run_async(self.backend().get_proof_state_summary(matter_id))
+            proof_issues = proof.get("issues", []) if isinstance(proof, dict) else []
+            if proof_issues:
+                lines.append(f"\n{'='*60}")
+                lines.append("PROOF STATE BY ISSUE")
+                lines.append(f"{'='*60}")
+                summary = proof.get("summary", {}) if isinstance(proof, dict) else {}
+                lines.append(f"  Average sufficiency: {summary.get('avg_sufficiency', 0):.0%}")
+                for ps in proof_issues[:20]:
+                    if not isinstance(ps, dict):
+                        continue
+                    title = (ps.get("issue_title") or ps.get("issue_id") or "—")[:60]
+                    status = ps.get("proof_status", "?")
+                    suf = ps.get("sufficiency", 0)
+                    suf_str = f"{float(suf):.0%}" if isinstance(suf, (int, float)) else str(suf)
+                    sup = ps.get("supporting_count", 0)
+                    att = ps.get("attacking_count", 0)
+                    lines.append(f"  [{status}] {title}  ({suf_str}, +{sup}/-{att})")
+        except Exception as exc:
+            logger.warning("Export proof state section failed: %s", exc)
+
+        try:
+            auth_data = _run_async(self.backend().get_authority_network(matter_id))
+            authorities = auth_data.get("authorities", []) if isinstance(auth_data, dict) else []
+            if authorities:
+                lines.append(f"\n{'='*60}")
+                lines.append("AUTHORITIES & REFERENCES")
+                lines.append(f"{'='*60}")
+                for auth in authorities[:30]:
+                    if not isinstance(auth, dict):
+                        continue
+                    cite = (auth.get("citation") or "—")[:80]
+                    atype = auth.get("authority_type", "?")
+                    weight = auth.get("weight", "?")
+                    n_links = len(auth.get("issue_links", []) or [])
+                    lines.append(f"  [{atype}/{weight}] {cite}  ({n_links} linked issues)")
+        except Exception as exc:
+            logger.warning("Export authority section failed: %s", exc)
+
+        try:
+            quant = _run_async(self.backend().get_quant_summary(matter_id))
+            recon = quant.get("payment_reconciliation", {}) if isinstance(quant, dict) else {}
+            if recon and recon.get("invoiced") is not None:
+                lines.append(f"\n{'='*60}")
+                lines.append("FINANCIAL RECONCILIATION")
+                lines.append(f"{'='*60}")
+                ccy = recon.get("currency", "USD")
+                for label, key in [("Invoiced", "invoiced"), ("Paid", "paid"),
+                                   ("Disputed", "disputed"), ("Exposure", "exposure")]:
+                    val = recon.get(key, 0)
+                    if isinstance(val, (int, float)):
+                        lines.append(f"  {label}: {ccy} {val:,.2f}")
+            waterfall = quant.get("damages_waterfall", []) if isinstance(quant, dict) else []
+            if waterfall:
+                lines.append(f"\n  Damages Waterfall:")
+                for d in waterfall[:15]:
+                    if not isinstance(d, dict):
+                        continue
+                    comp = d.get("component") or "(uncategorised)"
+                    amt = d.get("claimed_amount", 0)
+                    amt_str = f"{amt:,.2f}" if isinstance(amt, (int, float)) else str(amt)
+                    conflicts = len(d.get("conflicts", []) or [])
+                    flag = f" [!{conflicts} conflicts]" if conflicts else ""
+                    lines.append(f"    {comp}: {amt_str}{flag}")
+        except Exception as exc:
+            logger.warning("Export financial section failed: %s", exc)
+
         lines.append(f"\n{'='*60}")
         lines.append("END OF REPORT")
         lines.append(f"{'='*60}\n")
