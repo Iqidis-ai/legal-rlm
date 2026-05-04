@@ -8741,23 +8741,28 @@ class AppState:
         "legal": {"title": "MATTER SUMMARY REPORT", "issues": "ISSUES BY EVIDENCE COVERAGE (weakest first)",
                   "assertions": "KEY ASSERTIONS", "gaps": "OPEN GAPS", "contradictions": "CONTRADICTIONS",
                   "proof": "PROOF STATE BY ISSUE", "authorities": "AUTHORITIES & REFERENCES",
-                  "financial": "FINANCIAL RECONCILIATION", "issue_unit": "issues", "assertion_unit": "assertions"},
+                  "financial": "FINANCIAL RECONCILIATION", "threshold_alerts": "FINANCIAL HEALTH ALERTS",
+                  "issue_unit": "issues", "assertion_unit": "assertions"},
         "finance": {"title": "ANALYSIS SUMMARY REPORT", "issues": "THESES BY EVIDENCE COVERAGE (weakest first)",
                     "assertions": "KEY FINDINGS", "gaps": "OPEN GAPS", "contradictions": "DATA CONFLICTS",
                     "proof": "PROOF STATE BY THESIS", "authorities": "REFERENCES & SOURCES",
-                    "financial": "FINANCIAL RECONCILIATION", "issue_unit": "theses", "assertion_unit": "findings"},
+                    "financial": "FINANCIAL RECONCILIATION", "threshold_alerts": "FINANCIAL RISK ALERTS",
+                    "issue_unit": "theses", "assertion_unit": "findings"},
         "coding": {"title": "ANALYSIS SUMMARY REPORT", "issues": "HYPOTHESES BY EVIDENCE COVERAGE (weakest first)",
                    "assertions": "KEY FINDINGS", "gaps": "OPEN GAPS", "contradictions": "CONTRADICTIONS",
                    "proof": "PROOF STATE BY HYPOTHESIS", "authorities": "REFERENCES & DOCUMENTATION",
-                   "financial": "METRIC RECONCILIATION", "issue_unit": "hypotheses", "assertion_unit": "findings"},
+                   "financial": "METRIC RECONCILIATION", "threshold_alerts": "METRIC THRESHOLD ALERTS",
+                   "issue_unit": "hypotheses", "assertion_unit": "findings"},
         "academic_research": {"title": "RESEARCH SESSION SUMMARY", "issues": "CLAIMS BY EVIDENCE COVERAGE (weakest first)",
                               "assertions": "KEY CLAIMS", "gaps": "OPEN GAPS", "contradictions": "CONFLICTING FINDINGS",
                               "proof": "PROOF STATE BY CLAIM", "authorities": "CITATIONS & SOURCES",
-                              "financial": "QUANTITATIVE RECONCILIATION", "issue_unit": "claims", "assertion_unit": "claims"},
+                              "financial": "QUANTITATIVE RECONCILIATION", "threshold_alerts": "QUANTITATIVE THRESHOLD ALERTS",
+                              "issue_unit": "claims", "assertion_unit": "claims"},
         "biomedical": {"title": "CASE REVIEW SUMMARY", "issues": "FINDINGS BY EVIDENCE COVERAGE (weakest first)",
                        "assertions": "KEY FINDINGS", "gaps": "OPEN GAPS", "contradictions": "CONFLICTING EVIDENCE",
                        "proof": "PROOF STATE BY FINDING", "authorities": "CLINICAL REFERENCES",
-                       "financial": "QUANTITATIVE RECONCILIATION", "issue_unit": "findings", "assertion_unit": "findings"},
+                       "financial": "QUANTITATIVE RECONCILIATION", "threshold_alerts": "CLINICAL THRESHOLD ALERTS",
+                       "issue_unit": "findings", "assertion_unit": "findings"},
     }
 
     def export_summary_report(self, matter_id: str) -> "str | None":
@@ -8910,6 +8915,23 @@ class AppState:
                     lines.append(f"    {comp}: {amt_str}{flag}")
         except Exception as exc:
             logger.warning("Export financial section failed: %s", exc)
+
+        try:
+            violations = _run_async(self.backend().get_quant_thresholds(matter_id))
+            if violations:
+                lines.append(f"\n{'='*60}")
+                lines.append(el["threshold_alerts"])
+                lines.append(f"{'='*60}")
+                for v in violations:
+                    if not isinstance(v, dict):
+                        continue
+                    level = v.get("level", "?")
+                    desc = (v.get("description") or "—")[:120]
+                    amt = v.get("amount")
+                    amt_str = f" ({amt:,.2f})" if isinstance(amt, (int, float)) else ""
+                    lines.append(f"  [{level}] {desc}{amt_str}")
+        except Exception as exc:
+            logger.warning("Export threshold alerts section failed: %s", exc)
 
         lines.append(f"\n{'='*60}")
         lines.append("END OF REPORT")
