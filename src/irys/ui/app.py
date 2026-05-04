@@ -7710,6 +7710,24 @@ class AppState:
             logger.warning("update_assumption_status failed: %s", exc)
             return f"Error: {_escape(str(exc))}", ""
 
+    def set_issue_priority(self, matter_id: str, issue_id: str, priority: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first."
+        iid = (issue_id or "").strip()
+        if not iid:
+            return "Enter an issue ID."
+        if not priority:
+            return "Select a priority level."
+        try:
+            updated = _run_async(self.backend().set_issue_priority(matter_id, iid, priority))
+            if not updated:
+                return f"Issue {_escape(iid[:20])} not found."
+            label = {"critical": "Critical", "high": "High", "medium": "Medium", "low": "Low"}.get(priority, priority)
+            return f"Set {_escape(iid[:20])} to {label} priority."
+        except Exception as exc:
+            logger.warning("set_issue_priority failed: %s", exc)
+            return f"Error: {_escape(str(exc))}"
+
     def load_quant(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -9464,6 +9482,28 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             steering_panel_html = gr.HTML("<div class='viz-empty'>Recommendations will appear here after an investigation.</div>")
             refresh_steering_btn = gr.Button("Refresh Recommendations", variant="secondary", size="sm")
 
+        with gr.Accordion("Adjust issue priority", open=False):
+            gr.Markdown(
+                "Override the computed priority of an issue. Critical and high-priority "
+                "issues receive deeper investigation and are surfaced first in reports."
+            )
+            with gr.Row():
+                priority_issue_id_input = gr.Textbox(
+                    label="Issue ID (copy from the Issues panel)", scale=3,
+                )
+                priority_dropdown = gr.Dropdown(
+                    label="Priority",
+                    choices=[
+                        ("Critical — must investigate deeply", "critical"),
+                        ("High — important to the outcome", "high"),
+                        ("Medium — standard investigation", "medium"),
+                        ("Low — background concern only", "low"),
+                    ],
+                    scale=2,
+                )
+                priority_apply_btn = gr.Button("Set Priority", variant="primary", size="sm", scale=1)
+            priority_result = gr.Markdown("")
+
         with gr.Accordion("Working Assumptions — what Irys is taking as given", open=False):
             gr.Markdown(
                 "Irys logs every assumption it makes during analysis. If an assumption "
@@ -10486,6 +10526,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, aid, action, reason: state.update_assumption_status(mid, aid, action, reason),
             inputs=[matter_id_box, assumption_id_input, assumption_action_dropdown, assumption_reason_input],
             outputs=[assumption_action_result, assumptions_detail_html],
+        )
+        priority_apply_btn.click(
+            fn=lambda mid, iid, p: state.set_issue_priority(mid, iid, p),
+            inputs=[matter_id_box, priority_issue_id_input, priority_dropdown],
+            outputs=[priority_result],
         )
         refresh_quant_btn.click(
             fn=lambda mid: state.load_quant(mid, domain=state._detect_domain(mid)),

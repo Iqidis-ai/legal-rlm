@@ -2627,6 +2627,27 @@ async def update_assumption_status(matter_id: str, assumption_id: str, status: s
     return {"updated": True, "assumption_id": assumption_id, "status": status}
 
 
+_PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
+
+
+@app.post(
+    "/matter/{matter_id}/issues/{issue_id}/priority",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def set_issue_priority(matter_id: str, issue_id: str, priority: str = Body(...)):
+    """Set issue priority: critical, high, medium, low (SO-3 — user-steerable reasoning)."""
+    model = await _get_matter_model_or_404(matter_id)
+    p = priority.lower()
+    if p not in _PRIORITY_MAP:
+        raise HTTPException(status_code=400, detail=f"Invalid priority '{priority}'. Must be one of: {', '.join(_PRIORITY_MAP)}")
+    materiality = _PRIORITY_MAP[p]
+    updated = model.issues.set_materiality(issue_id, materiality)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Issue '{issue_id}' not found")
+    return {"updated": True, "issue_id": issue_id, "priority": p}
+
+
 @app.get(
     "/matter/{matter_id}/assertions/{assertion_id}/correct/revisions",
     tags=["Matter Model"],

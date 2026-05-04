@@ -544,6 +544,13 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.assumptions.set_status(assumption_id, status, reason or None)
 
+    _PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
+
+    async def set_issue_priority(self, matter_id: str, issue_id: str, priority: str) -> bool:
+        model = self._get_matter_model(matter_id)
+        materiality = self._PRIORITY_MAP.get(priority.lower(), 0.5)
+        return model.issues.set_materiality(issue_id, materiality)
+
     async def get_timeline(
         self,
         matter_id: str,

@@ -162,6 +162,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def set_issue_priority(self, matter_id: str, issue_id: str, priority: str) -> bool:
+        """Set issue priority: critical, high, medium, low (SO-3)."""
+        ...
+
+    @abstractmethod
     async def get_timeline(self, matter_id: str, limit: int = 80, policy_audience: str = "clean") -> list[dict]:
         """Return timeline events for the matter."""
         ...

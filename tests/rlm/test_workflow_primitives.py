@@ -3589,3 +3589,25 @@ def test_update_assumption_status_backend_interface():
     assert "assumption_id" in params
     assert "status" in params
     assert "reason" in params
+
+
+def test_set_issue_priority_backend_interface():
+    """Verify set_issue_priority exists in backend interface."""
+    import inspect
+    from irys.ui.backends.base import UIBackend
+    assert hasattr(UIBackend, "set_issue_priority")
+    sig = inspect.signature(UIBackend.set_issue_priority)
+    params = list(sig.parameters.keys())
+    assert "matter_id" in params
+    assert "issue_id" in params
+    assert "priority" in params
+
+
+def test_set_issue_priority_appstate_validation():
+    """Priority steering validates inputs before calling backend."""
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    assert state.set_issue_priority("", "i1", "high") == "Load a matter first."
+    assert state.set_issue_priority("—", "i1", "high") == "Load a matter first."
+    assert state.set_issue_priority("mid-1", "", "high") == "Enter an issue ID."
+    assert state.set_issue_priority("mid-1", "i1", "") == "Select a priority level."

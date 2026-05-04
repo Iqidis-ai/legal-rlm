@@ -2635,6 +2635,15 @@ class IssueStore:
         ).fetchone()
         return dict(row) if row else None
 
+    def set_materiality(self, issue_id: str, materiality: float) -> bool:
+        materiality = max(0.0, min(1.0, materiality))
+        cur = self.db.execute(
+            "UPDATE issue SET materiality=?, updated_at=? WHERE id=? AND matter_id=?",
+            (materiality, _now(), issue_id, self.matter_id),
+        )
+        self.db.conn.commit()
+        return cur.rowcount > 0
+
     def count_open(self) -> int:
         row = self.db.execute(
             "SELECT COUNT(*) FROM issue WHERE matter_id=? AND status='open'",

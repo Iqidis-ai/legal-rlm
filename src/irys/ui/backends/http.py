@@ -252,6 +252,13 @@ class HttpBackend(UIBackend):
         )
         return bool(result.get("updated")) if isinstance(result, dict) else False
 
+    async def set_issue_priority(self, matter_id: str, issue_id: str, priority: str) -> bool:
+        result = await self._post(
+            f"/matter/{matter_id}/issues/{issue_id}/priority",
+            {"priority": priority},
+        )
+        return bool(result.get("updated")) if isinstance(result, dict) else False
+
     async def get_timeline(self, matter_id: str, limit: int = 80, policy_audience: str = "clean") -> list[dict]:
         result = await self._get(f"/matter/{matter_id}/timeline", {"limit": limit, "policy_audience": policy_audience})
         if isinstance(result, dict):
