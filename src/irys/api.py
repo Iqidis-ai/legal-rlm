@@ -32,6 +32,7 @@ from .rlm.governance import (
     TraceFamilyHandler,
     TraceFamilyResult,
     _PLEASANTRY_PROMPT,
+    _build_pleasantry_prompt,
     _is_pleasantry,
     decision_cache_key,
 )
@@ -912,8 +913,9 @@ class Irys:
         usage_before = self._client.snapshot_usage()
         try:
             try:
+                domain = self._engine._resolve_active_domain()
                 response = await self._client.complete(
-                    _PLEASANTRY_PROMPT.format(query=query),
+                    _build_pleasantry_prompt(domain).format(query=query),
                     tier=ModelTier.NANO,
                     json_mode=False,
                     usage_label="pleasantry",

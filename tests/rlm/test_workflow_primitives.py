@@ -10544,3 +10544,74 @@ def test_visible_degradation_calls_result_factory():
         raise RuntimeError("db down")
     assert captured["component"] == "render_gaps"
     assert "db down" in captured["exc"]
+
+
+# ── Domain-parameterized prompt tests ─────────────────────────────────
+
+
+_ALL_DOMAINS = ["legal", "finance", "coding", "academic_research", "biomedical"]
+
+
+def test_classifier_prompt_builds_for_all_domains():
+    """_build_classifier_prompt produces a valid template for every domain."""
+    from irys.rlm.governance import _build_classifier_prompt
+    for domain in _ALL_DOMAINS:
+        prompt = _build_classifier_prompt(domain)
+        formatted = prompt.format(
+            snapshot_block="SNAP", conversation_block="CONV", query="test",
+        )
+        assert "test" in formatted
+        assert "{snapshot_block}" not in formatted
+        assert "{conversation_block}" not in formatted
+        assert "{query}" not in formatted
+
+
+def test_classifier_prompt_unknown_domain_falls_back_to_legal():
+    """Unknown domain IDs fall back to legal vocabulary."""
+    from irys.rlm.governance import _build_classifier_prompt
+    legal = _build_classifier_prompt("legal")
+    unknown = _build_classifier_prompt("nonexistent_domain")
+    assert legal == unknown
+
+
+def test_classifier_prompt_domain_specific_vocabulary():
+    """Each domain's prompt contains its platform and matter terms."""
+    from irys.rlm.governance import _build_classifier_prompt
+    assert "legal intelligence platform" in _build_classifier_prompt("legal")
+    assert "financial intelligence platform" in _build_classifier_prompt("finance")
+    assert "software analysis platform" in _build_classifier_prompt("coding")
+    assert "research analysis platform" in _build_classifier_prompt("academic_research")
+    assert "biomedical intelligence platform" in _build_classifier_prompt("biomedical")
+
+
+def test_pleasantry_prompt_builds_for_all_domains():
+    """_build_pleasantry_prompt produces a valid template for every domain."""
+    from irys.rlm.governance import _build_pleasantry_prompt
+    for domain in _ALL_DOMAINS:
+        prompt = _build_pleasantry_prompt(domain)
+        formatted = prompt.format(query="hello")
+        assert "hello" in formatted
+        assert "{query}" not in formatted
+
+
+def test_pleasantry_prompt_domain_specific_analysis_noun():
+    """Each domain's pleasantry prompt uses the correct analysis noun."""
+    from irys.rlm.governance import _build_pleasantry_prompt
+    assert "legal analysis" in _build_pleasantry_prompt("legal")
+    assert "financial analysis" in _build_pleasantry_prompt("finance")
+    assert "code analysis" in _build_pleasantry_prompt("coding")
+    assert "research analysis" in _build_pleasantry_prompt("academic_research")
+    assert "clinical analysis" in _build_pleasantry_prompt("biomedical")
+
+
+def test_cascade_governor_resolve_domain_default():
+    """CascadeGovernor._resolve_domain returns 'legal' with no matter model."""
+    gov = CascadeGovernor(client=_StubClient())
+    assert gov._resolve_domain() == "legal"
+
+
+def test_cascade_governor_resolve_domain_caches():
+    """Once resolved, domain is cached on the governor."""
+    gov = CascadeGovernor(client=_StubClient())
+    gov._cached_domain = "finance"
+    assert gov._resolve_domain() == "finance"

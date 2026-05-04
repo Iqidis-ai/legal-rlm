@@ -165,49 +165,123 @@ VALID_FAMILIES = {
 }
 
 
-INTENT_CLASSIFIER_PROMPT = """You are a routing classifier for a legal intelligence platform. For each user query you pick ONE route that matches how much work the system should actually do.
+_DOMAIN_CLASSIFIER_EXAMPLES: dict[str, dict[str, str]] = {
+    "legal": {
+        "platform": "legal intelligence platform",
+        "matter": "legal matter",
+        "investigate_examples": '"What\'s our damages exposure?", "Did the opposing party breach the agreement?", "Find me evidence of intent to deceive."',
+        "read_examples": '"Summarize our session for my team", "Give me that analysis as bullet points", "Draft a client email explaining our conclusions", "What have we found about the MSA?"',
+        "trace_examples": '"why did you say X", "show me the source for claim Y", "what\'s the provenance of the damages figure"',
+        "steer_examples": '"Actually the date was April, not March", "That assertion is wrong", "Mark the MSA as the operative contract", "Change the damages figure to 50000"',
+        "compare_examples": '"What changed since yesterday\'s production?", "What\'s new since the last investigation?"',
+        "scenario_examples": '"What if we concede jurisdiction?", "Treat the waiver as valid and recompute damages", "Imagine the statute of limitations hasn\'t run"',
+        "deliverable_examples": '"Generate a privilege log", "Draft the Rule 26(a)(1) disclosure", "Outline my deposition of Smith"',
+        "deliverable_desc": "a privilege log, a Rule 26 disclosure, a deposition outline, a meet-and-confer letter, etc. These have specific legal templates",
+        "deliverable_routing": '"privilege log", "Rule 26", "deposition outline", "production letter"',
+    },
+    "finance": {
+        "platform": "financial intelligence platform",
+        "matter": "financial matter",
+        "investigate_examples": '"What\'s our total exposure on this position?", "Analyze the covenant compliance risk", "Find evidence of earnings manipulation."',
+        "read_examples": '"Summarize the key financial findings", "Draft an investment committee memo", "What have we found about the revenue recognition?"',
+        "trace_examples": '"why did you flag this as a risk?", "show me the source for the EBITDA figure", "how did you derive that valuation?"',
+        "steer_examples": '"Actually the revenue was $50M not $45M", "That ratio is wrong", "Use the restated figures instead"',
+        "compare_examples": '"What changed since the last quarterly filing?", "How does this quarter compare to guidance?"',
+        "scenario_examples": '"What if revenue drops 20%?", "Redo the analysis assuming the covenant is waived", "Model a recession scenario"',
+        "deliverable_examples": '"Generate a credit memo", "Draft the investment thesis summary", "Prepare a risk assessment report"',
+        "deliverable_desc": "a credit memo, an investment thesis, a risk assessment, a due diligence report, etc. These have specific financial templates",
+        "deliverable_routing": '"credit memo", "investment thesis", "risk assessment", "due diligence report"',
+    },
+    "coding": {
+        "platform": "software analysis platform",
+        "matter": "codebase or system",
+        "investigate_examples": '"What caused this regression?", "Find all security vulnerabilities in the auth module", "Analyze the performance bottleneck in the API."',
+        "read_examples": '"Summarize the architecture", "Draft a design doc for this approach", "What have we found about the memory leak?"',
+        "trace_examples": '"why did you flag this as a bug?", "show me the test that covers this path", "how did you derive that dependency chain?"',
+        "steer_examples": '"Actually that function was deprecated", "That\'s not a bug, it\'s intended behavior", "Use the v2 API instead"',
+        "compare_examples": '"What changed since the last release?", "What\'s different between these two branches?"',
+        "scenario_examples": '"What if we remove this dependency?", "Model the impact of upgrading to Python 4", "What breaks if we change this interface?"',
+        "deliverable_examples": '"Generate a code review report", "Draft the API migration guide", "Prepare a security audit summary"',
+        "deliverable_desc": "a code review report, an API migration guide, a security audit, a postmortem, etc. These have specific engineering templates",
+        "deliverable_routing": '"code review", "migration guide", "security audit", "postmortem"',
+    },
+    "academic_research": {
+        "platform": "research analysis platform",
+        "matter": "research corpus",
+        "investigate_examples": '"What does the literature say about X?", "Find contradicting evidence for this hypothesis", "Analyze the methodology of these studies."',
+        "read_examples": '"Summarize the key findings", "Draft a literature review section", "What have we found about the effect size?"',
+        "trace_examples": '"why did you rate this study highly?", "show me the citation for that claim", "how did you derive that confidence interval?"',
+        "steer_examples": '"Actually that study was retracted", "That p-value is from the wrong analysis", "Exclude pre-2020 studies"',
+        "compare_examples": '"What changed since we added the new papers?", "How do these two meta-analyses differ?"',
+        "scenario_examples": '"What if we exclude studies with n<100?", "Redo the analysis assuming publication bias", "What if we use a random-effects model?"',
+        "deliverable_examples": '"Generate a systematic review table", "Draft the methods section", "Prepare a citation network summary"',
+        "deliverable_desc": "a systematic review table, a methods section, a citation analysis, a research summary, etc. These have specific academic templates",
+        "deliverable_routing": '"systematic review", "methods section", "citation analysis", "research summary"',
+    },
+    "biomedical": {
+        "platform": "biomedical intelligence platform",
+        "matter": "clinical or biomedical corpus",
+        "investigate_examples": '"What\'s the evidence for this drug\'s efficacy?", "Find adverse event signals in the trial data", "Analyze the mechanism of action."',
+        "read_examples": '"Summarize the clinical evidence", "Draft a safety review", "What have we found about the primary endpoint?"',
+        "trace_examples": '"why did you flag this safety signal?", "show me the trial that supports this claim", "how did you derive that hazard ratio?"',
+        "steer_examples": '"Actually that trial was Phase II not Phase III", "That dosage is wrong", "Use the ITT population instead"',
+        "compare_examples": '"What changed since the interim analysis?", "How does this trial compare to the competitor\'s?"',
+        "scenario_examples": '"What if the NNT threshold is 10 instead of 15?", "Redo assuming non-inferiority margin of 1.3", "What if we include real-world evidence?"',
+        "deliverable_examples": '"Generate a clinical evidence table", "Draft the safety narrative", "Prepare a regulatory submission summary"',
+        "deliverable_desc": "a clinical evidence table, a safety narrative, a regulatory submission summary, an evidence dossier, etc. These have specific clinical templates",
+        "deliverable_routing": '"evidence table", "safety narrative", "regulatory summary", "evidence dossier"',
+    },
+}
+
+
+def _build_classifier_prompt(domain: str = "legal") -> str:
+    ex = _DOMAIN_CLASSIFIER_EXAMPLES.get(domain, _DOMAIN_CLASSIFIER_EXAMPLES["legal"])
+    return f"""You are a routing classifier for a {ex['platform']}. For each user query you pick ONE route that matches how much work the system should actually do.
 
 Six routes are available:
 
-1. `investigate` — the user is asking a novel question about this legal matter that probably needs new evidence extraction, document search, or synthesis of findings the matter model does not yet contain. Examples: "What's our damages exposure?", "Did the opposing party breach the agreement?", "Find me evidence of intent to deceive." Route here if the matter is fresh (no facts yet), OR if the question targets material that probably hasn't been extracted, OR if the user explicitly asks for an investigation.
+1. `investigate` — the user is asking a novel question about this {ex['matter']} that probably needs new evidence extraction, document search, or synthesis of findings the matter model does not yet contain. Examples: {ex['investigate_examples']} Route here if the matter is fresh (no facts yet), OR if the question targets material that probably hasn't been extracted, OR if the user explicitly asks for an investigation.
 
-2. `read` — the user is asking for a summary, recap, restatement, reformat, or substantive answer synthesized from facts the matter model already contains. Examples: "Summarize our session for my team", "Give me that analysis as bullet points", "Draft a client email explaining our conclusions", "What have we found about the MSA?". Route here if the matter has content AND the query asks about existing findings as a narrative answer, not a plain enumeration.
+2. `read` — the user is asking for a summary, recap, restatement, reformat, or substantive answer synthesized from facts the matter model already contains. Examples: {ex['read_examples']}. Route here if the matter has content AND the query asks about existing findings as a narrative answer, not a plain enumeration.
 
 3. `query` — the user is asking for a plain enumeration or lookup from matter model tables: "list all quants", "show me every actor", "what gaps are open", "give me the full timeline", "list every contradiction". These are DB reads — no synthesis or reasoning needed. Route here when the request is structurally "give me the list of X" or "show me the data in store Y".
 
-4. `trace` — the user is asking where a specific prior conclusion came from: "why did you say X", "show me the source for claim Y", "what's the provenance of the damages figure", "how did you derive that timeline". Route here when the request targets the reasoning ledger / provenance of an existing finding.
+4. `trace` — the user is asking where a specific prior conclusion came from: {ex['trace_examples']}. Route here when the request targets the reasoning ledger / provenance of an existing finding.
 
-5. `steer` — the user is CORRECTING a prior fact, OVERRIDING a belief, annotating, editing assumptions, or otherwise mutating matter state. Examples: "Actually the date was April, not March", "That assertion is wrong", "Mark the MSA as the operative contract", "Change the damages figure to 50000", "Ignore the email from March 3rd — it's drafts". The user is not asking a question; they're correcting or directing the matter model. Route here even when the phrasing is indirect ("no, the payment was 30 days after").
+5. `steer` — the user is CORRECTING a prior fact, OVERRIDING a belief, annotating, editing assumptions, or otherwise mutating matter state. Examples: {ex['steer_examples']}. The user is not asking a question; they're correcting or directing the matter model. Route here even when the phrasing is indirect.
 
-6. `compare` — the user is asking for a DIFF across time or across alternatives. Examples: "What changed since yesterday's production?", "What's new since the last investigation?", "How does this version differ from the previous one?", "What did we learn in the latest run?". Route here when the request is explicitly about changes, deltas, or comparisons across matter states.
+6. `compare` — the user is asking for a DIFF across time or across alternatives. Examples: {ex['compare_examples']}. Route here when the request is explicitly about changes, deltas, or comparisons across matter states.
 
-7. `scenario` — the user is asking a HYPOTHETICAL or counterfactual — "what if X were true". Examples: "Redo the analysis assuming the contract is void", "What if we concede jurisdiction?", "Treat the waiver as valid and recompute damages", "Imagine the statute of limitations hasn't run". The user is not correcting state; they're asking for an alternative computation with an overridden assumption.
+7. `scenario` — the user is asking a HYPOTHETICAL or counterfactual — "what if X were true". Examples: {ex['scenario_examples']}. The user is not correcting state; they're asking for an alternative computation with an overridden assumption.
 
-8. `deliverable` — the user is asking for a STRUCTURED WORK PRODUCT — a privilege log, a Rule 26 disclosure, a deposition outline, a meet-and-confer letter, etc. These have specific legal templates and the strictest verification/policy floor. Examples: "Generate a privilege log", "Draft the Rule 26(a)(1) disclosure", "Outline my deposition of Smith", "Prepare a production letter".
+8. `deliverable` — the user is asking for a STRUCTURED WORK PRODUCT — {ex['deliverable_desc']} and the strictest verification/policy floor. Examples: {ex['deliverable_examples']}.
 
-9. `clarify` — the user's referent is ambiguous or the query is so vague that proceeding would produce a wrong cheap answer. Examples: "Tell me about Smith" when there are two Smiths. Route here SPARINGLY — only when a specific ambiguity makes routing unsafe.
+9. `clarify` — the user's referent is ambiguous or the query is so vague that proceeding would produce a wrong cheap answer. Route here SPARINGLY — only when a specific ambiguity makes routing unsafe.
 
 Guidance:
 - Default to `investigate` on a fresh matter (has_any_facts=False).
-- On a warm matter: `query` for "list X" / "show X" / "which X", `read` for "summarize" / "draft" / "explain" / "what does X mean", `trace` for "why" / "how did you" / "show the source", `steer` for "correct" / "actually X" / "no, it was Y" / "change" / "ignore", `compare` for "what changed" / "diff" / "since [X]", `scenario` for "what if" / "assume X" / "redo assuming", `deliverable` for named work products ("privilege log", "Rule 26", "deposition outline", "production letter").
+- On a warm matter: `query` for "list X" / "show X" / "which X", `read` for "summarize" / "draft" / "explain" / "what does X mean", `trace` for "why" / "how did you" / "show the source", `steer` for "correct" / "actually X" / "no, it was Y" / "change" / "ignore", `compare` for "what changed" / "diff" / "since [X]", `scenario` for "what if" / "assume X" / "redo assuming", `deliverable` for named work products ({ex['deliverable_routing']}).
 - Never route to read/query/trace/steer/compare/scenario if has_any_facts=False — there's nothing to read or compare.
 - Your job is cost governance, not content judgment. Keep the decision fast.
 
 Matter state snapshot:
-{snapshot_block}
+{{snapshot_block}}
 
 Recent conversation turns (for deixis only — do not rely on them as a knowledge source):
-{conversation_block}
+{{conversation_block}}
 
-User query: {query}
+User query: {{query}}
 
 Respond ONLY with a single JSON object:
-{{
+{{{{
   "family": "investigate" | "read" | "query" | "trace" | "steer" | "compare" | "scenario" | "deliverable" | "clarify",
   "confidence": 0.0-1.0,
   "rationale": "one short sentence — why this route"
-}}
+}}}}
 """
+
+
+INTENT_CLASSIFIER_PROMPT = _build_classifier_prompt("legal")
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +306,20 @@ class CascadeGovernor:
         self.client = client
         self.matter_model = matter_model
         self.cache_manifest_hash = cache_manifest_hash
+        self._cached_domain: Optional[str] = None
+
+    def _resolve_domain(self) -> str:
+        if self._cached_domain:
+            return self._cached_domain
+        if self.matter_model is not None:
+            try:
+                _, _, primary = self.matter_model._read_matter_domain_composition()
+                if primary:
+                    self._cached_domain = primary
+                    return primary
+            except Exception:
+                pass
+        return "legal"
 
     # MVI-2b (Fix D): decision-cache stage name for reasoning_cache.
     _CACHE_STAGE = "cascade_decision"
@@ -501,7 +589,7 @@ class CascadeGovernor:
         """Single NANO call. Returns (family, confidence, rationale).
         Defaults to ('investigate', 0.0, 'classifier error: <msg>') on
         any failure — fail safe, not fail silent."""
-        prompt = INTENT_CLASSIFIER_PROMPT.format(
+        prompt = _build_classifier_prompt(self._resolve_domain()).format(
             snapshot_block=snapshot.to_prompt_block(),
             conversation_block=_render_conversation(conversation_history),
             query=query,
@@ -793,15 +881,29 @@ def decision_cache_key(
 # case" would exceed the length cap AND contain "case", which disqualifies
 # it anyway).
 
-_PLEASANTRY_PROMPT = """A user of a legal intelligence platform typed the
-following greeting or pleasantry. Respond in ONE short, warm sentence (not
-more than 20 words). Do not offer legal analysis, do not ask follow-up
-questions about any matter, do not mention capabilities. Just acknowledge
+def _build_pleasantry_prompt(domain: str = "legal") -> str:
+    ex = _DOMAIN_CLASSIFIER_EXAMPLES.get(domain, _DOMAIN_CLASSIFIER_EXAMPLES["legal"])
+    platform = ex["platform"]
+    matter = ex["matter"]
+    analysis_noun = {
+        "legal": "legal analysis",
+        "finance": "financial analysis",
+        "coding": "code analysis",
+        "academic_research": "research analysis",
+        "biomedical": "clinical analysis",
+    }.get(domain, "analysis")
+    return f"""A user of a {platform} typed the \
+following greeting or pleasantry. Respond in ONE short, warm sentence (not \
+more than 20 words). Do not offer {analysis_noun}, do not ask follow-up \
+questions about any {matter}, do not mention capabilities. Just acknowledge \
 them and be briefly welcoming.
 
-User input: {query}
+User input: {{query}}
 
 Respond with plain text only. No JSON, no labels."""
+
+
+_PLEASANTRY_PROMPT = _build_pleasantry_prompt("legal")
 
 
 # Canonical single-word / phrase pleasantries we route directly. Matching
