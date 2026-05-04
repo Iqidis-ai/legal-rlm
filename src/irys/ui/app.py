@@ -232,6 +232,10 @@ def _upload_files_to_s3_matter(
             failed.append((str(f)[:80], f"resolve path: {exc}"))
             continue
 
+        if display_name == _DOMAIN_PRESET_FILENAME:
+            failed.append((display_name, "reserved filename"))
+            continue
+
         # If JS supplied a relpath for this leaf name, use it as the key suffix
         # so subdirectory structure survives the round-trip through S3.
         key_suffix = display_name
@@ -340,7 +344,10 @@ def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Pa
             relpath = key[len(prefix):]
             if not relpath or relpath.endswith("/"):
                 continue
-            dest = temp_dir / relpath
+            dest = (temp_dir / relpath).resolve()
+            if not str(dest).startswith(str(temp_dir.resolve())):
+                logger.warning("S3 key %r escapes temp dir — skipped", key)
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             download_jobs.append((key, dest))
 
