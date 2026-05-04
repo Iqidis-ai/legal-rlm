@@ -1179,5 +1179,5 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/query-context")
         if not isinstance(result, dict):
             _log.warning("get_query_context: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result

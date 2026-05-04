@@ -8859,3 +8859,50 @@ def test_query_context_api_endpoint_exists():
     from irys.service.api import app as fastapi_app
     routes = [r.path for r in fastapi_app.routes]
     assert "/matter/{matter_id}/query-context" in routes
+
+
+def test_query_context_in_process_roundtrip():
+    from dataclasses import fields, asdict
+    from irys.matter.models import QueryMatterContext
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    ctx = model.build_query_context()
+    result = asdict(ctx)
+    assert isinstance(result, dict)
+    expected_keys = {f.name for f in fields(QueryMatterContext)}
+    assert expected_keys.issubset(result.keys())
+    assert result["matter_id"] == model.matter_id
+
+
+def test_query_context_http_non_dict_returns_error():
+    from irys.ui.app import _fmt_query_context
+    error_data = {"error": "unexpected response type: list"}
+    html = _fmt_query_context(error_data)
+    assert "viz-empty" in html
+    assert "unexpected response type" in html
+
+
+def test_query_context_safe_list_normalization():
+    from irys.ui.app import _fmt_query_context
+    data = {
+        "matter_id": "m1",
+        "matter_name": "Test",
+        "existing_assertion_count": 1,
+        "existing_actor_count": 0,
+        "known_document_ids": "not_a_list",
+        "document_card_count": 0,
+        "active_assumptions": "also_not_a_list",
+        "open_issues": None,
+        "open_gaps": 42,
+        "weakest_issue_id": None,
+        "known_actors": {"bad": "data"},
+        "answered_clarifications": None,
+        "document_annotations": None,
+        "key_predicates": None,
+        "domain_facets": None,
+        "composed_trust_weights": {},
+        "primary_domain_profile_id": None,
+    }
+    html = _fmt_query_context(data)
+    assert "<strong>0</strong> documents" in html
+    assert "<strong>0</strong> active assumptions" in html

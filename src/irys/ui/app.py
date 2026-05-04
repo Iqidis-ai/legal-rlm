@@ -597,6 +597,10 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _safe_list(value: Any) -> list:
+    return value if isinstance(value, list) else []
+
+
 def _llm_token_breakdown(metrics: dict[str, Any]) -> str:
     parts = [f"{_safe_int(metrics.get('input_tokens')):,} input"]
     cache_tokens = _safe_int(metrics.get("cache_read_tokens"))
@@ -9598,19 +9602,19 @@ def _fmt_query_context(data: dict, domain: str = "legal") -> str:
 
     assertions = int(data.get("existing_assertion_count", 0)) if isinstance(data.get("existing_assertion_count"), (int, float)) and math.isfinite(float(data.get("existing_assertion_count", 0))) else 0
     actors = int(data.get("existing_actor_count", 0)) if isinstance(data.get("existing_actor_count"), (int, float)) and math.isfinite(float(data.get("existing_actor_count", 0))) else 0
-    doc_count = len(data.get("known_document_ids", []) or [])
+    known_docs = _safe_list(data.get("known_document_ids"))
+    doc_count = len(known_docs)
     card_count = int(data.get("document_card_count", 0)) if isinstance(data.get("document_card_count"), (int, float)) and math.isfinite(float(data.get("document_card_count", 0))) else 0
-    assumption_count = len(data.get("active_assumptions", []) or [])
+    assumption_count = len(_safe_list(data.get("active_assumptions")))
 
-    open_issues = data.get("open_issues", []) or []
-    open_gaps = data.get("open_gaps", []) or []
+    open_issues = _safe_list(data.get("open_issues"))
+    open_gaps = _safe_list(data.get("open_gaps"))
     weakest_id = data.get("weakest_issue_id")
-    known_actors = data.get("known_actors", []) or []
-    known_docs = data.get("known_document_ids", []) or []
-    clarifications = data.get("answered_clarifications", []) or []
-    annotations = data.get("document_annotations", []) or []
-    predicates = data.get("key_predicates", []) or []
-    domain_facets = data.get("domain_facets", []) or []
+    known_actors = _safe_list(data.get("known_actors"))
+    clarifications = _safe_list(data.get("answered_clarifications"))
+    annotations = _safe_list(data.get("document_annotations"))
+    predicates = _safe_list(data.get("key_predicates"))
+    domain_facets = _safe_list(data.get("domain_facets"))
     trust_weights = data.get("composed_trust_weights", {}) or {}
     if not isinstance(trust_weights, dict):
         trust_weights = {}
@@ -9660,33 +9664,33 @@ def _fmt_query_context(data: dict, domain: str = "legal") -> str:
         "<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>Reuse Inputs</div>"
     )
     parts.append(f"<div style='font-size:12px;'>Known documents: <strong>{len(known_docs)}</strong></div>")
-    if known_actors:
+    str_actors = [a for a in known_actors if not isinstance(a, dict)]
+    if str_actors:
         parts.append(f"<div style='font-size:12px;'>{_escape(L['actors'])}: ")
-        actor_tags = ", ".join(_escape(str(a)[:30]) for a in known_actors[:10] if not isinstance(a, dict))
+        actor_tags = ", ".join(_escape(str(a)[:30]) for a in str_actors[:10])
         parts.append(f"<span style='color:#059669;'>{actor_tags}</span>")
-        if len(known_actors) > 10:
-            parts.append(f" <span style='color:#9ca3af;'>+{len(known_actors)-10} more</span>")
+        if len(str_actors) > 10:
+            parts.append(f" <span style='color:#9ca3af;'>+{len(str_actors)-10} more</span>")
         parts.append("</div>")
     parts.append(f"<div style='font-size:12px;'>Answered clarifications: <strong>{len(clarifications)}</strong></div>")
     parts.append(f"<div style='font-size:12px;'>Document annotations: <strong>{len(annotations)}</strong></div>")
     parts.append("</div>")
 
     # Typed Graph Signals
-    if predicates:
+    str_predicates = [p for p in predicates if not isinstance(p, dict)]
+    if str_predicates:
         parts.append(
             "<div style='margin-bottom:12px;padding:10px;background:#ede9fe;border:1px solid #c4b5fd;border-radius:6px;'>"
             f"<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>{_escape(L['predicates'])}</div>"
         )
         parts.append("<div style='display:flex;flex-wrap:wrap;gap:4px;'>")
-        for p in predicates[:15]:
-            if isinstance(p, dict):
-                continue
+        for p in str_predicates[:15]:
             parts.append(
                 f"<span style='display:inline-block;padding:2px 8px;background:#ddd6fe;border-radius:4px;"
                 f"font-size:11px;color:#5b21b6;'>{_escape(str(p)[:40])}</span>"
             )
-        if len(predicates) > 15:
-            parts.append(f"<span style='font-size:11px;color:#9ca3af;'>+{len(predicates)-15} more</span>")
+        if len(str_predicates) > 15:
+            parts.append(f"<span style='font-size:11px;color:#9ca3af;'>+{len(str_predicates)-15} more</span>")
         parts.append("</div></div>")
 
     # Domain Calibration
