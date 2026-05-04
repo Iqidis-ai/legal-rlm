@@ -7065,6 +7065,102 @@ def _fmt_scenario_snapshot_history(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_SCENARIO_DELTA_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Scenario Delta Log",
+        "subtitle": "Changes applied to this branch without mutating the baseline matter.",
+        "empty": "No deltas applied to this branch yet.",
+        "col_op": "Operation", "col_kind": "Target Type",
+        "col_target": "Target ID", "col_time": "Applied",
+        "col_by": "By",
+    },
+    "finance": {
+        "title": "Scenario Delta Log",
+        "subtitle": "Changes applied to this scenario without mutating the base case.",
+        "empty": "No deltas applied to this scenario yet.",
+        "col_op": "Operation", "col_kind": "Target Type",
+        "col_target": "Target ID", "col_time": "Applied",
+        "col_by": "By",
+    },
+    "coding": {
+        "title": "Design Path Delta Log",
+        "subtitle": "Changes applied to this path without mutating the baseline.",
+        "empty": "No deltas applied to this design path yet.",
+        "col_op": "Operation", "col_kind": "Target Type",
+        "col_target": "Target ID", "col_time": "Applied",
+        "col_by": "By",
+    },
+    "academic_research": {
+        "title": "Hypothesis Delta Log",
+        "subtitle": "Changes applied to this hypothesis without mutating the baseline.",
+        "empty": "No deltas applied to this hypothesis yet.",
+        "col_op": "Operation", "col_kind": "Target Type",
+        "col_target": "Target ID", "col_time": "Applied",
+        "col_by": "By",
+    },
+    "biomedical": {
+        "title": "Interpretation Delta Log",
+        "subtitle": "Changes applied to this interpretation without mutating the baseline.",
+        "empty": "No deltas applied to this interpretation yet.",
+        "col_op": "Operation", "col_kind": "Target Type",
+        "col_target": "Target ID", "col_time": "Applied",
+        "col_by": "By",
+    },
+}
+
+
+def _fmt_scenario_deltas(deltas: list, domain: str = "legal") -> str:
+    L = _SCENARIO_DELTA_LABELS.get(domain, _SCENARIO_DELTA_LABELS["legal"])
+    if not deltas or not isinstance(deltas, list):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    safe = [d for d in deltas if isinstance(d, dict)]
+    if not safe:
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    _OP_COLORS = {
+        "override_belief": "#2563eb",
+        "suppress": "#dc2626",
+        "add_gap": "#d97706",
+        "resolve_gap": "#059669",
+        "add_assertion": "#7c3aed",
+        "assume": "#6b7280",
+    }
+
+    parts = [
+        f"<h3 style='margin:0 0 8px 0;'>{_escape(L['title'])}</h3>",
+        f"<div style='color:#666;font-size:0.9em;margin-bottom:8px;'>"
+        f"{_escape(L['subtitle'])} {len(safe)} delta{'s' if len(safe) != 1 else ''}</div>",
+        "<table style='border-collapse:collapse;width:100%;font-size:0.9em;'>",
+        f"<tr style='background:#f1f5f9;'>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['col_op'])}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['col_kind'])}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['col_target'])}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['col_time'])}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['col_by'])}</th></tr>",
+    ]
+
+    for d in safe:
+        op = _escape(str(d.get("operation", "?")))
+        kind = _escape(str(d.get("target_kind", "?")))
+        tid = _escape(str(d.get("target_id", "?"))[:16])
+        created = _escape(str(d.get("created_at", "?")))
+        by = _escape(str(d.get("created_by", "user")))
+        color = _OP_COLORS.get(d.get("operation", ""), "#6b7280")
+        parts.append(
+            f"<tr style='border-bottom:1px solid #e2e8f0;'>"
+            f"<td style='padding:4px 8px;'>"
+            f"<span style='color:{color};font-weight:600;'>{op}</span></td>"
+            f"<td style='padding:4px 8px;'>{kind}</td>"
+            f"<td style='padding:4px 8px;font-family:monospace;font-size:0.85em;'>{tid}</td>"
+            f"<td style='padding:4px 8px;'>{created}</td>"
+            f"<td style='padding:4px 8px;'>{by}</td></tr>"
+        )
+
+    parts.append("</table>")
+    return "\n".join(parts)
+
+
 def _fmt_scenario_comparison(data: dict, domain: str = "legal") -> str:
     L = _SCENARIO_COMPARE_LABELS.get(domain, _SCENARIO_COMPARE_LABELS["legal"])
 
@@ -13194,6 +13290,110 @@ class AppState:
             logger.warning("load_scenario_snapshot_history: %s", exc)
             return f"<div class='viz-empty'>Error loading snapshots: {_escape(str(exc))}</div>"
 
+    def load_scenario_deltas(
+        self, matter_id: str, branch_id: str, domain: str = "legal",
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        bid = (branch_id or "").strip()
+        if not bid:
+            return "<div class='viz-empty'>Enter a branch ID to view deltas.</div>"
+        try:
+            deltas = _run_async(self.backend().list_scenario_deltas(matter_id, bid))
+            if not isinstance(deltas, list):
+                logger.warning("load_scenario_deltas: expected list, got %s", type(deltas).__name__)
+                deltas = []
+            return _fmt_scenario_deltas(deltas, domain=domain)
+        except Exception as exc:
+            logger.warning("load_scenario_deltas: %s", exc)
+            return f"<div class='viz-empty'>Error loading deltas: {_escape(str(exc))}</div>"
+
+    def apply_scenario_delta_ui(
+        self, matter_id: str, branch_id: str,
+        target_kind: str, target_id: str, operation: str,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "No matter loaded.", ""
+        bid = (branch_id or "").strip()
+        if not bid:
+            return "Enter a branch ID.", ""
+        tkind = (target_kind or "").strip()
+        tid = (target_id or "").strip()
+        op = (operation or "").strip()
+        if not tkind or not tid or not op:
+            return "All fields (target kind, target ID, operation) are required.", ""
+        try:
+            result = _run_async(
+                self.backend().apply_scenario_delta(matter_id, bid, tkind, tid, op)
+            )
+            if not isinstance(result, dict):
+                logger.warning("apply_scenario_delta_ui: expected dict, got %s", type(result).__name__)
+                return "Unexpected response.", ""
+            if result.get("error"):
+                return f"Error: {_escape(str(result['error']))}", ""
+            total = result.get("total_deltas", 0)
+            domain = self._detect_domain(matter_id)
+            refreshed = self.load_scenario_deltas(matter_id, bid, domain=domain)
+            return f"Delta applied ({op} on {tkind}). {total} total deltas.", refreshed
+        except Exception as exc:
+            logger.warning("apply_scenario_delta_ui: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
+
+    def compute_scenario_snapshot_ui(
+        self, matter_id: str, branch_id: str,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "No matter loaded.", ""
+        bid = (branch_id or "").strip()
+        if not bid:
+            return "Enter a branch ID.", ""
+        try:
+            result = _run_async(
+                self.backend().compute_scenario_snapshot(matter_id, bid)
+            )
+            if not isinstance(result, dict):
+                logger.warning("compute_scenario_snapshot_ui: expected dict, got %s", type(result).__name__)
+                return "Unexpected response.", ""
+            if result.get("error"):
+                return f"Error: {_escape(str(result['error']))}", ""
+            dc = result.get("delta_count", 0)
+            warns = result.get("warnings", [])
+            warn_text = f" Warnings: {', '.join(str(w) for w in warns)}" if warns else ""
+            domain = self._detect_domain(matter_id)
+            refreshed = self.load_scenario_snapshot_history(matter_id, bid, domain=domain)
+            return f"Snapshot computed ({dc} deltas evaluated).{warn_text}", refreshed
+        except Exception as exc:
+            logger.warning("compute_scenario_snapshot_ui: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
+
+    def archive_scenario_branch_ui(
+        self, matter_id: str, branch_id: str,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "No matter loaded.", ""
+        bid = (branch_id or "").strip()
+        if not bid:
+            return "Enter a branch ID.", ""
+        try:
+            result = _run_async(
+                self.backend().archive_scenario_branch(matter_id, bid)
+            )
+            if isinstance(result, bool):
+                if result:
+                    status = "Branch archived."
+                else:
+                    status = "Branch not found or already archived."
+            elif isinstance(result, dict) and result.get("error"):
+                status = f"Error: {_escape(str(result['error']))}"
+            else:
+                status = "Archived."
+            domain = self._detect_domain(matter_id)
+            refreshed = self.load_scenario_workbench(matter_id, domain=domain)
+            return status, refreshed
+        except Exception as exc:
+            logger.warning("archive_scenario_branch_ui: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
+
     def load_alternative_theories(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -16156,6 +16356,50 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 snapshot_history_html = gr.HTML(
                     "<div class='viz-empty'>Enter a branch ID and click Load to see snapshot history.</div>"
                 )
+            with gr.Accordion("Delta log — changes applied to a branch", open=False):
+                with gr.Row():
+                    delta_log_branch_id = gr.Textbox(
+                        label="Branch ID", placeholder="Enter branch ID...", scale=3,
+                    )
+                    load_deltas_btn = gr.Button(
+                        "Load Deltas", variant="secondary", size="sm", scale=1,
+                    )
+                delta_log_html = gr.HTML(
+                    "<div class='viz-empty'>Enter a branch ID and click Load to see applied deltas.</div>"
+                )
+            with gr.Accordion("Apply delta — add a what-if change to a branch", open=False):
+                with gr.Row():
+                    delta_branch_id = gr.Textbox(
+                        label="Branch ID", placeholder="Enter branch ID...", scale=2,
+                    )
+                    delta_target_kind = gr.Dropdown(
+                        choices=["assertion", "issue", "predicate", "quant_fact",
+                                 "authority", "gap"],
+                        label="Target Kind", scale=1,
+                    )
+                with gr.Row():
+                    delta_target_id = gr.Textbox(
+                        label="Target ID", placeholder="ID of target to modify", scale=2,
+                    )
+                    delta_operation = gr.Dropdown(
+                        choices=["override_belief", "suppress", "add_gap",
+                                 "resolve_gap", "add_assertion", "assume"],
+                        label="Operation", scale=1,
+                    )
+                apply_delta_btn = gr.Button("Apply Delta", variant="primary", size="sm")
+                apply_delta_result = gr.Textbox(label="Result", interactive=False)
+            with gr.Accordion("Branch actions — compute snapshot or archive", open=False):
+                with gr.Row():
+                    action_branch_id = gr.Textbox(
+                        label="Branch ID", placeholder="Enter branch ID...", scale=3,
+                    )
+                    compute_snapshot_btn = gr.Button(
+                        "Compute Snapshot", variant="primary", size="sm", scale=1,
+                    )
+                    archive_branch_btn = gr.Button(
+                        "Archive Branch", variant="stop", size="sm", scale=1,
+                    )
+                branch_action_result = gr.Textbox(label="Result", interactive=False)
 
         with gr.Accordion("Alternative Theories — competing interpretations from the matter graph", open=False):
             gr.Markdown(
@@ -17661,6 +17905,26 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, bid: state.load_scenario_snapshot_history(mid, bid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box, snapshot_history_branch_id],
             outputs=[snapshot_history_html],
+        )
+        load_deltas_btn.click(
+            fn=lambda mid, bid: state.load_scenario_deltas(mid, bid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box, delta_log_branch_id],
+            outputs=[delta_log_html],
+        )
+        apply_delta_btn.click(
+            fn=lambda mid, bid, tk, tid, op: state.apply_scenario_delta_ui(mid, bid, tk, tid, op),
+            inputs=[matter_id_box, delta_branch_id, delta_target_kind, delta_target_id, delta_operation],
+            outputs=[apply_delta_result, delta_log_html],
+        )
+        compute_snapshot_btn.click(
+            fn=lambda mid, bid: state.compute_scenario_snapshot_ui(mid, bid),
+            inputs=[matter_id_box, action_branch_id],
+            outputs=[branch_action_result, snapshot_history_html],
+        )
+        archive_branch_btn.click(
+            fn=lambda mid, bid: state.archive_scenario_branch_ui(mid, bid),
+            inputs=[matter_id_box, action_branch_id],
+            outputs=[branch_action_result, scenario_workbench_html],
         )
         refresh_alt_theories_btn.click(
             fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),

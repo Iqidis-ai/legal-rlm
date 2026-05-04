@@ -9468,3 +9468,124 @@ def test_reclassify_card_flags_only_no_stale():
     )
     assert result["changed_fields"] == ["unresolved_flags"]
     assert result["staled_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Scenario Delta Inspector (SO-1, SO-3)
+# ---------------------------------------------------------------------------
+
+def test_scenario_delta_labels_all_domains():
+    from irys.ui.app import _SCENARIO_DELTA_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        L = _SCENARIO_DELTA_LABELS[domain]
+        assert "title" in L
+        assert "empty" in L
+        assert "col_op" in L
+
+
+def test_scenario_delta_formatter_empty():
+    from irys.ui.app import _fmt_scenario_deltas
+    html = _fmt_scenario_deltas([])
+    assert "viz-empty" in html
+
+
+def test_scenario_delta_formatter_renders():
+    from irys.ui.app import _fmt_scenario_deltas
+    deltas = [
+        {"operation": "override_belief", "target_kind": "assertion",
+         "target_id": "a1", "created_at": "2026-05-04", "created_by": "user"},
+        {"operation": "suppress", "target_kind": "gap",
+         "target_id": "g1", "created_at": "2026-05-04", "created_by": "system"},
+    ]
+    html = _fmt_scenario_deltas(deltas)
+    assert "override_belief" in html
+    assert "suppress" in html
+    assert "2 deltas" in html
+
+
+def test_scenario_delta_formatter_non_dict_guard():
+    from irys.ui.app import _fmt_scenario_deltas
+    html = _fmt_scenario_deltas(["not-a-dict", 42])
+    assert "viz-empty" in html
+
+
+def test_scenario_delta_formatter_xss():
+    from irys.ui.app import _fmt_scenario_deltas
+    deltas = [
+        {"operation": "<script>alert(1)</script>", "target_kind": "assertion",
+         "target_id": "a1", "created_at": "now", "created_by": "user"},
+    ]
+    html = _fmt_scenario_deltas(deltas)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_scenario_delta_backend_balance():
+    import inspect
+    from irys.ui.backends.base import UIBackend as DashboardBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("list_scenario_deltas", "apply_scenario_delta",
+                    "compute_scenario_snapshot", "archive_scenario_branch"):
+        assert hasattr(DashboardBackend, method), f"base missing {method}"
+        assert hasattr(InProcessBackend, method), f"in_process missing {method}"
+        assert hasattr(HttpBackend, method), f"http missing {method}"
+
+
+def test_scenario_delta_appstate_methods_exist():
+    from irys.ui.app import AppState
+    for method in ("load_scenario_deltas", "apply_scenario_delta_ui",
+                    "compute_scenario_snapshot_ui", "archive_scenario_branch_ui"):
+        assert hasattr(AppState, method), f"AppState missing {method}"
+
+
+def test_apply_scenario_delta_model():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory("test_delta")
+    bid = model.create_scenario_branch(name="test-branch", assumptions=[{"text": "test"}])["branch_id"]
+    result = model.apply_scenario_delta(
+        bid, "assertion", "a1", "override_belief", {"new_belief": "accepted"},
+    )
+    assert "delta_id" in result
+    assert result["total_deltas"] == 1
+    assert result["operation"] == "override_belief"
+
+
+def test_list_scenario_deltas_model():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory("test_list_delta")
+    bid = model.create_scenario_branch(name="test-branch", assumptions=[{"text": "test"}])["branch_id"]
+    model.apply_scenario_delta(bid, "assertion", "a1", "suppress")
+    model.apply_scenario_delta(bid, "gap", "g1", "resolve_gap")
+    deltas = model.list_scenario_deltas(bid)
+    assert len(deltas) == 2
+    assert deltas[0]["operation"] == "suppress"
+    assert deltas[1]["operation"] == "resolve_gap"
+
+
+def test_compute_scenario_snapshot_model():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory("test_snapshot")
+    bid = model.create_scenario_branch(name="test-branch", assumptions=[{"text": "test"}])["branch_id"]
+    model.apply_scenario_delta(bid, "gap", "g1", "add_gap")
+    result = model.compute_scenario_snapshot(bid)
+    assert "snapshot_id" in result
+    assert result["delta_count"] == 1
+    assert "g1" in result["new_gaps"]
+
+
+def test_archive_scenario_branch_model():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory("test_archive")
+    bid = model.create_scenario_branch(name="to-archive", assumptions=[{"text": "test"}])["branch_id"]
+    assert model.archive_scenario_branch(bid) is True
+    branch = model.get_scenario_branch(bid)
+    assert branch["status"] == "archived"
+
+
+def test_apply_delta_invalid_operation():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory("test_bad_op")
+    bid = model.create_scenario_branch(name="test", assumptions=[{"text": "test"}])["branch_id"]
+    result = model.apply_scenario_delta(bid, "assertion", "a1", "invalid_op")
+    assert "error" in result
