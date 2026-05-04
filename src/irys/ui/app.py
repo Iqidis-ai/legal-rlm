@@ -17274,6 +17274,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_assumption_review(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[assumption_review_html],
+            ).then(
+                fn=lambda mid: state.load_quant_ontology(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[quant_ontology_html, quant_alias_raw_dropdown],
+            ).then(
+                fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[answer_audit_html],
             )
         else:
             submit_btn.click(
@@ -17418,6 +17426,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_assumption_review(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[assumption_review_html],
+            ).then(
+                fn=lambda mid: state.load_quant_ontology(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[quant_ontology_html, quant_alias_raw_dropdown],
+            ).then(
+                fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[answer_audit_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
