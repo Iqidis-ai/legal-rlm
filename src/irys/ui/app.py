@@ -7795,6 +7795,33 @@ class AppState:
             )
         return f"✅ Verified {len(ids)} fact(s) sourced from {_escape(ref)}."
 
+    def do_bulk_verify_by_span(
+        self,
+        matter_id: str,
+        span_id: str,
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "⚠️ No matter loaded."
+        sid = (span_id or "").strip()
+        if not sid:
+            return "⚠️ Enter a section or span reference."
+        try:
+            ids = _run_async(self.backend().bulk_verify_by_span(
+                matter_id, sid,
+                reviewed_by_kind="user", reviewed_by_id="",
+            ))
+        except ValueError as exc:
+            return f"⚠️ {exc}"
+        except Exception as exc:
+            logger.warning("Bulk span verify failed for %s — %s", sid, exc)
+            return "⚠️ Bulk span verify didn't go through. Please try again."
+        if not ids:
+            return (
+                f"No candidate findings matched section <strong>{_escape(sid)}</strong>. "
+                "Check the section reference as it appears in the document structure."
+            )
+        return f"✅ Verified {len(ids)} fact(s) from section {_escape(sid)}."
+
     def load_batch_review_facts(
         self,
         matter_id: str,
@@ -9868,6 +9895,17 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     size="sm",
                 )
             bulk_verify_result = gr.Markdown("")
+            with gr.Row():
+                bulk_span_ref = gr.Textbox(
+                    label="Section / span reference",
+                    placeholder="e.g. Section 4.2, clause-ref, or span ID",
+                    scale=4,
+                )
+                bulk_span_verify_btn = gr.Button(
+                    "Verify all from section", variant="primary",
+                    scale=1, min_width=180,
+                )
+            bulk_span_result = gr.Markdown("")
             # Batch-review panel — renders the candidate facts from
             # the selected document with full metadata, pre-checked,
             # so the attorney can uncheck anything they don't want
@@ -11379,6 +11417,28 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box, bulk_doc_ref],
             outputs=[
                 bulk_verify_result, review_queue_html, review_target,
+                review_badge_md,
+                assertions_md, issues_md, overview_md,
+            ],
+        )
+
+        def _bulk_verify_span_and_refresh(mid, span_ref):
+            result = state.do_bulk_verify_by_span(mid, span_ref)
+            domain = state._detect_domain(mid)
+            queue_html, dropdown_update = state.load_review_queue(mid, domain=domain)
+            return (
+                result, queue_html, dropdown_update,
+                state.load_review_count_badge(mid, domain=domain),
+                state.load_assertions(mid),
+                state.load_issues(mid, domain=domain),
+                state.load_overview(mid, domain=domain),
+            )
+
+        bulk_span_verify_btn.click(
+            fn=_bulk_verify_span_and_refresh,
+            inputs=[matter_id_box, bulk_span_ref],
+            outputs=[
+                bulk_span_result, review_queue_html, review_target,
                 review_badge_md,
                 assertions_md, issues_md, overview_md,
             ],

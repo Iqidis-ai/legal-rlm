@@ -772,6 +772,25 @@ class HttpBackend(UIBackend):
         result = await self._post(f"/matter/{matter_id}/verify/bulk-by-document", body)
         return result.get("verification_ids", []) if isinstance(result, dict) else []
 
+    async def bulk_verify_by_span(
+        self, matter_id: str, span_id: str,
+        *, reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
+    ) -> list[str]:
+        body: dict = {
+            "span_id": span_id,
+            "reviewed_by_kind": reviewed_by_kind,
+            "review_scope": review_scope,
+        }
+        if reviewed_by_id:
+            body["reviewed_by_id"] = reviewed_by_id
+        if review_note:
+            body["review_note"] = review_note
+        result = await self._post(f"/matter/{matter_id}/verify/bulk-by-span", body)
+        return result.get("verification_ids", []) if isinstance(result, dict) else []
+
     async def bulk_verify_assertion_ids(
         self, matter_id: str, assertion_ids: list[str],
         *, reviewed_by_kind: str = "user",

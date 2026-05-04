@@ -561,6 +561,17 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def bulk_verify_by_span(
+        self, matter_id: str, span_id: str,
+        *, reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
+    ) -> list[str]:
+        """Bulk-verify all candidate assertions sourced from a span (SO-3)."""
+        ...
+
+    @abstractmethod
     async def bulk_verify_assertion_ids(
         self, matter_id: str, assertion_ids: list[str],
         *, reviewed_by_kind: str = "user",

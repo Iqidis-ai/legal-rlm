@@ -1012,6 +1012,22 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.list_candidate_assertions_for_document(document_ref)
 
+    async def bulk_verify_by_span(
+        self, matter_id: str, span_id: str,
+        *, reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+        review_note: Optional[str] = None,
+        review_scope: str = "extraction_correct",
+    ) -> list[str]:
+        model = self._get_matter_model(matter_id)
+        return model.bulk_verify_by_span(
+            span_id,
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+            review_note=review_note,
+            review_scope=review_scope,
+        )
+
     async def bulk_verify_assertion_ids(
         self, matter_id: str, assertion_ids: list[str],
         *, reviewed_by_kind: str = "user",
