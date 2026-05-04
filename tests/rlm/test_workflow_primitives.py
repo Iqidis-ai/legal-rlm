@@ -3676,3 +3676,126 @@ def test_doc_intel_trust_distribution():
     assert "1 low" in result
     result_no_overrides = _fmt_document_intelligence_panel(data, domain="legal")
     assert "Source Trust" not in result_no_overrides
+
+
+def test_fmt_assertion_inspector_linked_issues():
+    from irys.ui.app import _fmt_assertion_inspector
+
+    health = {
+        "assertion_id": "a-linked",
+        "proposition_text": "Revenue exceeded target",
+        "belief_state": "accepted",
+        "confidence": 0.85,
+        "oscillating": False,
+        "support_count": 2,
+        "attack_count": 0,
+        "has_superseding": False,
+        "support_source_roles": [],
+        "attack_source_roles": [],
+        "provenance": [],
+        "linked_issues": [
+            {"id": "iss-1", "title": "Material breach claim", "relation_type": "supports", "status": "open", "materiality": 0.8},
+            {"id": "iss-2", "title": "Damages calculation", "relation_type": "attacks", "status": "open", "materiality": 0.5},
+        ],
+    }
+    result = _fmt_assertion_inspector(health, domain="legal")
+    assert "Linked Issues" in result
+    assert "Material breach claim" in result
+    assert "Damages calculation" in result
+    assert "supports" in result
+    assert "attacks" in result
+    assert "0.80" in result
+    assert "0.50" in result
+
+    result_finance = _fmt_assertion_inspector(health, domain="finance")
+    assert "Linked Theses" in result_finance
+    assert "challenges" in result_finance
+
+    result_coding = _fmt_assertion_inspector(health, domain="coding")
+    assert "Linked Tasks" in result_coding
+
+    health_no_links = dict(health, linked_issues=[])
+    result_empty = _fmt_assertion_inspector(health_no_links, domain="legal")
+    assert "Linked Issues" not in result_empty
+
+
+def test_fmt_assertion_inspector_linked_issues_non_dict_guard():
+    from irys.ui.app import _fmt_assertion_inspector
+
+    health = {
+        "assertion_id": "a-guard",
+        "proposition_text": "Test proposition",
+        "belief_state": "undetermined",
+        "confidence": 0.5,
+        "oscillating": False,
+        "support_count": 0,
+        "attack_count": 0,
+        "has_superseding": False,
+        "support_source_roles": [],
+        "attack_source_roles": [],
+        "provenance": [],
+        "linked_issues": [
+            "not-a-dict",
+            None,
+            {"id": "iss-ok", "title": "Valid issue", "relation_type": "supports", "status": "open", "materiality": 0.6},
+        ],
+    }
+    result = _fmt_assertion_inspector(health, domain="legal")
+    assert "Valid issue" in result
+    assert "not-a-dict" not in result
+
+
+def test_get_issues_for_assertion_graph_layer():
+    import sqlite3
+    from irys.matter.graph import IssueStore
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+
+    conn.executescript("""
+        CREATE TABLE matter (id TEXT PRIMARY KEY);
+        INSERT INTO matter VALUES ('m1');
+        CREATE TABLE issue (
+            id TEXT PRIMARY KEY, matter_id TEXT, title TEXT, status TEXT DEFAULT 'open',
+            materiality REAL DEFAULT 0.5, salience REAL DEFAULT 1.0, created_at TEXT, updated_at TEXT
+        );
+        CREATE TABLE assertion (
+            id TEXT PRIMARY KEY, matter_id TEXT, proposition_text TEXT,
+            belief_state TEXT DEFAULT 'undetermined', confidence REAL DEFAULT 0.5,
+            created_at TEXT, updated_at TEXT
+        );
+        CREATE TABLE assertion_issue_link (
+            id TEXT PRIMARY KEY, assertion_id TEXT, issue_id TEXT,
+            relation_type TEXT DEFAULT 'supports', created_at TEXT
+        );
+        CREATE UNIQUE INDEX ux_assertion_issue ON assertion_issue_link(assertion_id, issue_id, relation_type);
+        INSERT INTO issue VALUES ('i1', 'm1', 'Breach claim', 'open', 0.8, 1.0, '2026-01-01', '2026-01-01');
+        INSERT INTO issue VALUES ('i2', 'm1', 'Damages', 'open', 0.5, 1.0, '2026-01-01', '2026-01-01');
+        INSERT INTO assertion VALUES ('a1', 'm1', 'Contract signed', 'accepted', 0.9, '2026-01-01', '2026-01-01');
+        INSERT INTO assertion_issue_link VALUES ('l1', 'a1', 'i1', 'supports', '2026-01-01');
+        INSERT INTO assertion_issue_link VALUES ('l2', 'a1', 'i2', 'attacks', '2026-01-01');
+    """)
+
+    class FakeDB:
+        def __init__(self, c):
+            self.conn = c
+        def execute(self, sql, params=()):
+            return self.conn.execute(sql, params)
+
+    store = IssueStore.__new__(IssueStore)
+    store.db = FakeDB(conn)
+    store.matter_id = "m1"
+
+    issues = store.get_issues_for_assertion("a1")
+    assert len(issues) == 2
+    titles = {i["title"] for i in issues}
+    assert "Breach claim" in titles
+    assert "Damages" in titles
+    rels = {i["relation_type"] for i in issues}
+    assert "supports" in rels
+    assert "attacks" in rels
+
+    empty = store.get_issues_for_assertion("nonexistent")
+    assert empty == []
+    conn.close()

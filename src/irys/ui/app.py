@@ -6194,6 +6194,14 @@ _ORIGIN_LABELS: dict[str, dict[str, str]] = {
                    "system_inferred": "System Inferred", "imported": "Imported", "legacy_backfill": "Backfill"},
 }
 
+_LINKED_ISSUES_LABELS: dict[str, dict[str, str]] = {
+    "legal": {"header": "Linked Issues", "supports": "supports", "attacks": "attacks", "establishes": "establishes", "negates": "negates"},
+    "finance": {"header": "Linked Theses", "supports": "supports", "attacks": "challenges", "establishes": "establishes", "negates": "negates"},
+    "coding": {"header": "Linked Tasks", "supports": "supports", "attacks": "blocks", "establishes": "establishes", "negates": "negates"},
+    "academic_research": {"header": "Linked Questions", "supports": "supports", "attacks": "contradicts", "establishes": "establishes", "negates": "negates"},
+    "biomedical": {"header": "Linked Hypotheses", "supports": "supports", "attacks": "contradicts", "establishes": "establishes", "negates": "negates"},
+}
+
 
 def _fmt_assertion_inspector(health: dict, history: list | None = None, domain: str = "legal") -> str:
     if health.get("error"):
@@ -6250,6 +6258,43 @@ def _fmt_assertion_inspector(health: dict, history: list | None = None, domain: 
         f"<div style='margin-top:4px'>{role_pills(attack_roles)}</div></div>"
         "</div>"
     )
+
+    linked_issues = health.get("linked_issues", [])
+    linked_html = ""
+    if linked_issues:
+        _li_labels = _LINKED_ISSUES_LABELS.get(domain, _LINKED_ISSUES_LABELS["legal"])
+        _rel_colors = {"supports": "#16a34a", "establishes": "#16a34a", "attacks": "#dc2626", "negates": "#dc2626"}
+        li_rows = ""
+        for li in linked_issues:
+            if not isinstance(li, dict):
+                continue
+            iid = _escape(str(li.get("id", ""))[:20])
+            title = _escape(str(li.get("title", "—"))[:60])
+            rel = str(li.get("relation_type", "supports")).lower()
+            rel_label = _escape(_li_labels.get(rel, rel.replace("_", " ")))
+            rel_color = _rel_colors.get(rel, "#6b7280")
+            status = _escape(str(li.get("status", "open")))
+            materiality = li.get("materiality", 0)
+            try:
+                mat_val = float(materiality)
+            except (TypeError, ValueError):
+                mat_val = 0.0
+            li_rows += (
+                "<tr>"
+                f"<td style='font-size:11px'>{title}</td>"
+                f"<td><span style='background:{rel_color};color:white;padding:1px 6px;border-radius:3px;font-size:10px'>{rel_label}</span></td>"
+                f"<td style='font-size:11px'>{status}</td>"
+                f"<td style='font-size:11px'>{mat_val:.2f}</td>"
+                f"<td style='font-size:10px;color:#6b7280'><code>{iid}</code></td>"
+                "</tr>"
+            )
+        if li_rows:
+            linked_html = (
+                f"<div class='viz-header' style='margin-top:8px'><strong>{_escape(_li_labels['header'])}</strong></div>"
+                "<div class='table-wrap'><table class='viz-table'>"
+                "<thead><tr><th>Title</th><th>Relation</th><th>Status</th><th>Materiality</th><th>ID</th></tr></thead>"
+                "<tbody>" + li_rows + "</tbody></table></div>"
+            )
 
     provenance = health.get("provenance", [])
     if provenance:
@@ -6330,6 +6375,7 @@ def _fmt_assertion_inspector(health: dict, history: list | None = None, domain: 
         "<div class='viz-shell'>"
         + header
         + evidence_html
+        + linked_html
         + prov_html
         + history_html
         + "</div>"

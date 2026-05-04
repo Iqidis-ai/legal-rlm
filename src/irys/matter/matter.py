@@ -3164,11 +3164,12 @@ class MatterModel:
         return self.content_policy.list_decisions(limit=max(1, min(limit, 500)))
 
     def get_assertion_health(self, assertion_id: str) -> dict:
-        """Return assertion health: oscillation, neighbors, provenance (SO-2 + SO-5)."""
+        """Return assertion health: oscillation, neighbors, provenance, linked issues (SO-2 + SO-5)."""
         record = self.assertions.get(assertion_id)
         if record is None:
             return {"error": "assertion_not_found"}
         neighbors = self.assertions.get_neighbor_belief_states(assertion_id)
+        linked_issues = self.issues.get_issues_for_assertion(assertion_id)
         return {
             "assertion_id": assertion_id,
             "proposition_text": record.proposition_text,
@@ -3181,6 +3182,7 @@ class MatterModel:
             "support_source_roles": neighbors.get("support_source_roles", []),
             "attack_source_roles": neighbors.get("attack_source_roles", []),
             "provenance": self.get_provenance("assertion", assertion_id, limit=10),
+            "linked_issues": linked_issues,
         }
 
     def get_system_health(self) -> dict:

@@ -2417,6 +2417,19 @@ class IssueStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_issues_for_assertion(self, assertion_id: str) -> list[dict]:
+        """Return issues linked to an assertion with relation types (SO-2)."""
+        rows = self.db.execute(
+            """SELECT i.id, i.title, i.status, i.materiality,
+                      ail.relation_type
+               FROM issue i
+               JOIN assertion_issue_link ail ON ail.issue_id = i.id
+               WHERE ail.assertion_id=?
+               ORDER BY ail.relation_type, i.title""",
+            (assertion_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_predicates(self, issue_id: str, limit: Optional[int] = None) -> list[dict]:
         """Return open predicates for an issue, ordered by creation.
 
