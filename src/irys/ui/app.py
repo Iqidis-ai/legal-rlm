@@ -7644,6 +7644,23 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading authorities: {_escape(exc)}</div>"
 
+    def search_authorities(self, matter_id: str, query: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        q = (query or "").strip()
+        if len(q) < 2:
+            return self.load_authority_network(matter_id, domain=self._detect_domain(matter_id))
+        try:
+            results = _run_async(self.backend().search_authorities(matter_id, q, limit=20))
+            domain = self._detect_domain(matter_id)
+            if not results:
+                return f"<div class='viz-empty'>No authorities matching “{_escape(q)}”.</div>"
+            wrapped = {"authorities": results, "issue_links": {}}
+            return _fmt_authority_panel(wrapped, domain)
+        except Exception as exc:
+            logger.warning("search_authorities failed: %s", exc)
+            return f"<div class='viz-empty'>Error searching: {_escape(str(exc))}</div>"
+
     def do_upsert_authority(
         self, matter_id: str, citation: str, authority_type: str,
         name: str, jurisdiction: str, weight: str,
@@ -9275,6 +9292,13 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "Authorities, standards, and references cited in the analysis, "
                 "with their weight, type, jurisdiction, and links to relevant issues."
             )
+            with gr.Row():
+                authority_search_box = gr.Textbox(
+                    label="Search authorities",
+                    placeholder="Search by citation or name…",
+                    scale=4,
+                )
+                authority_search_btn = gr.Button("Search", variant="secondary", size="sm", scale=1)
             authority_html = gr.HTML("<div class='viz-empty'>Authority data will appear here after an investigation.</div>")
             refresh_authority_btn = gr.Button("Refresh Authorities", variant="secondary", size="sm")
 
@@ -10247,6 +10271,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         refresh_authority_btn.click(
             fn=lambda mid: state.load_authority_network(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
+            outputs=[authority_html],
+        )
+        authority_search_btn.click(
+            fn=lambda mid, q: state.search_authorities(mid, q),
+            inputs=[matter_id_box, authority_search_box],
+            outputs=[authority_html],
+        )
+        authority_search_box.submit(
+            fn=lambda mid, q: state.search_authorities(mid, q),
+            inputs=[matter_id_box, authority_search_box],
             outputs=[authority_html],
         )
         upsert_authority_btn.click(
