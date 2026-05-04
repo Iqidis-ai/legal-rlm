@@ -8674,6 +8674,41 @@ class AppState:
             logger.warning("resolve_gap failed: %s", exc)
             return f"Error: {_escape(str(exc))}", ""
 
+    def escalate_gap(self, matter_id: str, gap_id: str) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        gid = (gap_id or "").strip()
+        if not gid:
+            return "Select a gap to escalate.", ""
+        try:
+            escalated = _run_async(self.backend().escalate_gap(matter_id, gid))
+            if not escalated:
+                return f"Gap {_escape(gid[:16])} not found or already resolved.", ""
+            wb = self.load_gap_workbench(matter_id)
+            return f"Escalated gap {_escape(gid[:16])} to maximum priority.", wb
+        except Exception as exc:
+            logger.warning("escalate_gap failed: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
+
+    def get_gap_choices(self, matter_id: str) -> list[tuple[str, str]]:
+        if not matter_id or matter_id == "—":
+            return []
+        try:
+            payload = _run_async(self.backend().get_gap_workbench(matter_id, limit=50))
+            items = payload.get("items", []) if isinstance(payload, dict) else []
+            choices = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                gid = item.get("gap_id", "")
+                desc = str(item.get("description", ""))[:60]
+                mat = _safe_float(item.get("materiality_score", 0))
+                choices.append((f"[{mat:.2f}] {desc}", gid))
+            return choices
+        except Exception as exc:
+            logger.warning("get_gap_choices failed: %s", exc)
+            return []
+
     def load_assumptions(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -10559,15 +10594,22 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )
             gaps_detail_html = gr.HTML("<div class='viz-empty'>Gaps will appear here after an investigation.</div>")
             refresh_gaps_btn = gr.Button("Refresh Gaps", variant="secondary", size="sm")
-            with gr.Accordion("Resolve a gap", open=False):
+            with gr.Accordion("Gap Actions — resolve or escalate", open=False):
+                gap_action_dropdown = gr.Dropdown(
+                    label="Select a gap",
+                    choices=[],
+                    interactive=True,
+                    scale=4,
+                )
+                refresh_gap_choices_btn = gr.Button(
+                    "Refresh gap list", variant="secondary", size="sm",
+                )
                 with gr.Row():
-                    resolve_gap_id_input = gr.Textbox(
-                        label="Gap ID (copy from table above)", scale=3,
-                    )
                     resolve_gap_note_input = gr.Textbox(
                         label="Resolution note (optional)", scale=4,
                     )
                     resolve_gap_btn = gr.Button("Resolve Gap", variant="primary", size="sm", scale=1)
+                    escalate_gap_btn = gr.Button("Escalate", variant="stop", size="sm", scale=1)
                 resolve_gap_result = gr.Markdown("")
 
         with gr.Accordion("Next Steps — prioritized recommendations for your review", open=False):
@@ -11652,10 +11694,20 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box],
             outputs=[gaps_detail_html],
         )
+        refresh_gap_choices_btn.click(
+            fn=lambda mid: gr.update(choices=state.get_gap_choices(mid)),
+            inputs=[matter_id_box],
+            outputs=[gap_action_dropdown],
+        )
         resolve_gap_btn.click(
             fn=lambda mid, gid, note: state.resolve_gap(mid, gid, note),
-            inputs=[matter_id_box, resolve_gap_id_input, resolve_gap_note_input],
-            outputs=[resolve_gap_result, gaps_detail_html],
+            inputs=[matter_id_box, gap_action_dropdown, resolve_gap_note_input],
+            outputs=[resolve_gap_result, gap_workbench_html],
+        )
+        escalate_gap_btn.click(
+            fn=lambda mid, gid: state.escalate_gap(mid, gid),
+            inputs=[matter_id_box, gap_action_dropdown],
+            outputs=[resolve_gap_result, gap_workbench_html],
         )
         refresh_steering_btn.click(
             fn=lambda mid: state.load_steering_panel(mid, domain=state._detect_domain(mid)),

@@ -2656,6 +2656,20 @@ async def resolve_gap(matter_id: str, gap_id: str, resolution_note: str = Body("
     return {"resolved": True, "gap_id": gap_id}
 
 
+@app.post(
+    "/matter/{matter_id}/gaps/{gap_id}/escalate",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def escalate_gap(matter_id: str, gap_id: str):
+    """Escalate a gap to maximum blocker priority (SO-7)."""
+    model = await _get_matter_model_or_404(matter_id)
+    escalated = model.escalate_gap(gap_id)
+    if not escalated:
+        raise HTTPException(status_code=404, detail=f"Gap '{gap_id}' not found or already resolved")
+    return {"escalated": True, "gap_id": gap_id}
+
+
 @app.get(
     "/matter/{matter_id}/assumptions",
     tags=["Matter Model"],

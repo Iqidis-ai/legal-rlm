@@ -444,6 +444,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.gaps.resolve_gap(gap_id, resolution_note)
 
+    async def escalate_gap(self, matter_id: str, gap_id: str) -> bool:
+        model = self._get_matter_model(matter_id)
+        return model.escalate_gap(gap_id)
+
     async def list_clarifications(self, matter_id: str, limit: int = 20) -> list[dict]:
         model = self._get_matter_model(matter_id)
         return model.clarifications.get_pending(limit=limit)

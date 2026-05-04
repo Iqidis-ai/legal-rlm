@@ -3310,6 +3310,9 @@ class MatterModel:
             affected_type=affected_type, affected_id=affected_id,
         )
 
+    def escalate_gap(self, gap_id: str) -> bool:
+        return self.gaps.escalate_gap(gap_id)
+
     def get_gap_workbench(
         self,
         min_materiality: float = 0.0,

@@ -120,6 +120,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def escalate_gap(self, matter_id: str, gap_id: str) -> bool:
+        """Escalate a gap to maximum blocker priority (SO-7)."""
+        ...
+
+    @abstractmethod
     async def list_clarifications(self, matter_id: str, limit: int = 20) -> list[dict]:
         ...
 

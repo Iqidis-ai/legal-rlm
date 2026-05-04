@@ -181,6 +181,10 @@ class HttpBackend(UIBackend):
         result = await self._post(f"/matter/{matter_id}/gaps/{gap_id}/resolve", {"resolution_note": resolution_note})
         return bool(result.get("resolved")) if isinstance(result, dict) else False
 
+    async def escalate_gap(self, matter_id: str, gap_id: str) -> bool:
+        result = await self._post(f"/matter/{matter_id}/gaps/{gap_id}/escalate", {})
+        return bool(result.get("escalated")) if isinstance(result, dict) else False
+
     async def list_clarifications(self, matter_id: str, limit: int = 20) -> list[dict]:
         result = await self._get(f"/matter/{matter_id}/clarifications", {"limit": limit})
         if isinstance(result, dict):
