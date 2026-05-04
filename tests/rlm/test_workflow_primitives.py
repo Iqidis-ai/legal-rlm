@@ -7309,3 +7309,191 @@ def test_impact_preview_backend_interface_balance():
     assert hasattr(UIBackend, "get_steering_impact_preview")
     assert hasattr(InProcessBackend, "get_steering_impact_preview")
     assert hasattr(HttpBackend, "get_steering_impact_preview")
+
+
+# ── Domain Investigation Readiness ──────────────────────────────────
+
+
+def test_domain_readiness_empty_matter():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.evaluate_domain_investigation_readiness()
+    assert result["matter_id"] == model.matter_id
+    assert result["overall_status"] in ("ready", "partial", "blocked")
+    assert len(result["profiles"]) == 5
+    for p in result["profiles"]:
+        assert p["profile_id"] in ("legal", "finance", "coding", "academic_research", "biomedical")
+        assert p["status"] in ("ready", "partial", "blocked")
+        assert "source_role_calibration" in p
+        assert "assertion_quality" in p
+        assert "objective_coverage" in p
+        assert "recommended_repairs" in p
+
+
+def test_domain_readiness_specific_profiles():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.evaluate_domain_investigation_readiness(profile_ids=["legal", "finance"])
+    assert len(result["profiles"]) == 2
+    pids = {p["profile_id"] for p in result["profiles"]}
+    assert pids == {"legal", "finance"}
+
+
+def test_domain_readiness_invalid_profile():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.evaluate_domain_investigation_readiness(profile_ids=["nonexistent"])
+    assert len(result["profiles"]) == 5
+
+
+def test_domain_readiness_with_assertions():
+    from irys.matter.matter import MatterModel
+    from irys.matter.models import AssertionCandidate
+    from irys.matter.enums import SpeechAct, SourceRole
+    model = MatterModel.open_in_memory()
+    model.assertions.upsert_occurrence(AssertionCandidate(
+        proposition_text="Test for domain readiness",
+        document_id="doc.pdf",
+        speech_act=SpeechAct.EXTRACTED,
+        source_role=SourceRole.UNKNOWN,
+    ))
+    result = model.evaluate_domain_investigation_readiness()
+    assert result["overall_status"] in ("ready", "partial", "blocked")
+    legal_profile = next(p for p in result["profiles"] if p["profile_id"] == "legal")
+    assert "assertion_quality" in legal_profile
+    assert "assertion_count" in legal_profile["assertion_quality"]
+
+
+def test_domain_readiness_cross_domain_findings():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.evaluate_domain_investigation_readiness()
+    assert isinstance(result["cross_domain_findings"], list)
+    for finding in result["cross_domain_findings"]:
+        assert "kind" in finding
+        assert "severity" in finding
+        assert "message" in finding
+
+
+def test_domain_readiness_no_repairs_flag():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.evaluate_domain_investigation_readiness(include_repair_recommendations=False)
+    for p in result["profiles"]:
+        assert p["recommended_repairs"] == []
+
+
+def test_domain_readiness_formatter_empty():
+    from irys.ui.app import _fmt_domain_readiness
+    html = _fmt_domain_readiness({})
+    assert "viz-empty" in html
+
+
+def test_domain_readiness_formatter_renders():
+    from irys.ui.app import _fmt_domain_readiness
+    data = {
+        "matter_id": "test",
+        "overall_status": "partial",
+        "profiles": [
+            {
+                "profile_id": "legal",
+                "status": "ready",
+                "primary_failures": [],
+                "domain_detection": {"confidence": 0.9, "is_primary": True},
+                "source_role_calibration": {"pass": True, "source_role_known_rate": 0.95, "defined_roles": 5},
+                "assertion_quality": {"pass": True, "assertion_count": 10, "structure_rate": 1.0},
+                "objective_coverage": {"pass": True, "coverage_avg": 0.8, "issue_count": 3},
+                "quantitative_coverage": {"pass": True, "quant_fact_count": 2},
+                "gap_modeling": {"pass": True, "open_gap_count": 1},
+                "steering_readiness": {"pass": True, "steerability": True},
+                "deliverable_readiness": {"pass": True},
+                "recommended_repairs": [],
+            },
+            {
+                "profile_id": "finance",
+                "status": "blocked",
+                "primary_failures": ["No detection signal"],
+                "domain_detection": {"confidence": 0.0, "is_primary": False},
+                "source_role_calibration": {"pass": False, "source_role_known_rate": 0.0, "defined_roles": 6},
+                "assertion_quality": {"pass": False, "assertion_count": 0, "structure_rate": None},
+                "objective_coverage": {"pass": False, "coverage_avg": None, "issue_count": 0},
+                "quantitative_coverage": {"pass": False, "quant_fact_count": 0},
+                "gap_modeling": {"pass": True, "open_gap_count": 0},
+                "steering_readiness": {"pass": False, "steerability": False},
+                "deliverable_readiness": {"pass": False},
+                "recommended_repairs": ["Run investigation to populate assertions"],
+            },
+        ],
+        "cross_domain_findings": [
+            {"kind": "mapping_gap", "profiles": ["finance"], "severity": "medium",
+             "message": "Profile finance has no detection signal"},
+        ],
+    }
+    html = _fmt_domain_readiness(data, domain="legal")
+    assert "Domain Investigation Readiness" in html
+    assert "partial" in html.lower()
+    assert "legal" in html
+    assert "finance" in html
+    assert "mapping_gap" in html
+    assert "Run investigation" in html
+
+
+def test_domain_readiness_formatter_xss():
+    from irys.ui.app import _fmt_domain_readiness
+    data = {
+        "matter_id": "test",
+        "overall_status": "<script>alert(1)</script>",
+        "profiles": [
+            {
+                "profile_id": "<img onerror=alert(1)>",
+                "status": "ready",
+                "primary_failures": [],
+                "domain_detection": {"confidence": 0.5, "is_primary": False},
+                "source_role_calibration": {"pass": True},
+                "assertion_quality": {"pass": True},
+                "objective_coverage": {"pass": True},
+                "quantitative_coverage": {"pass": True},
+                "gap_modeling": {"pass": True},
+                "steering_readiness": {"pass": True},
+                "deliverable_readiness": {"pass": True},
+                "recommended_repairs": ["<script>xss</script>"],
+            },
+        ],
+        "cross_domain_findings": [
+            {"kind": "test", "severity": "high", "message": "<script>xss</script>"},
+        ],
+    }
+    html = _fmt_domain_readiness(data)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_domain_readiness_formatter_non_dict_guards():
+    from irys.ui.app import _fmt_domain_readiness
+    data = {
+        "matter_id": "test",
+        "overall_status": "partial",
+        "profiles": ["not-a-dict", None, 42],
+        "cross_domain_findings": [123, "not-a-dict"],
+    }
+    html = _fmt_domain_readiness(data)
+    assert "Domain Investigation Readiness" in html
+    assert "<script>" not in html
+
+
+def test_domain_readiness_labels_all_five_domains():
+    from irys.ui.app import _DOMAIN_READINESS_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _DOMAIN_READINESS_LABELS[domain]
+        assert "title" in labels
+        assert "coverage" in labels
+        assert "empty" in labels
+
+
+def test_domain_readiness_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    assert hasattr(UIBackend, "get_domain_investigation_readiness")
+    assert hasattr(InProcessBackend, "get_domain_investigation_readiness")
+    assert hasattr(HttpBackend, "get_domain_investigation_readiness")

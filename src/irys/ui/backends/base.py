@@ -242,6 +242,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_domain_investigation_readiness(self, matter_id: str) -> dict:
+        """Evaluate cross-domain investigation readiness (all SOs)."""
+        ...
+
+    @abstractmethod
     async def get_objective_coverage(self, matter_id: str) -> dict:
         """Objective coverage workbench: per-objective criteria, support, gaps (SO-4)."""
         ...

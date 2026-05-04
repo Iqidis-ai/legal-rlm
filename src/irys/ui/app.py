@@ -6342,12 +6342,6 @@ def _fmt_alternative_theories(data: dict, domain: str = "legal") -> str:
         label = _escape(str(theory.get("label", ""))[:120])
         stance = str(theory.get("stance", "")).lower()
         color = stance_colors.get(stance, "#6b7280")
-        def _safe_int(v: object) -> int:
-            try:
-                iv = int(v)  # type: ignore[arg-type]
-                return iv if isinstance(iv, int) and iv >= 0 else 0
-            except (TypeError, ValueError):
-                return 0
 
         supporting = _safe_int(theory.get("supporting_assertions", 0))
         attacking_count = _safe_int(theory.get("attacking_assertions", 0))
@@ -6838,6 +6832,211 @@ def _fmt_impact_preview(data: dict, domain: str = "legal") -> str:
 
     table += "</div>"
     return table
+
+
+# ── Domain Investigation Readiness ───────────────────────────────────
+_DOMAIN_READINESS_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Domain Investigation Readiness",
+        "subtitle": "Cross-domain acceptance gate for investigation quality.",
+        "ready": "Ready",
+        "partial": "Partial",
+        "blocked": "Blocked",
+        "overall": "Overall Readiness",
+        "profile": "Profile",
+        "status": "Status",
+        "detection": "Detection",
+        "source_roles": "Source Calibration",
+        "assertions": "Assertion Quality",
+        "coverage": "Coverage",
+        "quant": "Quant",
+        "gaps": "Gaps",
+        "steering": "Steering",
+        "repairs": "Recommended Repairs",
+        "cross_domain": "Cross-Domain Findings",
+        "empty": "No readiness data. Load a matter and run an investigation first.",
+    },
+    "finance": {
+        "title": "Domain Investigation Readiness",
+        "subtitle": "Cross-domain acceptance gate for analysis quality.",
+        "ready": "Ready", "partial": "Partial", "blocked": "Blocked",
+        "overall": "Overall Readiness", "profile": "Profile", "status": "Status",
+        "detection": "Detection", "source_roles": "Source Calibration",
+        "assertions": "Assertion Quality", "coverage": "Coverage",
+        "quant": "Quant", "gaps": "Gaps", "steering": "Steering",
+        "repairs": "Recommended Repairs", "cross_domain": "Cross-Domain Findings",
+        "empty": "No readiness data. Load a matter and run an investigation first.",
+    },
+    "coding": {
+        "title": "Domain Investigation Readiness",
+        "subtitle": "Cross-domain acceptance gate for analysis quality.",
+        "ready": "Ready", "partial": "Partial", "blocked": "Blocked",
+        "overall": "Overall Readiness", "profile": "Profile", "status": "Status",
+        "detection": "Detection", "source_roles": "Source Calibration",
+        "assertions": "Assertion Quality", "coverage": "Coverage",
+        "quant": "Metrics", "gaps": "Gaps", "steering": "Steering",
+        "repairs": "Recommended Repairs", "cross_domain": "Cross-Domain Findings",
+        "empty": "No readiness data. Load a matter and run an investigation first.",
+    },
+    "academic_research": {
+        "title": "Domain Investigation Readiness",
+        "subtitle": "Cross-domain acceptance gate for research quality.",
+        "ready": "Ready", "partial": "Partial", "blocked": "Blocked",
+        "overall": "Overall Readiness", "profile": "Profile", "status": "Status",
+        "detection": "Detection", "source_roles": "Source Calibration",
+        "assertions": "Assertion Quality", "coverage": "Coverage",
+        "quant": "Quant", "gaps": "Gaps", "steering": "Steering",
+        "repairs": "Recommended Repairs", "cross_domain": "Cross-Domain Findings",
+        "empty": "No readiness data. Load a matter and run an investigation first.",
+    },
+    "biomedical": {
+        "title": "Domain Investigation Readiness",
+        "subtitle": "Cross-domain acceptance gate for clinical quality.",
+        "ready": "Ready", "partial": "Partial", "blocked": "Blocked",
+        "overall": "Overall Readiness", "profile": "Profile", "status": "Status",
+        "detection": "Detection", "source_roles": "Source Calibration",
+        "assertions": "Assertion Quality", "coverage": "Coverage",
+        "quant": "Quant", "gaps": "Gaps", "steering": "Steering",
+        "repairs": "Recommended Repairs", "cross_domain": "Cross-Domain Findings",
+        "empty": "No readiness data. Load a matter and run an investigation first.",
+    },
+}
+
+
+def _fmt_domain_readiness(data: dict, domain: str = "legal") -> str:
+    L = _DOMAIN_READINESS_LABELS.get(domain, _DOMAIN_READINESS_LABELS["legal"])
+
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    profiles = data.get("profiles", [])
+    if not isinstance(profiles, list) or not profiles:
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    overall = _escape(str(data.get("overall_status", "unknown")))
+    status_colors = {"ready": "#16a34a", "partial": "#d97706", "blocked": "#dc2626"}
+    overall_color = status_colors.get(data.get("overall_status", ""), "#6b7280")
+
+    ready_count = sum(1 for p in profiles if isinstance(p, dict) and p.get("status") == "ready")
+    partial_count = sum(1 for p in profiles if isinstance(p, dict) and p.get("status") == "partial")
+    blocked_count = sum(1 for p in profiles if isinstance(p, dict) and p.get("status") == "blocked")
+
+    def _check(d: dict, key: str = "pass") -> str:
+        if not isinstance(d, dict):
+            return "&#10060;"
+        return "&#9989;" if d.get(key, False) else "&#10060;"
+
+    header = (
+        f"<div class='viz-shell'>"
+        f"<div class='intel-panel-title'>{_escape(L['title'])}</div>"
+        f"<div style='font-size:0.8em;color:#6b7280;margin-bottom:10px;'>{_escape(L['subtitle'])}</div>"
+        f"<div style='display:flex;gap:16px;align-items:center;margin-bottom:12px;'>"
+        f"<div style='font-size:1.1em;font-weight:700;color:{overall_color};'>"
+        f"{_escape(L['overall'])}: {overall}</div>"
+        f"<div style='font-size:0.85em;color:#6b7280;'>"
+        f"{_escape(L['ready'])}: {ready_count} | {_escape(L['partial'])}: {partial_count} | "
+        f"{_escape(L['blocked'])}: {blocked_count}</div>"
+        f"</div>"
+    )
+
+    rows = ""
+    for p in profiles:
+        if not isinstance(p, dict):
+            continue
+        pid = _escape(str(p.get("profile_id", "?"))[:30])
+        pstatus = str(p.get("status", "unknown"))
+        pcolor = status_colors.get(pstatus, "#6b7280")
+        sr = p.get("source_role_calibration", {})
+        aq = p.get("assertion_quality", {})
+        oc = p.get("objective_coverage", {})
+        qc = p.get("quantitative_coverage", {})
+        gm = p.get("gap_modeling", {})
+        st = p.get("steering_readiness", {})
+        dd = p.get("domain_detection", {})
+        det_conf = 0.0
+        if isinstance(dd, dict):
+            try:
+                det_conf = float(dd.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                det_conf = 0.0
+
+        rows += (
+            f"<tr>"
+            f"<td><strong>{pid}</strong></td>"
+            f"<td style='color:{pcolor};font-weight:600;'>{_escape(pstatus)}</td>"
+            f"<td style='text-align:center;'>{det_conf:.0%}</td>"
+            f"<td style='text-align:center;'>{_check(sr)}</td>"
+            f"<td style='text-align:center;'>{_check(aq)}</td>"
+            f"<td style='text-align:center;'>{_check(oc)}</td>"
+            f"<td style='text-align:center;'>{_check(qc)}</td>"
+            f"<td style='text-align:center;'>{_check(gm)}</td>"
+            f"<td style='text-align:center;'>{_check(st)}</td>"
+            f"</tr>"
+        )
+
+    table = (
+        f"<div class='table-wrap'><table class='viz-table'>"
+        f"<thead><tr>"
+        f"<th>{_escape(L['profile'])}</th>"
+        f"<th>{_escape(L['status'])}</th>"
+        f"<th>{_escape(L['detection'])}</th>"
+        f"<th>{_escape(L['source_roles'])}</th>"
+        f"<th>{_escape(L['assertions'])}</th>"
+        f"<th>{_escape(L['coverage'])}</th>"
+        f"<th>{_escape(L['quant'])}</th>"
+        f"<th>{_escape(L['gaps'])}</th>"
+        f"<th>{_escape(L['steering'])}</th>"
+        f"</tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>"
+    )
+
+    repairs_html = ""
+    for p in profiles:
+        if not isinstance(p, dict):
+            continue
+        reps = p.get("recommended_repairs", [])
+        if isinstance(reps, list) and reps:
+            pid = _escape(str(p.get("profile_id", "?"))[:30])
+            items = "".join(
+                f"<li>{_escape(str(r)[:200])}</li>"
+                for r in reps if isinstance(r, str)
+            )
+            repairs_html += (
+                f"<div style='margin-top:6px;'>"
+                f"<strong>{pid}:</strong>"
+                f"<ul style='margin:2px 0;padding-left:18px;font-size:0.85em;'>{items}</ul></div>"
+            )
+
+    if repairs_html:
+        repairs_html = (
+            f"<div style='margin-top:12px;'>"
+            f"<div class='viz-subtitle'>{_escape(L['repairs'])}</div>"
+            f"{repairs_html}</div>"
+        )
+
+    cross_domain = data.get("cross_domain_findings", [])
+    cross_html = ""
+    if isinstance(cross_domain, list) and cross_domain:
+        cd_items = ""
+        for finding in cross_domain:
+            if not isinstance(finding, dict):
+                continue
+            sev = _escape(str(finding.get("severity", ""))[:20])
+            msg = _escape(str(finding.get("message", ""))[:200])
+            kind = _escape(str(finding.get("kind", ""))[:40])
+            sev_color = "#dc2626" if sev == "high" else "#d97706"
+            cd_items += (
+                f"<div style='font-size:0.85em;padding:4px 0;'>"
+                f"<span style='color:{sev_color};font-weight:600;'>[{sev}]</span> "
+                f"<span style='color:#6b7280;'>{kind}</span> — {msg}</div>"
+            )
+        cross_html = (
+            f"<div style='margin-top:12px;'>"
+            f"<div class='viz-subtitle'>{_escape(L['cross_domain'])}</div>"
+            f"{cd_items}</div>"
+        )
+
+    return f"{header}{table}{repairs_html}{cross_html}</div>"
 
 
 def _fmt_quant_panel(
@@ -11526,6 +11725,19 @@ class AppState:
             logger.warning("Impact preview load failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_domain_readiness(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_domain_investigation_readiness(matter_id))
+            if not isinstance(data, dict):
+                logger.warning("load_domain_readiness: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_domain_readiness(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Domain readiness load failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def create_scenario_branch_ui(self, matter_id: str, name: str, assumptions_text: str, notes: str = "") -> str:
         if not matter_id or matter_id == "—":
             return "No matter loaded."
@@ -14111,6 +14323,20 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "<div class='viz-empty'>Select a steering action and click Preview to see projected impact.</div>"
             )
 
+        with gr.Accordion("Domain Readiness — cross-domain investigation acceptance gate", open=False):
+            gr.Markdown(
+                "Validates whether the matter model substrate works across all five "
+                "domain profiles: legal, finance, coding, academic research, biomedical. "
+                "Checks assertion quality, source calibration, coverage, quantitative "
+                "extraction, gap modeling, and steering readiness per profile."
+            )
+            domain_readiness_html = gr.HTML(
+                "<div class='viz-empty'>Domain readiness will appear here after an investigation.</div>"
+            )
+            refresh_readiness_btn = gr.Button(
+                "Refresh Domain Readiness", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Answer Audit — freshness, sources, and policy for every answer", open=False):
             gr.Markdown(
                 "Every answer Irys produces is backed by a dependency manifest that tracks "
@@ -14772,6 +14998,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[manifest_inspector_html],
+            ).then(
+                fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[domain_readiness_html],
             )
         else:
             submit_btn.click(
@@ -14892,6 +15122,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[manifest_inspector_html],
+            ).then(
+                fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[domain_readiness_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -15021,6 +15255,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[manifest_inspector_html],
+        ).then(
+            fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[domain_readiness_html],
         )
 
         export_report_btn.click(
@@ -15385,6 +15623,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             ),
             inputs=[matter_id_box, impact_action_type, impact_payload],
             outputs=[impact_preview_html],
+        )
+        refresh_readiness_btn.click(
+            fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[domain_readiness_html],
         )
         refresh_answer_audit_btn.click(
             fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
@@ -15868,6 +16111,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[manifest_inspector_html],
+        ).then(
+            fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[domain_readiness_html],
         )
 
         clarification_dropdown.change(

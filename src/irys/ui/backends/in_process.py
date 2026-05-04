@@ -626,6 +626,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_steering_impact_preview(action_type=action_type, payload=payload)
 
+    async def get_domain_investigation_readiness(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.evaluate_domain_investigation_readiness()
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_objective_coverage_workbench()

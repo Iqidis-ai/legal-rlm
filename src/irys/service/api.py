@@ -4051,6 +4051,27 @@ async def post_steering_impact_preview(
     )
 
 
+@app.get(
+    "/matter/{matter_id}/domain-investigation-readiness",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_domain_investigation_readiness(
+    matter_id: str,
+    profile_ids: Optional[str] = Query(None, description="Comma-separated profile IDs"),
+    include_repair_recommendations: bool = Query(True),
+    policy_mode: str = Query("clean"),
+):
+    """Evaluate cross-domain investigation readiness (all SOs)."""
+    model = await _get_matter_model_or_404(matter_id)
+    pids = [p.strip() for p in profile_ids.split(",") if p.strip()] if profile_ids else None
+    return model.evaluate_domain_investigation_readiness(
+        profile_ids=pids,
+        include_repair_recommendations=include_repair_recommendations,
+        policy_mode=policy_mode,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Actor Resolution — alias matching and duplicate detection (SO-5)
 # ---------------------------------------------------------------------------

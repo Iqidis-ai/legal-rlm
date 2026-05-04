@@ -7836,6 +7836,188 @@ class MatterModel:
             "recommended_followups": followups,
         }
 
+    _ALL_PROFILES = ("legal", "finance", "coding", "academic_research", "biomedical")
+
+    def evaluate_domain_investigation_readiness(
+        self,
+        *,
+        profile_ids: list[str] | None = None,
+        include_repair_recommendations: bool = True,
+        policy_mode: str = "clean",
+    ) -> dict:
+        """Evaluate cross-domain readiness of the matter model (all SOs).
+
+        For each requested profile, checks: assertion quality, source role
+        calibration, objective coverage, quantitative coverage, gap modeling,
+        steering readiness, and deliverable readiness. Identifies cross-domain
+        blockers.
+        """
+        target_profiles = list(profile_ids) if profile_ids else list(self._ALL_PROFILES)
+        target_profiles = [p for p in target_profiles if p in self._ALL_PROFILES]
+        if not target_profiles:
+            target_profiles = list(self._ALL_PROFILES)
+
+        broker = self.memory_broker
+        facets, _, primary_profile = self._read_matter_domain_composition()
+        so_metrics = self.get_so_metrics()
+        health = self.get_system_health()
+        coverage_report = self.get_issue_coverage_report(policy_mode)
+
+        assertion_count = so_metrics.get("assertion_count", 0) or 0
+        issue_count = so_metrics.get("issue_count", 0) or 0
+        open_gap_count = so_metrics.get("open_gap_count", 0) or 0
+        quant_fact_count = so_metrics.get("quant_fact_count", 0) or 0
+        coverage_avg = so_metrics.get("issue_coverage_avg")
+
+        structure_rate = so_metrics.get("assertion_structure_rate")
+        source_known_rate = so_metrics.get("source_role_known_rate")
+        steerability = so_metrics.get("steerability", False)
+        belief_revision = so_metrics.get("belief_revision", False)
+
+        profiles_result: list[dict] = []
+        statuses: list[str] = []
+
+        for pid in target_profiles:
+            profile_data = broker.get_domain_profile(pid)
+            vocab = broker.get_profile_vocabulary(pid) if profile_data else None
+            has_profile = profile_data is not None
+            source_roles = list(vocab.get("source_roles", [])) if vocab else []
+            has_vocab = bool(source_roles)
+
+            primary_failures: list[str] = []
+
+            detection_conf = 0.0
+            for f in facets:
+                if isinstance(f, dict) and f.get("domain_profile_id") == pid:
+                    detection_conf = float(f.get("confidence", 0.0))
+                    break
+
+            if not has_profile:
+                primary_failures.append(f"Profile {pid} not installed in broker")
+            if not has_vocab:
+                primary_failures.append(f"No vocabulary for profile {pid}")
+
+            sr_calibration = {
+                "source_role_known_rate": source_known_rate,
+                "defined_roles": len(source_roles),
+                "pass": (source_known_rate or 0) >= 0.5,
+            }
+
+            assertion_quality = {
+                "assertion_count": assertion_count,
+                "structure_rate": structure_rate,
+                "pass": (structure_rate or 0) >= 0.8,
+            }
+
+            obj_coverage = {
+                "issue_count": issue_count,
+                "coverage_avg": coverage_avg,
+                "issues_with_proof_gap": so_metrics.get("issues_with_proof_gap", 0),
+                "pass": (coverage_avg or 0) >= 0.3,
+            }
+
+            quant_coverage = {
+                "quant_fact_count": quant_fact_count,
+                "pass": quant_fact_count > 0 or pid in ("coding", "academic_research"),
+            }
+
+            gap_modeling = {
+                "open_gap_count": open_gap_count,
+                "pass": True,
+            }
+
+            steering_ready = {
+                "steerability": steerability,
+                "belief_revision": belief_revision,
+                "pass": bool(steerability),
+            }
+
+            deliverable_ready = {
+                "pass": assertion_count > 0 and issue_count > 0,
+            }
+
+            checks = [
+                sr_calibration["pass"],
+                assertion_quality["pass"],
+                obj_coverage["pass"],
+                gap_modeling["pass"],
+            ]
+            if all(checks):
+                status = "ready"
+            elif any(checks):
+                status = "partial"
+            else:
+                status = "blocked"
+
+            if primary_failures:
+                status = "blocked"
+
+            repairs: list[str] = []
+            if include_repair_recommendations:
+                if not assertion_quality["pass"]:
+                    repairs.append("Run investigation to populate assertions with typed metadata")
+                if not sr_calibration["pass"]:
+                    repairs.append(f"Review source roles — {pid} profile expects {len(source_roles)} roles")
+                if not obj_coverage["pass"]:
+                    repairs.append("Run investigation to improve issue coverage")
+                if not steering_ready["pass"]:
+                    repairs.append("Run at least one investigation to enable steering")
+
+            profiles_result.append({
+                "profile_id": pid,
+                "status": status,
+                "primary_failures": primary_failures,
+                "domain_detection": {
+                    "confidence": detection_conf,
+                    "is_primary": pid == primary_profile,
+                },
+                "source_role_calibration": sr_calibration,
+                "assertion_quality": assertion_quality,
+                "objective_coverage": obj_coverage,
+                "quantitative_coverage": quant_coverage,
+                "gap_modeling": gap_modeling,
+                "steering_readiness": steering_ready,
+                "deliverable_readiness": deliverable_ready,
+                "recommended_repairs": repairs,
+            })
+            statuses.append(status)
+
+        cross_domain: list[dict] = []
+        active_pids = {f.get("domain_profile_id") for f in facets if isinstance(f, dict)}
+        for pid in target_profiles:
+            if pid not in active_pids and pid != "legal":
+                cross_domain.append({
+                    "kind": "mapping_gap",
+                    "profiles": [pid],
+                    "severity": "medium",
+                    "message": f"Profile {pid} has no detection signal in current matter",
+                })
+
+        if health.get("contradiction_count", 0) > 0 and len(active_pids) > 1:
+            cross_domain.append({
+                "kind": "source_role_drift",
+                "profiles": sorted(active_pids),
+                "severity": "high",
+                "message": (
+                    f"{health['contradiction_count']} contradictions across "
+                    f"{len(active_pids)} active profiles — source role calibration may drift"
+                ),
+            })
+
+        if all(s == "ready" for s in statuses):
+            overall = "ready"
+        elif all(s == "blocked" for s in statuses):
+            overall = "blocked"
+        else:
+            overall = "partial"
+
+        return {
+            "matter_id": self.matter_id,
+            "overall_status": overall,
+            "profiles": profiles_result,
+            "cross_domain_findings": cross_domain,
+        }
+
     def list_belief_revisions(self, limit: int = 100) -> list[dict]:
         """Return recent belief revision events with assertion context.
 
