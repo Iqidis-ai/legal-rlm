@@ -6959,6 +6959,8 @@ def _fmt_domain_readiness(data: dict, domain: str = "legal") -> str:
                 det_conf = float(dd.get("confidence", 0.0))
             except (TypeError, ValueError):
                 det_conf = 0.0
+        if not math.isfinite(det_conf):
+            det_conf = 0.0
 
         rows += (
             f"<tr>"
