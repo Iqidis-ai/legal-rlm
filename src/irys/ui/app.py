@@ -3223,6 +3223,150 @@ def _fmt_domain_profile_panel(summary: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_DOMAIN_COMPOSITION_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Domain Composition",
+        "empty": "No domain composition data available yet.",
+        "primary": "Primary Domain",
+        "facets": "Active Facets",
+        "trust_weights": "Composed Trust Weights",
+        "events": "Recent Detection Events",
+        "no_events": "No detection events recorded.",
+    },
+    "finance": {
+        "title": "Domain Composition",
+        "empty": "No domain composition data available yet.",
+        "primary": "Primary Domain",
+        "facets": "Active Facets",
+        "trust_weights": "Composed Reliability Weights",
+        "events": "Recent Detection Events",
+        "no_events": "No detection events recorded.",
+    },
+    "coding": {
+        "title": "Domain Composition",
+        "empty": "No domain composition data available yet.",
+        "primary": "Primary Domain",
+        "facets": "Active Facets",
+        "trust_weights": "Composed Confidence Weights",
+        "events": "Recent Detection Events",
+        "no_events": "No detection events recorded.",
+    },
+    "academic_research": {
+        "title": "Domain Composition",
+        "empty": "No domain composition data available yet.",
+        "primary": "Primary Domain",
+        "facets": "Active Facets",
+        "trust_weights": "Composed Authority Weights",
+        "events": "Recent Detection Events",
+        "no_events": "No detection events recorded.",
+    },
+    "biomedical": {
+        "title": "Domain Composition",
+        "empty": "No domain composition data available yet.",
+        "primary": "Primary Domain",
+        "facets": "Active Facets",
+        "trust_weights": "Composed Evidence Weights",
+        "events": "Recent Detection Events",
+        "no_events": "No detection events recorded.",
+    },
+}
+
+
+def _fmt_domain_composition_panel(data: dict, domain: str = "legal") -> str:
+    L = _DOMAIN_COMPOSITION_LABELS.get(domain, _DOMAIN_COMPOSITION_LABELS["legal"])
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{L['empty']}</div>"
+
+    primary = _escape(str(data.get("primary_domain_profile_id") or "unknown"))
+    facets = data.get("facets") or {}
+    tw = data.get("composed_trust_weights") or {}
+    events = data.get("detection_events") or []
+
+    primary_badge = (
+        f"<span style='display:inline-block;padding:2px 10px;border-radius:8px;"
+        f"background:#2563eb22;color:#2563eb;font-size:13px;font-weight:600;'>"
+        f"{primary}</span>"
+    )
+
+    facet_pills = ""
+    if isinstance(facets, dict) and facets:
+        pills = []
+        for facet_name, facet_val in facets.items():
+            if not isinstance(facet_name, str):
+                continue
+            weight = float(facet_val) if isinstance(facet_val, (int, float)) else 0.0
+            opacity = max(0.3, min(1.0, weight))
+            pills.append(
+                f"<span style='display:inline-block;padding:2px 8px;border-radius:6px;"
+                f"background:#6366f122;color:#6366f1;font-size:12px;margin:2px;"
+                f"opacity:{opacity:.2f};'>{_escape(facet_name)}"
+                f" <span style='font-size:10px;opacity:0.7'>{weight:.0%}</span></span>"
+            )
+        facet_pills = " ".join(pills)
+    else:
+        facet_pills = "<span style='color:#9ca3af;font-size:12px;'>No facets detected</span>"
+
+    tw_rows = ""
+    if isinstance(tw, dict) and tw:
+        for role, weight in sorted(tw.items(), key=lambda x: float(x[1]) if isinstance(x[1], (int, float)) else 0, reverse=True):
+            w = float(weight) if isinstance(weight, (int, float)) else 0.0
+            bar_pct = max(0, min(100, w * 100))
+            tw_rows += (
+                f"<tr><td style='padding:3px 8px;font-size:12px;'>{_escape(str(role))}</td>"
+                f"<td style='padding:3px 8px;width:60%;'>"
+                f"<div style='background:#f3f4f6;height:14px;border-radius:4px;overflow:hidden;'>"
+                f"<div style='background:#6366f1;height:100%;width:{bar_pct:.1f}%;border-radius:4px;'></div>"
+                f"</div></td>"
+                f"<td style='padding:3px 8px;font-size:11px;color:#6b7280;text-align:right;'>{w:.2f}</td></tr>"
+            )
+
+    event_rows = ""
+    for evt in events[:20]:
+        if not isinstance(evt, dict):
+            continue
+        profile = _escape(str(evt.get("candidate_profile_id") or "?"))
+        conf = float(evt.get("confidence") or 0)
+        target = _escape(f"{evt.get('target_kind', '?')}:{str(evt.get('target_id', '?'))[:16]}")
+        ts = _escape(str(evt.get("created_at") or "")[:19])
+        conf_color = "#16a34a" if conf >= 0.7 else ("#eab308" if conf >= 0.4 else "#6b7280")
+        event_rows += (
+            f"<tr><td style='padding:3px 8px;font-size:11px;'>{ts}</td>"
+            f"<td style='padding:3px 8px;font-size:11px;'>{profile}</td>"
+            f"<td style='padding:3px 8px;'>"
+            f"<span style='color:{conf_color};font-weight:600;font-size:11px;'>{conf:.0%}</span></td>"
+            f"<td style='padding:3px 8px;font-size:10px;color:#6b7280;font-family:monospace;'>{target}</td></tr>"
+        )
+
+    parts = [
+        "<div class='viz-shell'>",
+        f"<div class='viz-header'><strong>{L['title']}</strong></div>",
+        f"<div style='padding:8px 12px;'>"
+        f"<div style='margin-bottom:12px;'><strong>{L['primary']}:</strong> {primary_badge}</div>"
+        f"<div style='margin-bottom:12px;'><strong>{L['facets']}:</strong><div style='margin-top:4px;'>{facet_pills}</div></div>",
+    ]
+
+    if tw_rows:
+        parts.append(
+            f"<div style='margin-bottom:12px;'><strong>{L['trust_weights']}:</strong>"
+            "<div class='table-wrap'><table class='viz-table'>"
+            "<thead><tr><th>Role</th><th>Weight</th><th></th></tr></thead>"
+            f"<tbody>{tw_rows}</tbody></table></div></div>"
+        )
+
+    if event_rows:
+        parts.append(
+            f"<div><strong>{L['events']}:</strong>"
+            "<div class='table-wrap'><table class='viz-table'>"
+            "<thead><tr><th>Time</th><th>Profile</th><th>Confidence</th><th>Target</th></tr></thead>"
+            f"<tbody>{event_rows}</tbody></table></div></div>"
+        )
+    elif not events:
+        parts.append(f"<div style='color:#9ca3af;font-size:12px;'>{L['no_events']}</div>")
+
+    parts.append("</div></div>")
+    return "\n".join(parts)
+
+
 def _fmt_so_scorecard_panel(so: dict, domain: str = "legal") -> str:
     labels = _SO_SCORECARD_LABELS.get(domain, _SO_SCORECARD_LABELS["legal"])
     if not so or not isinstance(so, dict):
@@ -7506,6 +7650,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading domain profile: {_escape(exc)}</div>"
 
+    def load_domain_composition(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_domain_composition(matter_id))
+            return _fmt_domain_composition_panel(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading domain composition: {_escape(str(exc))}</div>"
+
     def load_document_triage(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -9011,6 +9164,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             domain_profile_html = gr.HTML("<div class='viz-empty'>Domain profile will appear here after an investigation.</div>")
             refresh_domain_profile_btn = gr.Button("Refresh Domain Profile", variant="secondary", size="sm")
 
+            with gr.Accordion("Domain Composition — how domain detection blends profiles", open=False):
+                gr.Markdown(
+                    "Shows which domain facets are active, how trust weights are composed "
+                    "across detected domains, and recent detection events that shaped the profile."
+                )
+                domain_composition_html = gr.HTML("<div class='viz-empty'>Domain composition will appear here after an investigation.</div>")
+                refresh_domain_composition_btn = gr.Button("Refresh Composition", variant="secondary", size="sm")
+
         with gr.Accordion("Content Policy Audit — what Irys allowed, blocked, or withheld", open=False):
             gr.Markdown(
                 "Every time Irys decides whether to include or redact content for a given "
@@ -9889,6 +10050,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[domain_profile_html],
+        )
+        refresh_domain_composition_btn.click(
+            fn=lambda mid: state.load_domain_composition(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[domain_composition_html],
         )
         refresh_doc_triage_btn.click(
             fn=lambda mid: state.load_document_triage(mid, domain=state._detect_domain(mid)),

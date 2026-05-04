@@ -387,6 +387,10 @@ class HttpBackend(UIBackend):
             return {}
         return result
 
+    async def get_domain_composition(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/domain-composition")
+        return result if isinstance(result, dict) else {}
+
     async def list_documents_needing_profile(
         self, matter_id: str, limit: int = 50
     ) -> list[dict]:

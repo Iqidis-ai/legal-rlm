@@ -3202,3 +3202,44 @@ def test_fmt_steering_params_non_dict_guard():
     result = _fmt_steering(actions, domain="legal")
     assert "test" in result
     assert "test2" in result
+
+
+def test_fmt_domain_composition_panel_domain_labels():
+    from irys.ui.app import _fmt_domain_composition_panel
+    data = {
+        "primary_domain_profile_id": "legal:1",
+        "facets": {"legal": 0.8, "finance": 0.3},
+        "composed_trust_weights": {"authoritative": 0.9, "advocacy": 0.5},
+        "detection_events": [
+            {"candidate_profile_id": "legal:1", "confidence": 0.85,
+             "target_kind": "document", "target_id": "doc1", "created_at": "2026-01-01T00:00:00"},
+        ],
+    }
+    legal = _fmt_domain_composition_panel(data, domain="legal")
+    assert "Domain Composition" in legal
+    assert "legal:1" in legal
+    assert "Composed Trust Weights" in legal
+
+    finance = _fmt_domain_composition_panel(data, domain="finance")
+    assert "Composed Reliability Weights" in finance
+
+    coding = _fmt_domain_composition_panel(data, domain="coding")
+    assert "Composed Confidence Weights" in coding
+
+
+def test_fmt_domain_composition_panel_empty():
+    from irys.ui.app import _fmt_domain_composition_panel
+    result = _fmt_domain_composition_panel({}, domain="biomedical")
+    assert "viz-empty" in result
+
+
+def test_fmt_domain_composition_panel_non_dict_guard():
+    from irys.ui.app import _fmt_domain_composition_panel
+    data = {
+        "primary_domain_profile_id": "legal:1",
+        "facets": "not-a-dict",
+        "composed_trust_weights": None,
+        "detection_events": ["bad-event", {"candidate_profile_id": "legal:1", "confidence": 0.7}],
+    }
+    result = _fmt_domain_composition_panel(data, domain="legal")
+    assert "legal:1" in result

@@ -743,6 +743,30 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_domain_profile_summary(profile_id=profile_id)
 
+    async def get_domain_composition(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        facets, tw, primary = model._read_matter_domain_composition()
+        detection_events = []
+        try:
+            rows = model.db.execute(
+                """SELECT id, target_kind, target_id, candidate_profile_id,
+                          confidence, signals_json, evidence_refs_json, created_at
+                   FROM domain_detection_event
+                   WHERE matter_id=?
+                   ORDER BY created_at DESC LIMIT 50""",
+                (model.matter_id,),
+            ).fetchall()
+            detection_events = [dict(r) for r in rows]
+        except Exception as exc:
+            logger.warning("domain_detection_event query failed: %s", exc)
+        return {
+            "matter_id": model.matter_id,
+            "primary_domain_profile_id": primary,
+            "facets": facets,
+            "composed_trust_weights": tw,
+            "detection_events": detection_events,
+        }
+
     async def list_documents_needing_profile(
         self, matter_id: str, limit: int = 50
     ) -> list[dict]:

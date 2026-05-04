@@ -328,6 +328,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_domain_composition(self, matter_id: str) -> dict:
+        """Return domain facets, composed trust weights, and detection events."""
+        ...
+
+    @abstractmethod
     async def list_documents_needing_profile(
         self, matter_id: str, limit: int = 50
     ) -> list[dict]:
