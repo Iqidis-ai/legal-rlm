@@ -306,6 +306,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def compute_issue_proof_state(self, matter_id: str, issue_id: str) -> dict:
+        """Recompute proof state for a single issue. Returns the proof state."""
+        ...
+
+    @abstractmethod
     async def flush_pending(self, matter_id: str) -> dict:
         """Drain pending propagation queues for belief revision convergence."""
         ...

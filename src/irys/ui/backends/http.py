@@ -360,6 +360,10 @@ class HttpBackend(UIBackend):
             return {}
         return result
 
+    async def compute_issue_proof_state(self, matter_id: str, issue_id: str) -> dict:
+        result = await self._post(f"/matter/{matter_id}/issues/{issue_id}/proof-state/compute")
+        return result if isinstance(result, dict) else {}
+
     async def flush_pending(self, matter_id: str) -> dict:
         result = await self._post(f"/matter/{matter_id}/flush-pending")
         if not isinstance(result, dict):

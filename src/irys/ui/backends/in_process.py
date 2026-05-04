@@ -702,6 +702,10 @@ class InProcessBackend(UIBackend):
         states = model.proof_state.compute_all()
         return {"matter_id": matter_id, "updated_count": len(states), "states": states}
 
+    async def compute_issue_proof_state(self, matter_id: str, issue_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.proof_state.compute_and_store(issue_id)
+
     async def flush_pending(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         from ...matter.runtime import MatterRuntimeAdapter
