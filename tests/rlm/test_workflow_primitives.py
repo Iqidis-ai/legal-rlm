@@ -5806,3 +5806,229 @@ def test_backend_interface_balance_decision_leverage():
         assert hasattr(UIBackend, method), f"UIBackend missing {method}"
         assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
         assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+# ── Executable Steering Actions ─────────────────────────────────────
+
+def test_steering_panel_returns_tuple_with_choices():
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    html, choices = state.load_steering_panel("", domain="legal")
+    assert isinstance(html, str)
+    assert isinstance(choices, list)
+    assert len(choices) == 0
+
+
+def test_steering_panel_choices_encode_action_json():
+    import json
+    from irys.ui.app import _fmt_steering_panel, _STEERING_ACTION_LABELS
+    from irys.ui.app import AppState
+    actions = [
+        {
+            "action_id": "a1",
+            "action_type": "redirect_focus",
+            "description": "Redirect to under-covered issue",
+            "params": {"issue_id": "iss-1", "matter_id": "m1"},
+            "rationale": "Low coverage",
+            "priority": "high",
+            "impact": "Increases coverage",
+        },
+        {
+            "action_id": "a2",
+            "action_type": "answer_clarification",
+            "description": "Answer pending question",
+            "params": {"question_id": "q-1", "answer_text": "<your answer here>"},
+            "rationale": "Material improvement",
+            "priority": "medium",
+            "impact": "Closes gap",
+        },
+    ]
+
+    class FakeBackend:
+        async def get_steering_surface(self, mid, run_id=None):
+            return actions
+
+    state = AppState.__new__(AppState)
+    state._backends = {"test": FakeBackend()}
+    state._active_backend_key = "test"
+    state.current_run_id = None
+    state.backend = lambda: FakeBackend()
+    html, choices = state.load_steering_panel("m1", domain="legal")
+    assert len(choices) == 2
+    label_0, value_0 = choices[0]
+    parsed = json.loads(value_0)
+    assert parsed["action_type"] == "redirect_focus"
+    assert parsed["params"]["issue_id"] == "iss-1"
+    assert parsed["needs_input"] is False
+    label_1, value_1 = choices[1]
+    parsed_1 = json.loads(value_1)
+    assert parsed_1["action_type"] == "answer_clarification"
+    assert parsed_1["needs_input"] is True
+
+
+def test_execute_steering_action_redirect():
+    import json
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state.current_run_id = None
+    called = {}
+    def fake_redirect(mid, rid, iid):
+        called["args"] = (mid, rid, iid)
+        return "Redirected"
+    state.do_redirect = fake_redirect
+    action_json = json.dumps({
+        "action_type": "redirect_focus",
+        "params": {"issue_id": "iss-42"},
+    })
+    result = state.execute_steering_action("m1", action_json, "")
+    assert result == "Redirected"
+    assert called["args"] == ("m1", "", "iss-42")
+
+
+def test_execute_steering_action_answer_clarification_needs_input():
+    import json
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state.current_run_id = None
+    action_json = json.dumps({
+        "action_type": "answer_clarification",
+        "params": {"question_id": "q-1"},
+    })
+    result = state.execute_steering_action("m1", action_json, "")
+    assert "Enter your answer" in result
+
+
+def test_execute_steering_action_answer_clarification_with_input():
+    import json
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state.current_run_id = None
+    called = {}
+    def fake_answer(mid, qid, text):
+        called["args"] = (mid, qid, text)
+        return "Answered"
+    state.do_answer_clarification = fake_answer
+    action_json = json.dumps({
+        "action_type": "answer_clarification",
+        "params": {"question_id": "q-1"},
+    })
+    result = state.execute_steering_action("m1", action_json, "Yes, the contract was signed.")
+    assert result == "Answered"
+    assert called["args"][2] == "Yes, the contract was signed."
+
+
+def test_execute_steering_action_force_belief_state():
+    import json
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state.current_run_id = None
+    called = {}
+    def fake_correct(mid, aid, new_state, reason):
+        called["args"] = (mid, aid, new_state, reason)
+        return "Corrected"
+    state.do_correct_assertion = fake_correct
+    action_json = json.dumps({
+        "action_type": "force_belief_state",
+        "params": {"assertion_id": "a-1", "new_state": "disputed"},
+    })
+    result = state.execute_steering_action("m1", action_json, "Witness contradicts")
+    assert result == "Corrected"
+    assert called["args"][1] == "a-1"
+    assert called["args"][2] == "disputed"
+    assert called["args"][3] == "Witness contradicts"
+
+
+def test_execute_steering_action_supply_document():
+    import json
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state.current_run_id = None
+    action_json = json.dumps({
+        "action_type": "supply_document",
+        "params": {"gap_id": "g-1", "description": "Signed lease agreement"},
+    })
+    result = state.execute_steering_action("m1", action_json, "")
+    assert "Signed lease agreement" in result
+    assert "Upload" in result
+
+
+def test_execute_steering_action_no_matter():
+    import json
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    result = state.execute_steering_action("", "", "")
+    assert "Load a matter" in result
+
+
+def test_execute_steering_action_no_selection():
+    import json
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    result = state.execute_steering_action("m1", "", "")
+    assert "Select an action" in result
+
+
+def test_execute_steering_action_invalid_json():
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    result = state.execute_steering_action("m1", "not-json", "")
+    assert "Invalid action data" in result
+
+
+def test_execute_steering_action_xss_safety():
+    import json
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state.current_run_id = None
+    action_json = json.dumps({
+        "action_type": "supply_document",
+        "params": {"gap_id": "g-1", "description": "<script>alert(1)</script>"},
+    })
+    result = state.execute_steering_action("m1", action_json, "")
+    assert "<script>" not in result
+
+
+def test_steering_action_labels_all_five_domains():
+    from irys.ui.app import _STEERING_ACTION_LABELS
+    required_keys = {
+        "title", "empty", "correct_assertion", "force_belief_state",
+        "redirect_focus", "supply_document", "answer_clarification",
+        "set_trust_override",
+    }
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        assert domain in _STEERING_ACTION_LABELS, f"Missing domain: {domain}"
+        for key in required_keys:
+            assert key in _STEERING_ACTION_LABELS[domain], f"Missing key {key} in {domain}"
+
+
+def test_execute_steering_action_set_trust_override():
+    import json
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state.current_run_id = None
+    called = {}
+    def fake_trust(mid, pattern, level, note):
+        called["args"] = (mid, pattern, level, note)
+        return "Override set"
+    state.do_set_trust_override = fake_trust
+    action_json = json.dumps({
+        "action_type": "set_trust_override",
+        "params": {"document_pattern": "contract.pdf", "trust_level": "low"},
+    })
+    result = state.execute_steering_action("m1", action_json, "Unreliable source")
+    assert result == "Override set"
+    assert called["args"][1] == "contract.pdf"
+    assert called["args"][3] == "Unreliable source"
+
+
+def test_execute_steering_action_unknown_type():
+    import json
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state.current_run_id = None
+    action_json = json.dumps({
+        "action_type": "nonexistent_action",
+        "params": {},
+    })
+    result = state.execute_steering_action("m1", action_json, "")
+    assert "Unknown action type" in result

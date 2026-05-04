@@ -14,6 +14,7 @@ Architecture: in-process for local dev (InProcessBackend), HTTP for deployed ser
 import asyncio
 import concurrent.futures
 import html
+import json
 import logging
 import math
 import os
@@ -10053,15 +10054,80 @@ class AppState:
                 break
         return "\n".join(sections), top_redirect_issue
 
-    def load_steering_panel(self, matter_id: str, domain: str = "legal") -> str:
+    def load_steering_panel(self, matter_id: str, domain: str = "legal") -> tuple[str, list]:
         if not matter_id or matter_id == "—":
-            return "<div class='viz-empty'>No matter loaded.</div>"
+            return "<div class='viz-empty'>No matter loaded.</div>", []
         try:
             run_id = getattr(self, "current_run_id", None)
             actions = _run_async(self.backend().get_steering_surface(matter_id, run_id=run_id))
-            return _fmt_steering_panel(actions, domain)
+            panel_html = _fmt_steering_panel(actions, domain)
+            labels = _STEERING_ACTION_LABELS.get(domain, _STEERING_ACTION_LABELS["legal"])
+            choices: list[tuple[str, str]] = []
+            for idx, a in enumerate(actions):
+                if not isinstance(a, dict):
+                    continue
+                action_type = a.get("action_type", "unknown")
+                priority = a.get("priority", "low")
+                action_label = labels.get(action_type, action_type.replace("_", " ").title())
+                desc_short = (a.get("description") or "")[:60]
+                choice_label = f"[{priority.upper()}] {action_label}: {desc_short}"
+                needs_input = action_type in ("answer_clarification", "correct_assertion")
+                choice_value = json.dumps({
+                    "action_type": action_type,
+                    "params": a.get("params") or {},
+                    "needs_input": needs_input,
+                })
+                choices.append((choice_label, choice_value))
+            return panel_html, choices
         except Exception as exc:
-            return f"<div class='viz-empty'>Error loading recommendations: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading recommendations: {_escape(exc)}</div>", []
+
+    def execute_steering_action(
+        self, matter_id: str, action_json: str, user_input: str
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first."
+        if not action_json:
+            return "Select an action from the dropdown."
+        try:
+            action = json.loads(action_json)
+        except (json.JSONDecodeError, TypeError):
+            return "Invalid action data — refresh recommendations and try again."
+        action_type = action.get("action_type", "")
+        params = action.get("params") or {}
+        run_id = getattr(self, "current_run_id", None) or ""
+
+        if action_type == "redirect_focus":
+            issue_id = params.get("issue_id", "")
+            return self.do_redirect(matter_id, run_id, issue_id)
+
+        if action_type == "answer_clarification":
+            question_id = params.get("question_id", "")
+            answer_text = (user_input or "").strip()
+            if not answer_text:
+                return "Enter your answer in the text box before executing."
+            return self.do_answer_clarification(matter_id, question_id, answer_text)
+
+        if action_type in ("force_belief_state", "correct_assertion"):
+            assertion_id = params.get("assertion_id", "")
+            new_state = params.get("new_state", "disputed")
+            reason = (user_input or "").strip() or params.get("note", "Steering action")
+            return self.do_correct_assertion(matter_id, assertion_id, new_state, reason)
+
+        if action_type == "set_trust_override":
+            doc_pattern = params.get("document_pattern", "")
+            trust_level = params.get("trust_level", "low")
+            note = (user_input or "").strip() or "Steering recommendation"
+            return self.do_set_trust_override(matter_id, doc_pattern, trust_level, note)
+
+        if action_type == "supply_document":
+            desc = _escape(params.get("description", ""))
+            return (
+                f"Document needed: \"{desc}\". "
+                "Upload the document in the Documents tab, then click Refresh Recommendations."
+            )
+
+        return f"Unknown action type: {action_type}"
 
     def load_gaps_detail(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -12307,6 +12373,29 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )
             steering_panel_html = gr.HTML("<div class='viz-empty'>Recommendations will appear here after an investigation.</div>")
             refresh_steering_btn = gr.Button("Refresh Recommendations", variant="secondary", size="sm")
+            with gr.Accordion("Quick Execute — act on a recommendation directly", open=False):
+                gr.Markdown(
+                    "Select a recommendation from the dropdown, optionally provide "
+                    "additional input (required for clarifications and corrections), "
+                    "then click Execute to apply it immediately."
+                )
+                with gr.Row():
+                    steering_action_dropdown = gr.Dropdown(
+                        label="Select action to execute",
+                        choices=[],
+                        scale=4,
+                    )
+                    steering_action_input = gr.Textbox(
+                        label="Additional input (answer text or correction reason)",
+                        placeholder="Required for clarifications and corrections",
+                        scale=3,
+                    )
+                    steering_execute_btn = gr.Button(
+                        "Execute", variant="primary", size="sm", scale=1,
+                    )
+                steering_execute_result = gr.Textbox(
+                    label="Result", interactive=False,
+                )
 
         with gr.Accordion("Adjust issue priority", open=False):
             gr.Markdown(
@@ -13329,6 +13418,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_decision_leverage(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[decision_leverage_html],
+            ).then(
+                fn=lambda mid: (
+                    lambda r: (r[0], gr.update(choices=r[1], value=None))
+                )(state.load_steering_panel(mid, domain=state._detect_domain(mid))),
+                inputs=[matter_id_box],
+                outputs=[steering_panel_html, steering_action_dropdown],
             )
         else:
             submit_btn.click(
@@ -13423,6 +13518,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_decision_leverage(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[decision_leverage_html],
+            ).then(
+                fn=lambda mid: (
+                    lambda r: (r[0], gr.update(choices=r[1], value=None))
+                )(state.load_steering_panel(mid, domain=state._detect_domain(mid))),
+                inputs=[matter_id_box],
+                outputs=[steering_panel_html, steering_action_dropdown],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -13526,6 +13627,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_decision_leverage(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[decision_leverage_html],
+        ).then(
+            fn=lambda mid: (
+                lambda r: (r[0], gr.update(choices=r[1], value=None))
+            )(state.load_steering_panel(mid, domain=state._detect_domain(mid))),
+            inputs=[matter_id_box],
+            outputs=[steering_panel_html, steering_action_dropdown],
         )
 
         export_report_btn.click(
@@ -13611,9 +13718,24 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[resolve_gap_result, gap_workbench_html],
         )
         refresh_steering_btn.click(
-            fn=lambda mid: state.load_steering_panel(mid, domain=state._detect_domain(mid)),
+            fn=lambda mid: (
+                lambda r: (r[0], gr.update(choices=r[1], value=None))
+            )(state.load_steering_panel(mid, domain=state._detect_domain(mid))),
             inputs=[matter_id_box],
-            outputs=[steering_panel_html],
+            outputs=[steering_panel_html, steering_action_dropdown],
+        )
+        steering_execute_btn.click(
+            fn=lambda mid, action_json, user_input: state.execute_steering_action(
+                mid, action_json, user_input,
+            ),
+            inputs=[matter_id_box, steering_action_dropdown, steering_action_input],
+            outputs=[steering_execute_result],
+        ).then(
+            fn=lambda mid: (
+                lambda r: (r[0], gr.update(choices=r[1], value=None))
+            )(state.load_steering_panel(mid, domain=state._detect_domain(mid))),
+            inputs=[matter_id_box],
+            outputs=[steering_panel_html, steering_action_dropdown],
         )
         refresh_assumptions_btn.click(
             fn=lambda mid: state.load_assumptions(mid, domain=state._detect_domain(mid)),
@@ -14275,6 +14397,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_decision_leverage(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[decision_leverage_html],
+        ).then(
+            fn=lambda mid: (
+                lambda r: (r[0], gr.update(choices=r[1], value=None))
+            )(state.load_steering_panel(mid, domain=state._detect_domain(mid))),
+            inputs=[matter_id_box],
+            outputs=[steering_panel_html, steering_action_dropdown],
         )
 
         clarification_dropdown.change(
