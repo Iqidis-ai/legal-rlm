@@ -546,7 +546,12 @@ class InProcessBackend(UIBackend):
 
     async def list_assumptions(self, matter_id: str, limit: int = 30) -> list[dict]:
         model = self._get_matter_model(matter_id)
-        return model.assumptions.get_all(max_rows=limit)
+        assumptions = model.assumptions.get_all(max_rows=limit)
+        for a in assumptions:
+            targets = model.assumptions.get_linked_targets(a["id"])
+            a["linked_target_count"] = len(targets)
+            a["linked_targets"] = targets[:5]
+        return assumptions
 
     async def update_assumption_status(self, matter_id: str, assumption_id: str, status: str, reason: str = "") -> bool:
         model = self._get_matter_model(matter_id)

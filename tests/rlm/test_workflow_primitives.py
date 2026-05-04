@@ -3918,3 +3918,39 @@ def test_fmt_assertion_graph_non_dict_guard():
     result = _fmt_assertion_graph(graph, domain="legal")
     assert "Valid" in result
     assert "bad" not in result.replace("bad-edge", "")
+
+
+def test_fmt_assumptions_linked_targets():
+    from irys.ui.app import _fmt_assumptions
+
+    assumptions = [
+        {
+            "id": "asm-1",
+            "statement": "Contract was fully executed",
+            "status": "provisional",
+            "rationale": "Based on initial review",
+            "invalidation_condition": "if unsigned copy found",
+            "linked_target_count": 3,
+            "linked_targets": [
+                {"target_type": "issue", "target_id": "iss-1"},
+                {"target_type": "assertion", "target_id": "a-1"},
+                {"target_type": "predicate", "target_id": "p-1"},
+            ],
+        },
+        {
+            "id": "asm-2",
+            "statement": "No prior litigation",
+            "status": "confirmed",
+            "rationale": None,
+            "invalidation_condition": None,
+            "linked_target_count": 0,
+            "linked_targets": [],
+        },
+    ]
+    result = _fmt_assumptions(assumptions, domain="legal")
+    assert "Contract was fully executed" in result
+    assert "Linked to 3" in result
+    assert "assertion" in result
+    assert "issue" in result
+    assert "No prior litigation" in result
+    assert "Linked to 0" not in result

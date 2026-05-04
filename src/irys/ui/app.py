@@ -5584,6 +5584,18 @@ def _fmt_assumptions(assumptions: list, domain: str = "legal") -> str:
             detail += f"<div style='font-size:11px;color:#dc2626;margin-top:2px'>Invalidated if: {cond}</div>"
         if rationale:
             detail += f"<div style='font-size:11px;color:#6b7280;margin-top:2px'>Rationale: {rationale}</div>"
+        target_count = a.get("linked_target_count", 0)
+        if target_count:
+            targets = a.get("linked_targets", [])
+            target_types = set()
+            for t in targets:
+                if isinstance(t, dict):
+                    target_types.add(t.get("target_type", "item"))
+            type_str = ", ".join(sorted(target_types)) if target_types else "items"
+            detail += (
+                f"<div style='font-size:10px;color:#7c3aed;margin-top:2px'>"
+                f"Linked to {target_count} {type_str}</div>"
+            )
         aid = _escape(str(a.get("id", "?"))[:16])
         full_aid = _escape(str(a.get("id", "?")))
         rows += (

@@ -8887,6 +8887,15 @@ class AssumptionStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_linked_targets(self, assumption_id: str) -> list[dict]:
+        """Return targets linked to an assumption (SO-7 impact visibility)."""
+        rows = self.db.execute(
+            "SELECT target_type, target_id FROM assumption_link"
+            " WHERE assumption_id=? ORDER BY target_type, target_id",
+            (assumption_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_all(self, max_rows: int = 100) -> list[dict]:
         """Return all assumptions for this matter regardless of status."""
         rows = self.db.execute(
