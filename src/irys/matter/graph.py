@@ -1271,6 +1271,20 @@ class AssertionStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def count_contradictions(self) -> int:
+        row = self.db.execute(
+            """SELECT COUNT(*) FROM assertion_link al
+               JOIN assertion a_src ON a_src.id = al.src_assertion_id
+               JOIN assertion a_dst ON a_dst.id = al.dst_assertion_id
+               WHERE al.link_type IN ('attacks', 'contradicts')
+                 AND a_src.matter_id = ?
+                 AND a_dst.matter_id = ?
+                 AND a_src.belief_state NOT IN ('superseded','withdrawn','resolved')
+                 AND a_dst.belief_state NOT IN ('superseded','withdrawn','resolved')""",
+            (self.matter_id, self.matter_id),
+        ).fetchone()
+        return row[0]
+
     def detect_heuristic_contradictions(self) -> int:
         """
         Heuristically detect and link contradicting assertion pairs (SO-2).
@@ -1733,6 +1747,20 @@ class GapStore:
         )
         self.db.conn.commit()
         return cur.rowcount > 0
+
+    def gaps_for_issue(self, issue_id: str) -> list[dict]:
+        rows = self.db.execute(
+            """SELECT g.id, g.gap_type, g.description, g.expected_artifact,
+                      g.materiality_score, g.blocker_score, g.status,
+                      g.created_at, g.updated_at
+               FROM gap g
+               JOIN gap_link gl ON gl.gap_id = g.id
+               WHERE g.matter_id=? AND g.status='open'
+                 AND gl.affected_type='issue' AND gl.affected_id=?
+               ORDER BY g.materiality_score DESC""",
+            (self.matter_id, issue_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def count_open(self) -> int:
         row = self.db.execute(

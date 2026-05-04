@@ -3245,7 +3245,7 @@ class MatterModel:
         revision_count = int(revision_row["n"]) if revision_row else 0
 
         gap_count = self.gaps.count_open()
-        contradiction_count = len(self.assertions.find_contradictions(limit=500))
+        contradiction_count = self.assertions.count_contradictions()
         version_chain_count = len(self.list_version_families())
 
         oscillating_count = 0
@@ -3320,8 +3320,8 @@ class MatterModel:
                     inv = self.inventory.get_by_id(occ["document_inventory_id"])
                     if inv:
                         doc_label = inv.get("relative_path") or doc_id
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.warning("assertion_trace: inventory lookup failed for %s: %s", doc_id, exc)
             if span_id:
                 try:
                     span_row = self.db.execute(
@@ -3330,8 +3330,8 @@ class MatterModel:
                     ).fetchone()
                     if span_row:
                         section_label = span_row["section_ref"] or span_row["clause_ref"] or span_id
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.warning("assertion_trace: span lookup failed for %s: %s", span_id, exc)
             source_docs.append({
                 "document_id": doc_id,
                 "document_label": doc_label,
@@ -3370,8 +3370,8 @@ class MatterModel:
             vs_row = self.verification.get_status(assertion_id, "assertion")
             if vs_row:
                 verification = dict(vs_row) if hasattr(vs_row, "keys") else {}
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("assertion_trace: verification lookup failed for %s: %s", assertion_id, exc)
 
         revisions: list[dict] = []
         try:
@@ -3383,8 +3383,8 @@ class MatterModel:
                 (assertion_id,),
             ).fetchall()
             revisions = [dict(r) for r in rev_rows]
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("assertion_trace: revision history failed for %s: %s", assertion_id, exc)
 
         return {
             "assertion_id": assertion_id,
@@ -3464,22 +3464,14 @@ class MatterModel:
             proof_row = self.proof_state.get(issue_id)
             if proof_row:
                 proof = dict(proof_row) if hasattr(proof_row, "keys") else {}
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("issue_closure: proof_state lookup failed for %s: %s", issue_id, exc)
 
         issue_gaps = []
         try:
-            all_gaps = self.gaps.open_gaps(limit=200)
-            for g in all_gaps:
-                if not isinstance(g, dict):
-                    continue
-                deps = g.get("dependencies", [])
-                for d in deps:
-                    if isinstance(d, dict) and d.get("affected_id") == issue_id:
-                        issue_gaps.append(g)
-                        break
-        except Exception:
-            pass
+            issue_gaps = self.gaps.gaps_for_issue(issue_id)
+        except Exception as exc:
+            _log.warning("issue_closure: gap query failed for %s: %s", issue_id, exc)
 
         pending_count = 0
         verified_count = 0
@@ -3493,14 +3485,14 @@ class MatterModel:
                     verified_count += 1
                 elif vs == "candidate":
                     pending_count += 1
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("issue_closure: assertion query failed for %s: %s", issue_id, exc)
 
         source_agreement = []
         try:
             source_agreement = self.get_source_agreement_for_issue(issue_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("issue_closure: source_agreement failed for %s: %s", issue_id, exc)
 
         blockers: list[str] = []
         coverage_frac = float(coverage.get("coverage_fraction", 0)) if coverage else 0
@@ -3576,7 +3568,7 @@ class MatterModel:
         open_gap_count = self.gaps.count_open()
         high_mat_gaps = self.gaps.open_gaps(min_materiality=0.7, limit=20)
 
-        contradiction_count = len(self.assertions.find_contradictions(limit=500))
+        contradiction_count = self.assertions.count_contradictions()
         pending_clarifications = self.clarifications.count_pending()
 
         review_counts = self.count_review_queue()
@@ -3894,17 +3886,14 @@ class MatterModel:
                 card = self.get_document_card(relative_path=ref_norm) or {}
                 if hasattr(card, "keys"):
                     card = dict(card)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("document_console: card lookup failed for %s: %s", ref_norm, exc)
 
         candidates = self.list_candidate_assertions_for_document(ref_norm)
         candidate_count = len(candidates)
 
         verified_count = 0
         rejected_count = 0
-        for c in candidates:
-            if not isinstance(c, dict):
-                continue
         all_rows = self.db.execute(
             """SELECT COUNT(*) AS n,
                       SUM(CASE WHEN vs.status='verified' THEN 1 ELSE 0 END) AS verified,
@@ -3936,8 +3925,8 @@ class MatterModel:
                 (self.matter_id, ref_norm, ref_norm),
             ).fetchall()
             linked_issues = [dict(r) for r in issue_rows]
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("document_console: linked_issues query failed for %s: %s", ref_norm, exc)
 
         actor_roles: list[dict] = []
         try:
@@ -3953,8 +3942,8 @@ class MatterModel:
                 (self.matter_id, ref_norm, ref_norm),
             ).fetchall()
             actor_roles = [dict(r) for r in role_rows]
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("document_console: actor_roles query failed for %s: %s", ref_norm, exc)
 
         return {
             "document_ref": document_ref,
