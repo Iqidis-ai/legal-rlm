@@ -9996,3 +9996,88 @@ def test_llm_usage_formatter_all_domains():
         html = _fmt_llm_usage(data, domain=domain)
         assert "viz-shell" in html
         assert "$0.0010" in html
+
+
+# ── Domain label lookup tests ────────────────────────────────────────
+
+
+def test_domain_source_label_all_domains():
+    """_domain_source_label resolves source roles across all 5 domains."""
+    from irys.ui.app import _domain_source_label
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        label = _domain_source_label("operative", domain)
+        assert label and isinstance(label, str)
+        assert label != "operative"
+
+
+def test_domain_source_label_unknown_falls_back():
+    """_domain_source_label falls back to title-cased role for unknown roles."""
+    from irys.ui.app import _domain_source_label
+    assert _domain_source_label("made_up_role", "legal") == "Made Up Role"
+
+
+def test_domain_speech_act_label_all_domains():
+    """_domain_speech_act_label resolves speech acts across all 5 domains."""
+    from irys.ui.app import _domain_speech_act_label
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        label = _domain_speech_act_label("alleged", domain)
+        assert label and isinstance(label, str)
+
+
+def test_domain_speech_act_label_unknown_falls_back():
+    """_domain_speech_act_label falls back for unknown acts."""
+    from irys.ui.app import _domain_speech_act_label
+    assert _domain_speech_act_label("unrecognized_act", "finance") == "Unrecognized Act"
+
+
+def test_domain_belief_label_all_domains():
+    """_domain_belief_label resolves belief states across all 5 domains."""
+    from irys.ui.app import _domain_belief_label
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        label = _domain_belief_label("disputed", domain)
+        assert label and isinstance(label, str)
+
+
+def test_domain_belief_label_unknown_falls_back():
+    """_domain_belief_label falls back for unknown states."""
+    from irys.ui.app import _domain_belief_label
+    assert _domain_belief_label("phantom_state", "coding") == "Phantom State"
+
+
+def test_document_console_formatter_all_domains():
+    """_fmt_document_console renders across all 5 domains."""
+    from irys.ui.app import _fmt_document_console
+    data = {
+        "document_ref": "doc-001",
+        "card": {
+            "document_kind": "contract",
+            "page_count": 12,
+            "extracted_date": "2025-01-15",
+        },
+        "candidates": [
+            {"proposition_text": "Amount is $5000", "belief_state": "alleged"},
+        ],
+    }
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        html = _fmt_document_console(data, domain=domain)
+        assert "doc-001" in html
+
+
+def test_document_console_formatter_error_dict():
+    """_fmt_document_console surfaces error dicts."""
+    from irys.ui.app import _fmt_document_console
+    html = _fmt_document_console({"error": "doc not found"}, domain="legal")
+    assert "Backend error" in html
+    assert "doc not found" in html
+
+
+def test_document_console_formatter_xss():
+    """_fmt_document_console escapes untrusted document refs."""
+    from irys.ui.app import _fmt_document_console
+    data = {
+        "document_ref": "<script>alert(1)</script>",
+        "card": {},
+        "candidates": [],
+    }
+    html = _fmt_document_console(data, domain="legal")
+    assert "<script>" not in html
