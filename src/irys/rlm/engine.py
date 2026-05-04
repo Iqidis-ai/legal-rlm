@@ -1249,6 +1249,16 @@ _DOMAIN_TRUST_HIERARCHY: dict[str, str] = {
     ),
 }
 
+@dataclass(frozen=True)
+class ContextPacketBuild:
+    """Result of _assemble_context_packet with dependency tracking (SO-1, SO-5)."""
+    text: str
+    dependency_manifest_hash: Optional[str] = None
+    consumed_object_refs: tuple = ()
+    selected_sections: tuple = ()
+    omitted_sections: tuple = ()
+
+
 _DOMAIN_RELIANCE_POLICY: dict[str, dict[str, Any]] = {
     "legal": {
         "source_label": "advocacy",
@@ -2289,6 +2299,7 @@ class RLMEngine:
         output_text: str,
         *,
         emitter: str,
+        dependency_manifest_hash: Optional[str] = None,
     ) -> OutputEnvelope:
         """Central output wrapper for workflow-aware user-facing text.
 
@@ -2321,7 +2332,8 @@ class RLMEngine:
             emitter=emitter,
             objective_id=objective.id if objective else None,
             dependency_manifest_hash=(
-                working_set.dependency_manifest_hash if working_set else None
+                dependency_manifest_hash
+                or (working_set.dependency_manifest_hash if working_set else None)
             ),
             validation_results=validation_results,
             review_required=any(
@@ -6200,7 +6212,8 @@ Return:
 
         # Dynamically assemble the context packet — only include sections that
         # have real content. PRO gets exactly what's useful, nothing empty.
-        context_packet = await self._assemble_context_packet(state, findings_text)
+        context_build = await self._assemble_context_packet(state, findings_text)
+        context_packet = context_build.text
 
         _synth_domain = self._resolve_active_domain(state)
         _synth_template = _compose_synthesis_prompt(_synth_domain)
@@ -6235,7 +6248,7 @@ Return:
             )
             if self._matter_model is not None:
                 try:
-                    _mh = state.cache_manifest_hash
+                    _mh = context_build.dependency_manifest_hash or state.cache_manifest_hash
                     if _mh:
                         self._matter_model.cache.put_brokered(
                             "synthesis", _syn_key, response,
@@ -6281,7 +6294,10 @@ Return:
             response,
             emitter="synthesis",
         )
-        self._emit_output(state, response, emitter="synthesis")
+        self._emit_output(
+            state, response, emitter="synthesis",
+            dependency_manifest_hash=context_build.dependency_manifest_hash,
+        )
 
         if self._matter_model is not None and _synth_domain == "legal":
             try:
@@ -7343,7 +7359,7 @@ Return:
     async def _assemble_context_packet(
         self, state: InvestigationState, findings_text: str,
         policy_audience: str = "clean",
-    ) -> str:
+    ) -> ContextPacketBuild:
         """Dynamically build the context packet for synthesis.
 
         Uses a LITE call to decide which OPTIONAL sections are relevant to
@@ -7524,7 +7540,45 @@ Return:
         # strings built from state.*.
         if policy_audience == "clean" and self._matter_model is not None:
             packet = self._scrub_privileged_references(packet)
-        return packet
+
+        # Build per-output dependency manifest (SO-1, SO-5).
+        selected_keys_set = tuple(
+            k for k, _, mandatory in ordered if not mandatory or k in ("issue_coverage", "advocacy_gate")
+        )
+        manifest_hash: Optional[str] = None
+        consumed_refs: list[tuple[str, str]] = []
+        if self._matter_model is not None:
+            try:
+                if coverage_rows:
+                    for row in coverage_rows:
+                        rid = row.get("id")
+                        if rid:
+                            consumed_refs.append(("issue", str(rid)))
+                assertion_ids = getattr(state, "_consumed_assertion_ids", None)
+                if assertion_ids:
+                    for aid in assertion_ids:
+                        consumed_refs.append(("assertion", str(aid)))
+                ns_keys = ["assertions", "issues", "evidence_edges"]
+                if "source_calibration" in selected_keys:
+                    ns_keys.append("proof_state")
+                if "quantitative" in selected_keys:
+                    ns_keys.append("quant_facts")
+                manifest_hash = self._matter_model.build_output_dependency_manifest(
+                    purpose="synthesis",
+                    policy_audience=policy_audience,
+                    object_refs=consumed_refs,
+                    namespace_keys=ns_keys,
+                )
+            except Exception as exc:
+                logger.warning("build_output_dependency_manifest failed: %s", exc)
+
+        return ContextPacketBuild(
+            text=packet,
+            dependency_manifest_hash=manifest_hash,
+            consumed_object_refs=tuple(consumed_refs),
+            selected_sections=selected_keys_set,
+            omitted_sections=tuple(omitted),
+        )
 
     def _scrub_privileged_references(self, text: str) -> str:
         """Remove lines that mention a privileged document's relative path

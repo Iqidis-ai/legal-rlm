@@ -6707,6 +6707,81 @@ class MatterModel:
         broker.record_dependency_manifest(manifest)
         return manifest.manifest_hash()
 
+    def build_output_dependency_manifest(
+        self,
+        *,
+        purpose: str,
+        policy_audience: str = "clean",
+        taint_class: str = "public_clean",
+        object_refs: "Iterable[tuple[str, str]]" = (),
+        negative_dependencies: "Iterable" = (),
+        namespace_keys: "Iterable[str]" = (),
+    ) -> str:
+        """Build and record a per-output DependencyManifest (SO-1, SO-5).
+
+        Unlike build_semantic_cache_manifest() which captures broad namespace
+        revisions, this records the specific objects an output consumed so
+        invalidation is precise: a changed assertion only invalidates outputs
+        that consumed it.
+
+        Returns the manifest hash.
+        """
+        from .memory_contracts import DependencyManifest, ObjectDependency, NamespaceDependency
+
+        broker = self.memory_broker
+        _, _, primary_profile = self._read_matter_domain_composition()
+        dpid = primary_profile or "legal"
+
+        obj_deps = []
+        for kind, obj_id in object_refs:
+            dep = ObjectDependency(target_kind=kind, target_id=obj_id)
+            if kind in ("assertion", "assertions", "claim"):
+                try:
+                    row = self.db.execute(
+                        "SELECT belief_state, verification_state FROM assertion "
+                        "WHERE id=? AND matter_id=?",
+                        (obj_id, self.matter_id),
+                    ).fetchone()
+                    if row:
+                        dep = ObjectDependency(
+                            target_kind=kind,
+                            target_id=obj_id,
+                            belief_state=row["belief_state"],
+                            verification_state=row["verification_state"],
+                        )
+                except Exception:
+                    pass
+            obj_deps.append(dep)
+
+        ns_deps = []
+        ns_keys = set(namespace_keys) if namespace_keys else set()
+        if ns_keys:
+            ns_deps = list(broker.namespace_dependencies_for_keys(tuple(ns_keys)))
+
+        mapping_hash = broker.current_profile_mapping_hash(
+            domain_profile_id=dpid,
+            domain_profile_version=1,
+            target_kind="clarification",
+            target_namespace="clarifications",
+        )
+
+        neg_deps = tuple(negative_dependencies) if negative_dependencies else ()
+
+        manifest = DependencyManifest(
+            matter_id=self.matter_id,
+            namespace_dependencies=tuple(ns_deps),
+            object_dependencies=tuple(obj_deps),
+            negative_dependencies=neg_deps,
+            domain_profile_id=dpid,
+            domain_profile_version=1,
+            profile_mapping_hash=mapping_hash,
+            purpose=purpose,
+            policy_audience=policy_audience,
+            taint_class=taint_class,
+        )
+        broker.record_dependency_manifest(manifest)
+        return manifest.manifest_hash()
+
     _TRUST_DISAGREEMENT_THRESHOLD = 0.25
 
     def _read_matter_domain_composition(

@@ -4605,7 +4605,8 @@ def _pr3_packet(engine, query="analyze the record"):
     async def _no_selector(_query, _candidates):
         return []
     engine._select_relevant_sections = _no_selector
-    return asyncio.run(engine._assemble_context_packet(state, findings_text=""))
+    result = asyncio.run(engine._assemble_context_packet(state, findings_text=""))
+    return result.text if hasattr(result, "text") else result
 
 
 def test_pr3_context_packet_includes_coverage_and_gap_sections():
@@ -4807,7 +4808,8 @@ def test_mvp6_opt_in_registry_blocks_unregistered_sections():
     engine._select_relevant_sections = _permissive_selector
 
     state = InvestigationState.create("analyze", "/repo")
-    packet = asyncio.run(engine._assemble_context_packet(state, findings_text=""))
+    build = asyncio.run(engine._assemble_context_packet(state, findings_text=""))
+    packet = build.text if hasattr(build, "text") else build
 
     forbidden_headings = [
         "Source Calibration", "Key Entities Identified",
@@ -4855,7 +4857,8 @@ def test_mvp6_oversized_citations_are_capped():
         )
         for i in range(30)
     ]
-    packet = asyncio.run(engine._assemble_context_packet(state, findings_text=""))
+    build = asyncio.run(engine._assemble_context_packet(state, findings_text=""))
+    packet = build.text if hasattr(build, "text") else build
     # If citations block appears at all, it must be truncated.
     if "Documentary Citations" in packet:
         assert "omitted under" in packet, (
@@ -4878,3 +4881,109 @@ def test_mvp6_packet_is_byte_identical_across_repeated_calls():
     p1 = _pr3_packet(engine, query="determinism check")
     p2 = _pr3_packet(engine, query="determinism check")
     assert p1 == p2
+
+
+# ---------------------------------------------------------------------------
+# SO-1, SO-5: Per-output dependency manifests
+# ---------------------------------------------------------------------------
+
+def _pr3_packet_build(engine, query="analyze the record"):
+    """Like _pr3_packet but returns the full ContextPacketBuild."""
+    import asyncio
+    from irys.rlm.state import InvestigationState
+    state = InvestigationState.create(query, "/repo")
+
+    async def _no_selector(_query, _candidates):
+        return []
+    engine._select_relevant_sections = _no_selector
+    return asyncio.run(engine._assemble_context_packet(state, findings_text=""))
+
+
+def test_context_packet_build_returns_structured_object():
+    """_assemble_context_packet must return ContextPacketBuild, not str."""
+    from irys.rlm.engine import ContextPacketBuild
+    model = MatterModel.open_in_memory()
+    _pr3_seed_supported_issue(model)
+    engine = _pr3_make_engine(model)
+    engine._detect_proof_gaps()
+
+    build = _pr3_packet_build(engine)
+    assert isinstance(build, ContextPacketBuild)
+    assert isinstance(build.text, str)
+    assert len(build.text) > 0
+
+
+def test_context_packet_build_records_manifest_hash():
+    """ContextPacketBuild must have a non-None dependency_manifest_hash when model is present."""
+    model = MatterModel.open_in_memory()
+    _pr3_seed_supported_issue(model)
+    engine = _pr3_make_engine(model)
+    engine._detect_proof_gaps()
+
+    build = _pr3_packet_build(engine)
+    assert build.dependency_manifest_hash is not None
+    assert build.dependency_manifest_hash.startswith("sha256:")
+
+
+def test_context_packet_build_consumed_refs_include_issues():
+    """consumed_object_refs must include issue IDs from coverage report."""
+    model = MatterModel.open_in_memory()
+    issue_id = _pr3_seed_supported_issue(model, title="Verified claim")
+    engine = _pr3_make_engine(model)
+    engine._detect_proof_gaps()
+
+    build = _pr3_packet_build(engine)
+    ref_ids = [ref[1] for ref in build.consumed_object_refs if ref[0] == "issue"]
+    assert issue_id in ref_ids, "Issue from coverage report must appear in consumed refs"
+
+
+def test_context_packet_manifest_validates_when_fresh():
+    """A fresh manifest must pass validation against the current matter state."""
+    model = MatterModel.open_in_memory()
+    _pr3_seed_supported_issue(model)
+    engine = _pr3_make_engine(model)
+    engine._detect_proof_gaps()
+
+    build = _pr3_packet_build(engine)
+    mh = build.dependency_manifest_hash
+    assert mh is not None
+
+    validation = model.memory_broker.validate_dependency_manifest(mh)
+    assert validation is not None
+    assert validation.status in ("valid", "unknown")
+
+
+def test_emit_output_uses_per_output_manifest():
+    """_emit_output must prefer explicit manifest hash over working_set default."""
+    from irys.rlm.engine import RLMEngine
+    from irys.rlm.state import InvestigationState
+
+    model = MatterModel.open_in_memory()
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    state = InvestigationState.create("test query", "/repo")
+    engine._initialize_workflow_state(state)
+
+    envelope = engine._emit_output(
+        state, "Test output", emitter="test",
+        dependency_manifest_hash="abcd1234" * 8,
+    )
+    assert envelope.dependency_manifest_hash == "abcd1234" * 8
+
+
+def test_build_output_dependency_manifest_records_and_returns_hash():
+    """MatterModel.build_output_dependency_manifest must record manifest and return hash."""
+    model = MatterModel.open_in_memory()
+    _pr3_seed_supported_issue(model)
+
+    mh = model.build_output_dependency_manifest(
+        purpose="test_synthesis",
+        object_refs=[("issue", "test-issue-1")],
+    )
+    assert isinstance(mh, str)
+    assert mh.startswith("sha256:")
+
+    full = model.memory_broker.get_dependency_manifest(mh)
+    assert full is not None
+    assert full.purpose == "test_synthesis"
