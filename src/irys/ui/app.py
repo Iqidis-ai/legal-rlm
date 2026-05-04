@@ -2608,11 +2608,21 @@ def _fmt_quant_thresholds_panel(violations: list[dict], domain: str = "legal") -
         level = str(v.get("level") or "LOW")
         pill_class = _SEVERITY_PILLS.get(level, "pill-neutral")
         desc = _escape(str(v.get("description") or "—")[:200])
+        raw_amt = v.get("amount")
+        amt_cell = ""
+        if raw_amt is not None:
+            try:
+                amt_cell = f"<td style='text-align:right;font-family:monospace;font-size:12px;'>{float(raw_amt):,.2f}</td>"
+            except (ValueError, TypeError):
+                amt_cell = "<td>—</td>"
+        else:
+            amt_cell = "<td>—</td>"
         rows_html += (
             f"<tr>"
             f"<td>{threshold}</td>"
             f"<td><span class='pill {pill_class}'>{_escape(level)}</span></td>"
             f"<td>{desc}</td>"
+            f"{amt_cell}"
             f"</tr>"
         )
 
@@ -2629,7 +2639,7 @@ def _fmt_quant_thresholds_panel(violations: list[dict], domain: str = "legal") -
     table = (
         "<div class='table-wrap'><table class='viz-table'>"
         f"<thead><tr><th>{labels['threshold_col']}</th><th>{labels['level_col']}</th>"
-        f"<th>{labels['desc_col']}</th></tr></thead>"
+        f"<th>{labels['desc_col']}</th><th style='text-align:right;'>Amount</th></tr></thead>"
         "<tbody>" + rows_html + "</tbody></table></div>"
     )
     return f"<div class='viz-shell'>{header}{table}</div>"

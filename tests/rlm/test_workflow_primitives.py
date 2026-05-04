@@ -482,6 +482,9 @@ def test_fmt_quant_thresholds_panel_with_data():
     assert "Disputed Fraction" in result
     assert "pill-red" in result
     assert "pill-orange" in result
+    assert "50,000.00" in result
+    assert "7,500.00" in result
+    assert "Amount" in result
 
 
 def test_fmt_quant_thresholds_panel_skips_non_dict():
