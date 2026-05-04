@@ -14,6 +14,7 @@ Architecture: in-process for local dev (InProcessBackend), HTTP for deployed ser
 import asyncio
 import concurrent.futures
 import html
+import json
 import logging
 import os
 import pathlib
@@ -136,13 +137,39 @@ def _s3_matter_doc_count(matter_name: str) -> str:
         return "? documents"
 
 
-def _upload_files_to_s3_matter(uploaded_files: list, name: str) -> tuple[str, str]:
+def _sanitize_s3_relpath(relpath: str) -> str:
+    """Sanitize a browser-supplied relative path for use as an S3 key suffix.
+
+    Splits on / (and \\), drops empty / `.` / `..` segments to block traversal,
+    strips whitespace per segment. Returns "" when nothing usable remains.
+    """
+    parts: list[str] = []
+    for raw in relpath.replace("\\", "/").split("/"):
+        part = raw.strip()
+        if not part or part in (".", ".."):
+            continue
+        parts.append(part)
+    return "/".join(parts)
+
+
+def _upload_files_to_s3_matter(
+    uploaded_files: list,
+    name: str,
+    relpath_json: Optional[str] = None,
+) -> tuple[str, str]:
     """Upload Gradio files to S3 under matters/<name>/.
 
     Appends to existing matter if the name already exists. Per-file failures
     are isolated (do not abort the batch), retried with exponential backoff,
     and reported in the status string. Filename collisions get a numeric
     suffix instead of silently overwriting.
+
+    When `relpath_json` is provided (a JSON object of `{leaf_name: [relpath,
+    ...]}` produced client-side from `webkitRelativePath`), folder structure
+    is preserved by using the relpath as the S3 key suffix. Multiple files
+    sharing a leaf name in different subfolders are matched in upload order
+    by popping the head of each leaf's relpath list.
+
     Returns (display_name, status_message).
     """
     bucket = _s3_bucket()
@@ -151,6 +178,20 @@ def _upload_files_to_s3_matter(uploaded_files: list, name: str) -> tuple[str, st
     safe = _sanitize_matter_name(name)
     prefix = f"{_s3_matters_base_prefix()}/{safe}"
     s3 = _get_s3_client()
+
+    # Parse relpath map from JS (best-effort; falls back to flat upload).
+    relpath_map: dict[str, list[str]] = {}
+    if relpath_json:
+        try:
+            raw = json.loads(relpath_json)
+            if isinstance(raw, dict):
+                for leaf, paths in raw.items():
+                    if isinstance(paths, list):
+                        relpath_map[leaf] = [str(p) for p in paths]
+                    elif isinstance(paths, str):
+                        relpath_map[leaf] = [paths]
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            logging.warning("Could not parse folder relpath JSON: %s", exc)
 
     # Pre-load existing keys so we can avoid silent overwrite on collision.
     used_keys: set[str] = set()
@@ -179,16 +220,30 @@ def _upload_files_to_s3_matter(uploaded_files: list, name: str) -> tuple[str, st
             failed.append((str(f)[:80], f"resolve path: {exc}"))
             continue
 
-        key = f"{prefix}/{display_name}"
+        # If JS supplied a relpath for this leaf name, use it as the key suffix
+        # so subdirectory structure survives the round-trip through S3.
+        key_suffix = display_name
+        bucket_paths = relpath_map.get(display_name)
+        if bucket_paths:
+            cleaned = _sanitize_s3_relpath(bucket_paths.pop(0))
+            if cleaned:
+                key_suffix = cleaned
+
+        key = f"{prefix}/{key_suffix}"
         if key in used_keys:
-            stem = pathlib.Path(display_name).stem
-            ext = pathlib.Path(display_name).suffix
+            stem = pathlib.Path(key_suffix).stem
+            ext = pathlib.Path(key_suffix).suffix
+            parent = pathlib.Path(key_suffix).parent
             n = 2
             while True:
-                cand_name = f"{stem} ({n}){ext}"
-                cand_key = f"{prefix}/{cand_name}"
+                cand_leaf = f"{stem} ({n}){ext}"
+                cand_suffix = (
+                    str(parent / cand_leaf) if str(parent) not in (".", "") else cand_leaf
+                )
+                cand_key = f"{prefix}/{cand_suffix}"
                 if cand_key not in used_keys:
-                    display_name = cand_name
+                    display_name = cand_leaf
+                    key_suffix = cand_suffix
                     key = cand_key
                     break
                 n += 1
@@ -4428,6 +4483,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         elem_id="folder-upload",
                     )
                     add_folder_btn = gr.Button("Upload Folder", variant="primary", scale=1, min_width=120)
+                folder_upload_relpaths = gr.Textbox(
+                    visible=False,
+                    elem_id="folder-upload-relpaths",
+                    value="",
+                )
                 with gr.Accordion("Danger zone", open=False):
                     delete_matter_btn = gr.Button("Delete entire matter", variant="stop")
                 file_manage_status = gr.HTML()
@@ -4446,6 +4506,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     label="Initial folder (optional)",
                     file_count="multiple",
                     elem_id="folder-upload-new",
+                )
+                folder_upload_new_relpaths = gr.Textbox(
+                    visible=False,
+                    elem_id="folder-upload-new-relpaths",
+                    value="",
                 )
                 save_matter_btn = gr.Button("Create matter", variant="primary")
                 upload_status = gr.HTML()
@@ -4940,13 +5005,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 outputs=[matter_files_dropdown, file_manage_status, file_upload, matter_card_html],
             )
 
-            def _on_add_folder(files, matter_name):
+            def _on_add_folder(files, relpaths_json, matter_name):
                 if not matter_name:
-                    return gr.update(), _fmt_ws_status("Select a matter first", "err"), gr.update(), gr.update()
+                    return gr.update(), _fmt_ws_status("Select a matter first", "err"), gr.update(), gr.update(), ""
                 if not files:
-                    return gr.update(), _fmt_ws_status("No folder selected", "info"), gr.update(), gr.update()
+                    return gr.update(), _fmt_ws_status("No folder selected", "info"), gr.update(), gr.update(), ""
                 try:
-                    _, status_msg = _upload_files_to_s3_matter(files, matter_name.strip())
+                    _, status_msg = _upload_files_to_s3_matter(
+                        files, matter_name.strip(), relpath_json=relpaths_json
+                    )
                     updated = _list_s3_matter_files(matter_name.strip())
                     tone = "warn" if "failed" in status_msg.lower() else "ok"
                     return (
@@ -4954,25 +5021,28 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         _fmt_ws_status(status_msg, tone),
                         None,
                         _fmt_matter_card(matter_name, updated),
+                        "",
                     )
                 except Exception as e:
-                    return gr.update(), _fmt_ws_status(f"Upload failed: {e}", "err"), gr.update(), gr.update()
+                    return gr.update(), _fmt_ws_status(f"Upload failed: {e}", "err"), gr.update(), gr.update(), ""
 
             add_folder_btn.click(
                 fn=_on_add_folder,
-                inputs=[folder_upload, repo_path],
-                outputs=[matter_files_dropdown, file_manage_status, folder_upload, matter_card_html],
+                inputs=[folder_upload, folder_upload_relpaths, repo_path],
+                outputs=[matter_files_dropdown, file_manage_status, folder_upload, matter_card_html, folder_upload_relpaths],
             )
 
             # Create a new matter (with optional initial files/folder), then select it
-            def _on_save_matter(files, folder_files, name):
+            def _on_save_matter(files, folder_files, folder_relpaths_json, name):
                 if not name or not name.strip():
-                    return gr.update(), "", _fmt_ws_status("Enter a matter name first", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update()
+                    return gr.update(), "", _fmt_ws_status("Enter a matter name first", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update(), ""
                 try:
                     all_files = (files or []) + (folder_files or [])
                     status_msg = ""
                     if all_files:
-                        display_name, status_msg = _upload_files_to_s3_matter(all_files, name.strip())
+                        display_name, status_msg = _upload_files_to_s3_matter(
+                            all_files, name.strip(), relpath_json=folder_relpaths_json
+                        )
                     else:
                         display_name = _sanitize_matter_name(name.strip()).replace("_", " ")
                     names = _list_s3_matter_names()
@@ -4988,14 +5058,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         gr.update(visible=True),
                         gr.update(choices=new_files, value=None),
                         _fmt_matter_card(display_name, new_files),
+                        "",
                     )
                 except Exception as e:
-                    return gr.update(), "", _fmt_ws_status(f"Create failed: {e}", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update()
+                    return gr.update(), "", _fmt_ws_status(f"Create failed: {e}", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update(), ""
 
             save_matter_btn.click(
                 fn=_on_save_matter,
-                inputs=[file_upload_new, folder_upload_new, matter_name_input],
-                outputs=[matter_dropdown, repo_path, upload_status, matter_workspace, matter_files_dropdown, matter_card_html],
+                inputs=[file_upload_new, folder_upload_new, folder_upload_new_relpaths, matter_name_input],
+                outputs=[matter_dropdown, repo_path, upload_status, matter_workspace, matter_files_dropdown, matter_card_html, folder_upload_new_relpaths],
             )
         else:
             browse_btn.click(
@@ -5450,23 +5521,53 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 """
         demo.load(fn=None, js=_fact_select_js)
 
-        # Inject JS to enable folder selection on the folder-upload inputs
+        # Inject JS to enable folder selection on the folder-upload inputs and
+        # to capture each file's webkitRelativePath into a hidden Textbox so the
+        # server can preserve subdirectory structure on S3 upload. We post a
+        # JSON map of {leafFilename: [relpath, ...]} keyed by leaf name to
+        # disambiguate duplicate filenames living in different subfolders.
         if _s3_mode:
             _folder_upload_js = """
 () => {
-    const applyFolderAttr = () => {
-        ['folder-upload', 'folder-upload-new'].forEach(id => {
-            const el = document.getElementById(id);
-            if (!el) return;
-            el.querySelectorAll('input[type=file]').forEach(inp => {
-                inp.setAttribute('webkitdirectory', '');
-                inp.setAttribute('directory', '');
-                inp.setAttribute('multiple', '');
+    const widgets = ['folder-upload', 'folder-upload-new'];
+
+    const writeRelpathMap = (widgetId, fileList) => {
+        const map = {};
+        Array.from(fileList || []).forEach(f => {
+            const rp = f.webkitRelativePath || f.name;
+            const leaf = f.name;
+            if (!map[leaf]) map[leaf] = [];
+            map[leaf].push(rp);
+        });
+        const target = document.getElementById(widgetId + '-relpaths');
+        if (!target) return;
+        const box = target.querySelector('textarea, input[type=text]');
+        if (!box) return;
+        const desc = Object.getOwnPropertyDescriptor(box.constructor.prototype, 'value');
+        if (!desc || !desc.set) return;
+        desc.set.call(box, JSON.stringify(map));
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    const setupWidget = (widgetId) => {
+        const wrapper = document.getElementById(widgetId);
+        if (!wrapper) return;
+        wrapper.querySelectorAll('input[type=file]').forEach(inp => {
+            inp.setAttribute('webkitdirectory', '');
+            inp.setAttribute('directory', '');
+            inp.setAttribute('multiple', '');
+            if (inp.dataset.relpathBound === '1') return;
+            inp.dataset.relpathBound = '1';
+            inp.addEventListener('change', () => {
+                writeRelpathMap(widgetId, inp.files);
             });
         });
     };
-    applyFolderAttr();
-    new MutationObserver(applyFolderAttr).observe(document.body, {childList: true, subtree: true});
+
+    const apply = () => widgets.forEach(setupWidget);
+    apply();
+    new MutationObserver(apply).observe(document.body, { childList: true, subtree: true });
 }
 """
             demo.load(fn=None, js=_folder_upload_js)
