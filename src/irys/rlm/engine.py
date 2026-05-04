@@ -1249,6 +1249,82 @@ _DOMAIN_TRUST_HIERARCHY: dict[str, str] = {
     ),
 }
 
+_DOMAIN_RELIANCE_POLICY: dict[str, dict[str, Any]] = {
+    "legal": {
+        "source_label": "advocacy",
+        "source_description": "advocacy-authored material (pleadings, briefs, demand letters)",
+        "advisory_name": "Source Calibration Advisory",
+        "section_label": "Unsubstantiated Claims",
+        "hedge_markers": (
+            "alleges", "alleged", "alleged that", "is alleged",
+            "contends", "contended", "claims", "claimed",
+            "asserts", "asserted", "according to",
+            "plaintiff's", "defendant's", "per complaint", "per motion",
+            "argued", "argued that", "per defense", "per plaintiff",
+            "purportedly", "supposedly", "reportedly",
+        ),
+        "violation_note": "advocacy-only claims found without hedging. These are allegations only.",
+        "corroboration_label": "operative or authoritative",
+    },
+    "finance": {
+        "source_label": "management-only",
+        "source_description": "management commentary, investor presentations, or sell-side research",
+        "advisory_name": "Source Calibration Advisory",
+        "section_label": "Unverified Claims",
+        "hedge_markers": (
+            "management states", "management guidance", "per management",
+            "unaudited", "preliminary", "projected", "estimated",
+            "forecast", "guidance suggests", "analyst estimate",
+            "according to management", "per investor presentation",
+            "reportedly", "purportedly", "company claims",
+        ),
+        "violation_note": "management-only claims found without hedging. These lack audit verification.",
+        "corroboration_label": "audited or regulatory",
+    },
+    "coding": {
+        "source_label": "author-asserted",
+        "source_description": "author assertions, commit messages, or unverified design docs",
+        "advisory_name": "Source Calibration Advisory",
+        "section_label": "Unverified Claims",
+        "hedge_markers": (
+            "reportedly", "per commit message", "per PR description",
+            "according to author", "design doc states", "proposal suggests",
+            "claimed to fix", "claimed to resolve", "purportedly",
+            "according to comments", "per documentation",
+        ),
+        "violation_note": "author-asserted-only claims found without hedging. These lack test/spec verification.",
+        "corroboration_label": "test-verified or spec-confirmed",
+    },
+    "academic_research": {
+        "source_label": "preprint-only",
+        "source_description": "preprints, conference abstracts, or unreplicated single-study findings",
+        "advisory_name": "Source Calibration Advisory",
+        "section_label": "Unreplicated Claims",
+        "hedge_markers": (
+            "preprint", "not peer-reviewed", "preliminary finding",
+            "single study", "unreplicated", "pilot study",
+            "according to authors", "self-reported", "conference abstract",
+            "reportedly", "purportedly", "tentatively",
+        ),
+        "violation_note": "preprint-only claims found without hedging. These lack peer review or replication.",
+        "corroboration_label": "peer-reviewed or replicated",
+    },
+    "biomedical": {
+        "source_label": "sponsor-only",
+        "source_description": "sponsor communications, marketing materials, or single-arm pilot data",
+        "advisory_name": "Source Calibration Advisory",
+        "section_label": "Unconfirmed Claims",
+        "hedge_markers": (
+            "sponsor states", "per sponsor", "marketing material",
+            "preliminary", "pilot data", "preclinical",
+            "according to sponsor", "case report", "anecdotal",
+            "reportedly", "purportedly", "unconfirmed",
+        ),
+        "violation_note": "sponsor-only claims found without hedging. These lack regulatory or guideline confirmation.",
+        "corroboration_label": "guideline-confirmed or trial-verified",
+    },
+}
+
 _LEGAL_SYNTHESIS_PROMPT = """Role & Standard
 
 You are Irys Core, an elite legal work-product engine operating at the level of a named partner in a top global law firm.
@@ -6163,7 +6239,7 @@ Return:
         # is advisory; this is a hard output mutation that cannot be LLM-bypassed.
         if self._matter_model is not None:
             try:
-                _adv_enforced = self._enforce_advocacy_gate(response)
+                _adv_enforced = self._enforce_advocacy_gate(response, state)
                 if _adv_enforced is not None:
                     response = _adv_enforced
             except Exception as exc:
@@ -6213,17 +6289,17 @@ Return:
 
         self._emit_step(state, StepType.SYNTHESIS, "Analysis complete")
 
-    def _enforce_advocacy_gate(self, synthesis_output: str) -> Optional[str]:
-        """Behavioral gate: ensure advocacy-only issues are explicitly flagged (SO-5).
+    def _enforce_advocacy_gate(self, synthesis_output: str, state: "Optional[InvestigationState]" = None) -> Optional[str]:
+        """Domain-calibrated reliance gate (SO-5).
 
-        Called after LLM synthesis. If any open issues have advocacy_only=True proof
-        state AND the output doesn't already contain the Source Calibration Advisory
-        marker, appends a structured block naming those issues and flagging them as
-        unsupported by operative/authoritative sources.
-
-        Returns augmented output, or None if no action needed.
-        This is a hard behavioral output change, not just a prompt instruction.
+        Post-synthesis hard gate that appends a Source Calibration Advisory when
+        open issues rely exclusively on low-trust sources.  Domain-specific policy
+        from _DOMAIN_RELIANCE_POLICY controls hedge markers, labels, and
+        violation notes — legal uses advocacy markers, finance uses management-only
+        markers, biomedical uses sponsor-only markers, etc.
         """
+        domain = self._resolve_active_domain(state)
+        policy = _DOMAIN_RELIANCE_POLICY.get(domain, _DOMAIN_RELIANCE_POLICY["legal"])
         if self._matter_model is None:
             return None
         try:
@@ -6277,21 +6353,7 @@ Return:
             for ps in active_advocacy
         ]
 
-        # Structural violation check: detect advocacy-only issue content appearing in
-        # ## Key Findings or ## Factual Background without hedging markers.
-        # This is the hard gate: even if the advisory marker is already present, a
-        # structural violation forces re-injection of the advisory block.
-        #
-        # Hedge check is PER-LINE: each Markdown bullet is checked independently so a
-        # hedge phrase in an adjacent bullet cannot suppress a real violation on this line.
-        _HEDGE_MARKERS = (
-            "alleges", "alleged", "alleged that", "is alleged",
-            "contends", "contended", "claims", "claimed",
-            "asserts", "asserted", "according to",
-            "plaintiff's", "defendant's", "per complaint", "per motion",
-            "argued", "argued that", "per defense", "per plaintiff",
-            "purportedly", "supposedly", "reportedly",
-        )
+        _HEDGE_MARKERS = policy["hedge_markers"]
         _STRUCTURAL_VIOLATION = False
 
         # Normalize line endings: CRLF → LF so regex patterns that anchor on
@@ -6375,20 +6437,19 @@ Return:
         violation_note = ""
         if _STRUCTURAL_VIOLATION:
             violation_note = (
-                "\n⚠ STRUCTURAL VIOLATION DETECTED: advocacy-only claims found in "
-                "## Key Findings or ## Factual Background without hedging. "
-                "These are allegations only.\n"
+                f"\n⚠ STRUCTURAL VIOLATION DETECTED: {policy['violation_note']}\n"
             )
 
+        advisory_name = policy["advisory_name"]
         lines = [
             "",
-            f"## {_ADVOCACY_MARKER_NAME}",
-            "*(Auto-generated by SO-5 advocacy gate — the following issues lack operative "
-            "or authoritative corroboration.)*",
+            f"## {advisory_name}",
+            f"*(Auto-generated by SO-5 reliance gate — the following issues lack "
+            f"{policy['corroboration_label']} corroboration.)*",
             violation_note,
-            "The following issues are supported ONLY by advocacy-authored material "
-            "(pleadings, briefs, demand letters). They must appear in "
-            "## Unsubstantiated Claims, NOT in ## Key Findings as established facts:",
+            f"The following issues are supported ONLY by {policy['source_description']}. "
+            f"They must appear in ## {policy['section_label']}, NOT in "
+            f"## Key Findings as established facts:",
             "",
         ]
         for ps in active_advocacy:
@@ -6396,7 +6457,7 @@ Return:
             title = issue_index.get(issue_id, str(issue_id or "?")[:24])
             tw = ps.get("trust_weighted_support", 0.0)
             lines.append(
-                f"- **{title}** — advocacy-only "
+                f"- **{title}** — {policy['source_label']}-only "
                 f"(trust-weighted support: {tw:.2f})"
             )
         lines.append("")

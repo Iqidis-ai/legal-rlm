@@ -4385,6 +4385,163 @@ def test_advocacy_gate_no_false_positive_when_hedge_on_preceding_line():
 
 
 # ---------------------------------------------------------------------------
+# SO-5: domain-calibrated reliance gate (_enforce_advocacy_gate with domain policy)
+# ---------------------------------------------------------------------------
+
+def _make_domain_state(domain: str):
+    """Create a minimal object with _cached_domain for gate tests."""
+    class _FakeState:
+        pass
+    s = _FakeState()
+    s._cached_domain = domain
+    return s
+
+
+def test_reliance_gate_finance_uses_management_only_label():
+    """Finance domain gate must use 'management-only' labels, not advocacy."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    state = _make_domain_state("finance")
+    output = "## Executive Summary\nRevenue forecast looks strong."
+    result = engine._enforce_advocacy_gate(output, state)
+
+    assert result is not None
+    assert "management-only" in result.lower()
+    assert "management commentary" in result.lower()
+    assert "advocacy" not in result.lower().replace("source calibration advisory", "")
+
+
+def test_reliance_gate_biomedical_uses_sponsor_only_label():
+    """Biomedical domain gate must use 'sponsor-only' labels."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    state = _make_domain_state("biomedical")
+    output = "## Executive Summary\nDrug shows promising results."
+    result = engine._enforce_advocacy_gate(output, state)
+
+    assert result is not None
+    assert "sponsor-only" in result.lower()
+    assert "guideline-confirmed or trial-verified" in result.lower()
+
+
+def test_reliance_gate_academic_uses_preprint_only_label():
+    """Academic research domain must use 'preprint-only' labels."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    state = _make_domain_state("academic_research")
+    output = "## Executive Summary\nStudy confirms hypothesis."
+    result = engine._enforce_advocacy_gate(output, state)
+
+    assert result is not None
+    assert "preprint-only" in result.lower()
+    assert "Unreplicated Claims" in result
+
+
+def test_reliance_gate_coding_uses_author_asserted_label():
+    """Coding domain must use 'author-asserted' labels."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    state = _make_domain_state("coding")
+    output = "## Executive Summary\nModule handles edge cases correctly."
+    result = engine._enforce_advocacy_gate(output, state)
+
+    assert result is not None
+    assert "author-asserted-only" in result.lower()
+    assert "test-verified or spec-confirmed" in result.lower()
+
+
+def test_reliance_gate_legal_unchanged_with_state():
+    """Legal domain behavior must match original gate output."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    state = _make_domain_state("legal")
+    output = "## Executive Summary\nPlaintiff claims breach of contract."
+    result = engine._enforce_advocacy_gate(output, state)
+
+    assert result is not None
+    assert "advocacy-only" in result.lower()
+    assert "operative or authoritative" in result.lower()
+
+
+def test_reliance_gate_unknown_domain_falls_back_to_legal():
+    """Unknown domain must fall back to legal policy."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    state = _make_domain_state("unknown_domain")
+    output = "## Executive Summary\nSummary text."
+    result = engine._enforce_advocacy_gate(output, state)
+
+    assert result is not None
+    assert "advocacy-only" in result.lower()
+
+
+def test_reliance_gate_finance_structural_violation_uses_domain_note():
+    """Finance structural violation must use domain-specific violation note."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    issue_id = _seed_advocacy_issue(model)
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    state = _make_domain_state("finance")
+    output = (
+        "## Key Findings\n"
+        "- Breach of contract was established as fact.\n"
+        "## Source Calibration Advisory\nAlready flagged.\n"
+    )
+    result = engine._enforce_advocacy_gate(output, state)
+    assert result is not None
+    assert "STRUCTURAL VIOLATION" in result
+    assert "management-only" in result.lower()
+    assert "audit verification" in result.lower()
+
+
+def test_reliance_gate_all_domains_have_policy():
+    """Every supported domain must have a reliance policy entry."""
+    from irys.rlm.engine import _DOMAIN_RELIANCE_POLICY
+    from irys.rlm.governance import _SUPPORTED_DOMAINS
+    for domain in _SUPPORTED_DOMAINS:
+        assert domain in _DOMAIN_RELIANCE_POLICY, f"Missing policy for {domain}"
+        policy = _DOMAIN_RELIANCE_POLICY[domain]
+        for key in ("source_label", "source_description", "advisory_name",
+                     "section_label", "hedge_markers", "violation_note",
+                     "corroboration_label"):
+            assert key in policy, f"Missing {key} in {domain} policy"
+        assert len(policy["hedge_markers"]) >= 5, f"{domain} needs ≥5 hedge markers"
+
+
+# ---------------------------------------------------------------------------
 # PR.3: mandatory coverage + missingness in _assemble_context_packet (SO-4, SO-7)
 # ---------------------------------------------------------------------------
 

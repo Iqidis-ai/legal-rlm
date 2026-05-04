@@ -10725,3 +10725,55 @@ def test_resolve_matter_domain_validates_supported_set():
     from irys.rlm.governance import _SUPPORTED_DOMAINS
     for domain in _ALL_DOMAINS:
         assert domain in _SUPPORTED_DOMAINS
+
+
+# ---------------------------------------------------------------------------
+# _DOMAIN_RELIANCE_POLICY — domain-calibrated reliance gate data (SO-5)
+# ---------------------------------------------------------------------------
+
+def test_domain_reliance_policy_covers_all_domains():
+    """Every supported domain must have a reliance policy entry."""
+    from irys.rlm.engine import _DOMAIN_RELIANCE_POLICY
+    for domain in _ALL_DOMAINS:
+        assert domain in _DOMAIN_RELIANCE_POLICY, f"Missing policy for {domain}"
+
+
+def test_domain_reliance_policy_required_keys():
+    """Each policy must contain all required keys with correct types."""
+    from irys.rlm.engine import _DOMAIN_RELIANCE_POLICY
+    required = ("source_label", "source_description", "advisory_name",
+                "section_label", "hedge_markers", "violation_note",
+                "corroboration_label")
+    for domain, policy in _DOMAIN_RELIANCE_POLICY.items():
+        for key in required:
+            assert key in policy, f"{domain} missing {key}"
+        assert isinstance(policy["hedge_markers"], tuple), f"{domain} hedge_markers must be tuple"
+        assert len(policy["hedge_markers"]) >= 5, f"{domain} needs ≥5 hedge markers"
+        for val in ("source_label", "source_description", "advisory_name",
+                     "section_label", "violation_note", "corroboration_label"):
+            assert isinstance(policy[val], str) and policy[val], f"{domain}.{val} must be non-empty str"
+
+
+def test_domain_reliance_policy_no_cross_contamination():
+    """Each domain's hedge markers should contain at least one domain-unique term."""
+    from irys.rlm.engine import _DOMAIN_RELIANCE_POLICY
+    all_markers = {}
+    for domain, policy in _DOMAIN_RELIANCE_POLICY.items():
+        all_markers[domain] = set(policy["hedge_markers"])
+    for domain, markers in all_markers.items():
+        others = set()
+        for other_domain, other_markers in all_markers.items():
+            if other_domain != domain:
+                others |= other_markers
+        unique = markers - others
+        assert unique, f"{domain} has no unique hedge markers — risk of cross-contamination"
+
+
+def test_domain_reliance_policy_legal_backward_compat():
+    """Legal policy must contain the original hedge markers."""
+    from irys.rlm.engine import _DOMAIN_RELIANCE_POLICY
+    legal = _DOMAIN_RELIANCE_POLICY["legal"]
+    assert "alleges" in legal["hedge_markers"]
+    assert "plaintiff's" in legal["hedge_markers"]
+    assert legal["source_label"] == "advocacy"
+    assert legal["corroboration_label"] == "operative or authoritative"
