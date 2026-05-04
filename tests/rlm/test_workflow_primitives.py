@@ -8995,3 +8995,153 @@ def test_domain_composition_panel_xss():
     assert "<script>" not in html
     assert "<img onerror" not in html
     assert "<b>evil</b>" not in html
+
+
+# ---------------------------------------------------------------------------
+# Source Calibration Inspector (SO-4, SO-5, SO-7)
+# ---------------------------------------------------------------------------
+
+
+def test_source_calibration_labels_all_five_domains():
+    from irys.ui.app import _SOURCE_CALIBRATION_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _SOURCE_CALIBRATION_LABELS[domain]
+        assert "title" in labels
+        assert "subtitle" in labels
+        assert "issue_col" in labels
+        assert "gap_col" in labels
+        assert "empty" in labels
+
+
+def test_source_calibration_formatter_empty():
+    from irys.ui.app import _fmt_source_calibration
+    html = _fmt_source_calibration({})
+    assert "viz-empty" in html
+
+
+def test_source_calibration_formatter_error():
+    from irys.ui.app import _fmt_source_calibration
+    html = _fmt_source_calibration({"error": "service down"})
+    assert "service down" in html
+    assert "viz-empty" in html
+
+
+def test_source_calibration_formatter_non_dict():
+    from irys.ui.app import _fmt_source_calibration
+    html = _fmt_source_calibration("bad")
+    assert "viz-empty" in html
+
+
+def test_source_calibration_formatter_renders():
+    from irys.ui.app import _fmt_source_calibration
+    data = {
+        "evidence_matrix": {
+            "issues": [{"id": "i1", "title": "Breach of Contract"}],
+            "sources": ["doc_a.pdf", "doc_b.pdf"],
+            "cells": {"i1": {"doc_a.pdf": {"supporting": 3, "attacking": 0, "total": 3}}},
+            "issue_totals": {"i1": {"supporting": 3, "attacking": 0}},
+            "source_totals": {"doc_a.pdf": {"supporting": 3, "attacking": 0}},
+        },
+        "coverage_report": [{"id": "i1", "title": "Breach", "coverage_fraction": 0.6}],
+        "domain_profile": {
+            "profile_id": "legal",
+            "source_roles": ["advocacy", "operative", "authority"],
+            "composed_trust_weights": {"official_record": 0.95, "advocacy": 0.6},
+        },
+        "gap_workbench": {
+            "gaps": [{"gap_type": "MISSING_AUTHORITY", "description": "Need court filing", "materiality_score": 0.8, "issue_title": "Breach"}]
+        },
+        "reviewable_documents": [],
+    }
+    html = _fmt_source_calibration(data)
+    assert "Calibration Summary" in html
+    assert "Issue Source Mix" in html
+    assert "Breach of Contract" in html
+    assert "single-source" in html
+    assert "no attack tested" in html
+    assert "Missing Source Obligations" in html
+    assert "Authority" in html
+    assert "0.80" in html
+
+
+def test_source_calibration_formatter_xss():
+    from irys.ui.app import _fmt_source_calibration
+    data = {
+        "evidence_matrix": {
+            "issues": [{"id": "i1", "title": "<script>alert(1)</script>"}],
+            "sources": ["<img onerror=alert(2)>"],
+            "cells": {"i1": {"<img>": {"supporting": 1, "attacking": 0, "total": 1}}},
+            "issue_totals": {"i1": {"supporting": 1, "attacking": 0}},
+            "source_totals": {},
+        },
+        "coverage_report": [],
+        "domain_profile": {
+            "profile_id": "<script>x</script>",
+            "source_roles": [],
+            "composed_trust_weights": {"<b>evil</b>": 0.5},
+        },
+        "gap_workbench": {
+            "gaps": [{"gap_type": "MISSING_DOC", "description": "<script>xss</script>", "materiality_score": 0.5, "issue_title": "<b>bad</b>"}]
+        },
+        "reviewable_documents": [],
+    }
+    html = _fmt_source_calibration(data)
+    assert "<script>" not in html
+    assert "<img onerror" not in html
+    assert "<b>evil</b>" not in html
+    assert "<b>bad</b>" not in html
+
+
+def test_source_calibration_formatter_domain_labels():
+    from irys.ui.app import _fmt_source_calibration
+    data = {
+        "evidence_matrix": {"issues": [], "sources": [], "cells": {}, "issue_totals": {}, "source_totals": {}},
+        "coverage_report": [],
+        "domain_profile": {"profile_id": "test", "source_roles": [], "composed_trust_weights": {}},
+        "gap_workbench": {"gaps": []},
+        "reviewable_documents": [],
+    }
+    legal_html = _fmt_source_calibration(data, domain="legal")
+    assert "Source Calibration Inspector" in legal_html
+    finance_html = _fmt_source_calibration(data, domain="finance")
+    assert "Source Type Assessment" in finance_html
+    coding_html = _fmt_source_calibration(data, domain="coding")
+    assert "Evidence Source Assessment" in coding_html
+    research_html = _fmt_source_calibration(data, domain="academic_research")
+    assert "Citation Source Assessment" in research_html
+    bio_html = _fmt_source_calibration(data, domain="biomedical")
+    assert "Clinical Evidence Assessment" in bio_html
+
+
+def test_source_calibration_formatter_non_dict_guards():
+    from irys.ui.app import _fmt_source_calibration
+    data = {
+        "evidence_matrix": "not_a_dict",
+        "coverage_report": "not_a_list",
+        "domain_profile": 42,
+        "gap_workbench": None,
+        "reviewable_documents": None,
+    }
+    html = _fmt_source_calibration(data)
+    assert "Calibration Summary" in html
+
+
+def test_source_calibration_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("get_source_calibration",):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+def test_source_calibration_appstate_method_exists():
+    from irys.ui.app import AppState
+    assert hasattr(AppState, "load_source_calibration")
+
+
+def test_source_calibration_api_endpoint_exists():
+    from irys.service.api import app as fastapi_app
+    routes = [r.path for r in fastapi_app.routes]
+    assert "/matter/{matter_id}/source-calibration" in routes

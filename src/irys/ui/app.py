@@ -1758,6 +1758,254 @@ def _fmt_evidence_matrix_panel(matrix: dict, domain: str = "legal") -> str:
     )
 
 
+# Source Calibration Inspector (SO-4, SO-5, SO-7)
+
+_SOURCE_CALIBRATION_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Source Calibration Inspector",
+        "subtitle": "are conclusions grounded in the right source types?",
+        "issue_col": "Issue",
+        "support_col": "Support",
+        "attack_col": "Attack",
+        "diversity_col": "Source Diversity",
+        "warnings_col": "Warnings",
+        "doc_col": "Document",
+        "role_col": "Source Role",
+        "gap_col": "Missing Source Type",
+        "materiality_col": "Materiality",
+        "empty": "No source calibration data — run an investigation first.",
+        "single_source": "single-source",
+        "advocacy_only": "advocacy-only",
+        "no_attack_tested": "no attack tested",
+        "unknown_role": "unknown source role",
+    },
+    "finance": {
+        "title": "Source Type Assessment",
+        "subtitle": "are conclusions grounded in the right data sources?",
+        "issue_col": "Position",
+        "support_col": "Support",
+        "attack_col": "Challenge",
+        "diversity_col": "Data Diversity",
+        "warnings_col": "Warnings",
+        "doc_col": "Filing",
+        "role_col": "Source Type",
+        "gap_col": "Missing Data Type",
+        "materiality_col": "Materiality",
+        "empty": "No source assessment data — run an analysis first.",
+        "single_source": "single-source",
+        "advocacy_only": "management-only",
+        "no_attack_tested": "no independent review",
+        "unknown_role": "unknown source type",
+    },
+    "coding": {
+        "title": "Evidence Source Assessment",
+        "subtitle": "are conclusions grounded in the right artifact types?",
+        "issue_col": "Objective",
+        "support_col": "Support",
+        "attack_col": "Challenge",
+        "diversity_col": "Artifact Diversity",
+        "warnings_col": "Warnings",
+        "doc_col": "Artifact",
+        "role_col": "Artifact Role",
+        "gap_col": "Missing Artifact Type",
+        "materiality_col": "Materiality",
+        "empty": "No source assessment data — run an analysis first.",
+        "single_source": "single-source",
+        "advocacy_only": "author-only",
+        "no_attack_tested": "no test evidence",
+        "unknown_role": "unknown artifact role",
+    },
+    "academic_research": {
+        "title": "Citation Source Assessment",
+        "subtitle": "are conclusions grounded in the right source classes?",
+        "issue_col": "Research Question",
+        "support_col": "Support",
+        "attack_col": "Challenge",
+        "diversity_col": "Citation Diversity",
+        "warnings_col": "Warnings",
+        "doc_col": "Publication",
+        "role_col": "Source Class",
+        "gap_col": "Missing Source Class",
+        "materiality_col": "Materiality",
+        "empty": "No citation assessment data — run an analysis first.",
+        "single_source": "single-source",
+        "advocacy_only": "preprint-only",
+        "no_attack_tested": "no replication",
+        "unknown_role": "unknown source class",
+    },
+    "biomedical": {
+        "title": "Clinical Evidence Assessment",
+        "subtitle": "are conclusions grounded in the right evidence classes?",
+        "issue_col": "Clinical Question",
+        "support_col": "Support",
+        "attack_col": "Challenge",
+        "diversity_col": "Evidence Diversity",
+        "warnings_col": "Warnings",
+        "doc_col": "Record",
+        "role_col": "Evidence Class",
+        "gap_col": "Missing Evidence Class",
+        "materiality_col": "Materiality",
+        "empty": "No evidence assessment data — run an analysis first.",
+        "single_source": "single-source",
+        "advocacy_only": "sponsor-only",
+        "no_attack_tested": "no independent trial",
+        "unknown_role": "unknown evidence class",
+    },
+}
+
+
+def _fmt_source_calibration(data: dict, domain: str = "legal") -> str:
+    L = _SOURCE_CALIBRATION_LABELS.get(domain, _SOURCE_CALIBRATION_LABELS["legal"])
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    if "error" in data:
+        return f"<div class='viz-empty'>Error: {_escape(str(data['error']))}</div>"
+
+    matrix = data.get("evidence_matrix", {})
+    if not isinstance(matrix, dict):
+        matrix = {}
+    coverage = _safe_list(data.get("coverage_report"))
+    profile = data.get("domain_profile", {})
+    if not isinstance(profile, dict):
+        profile = {}
+    gap_wb = data.get("gap_workbench", {})
+    if not isinstance(gap_wb, dict):
+        gap_wb = {}
+    docs = _safe_list(data.get("reviewable_documents"))
+
+    source_roles = _safe_list(profile.get("source_roles"))
+    trust_weights = profile.get("composed_trust_weights", {})
+    if not isinstance(trust_weights, dict):
+        trust_weights = {}
+    profile_id = profile.get("profile_id", "unknown")
+
+    issue_totals = matrix.get("issue_totals", {})
+    if not isinstance(issue_totals, dict):
+        issue_totals = {}
+    source_totals = matrix.get("source_totals", {})
+    if not isinstance(source_totals, dict):
+        source_totals = {}
+    cells = matrix.get("cells", {})
+    if not isinstance(cells, dict):
+        cells = {}
+    issues = _safe_list(matrix.get("issues"))
+    sources = _safe_list(matrix.get("sources"))
+
+    parts: list[str] = []
+    parts.append("<div style='margin-bottom:16px;'>")
+    parts.append(
+        f"<h3 style='margin:0 0 4px;'>{_escape(L['title'])}</h3>"
+        f"<div style='font-size:12px;color:#6b7280;margin-bottom:12px;'>{_escape(L['subtitle'])}</div>"
+    )
+
+    # Calibration Summary
+    known_roles = len([r for r in source_roles if not isinstance(r, dict)])
+    total_sources = len(sources)
+    parts.append(
+        "<div style='margin-bottom:12px;padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;'>"
+        "<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>Calibration Summary</div>"
+        f"<div style='font-size:12px;'>Profile: <strong>{_escape(str(profile_id))}</strong> "
+        f"| Known source roles: <strong>{known_roles}</strong> "
+        f"| Source documents: <strong>{total_sources}</strong> "
+        f"| Issues covered: <strong>{len(issues)}</strong></div>"
+    )
+    if trust_weights:
+        parts.append("<div style='font-size:11px;margin-top:4px;color:#6b7280;'>Trust weights: ")
+        tw_parts = []
+        for k, v in list(trust_weights.items())[:6]:
+            val = float(v) if isinstance(v, (int, float)) and math.isfinite(float(v)) else 0.0
+            tw_parts.append(f"{_escape(str(k)[:20])}={val:.2f}")
+        parts.append(", ".join(tw_parts))
+        if len(trust_weights) > 6:
+            parts.append(f" +{len(trust_weights)-6} more")
+        parts.append("</div>")
+    parts.append("</div>")
+
+    # Issue Source Mix table
+    if issues:
+        parts.append(
+            "<div style='margin-bottom:12px;'>"
+            "<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>Issue Source Mix</div>"
+            "<div class='table-wrap'><table class='viz-table'>"
+            f"<thead><tr><th>{_escape(L['issue_col'])}</th>"
+            f"<th>{_escape(L['support_col'])}</th>"
+            f"<th>{_escape(L['attack_col'])}</th>"
+            f"<th>{_escape(L['diversity_col'])}</th>"
+            f"<th>{_escape(L['warnings_col'])}</th></tr></thead><tbody>"
+        )
+        for iss in issues[:30]:
+            if not isinstance(iss, dict):
+                continue
+            iid = iss.get("id", "")
+            title = _escape(str(iss.get("title", iid))[:50])
+            totals = issue_totals.get(iid, {})
+            if not isinstance(totals, dict):
+                totals = {}
+            sup = int(totals.get("supporting", 0)) if isinstance(totals.get("supporting"), (int, float)) else 0
+            atk = int(totals.get("attacking", 0)) if isinstance(totals.get("attacking"), (int, float)) else 0
+
+            issue_cells = cells.get(iid, {})
+            if not isinstance(issue_cells, dict):
+                issue_cells = {}
+            unique_sources = len(issue_cells)
+
+            warnings = []
+            if unique_sources <= 1 and sup > 0:
+                warnings.append(L["single_source"])
+            if atk == 0 and sup > 0:
+                warnings.append(L["no_attack_tested"])
+
+            warn_html = ""
+            if warnings:
+                warn_html = " ".join(
+                    f"<span style='display:inline-block;padding:1px 6px;background:#fef3c7;border:1px solid #fde68a;"
+                    f"border-radius:3px;font-size:10px;color:#92400e;margin:1px;'>{_escape(w)}</span>"
+                    for w in warnings
+                )
+
+            parts.append(
+                f"<tr><td title='{_escape(str(iid)[:40])}'>{title}</td>"
+                f"<td style='text-align:center;'>{sup}</td>"
+                f"<td style='text-align:center;'>{atk}</td>"
+                f"<td style='text-align:center;'>{unique_sources}</td>"
+                f"<td>{warn_html}</td></tr>"
+            )
+        if len(issues) > 30:
+            parts.append(f"<tr><td colspan='5' style='color:#9ca3af;text-align:center;'>+{len(issues)-30} more issues</td></tr>")
+        parts.append("</tbody></table></div></div>")
+
+    # Missing Source Obligations from gap workbench
+    gaps = _safe_list(gap_wb.get("gaps"))
+    source_gaps = [g for g in gaps if isinstance(g, dict) and str(g.get("gap_type", "")).startswith("MISSING_")]
+    if source_gaps:
+        parts.append(
+            "<div style='margin-bottom:12px;'>"
+            "<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>Missing Source Obligations</div>"
+            "<div class='table-wrap'><table class='viz-table'>"
+            f"<thead><tr><th>{_escape(L['gap_col'])}</th>"
+            f"<th>{_escape(L['issue_col'])}</th>"
+            f"<th>{_escape(L['materiality_col'])}</th></tr></thead><tbody>"
+        )
+        for g in source_gaps[:20]:
+            gap_type = _escape(str(g.get("gap_type", ""))[:40].replace("MISSING_", "").replace("_", " ").title())
+            desc = _escape(str(g.get("description", ""))[:60])
+            mat = _safe_float(g.get("materiality_score") or g.get("materiality") or 0)
+            mat_color = "#dc2626" if mat >= 0.7 else "#f59e0b" if mat >= 0.4 else "#6b7280"
+            issue_title = _escape(str(g.get("issue_title", g.get("affected_issue_id", "")))[:40])
+            parts.append(
+                f"<tr><td title='{desc}'>{gap_type}</td>"
+                f"<td>{issue_title}</td>"
+                f"<td style='color:{mat_color};font-weight:600;'>{mat:.2f}</td></tr>"
+            )
+        if len(source_gaps) > 20:
+            parts.append(f"<tr><td colspan='3' style='color:#9ca3af;text-align:center;'>+{len(source_gaps)-20} more</td></tr>")
+        parts.append("</tbody></table></div></div>")
+
+    parts.append("</div>")
+    return "".join(parts)
+
+
 _PROOF_PANEL_LABELS = {
     "legal": {
         "issues_tracked": "Issues Reviewed",
@@ -12420,6 +12668,17 @@ class AppState:
             logger.warning("Query context load failed: %s", exc)
             return f"<div class='viz-empty'>Error loading query context: {_escape(str(exc))}</div>"
 
+    def load_source_calibration(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            domain = self._detect_domain(matter_id)
+            data = _run_async(self.backend().get_source_calibration(matter_id))
+            return _fmt_source_calibration(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Source calibration load failed: %s", exc)
+            return f"<div class='viz-empty'>Error loading source calibration: {_escape(str(exc))}</div>"
+
     def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str) -> tuple[str, str]:
         if not matter_id or matter_id == "—":
             return "Load a matter first.", ""
@@ -15076,6 +15335,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             evidence_matrix_html = gr.HTML("<div class='viz-empty'>Evidence matrix will appear here after an investigation.</div>")
             refresh_evidence_btn = gr.Button("Refresh Evidence Matrix", variant="secondary", size="sm")
 
+        with gr.Accordion("Source Calibration — are conclusions grounded in the right source types?", open=False):
+            gr.Markdown(
+                "Evaluates whether each issue is supported by a diverse, professionally "
+                "appropriate mix of source types. Flags single-source reliance, "
+                "advocacy-only support, and missing source obligations."
+            )
+            source_calibration_html = gr.HTML(
+                "<div class='viz-empty'>Source calibration will appear after investigation.</div>"
+            )
+            refresh_source_calibration_btn = gr.Button(
+                "Refresh Calibration", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Proof State — sufficiency and predicate coverage by issue", open=False):
             gr.Markdown(
                 "Per-issue proof analysis: sufficiency scores, predicate coverage, "
@@ -16156,6 +16428,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 inputs=[matter_id_box],
                 outputs=[query_context_html],
             ).then(
+                fn=lambda mid: state.load_source_calibration(mid),
+                inputs=[matter_id_box],
+                outputs=[source_calibration_html],
+            ).then(
                 fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_profile_html],
@@ -16291,6 +16567,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_query_context(mid),
                 inputs=[matter_id_box],
                 outputs=[query_context_html],
+            ).then(
+                fn=lambda mid: state.load_source_calibration(mid),
+                inputs=[matter_id_box],
+                outputs=[source_calibration_html],
             ).then(
                 fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
@@ -16428,6 +16708,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_query_context(mid),
             inputs=[matter_id_box],
             outputs=[query_context_html],
+        ).then(
+            fn=lambda mid: state.load_source_calibration(mid),
+            inputs=[matter_id_box],
+            outputs=[source_calibration_html],
         ).then(
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -16578,6 +16862,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box],
             outputs=[query_context_html],
         )
+        refresh_source_calibration_btn.click(
+            fn=lambda mid: state.load_source_calibration(mid),
+            inputs=[matter_id_box],
+            outputs=[source_calibration_html],
+        )
         refresh_gap_workbench_btn.click(
             fn=lambda mid: state.load_gap_workbench(mid),
             inputs=[matter_id_box],
@@ -16634,6 +16923,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_query_context(mid),
             inputs=[matter_id_box],
             outputs=[query_context_html],
+        ).then(
+            fn=lambda mid: state.load_source_calibration(mid),
+            inputs=[matter_id_box],
+            outputs=[source_calibration_html],
         ).then(
             fn=lambda mid: state.load_objective_coverage(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -17375,6 +17668,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_query_context(mid),
             inputs=[matter_id_box],
             outputs=[query_context_html],
+        ).then(
+            fn=lambda mid: state.load_source_calibration(mid),
+            inputs=[matter_id_box],
+            outputs=[source_calibration_html],
         ).then(
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],

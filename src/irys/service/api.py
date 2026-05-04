@@ -3673,6 +3673,28 @@ async def get_query_context(matter_id: str):
     return asdict(model.build_query_context())
 
 
+@app.get(
+    "/matter/{matter_id}/source-calibration",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_source_calibration(matter_id: str):
+    """Return source calibration summary: source-role diversity, under-calibrated issues, missing sources (SO-4, SO-5, SO-7)."""
+    model = await _get_matter_model_or_404(matter_id)
+    matrix = model.get_evidence_matrix(policy_audience="clean")
+    coverage = model.get_issue_coverage_report(policy_audience="clean")
+    profile = model.get_domain_profile_summary()
+    gap_wb = model.get_gap_workbench()
+    docs = model.list_reviewable_documents(limit=200)
+    return {
+        "evidence_matrix": matrix,
+        "coverage_report": coverage,
+        "domain_profile": profile,
+        "gap_workbench": gap_wb,
+        "reviewable_documents": docs,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Provenance Trail (SO-5 sourcing transparency)
 # ---------------------------------------------------------------------------

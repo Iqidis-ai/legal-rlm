@@ -1393,3 +1393,13 @@ class InProcessBackend(UIBackend):
         from dataclasses import asdict
         model = self._get_matter_model(matter_id)
         return asdict(model.build_query_context())
+
+    async def get_source_calibration(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return {
+            "evidence_matrix": model.get_evidence_matrix(policy_audience="clean"),
+            "coverage_report": model.get_issue_coverage_report(policy_audience="clean"),
+            "domain_profile": model.get_domain_profile_summary(),
+            "gap_workbench": model.get_gap_workbench(),
+            "reviewable_documents": model.list_reviewable_documents(limit=200),
+        }

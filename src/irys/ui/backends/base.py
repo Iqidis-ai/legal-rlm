@@ -821,3 +821,8 @@ class UIBackend(ABC):
     async def get_query_context(self, matter_id: str) -> dict:
         """Return the engine's query context snapshot (SO-1, SO-3, SO-4, SO-7)."""
         ...
+
+    @abstractmethod
+    async def get_source_calibration(self, matter_id: str) -> dict:
+        """Return source calibration: role diversity, under-calibrated issues, missing sources (SO-4, SO-5, SO-7)."""
+        ...

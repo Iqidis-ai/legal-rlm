@@ -1181,3 +1181,10 @@ class HttpBackend(UIBackend):
             _log.warning("get_query_context: expected dict, got %s", type(result).__name__)
             return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
+
+    async def get_source_calibration(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/source-calibration")
+        if not isinstance(result, dict):
+            _log.warning("get_source_calibration: expected dict, got %s", type(result).__name__)
+            return {"error": f"unexpected response type: {type(result).__name__}"}
+        return result
