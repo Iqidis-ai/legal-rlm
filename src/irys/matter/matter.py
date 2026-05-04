@@ -6800,8 +6800,8 @@ class MatterModel:
                             belief_state=row["belief_state"],
                             verification_state=row["v_status"],
                         )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.debug("dependency manifest assertion enrichment failed for %s: %s", obj_id, exc)
             obj_deps.append(dep)
 
         ns_deps = []

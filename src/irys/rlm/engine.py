@@ -6052,8 +6052,8 @@ Return:
                                 )
                     # If no assertions were recorded, proof state is unchanged — skip update.
                     # Post-synthesis compute_all() at end of run catches any remaining gaps.
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.warning("proof_state compute_and_store failed: %s", exc)
                 if analysis and analysis.get("quotes"):
                     # Extract authorities from the raw document text processed so far.
                     _quote_text = " ".join(
@@ -6313,8 +6313,8 @@ Return:
         if self._matter_model is not None:
             try:
                 self._matter_model.proof_state.compute_all()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("proof_state compute_all failed: %s", exc)
 
         self._emit_step(state, StepType.SYNTHESIS, "Analysis complete")
 
@@ -6336,7 +6336,8 @@ Return:
             return None
         try:
             advocacy_issues = self._matter_model.proof_state.get_advocacy_only()
-        except Exception:
+        except Exception as exc:
+            _log.warning("_enforce_advocacy_gate: get_advocacy_only failed: %s", exc)
             return None
         if not advocacy_issues:
             return None
@@ -6658,8 +6659,8 @@ Return:
                     weight="persuasive",
                     provenance=_auth_prov,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("authority upsert failed for %r: %s", citation, exc)
 
         for m in _STATUTE_PATTERN.finditer(text):
             title = m.group(1).strip()
@@ -6678,8 +6679,8 @@ Return:
                     weight="binding",  # federal statutes and regulations are binding
                     provenance=_auth_prov,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("authority upsert failed for %r: %s", citation, exc)
 
         for m in _STATE_STATUTE_PATTERN.finditer(text):
             code = m.group(1).strip()
@@ -6696,8 +6697,8 @@ Return:
                     weight="persuasive",  # state statutes — jurisdiction-dependent
                     provenance=_auth_prov,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("authority upsert failed for %r: %s", citation, exc)
 
     def _build_issue_focus_block(
         self, focus_issue_id: Optional[str]
@@ -6909,7 +6910,8 @@ Return:
             # Use targeted query — hits ix_proof_state_advocacy(matter_id, advocacy_only)
             # instead of fetching all proof states and filtering in Python.
             ps_rows = self._matter_model.proof_state.get_advocacy_only()
-        except Exception:
+        except Exception as exc:
+            _log.warning("_build_advocacy_gate_block: get_advocacy_only failed: %s", exc)
             return ""
 
         if not ps_rows:

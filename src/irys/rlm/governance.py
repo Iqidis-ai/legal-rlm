@@ -63,8 +63,8 @@ def resolve_matter_domain_strict(
             _, _, primary = matter_model._read_matter_domain_composition()
             if primary and primary in _SUPPORTED_DOMAINS:
                 return primary, True
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("resolve_matter_domain_strict: composition read failed: %s", exc)
     return "legal", False
 
 
