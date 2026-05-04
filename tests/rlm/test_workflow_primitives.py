@@ -2658,7 +2658,7 @@ def test_fmt_document_intelligence_panel_xss():
 # ------------------------------------------------------------------ #
 
 def test_http_backend_compute_proof_state_type_guard():
-    """HttpBackend.compute_proof_state returns {} on non-dict response."""
+    """HttpBackend.compute_proof_state returns error dict on non-dict response."""
     from irys.ui.backends.http import HttpBackend
     backend = HttpBackend.__new__(HttpBackend)
     import asyncio
@@ -2670,11 +2670,11 @@ def test_http_backend_compute_proof_state_type_guard():
     result = asyncio.run(
         backend.compute_proof_state("m1")
     )
-    assert result == {}
+    assert "error" in result
 
 
 def test_http_backend_flush_pending_type_guard():
-    """HttpBackend.flush_pending returns {} on non-dict response."""
+    """HttpBackend.flush_pending returns error dict on non-dict response."""
     from irys.ui.backends.http import HttpBackend
     backend = HttpBackend.__new__(HttpBackend)
     import asyncio
@@ -2686,7 +2686,7 @@ def test_http_backend_flush_pending_type_guard():
     result = asyncio.run(
         backend.flush_pending("m1")
     )
-    assert result == {}
+    assert "error" in result
 
 
 def test_http_backend_compute_proof_state_passthrough():

@@ -81,7 +81,7 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/overview")
         if not isinstance(result, dict):
             _log.warning("get_overview: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     # ------------------------------------------------------------------ #
@@ -292,14 +292,14 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/quant-facts", {"limit": limit})
         if not isinstance(result, dict):
             _log.warning("get_quant_facts: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_decision_leverage(self, matter_id: str, top_n: int = 15) -> dict:
         result = await self._get(f"/matter/{matter_id}/decision-leverage", {"top_n": top_n})
         if not isinstance(result, dict):
             _log.warning("get_decision_leverage: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_output_quality(self, matter_id: str, run_id: str | None = None) -> dict:
@@ -307,35 +307,35 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/output-quality", params)
         if not isinstance(result, dict):
             _log.warning("get_output_quality: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_deliverable_workbench(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/deliverable-workbench")
         if not isinstance(result, dict):
             _log.warning("get_deliverable_workbench: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_scenario_workbench(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/scenario-branches")
         if not isinstance(result, dict):
             _log.warning("get_scenario_workbench: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def create_scenario_branch(self, matter_id: str, payload: dict) -> dict:
         result = await self._post(f"/matter/{matter_id}/scenario-branches", payload)
         if not isinstance(result, dict):
             _log.warning("create_scenario_branch: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def archive_scenario_branch(self, matter_id: str, branch_id: str) -> dict:
         result = await self._post(f"/matter/{matter_id}/scenario-branches/{branch_id}/archive")
         if not isinstance(result, dict):
             _log.warning("archive_scenario_branch: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def apply_scenario_delta(self, matter_id: str, branch_id: str,
@@ -348,7 +348,7 @@ class HttpBackend(UIBackend):
         )
         if not isinstance(result, dict):
             _log.warning("apply_scenario_delta: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def list_scenario_deltas(self, matter_id: str, branch_id: str) -> list[dict]:
@@ -365,14 +365,14 @@ class HttpBackend(UIBackend):
         result = await self._post(f"/matter/{matter_id}/scenario-branches/{branch_id}/snapshot")
         if not isinstance(result, dict):
             _log.warning("compute_scenario_snapshot: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def compare_scenario_to_baseline(self, matter_id: str, branch_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/scenario-branches/{branch_id}/compare")
         if not isinstance(result, dict):
             _log.warning("compare_scenario_to_baseline: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def list_scenario_snapshots(
@@ -392,14 +392,14 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/alternative-theories{params}")
         if not isinstance(result, dict):
             _log.warning("get_alternative_theory_portfolio: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_dependency_manifest_inspector(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/dependency-manifests")
         if not isinstance(result, dict):
             _log.warning("get_dependency_manifest_inspector: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_steering_impact_preview(self, matter_id: str, action_type: str, payload: dict) -> dict:
@@ -409,28 +409,28 @@ class HttpBackend(UIBackend):
         )
         if not isinstance(result, dict):
             _log.warning("get_steering_impact_preview: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_domain_investigation_readiness(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/domain-investigation-readiness")
         if not isinstance(result, dict):
             _log.warning("get_domain_investigation_readiness: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def compile_issue_brief(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/issue-brief")
         if not isinstance(result, dict):
             _log.warning("compile_issue_brief: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_objective_coverage(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/objective-coverage")
         if not isinstance(result, dict):
             _log.warning("get_objective_coverage: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def set_criterion_status(
@@ -443,7 +443,7 @@ class HttpBackend(UIBackend):
         )
         if not isinstance(result, dict):
             _log.warning("set_criterion_status: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def add_criterion(
@@ -456,14 +456,14 @@ class HttpBackend(UIBackend):
         )
         if not isinstance(result, dict):
             _log.warning("add_criterion: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_assumption_review(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/assumption-review")
         if not isinstance(result, dict):
             _log.warning("get_assumption_review: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def review_assumption(
@@ -473,7 +473,7 @@ class HttpBackend(UIBackend):
         result = await self._post(f"/matter/{matter_id}/assumption-review", params=params)
         if not isinstance(result, dict):
             _log.warning("review_assumption: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def set_issue_priority(self, matter_id: str, issue_id: str, priority: str) -> bool:
@@ -496,14 +496,14 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/evidence-matrix", {"policy_audience": policy_audience})
         if not isinstance(result, dict):
             _log.warning("get_evidence_matrix: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_communication_map(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/communication-map")
         if not isinstance(result, dict):
             _log.warning("get_communication_map: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def list_belief_revisions(self, matter_id: str, limit: int = 100) -> list[dict]:
@@ -601,7 +601,7 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/reconciliation", {"currency": currency})
         if not isinstance(result, dict):
             _log.warning("get_reconciliation: unexpected response type %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_invoice_chain(self, matter_id: str, currency: str = "USD") -> list:
@@ -623,7 +623,7 @@ class HttpBackend(UIBackend):
         result = await self._post(f"/matter/{matter_id}/proof-state/compute")
         if not isinstance(result, dict):
             _log.warning("compute_proof_state: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def compute_issue_proof_state(self, matter_id: str, issue_id: str) -> dict:
@@ -634,7 +634,7 @@ class HttpBackend(UIBackend):
         result = await self._post(f"/matter/{matter_id}/flush-pending")
         if not isinstance(result, dict):
             _log.warning("flush_pending: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_so_scorecard(self, matter_id: str) -> dict:
@@ -650,7 +650,7 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/domain-profile", params)
         if not isinstance(result, dict):
             _log.warning("get_domain_profile_summary: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_domain_composition(self, matter_id: str) -> dict:
@@ -793,7 +793,7 @@ class HttpBackend(UIBackend):
         )
         if not isinstance(result, dict):
             _log.warning("merge_actors: unexpected response type %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def resolve_actor(self, matter_id: str, name: str) -> dict:
@@ -871,7 +871,7 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/proof-state")
         if not isinstance(result, dict):
             _log.warning("get_proof_state_summary: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_authority_network(self, matter_id: str) -> dict:
@@ -1126,7 +1126,7 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/knowledge-seeds")
         if not isinstance(result, dict):
             _log.warning("get_knowledge_seeds: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def review_knowledge_seed(
@@ -1137,7 +1137,7 @@ class HttpBackend(UIBackend):
         result = await self._post(f"/matter/{matter_id}/knowledge-seeds/review", params=params)
         if not isinstance(result, dict):
             _log.warning("review_knowledge_seed: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def promote_knowledge_seed(
@@ -1154,7 +1154,7 @@ class HttpBackend(UIBackend):
         result = await self._post(f"/matter/{matter_id}/knowledge-seeds/promote", params=params)
         if not isinstance(result, dict):
             _log.warning("promote_knowledge_seed: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
@@ -1177,7 +1177,7 @@ class HttpBackend(UIBackend):
         )
         if not isinstance(result, dict):
             _log.warning("reclassify_document_sensitivity: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def mark_document_stale(
@@ -1188,7 +1188,7 @@ class HttpBackend(UIBackend):
         )
         if not isinstance(result, dict):
             _log.warning("mark_document_stale: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def mark_span_stale(
@@ -1199,7 +1199,7 @@ class HttpBackend(UIBackend):
         )
         if not isinstance(result, dict):
             _log.warning("mark_span_stale: expected dict, got %s", type(result).__name__)
-            return {}
+            return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
     async def get_verification_events(
