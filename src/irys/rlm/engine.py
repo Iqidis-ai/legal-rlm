@@ -1896,17 +1896,28 @@ class RLMEngine:
     def _resolve_taint_default(self) -> str:
         """Return the taint default for this matter's domain.
 
-        Reads from the domain preset file if available; otherwise public_clean.
-        Per-document taint classification happens during ingestion, not here.
+        Reads from the domain preset file if available; validates against the
+        domain profile's allowed taint classes. Falls back to public_clean.
         """
         if self._matter_model is None:
             return "public_clean"
         try:
             preset = self._matter_model.get_domain_preset()
             if preset and isinstance(preset.get("taint_default"), str):
-                return preset["taint_default"]
+                taint = preset["taint_default"]
+                domain = preset.get("domain")
+                if domain and hasattr(self._matter_model, "memory_broker"):
+                    allowed = self._matter_model.memory_broker.get_profile_taint_classes(domain, 1)
+                    if allowed and taint not in allowed:
+                        logger.warning(
+                            "_resolve_taint_default: %r not in allowed taint classes for %s, falling back",
+                            taint, domain,
+                        )
+                        return "public_clean"
+                return taint
+            logger.info("_resolve_taint_default: no preset or taint_default field, using public_clean")
         except Exception as exc:
-            _log.warning("_resolve_taint_default: preset read failed: %s", exc)
+            logger.warning("_resolve_taint_default: preset read failed: %s", exc)
         return "public_clean"
 
     def _get_semaphore(self) -> asyncio.Semaphore:

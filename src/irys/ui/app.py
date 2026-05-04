@@ -17685,7 +17685,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             def _on_save_matter(files, folder_files, folder_relpaths_json, name, domain_val):
                 if not name or not name.strip():
                     return gr.update(), "", _fmt_ws_status("Enter a matter name first", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update(), ""
-                safe_domain = domain_val if domain_val in _VALID_DOMAINS else "legal"
+                if domain_val not in _VALID_DOMAINS:
+                    return gr.update(), "", _fmt_ws_status(f"Invalid domain: {domain_val!r}. Choose from: {', '.join(sorted(_VALID_DOMAINS))}", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update(), ""
+                safe_domain = domain_val
                 try:
                     all_files = (files or []) + (folder_files or [])
                     status_msg = ""

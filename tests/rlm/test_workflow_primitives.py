@@ -11134,3 +11134,41 @@ def test_resolve_taint_default_legal_domain_no_preset(tmp_path):
     engine = RLMEngine.__new__(RLMEngine)
     engine._matter_model = mm
     assert engine._resolve_taint_default() == "public_clean"
+
+
+def test_resolve_taint_default_rejects_invalid_taint_class(tmp_path):
+    """A taint_default not in the domain profile's allowed classes is rejected."""
+    import json
+    from irys.matter.matter import MatterModel
+    from irys.rlm.engine import RLMEngine
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text(json.dumps({
+        "domain": "finance",
+        "version": 1,
+        "taint_default": "fabricated_taint_class",
+    }), encoding="utf-8")
+
+    mm = MatterModel.open(tmp_path)
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = mm
+    assert engine._resolve_taint_default() == "public_clean"
+
+
+def test_resolve_taint_default_accepts_valid_taint_class(tmp_path):
+    """A taint_default that is in the domain profile's allowed classes is accepted."""
+    import json
+    from irys.matter.matter import MatterModel
+    from irys.rlm.engine import RLMEngine
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text(json.dumps({
+        "domain": "finance",
+        "version": 1,
+        "taint_default": "material_nonpublic",
+    }), encoding="utf-8")
+
+    mm = MatterModel.open(tmp_path)
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = mm
+    assert engine._resolve_taint_default() == "material_nonpublic"
