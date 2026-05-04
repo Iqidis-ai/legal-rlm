@@ -2138,6 +2138,30 @@ def test_fmt_evidence_matrix_panel_xss():
     assert "<img src=x>" not in result
 
 
+def test_fmt_evidence_matrix_panel_domain_labels():
+    """Each domain renders its own terminology."""
+    from irys.ui.app import _fmt_evidence_matrix_panel
+
+    matrix = {
+        "issues": [{"id": "i1", "title": "Issue A"}],
+        "sources": ["src1"],
+        "cells": {"i1": {"src1": {"supporting": 1, "attacking": 0, "total": 1}}},
+        "issue_totals": {"i1": {"supporting": 1, "attacking": 0}},
+        "source_totals": {"src1": {"supporting": 1, "attacking": 0}},
+    }
+    domain_terms = {
+        "legal": ("Support and attack", "Issue"),
+        "finance": ("Corroboration and contradiction", "Thesis"),
+        "coding": ("Confirmation and refutation", "Hypothesis"),
+        "academic_research": ("Support and challenge", "Claim"),
+        "biomedical": ("Support and contradiction", "Finding"),
+    }
+    for domain, (title_frag, issue_label) in domain_terms.items():
+        result = _fmt_evidence_matrix_panel(matrix, domain=domain)
+        assert title_frag in result, f"{domain}: missing title fragment '{title_frag}'"
+        assert issue_label in result, f"{domain}: missing issue label '{issue_label}'"
+
+
 # ------------------------------------------------------------------ #
 # _fmt_authority_panel tests                                           #
 # ------------------------------------------------------------------ #

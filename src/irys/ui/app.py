@@ -1273,9 +1273,94 @@ def _fmt_timeline_panel(events: list[dict]) -> str:
     )
 
 
-def _fmt_evidence_matrix_panel(matrix: dict) -> str:
+_EVIDENCE_MATRIX_LABELS = {
+    "legal": {
+        "title": "Support and attack by issue/source",
+        "legend": "Green = support, red = attack, split cell = both.",
+        "issue": "Issue",
+        "source": "Source",
+        "support": "Support",
+        "attack": "Attack",
+        "total": "Total",
+        "issue_totals": "Issue totals",
+        "source_totals": "Source totals",
+        "detail": "Issue/source detail",
+        "no_issue_totals": "No issue totals available.",
+        "no_source_totals": "No source totals available.",
+        "no_cells": "No linked evidence cells yet.",
+        "empty": "Evidence matrix will populate after issues are linked to sources.",
+    },
+    "finance": {
+        "title": "Corroboration and contradiction by thesis/source",
+        "legend": "Green = corroboration, red = contradiction, split cell = both.",
+        "issue": "Thesis",
+        "source": "Source",
+        "support": "Corroboration",
+        "attack": "Contradiction",
+        "total": "Total",
+        "issue_totals": "Thesis totals",
+        "source_totals": "Source totals",
+        "detail": "Thesis/source detail",
+        "no_issue_totals": "No thesis totals available.",
+        "no_source_totals": "No source totals available.",
+        "no_cells": "No linked evidence cells yet.",
+        "empty": "Evidence matrix will populate after theses are linked to sources.",
+    },
+    "coding": {
+        "title": "Confirmation and refutation by hypothesis/artifact",
+        "legend": "Green = confirmation, red = refutation, split cell = both.",
+        "issue": "Hypothesis",
+        "source": "Artifact",
+        "support": "Confirmation",
+        "attack": "Refutation",
+        "total": "Total",
+        "issue_totals": "Hypothesis totals",
+        "source_totals": "Artifact totals",
+        "detail": "Hypothesis/artifact detail",
+        "no_issue_totals": "No hypothesis totals available.",
+        "no_source_totals": "No artifact totals available.",
+        "no_cells": "No linked evidence cells yet.",
+        "empty": "Evidence matrix will populate after hypotheses are linked to artifacts.",
+    },
+    "academic_research": {
+        "title": "Support and challenge by claim/source",
+        "legend": "Green = support, red = challenge, split cell = both.",
+        "issue": "Claim",
+        "source": "Source",
+        "support": "Support",
+        "attack": "Challenge",
+        "total": "Total",
+        "issue_totals": "Claim totals",
+        "source_totals": "Source totals",
+        "detail": "Claim/source detail",
+        "no_issue_totals": "No claim totals available.",
+        "no_source_totals": "No source totals available.",
+        "no_cells": "No linked evidence cells yet.",
+        "empty": "Evidence matrix will populate after claims are linked to sources.",
+    },
+    "biomedical": {
+        "title": "Support and contradiction by finding/source",
+        "legend": "Green = support, red = contradiction, split cell = both.",
+        "issue": "Finding",
+        "source": "Source",
+        "support": "Support",
+        "attack": "Contradiction",
+        "total": "Total",
+        "issue_totals": "Finding totals",
+        "source_totals": "Source totals",
+        "detail": "Finding/source detail",
+        "no_issue_totals": "No finding totals available.",
+        "no_source_totals": "No source totals available.",
+        "no_cells": "No linked evidence cells yet.",
+        "empty": "Evidence matrix will populate after findings are linked to sources.",
+    },
+}
+
+
+def _fmt_evidence_matrix_panel(matrix: dict, domain: str = "legal") -> str:
+    labels = _EVIDENCE_MATRIX_LABELS.get(domain, _EVIDENCE_MATRIX_LABELS["legal"])
     if not matrix or not matrix.get("issues") or not matrix.get("sources"):
-        return "<div class='viz-empty'>Evidence matrix will populate after issues are linked to sources.</div>"
+        return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
 
     issues = list(matrix.get("issues", []))
     sources = list(matrix.get("sources", []))
@@ -1390,32 +1475,32 @@ def _fmt_evidence_matrix_panel(matrix: dict) -> str:
 
     return (
         "<div class='viz-shell'>"
-        "<div class='viz-panel-title'>Support and attack by issue/source</div>"
-        "<div class='viz-footnote'>Green = support, red = attack, split cell = both.</div>"
-        "<div class='matrix-wrap matrix-wrap-heatmap'><table class='matrix-table evidence-matrix-table'><thead><tr><th>Issue</th>"
+        f"<div class='viz-panel-title'>{_escape(labels['title'])}</div>"
+        f"<div class='viz-footnote'>{_escape(labels['legend'])}</div>"
+        f"<div class='matrix-wrap matrix-wrap-heatmap'><table class='matrix-table evidence-matrix-table'><thead><tr><th>{_escape(labels['issue'])}</th>"
         + header
         + "</tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table></div>"
         + "<div class='viz-two-col'>"
-        + "<div class='viz-panel'><div class='viz-subtitle'>Issue totals</div>"
+        + f"<div class='viz-panel'><div class='viz-subtitle'>{_escape(labels['issue_totals'])}</div>"
         + "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
-        + "<th>Issue</th><th>Support</th><th>Attack</th><th>Total</th>"
+        + f"<th>{_escape(labels['issue'])}</th><th>{_escape(labels['support'])}</th><th>{_escape(labels['attack'])}</th><th>{_escape(labels['total'])}</th>"
         + "</tr></thead><tbody>"
-        + (issue_totals_rows or "<tr><td colspan='4'>No issue totals available.</td></tr>")
+        + (issue_totals_rows or f"<tr><td colspan='4'>{_escape(labels['no_issue_totals'])}</td></tr>")
         + "</tbody></table></div></div>"
-        + "<div class='viz-panel'><div class='viz-subtitle'>Source totals</div>"
+        + f"<div class='viz-panel'><div class='viz-subtitle'>{_escape(labels['source_totals'])}</div>"
         + "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
-        + "<th>Source</th><th>Support</th><th>Attack</th><th>Total</th>"
+        + f"<th>{_escape(labels['source'])}</th><th>{_escape(labels['support'])}</th><th>{_escape(labels['attack'])}</th><th>{_escape(labels['total'])}</th>"
         + "</tr></thead><tbody>"
-        + (source_totals_rows or "<tr><td colspan='4'>No source totals available.</td></tr>")
+        + (source_totals_rows or f"<tr><td colspan='4'>{_escape(labels['no_source_totals'])}</td></tr>")
         + "</tbody></table></div></div>"
         + "</div>"
-        + "<div class='viz-panel'><div class='viz-subtitle'>Issue/source detail</div>"
+        + f"<div class='viz-panel'><div class='viz-subtitle'>{_escape(labels['detail'])}</div>"
         + "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
-        + "<th>Issue</th><th>Source</th><th>Support</th><th>Attack</th><th>Total</th>"
+        + f"<th>{_escape(labels['issue'])}</th><th>{_escape(labels['source'])}</th><th>{_escape(labels['support'])}</th><th>{_escape(labels['attack'])}</th><th>{_escape(labels['total'])}</th>"
         + "</tr></thead><tbody>"
-        + (("".join(detail_rows)) or "<tr><td colspan='5'>No linked evidence cells yet.</td></tr>")
+        + (("".join(detail_rows)) or f"<tr><td colspan='5'>{_escape(labels['no_cells'])}</td></tr>")
         + "</tbody></table></div></div></div>"
     )
 
@@ -6676,14 +6761,14 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading timeline: {_escape(exc)}</div>"
 
-    def load_evidence_matrix(self, matter_id: str) -> str:
+    def load_evidence_matrix(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             matrix = _run_async(self.backend().get_evidence_matrix(
                 matter_id, policy_audience=self.policy_audience,
             ))
-            return _fmt_evidence_matrix_panel(matrix)
+            return _fmt_evidence_matrix_panel(matrix, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading evidence matrix: {_escape(exc)}</div>"
 
@@ -8641,7 +8726,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 f_assertions = pool.submit(state.load_assertions, mid)
                 f_quant = pool.submit(state.load_quant, mid)
                 f_timeline = pool.submit(state.load_timeline, mid)
-                f_evidence = pool.submit(state.load_evidence_matrix, mid)
+                f_evidence = pool.submit(state.load_evidence_matrix, mid, domain=domain)
                 f_communication = pool.submit(state.load_communication_map, mid)
                 f_llm = pool.submit(state.load_llm_analytics, mid)
                 f_proof = pool.submit(state.load_proof_state, mid, domain=domain)
@@ -8993,7 +9078,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[timeline_html],
         )
         refresh_evidence_btn.click(
-            fn=lambda mid: state.load_evidence_matrix(mid),
+            fn=lambda mid: state.load_evidence_matrix(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[evidence_matrix_html],
         )
@@ -9140,7 +9225,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             return (
                 banner,
                 state.load_timeline(mid),
-                state.load_evidence_matrix(mid),
+                state.load_evidence_matrix(mid, domain=state._detect_domain(mid)),
             )
 
         privilege_toggle.change(
