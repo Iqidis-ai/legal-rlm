@@ -9589,3 +9589,55 @@ def test_apply_delta_invalid_operation():
     bid = model.create_scenario_branch(name="test", assumptions=[{"text": "test"}])["branch_id"]
     result = model.apply_scenario_delta(bid, "assertion", "a1", "invalid_op")
     assert "error" in result
+
+
+def test_scenario_delta_formatter_shows_payload():
+    from irys.ui.app import _fmt_scenario_deltas
+    deltas = [
+        {"operation": "override_belief", "target_kind": "assertion",
+         "target_id": "a1", "created_at": "now", "created_by": "user",
+         "payload": {"new_belief": "accepted"}},
+    ]
+    html = _fmt_scenario_deltas(deltas)
+    assert "new_belief" in html
+    assert "accepted" in html
+
+
+def test_scenario_delta_formatter_payload_xss():
+    from irys.ui.app import _fmt_scenario_deltas
+    deltas = [
+        {"operation": "add_gap", "target_kind": "gap",
+         "target_id": "g1", "created_at": "now", "created_by": "user",
+         "payload": {"description": "<script>xss</script>"}},
+    ]
+    html = _fmt_scenario_deltas(deltas)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_promote_knowledge_seed_appstate_exists():
+    from irys.ui.app import AppState
+    assert hasattr(AppState, "promote_knowledge_seed_ui")
+
+
+def test_promote_knowledge_seed_model():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory("test_promote")
+    result = model.promote_knowledge_seed(
+        seed_kind="contradiction_resolution",
+        domain_profile_id="legal:1",
+        payload_json='{"resolved": true}',
+        source_matter_id=model.matter_id,
+    )
+    assert result["success"] is True
+    assert "seed_id" in result
+
+
+def test_promote_knowledge_seed_backend_balance():
+    import inspect
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    assert hasattr(UIBackend, "promote_knowledge_seed")
+    assert hasattr(InProcessBackend, "promote_knowledge_seed")
+    assert hasattr(HttpBackend, "promote_knowledge_seed")

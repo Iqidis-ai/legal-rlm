@@ -7136,9 +7136,12 @@ def _fmt_scenario_deltas(deltas: list, domain: str = "legal") -> str:
         f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['col_op'])}</th>"
         f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['col_kind'])}</th>"
         f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['col_target'])}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>Detail</th>"
         f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['col_time'])}</th>"
         f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['col_by'])}</th></tr>",
     ]
+
+    _PAYLOAD_SUMMARY_KEYS = ("new_belief", "description", "gap_type", "reason", "text")
 
     for d in safe:
         op = _escape(str(d.get("operation", "?")))
@@ -7147,12 +7150,21 @@ def _fmt_scenario_deltas(deltas: list, domain: str = "legal") -> str:
         created = _escape(str(d.get("created_at", "?")))
         by = _escape(str(d.get("created_by", "user")))
         color = _OP_COLORS.get(d.get("operation", ""), "#6b7280")
+        payload = d.get("payload", {})
+        detail_parts = []
+        if isinstance(payload, dict):
+            for pk in _PAYLOAD_SUMMARY_KEYS:
+                pv = payload.get(pk)
+                if pv:
+                    detail_parts.append(f"{_escape(pk)}: {_escape(str(pv)[:40])}")
+        detail = "; ".join(detail_parts) if detail_parts else "—"
         parts.append(
             f"<tr style='border-bottom:1px solid #e2e8f0;'>"
             f"<td style='padding:4px 8px;'>"
             f"<span style='color:{color};font-weight:600;'>{op}</span></td>"
             f"<td style='padding:4px 8px;'>{kind}</td>"
             f"<td style='padding:4px 8px;font-family:monospace;font-size:0.85em;'>{tid}</td>"
+            f"<td style='padding:4px 8px;font-size:0.85em;color:#4b5563;'>{detail}</td>"
             f"<td style='padding:4px 8px;'>{created}</td>"
             f"<td style='padding:4px 8px;'>{by}</td></tr>"
         )
@@ -13311,6 +13323,7 @@ class AppState:
     def apply_scenario_delta_ui(
         self, matter_id: str, branch_id: str,
         target_kind: str, target_id: str, operation: str,
+        payload_json: str = "",
     ) -> tuple[str, str]:
         if not matter_id or matter_id == "—":
             return "No matter loaded.", ""
@@ -13322,9 +13335,17 @@ class AppState:
         op = (operation or "").strip()
         if not tkind or not tid or not op:
             return "All fields (target kind, target ID, operation) are required.", ""
+        payload: dict = {}
+        if payload_json and payload_json.strip():
+            try:
+                payload = json.loads(payload_json.strip())
+                if not isinstance(payload, dict):
+                    return "Payload must be a JSON object.", ""
+            except (json.JSONDecodeError, TypeError):
+                return "Payload must be valid JSON.", ""
         try:
             result = _run_async(
-                self.backend().apply_scenario_delta(matter_id, bid, tkind, tid, op, {})
+                self.backend().apply_scenario_delta(matter_id, bid, tkind, tid, op, payload)
             )
             if not isinstance(result, dict):
                 logger.warning("apply_scenario_delta_ui: expected dict, got %s", type(result).__name__)
@@ -13879,6 +13900,38 @@ class AppState:
             return f"Reviewed: {_escape(result.get('seed_kind', ''))} → {_escape(decision)}", refreshed
         except Exception as exc:
             logger.warning("review_knowledge_seed failed: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
+
+    def promote_knowledge_seed_ui(
+        self, matter_id: str, seed_kind: str,
+        domain_profile_id: str, payload_json: str,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        if not seed_kind:
+            return "Select a seed kind.", ""
+        if not domain_profile_id or not domain_profile_id.strip():
+            return "Enter a domain profile ID.", ""
+        payload_str = (payload_json or "{}").strip()
+        try:
+            json.loads(payload_str)
+        except (json.JSONDecodeError, TypeError):
+            return "Payload must be valid JSON.", ""
+        try:
+            result = _run_async(self.backend().promote_knowledge_seed(
+                matter_id, seed_kind, domain_profile_id.strip(),
+                payload_str, source_matter_id=matter_id,
+            ))
+            if not isinstance(result, dict):
+                logger.warning("promote_knowledge_seed_ui: expected dict, got %s", type(result).__name__)
+                return "Unexpected response.", ""
+            if result.get("error"):
+                return f"Error: {_escape(str(result['error']))}", ""
+            domain = self._detect_domain(matter_id)
+            refreshed = self.load_knowledge_seeds(matter_id, domain=domain)
+            return f"Seed promoted: {_escape(seed_kind)} (ID: {_escape(str(result.get('seed_id', ''))[:12])})", refreshed
+        except Exception as exc:
+            logger.warning("promote_knowledge_seed_ui: %s", exc)
             return f"Error: {_escape(str(exc))}", ""
 
     def load_document_versions(self, matter_id: str, domain: str = "legal") -> str:
@@ -16387,6 +16440,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                                  "resolve_gap", "add_assertion", "assume"],
                         label="Operation", scale=1,
                     )
+                delta_payload = gr.Textbox(
+                    label="Payload (JSON, optional)",
+                    placeholder='e.g. {"new_belief": "accepted"} or {"description": "missing receipts"}',
+                    lines=2,
+                )
                 apply_delta_btn = gr.Button("Apply Delta", variant="primary", size="sm")
                 apply_delta_result = gr.Textbox(label="Result", interactive=False)
             with gr.Accordion("Branch actions — compute snapshot or archive", open=False):
@@ -16499,6 +16557,29 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 seed_review_note_input = gr.Textbox(label="Review note (optional)", placeholder="Why this decision?")
                 seed_review_btn = gr.Button("Submit Review", variant="primary", size="sm")
                 seed_review_status = gr.Textbox(label="Status", interactive=False, visible=True)
+
+            with gr.Accordion("Promote intelligence as a reusable seed", open=False):
+                with gr.Row():
+                    promote_seed_kind = gr.Dropdown(
+                        choices=[
+                            ("Contradiction resolution", "contradiction_resolution"),
+                            ("Metric classification", "metric_classification"),
+                            ("Domain weight", "domain_weight"),
+                            ("Source calibration", "source_calibration"),
+                            ("Custom", "custom"),
+                        ],
+                        label="Seed Kind", scale=2,
+                    )
+                    promote_domain_profile = gr.Textbox(
+                        label="Domain Profile ID", placeholder="e.g. legal:1",
+                        scale=1,
+                    )
+                promote_payload = gr.Textbox(
+                    label="Payload (JSON)", placeholder='{"key": "value"}',
+                    lines=2,
+                )
+                promote_seed_btn = gr.Button("Promote Seed", variant="primary", size="sm")
+                promote_seed_result = gr.Textbox(label="Result", interactive=False)
 
         with gr.Accordion("Domain Profile — how Irys interprets this subject area", open=False):
             gr.Markdown(
@@ -17913,8 +17994,8 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[delta_log_html],
         )
         apply_delta_btn.click(
-            fn=lambda mid, bid, tk, tid, op: state.apply_scenario_delta_ui(mid, bid, tk, tid, op),
-            inputs=[matter_id_box, delta_branch_id, delta_target_kind, delta_target_id, delta_operation],
+            fn=lambda mid, bid, tk, tid, op, pj: state.apply_scenario_delta_ui(mid, bid, tk, tid, op, pj),
+            inputs=[matter_id_box, delta_branch_id, delta_target_kind, delta_target_id, delta_operation, delta_payload],
             outputs=[apply_delta_result, delta_log_html],
         )
         compute_snapshot_btn.click(
@@ -17963,6 +18044,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, sid, dec, note: state.review_knowledge_seed(mid, sid, dec, note),
             inputs=[matter_id_box, seed_id_input, seed_decision_input, seed_review_note_input],
             outputs=[seed_review_status, knowledge_seeds_html],
+        )
+        promote_seed_btn.click(
+            fn=lambda mid, kind, dp, pj: state.promote_knowledge_seed_ui(mid, kind, dp, pj),
+            inputs=[matter_id_box, promote_seed_kind, promote_domain_profile, promote_payload],
+            outputs=[promote_seed_result, knowledge_seeds_html],
         )
         refresh_domain_profile_btn.click(
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
