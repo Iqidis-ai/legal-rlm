@@ -1243,6 +1243,21 @@
       "source": "src/irys/matter/graph.py",
       "writes": [
         "namespace_revision",
+        "object_taint",
+        "policy",
+        "schema_state"
+      ],
+      "broker_status": "broker_substrate",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "none",
+      "taint_behavior": "enforced_by_object_taint_rows",
+      "profile_behavior": "enforced_by_domain_profile_and_profile_mapping_rows",
+      "surface": "MemoryBrokerStore.remove_object_taint_by_class"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "namespace_revision",
         "profile_mappings",
         "schema_state"
       ],
