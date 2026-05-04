@@ -299,8 +299,7 @@ Consider:
 5. What is your preliminary hypothesis based on the query and the document names?
 
 PRIORITIZE:
-- Primary source documents (contracts, pleadings, agreements) over secondary (correspondence)
-- Documents whose filenames suggest they contain key evidence for the query
+{domain_document_priorities}
 - Documents with dates matching key events
 - Files mentioning specific parties or amounts
 - Existing Matter Intelligence about open gaps, missing evidence, and weakly supported issues
@@ -311,7 +310,7 @@ Respond in JSON format:
     "issues": [
         {{
             "title": "issue description",
-            "type": "claim|defense|exposure|interpretation|procedural|evidentiary|condition_precedent|waiver|diligence_red_flag|compliance_failure",
+            "type": "{domain_issue_types}",
             "predicates": ["testable element 1", "testable element 2"]
         }}
     ],
@@ -327,15 +326,10 @@ For target_documents: list the EXACT filenames from the Document Listing above t
 believe are the highest-value retrieval targets. These should be specific files, not types.
 Maximum 10 filenames. These will be used as durable retrieval targets throughout the investigation.
 
-Issue types: claim=a primary assertion or position, defense=a counterargument or defense,
-exposure=a risk, liability, or cost component, interpretation=a disputed interpretation of terms,
-procedural=a procedural barrier or threshold issue, evidentiary=an evidentiary bottleneck,
-condition_precedent=a condition that must be satisfied, waiver=a waiver or estoppel defense,
-diligence_red_flag=a due-diligence risk item, compliance_failure=a regulatory or policy violation.
+{domain_issue_type_descriptions}
 
 For each issue, include 2-4 "predicates": the specific testable elements that must be
-established to prove or defeat that issue (e.g., for breach of contract: ["contract
-existence and terms", "defendant's obligation", "failure to perform", "resulting damages"]).
+established to prove or defeat that issue ({domain_predicate_examples}).
 Predicates drive targeted document search — make them concrete and searchable.
 
 For initial_searches: each entry must include "term" (the search string) and "issue_idx"
@@ -345,7 +339,7 @@ This enables the system to link discovered facts to the correct issue.
 IMPORTANT — search term format:
 Each "term" must be a simple literal phrase or exact filename that grep can match.
 DO NOT use boolean operators (AND, OR, NOT), quotes as search syntax, or wildcards.
-Good: "breach of contract", "Invoice_March.xlsx", "termination clause"
+{domain_search_examples}
 Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 """
 
@@ -353,7 +347,7 @@ Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "8"
+_ORIENTATION_CACHE_VERSION = "9"
 
 
 def _format_matter_context(ctx) -> str:
@@ -459,9 +453,9 @@ Search Results for "{search_term}":
    Format each fact as: {{"fact": "under-100-char text", "source_file": "filename_if_determinable", "subject": "entity", "predicate": "snake_case_verb", "object": "value_or_target"}}
    - source_file: file identifier exactly as it appears in the results (may be "filename.pdf" or "folder/filename.pdf")
    - subject / predicate / object: REQUIRED except for purely procedural facts with no entity relationship (omit all three then)
-   - subject examples: "plaintiff", "defendant", "Acme_Corp"
-   - predicate examples: "agreed_to_pay", "breached_contract", "filed_motion"
-   - object examples: "50000 USD", "March 15 2023", "the services agreement"
+   - subject examples: {domain_subject_examples}
+   - predicate examples: {domain_predicate_examples}
+   - object examples: {domain_object_examples}
    - Include dates, amounts, party names when present
 
 2. MENTIONED_LEADS: referenced documents, named individuals, dates, or cross-references that look worth investigating next. List only what's mentioned; no priority.
@@ -713,6 +707,144 @@ _DOMAIN_DEEP_READ_VOCABULARY = {
         "failed_safety_threshold, exceeded_non_inferiority_margin, achieved_response_rate\n"
         "- Numeric focus: hazard ratios, odds ratios, NNT, p-values, survival rates, dosage, AE frequency"
     ),
+}
+
+_DOMAIN_ORIENTATION_CONTEXT: dict[str, dict[str, str]] = {
+    "legal": {
+        "issue_types": "claim|defense|exposure|interpretation|procedural|evidentiary|condition_precedent|waiver|diligence_red_flag|compliance_failure",
+        "issue_type_descriptions": (
+            "Issue types: claim=a primary assertion or position, defense=a counterargument or defense, "
+            "exposure=a risk, liability, or cost component, interpretation=a disputed interpretation of terms, "
+            "procedural=a procedural barrier or threshold issue, evidentiary=an evidentiary bottleneck, "
+            "condition_precedent=a condition that must be satisfied, waiver=a waiver or estoppel defense, "
+            "diligence_red_flag=a due-diligence risk item, compliance_failure=a regulatory or policy violation."
+        ),
+        "predicate_examples": (
+            'e.g., for breach of contract: ["contract existence and terms", '
+            '"defendant\'s obligation", "failure to perform", "resulting damages"]'
+        ),
+        "document_priorities": (
+            "- Primary source documents (contracts, pleadings, agreements) over secondary (correspondence)\n"
+            "- Documents whose filenames suggest they contain key evidence for the query"
+        ),
+        "search_examples": 'Good: "breach of contract", "Invoice_March.xlsx", "termination clause"',
+    },
+    "finance": {
+        "issue_types": "revenue_recognition|risk_exposure|covenant_compliance|valuation_dispute|disclosure_gap|audit_finding|forecast_deviation|regulatory_violation|related_party_transaction|going_concern",
+        "issue_type_descriptions": (
+            "Issue types: revenue_recognition=recognition timing or method dispute, "
+            "risk_exposure=identified financial risk or liability, covenant_compliance=debt covenant adherence, "
+            "valuation_dispute=disputed asset/liability valuation, disclosure_gap=missing or insufficient disclosure, "
+            "audit_finding=external or internal audit issue, forecast_deviation=material variance from guidance, "
+            "regulatory_violation=SEC/regulatory non-compliance, "
+            "related_party_transaction=transaction requiring related-party scrutiny, "
+            "going_concern=viability or continuity question."
+        ),
+        "predicate_examples": (
+            'e.g., for revenue recognition: ["revenue earned and realized", '
+            '"delivery obligation satisfied", "price determinable", "collectibility reasonably assured"]'
+        ),
+        "document_priorities": (
+            "- Audited financial statements and SEC filings over management commentary\n"
+            "- Loan agreements, indentures, and executed contracts over internal memos"
+        ),
+        "search_examples": 'Good: "revenue recognition", "covenant waiver", "EBITDA adjustment"',
+    },
+    "coding": {
+        "issue_types": "bug|regression|design_flaw|security_vulnerability|performance_bottleneck|dependency_risk|api_breaking_change|test_gap|architecture_debt|compliance_gap",
+        "issue_type_descriptions": (
+            "Issue types: bug=incorrect behavior vs specification, regression=previously working behavior broken, "
+            "design_flaw=structural problem in architecture or API, "
+            "security_vulnerability=exploitable weakness, performance_bottleneck=latency/throughput issue, "
+            "dependency_risk=risky or outdated dependency, api_breaking_change=incompatible interface change, "
+            "test_gap=insufficient test coverage, architecture_debt=accumulated design shortcuts, "
+            "compliance_gap=missing security/accessibility/regulatory requirement."
+        ),
+        "predicate_examples": (
+            'e.g., for a regression: ["test existed and passed before", '
+            '"specific commit or change introduced failure", "expected vs actual behavior", "affected users/systems"]'
+        ),
+        "document_priorities": (
+            "- Source code and test files over documentation\n"
+            "- Design docs, architecture decisions, and specs over informal discussions"
+        ),
+        "search_examples": 'Good: "NullPointerException", "auth middleware", "rate_limit config"',
+    },
+    "academic_research": {
+        "issue_types": "hypothesis|methodology_concern|replication_failure|statistical_issue|confound|generalizability_limit|ethical_concern|novelty_claim|data_integrity|literature_gap",
+        "issue_type_descriptions": (
+            "Issue types: hypothesis=a testable claim or theory, "
+            "methodology_concern=flaw in experimental design or analysis, "
+            "replication_failure=inability to reproduce results, "
+            "statistical_issue=p-hacking, multiple comparisons, underpowered study, "
+            "confound=uncontrolled variable, generalizability_limit=external validity question, "
+            "ethical_concern=IRB, consent, or conduct issue, novelty_claim=disputed originality, "
+            "data_integrity=data quality or fabrication concern, "
+            "literature_gap=missing or incomplete prior work coverage."
+        ),
+        "predicate_examples": (
+            'e.g., for a hypothesis: ["independent variable defined", '
+            '"dependent variable measured", "confounders controlled", "effect size reported"]'
+        ),
+        "document_priorities": (
+            "- Peer-reviewed publications and data sets over commentary\n"
+            "- Systematic reviews and meta-analyses over single studies"
+        ),
+        "search_examples": 'Good: "effect size", "control group", "p < 0.05", "sample selection"',
+    },
+    "biomedical": {
+        "issue_types": "efficacy_claim|safety_signal|endpoint_failure|regulatory_gap|dosing_question|mechanism_uncertainty|trial_design_flaw|biomarker_validity|real_world_evidence|label_compliance",
+        "issue_type_descriptions": (
+            "Issue types: efficacy_claim=claimed therapeutic benefit, "
+            "safety_signal=adverse event pattern or toxicity concern, "
+            "endpoint_failure=primary or secondary endpoint not met, "
+            "regulatory_gap=missing regulatory submission element, "
+            "dosing_question=dose-response or titration issue, "
+            "mechanism_uncertainty=unclear mechanism of action, "
+            "trial_design_flaw=protocol or randomization weakness, "
+            "biomarker_validity=questioned biomarker as surrogate endpoint, "
+            "real_world_evidence=post-market or observational finding, "
+            "label_compliance=indication or contraindication labeling issue."
+        ),
+        "predicate_examples": (
+            'e.g., for an efficacy claim: ["primary endpoint defined", '
+            '"statistical significance achieved", "clinically meaningful difference shown", '
+            '"comparator arm adequate"]'
+        ),
+        "document_priorities": (
+            "- Clinical trial reports and regulatory filings over sponsored materials\n"
+            "- Phase III RCT results and systematic reviews over case reports"
+        ),
+        "search_examples": 'Good: "hazard ratio", "adverse event", "primary endpoint", "FDA approval"',
+    },
+}
+
+_DOMAIN_EXTRACTION_EXAMPLES: dict[str, dict[str, str]] = {
+    "legal": {
+        "subject_examples": '"plaintiff", "defendant", "Acme_Corp"',
+        "predicate_examples": '"agreed_to_pay", "breached_contract", "filed_motion"',
+        "object_examples": '"50000 USD", "March 15 2023", "the services agreement"',
+    },
+    "finance": {
+        "subject_examples": '"Company_X", "auditor", "management"',
+        "predicate_examples": '"reported_revenue", "restated_earnings", "breached_covenant"',
+        "object_examples": '"12.5M USD", "Q3 2024", "the credit facility"',
+    },
+    "coding": {
+        "subject_examples": '"auth_service", "UserController", "CI_pipeline"',
+        "predicate_examples": '"introduced_bug", "deprecated_api", "changed_behavior"',
+        "object_examples": '"v2.3.1", "login endpoint", "rate limit threshold"',
+    },
+    "academic_research": {
+        "subject_examples": '"treatment_group", "Smith_et_al_2023", "variable_X"',
+        "predicate_examples": '"demonstrated_effect", "found_no_significance", "controlled_for"',
+        "object_examples": '"p=0.003", "n=1200", "depression score"',
+    },
+    "biomedical": {
+        "subject_examples": '"Drug_X", "treatment_arm", "FDA"',
+        "predicate_examples": '"demonstrated_efficacy", "showed_adverse_event", "approved_indication"',
+        "object_examples": '"HR=0.72", "Grade 3 AE", "overall survival endpoint"',
+    },
 }
 
 
@@ -1604,6 +1736,20 @@ class RLMEngine:
         # Reset to None at the start of each run() call. Populated lazily on first use
         # inside _deep_read_document() — avoids repeated repo.list_files() walks.
         self._known_filenames: Optional[set] = None
+
+    def _resolve_active_domain(self, state=None) -> str:
+        if state is not None and getattr(state, "_cached_domain", None):
+            return state._cached_domain
+        if self._matter_model is not None:
+            try:
+                _, _, primary = self._matter_model._read_matter_domain_composition()
+                if primary:
+                    if state is not None:
+                        state._cached_domain = primary
+                    return primary
+            except Exception:
+                pass
+        return "legal"
 
     def _get_semaphore(self) -> asyncio.Semaphore:
         """Get or create the operation semaphore.
@@ -2765,6 +2911,10 @@ class RLMEngine:
         _matter_ctx_capped = self._cap_text_by_tokens(
             _matter_ctx_str, _budget.orientation_tokens
         )
+        _orient_domain = self._resolve_active_domain(state)
+        _orient_ctx = _DOMAIN_ORIENTATION_CONTEXT.get(
+            _orient_domain, _DOMAIN_ORIENTATION_CONTEXT["legal"]
+        )
         prompt = ORIENTATION_PROMPT.format(
             structure=structure_str,
             file_listing=file_listing_str,
@@ -2772,6 +2922,11 @@ class RLMEngine:
             query=state.query,
             matter_context=_matter_ctx_capped,
             research_alignment_guidance=RESEARCH_ALIGNMENT_GUIDANCE,
+            domain_issue_types=_orient_ctx["issue_types"],
+            domain_issue_type_descriptions=_orient_ctx["issue_type_descriptions"],
+            domain_predicate_examples=_orient_ctx["predicate_examples"],
+            domain_document_priorities=_orient_ctx["document_priorities"],
+            domain_search_examples=_orient_ctx["search_examples"],
         )
 
         # Orientation cache key: sha256 of normalized query + total file count +
@@ -2812,7 +2967,8 @@ class RLMEngine:
         _history_digest = _conversation_history_digest(state.conversation_history)
         _orient_key = _hashlib.sha256(
             f"{state.query.lower().strip()}\n{stats.total_files}\n{_file_digest}"
-            f"\n{_history_digest}\n{_ctx_fingerprint}\nv{_ORIENTATION_CACHE_VERSION}".encode()
+            f"\n{_history_digest}\n{_ctx_fingerprint}\nv{_ORIENTATION_CACHE_VERSION}"
+            f"\ndomain:{_orient_domain}".encode()
         ).hexdigest()
 
         _plan_defaults = {
@@ -4026,12 +4182,19 @@ class RLMEngine:
                     if _ln.strip().startswith("Element to prove"):
                         _relevance_hint = _ln.strip()
                         break
+            _extract_domain = self._resolve_active_domain(state)
+            _extract_ex = _DOMAIN_EXTRACTION_EXAMPLES.get(
+                _extract_domain, _DOMAIN_EXTRACTION_EXAMPLES["legal"]
+            )
             stage1_prompt = EXTRACT_FINDINGS_PROMPT.format(
                 query=state.query,
                 hypothesis=state.hypothesis or "No hypothesis yet",
                 relevance_hint=_relevance_hint,
                 search_term=results.query,
                 search_results=results_text,
+                domain_subject_examples=_extract_ex["subject_examples"],
+                domain_predicate_examples=_extract_ex["predicate_examples"],
+                domain_object_examples=_extract_ex["object_examples"],
             )
             stage1_response = await self.client.complete(
                 stage1_prompt,
@@ -5316,18 +5479,7 @@ Return:
                 _excerpt_chars = self.config.excerpt_chars
             content = doc.get_excerpt(_excerpt_chars)
 
-            if state._cached_domain is None:
-                _domain = "legal"
-                try:
-                    if self._matter_model is not None:
-                        _, _, _primary = self._matter_model._read_matter_domain_composition()
-                        if _primary:
-                            _domain = _primary
-                            state._cached_domain = _domain
-                except Exception as exc:
-                    _log.warning("Domain detection failed during deep read, using legal fallback: %s", exc)
-            else:
-                _domain = state._cached_domain
+            _domain = self._resolve_active_domain(state)
             _vocab = _DOMAIN_DEEP_READ_VOCABULARY.get(_domain, _DOMAIN_DEEP_READ_VOCABULARY["legal"])
 
             prompt = DEEP_READ_PROMPT.format(
@@ -5756,7 +5908,7 @@ Return:
                         q.get("text", "") for q in analysis["quotes"][:10]
                         if isinstance(q, dict)
                     )
-                    if _quote_text:
+                    if _quote_text and _domain == "legal":
                         try:
                             self._extract_and_store_authorities(
                                 _quote_text,
@@ -5903,14 +6055,7 @@ Return:
         # have real content. PRO gets exactly what's useful, nothing empty.
         context_packet = await self._assemble_context_packet(state, findings_text)
 
-        _synth_domain = "legal"
-        if self._matter_model is not None:
-            try:
-                _, _, _primary = self._matter_model._read_matter_domain_composition()
-                if _primary:
-                    _synth_domain = _primary
-            except Exception as exc:
-                _log.warning("Domain detection failed during synthesis, using legal fallback: %s", exc)
+        _synth_domain = self._resolve_active_domain(state)
         _synth_template = _compose_synthesis_prompt(_synth_domain)
         prompt = _synth_template.format(
             query=state.query,
@@ -5985,8 +6130,7 @@ Return:
         )
         self._emit_output(state, response, emitter="synthesis")
 
-        # Persist legal citations found in synthesis output to authority store (SO-4).
-        if self._matter_model is not None:
+        if self._matter_model is not None and _synth_domain == "legal":
             try:
                 self._extract_and_store_authorities(
                     response,
@@ -5994,7 +6138,7 @@ Return:
                     source_document_ref="synthesis:final",
                 )
             except Exception:
-                pass  # best-effort; never block synthesis output
+                pass
 
         # Refresh proof state for all open issues (SO-4 proof-aware reasoning).
         if self._matter_model is not None:
@@ -7370,19 +7514,7 @@ Return:
         if not rows:
             return "No assertions recorded in matter model yet."
 
-        if state is not None and state._cached_domain is not None:
-            _domain = state._cached_domain
-        else:
-            _domain = "legal"
-            try:
-                _, _, _primary = self._matter_model._read_matter_domain_composition()
-                if _primary:
-                    _domain = _primary
-                    if state is not None:
-                        state._cached_domain = _domain
-            except Exception:
-                pass
-
+        _domain = self._resolve_active_domain(state)
         _role_labels = _DOMAIN_ROLE_CALIBRATION_LABELS.get(_domain, _DOMAIN_ROLE_CALIBRATION_LABELS["legal"])
 
         lines = ["The following facts were extracted from documents with these source roles:"]

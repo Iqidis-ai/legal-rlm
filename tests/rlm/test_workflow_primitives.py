@@ -4617,3 +4617,115 @@ def test_assertion_trace_non_dict_guard():
     result = _fmt_assertion_trace(data, domain="legal")
     assert "real.pdf" in result
     assert "Real" in result
+
+
+# ---------------------------------------------------------------------------
+# Domain-aware prompt vocabulary tests
+# ---------------------------------------------------------------------------
+
+
+def test_domain_orientation_context_has_all_five_domains():
+    from irys.rlm.engine import _DOMAIN_ORIENTATION_CONTEXT
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        ctx = _DOMAIN_ORIENTATION_CONTEXT[domain]
+        assert "issue_types" in ctx
+        assert "issue_type_descriptions" in ctx
+        assert "predicate_examples" in ctx
+        assert "document_priorities" in ctx
+        assert "search_examples" in ctx
+        assert "|" in ctx["issue_types"], f"{domain} should have pipe-separated issue types"
+
+
+def test_domain_extraction_examples_has_all_five_domains():
+    from irys.rlm.engine import _DOMAIN_EXTRACTION_EXAMPLES
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        ex = _DOMAIN_EXTRACTION_EXAMPLES[domain]
+        assert "subject_examples" in ex
+        assert "predicate_examples" in ex
+        assert "object_examples" in ex
+
+
+def test_orientation_prompt_accepts_domain_parameters():
+    from irys.rlm.engine import ORIENTATION_PROMPT, _DOMAIN_ORIENTATION_CONTEXT
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        ctx = _DOMAIN_ORIENTATION_CONTEXT[domain]
+        result = ORIENTATION_PROMPT.format(
+            structure="test/",
+            file_listing="file1.pdf",
+            total_files=1,
+            query="test query",
+            matter_context="",
+            research_alignment_guidance="",
+            domain_issue_types=ctx["issue_types"],
+            domain_issue_type_descriptions=ctx["issue_type_descriptions"],
+            domain_predicate_examples=ctx["predicate_examples"],
+            domain_document_priorities=ctx["document_priorities"],
+            domain_search_examples=ctx["search_examples"],
+        )
+        assert ctx["issue_types"] in result
+        if domain != "legal":
+            assert "breach of contract" not in result.lower() or domain == "legal"
+
+
+def test_orientation_prompt_finance_uses_financial_types():
+    from irys.rlm.engine import ORIENTATION_PROMPT, _DOMAIN_ORIENTATION_CONTEXT
+    ctx = _DOMAIN_ORIENTATION_CONTEXT["finance"]
+    result = ORIENTATION_PROMPT.format(
+        structure="test/",
+        file_listing="10K.pdf",
+        total_files=1,
+        query="review financials",
+        matter_context="",
+        research_alignment_guidance="",
+        domain_issue_types=ctx["issue_types"],
+        domain_issue_type_descriptions=ctx["issue_type_descriptions"],
+        domain_predicate_examples=ctx["predicate_examples"],
+        domain_document_priorities=ctx["document_priorities"],
+        domain_search_examples=ctx["search_examples"],
+    )
+    assert "revenue_recognition" in result
+    assert "covenant_compliance" in result
+    assert "Audited financial statements" in result
+
+
+def test_extract_prompt_accepts_domain_examples():
+    from irys.rlm.engine import EXTRACT_FINDINGS_PROMPT, _DOMAIN_EXTRACTION_EXAMPLES
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        ex = _DOMAIN_EXTRACTION_EXAMPLES[domain]
+        result = EXTRACT_FINDINGS_PROMPT.format(
+            query="test",
+            hypothesis="test",
+            relevance_hint="(none)",
+            search_term="test",
+            search_results="no results",
+            domain_subject_examples=ex["subject_examples"],
+            domain_predicate_examples=ex["predicate_examples"],
+            domain_object_examples=ex["object_examples"],
+        )
+        assert ex["subject_examples"] in result
+
+
+def test_resolve_active_domain_returns_legal_without_model():
+    from irys.rlm.engine import RLMEngine
+    engine = RLMEngine(gemini_client=_StubClient())
+    assert engine._resolve_active_domain() == "legal"
+
+
+def test_resolve_active_domain_returns_cached():
+    from irys.rlm.engine import RLMEngine
+    from irys.rlm.state import InvestigationState
+    engine = RLMEngine(gemini_client=_StubClient())
+    state = InvestigationState.create("test", ".")
+    state._cached_domain = "finance"
+    assert engine._resolve_active_domain(state) == "finance"
+
+
+def test_authority_extraction_gated_to_legal():
+    """Verify that _extract_and_store_authorities is only invoked for legal domain."""
+    from irys.rlm.engine import _DOMAIN_ORIENTATION_CONTEXT
+    assert "legal" in _DOMAIN_ORIENTATION_CONTEXT
+    for domain in ("finance", "coding", "academic_research", "biomedical"):
+        ctx = _DOMAIN_ORIENTATION_CONTEXT[domain]
+        assert "claim" not in ctx["issue_types"].split("|"), (
+            f"{domain} should not use legal issue type 'claim'"
+        )

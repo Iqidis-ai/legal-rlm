@@ -2693,12 +2693,10 @@ def test_expand_query_splits_boolean_terms_and_keeps_context_terms_separate():
 
 
 def test_orientation_cache_version_bumped():
-    """_ORIENTATION_CACHE_VERSION must be '8' after the MVP.6 orientation
-    durable-context cap changed the prompt-visible matter_context shape."""
+    """_ORIENTATION_CACHE_VERSION must be '9' after domain-parameterized orientation prompt."""
     from irys.rlm.engine import _ORIENTATION_CACHE_VERSION
-    assert _ORIENTATION_CACHE_VERSION == "8", (
-        "_ORIENTATION_CACHE_VERSION must be bumped to '8' after updating ORIENTATION_PROMPT "
-        "to require literal grep-compatible search terms"
+    assert _ORIENTATION_CACHE_VERSION == "9", (
+        "_ORIENTATION_CACHE_VERSION must be bumped to '9' after domain-parameterized orientation prompt"
     )
 
 

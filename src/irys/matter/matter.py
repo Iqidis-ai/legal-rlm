@@ -4658,11 +4658,13 @@ class MatterModel:
         from .memory_contracts import DependencyManifest
 
         broker = self.memory_broker
+        _, _, primary_profile = self._read_matter_domain_composition()
+        dpid = primary_profile or "legal"
         ns_deps = broker.namespace_dependencies_for_keys(
             self._SEMANTIC_CACHE_NAMESPACES
         )
         mapping_hash = broker.current_profile_mapping_hash(
-            domain_profile_id="legal",
+            domain_profile_id=dpid,
             domain_profile_version=1,
             target_kind="clarification",
             target_namespace="clarifications",
@@ -4670,7 +4672,7 @@ class MatterModel:
         manifest = DependencyManifest(
             matter_id=self.matter_id,
             namespace_dependencies=ns_deps,
-            domain_profile_id="legal",
+            domain_profile_id=dpid,
             domain_profile_version=1,
             profile_mapping_hash=mapping_hash,
             purpose=purpose,
