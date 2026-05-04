@@ -10777,3 +10777,64 @@ def test_domain_reliance_policy_legal_backward_compat():
     assert "plaintiff's" in legal["hedge_markers"]
     assert legal["source_label"] == "advocacy"
     assert legal["corroboration_label"] == "operative or authoritative"
+
+
+# ---------------------------------------------------------------------------
+# resolve_matter_domain_strict — domain acceptance gate (SO-5)
+# ---------------------------------------------------------------------------
+
+def test_resolve_matter_domain_strict_fallback_not_explicit():
+    """Fallback to legal must report is_explicit=False."""
+    from irys.rlm.governance import resolve_matter_domain_strict
+    domain, is_explicit = resolve_matter_domain_strict(None)
+    assert domain == "legal"
+    assert is_explicit is False
+
+
+def test_resolve_matter_domain_strict_cached_is_explicit():
+    """Cached valid domain reports is_explicit=True."""
+    from irys.rlm.governance import resolve_matter_domain_strict
+    domain, is_explicit = resolve_matter_domain_strict(None, "finance")
+    assert domain == "finance"
+    assert is_explicit is True
+
+
+def test_resolve_matter_domain_strict_unknown_cached_not_explicit():
+    """Unknown cached value falls back to legal with is_explicit=False."""
+    from irys.rlm.governance import resolve_matter_domain_strict
+    domain, is_explicit = resolve_matter_domain_strict(None, "unknown")
+    assert domain == "legal"
+    assert is_explicit is False
+
+
+def test_deliverable_handler_blocks_on_ambiguous_domain():
+    """DeliverableFamilyHandler.run() must escalate when domain is ambiguous."""
+    from irys.rlm.governance import DeliverableFamilyHandler, ExecutionContract
+
+    class _FakeModel:
+        def _read_matter_domain_composition(self):
+            raise RuntimeError("composition unavailable")
+
+    handler = DeliverableFamilyHandler(matter_model=_FakeModel())
+    contract = ExecutionContract(family="deliverable")
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(
+            handler.run("generate privilege log", contract)
+        )
+    finally:
+        loop.close()
+    assert result.escalation_needed is True
+    assert "domain" in result.escalation_reason.lower()
+
+
+def test_deliverable_handler_proceeds_with_explicit_domain():
+    """DeliverableFamilyHandler.run() proceeds when domain is explicitly known."""
+    from irys.rlm.governance import DeliverableFamilyHandler
+
+    handler = DeliverableFamilyHandler(matter_model=None)
+    handler._cached_domain = "legal"
+    # With cached domain and no model, the strict check returns explicit=True
+    domain, is_explicit = handler._resolve_domain_strict()
+    assert domain == "legal"
+    assert is_explicit is True

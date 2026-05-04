@@ -42,16 +42,30 @@ def resolve_matter_domain(matter_model: Any, cached: Optional[str] = None) -> st
     matter model's domain composition. Falls back to 'legal' if the matter
     model is None, the read fails, or the domain is not in the supported set.
     """
+    domain, _ = resolve_matter_domain_strict(matter_model, cached)
+    return domain
+
+
+def resolve_matter_domain_strict(
+    matter_model: Any, cached: Optional[str] = None,
+) -> tuple[str, bool]:
+    """Resolve domain with explicit/fallback indicator.
+
+    Returns (domain_id, is_explicit) where is_explicit=True means the domain
+    was found either from cache or from the matter model's composition — NOT
+    from the silent fallback.  Callers (e.g. deliverable gates) can use
+    is_explicit=False to block or warn.
+    """
     if cached and cached in _SUPPORTED_DOMAINS:
-        return cached
+        return cached, True
     if matter_model is not None:
         try:
             _, _, primary = matter_model._read_matter_domain_composition()
             if primary and primary in _SUPPORTED_DOMAINS:
-                return primary
+                return primary, True
         except Exception:
             pass
-    return "legal"
+    return "legal", False
 
 
 # ---------------------------------------------------------------------------
@@ -330,9 +344,12 @@ class CascadeGovernor:
         self._cached_domain: Optional[str] = None
 
     def _resolve_domain(self) -> str:
-        result = resolve_matter_domain(self.matter_model, self._cached_domain)
-        self._cached_domain = result
-        return result
+        domain, is_explicit = resolve_matter_domain_strict(
+            self.matter_model, self._cached_domain,
+        )
+        if is_explicit:
+            self._cached_domain = domain
+        return domain
 
     # MVI-2b (Fix D): decision-cache stage name for reasoning_cache.
     _CACHE_STAGE = "cascade_decision"
@@ -1079,9 +1096,12 @@ class ReadFamilyHandler:
         self._cached_domain: Optional[str] = None
 
     def _resolve_domain(self) -> str:
-        result = resolve_matter_domain(self.matter_model, self._cached_domain)
-        self._cached_domain = result
-        return result
+        domain, is_explicit = resolve_matter_domain_strict(
+            self.matter_model, self._cached_domain,
+        )
+        if is_explicit:
+            self._cached_domain = domain
+        return domain
 
     async def run(
         self,
@@ -1790,9 +1810,12 @@ class QueryFamilyHandler:
         self._cached_domain: Optional[str] = None
 
     def _resolve_domain(self) -> str:
-        result = resolve_matter_domain(self.matter_model, self._cached_domain)
-        self._cached_domain = result
-        return result
+        domain, is_explicit = resolve_matter_domain_strict(
+            self.matter_model, self._cached_domain,
+        )
+        if is_explicit:
+            self._cached_domain = domain
+        return domain
 
     async def run(
         self,
@@ -2792,9 +2815,12 @@ class ScenarioFamilyHandler:
         self._cached_domain: Optional[str] = None
 
     def _resolve_domain(self) -> str:
-        result = resolve_matter_domain(self.matter_model, self._cached_domain)
-        self._cached_domain = result
-        return result
+        domain, is_explicit = resolve_matter_domain_strict(
+            self.matter_model, self._cached_domain,
+        )
+        if is_explicit:
+            self._cached_domain = domain
+        return domain
 
     async def run(
         self,
@@ -2960,9 +2986,17 @@ class DeliverableFamilyHandler:
         self._cached_domain: Optional[str] = None
 
     def _resolve_domain(self) -> str:
-        result = resolve_matter_domain(self.matter_model, self._cached_domain)
-        self._cached_domain = result
-        return result
+        domain, is_explicit = resolve_matter_domain_strict(
+            self.matter_model, self._cached_domain,
+        )
+        if is_explicit:
+            self._cached_domain = domain
+        return domain
+
+    def _resolve_domain_strict(self) -> tuple[str, bool]:
+        return resolve_matter_domain_strict(
+            self.matter_model, self._cached_domain,
+        )
 
     async def run(
         self,
@@ -2977,6 +3011,23 @@ class DeliverableFamilyHandler:
                 escalation_needed=True,
                 escalation_reason="no matter model available",
             )
+        domain, is_explicit = self._resolve_domain_strict()
+        if not is_explicit:
+            logger.warning(
+                "Domain detection unavailable — blocking deliverable (SO-5 acceptance gate)"
+            )
+            return DeliverableFamilyResult(
+                intent="",
+                rendered_answer="",
+                row_count=0,
+                escalation_needed=True,
+                escalation_reason=(
+                    "Domain detection unavailable or ambiguous — cannot produce "
+                    "deliverable without confirmed domain. Please set the matter "
+                    "domain profile explicitly."
+                ),
+            )
+        self._cached_domain = domain
         intent = await self._resolve_sub_intent(query)
         if intent == "privilege_log":
             return self._render_privilege_log()
