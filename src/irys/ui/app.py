@@ -10080,6 +10080,7 @@ class AppState:
                 choices.append((choice_label, choice_value))
             return panel_html, choices
         except Exception as exc:
+            logger.warning("Steering panel load failed: %s", exc)
             return f"<div class='viz-empty'>Error loading recommendations: {_escape(exc)}</div>", []
 
     def execute_steering_action(
@@ -10127,7 +10128,7 @@ class AppState:
                 "Upload the document in the Documents tab, then click Refresh Recommendations."
             )
 
-        return f"Unknown action type: {action_type}"
+        return f"Unknown action type: {_escape(action_type)}"
 
     def load_gaps_detail(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":

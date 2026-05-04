@@ -6032,3 +6032,17 @@ def test_execute_steering_action_unknown_type():
     })
     result = state.execute_steering_action("m1", action_json, "")
     assert "Unknown action type" in result
+
+
+def test_execute_steering_action_unknown_type_xss():
+    import json
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state.current_run_id = None
+    action_json = json.dumps({
+        "action_type": "<script>alert(1)</script>",
+        "params": {},
+    })
+    result = state.execute_steering_action("m1", action_json, "")
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
