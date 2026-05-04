@@ -2394,6 +2394,32 @@ async def bulk_verify_by_ids(matter_id: str, request: BulkVerifyByIdsRequest):
 
 
 @app.get(
+    "/matter/{matter_id}/review-queue/documents",
+    tags=["Review Queue"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def list_reviewable_documents(matter_id: str, limit: int = 500):
+    """Return documents with pending/verified counts for the review picker (SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    docs = model.list_reviewable_documents(limit=limit)
+    return {"matter_id": matter_id, "documents": docs}
+
+
+@app.get(
+    "/matter/{matter_id}/review-queue/by-document",
+    tags=["Review Queue"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def list_candidate_assertions_for_document(
+    matter_id: str, document_ref: str = Query(...),
+):
+    """Return candidate assertions for a specific document (SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    assertions = model.list_candidate_assertions_for_document(document_ref)
+    return {"matter_id": matter_id, "document_ref": document_ref, "assertions": assertions}
+
+
+@app.get(
     "/matter/{matter_id}/verification-events",
     tags=["Review Queue"],
     responses={404: {"model": ErrorResponse}},

@@ -812,34 +812,20 @@ class HttpBackend(UIBackend):
         self, matter_id: str, document_ref: str,
     ) -> list[dict]:
         result = await self._get(
-            f"/matter/{matter_id}/review-queue",
-            {"target_kind": "assertion", "limit": 500},
+            f"/matter/{matter_id}/review-queue/by-document",
+            {"document_ref": document_ref},
         )
-        queue = result.get("queue", []) if isinstance(result, dict) else (result if isinstance(result, list) else [])
-        doc_norm = document_ref.replace("\\", "/")
-        return [
-            item for item in queue
-            if (item.get("document_id") or "").replace("\\", "/") == doc_norm
-        ]
+        if isinstance(result, dict):
+            return result.get("assertions", [])
+        return result if isinstance(result, list) else []
 
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         result = await self._get(
-            f"/matter/{matter_id}/review-queue",
-            {"limit": 500},
+            f"/matter/{matter_id}/review-queue/documents",
         )
-        queue = result.get("queue", []) if isinstance(result, dict) else (result if isinstance(result, list) else [])
-        doc_counts: dict[str, dict] = {}
-        for item in queue:
-            doc = item.get("document_id") or "unknown"
-            if doc not in doc_counts:
-                doc_counts[doc] = {"path": doc, "pending": 0, "verified": 0, "total": 0}
-            doc_counts[doc]["total"] += 1
-            vs = (item.get("verification_state") or "").lower()
-            if vs == "verified":
-                doc_counts[doc]["verified"] += 1
-            else:
-                doc_counts[doc]["pending"] += 1
-        return sorted(doc_counts.values(), key=lambda d: d["pending"], reverse=True)
+        if isinstance(result, dict):
+            return result.get("documents", [])
+        return result if isinstance(result, list) else []
 
     async def get_verification_events(
         self, matter_id: str, target_kind: Optional[str] = None,
