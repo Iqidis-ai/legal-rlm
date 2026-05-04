@@ -9821,3 +9821,81 @@ def test_freshness_report_formatter_error_dict():
     html = _fmt_freshness_report(data, domain="legal")
     assert "Backend error" in html
     assert "backend failed" in html
+
+
+# ── Reasoning Cache Stats tests ──────────────────────────────────────
+
+
+def test_cache_stats_formatter_renders_table():
+    """_fmt_cache_stats renders stage table with hit rates."""
+    from irys.ui.app import _fmt_cache_stats
+    data = {
+        "matter_id": "m1",
+        "trust_revision": 3,
+        "total_entries": 10,
+        "total_hits": 4,
+        "overall_hit_rate": 0.4,
+        "stages": [
+            {"stage": "cascade_decision", "total_entries": 5, "hit_count": 3, "hit_rate": 0.6},
+            {"stage": "orient", "total_entries": 5, "hit_count": 1, "hit_rate": 0.2},
+        ],
+    }
+    html = _fmt_cache_stats(data, domain="legal")
+    assert "cascade_decision" in html
+    assert "orient" in html
+    assert "60.0%" in html
+    assert "20.0%" in html
+    assert "Trust Revision" in html
+
+
+def test_cache_stats_formatter_xss():
+    """_fmt_cache_stats escapes untrusted stage names."""
+    from irys.ui.app import _fmt_cache_stats
+    data = {
+        "matter_id": "m1",
+        "trust_revision": 1,
+        "total_entries": 1,
+        "total_hits": 0,
+        "overall_hit_rate": 0.0,
+        "stages": [
+            {"stage": "<script>alert(1)</script>", "total_entries": 1, "hit_count": 0, "hit_rate": 0.0},
+        ],
+    }
+    html = _fmt_cache_stats(data, domain="legal")
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_cache_stats_formatter_error_dict():
+    """_fmt_cache_stats surfaces error dicts from backend."""
+    from irys.ui.app import _fmt_cache_stats
+    data = {"error": "cache unavailable"}
+    html = _fmt_cache_stats(data, domain="legal")
+    assert "Backend error" in html
+    assert "cache unavailable" in html
+
+
+def test_cache_stats_formatter_empty():
+    """_fmt_cache_stats shows empty message when no stages."""
+    from irys.ui.app import _fmt_cache_stats
+    html = _fmt_cache_stats({}, domain="legal")
+    assert "viz-empty" in html
+
+
+def test_cache_stats_formatter_all_domains():
+    """_fmt_cache_stats uses domain-specific labels."""
+    from irys.ui.app import _fmt_cache_stats
+    data = {
+        "matter_id": "m1",
+        "trust_revision": 1,
+        "total_entries": 2,
+        "total_hits": 1,
+        "overall_hit_rate": 0.5,
+        "stages": [
+            {"stage": "synthesis", "total_entries": 2, "hit_count": 1, "hit_rate": 0.5},
+        ],
+    }
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        html = _fmt_cache_stats(data, domain=domain)
+        assert "synthesis" in html
+        assert "viz-shell" in html

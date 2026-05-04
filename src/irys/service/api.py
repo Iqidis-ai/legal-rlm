@@ -2569,6 +2569,17 @@ async def get_matter_freshness(matter_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/cache-stats",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_cache_stats(matter_id: str):
+    """Return reasoning cache hit/miss statistics per stage (SO-1)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_reasoning_cache_stats()
+
+
+@app.get(
     "/matter/{matter_id}/decision-context",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

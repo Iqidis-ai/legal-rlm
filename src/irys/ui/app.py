@@ -7834,6 +7834,112 @@ def _fmt_freshness_report(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+# ── Reasoning Cache Stats ────────────────────────────────────────────
+_CACHE_STATS_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Reasoning Cache",
+        "subtitle": "Hit rates by reasoning stage — reuse of prior analysis",
+        "empty": "No cache data available. Run an investigation first.",
+        "stage": "Stage", "entries": "Entries", "hits": "Hits",
+        "hit_rate": "Hit Rate", "trust_rev": "Trust Revision",
+        "overall": "Overall Hit Rate",
+    },
+    "finance": {
+        "title": "Analysis Cache",
+        "subtitle": "Hit rates by analysis stage — reuse of prior computations",
+        "empty": "No cache data. Run an analysis first.",
+        "stage": "Stage", "entries": "Entries", "hits": "Hits",
+        "hit_rate": "Hit Rate", "trust_rev": "Trust Revision",
+        "overall": "Overall Hit Rate",
+    },
+    "coding": {
+        "title": "Reasoning Cache",
+        "subtitle": "Hit rates by analysis stage — reuse of prior scans",
+        "empty": "No cache data. Run a scan first.",
+        "stage": "Stage", "entries": "Entries", "hits": "Hits",
+        "hit_rate": "Hit Rate", "trust_rev": "Trust Revision",
+        "overall": "Overall Hit Rate",
+    },
+    "academic_research": {
+        "title": "Reasoning Cache",
+        "subtitle": "Hit rates by research stage — reuse of prior synthesis",
+        "empty": "No cache data. Run a review first.",
+        "stage": "Stage", "entries": "Entries", "hits": "Hits",
+        "hit_rate": "Hit Rate", "trust_rev": "Trust Revision",
+        "overall": "Overall Hit Rate",
+    },
+    "biomedical": {
+        "title": "Evidence Cache",
+        "subtitle": "Hit rates by reasoning stage — reuse of prior evidence review",
+        "empty": "No cache data. Run an analysis first.",
+        "stage": "Stage", "entries": "Entries", "hits": "Hits",
+        "hit_rate": "Hit Rate", "trust_rev": "Trust Revision",
+        "overall": "Overall Hit Rate",
+    },
+}
+
+
+def _fmt_cache_stats(data: dict, domain: str = "legal") -> str:
+    L = _CACHE_STATS_LABELS.get(domain, _CACHE_STATS_LABELS["legal"])
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+    if err := _error_html(data):
+        return err
+
+    stages = data.get("stages", [])
+    if not isinstance(stages, list) or not stages:
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    trust_rev = int(data.get("trust_revision", 0)) if isinstance(data.get("trust_revision"), (int, float)) else 0
+    total_entries = int(data.get("total_entries", 0)) if isinstance(data.get("total_entries"), (int, float)) else 0
+    overall_rate = float(data.get("overall_hit_rate", 0.0)) if isinstance(data.get("overall_hit_rate"), (int, float)) else 0.0
+
+    parts = [
+        "<div class='viz-shell'>",
+        f"<div class='viz-header'><strong>{_escape(L['title'])}</strong>"
+        f" &mdash; {_escape(L['subtitle'])}</div>",
+        f"<div style='margin:8px 0;font-size:0.9em;color:#6b7280;'>"
+        f"<span class='pill pill-neutral'>{_escape(L['trust_rev'])}: {trust_rev}</span> &middot; "
+        f"<span class='pill pill-neutral'>{total_entries} {_escape(L['entries'])}</span> &middot; "
+        f"<span class='pill pill-green'>{_escape(L['overall'])}: {overall_rate:.1%}</span>"
+        f"</div>",
+        "<table style='width:100%;border-collapse:collapse;font-size:0.85em;'>"
+        "<tr style='border-bottom:1px solid #e5e7eb;'>"
+        f"<th style='text-align:left;padding:4px 8px;color:#6b7280;'>{_escape(L['stage'])}</th>"
+        f"<th style='text-align:center;padding:4px 8px;color:#6b7280;'>{_escape(L['entries'])}</th>"
+        f"<th style='text-align:center;padding:4px 8px;color:#6b7280;'>{_escape(L['hits'])}</th>"
+        f"<th style='text-align:right;padding:4px 8px;color:#6b7280;'>{_escape(L['hit_rate'])}</th>"
+        "</tr>",
+    ]
+
+    for stage in stages:
+        if not isinstance(stage, dict):
+            continue
+        name = _escape(str(stage.get("stage", "")))
+        entries = int(stage.get("total_entries", 0)) if isinstance(stage.get("total_entries"), (int, float)) else 0
+        hits = int(stage.get("hit_count", 0)) if isinstance(stage.get("hit_count"), (int, float)) else 0
+        rate = float(stage.get("hit_rate", 0.0)) if isinstance(stage.get("hit_rate"), (int, float)) else 0.0
+
+        if rate >= 0.5:
+            rate_pill = f"<span class='pill pill-green'>{rate:.1%}</span>"
+        elif rate > 0:
+            rate_pill = f"<span class='pill pill-orange'>{rate:.1%}</span>"
+        else:
+            rate_pill = f"<span class='pill pill-neutral'>{rate:.1%}</span>"
+
+        parts.append(
+            f"<tr style='border-bottom:1px solid #f3f4f6;'>"
+            f"<td style='padding:4px 8px;font-family:monospace;font-size:0.9em;'>{name}</td>"
+            f"<td style='text-align:center;padding:4px 8px;'>{entries}</td>"
+            f"<td style='text-align:center;padding:4px 8px;'>{hits}</td>"
+            f"<td style='text-align:right;padding:4px 8px;'>{rate_pill}</td>"
+            f"</tr>"
+        )
+
+    parts.append("</table></div>")
+    return "\n".join(parts)
+
+
 # ── Steering Impact Preview ──────────────────────────────────────────
 _IMPACT_PREVIEW_LABELS: dict[str, dict[str, str]] = {
     "legal": {
@@ -13634,6 +13740,19 @@ class AppState:
             logger.warning("Freshness report load failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_cache_stats(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_cache_stats(matter_id))
+            if not isinstance(data, dict):
+                logger.warning("load_cache_stats: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_cache_stats(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Cache stats load failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def load_impact_preview(
         self, matter_id: str, action_type: str, payload_json: str, domain: str = "legal",
     ) -> str:
@@ -16690,6 +16809,18 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "Refresh Freshness", variant="secondary", size="sm",
             )
 
+        with gr.Accordion("Reasoning Cache — hit rates by stage showing reuse of prior analysis", open=False):
+            gr.Markdown(
+                "Shows how effectively the reasoning cache is being reused across stages. "
+                "Higher hit rates mean faster investigations and less redundant computation."
+            )
+            cache_stats_html = gr.HTML(
+                "<div class='viz-empty'>Cache stats will appear here after loading a matter.</div>"
+            )
+            refresh_cache_stats_btn = gr.Button(
+                "Refresh Cache Stats", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Steering Impact Preview — project the effect of corrections before committing", open=False):
             gr.Markdown(
                 "Select a steering action type, provide the relevant payload as JSON, "
@@ -17471,6 +17602,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 inputs=[matter_id_box],
                 outputs=[freshness_report_html],
             ).then(
+                fn=lambda mid: state.load_cache_stats(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[cache_stats_html],
+            ).then(
                 fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_readiness_html],
@@ -17626,6 +17761,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_freshness_report(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[freshness_report_html],
+            ).then(
+                fn=lambda mid: state.load_cache_stats(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[cache_stats_html],
             ).then(
                 fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
@@ -17791,6 +17930,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_freshness_report(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[freshness_report_html],
+        ).then(
+            fn=lambda mid: state.load_cache_stats(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[cache_stats_html],
         ).then(
             fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -18254,6 +18397,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_freshness_report(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[freshness_report_html],
+        )
+        refresh_cache_stats_btn.click(
+            fn=lambda mid: state.load_cache_stats(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[cache_stats_html],
         )
         impact_preview_btn.click(
             fn=lambda mid, at, pj: state.load_impact_preview(
@@ -18803,6 +18951,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_freshness_report(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[freshness_report_html],
+        ).then(
+            fn=lambda mid: state.load_cache_stats(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[cache_stats_html],
         ).then(
             fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],

@@ -651,6 +651,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_freshness_report()
 
+    async def get_cache_stats(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_reasoning_cache_stats()
+
     async def get_steering_impact_preview(self, matter_id: str, action_type: str, payload: dict) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_steering_impact_preview(action_type=action_type, payload=payload)

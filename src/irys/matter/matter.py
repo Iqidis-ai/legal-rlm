@@ -9021,5 +9021,42 @@ class MatterModel:
             "namespaces": namespaces,
         }
 
+    def get_reasoning_cache_stats(self) -> dict:
+        rows = self.db.execute(
+            """SELECT stage,
+                      COUNT(*) AS total,
+                      SUM(CASE WHEN last_hit_at IS NOT NULL THEN 1 ELSE 0 END) AS hit_count
+               FROM reasoning_cache
+               WHERE matter_id=?
+               GROUP BY stage
+               ORDER BY stage""",
+            (self.matter_id,),
+        ).fetchall()
+
+        trust_rev = self.reasoning_cache.current_trust_revision()
+        stages: list[dict] = []
+        total_entries = 0
+        total_hits = 0
+        for row in rows:
+            t = int(row["total"])
+            h = int(row["hit_count"])
+            total_entries += t
+            total_hits += h
+            stages.append({
+                "stage": row["stage"],
+                "total_entries": t,
+                "hit_count": h,
+                "hit_rate": round(h / t, 3) if t > 0 else 0.0,
+            })
+
+        return {
+            "matter_id": self.matter_id,
+            "trust_revision": trust_rev,
+            "total_entries": total_entries,
+            "total_hits": total_hits,
+            "overall_hit_rate": round(total_hits / total_entries, 3) if total_entries > 0 else 0.0,
+            "stages": stages,
+        }
+
     def __repr__(self) -> str:
         return f"MatterModel(matter_id={self.matter_id[:8]}..., db={self.db})"

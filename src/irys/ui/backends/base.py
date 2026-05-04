@@ -266,6 +266,10 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_cache_stats(self, matter_id: str) -> dict:
+        ...
+
+    @abstractmethod
     async def get_steering_impact_preview(self, matter_id: str, action_type: str, payload: dict) -> dict:
         """Project impact of a steering action without mutating (SO-3)."""
         ...

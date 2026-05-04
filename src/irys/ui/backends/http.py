@@ -409,6 +409,13 @@ class HttpBackend(UIBackend):
             return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
+    async def get_cache_stats(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/cache-stats")
+        if not isinstance(result, dict):
+            _log.warning("get_cache_stats: expected dict, got %s", type(result).__name__)
+            return {"error": f"unexpected response type: {type(result).__name__}"}
+        return result
+
     async def get_steering_impact_preview(self, matter_id: str, action_type: str, payload: dict) -> dict:
         result = await self._post(
             f"/matter/{matter_id}/steering-impact-preview",
