@@ -643,6 +643,14 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def resolve_contradiction(
+        self, matter_id: str, attacker_id: str, attacked_id: str,
+        decision: str, rationale: str = "",
+    ) -> dict:
+        """Resolve a contradiction pair: prefer one assertion, dispute both, or request evidence (SO-2)."""
+        ...
+
+    @abstractmethod
     async def get_verification_events(
         self, matter_id: str, target_kind: Optional[str] = None,
         target_id: Optional[str] = None, limit: int = 50,

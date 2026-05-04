@@ -621,6 +621,16 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_answer_audit_workbench(manifest_hash=manifest_hash)
 
+    async def resolve_contradiction(
+        self, matter_id: str, attacker_id: str, attacked_id: str,
+        decision: str, rationale: str = "",
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.resolve_contradiction(
+            attacker_id=attacker_id, attacked_id=attacked_id,
+            decision=decision, rationale=rationale,
+        )
+
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         """Document picker feed for the bulk-verify dropdown — every
         doc in the matter with pending/verified counts so reviewers

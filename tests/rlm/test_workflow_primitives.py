@@ -4979,3 +4979,24 @@ def test_answer_audit_labels_all_five_domains():
         labels = _ANSWER_AUDIT_LABELS[domain]
         for key in ("title", "fresh", "stale", "empty", "evidence", "missingness"):
             assert key in labels, f"Missing key {key} for {domain}"
+
+
+# --- Contradiction Resolution Workflow tests ---
+
+
+def test_resolve_contradiction_invalid_decision():
+    """resolve_contradiction rejects invalid decision values."""
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.resolve_contradiction("a1", "a2", "invalid_choice", "reason")
+    assert result.get("error")
+    assert "Invalid decision" in result["error"]
+
+
+def test_resolve_contradiction_missing_assertion():
+    """resolve_contradiction returns error when assertion not found."""
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.resolve_contradiction("nonexistent", "also_nonexistent", "prefer_attacker", "test")
+    assert result.get("error")
+    assert "not found" in result["error"]

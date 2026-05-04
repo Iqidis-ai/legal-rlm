@@ -871,6 +871,19 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/answer-audits", params or None)
         return result if isinstance(result, dict) else {}
 
+    async def resolve_contradiction(
+        self, matter_id: str, attacker_id: str, attacked_id: str,
+        decision: str, rationale: str = "",
+    ) -> dict:
+        params = {
+            "attacker_id": attacker_id,
+            "attacked_id": attacked_id,
+            "decision": decision,
+            "rationale": rationale,
+        }
+        result = await self._post(f"/matter/{matter_id}/resolve-contradiction", params=params)
+        return result if isinstance(result, dict) else {}
+
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         result = await self._get(
             f"/matter/{matter_id}/review-queue/documents",

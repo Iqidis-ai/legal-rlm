@@ -9772,6 +9772,34 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error mining contradictions: {_escape(exc)}</div>"
 
+    def resolve_contradiction(
+        self, matter_id: str, attacker_id: str, attacked_id: str,
+        decision: str, rationale: str,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        if not attacker_id or not attacked_id:
+            return "Enter both assertion IDs from a contradiction pair.", ""
+        if not decision:
+            return "Select a resolution decision.", ""
+        try:
+            result = _run_async(self.backend().resolve_contradiction(
+                matter_id, attacker_id.strip(), attacked_id.strip(),
+                decision, rationale.strip(),
+            ))
+            if not isinstance(result, dict):
+                return "Unexpected response.", ""
+            if result.get("error"):
+                return f"Error: {_escape(str(result['error']))}", ""
+            actions = result.get("actions", [])
+            msg = " · ".join(str(a) for a in actions if isinstance(a, str))
+            domain = self._detect_domain(matter_id)
+            refreshed = self.load_contradictions(matter_id, domain=domain)
+            return f"Resolved: {_escape(msg)}", refreshed
+        except Exception as exc:
+            logger.warning("resolve_contradiction failed: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
+
     def load_document_versions(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -11680,6 +11708,34 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             with gr.Row():
                 refresh_contradiction_btn = gr.Button("Refresh Contradictions", variant="secondary", size="sm")
                 mine_contradiction_btn = gr.Button("Run Contradiction Mining", variant="primary", size="sm")
+            with gr.Accordion("Resolve a contradiction", open=False):
+                gr.Markdown(
+                    "Paste the attacker and attacked assertion IDs from a conflict pair above, "
+                    "choose how to resolve the disagreement, and provide your reasoning."
+                )
+                with gr.Row():
+                    resolve_attacker_id = gr.Textbox(
+                        label="Attacker assertion ID", placeholder="Paste attacker ID", scale=2,
+                    )
+                    resolve_attacked_id = gr.Textbox(
+                        label="Attacked assertion ID", placeholder="Paste attacked ID", scale=2,
+                    )
+                with gr.Row():
+                    resolve_decision = gr.Dropdown(
+                        label="Resolution decision",
+                        choices=[
+                            ("Prefer attacker — supersede attacked", "prefer_attacker"),
+                            ("Prefer attacked — supersede attacker", "prefer_attacked"),
+                            ("Mark both as disputed", "mark_both_disputed"),
+                            ("Request more evidence", "request_evidence"),
+                        ],
+                        interactive=True, scale=2,
+                    )
+                    resolve_rationale = gr.Textbox(
+                        label="Rationale", placeholder="Why this decision?", scale=3,
+                    )
+                    resolve_btn = gr.Button("Resolve", variant="primary", size="sm", scale=1)
+                resolve_result = gr.Markdown("")
 
         with gr.Accordion("Document Version Chains — which documents supersede each other", open=False):
             gr.Markdown(
@@ -12716,6 +12772,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.mine_and_load_contradictions(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[contradiction_html],
+        )
+        resolve_btn.click(
+            fn=lambda mid, att, atd, dec, rat: state.resolve_contradiction(mid, att, atd, dec, rat),
+            inputs=[matter_id_box, resolve_attacker_id, resolve_attacked_id, resolve_decision, resolve_rationale],
+            outputs=[resolve_result, contradiction_html],
         )
         refresh_doc_versions_btn.click(
             fn=lambda mid: state.load_document_versions(mid, domain=state._detect_domain(mid)),

@@ -3463,6 +3463,104 @@ class MatterModel:
         }
 
     # ------------------------------------------------------------------
+    # Contradiction resolution workflow (SO-1, SO-2, SO-3, SO-7)
+    # ------------------------------------------------------------------
+
+    def resolve_contradiction(
+        self,
+        attacker_id: str,
+        attacked_id: str,
+        decision: str,
+        rationale: str,
+        run_id: str | None = None,
+    ) -> dict:
+        """Resolve a contradiction pair by applying user decision.
+
+        decision must be one of:
+          prefer_attacker — mark attacked as superseded
+          prefer_attacked — mark attacker as superseded
+          mark_both_disputed — mark both as disputed
+          request_evidence — keep both, record gap for more evidence
+        """
+        valid_decisions = {
+            "prefer_attacker", "prefer_attacked",
+            "mark_both_disputed", "request_evidence",
+        }
+        if decision not in valid_decisions:
+            return {"error": f"Invalid decision. Must be one of: {', '.join(sorted(valid_decisions))}"}
+
+        attacker = self.assertions.get(attacker_id)
+        attacked = self.assertions.get(attacked_id)
+        if not attacker:
+            return {"error": f"Attacker assertion {attacker_id} not found"}
+        if not attacked:
+            return {"error": f"Attacked assertion {attacked_id} not found"}
+
+        self._ensure_belief_trust_weights()
+        results: list[str] = []
+
+        note_prefix = f"Resolution: {decision}. {rationale}"
+
+        if decision == "prefer_attacker":
+            r = self._correct_assertion_inner(
+                attacked_id, BeliefState.SUPERSEDED, run_id,
+                note=f"{note_prefix} Superseded by {attacker_id[:12]}",
+                confidence=0.1,
+            )
+            results.append(f"Marked {attacked_id[:12]} as SUPERSEDED")
+        elif decision == "prefer_attacked":
+            r = self._correct_assertion_inner(
+                attacker_id, BeliefState.SUPERSEDED, run_id,
+                note=f"{note_prefix} Superseded by {attacked_id[:12]}",
+                confidence=0.1,
+            )
+            results.append(f"Marked {attacker_id[:12]} as SUPERSEDED")
+        elif decision == "mark_both_disputed":
+            for aid in (attacker_id, attacked_id):
+                r = self._correct_assertion_inner(
+                    aid, BeliefState.DISPUTED, run_id,
+                    note=note_prefix, confidence=0.3,
+                )
+                results.append(f"Marked {aid[:12]} as DISPUTED")
+        elif decision == "request_evidence":
+            self.gaps.record(
+                gap_type=GapType.MISSING_DOCUMENT,
+                description=f"More evidence needed to resolve: '{rationale[:120]}'",
+                materiality=0.8,
+                affected_type="assertion",
+                affected_id=attacked_id,
+            )
+            results.append("Recorded gap for additional evidence")
+
+        # Close related UNRESOLVED_CONTRADICTION gaps
+        if decision != "request_evidence":
+            closed = 0
+            for gid in self._find_contradiction_gaps(attacker_id, attacked_id):
+                if self.gaps.resolve_gap(gid, resolution_note=note_prefix[:200]):
+                    closed += 1
+            if closed:
+                results.append(f"Closed {closed} contradiction gap(s)")
+
+        return {
+            "success": True,
+            "decision": decision,
+            "actions": results,
+            "attacker_id": attacker_id,
+            "attacked_id": attacked_id,
+        }
+
+    def _find_contradiction_gaps(self, attacker_id: str, attacked_id: str) -> list[str]:
+        rows = self.db.execute(
+            """SELECT g.id FROM gap g
+               JOIN gap_link gl ON gl.gap_id = g.id
+               WHERE g.matter_id = ? AND g.status = 'open'
+                 AND g.gap_type = 'unresolved_contradiction'
+                 AND gl.affected_id IN (?, ?)""",
+            (self.matter_id, attacker_id, attacked_id),
+        ).fetchall()
+        return [r["id"] for r in rows]
+
+    # ------------------------------------------------------------------
     # Assertion trace with impact (SO-2, SO-3, SO-5)
     # ------------------------------------------------------------------
 

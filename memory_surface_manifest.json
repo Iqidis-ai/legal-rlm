@@ -1620,6 +1620,27 @@
       "taint_behavior": "legacy_unknown_until_brokered",
       "profile_behavior": "domain_profile_scoped",
       "surface": "MetricAliasStore.approve"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "belief_revisions",
+        "cache_records",
+        "claims",
+        "gaps",
+        "namespace_revision",
+        "proof_state",
+        "propagation_queue",
+        "revision_events",
+        "schema_state",
+        "workspaces"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.resolve_contradiction"
     }
   ],
   "write_surface_groups": [],

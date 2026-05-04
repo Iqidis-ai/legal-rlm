@@ -3470,6 +3470,28 @@ async def get_answer_audits(
     return model.get_answer_audit_workbench(manifest_hash=manifest_hash)
 
 
+@app.post(
+    "/matter/{matter_id}/resolve-contradiction",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def resolve_contradiction(
+    matter_id: str,
+    attacker_id: str = Query(...),
+    attacked_id: str = Query(...),
+    decision: str = Query(...),
+    rationale: str = Query(default=""),
+):
+    """Resolve a contradiction pair: prefer one assertion, dispute both, or request evidence."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.resolve_contradiction(
+        attacker_id=attacker_id,
+        attacked_id=attacked_id,
+        decision=decision,
+        rationale=rationale,
+    )
+
+
 @app.get(
     "/matter/{matter_id}/system-health",
     tags=["Matter Model"],
