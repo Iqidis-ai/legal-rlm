@@ -211,10 +211,10 @@ app = create_app()
 # Mount Gradio UI at /ui path (root path would override API routes)
 try:
     import gradio as gr
-    from ..ui.app import create_app as create_gradio_app
+    from ..ui.app import create_app as create_gradio_app, _theme, _css
     _config = get_config()
     gradio_app = create_gradio_app(api_key=_config.gemini_api_key)
-    app = gr.mount_gradio_app(app, gradio_app, path="/ui")
+    app = gr.mount_gradio_app(app, gradio_app, path="/ui", theme=_theme, css=_css)
     logger.info("Gradio UI mounted at /ui")
 except ImportError as e:
     logger.warning(f"Gradio not available, UI disabled: {e}")
