@@ -157,6 +157,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def update_assumption_status(self, matter_id: str, assumption_id: str, status: str, reason: str = "") -> bool:
+        """Set assumption status: provisional, confirmed, or invalidated (SO-3)."""
+        ...
+
+    @abstractmethod
     async def get_timeline(self, matter_id: str, limit: int = 80, policy_audience: str = "clean") -> list[dict]:
         """Return timeline events for the matter."""
         ...

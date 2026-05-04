@@ -2600,6 +2600,34 @@ async def resolve_gap(matter_id: str, gap_id: str, resolution_note: str = ""):
 
 
 @app.get(
+    "/matter/{matter_id}/assumptions",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_assumptions(matter_id: str, limit: int = 100):
+    """Return all assumptions for a matter (SO-3 — user-steerable reasoning)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.assumptions.get_all(max_rows=limit)
+
+
+@app.post(
+    "/matter/{matter_id}/assumptions/{assumption_id}/status",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def update_assumption_status(matter_id: str, assumption_id: str, status: str, reason: str = ""):
+    """Set assumption status: provisional, confirmed, or invalidated (SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    valid_statuses = ("provisional", "confirmed", "invalidated")
+    if status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status '{status}'. Must be one of: {', '.join(valid_statuses)}")
+    updated = model.assumptions.set_status(assumption_id, status, reason or None)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Assumption '{assumption_id}' not found")
+    return {"updated": True, "assumption_id": assumption_id, "status": status}
+
+
+@app.get(
     "/matter/{matter_id}/assertions/{assertion_id}/correct/revisions",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

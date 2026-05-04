@@ -245,6 +245,13 @@ class HttpBackend(UIBackend):
             return []
         return result
 
+    async def update_assumption_status(self, matter_id: str, assumption_id: str, status: str, reason: str = "") -> bool:
+        result = await self._post(
+            f"/matter/{matter_id}/assumptions/{assumption_id}/status",
+            {"status": status, "reason": reason},
+        )
+        return bool(result.get("updated")) if isinstance(result, dict) else False
+
     async def get_timeline(self, matter_id: str, limit: int = 80, policy_audience: str = "clean") -> list[dict]:
         result = await self._get(f"/matter/{matter_id}/timeline", {"limit": limit, "policy_audience": policy_audience})
         if isinstance(result, dict):

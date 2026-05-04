@@ -5371,10 +5371,13 @@ def _fmt_assumptions(assumptions: list, domain: str = "legal") -> str:
             detail += f"<div style='font-size:11px;color:#dc2626;margin-top:2px'>Invalidated if: {cond}</div>"
         if rationale:
             detail += f"<div style='font-size:11px;color:#6b7280;margin-top:2px'>Rationale: {rationale}</div>"
+        aid = _escape(str(a.get("id", "?"))[:16])
+        full_aid = _escape(str(a.get("id", "?")))
         rows += (
             "<tr>"
             f"<td><span class='pill {pill_cls}'>{pill_text}</span></td>"
             f"<td><strong>{stmt}</strong>{detail}</td>"
+            f"<td><code style='font-size:10px;cursor:pointer;' title='{full_aid}'>{aid}</code></td>"
             "</tr>"
         )
     if not rows:
@@ -5387,7 +5390,7 @@ def _fmt_assumptions(assumptions: list, domain: str = "legal") -> str:
         "<div class='viz-shell'>"
         f"<div class='viz-header'><strong>{labels['title']}</strong> — {subtitle}</div>"
         "<div class='table-wrap'><table class='viz-table'>"
-        "<thead><tr><th>Status</th><th>Assumption</th></tr></thead>"
+        "<thead><tr><th>Status</th><th>Assumption</th><th>ID</th></tr></thead>"
         "<tbody>" + rows + "</tbody></table></div>"
         "</div>"
     )
@@ -7673,6 +7676,30 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading assumptions: {_escape(str(exc))}</div>"
 
+    def update_assumption_status(self, matter_id: str, assumption_id: str, action: str, reason: str) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        aid = (assumption_id or "").strip()
+        if not aid:
+            return "Enter an assumption ID.", ""
+        if not action:
+            return "Select an action.", ""
+        try:
+            updated = _run_async(self.backend().update_assumption_status(
+                matter_id, aid, action, reason.strip()
+            ))
+            if not updated:
+                return f"Assumption {_escape(aid[:16])} not found.", ""
+            label = {"confirmed": "Confirmed", "invalidated": "Invalidated", "provisional": "Reset to provisional"}.get(action, action)
+            domain = self._detect_domain(matter_id)
+            html = self.load_assumptions(matter_id, domain)
+            return f"{label} assumption {_escape(aid[:16])}.", html
+        except ValueError as ve:
+            return f"Invalid: {_escape(str(ve))}", ""
+        except Exception as exc:
+            logger.warning("update_assumption_status failed: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
+
     def load_quant(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -9428,6 +9455,25 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )
             assumptions_detail_html = gr.HTML("<div class='viz-empty'>Assumptions will appear here after an investigation.</div>")
             refresh_assumptions_btn = gr.Button("Refresh Assumptions", variant="secondary", size="sm")
+            with gr.Accordion("Challenge or confirm an assumption", open=False):
+                with gr.Row():
+                    assumption_id_input = gr.Textbox(
+                        label="Assumption ID (copy from table above)", scale=3,
+                    )
+                    assumption_action_dropdown = gr.Dropdown(
+                        label="Action",
+                        choices=[
+                            ("Confirm — mark as validated", "confirmed"),
+                            ("Invalidate — mark as disproved", "invalidated"),
+                            ("Reset to provisional", "provisional"),
+                        ],
+                        scale=2,
+                    )
+                    assumption_reason_input = gr.Textbox(
+                        label="Reason (optional)", scale=3,
+                    )
+                    assumption_action_btn = gr.Button("Apply", variant="primary", size="sm", scale=1)
+                assumption_action_result = gr.Markdown("")
 
         with gr.Accordion("Financials — payments, damages, and numeric disputes", open=False):
             gr.Markdown(
@@ -10414,6 +10460,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_assumptions(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[assumptions_detail_html],
+        )
+        assumption_action_btn.click(
+            fn=lambda mid, aid, action, reason: state.update_assumption_status(mid, aid, action, reason),
+            inputs=[matter_id_box, assumption_id_input, assumption_action_dropdown, assumption_reason_input],
+            outputs=[assumption_action_result, assumptions_detail_html],
         )
         refresh_quant_btn.click(
             fn=lambda mid: state.load_quant(mid, domain=state._detect_domain(mid)),

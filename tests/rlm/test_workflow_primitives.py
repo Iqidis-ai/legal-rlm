@@ -3533,3 +3533,30 @@ def test_clarification_context_missing_id():
     state._clarification_cache = {}
     result = state.get_clarification_context("mid-1", "nonexistent")
     assert result == ""
+
+
+def test_fmt_assumptions_shows_id():
+    """Assumption table should display IDs for copy-paste into action form."""
+    from irys.ui.app import _fmt_assumptions
+    assumptions = [
+        {"id": "asmp-abc123", "statement": "Contract was signed",
+         "status": "provisional", "rationale": "From document"},
+    ]
+    result = _fmt_assumptions(assumptions, domain="legal")
+    assert "asmp-abc123" in result
+    assert "<th>ID</th>" in result
+    assert "<code" in result
+    assert "1 assumption" in result
+
+
+def test_update_assumption_status_backend_interface():
+    """Verify update_assumption_status exists in backend interface."""
+    import inspect
+    from irys.ui.backends.base import UIBackend
+    assert hasattr(UIBackend, "update_assumption_status")
+    sig = inspect.signature(UIBackend.update_assumption_status)
+    params = list(sig.parameters.keys())
+    assert "matter_id" in params
+    assert "assumption_id" in params
+    assert "status" in params
+    assert "reason" in params

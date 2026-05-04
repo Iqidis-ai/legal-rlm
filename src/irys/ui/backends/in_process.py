@@ -540,6 +540,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.assumptions.get_all(max_rows=limit)
 
+    async def update_assumption_status(self, matter_id: str, assumption_id: str, status: str, reason: str = "") -> bool:
+        model = self._get_matter_model(matter_id)
+        return model.assumptions.set_status(assumption_id, status, reason or None)
+
     async def get_timeline(
         self,
         matter_id: str,
