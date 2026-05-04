@@ -2580,6 +2580,17 @@ async def get_matter_cache_stats(matter_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/llm-usage",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_matter_llm_usage(matter_id: str, run_id: str | None = None):
+    """Return aggregated LLM token usage and cost breakdown (SO-1)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.summarize_llm_usage(run_id=run_id)
+
+
+@app.get(
     "/matter/{matter_id}/decision-context",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

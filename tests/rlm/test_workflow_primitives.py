@@ -9899,3 +9899,100 @@ def test_cache_stats_formatter_all_domains():
         html = _fmt_cache_stats(data, domain=domain)
         assert "synthesis" in html
         assert "viz-shell" in html
+
+
+# ── LLM Usage Summary tests ──────��──────────────────────────────────
+
+
+def test_llm_usage_formatter_renders_summary():
+    """_fmt_llm_usage renders token counts and cost."""
+    from irys.ui.app import _fmt_llm_usage
+    data = {
+        "request_count": 15,
+        "successful_requests": 14,
+        "failed_requests": 1,
+        "input_tokens": 50000,
+        "output_tokens": 12000,
+        "cache_read_tokens": 8000,
+        "thinking_tokens": 3000,
+        "estimated_cost_usd": 0.0425,
+        "by_tier": {
+            "flash": {
+                "requests": 10, "input_tokens": 30000, "output_tokens": 8000,
+                "estimated_cost_usd": 0.015,
+            },
+            "pro": {
+                "requests": 5, "input_tokens": 20000, "output_tokens": 4000,
+                "estimated_cost_usd": 0.0275,
+            },
+        },
+    }
+    html = _fmt_llm_usage(data, domain="legal")
+    assert "14 Successful" in html
+    assert "1 Failed" in html
+    assert "$0.0425" in html
+    assert "50,000" in html
+    assert "flash" in html
+    assert "pro" in html
+
+
+def test_llm_usage_formatter_xss():
+    """_fmt_llm_usage escapes untrusted tier names."""
+    from irys.ui.app import _fmt_llm_usage
+    data = {
+        "request_count": 1,
+        "successful_requests": 1,
+        "failed_requests": 0,
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "cache_read_tokens": 0,
+        "thinking_tokens": 0,
+        "estimated_cost_usd": 0.001,
+        "by_tier": {
+            "<script>alert(1)</script>": {
+                "requests": 1, "input_tokens": 100, "output_tokens": 50,
+                "estimated_cost_usd": 0.001,
+            },
+        },
+    }
+    html = _fmt_llm_usage(data, domain="legal")
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_llm_usage_formatter_error_dict():
+    """_fmt_llm_usage surfaces error dicts from backend."""
+    from irys.ui.app import _fmt_llm_usage
+    data = {"error": "usage unavailable"}
+    html = _fmt_llm_usage(data, domain="legal")
+    assert "Backend error" in html
+    assert "usage unavailable" in html
+
+
+def test_llm_usage_formatter_empty():
+    """_fmt_llm_usage shows empty message when no requests."""
+    from irys.ui.app import _fmt_llm_usage
+    html = _fmt_llm_usage({}, domain="legal")
+    assert "viz-empty" in html
+    html2 = _fmt_llm_usage({"request_count": 0}, domain="finance")
+    assert "viz-empty" in html2
+
+
+def test_llm_usage_formatter_all_domains():
+    """_fmt_llm_usage uses domain-specific labels."""
+    from irys.ui.app import _fmt_llm_usage
+    data = {
+        "request_count": 1,
+        "successful_requests": 1,
+        "failed_requests": 0,
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "cache_read_tokens": 0,
+        "thinking_tokens": 0,
+        "estimated_cost_usd": 0.001,
+        "by_tier": {},
+    }
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        html = _fmt_llm_usage(data, domain=domain)
+        assert "viz-shell" in html
+        assert "$0.0010" in html

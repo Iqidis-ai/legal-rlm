@@ -7940,6 +7940,131 @@ def _fmt_cache_stats(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+# ── LLM Usage Summary ────────────────────────────────────────────────
+_LLM_USAGE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "LLM Usage",
+        "subtitle": "Token consumption and cost across reasoning tiers",
+        "empty": "No LLM usage data. Run an investigation first.",
+        "requests": "Requests", "success": "Successful", "failed": "Failed",
+        "input": "Input Tokens", "output": "Output Tokens",
+        "cache_read": "Cache-Read Tokens", "thinking": "Thinking Tokens",
+        "cost": "Est. Cost", "tier": "Model Tier",
+    },
+    "finance": {
+        "title": "LLM Usage",
+        "subtitle": "Token consumption and cost across analysis tiers",
+        "empty": "No usage data. Run an analysis first.",
+        "requests": "Requests", "success": "Successful", "failed": "Failed",
+        "input": "Input Tokens", "output": "Output Tokens",
+        "cache_read": "Cache-Read Tokens", "thinking": "Thinking Tokens",
+        "cost": "Est. Cost", "tier": "Model Tier",
+    },
+    "coding": {
+        "title": "LLM Usage",
+        "subtitle": "Token consumption and cost across scan tiers",
+        "empty": "No usage data. Run a scan first.",
+        "requests": "Requests", "success": "Successful", "failed": "Failed",
+        "input": "Input Tokens", "output": "Output Tokens",
+        "cache_read": "Cache-Read Tokens", "thinking": "Thinking Tokens",
+        "cost": "Est. Cost", "tier": "Model Tier",
+    },
+    "academic_research": {
+        "title": "LLM Usage",
+        "subtitle": "Token consumption and cost across research tiers",
+        "empty": "No usage data. Run a review first.",
+        "requests": "Requests", "success": "Successful", "failed": "Failed",
+        "input": "Input Tokens", "output": "Output Tokens",
+        "cache_read": "Cache-Read Tokens", "thinking": "Thinking Tokens",
+        "cost": "Est. Cost", "tier": "Model Tier",
+    },
+    "biomedical": {
+        "title": "LLM Usage",
+        "subtitle": "Token consumption and cost across evidence tiers",
+        "empty": "No usage data. Run an analysis first.",
+        "requests": "Requests", "success": "Successful", "failed": "Failed",
+        "input": "Input Tokens", "output": "Output Tokens",
+        "cache_read": "Cache-Read Tokens", "thinking": "Thinking Tokens",
+        "cost": "Est. Cost", "tier": "Model Tier",
+    },
+}
+
+
+def _fmt_llm_usage(data: dict, domain: str = "legal") -> str:
+    L = _LLM_USAGE_LABELS.get(domain, _LLM_USAGE_LABELS["legal"])
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+    if err := _error_html(data):
+        return err
+
+    req_count = int(data.get("request_count", 0)) if isinstance(data.get("request_count"), (int, float)) else 0
+    if req_count == 0:
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    success = int(data.get("successful_requests", 0)) if isinstance(data.get("successful_requests"), (int, float)) else 0
+    failed = int(data.get("failed_requests", 0)) if isinstance(data.get("failed_requests"), (int, float)) else 0
+    input_tok = int(data.get("input_tokens", 0)) if isinstance(data.get("input_tokens"), (int, float)) else 0
+    output_tok = int(data.get("output_tokens", 0)) if isinstance(data.get("output_tokens"), (int, float)) else 0
+    cache_tok = int(data.get("cache_read_tokens", 0)) if isinstance(data.get("cache_read_tokens"), (int, float)) else 0
+    thinking_tok = int(data.get("thinking_tokens", 0)) if isinstance(data.get("thinking_tokens"), (int, float)) else 0
+    cost = float(data.get("estimated_cost_usd", 0.0)) if isinstance(data.get("estimated_cost_usd"), (int, float)) else 0.0
+
+    fail_pill = (
+        f" <span class='pill pill-red'>{failed} {_escape(L['failed'])}</span>"
+        if failed > 0 else ""
+    )
+
+    parts = [
+        "<div class='viz-shell'>",
+        f"<div class='viz-header'><strong>{_escape(L['title'])}</strong>"
+        f" &mdash; {_escape(L['subtitle'])}</div>",
+        f"<div style='margin:8px 0;font-size:0.9em;color:#6b7280;'>"
+        f"<span class='pill pill-green'>{success} {_escape(L['success'])}</span>"
+        f"{fail_pill} &middot; "
+        f"<span class='pill pill-neutral'>{_escape(L['cost'])}: ${cost:.4f}</span>"
+        f"</div>",
+        "<div style='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;'>",
+        _metric_card(L["input"], f"{input_tok:,}"),
+        _metric_card(L["output"], f"{output_tok:,}"),
+        _metric_card(L["cache_read"], f"{cache_tok:,}"),
+        _metric_card(L["thinking"], f"{thinking_tok:,}"),
+        "</div>",
+    ]
+
+    by_tier = data.get("by_tier", {})
+    if isinstance(by_tier, dict) and by_tier:
+        parts.append(
+            "<table style='width:100%;border-collapse:collapse;font-size:0.85em;'>"
+            "<tr style='border-bottom:1px solid #e5e7eb;'>"
+            f"<th style='text-align:left;padding:4px 8px;color:#6b7280;'>{_escape(L['tier'])}</th>"
+            f"<th style='text-align:center;padding:4px 8px;color:#6b7280;'>{_escape(L['requests'])}</th>"
+            f"<th style='text-align:center;padding:4px 8px;color:#6b7280;'>{_escape(L['input'])}</th>"
+            f"<th style='text-align:center;padding:4px 8px;color:#6b7280;'>{_escape(L['output'])}</th>"
+            f"<th style='text-align:right;padding:4px 8px;color:#6b7280;'>{_escape(L['cost'])}</th>"
+            "</tr>"
+        )
+        for tier_name, tier_data in sorted(by_tier.items()):
+            if not isinstance(tier_data, dict):
+                continue
+            t_req = int(tier_data.get("requests", 0)) if isinstance(tier_data.get("requests"), (int, float)) else 0
+            t_in = int(tier_data.get("input_tokens", 0)) if isinstance(tier_data.get("input_tokens"), (int, float)) else 0
+            t_out = int(tier_data.get("output_tokens", 0)) if isinstance(tier_data.get("output_tokens"), (int, float)) else 0
+            t_cost = float(tier_data.get("estimated_cost_usd", 0.0)) if isinstance(tier_data.get("estimated_cost_usd"), (int, float)) else 0.0
+            parts.append(
+                f"<tr style='border-bottom:1px solid #f3f4f6;'>"
+                f"<td style='padding:4px 8px;font-family:monospace;font-size:0.9em;'>{_escape(str(tier_name))}</td>"
+                f"<td style='text-align:center;padding:4px 8px;'>{t_req:,}</td>"
+                f"<td style='text-align:center;padding:4px 8px;'>{t_in:,}</td>"
+                f"<td style='text-align:center;padding:4px 8px;'>{t_out:,}</td>"
+                f"<td style='text-align:right;padding:4px 8px;'>${t_cost:.4f}</td>"
+                f"</tr>"
+            )
+        parts.append("</table>")
+
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
 # ── Steering Impact Preview ──────────────────────────────────────────
 _IMPACT_PREVIEW_LABELS: dict[str, dict[str, str]] = {
     "legal": {
@@ -13753,6 +13878,19 @@ class AppState:
             logger.warning("Cache stats load failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_llm_usage(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_llm_usage(matter_id))
+            if not isinstance(data, dict):
+                logger.warning("load_llm_usage: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_llm_usage(data, domain=domain)
+        except Exception as exc:
+            logger.warning("LLM usage load failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def load_impact_preview(
         self, matter_id: str, action_type: str, payload_json: str, domain: str = "legal",
     ) -> str:
@@ -16821,6 +16959,18 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "Refresh Cache Stats", variant="secondary", size="sm",
             )
 
+        with gr.Accordion("LLM Usage — token consumption and cost across reasoning tiers", open=False):
+            gr.Markdown(
+                "Aggregated token counts, costs, and per-tier breakdowns for all LLM calls "
+                "in this matter. Useful for monitoring compute spend and identifying optimization targets."
+            )
+            llm_usage_html = gr.HTML(
+                "<div class='viz-empty'>LLM usage will appear here after loading a matter.</div>"
+            )
+            refresh_llm_usage_btn = gr.Button(
+                "Refresh LLM Usage", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Steering Impact Preview — project the effect of corrections before committing", open=False):
             gr.Markdown(
                 "Select a steering action type, provide the relevant payload as JSON, "
@@ -17606,6 +17756,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 inputs=[matter_id_box],
                 outputs=[cache_stats_html],
             ).then(
+                fn=lambda mid: state.load_llm_usage(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[llm_usage_html],
+            ).then(
                 fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_readiness_html],
@@ -17765,6 +17919,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_cache_stats(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[cache_stats_html],
+            ).then(
+                fn=lambda mid: state.load_llm_usage(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[llm_usage_html],
             ).then(
                 fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
@@ -17934,6 +18092,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_cache_stats(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[cache_stats_html],
+        ).then(
+            fn=lambda mid: state.load_llm_usage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[llm_usage_html],
         ).then(
             fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -18402,6 +18564,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_cache_stats(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[cache_stats_html],
+        )
+        refresh_llm_usage_btn.click(
+            fn=lambda mid: state.load_llm_usage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[llm_usage_html],
         )
         impact_preview_btn.click(
             fn=lambda mid, at, pj: state.load_impact_preview(
@@ -18955,6 +19122,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_cache_stats(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[cache_stats_html],
+        ).then(
+            fn=lambda mid: state.load_llm_usage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[llm_usage_html],
         ).then(
             fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],

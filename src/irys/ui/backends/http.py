@@ -416,6 +416,16 @@ class HttpBackend(UIBackend):
             return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
+    async def get_llm_usage(self, matter_id: str, run_id: str | None = None) -> dict:
+        path = f"/matter/{matter_id}/llm-usage"
+        if run_id:
+            path += f"?run_id={run_id}"
+        result = await self._get(path)
+        if not isinstance(result, dict):
+            _log.warning("get_llm_usage: expected dict, got %s", type(result).__name__)
+            return {"error": f"unexpected response type: {type(result).__name__}"}
+        return result
+
     async def get_steering_impact_preview(self, matter_id: str, action_type: str, payload: dict) -> dict:
         result = await self._post(
             f"/matter/{matter_id}/steering-impact-preview",
