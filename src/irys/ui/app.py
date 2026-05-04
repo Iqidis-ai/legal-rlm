@@ -79,11 +79,16 @@ def _s3_matters_base_prefix() -> str:
 
 def _get_s3_client():
     import boto3
+    from botocore.config import Config
+    # max_pool_connections defaults to 10, which throttles the 16-way parallel
+    # upload/download paths. Bump to 32 so threaded callers don't queue on the
+    # connection pool for matter transfers with hundreds of files.
     return boto3.client(
         "s3",
         region_name=os.getenv("S3_REGION", "us-east-1"),
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID") or None,
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY") or None,
+        config=Config(max_pool_connections=32),
     )
 
 
@@ -203,7 +208,11 @@ def _upload_files_to_s3_matter(
     except Exception as exc:
         logging.warning("S3 list before upload failed for '%s': %s", safe, exc)
 
-    saved = 0
+    # Phase 1 — serial key allocation: relpath_map is consumed in upload order
+    # (so JS-supplied relpaths line up with their files) and `used_keys` is a
+    # shared collision tracker. Both are racy under threads, so we resolve
+    # final keys here before fanning out the actual PUTs.
+    plan: list[tuple[pathlib.Path, str, str]] = []  # (source path, display name, full key)
     failed: list[tuple[str, str]] = []
     for f in uploaded_files:
         try:
@@ -248,26 +257,39 @@ def _upload_files_to_s3_matter(
                     break
                 n += 1
         used_keys.add(key)
+        plan.append((actual_path, display_name, key))
 
+    # Phase 2 — parallel upload. boto3's botocore client is documented as
+    # thread-safe for separate API calls, so 16 concurrent PUTs of small PDFs
+    # easily saturate residential bandwidth without exhausting the connection
+    # pool (default 10) plus the safety margin we configure at client init.
+    def _upload_one(item: tuple[pathlib.Path, str, str]) -> tuple[bool, str, str, str]:
+        src, name_for_log, target_key = item
         last_err: Optional[Exception] = None
-        ok = False
         for attempt in range(3):
             try:
-                s3.upload_file(str(actual_path), bucket, key)
-                ok = True
-                break
+                s3.upload_file(str(src), bucket, target_key)
+                return True, name_for_log, target_key, ""
             except Exception as exc:
                 last_err = exc
                 if attempt < 2:
                     time.sleep(0.5 * (2 ** attempt))
-        if ok:
-            saved += 1
-        else:
-            failed.append((display_name, str(last_err) if last_err else "unknown"))
-            logging.error(
-                "S3 upload failed after retries for '%s' -> %s: %s",
-                display_name, key, last_err,
-            )
+        return False, name_for_log, target_key, str(last_err) if last_err else "unknown"
+
+    saved = 0
+    if plan:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(16, len(plan)), thread_name_prefix="s3_upload"
+        ) as pool:
+            for ok, name_for_log, target_key, err in pool.map(_upload_one, plan):
+                if ok:
+                    saved += 1
+                else:
+                    failed.append((name_for_log, err))
+                    logging.error(
+                        "S3 upload failed after retries for '%s' -> %s: %s",
+                        name_for_log, target_key, err,
+                    )
 
     count = _s3_matter_doc_count(name)
     display = safe.replace("_", " ")
@@ -308,6 +330,7 @@ def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Pa
             shutil.rmtree(item, ignore_errors=True)
     s3 = _get_s3_client()
     paginator = s3.get_paginator("list_objects_v2")
+    download_jobs: list[tuple[str, pathlib.Path]] = []
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
@@ -316,7 +339,18 @@ def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Pa
                 continue
             dest = temp_dir / relpath
             dest.parent.mkdir(parents=True, exist_ok=True)
-            s3.download_file(bucket, key, str(dest))
+            download_jobs.append((key, dest))
+
+    def _download_one(job: tuple[str, pathlib.Path]) -> None:
+        key, dest = job
+        s3.download_file(bucket, key, str(dest))
+
+    if download_jobs:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(16, len(download_jobs)), thread_name_prefix="s3_download"
+        ) as pool:
+            # Materialize results so any per-file exception surfaces as before.
+            list(pool.map(_download_one, download_jobs))
     return temp_dir
 
 
