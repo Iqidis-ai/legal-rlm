@@ -5473,10 +5473,10 @@ _QUANT_ONTOLOGY_LABELS: dict[str, dict[str, str]] = {
 
 def _fmt_quant_ontology(data: dict, domain: str = "legal") -> str:
     labels = _QUANT_ONTOLOGY_LABELS.get(domain, _QUANT_ONTOLOGY_LABELS["legal"])
-    if not data or not data.get("metric_groups"):
-        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
     if err := _error_html(data):
         return err
+    if not data or not data.get("metric_groups"):
+        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
 
     groups = data["metric_groups"]
     approved_count = data.get("approved_count", 0)
@@ -7565,6 +7565,8 @@ def _fmt_manifest_inspector(data: dict, domain: str = "legal") -> str:
     L = _MANIFEST_INSPECTOR_LABELS.get(domain, _MANIFEST_INSPECTOR_LABELS["legal"])
     if not isinstance(data, dict):
         return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+    if err := _error_html(data):
+        return err
 
     manifests = data.get("manifests", [])
     if not manifests or not isinstance(manifests, list):

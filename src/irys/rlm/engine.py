@@ -2948,8 +2948,8 @@ class RLMEngine:
                 state.cache_manifest_hash = (
                     self._matter_model.build_semantic_cache_manifest()
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("build_semantic_cache_manifest failed: %s", exc)
             if state.cache_manifest_hash and state.working_set:
                 state.working_set.dependency_manifest_hash = (
                     state.cache_manifest_hash

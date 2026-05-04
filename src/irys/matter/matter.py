@@ -8976,36 +8976,27 @@ class MatterModel:
             },
         }
 
-    _FRESHNESS_NAMESPACES = (
-        "claims", "claim_occurrences", "objective_nodes", "criteria",
-        "entities", "artifacts", "clarifications", "annotations",
-        "assumptions", "support_edges", "guidance", "spans",
-        "proof_state", "verification_state", "object_taint", "policy",
-        "domain_profiles", "profile_mappings", "domain_facets",
-        "domain_detection", "domain_composition",
-    )
-
     def get_freshness_report(self) -> dict:
-        broker = self.memory_broker
+        rows = self.db.execute(
+            """SELECT namespace, revision, updated_at
+               FROM namespace_revision
+               WHERE matter_id=? AND target_kind='*' AND target_id='*'
+               ORDER BY namespace""",
+            (self.matter_id,),
+        ).fetchall()
+
         namespaces: list[dict] = []
-        stale_list: list[str] = []
-        for ns in self._FRESHNESS_NAMESPACES:
-            rev = broker.get_namespace_revision(ns)
-            row = self.db.execute(
-                """SELECT updated_at FROM namespace_revision
-                   WHERE matter_id=? AND namespace=? AND target_kind='*' AND target_id='*'""",
-                (self.matter_id, ns),
-            ).fetchone()
-            updated = row["updated_at"] if row else None
-            state = "fresh" if rev > 0 else "missing"
+        for row in rows:
+            ns = row["namespace"]
+            rev = int(row["revision"] or 0)
             namespaces.append({
                 "namespace": ns,
                 "revision": rev,
-                "state": state,
-                "updated_at": updated,
+                "state": "fresh" if rev > 0 else "missing",
+                "updated_at": row["updated_at"],
             })
-            if state == "missing":
-                stale_list.append(ns)
+
+        stale_list = [ns["namespace"] for ns in namespaces if ns["state"] != "fresh"]
 
         run_row = self.db.execute(
             "SELECT COUNT(*) AS cnt FROM run_session WHERE matter_id=? AND status='running'",
@@ -9024,7 +9015,7 @@ class MatterModel:
             "matter_id": self.matter_id,
             "namespace_count": len(namespaces),
             "stale_namespaces": stale_list,
-            "is_hot_answerable": len(stale_list) == 0 and active_runs == 0,
+            "is_hot_answerable": len(namespaces) > 0 and len(stale_list) == 0 and active_runs == 0,
             "active_run_count": active_runs,
             "last_update_at": last_update,
             "namespaces": namespaces,
