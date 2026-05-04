@@ -1269,7 +1269,9 @@ def _fmt_issues_panel(issues: list, domain: str = "legal") -> str:
         issue_id = issue.get("id") or ""
         title = _escape(issue.get("title") or issue_id or labels["issue_fallback"])
         short_issue_id = _escape(str(issue_id)[:12])
-        proof = _escape(issue.get("proof_status", "none"))
+        _KNOWN_PROOFS = {"none", "partial", "sufficient", "proved", "contested", "blocked", "unknown"}
+        _raw_proof = (issue.get("proof_status") or "none").lower()
+        proof = _raw_proof if _raw_proof in _KNOWN_PROOFS else "none"
         attack = _safe_int(issue.get("attacking_count", 0))
         contested = _safe_int(issue.get("contested_predicates", 0))
         blocked = _safe_int(issue.get("blocked_predicates", 0))
@@ -5102,7 +5104,9 @@ def _fmt_assertions(assertions: list, domain: str = "legal") -> str:
         assertion_id = _escape(a.get("id", "?"))
         prop = _escape(a.get("proposition_text") or "")
         state_raw = a.get("belief_state") or "—"
-        state_cls = state_raw.lower() if state_raw != "—" else "unknown"
+        _KNOWN_BELIEFS_A = {"accepted", "rejected", "undetermined", "disputed", "provisional", "confirmed", "hypothetical",
+                            "alleged", "argued", "admitted", "operative", "performed", "superseded", "withdrawn", "inferred", "resolved"}
+        state_cls = state_raw.lower() if state_raw.lower() in _KNOWN_BELIEFS_A else "unknown"
         state_label = _domain_belief_label(state_raw, domain) if state_raw != "—" else "—"
         state_cell = (
             f"<span class='belief-pill belief-{state_cls}'>{_escape(state_label)}</span>"
@@ -5262,6 +5266,8 @@ def _fmt_issue_assertions(
             prop = _escape((a.get("proposition_text") or "—")[:200])
             belief = a.get("belief_state") or "undetermined"
             belief_label = _escape(_domain_belief_label(belief, domain))
+            _KNOWN_BELIEFS = {"accepted", "rejected", "undetermined", "disputed", "provisional", "confirmed", "hypothetical"}
+            belief_cls = belief.lower() if belief.lower() in _KNOWN_BELIEFS else "undetermined"
             conf = a.get("confidence")
             conf_str = f"{float(conf):.2f}" if isinstance(conf, (int, float)) else "—"
             aid = _escape(str(a.get("id", "?"))[:12])
@@ -5270,7 +5276,7 @@ def _fmt_issue_assertions(
                 f"background:{bg};border-left:3px solid {color};font-size:12px;'>"
                 f"<div>{prop}</div>"
                 f"<div style='font-size:11px;color:#6b7280;margin-top:2px;'>"
-                f"<span class='belief-pill belief-{belief.lower()}'>{belief_label}</span>"
+                f"<span class='belief-pill belief-{belief_cls}'>{belief_label}</span>"
                 f" · Confidence: {conf_str}"
                 f" · <code style='font-size:10px;'>{aid}</code></div>"
                 f"</div>"

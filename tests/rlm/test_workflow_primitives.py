@@ -3408,3 +3408,39 @@ def test_fmt_investigation_history_non_dict_guard():
     result = _fmt_investigation_history_panel(runs, domain="legal")
     assert "1 run recorded" in result
     assert "Q1" in result
+
+
+def test_xss_belief_state_class_whitelist():
+    """Codex PR Gate finding: belief_state goes into class= attribute.
+    Malicious values must be normalized to a safe default."""
+    from irys.ui.app import _fmt_issue_assertions, _fmt_assertions
+    malicious = "accepted' onclick='alert(1)"
+    assertions_ia = [
+        {"id": "a1", "proposition_text": "Test", "relation_type": "supporting",
+         "belief_state": malicious, "confidence": 0.5},
+    ]
+    result = _fmt_issue_assertions(assertions_ia, "iss-1", domain="legal")
+    assert "belief-undetermined" in result
+    assert f"belief-{malicious.lower()}" not in result
+
+    assertions_a = [
+        {"id": "a2", "proposition_text": "Test2", "belief_state": malicious, "confidence": 0.5},
+    ]
+    result2 = _fmt_assertions(assertions_a, domain="legal")
+    assert "belief-unknown" in result2
+    assert f"belief-{malicious.lower()}" not in result2
+
+
+def test_xss_proof_status_class_whitelist():
+    """proof_status goes into class= attribute in the issues panel tree.
+    Malicious values must be normalized to a safe default."""
+    from irys.ui.app import _fmt_issues_panel
+    malicious = "partial' onclick='alert(1)"
+    issues = [
+        {"id": "iss-1", "proof_status": malicious, "title": "Test",
+         "coverage_fraction": 0.5, "depth": 0,
+         "supporting_count": 1, "attacking_count": 0},
+    ]
+    result = _fmt_issues_panel(issues, domain="legal")
+    assert f"proof-{malicious.lower()}" not in result
+    assert "proof-none" in result
