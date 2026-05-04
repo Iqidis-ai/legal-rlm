@@ -13869,6 +13869,62 @@ class AppState:
             logger.warning("get_document_card_choices: %s", exc)
             return []
 
+    def correct_document_card(
+        self, matter_id: str, document_ref: str,
+        doc_type: str, source_role: str, privilege_flag: bool,
+        operative_status: str, flags_text: str,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "No matter loaded.", ""
+        ref = (document_ref or "").strip().replace("\\", "/")
+        if not ref:
+            return "Select a document first.", ""
+        try:
+            inv_row = _run_async(
+                self.backend().get_document_card(matter_id, relative_path=ref)
+            )
+            doc_id = ref
+            if isinstance(inv_row, dict) and isinstance(inv_row.get("card"), dict):
+                doc_id = inv_row["card"].get("doc_id", ref)
+
+            fields: dict = {}
+            if doc_type and doc_type.strip():
+                fields["doc_type"] = doc_type.strip()
+            if source_role and source_role.strip():
+                fields["source_role"] = source_role.strip()
+            fields["privilege_flag"] = bool(privilege_flag)
+            if operative_status and operative_status.strip():
+                fields["operative_status"] = operative_status.strip()
+            if flags_text and flags_text.strip():
+                fields["unresolved_flags"] = [
+                    f.strip() for f in flags_text.strip().split(",") if f.strip()
+                ]
+
+            result = _run_async(
+                self.backend().patch_document_card(matter_id, doc_id, fields)
+            )
+            if not isinstance(result, dict):
+                logger.warning("correct_document_card: expected dict, got %s", type(result).__name__)
+                return "Unexpected response.", ""
+
+            if result.get("error"):
+                return f"Error: {_escape(str(result['error']))}", ""
+
+            changed = result.get("changed_fields", [])
+            staled = result.get("staled_count", 0)
+            if not changed:
+                status = "No changes detected."
+            else:
+                status = (
+                    f"Updated {', '.join(changed)}."
+                    f" {staled} downstream target(s) marked stale."
+                )
+            card_html = self.load_document_card(matter_id, document_ref)
+            return status, card_html
+        except Exception as exc:
+            logger.warning("correct_document_card failed: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
+
     def load_taint_summary(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -15792,6 +15848,43 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     "<div class='viz-empty'>Select a document to view its card.</div>"
                 )
 
+                with gr.Accordion("Correct Card Classification — fix type, role, or status", open=False):
+                    gr.Markdown(
+                        "If the AI-profiled classification is wrong, correct it here. "
+                        "Changes to type, role, or status will mark downstream "
+                        "assertions and evidence as stale for re-evaluation."
+                    )
+                    with gr.Row():
+                        card_edit_doc_type = gr.Textbox(
+                            label="Document type",
+                            placeholder="e.g. contract, memo, filing, report",
+                            scale=1,
+                        )
+                        card_edit_source_role = gr.Textbox(
+                            label="Source role",
+                            placeholder="e.g. operative, advocacy, informal",
+                            scale=1,
+                        )
+                    with gr.Row():
+                        card_edit_operative = gr.Textbox(
+                            label="Operative status",
+                            placeholder="e.g. operative, draft, superseded",
+                            scale=1,
+                        )
+                        card_edit_privilege = gr.Checkbox(
+                            label="Privileged / restricted",
+                            value=False,
+                            scale=1,
+                        )
+                    card_edit_flags = gr.Textbox(
+                        label="Unresolved flags (comma-separated)",
+                        placeholder="e.g. missing_exhibit, date_conflict",
+                    )
+                    card_edit_btn = gr.Button(
+                        "Apply Corrections", variant="primary", size="sm",
+                    )
+                    card_edit_result = gr.Markdown("")
+
             with gr.Accordion("Document Review Console — deep-dive into a single source", open=False):
                 gr.Markdown(
                     "Select a document to see its full profile: type, privilege status, "
@@ -17430,6 +17523,18 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: gr.update(choices=state.get_document_card_choices(mid)),
             inputs=[matter_id_box],
             outputs=[doc_card_selector],
+        )
+        card_edit_btn.click(
+            fn=lambda mid, doc, dt, sr, pf, os_, fl: state.correct_document_card(
+                mid, doc, dt, sr, pf, os_, fl,
+            ),
+            inputs=[
+                matter_id_box, doc_card_selector,
+                card_edit_doc_type, card_edit_source_role,
+                card_edit_privilege, card_edit_operative,
+                card_edit_flags,
+            ],
+            outputs=[card_edit_result, document_card_html],
         )
         refresh_belief_btn.click(
             fn=lambda mid: state.load_belief_revisions(mid, domain=state._detect_domain(mid)),

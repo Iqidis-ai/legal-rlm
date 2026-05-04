@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 67
+SCHEMA_VERSION = 68
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -2443,7 +2443,8 @@ def _migration_v50(conn) -> None:
                 CHECK (review_scope IN (
                     'extraction_correct','record_truth','inference','legal_conclusion',
                     'truth_override','internal_privileged','clean_output',
-                    'privilege_classification','dispute_resolution','artifact_policy'
+                    'privilege_classification','dispute_resolution','artifact_policy',
+                    'document_card_classification'
                 )),
             review_scope_json TEXT,
             review_note       TEXT,
@@ -3248,6 +3249,77 @@ def _migration_v67(conn) -> None:
     conn.commit()
 
 
+def _migration_v68(conn) -> None:
+    """Add 'document_card_classification' to verification_state.review_scope CHECK."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='verification_state'"
+    ).fetchone()
+    if row and "document_card_classification" in (row[0] or ""):
+        return
+    conn.execute("DROP INDEX IF EXISTS ix_verification_status")
+    conn.execute("DROP INDEX IF EXISTS ix_verification_target")
+    conn.execute("ALTER TABLE verification_state RENAME TO verification_state_old")
+    conn.execute(
+        """CREATE TABLE verification_state (
+            id                TEXT PRIMARY KEY,
+            matter_id         TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            target_kind       TEXT NOT NULL CHECK (target_kind IN (
+                'assertion','assertion_occurrence','issue_predicate','evidence_edge',
+                'quant_fact','authority','document_card','privilege_classification',
+                'gap','dispute','dispute_position','timeline_event','deadline',
+                'authority_treatment','actor_relationship','defined_term',
+                'causation_edge','theory','artifact','artifact_manifest_item'
+            )),
+            target_id         TEXT NOT NULL,
+            status            TEXT NOT NULL DEFAULT 'candidate'
+                CHECK (status IN ('candidate','verified','rejected','stale')),
+            ai_confidence     REAL CHECK (ai_confidence IS NULL OR (ai_confidence >= 0.0 AND ai_confidence <= 1.0)),
+            reviewed_by_kind  TEXT CHECK (reviewed_by_kind IS NULL OR reviewed_by_kind IN ('user','attorney','system','import')),
+            reviewed_by_id    TEXT,
+            reviewed_at       TEXT,
+            review_scope      TEXT NOT NULL DEFAULT 'extraction_correct'
+                CHECK (review_scope IN (
+                    'extraction_correct','record_truth','inference','legal_conclusion',
+                    'truth_override','internal_privileged','clean_output',
+                    'privilege_classification','dispute_resolution','artifact_policy',
+                    'document_card_classification'
+                )),
+            review_scope_json TEXT,
+            review_note       TEXT,
+            rejection_reason  TEXT,
+            stale_reason      TEXT,
+            version           INTEGER NOT NULL DEFAULT 1,
+            created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(matter_id, target_kind, target_id)
+        ) STRICT"""
+    )
+    conn.execute(
+        """INSERT INTO verification_state (
+               id, matter_id, target_kind, target_id, status, ai_confidence,
+               reviewed_by_kind, reviewed_by_id, reviewed_at, review_scope,
+               review_scope_json, review_note, rejection_reason, stale_reason,
+               version, created_at, updated_at
+           )
+           SELECT
+               id, matter_id, target_kind, target_id, status, ai_confidence,
+               reviewed_by_kind, reviewed_by_id, reviewed_at, review_scope,
+               review_scope_json, review_note, rejection_reason, stale_reason,
+               version, created_at, updated_at
+           FROM verification_state_old"""
+    )
+    conn.execute("DROP TABLE verification_state_old")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_verification_status"
+        " ON verification_state(matter_id, status, target_kind, updated_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_verification_target"
+        " ON verification_state(target_kind, target_id)"
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -3319,6 +3391,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (65, _migration_v65),
     (66, _migration_v66),
     (67, _migration_v67),
+    (68, _migration_v68),
 ]
 
 

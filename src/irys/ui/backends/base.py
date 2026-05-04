@@ -530,6 +530,16 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def patch_document_card(
+        self,
+        matter_id: str,
+        doc_id: str,
+        fields: dict,
+    ) -> dict:
+        """Correct classification fields on a document card (SO-3, SO-5)."""
+        ...
+
+    @abstractmethod
     async def get_taint_summary(
         self, matter_id: str, limit: int = 50
     ) -> dict:

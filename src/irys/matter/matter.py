@@ -5913,6 +5913,90 @@ class MatterModel:
             return self.document_cards.get_by_path(relative_path)
         return None
 
+    def reclassify_document_card_fields(
+        self,
+        doc_id: str,
+        *,
+        doc_type: Optional[str] = None,
+        source_role: Optional[str] = None,
+        privilege_flag: Optional[bool] = None,
+        operative_status: Optional[str] = None,
+        unresolved_flags: Optional[list] = None,
+        reviewed_by_kind: str = "user",
+        reviewed_by_id: Optional[str] = None,
+    ) -> dict:
+        """Correct classification fields on a document card (SO-3, SO-5).
+
+        Partial update: only non-None fields are written. Returns
+        {changed_fields, staled_count, card_id}. Downstream staling
+        runs for doc_type/source_role/operative_status/privilege_flag
+        changes but not for flags-only edits.
+        """
+        inv = self.db.execute(
+            """SELECT id FROM document_inventory
+               WHERE matter_id=? AND (id=? OR relative_path=?)""",
+            (self.matter_id, doc_id, doc_id),
+        ).fetchone()
+        if inv is None:
+            return {"error": "Document not found", "doc_id": doc_id}
+        inv_id = inv["id"]
+        card = self.document_cards.get_by_doc_id(inv_id)
+        old = dict(card) if card else {}
+
+        changed: list[str] = []
+        upsert_kwargs: dict = {}
+
+        if doc_type is not None and doc_type != old.get("doc_type"):
+            upsert_kwargs["doc_type"] = doc_type
+            changed.append("doc_type")
+        if source_role is not None and source_role != old.get("source_role"):
+            upsert_kwargs["source_role"] = source_role
+            changed.append("source_role")
+        if operative_status is not None and operative_status != old.get("operative_status"):
+            upsert_kwargs["operative_status"] = operative_status
+            changed.append("operative_status")
+        if privilege_flag is not None:
+            old_pf = old.get("privilege_flag")
+            new_pf_int = 1 if privilege_flag else 0
+            if old_pf != new_pf_int:
+                upsert_kwargs["privilege_flag"] = privilege_flag
+                changed.append("privilege_flag")
+        if unresolved_flags is not None:
+            upsert_kwargs["unresolved_flags"] = unresolved_flags
+            changed.append("unresolved_flags")
+
+        if not changed:
+            return {"changed_fields": [], "staled_count": 0, "card_id": old.get("id", "")}
+
+        card_id = self.document_cards.upsert(doc_id=inv_id, **upsert_kwargs)
+
+        try:
+            self.verify_target(
+                "document_card", card_id,
+                reviewed_by_kind=reviewed_by_kind,
+                reviewed_by_id=reviewed_by_id,
+                review_scope="document_card_classification",
+            )
+        except (ValueError, Exception) as _exc:
+            _log.warning(
+                "reclassify_document_card_fields: verify blocked: %s", _exc,
+            )
+            return {"error": f"Card updated but verification failed: {_exc}",
+                    "changed_fields": changed, "card_id": card_id}
+
+        staled = 0
+        staling_fields = {"doc_type", "source_role", "operative_status", "privilege_flag"}
+        if changed and staling_fields.intersection(changed):
+            scope = self._collect_document_invalidation_scope(inv_id)
+            scope["document_card_ids"] = set()
+            reason_parts = [f"{f}:{old.get(f)}->{upsert_kwargs.get(f)}" for f in changed if f in staling_fields]
+            staled = self._apply_invalidation(
+                scope,
+                reason=f"document_card_reclassified:{','.join(reason_parts)}",
+            )
+
+        return {"changed_fields": changed, "staled_count": staled, "card_id": card_id}
+
     def list_search_seed_docs(
         self,
         issue_id: Optional[str] = None,

@@ -9380,3 +9380,91 @@ def test_document_card_api_endpoint_exists():
     from irys.service.api import app as fastapi_app
     routes = [r.path for r in fastapi_app.routes]
     assert "/matter/{matter_id}/documents/card" in routes
+
+
+# ── Editable Document Card ───────────────────────────────────────
+
+
+def test_patch_document_card_api_endpoint_exists():
+    from irys.service.api import app as fastapi_app
+    routes = [r.path for r in fastapi_app.routes]
+    assert "/matter/{matter_id}/documents/{doc_id}/card" in routes
+
+
+def test_patch_document_card_backend_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("patch_document_card",):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+def test_correct_document_card_appstate_exists():
+    from irys.ui.app import AppState
+    assert hasattr(AppState, "correct_document_card")
+
+
+def test_reclassify_document_card_fields_model_method():
+    from irys.matter.matter import MatterModel
+    assert hasattr(MatterModel, "reclassify_document_card_fields")
+
+
+def test_reclassify_card_no_change():
+    """When all fields match existing values, no staling should occur."""
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory("test_no_change")
+    result = model.reclassify_document_card_fields("nonexistent_doc_id")
+    assert result.get("error") == "Document not found"
+
+
+def test_reclassify_card_partial_update():
+    """Verify partial update only writes specified fields."""
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory("test_partial")
+    doc_id, _ = model.inventory.upsert("doc.pdf", sha256="abc123")
+
+    model.document_cards.upsert(
+        doc_id=doc_id,
+        doc_type="memo",
+        source_role="informal",
+        operative_status="draft",
+    )
+    result = model.reclassify_document_card_fields(
+        doc_id, doc_type="contract",
+    )
+    assert "doc_type" in result.get("changed_fields", [])
+    assert "source_role" not in result.get("changed_fields", [])
+    card = model.document_cards.get_by_doc_id(doc_id)
+    assert card["doc_type"] == "contract"
+    assert card["source_role"] == "informal"
+
+
+def test_reclassify_card_stales_downstream():
+    """Verify that doc_type/source_role changes trigger staling."""
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory("test_stale")
+    doc_id, _ = model.inventory.upsert("a.pdf", sha256="abc")
+
+    model.document_cards.upsert(doc_id=doc_id, doc_type="draft", source_role="unknown")
+    result = model.reclassify_document_card_fields(
+        doc_id, doc_type="contract", source_role="operative",
+    )
+    assert "doc_type" in result["changed_fields"]
+    assert "source_role" in result["changed_fields"]
+    assert isinstance(result["staled_count"], int)
+
+
+def test_reclassify_card_flags_only_no_stale():
+    """Flags-only edit should not stale downstream."""
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory("test_flags")
+    doc_id, _ = model.inventory.upsert("b.pdf", sha256="def")
+
+    model.document_cards.upsert(doc_id=doc_id, doc_type="report")
+    result = model.reclassify_document_card_fields(
+        doc_id, unresolved_flags=["needs_review"],
+    )
+    assert result["changed_fields"] == ["unresolved_flags"]
+    assert result["staled_count"] == 0

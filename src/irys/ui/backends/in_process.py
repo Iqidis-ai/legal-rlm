@@ -1029,6 +1029,22 @@ class InProcessBackend(UIBackend):
         card = model.get_document_card(relative_path=relative_path, doc_id=doc_id)
         return {"card": card}
 
+    async def patch_document_card(
+        self,
+        matter_id: str,
+        doc_id: str,
+        fields: dict,
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.reclassify_document_card_fields(
+            doc_id,
+            doc_type=fields.get("doc_type"),
+            source_role=fields.get("source_role"),
+            privilege_flag=fields.get("privilege_flag"),
+            operative_status=fields.get("operative_status"),
+            unresolved_flags=fields.get("unresolved_flags"),
+        )
+
     async def get_taint_summary(
         self, matter_id: str, limit: int = 50
     ) -> dict:

@@ -4177,6 +4177,31 @@ async def get_document_card(
     }
 
 
+@app.patch(
+    "/matter/{matter_id}/documents/{doc_id}/card",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def patch_document_card(matter_id: str, doc_id: str, body: dict):
+    """Correct classification fields on a document card (SO-3, SO-5)."""
+    _allowed = {"doc_type", "source_role", "privilege_flag", "operative_status", "unresolved_flags"}
+    unknown = set(body.keys()) - _allowed - {"reviewed_by_kind", "reviewed_by_id"}
+    if unknown:
+        raise HTTPException(400, f"Unknown fields: {', '.join(sorted(unknown))}")
+    model = await _get_matter_model_or_404(matter_id)
+    result = model.reclassify_document_card_fields(
+        doc_id,
+        doc_type=body.get("doc_type"),
+        source_role=body.get("source_role"),
+        privilege_flag=body.get("privilege_flag"),
+        operative_status=body.get("operative_status"),
+        unresolved_flags=body.get("unresolved_flags"),
+        reviewed_by_kind=body.get("reviewed_by_kind", "user"),
+        reviewed_by_id=body.get("reviewed_by_id"),
+    )
+    return result
+
+
 @app.get(
     "/matter/{matter_id}/llm-calls",
     tags=["Matter Model"],

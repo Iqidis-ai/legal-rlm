@@ -38,6 +38,11 @@ class HttpBackend(UIBackend):
         r.raise_for_status()
         return r.json()
 
+    async def _patch(self, path: str, body: dict = None) -> Any:
+        r = await self._client.patch(path, json=body or {})
+        r.raise_for_status()
+        return r.json()
+
     # ------------------------------------------------------------------ #
     # Investigation control                                                #
     # ------------------------------------------------------------------ #
@@ -683,6 +688,22 @@ class HttpBackend(UIBackend):
         )
         if not isinstance(result, dict):
             _log.warning("get_document_card: expected dict, got %s", type(result).__name__)
+            return {"error": f"unexpected response type: {type(result).__name__}"}
+        return result
+
+    async def patch_document_card(
+        self,
+        matter_id: str,
+        doc_id: str,
+        fields: dict,
+    ) -> dict:
+        from urllib.parse import quote as _url_quote_local
+        did = _url_quote_local(doc_id, safe="")
+        result = await self._patch(
+            f"/matter/{matter_id}/documents/{did}/card", fields
+        )
+        if not isinstance(result, dict):
+            _log.warning("patch_document_card: expected dict, got %s", type(result).__name__)
             return {"error": f"unexpected response type: {type(result).__name__}"}
         return result
 
