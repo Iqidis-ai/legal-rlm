@@ -1636,16 +1636,60 @@ class QueryFamilyResult:
     escalation_reason: Optional[str] = None
 
 
-QUERY_INTENTS = [
-    ("list_quants", "enumerate quantitative facts — amounts, payments, damages, dollar figures"),
-    ("list_actors", "enumerate actors — parties, counsel, witnesses, people, companies"),
-    ("list_documents", "enumerate documents in the matter — files, contracts, pleadings, their review status"),
-    ("list_gaps", "enumerate open gaps — missing docs, unresolved questions, unknowns"),
-    ("list_issues", "enumerate open legal issues — claims, defenses, damages components"),
-    ("list_contradictions", "enumerate contradictions — conflicting assertions, disputed facts"),
-    ("list_recent_facts", "enumerate recent facts/assertions in the matter model"),
-    ("list_authorities", "enumerate legal authorities cited in the matter — cases, statutes"),
-]
+_QUERY_INTENTS_BY_DOMAIN: dict[str, list[tuple[str, str]]] = {
+    "legal": [
+        ("list_quants", "enumerate quantitative facts -- amounts, payments, damages, dollar figures"),
+        ("list_actors", "enumerate actors -- parties, counsel, witnesses, people, companies"),
+        ("list_documents", "enumerate documents in the matter -- files, contracts, pleadings, their review status"),
+        ("list_gaps", "enumerate open gaps -- missing docs, unresolved questions, unknowns"),
+        ("list_issues", "enumerate open legal issues -- claims, defenses, damages components"),
+        ("list_contradictions", "enumerate contradictions -- conflicting assertions, disputed facts"),
+        ("list_recent_facts", "enumerate recent facts/assertions in the matter model"),
+        ("list_authorities", "enumerate legal authorities cited in the matter -- cases, statutes"),
+    ],
+    "finance": [
+        ("list_quants", "enumerate quantitative facts -- revenue, expenses, ratios, margins, EPS"),
+        ("list_actors", "enumerate actors -- companies, executives, analysts, auditors, regulators"),
+        ("list_documents", "enumerate documents in the matter -- filings, reports, transcripts, memos"),
+        ("list_gaps", "enumerate open gaps -- missing filings, unresolved disclosures, unknowns"),
+        ("list_issues", "enumerate open financial issues -- risk factors, compliance questions, thesis elements"),
+        ("list_contradictions", "enumerate contradictions -- conflicting disclosures, estimate divergences"),
+        ("list_recent_facts", "enumerate recent facts/assertions in the matter model"),
+        ("list_authorities", "enumerate authorities cited -- standards, regulations, auditor opinions"),
+    ],
+    "coding": [
+        ("list_quants", "enumerate quantitative facts -- latency, error rates, coverage, version numbers"),
+        ("list_actors", "enumerate actors -- developers, services, components, teams"),
+        ("list_documents", "enumerate documents in the matter -- source files, PRs, design docs, issues"),
+        ("list_gaps", "enumerate open gaps -- missing tests, undocumented APIs, unknowns"),
+        ("list_issues", "enumerate open issues -- bugs, tech debt, feature gaps, design questions"),
+        ("list_contradictions", "enumerate contradictions -- conflicting specs, behavior mismatches"),
+        ("list_recent_facts", "enumerate recent facts/assertions in the matter model"),
+        ("list_authorities", "enumerate authorities cited -- specifications, standards, documentation"),
+    ],
+    "academic_research": [
+        ("list_quants", "enumerate quantitative facts -- effect sizes, p-values, sample sizes, CIs"),
+        ("list_actors", "enumerate actors -- researchers, institutions, funding bodies, cohorts"),
+        ("list_documents", "enumerate documents in the matter -- papers, datasets, preprints, protocols"),
+        ("list_gaps", "enumerate open gaps -- missing replications, unexplained variance, unknowns"),
+        ("list_issues", "enumerate open research questions -- methodology concerns, conflicting findings"),
+        ("list_contradictions", "enumerate contradictions -- conflicting results, failed replications"),
+        ("list_recent_facts", "enumerate recent facts/assertions in the matter model"),
+        ("list_authorities", "enumerate authorities cited -- peer-reviewed journals, meta-analyses, reviews"),
+    ],
+    "biomedical": [
+        ("list_quants", "enumerate quantitative facts -- hazard ratios, odds ratios, AE rates, survival rates"),
+        ("list_actors", "enumerate actors -- sponsors, investigators, patient cohorts, regulators"),
+        ("list_documents", "enumerate documents in the matter -- trial reports, FDA filings, protocols, lab results"),
+        ("list_gaps", "enumerate open gaps -- missing endpoints, unreported AEs, unknowns"),
+        ("list_issues", "enumerate open issues -- efficacy questions, safety signals, regulatory concerns"),
+        ("list_contradictions", "enumerate contradictions -- conflicting trial results, label vs evidence"),
+        ("list_recent_facts", "enumerate recent facts/assertions in the matter model"),
+        ("list_authorities", "enumerate authorities cited -- guidelines, systematic reviews, Phase III results"),
+    ],
+}
+
+QUERY_INTENTS = _QUERY_INTENTS_BY_DOMAIN["legal"]
 
 
 SUB_INTENT_PROMPT = """Classify which enumeration the user wants from a matter's stored data. Pick EXACTLY one intent from the list, or return "none" if the query doesn't fit any enumeration.
@@ -1694,6 +1738,20 @@ class QueryFamilyHandler:
     ) -> None:
         self.matter_model = matter_model
         self.client = client
+        self._cached_domain: Optional[str] = None
+
+    def _resolve_domain(self) -> str:
+        if self._cached_domain:
+            return self._cached_domain
+        if self.matter_model is not None:
+            try:
+                _, _, primary = self.matter_model._read_matter_domain_composition()
+                if primary:
+                    self._cached_domain = primary
+                    return primary
+            except Exception:
+                pass
+        return "legal"
 
     async def run(
         self,
@@ -1763,8 +1821,12 @@ class QueryFamilyHandler:
                 return matches.pop()
             return None
 
+        _domain = self._resolve_domain()
+        _intents = _QUERY_INTENTS_BY_DOMAIN.get(
+            _domain, _QUERY_INTENTS_BY_DOMAIN["legal"],
+        )
         intent_list = "\n".join(
-            f"- {name}: {desc}" for name, desc in QUERY_INTENTS
+            f"- {name}: {desc}" for name, desc in _intents
         )
         prompt = SUB_INTENT_PROMPT.format(
             intent_list=intent_list, query=query,
@@ -1786,7 +1848,7 @@ class QueryFamilyHandler:
         intent = str(parsed.get("intent") or "").strip()
         if intent == "none" or not intent:
             return None
-        valid = {name for name, _ in QUERY_INTENTS}
+        valid = {name for name, _ in _intents}
         if intent not in valid:
             return None
         return intent

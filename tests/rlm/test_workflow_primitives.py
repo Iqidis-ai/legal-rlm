@@ -10682,3 +10682,18 @@ def test_deliverable_sub_intent_prompt_builds_for_all_domains():
         assert "test" in formatted
         assert "{intent_list}" not in formatted
         assert "{query}" not in formatted
+
+
+def test_query_intents_per_domain():
+    """Every domain has 8 query intents matching standard names."""
+    from irys.rlm.governance import _QUERY_INTENTS_BY_DOMAIN
+    expected_names = {
+        "list_quants", "list_actors", "list_documents", "list_gaps",
+        "list_issues", "list_contradictions", "list_recent_facts",
+        "list_authorities",
+    }
+    for domain in _ALL_DOMAINS:
+        intents = _QUERY_INTENTS_BY_DOMAIN[domain]
+        assert len(intents) == 8, f"{domain} has {len(intents)} intents, expected 8"
+        names = {n for n, _ in intents}
+        assert names == expected_names, f"{domain} intent names mismatch"
