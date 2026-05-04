@@ -3325,6 +3325,98 @@ class MatterModel:
 
     # ------------------------------------------------------------------
     # Document intelligence (cards + spans)
+    def get_issue_closure_workbench(self, issue_id: str) -> dict:
+        """Consolidated issue closure surface: proof state + coverage +
+        gaps + verification status + source agreement (SO-2, SO-3, SO-4, SO-7).
+
+        Returns everything a professional needs to decide if an issue is
+        ready to rely on and what must happen next."""
+        issue_row = self.issues.get(issue_id)
+        if not issue_row:
+            return {"error": "Issue not found", "issue_id": issue_id}
+
+        issue = dict(issue_row)
+
+        coverage_rows = self.get_issue_coverage_report()
+        coverage = next(
+            (r for r in coverage_rows if isinstance(r, dict) and r.get("id") == issue_id),
+            {},
+        )
+
+        proof = {}
+        try:
+            proof_row = self.proof_state.get(issue_id)
+            if proof_row:
+                proof = dict(proof_row) if hasattr(proof_row, "keys") else {}
+        except Exception:
+            pass
+
+        issue_gaps = []
+        try:
+            all_gaps = self.gaps.open_gaps(limit=200)
+            for g in all_gaps:
+                if not isinstance(g, dict):
+                    continue
+                deps = g.get("dependencies", [])
+                for d in deps:
+                    if isinstance(d, dict) and d.get("affected_id") == issue_id:
+                        issue_gaps.append(g)
+                        break
+        except Exception:
+            pass
+
+        pending_count = 0
+        verified_count = 0
+        try:
+            assertions = self.issues.get_assertions_for_issue(issue_id)
+            for a in assertions:
+                if not isinstance(a, dict):
+                    continue
+                vs = (a.get("verification_status") or "candidate").lower()
+                if vs == "verified":
+                    verified_count += 1
+                elif vs == "candidate":
+                    pending_count += 1
+        except Exception:
+            pass
+
+        source_agreement = []
+        try:
+            source_agreement = self.get_source_agreement_for_issue(issue_id)
+        except Exception:
+            pass
+
+        blockers: list[str] = []
+        coverage_frac = float(coverage.get("coverage_fraction", 0)) if coverage else 0
+        if coverage_frac < 0.5:
+            blockers.append("Low evidence coverage")
+        if issue_gaps:
+            blockers.append(f"{len(issue_gaps)} open gap(s)")
+        if pending_count > 0 and verified_count == 0:
+            blockers.append("No verified supporting facts")
+        if coverage.get("has_proof_gap"):
+            blockers.append("Missing element of proof")
+
+        readiness = "ready" if not blockers else "blocked"
+
+        return {
+            "issue_id": issue_id,
+            "title": issue.get("title", ""),
+            "status": issue.get("status", ""),
+            "materiality": issue.get("materiality", 0),
+            "salience": issue.get("salience", 0),
+            "coverage_fraction": coverage_frac,
+            "supporting_count": coverage.get("supporting_count", 0),
+            "predicate_count": coverage.get("predicate_count", 0),
+            "verified_count": verified_count,
+            "pending_count": pending_count,
+            "proof_state": proof,
+            "gaps": issue_gaps,
+            "source_agreement": source_agreement,
+            "blockers": blockers,
+            "readiness": readiness,
+        }
+
     # ------------------------------------------------------------------
 
     def _card_provenance(

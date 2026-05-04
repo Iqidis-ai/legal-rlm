@@ -420,6 +420,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_assertion_graph_for_issue(issue_id)
 
+    async def get_issue_closure_workbench(self, matter_id: str, issue_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_issue_closure_workbench(issue_id)
+
     async def get_issue_authorities(self, matter_id: str, issue_id: str) -> list[dict]:
         model = self._get_matter_model(matter_id)
         return model.authority.list_for_issue(issue_id)

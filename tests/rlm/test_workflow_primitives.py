@@ -4084,6 +4084,93 @@ def test_fmt_assertion_graph_non_dict_guard():
     assert "bad" not in result.replace("bad-edge", "")
 
 
+def test_fmt_issue_closure_workbench_ready():
+    from irys.ui.app import _fmt_issue_closure_workbench
+    data = {
+        "issue_id": "i1",
+        "title": "Breach of contract",
+        "readiness": "ready",
+        "coverage_fraction": 0.85,
+        "supporting_count": 5,
+        "predicate_count": 4,
+        "verified_count": 3,
+        "pending_count": 2,
+        "blockers": [],
+        "gaps": [],
+        "source_agreement": [
+            {"doc_label": "contract.pdf", "source_role": "primary", "supports": 3, "attacks": 0},
+        ],
+    }
+    result = _fmt_issue_closure_workbench(data)
+    assert "Breach of contract" in result
+    assert "Ready to rely on" in result
+    assert "85%" in result
+    assert "contract.pdf" in result
+
+
+def test_fmt_issue_closure_workbench_blocked():
+    from irys.ui.app import _fmt_issue_closure_workbench
+    data = {
+        "issue_id": "i2",
+        "title": "Damages calculation",
+        "readiness": "blocked",
+        "coverage_fraction": 0.3,
+        "supporting_count": 1,
+        "predicate_count": 5,
+        "verified_count": 0,
+        "pending_count": 1,
+        "blockers": ["Low evidence coverage", "No verified supporting facts"],
+        "gaps": [
+            {"description": "Need expert report", "gap_type": "missing_document", "materiality_score": 0.8},
+        ],
+        "source_agreement": [],
+    }
+    result = _fmt_issue_closure_workbench(data)
+    assert "Not ready" in result
+    assert "Low evidence coverage" in result
+    assert "No verified" in result
+    assert "Need expert report" in result
+
+
+def test_fmt_issue_closure_workbench_domain_labels():
+    from irys.ui.app import _fmt_issue_closure_workbench
+    data = {
+        "issue_id": "i1", "title": "Test", "readiness": "ready",
+        "coverage_fraction": 0.9, "supporting_count": 3, "predicate_count": 2,
+        "verified_count": 2, "pending_count": 0, "blockers": [], "gaps": [],
+        "source_agreement": [],
+    }
+    result_coding = _fmt_issue_closure_workbench(data, domain="coding")
+    assert "Requirement Closure" in result_coding
+    result_bio = _fmt_issue_closure_workbench(data, domain="biomedical")
+    assert "Finding Closure" in result_bio
+
+
+def test_fmt_issue_closure_workbench_xss():
+    from irys.ui.app import _fmt_issue_closure_workbench
+    data = {
+        "issue_id": "i1", "title": "<script>alert(1)</script>",
+        "readiness": "blocked", "coverage_fraction": 0.5,
+        "supporting_count": 1, "predicate_count": 2,
+        "verified_count": 0, "pending_count": 1,
+        "blockers": ["<img onerror=x>"],
+        "gaps": [{"description": "<b>bold</b>", "gap_type": "missing", "materiality_score": 0.5}],
+        "source_agreement": [{"doc_label": "<iframe>", "source_role": "x", "supports": 1, "attacks": 0}],
+    }
+    result = _fmt_issue_closure_workbench(data)
+    assert "<script>" not in result
+    assert "<img onerror" not in result
+    assert "<iframe>" not in result
+
+
+def test_fmt_issue_closure_workbench_empty():
+    from irys.ui.app import _fmt_issue_closure_workbench
+    result = _fmt_issue_closure_workbench({})
+    assert "No closure data" in result
+    result_error = _fmt_issue_closure_workbench({"error": "Issue not found"})
+    assert "Issue not found" in result_error
+
+
 def test_fmt_assumptions_linked_targets():
     from irys.ui.app import _fmt_assumptions
 

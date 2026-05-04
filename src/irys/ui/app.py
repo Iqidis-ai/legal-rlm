@@ -5287,6 +5287,193 @@ _ISSUE_ASSERTIONS_LABELS: dict[str, dict[str, str]] = {
 }
 
 
+_ISSUE_CLOSURE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Issue Closure Workbench",
+        "ready": "Ready to rely on",
+        "blocked": "Not ready — action needed",
+        "coverage": "Evidence Coverage",
+        "verified": "Verified facts",
+        "pending": "Pending review",
+        "gaps": "Open Gaps",
+        "blockers": "Blockers",
+        "sources": "Source Agreement",
+    },
+    "finance": {
+        "title": "Position Closure Workbench",
+        "ready": "Ready to rely on",
+        "blocked": "Not ready — action needed",
+        "coverage": "Evidence Coverage",
+        "verified": "Verified data points",
+        "pending": "Pending review",
+        "gaps": "Open Gaps",
+        "blockers": "Blockers",
+        "sources": "Source Agreement",
+    },
+    "coding": {
+        "title": "Requirement Closure Workbench",
+        "ready": "Ready to close",
+        "blocked": "Not ready — action needed",
+        "coverage": "Evidence Coverage",
+        "verified": "Verified findings",
+        "pending": "Pending review",
+        "gaps": "Open Gaps",
+        "blockers": "Blockers",
+        "sources": "Source Agreement",
+    },
+    "academic_research": {
+        "title": "Claim Closure Workbench",
+        "ready": "Sufficiently supported",
+        "blocked": "Insufficiently supported",
+        "coverage": "Evidence Coverage",
+        "verified": "Verified citations",
+        "pending": "Pending review",
+        "gaps": "Open Gaps",
+        "blockers": "Blockers",
+        "sources": "Source Agreement",
+    },
+    "biomedical": {
+        "title": "Finding Closure Workbench",
+        "ready": "Sufficiently evidenced",
+        "blocked": "Insufficiently evidenced",
+        "coverage": "Evidence Coverage",
+        "verified": "Verified records",
+        "pending": "Pending review",
+        "gaps": "Open Gaps",
+        "blockers": "Blockers",
+        "sources": "Source Agreement",
+    },
+}
+
+
+def _fmt_issue_closure_workbench(data: dict, domain: str = "legal") -> str:
+    if not data or not isinstance(data, dict):
+        return "<div class='viz-empty'>No closure data available.</div>"
+    if data.get("error"):
+        return f"<div class='viz-empty'>{_escape(str(data['error']))}</div>"
+
+    L = _ISSUE_CLOSURE_LABELS.get(domain, _ISSUE_CLOSURE_LABELS["legal"])
+    title = _escape(str(data.get("title", "")))
+    readiness = data.get("readiness", "blocked")
+    coverage = _safe_float(data.get("coverage_fraction", 0))
+    supporting = int(data.get("supporting_count", 0))
+    predicates = int(data.get("predicate_count", 0))
+    verified = int(data.get("verified_count", 0))
+    pending = int(data.get("pending_count", 0))
+    blockers = data.get("blockers", [])
+    gaps = data.get("gaps", [])
+
+    ready_color = "#059669" if readiness == "ready" else "#dc2626"
+    ready_label = L["ready"] if readiness == "ready" else L["blocked"]
+    coverage_pct = min(coverage * 100, 100)
+    cov_color = "#059669" if coverage >= 0.7 else "#f59e0b" if coverage >= 0.4 else "#dc2626"
+
+    parts = [
+        f"<div style='margin-bottom:16px;'>",
+        f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'>",
+        f"<h3 style='margin:0;'>{L['title']}: {title}</h3>",
+        f"<span style='display:inline-block;padding:4px 14px;border-radius:12px;"
+        f"background:{ready_color};color:white;font-weight:700;font-size:13px;'>"
+        f"{_escape(ready_label)}</span>",
+        f"</div>",
+    ]
+
+    # Coverage bar
+    parts.append(
+        f"<div style='margin-bottom:12px;'>"
+        f"<div style='font-size:12px;color:#6b7280;margin-bottom:4px;font-weight:600;'>"
+        f"{L['coverage']}: {coverage_pct:.0f}% "
+        f"({supporting} supporting / {predicates} element{'s' if predicates != 1 else ''})</div>"
+        f"<div style='width:100%;height:12px;background:#e5e7eb;border-radius:6px;'>"
+        f"<div style='width:{coverage_pct:.0f}%;height:100%;background:{cov_color};"
+        f"border-radius:6px;transition:width 0.3s;'></div></div>"
+        f"</div>"
+    )
+
+    # Verification status
+    parts.append(
+        f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;'>"
+        f"<div style='background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 12px;'>"
+        f"<div style='font-size:11px;color:#166534;font-weight:600;'>{L['verified']}</div>"
+        f"<div style='font-size:20px;font-weight:700;color:#059669;'>{verified}</div></div>"
+        f"<div style='background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;'>"
+        f"<div style='font-size:11px;color:#92400e;font-weight:600;'>{L['pending']}</div>"
+        f"<div style='font-size:20px;font-weight:700;color:#d97706;'>{pending}</div></div>"
+        f"</div>"
+    )
+
+    # Blockers
+    if blockers:
+        blocker_items = "".join(
+            f"<li style='margin:3px 0;color:#991b1b;'>{_escape(str(b))}</li>"
+            for b in blockers if isinstance(b, str)
+        )
+        parts.append(
+            f"<div style='background:#fef2f2;border:1px solid #fecaca;border-radius:8px;"
+            f"padding:8px 12px;margin-bottom:12px;'>"
+            f"<div style='font-size:12px;font-weight:700;color:#991b1b;margin-bottom:4px;'>"
+            f"{L['blockers']} ({len(blockers)})</div>"
+            f"<ul style='margin:0;padding-left:18px;font-size:12px;'>{blocker_items}</ul></div>"
+        )
+
+    # Gaps
+    if gaps:
+        gap_items = ""
+        for g in gaps[:5]:
+            if not isinstance(g, dict):
+                continue
+            gdesc = _escape(str(g.get("description", "")))
+            gtype = _escape(str(g.get("gap_type", "")).replace("_", " ").title())
+            gmat = _safe_float(g.get("materiality_score", 0))
+            gap_items += (
+                f"<div style='padding:4px 0;border-bottom:1px solid #f3f4f6;font-size:12px;'>"
+                f"<span class='pill pill-neutral' style='font-size:10px;'>{gtype}</span> "
+                f"{gdesc} <span style='color:#6b7280;'>({gmat:.2f})</span></div>"
+            )
+        parts.append(
+            f"<div style='margin-bottom:12px;'>"
+            f"<div style='font-size:12px;font-weight:700;color:#374151;margin-bottom:4px;'>"
+            f"{L['gaps']} ({len(gaps)})</div>{gap_items}</div>"
+        )
+
+    # Source agreement summary
+    source_agreement = data.get("source_agreement", [])
+    if source_agreement:
+        src_rows = ""
+        for sa in source_agreement[:6]:
+            if not isinstance(sa, dict):
+                continue
+            doc = _escape(str(sa.get("doc_label", "")))
+            role = _escape(str(sa.get("source_role", "")))
+            sup = int(sa.get("supports", 0))
+            att = int(sa.get("attacks", 0))
+            balance = "&#9989;" if sup > att else "&#9888;&#65039;" if att > 0 else "&#8212;"
+            src_rows += (
+                f"<tr><td style='padding:2px 6px;font-size:12px;'>{doc}</td>"
+                f"<td style='padding:2px 6px;font-size:12px;'>{role}</td>"
+                f"<td style='padding:2px 6px;font-size:12px;text-align:center;'>{sup}</td>"
+                f"<td style='padding:2px 6px;font-size:12px;text-align:center;'>{att}</td>"
+                f"<td style='padding:2px 6px;font-size:12px;text-align:center;'>{balance}</td></tr>"
+            )
+        if src_rows:
+            parts.append(
+                f"<div style='margin-bottom:8px;'>"
+                f"<div style='font-size:12px;font-weight:700;color:#374151;margin-bottom:4px;'>"
+                f"{L['sources']}</div>"
+                f"<table style='width:100%;border-collapse:collapse;'>"
+                f"<thead><tr style='background:#f1f5f9;'>"
+                f"<th style='text-align:left;padding:2px 6px;font-size:11px;'>Document</th>"
+                f"<th style='text-align:left;padding:2px 6px;font-size:11px;'>Role</th>"
+                f"<th style='text-align:center;padding:2px 6px;font-size:11px;'>Support</th>"
+                f"<th style='text-align:center;padding:2px 6px;font-size:11px;'>Attack</th>"
+                f"<th style='text-align:center;padding:2px 6px;font-size:11px;'>Balance</th>"
+                f"</tr></thead><tbody>{src_rows}</tbody></table></div>"
+            )
+
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def _fmt_issue_assertions(
     assertions: list, issue_id: str, authorities: list | None = None, domain: str = "legal"
 ) -> str:
@@ -7588,6 +7775,20 @@ class AppState:
             return _fmt_issue_assertions(assertions, iid, authorities=authorities, domain=domain)
         except Exception as exc:
             logger.warning("load_issue_assertions failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
+    def load_issue_closure_workbench(self, matter_id: str, issue_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        iid = (issue_id or "").strip()
+        if not iid:
+            return "<div class='viz-empty'>Select an issue to see closure status.</div>"
+        try:
+            data = _run_async(self.backend().get_issue_closure_workbench(matter_id, iid))
+            domain = self._detect_domain(matter_id)
+            return _fmt_issue_closure_workbench(data, domain=domain)
+        except Exception as exc:
+            logger.warning("load_issue_closure_workbench failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
     def load_source_agreement(self, matter_id: str, issue_id: str) -> str:
@@ -9960,6 +10161,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             assertion_graph_html = gr.HTML(
                 "<div class='viz-empty'>Assertion relationship map will appear after selecting an issue.</div>"
             )
+            issue_closure_html = gr.HTML(
+                "<div class='viz-empty'>Issue closure workbench will appear after selecting an issue.</div>"
+            )
 
         # ==================================================================
         # REVIEW INBOX — what AI extractions need the attorney's sign-off
@@ -11487,6 +11691,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, iid: state.load_assertion_graph(mid, iid),
             inputs=[matter_id_box, issue_drilldown_id],
             outputs=[assertion_graph_html],
+        ).then(
+            fn=lambda mid, iid: state.load_issue_closure_workbench(mid, iid),
+            inputs=[matter_id_box, issue_drilldown_id],
+            outputs=[issue_closure_html],
         )
         issue_drilldown_id.submit(
             fn=lambda mid, iid: state.load_issue_assertions(mid, iid),

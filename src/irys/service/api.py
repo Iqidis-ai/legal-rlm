@@ -3155,6 +3155,21 @@ async def get_issue_proof_state(matter_id: str, issue_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/issues/{issue_id}/closure-workbench",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_issue_closure_workbench(matter_id: str, issue_id: str):
+    """Consolidated issue closure surface: proof state + coverage + gaps +
+    verification status + source agreement (SO-2, SO-3, SO-4, SO-7)."""
+    model = await _get_matter_model_or_404(matter_id)
+    result = model.get_issue_closure_workbench(issue_id)
+    if result.get("error"):
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@app.get(
     "/matter/{matter_id}/proof-state/gaps",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

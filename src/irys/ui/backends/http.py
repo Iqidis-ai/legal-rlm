@@ -149,6 +149,10 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/issues/{issue_id}/assertion-graph")
         return result if isinstance(result, dict) else {"nodes": [], "edges": []}
 
+    async def get_issue_closure_workbench(self, matter_id: str, issue_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/issues/{issue_id}/closure-workbench")
+        return result if isinstance(result, dict) else {"error": "Request failed"}
+
     async def get_issue_authorities(self, matter_id: str, issue_id: str) -> list[dict]:
         result = await self._get(f"/matter/{matter_id}/issues/{issue_id}/authorities")
         return result if isinstance(result, list) else []

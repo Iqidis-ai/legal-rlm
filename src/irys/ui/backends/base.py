@@ -91,6 +91,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_issue_closure_workbench(self, matter_id: str, issue_id: str) -> dict:
+        """Consolidated issue closure surface (SO-2, SO-3, SO-4, SO-7)."""
+        ...
+
+    @abstractmethod
     async def get_issue_authorities(self, matter_id: str, issue_id: str) -> list[dict]:
         """Return authorities linked to a specific issue with relevance (SO-4)."""
         ...
