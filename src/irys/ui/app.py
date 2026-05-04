@@ -545,7 +545,7 @@ _DOMAIN_CREATE_PRESETS: dict[str, dict[str, Any]] = {
             "Review trial design",
         ],
         "document_labels": ["Clinical Trial", "FDA Document", "Label/PI", "Case Report", "Guideline"],
-        "taint_default": "patient_deidentified",
+        "taint_default": "public_clean",
     },
 }
 

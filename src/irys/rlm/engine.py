@@ -1893,15 +1893,11 @@ class RLMEngine:
                     pass
         return result
 
-    _DOMAIN_TAINT_DEFAULTS: dict[str, str] = {
-        "biomedical": "patient_deidentified",
-    }
-
     def _resolve_taint_default(self) -> str:
         """Return the taint default for this matter's domain.
 
-        Priority: (1) preset file taint_default, (2) domain composition
-        from DB with known domain→taint mapping, (3) public_clean.
+        Reads from the domain preset file if available; otherwise public_clean.
+        Per-document taint classification happens during ingestion, not here.
         """
         if self._matter_model is None:
             return "public_clean"
@@ -1911,12 +1907,6 @@ class RLMEngine:
                 return preset["taint_default"]
         except Exception as exc:
             _log.warning("_resolve_taint_default: preset read failed: %s", exc)
-        try:
-            _, _, primary = self._matter_model._read_matter_domain_composition()
-            if primary and primary in self._DOMAIN_TAINT_DEFAULTS:
-                return self._DOMAIN_TAINT_DEFAULTS[primary]
-        except Exception as exc:
-            _log.warning("_resolve_taint_default: domain composition read failed: %s", exc)
         return "public_clean"
 
     def _get_semaphore(self) -> asyncio.Semaphore:
