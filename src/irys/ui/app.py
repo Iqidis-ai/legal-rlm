@@ -5415,6 +5415,118 @@ def _fmt_source_agreement(sources: list, domain: str = "legal") -> str:
     )
 
 
+_ASSERTION_GRAPH_LABELS: dict[str, dict[str, str]] = {
+    "legal": {"title": "Assertion Relationship Map", "empty": "No assertions linked to this issue."},
+    "finance": {"title": "Finding Relationship Map", "empty": "No findings linked to this thesis."},
+    "coding": {"title": "Claim Relationship Map", "empty": "No claims linked to this task."},
+    "academic_research": {"title": "Claim Relationship Map", "empty": "No claims linked to this question."},
+    "biomedical": {"title": "Finding Relationship Map", "empty": "No findings linked to this hypothesis."},
+}
+
+_GRAPH_LINK_COLORS: dict[str, str] = {
+    "supports": "#16a34a", "corroborates": "#16a34a",
+    "attacks": "#dc2626", "contradicts": "#dc2626",
+    "supersedes": "#7c3aed",
+}
+
+
+def _fmt_assertion_graph(graph: dict, domain: str = "legal") -> str:
+    L = _ASSERTION_GRAPH_LABELS.get(domain, _ASSERTION_GRAPH_LABELS["legal"])
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+    if not nodes:
+        return f"<div class='viz-empty'>{L['empty']}</div>"
+
+    supporting = []
+    attacking = []
+    other = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        rel = (n.get("relation_type") or "").lower()
+        if rel in ("supports", "establishes"):
+            supporting.append(n)
+        elif rel in ("attacks", "negates"):
+            attacking.append(n)
+        else:
+            other.append(n)
+
+    def _node_card(n: dict, color: str, bg: str) -> str:
+        aid = _escape(str(n.get("id", ""))[:16])
+        prop = _escape(str(n.get("proposition_text", "—"))[:80])
+        belief = n.get("belief_state", "undetermined")
+        belief_label = _escape(_domain_belief_label(belief, domain))
+        conf = n.get("confidence", 0)
+        try:
+            conf_val = float(conf)
+        except (TypeError, ValueError):
+            conf_val = 0.0
+        return (
+            f"<div style='padding:6px 10px;margin:3px 0;border-radius:6px;"
+            f"background:{bg};border-left:3px solid {color};font-size:11px'>"
+            f"<div>{prop}</div>"
+            f"<div style='font-size:10px;color:#6b7280;margin-top:2px'>"
+            f"<code>{aid}</code> · {belief_label} · {conf_val:.2f}</div></div>"
+        )
+
+    parts = [f"<div class='viz-shell'><div class='viz-header'><strong>{_escape(L['title'])}</strong></div>"]
+
+    if supporting:
+        parts.append(
+            "<div style='margin-bottom:12px'>"
+            f"<div style='font-weight:600;font-size:12px;color:#16a34a;margin-bottom:4px'>Supporting ({len(supporting)})</div>"
+        )
+        for n in supporting:
+            parts.append(_node_card(n, "#16a34a", "#f0fdf4"))
+        parts.append("</div>")
+
+    if attacking:
+        parts.append(
+            "<div style='margin-bottom:12px'>"
+            f"<div style='font-weight:600;font-size:12px;color:#dc2626;margin-bottom:4px'>Attacking ({len(attacking)})</div>"
+        )
+        for n in attacking:
+            parts.append(_node_card(n, "#dc2626", "#fef2f2"))
+        parts.append("</div>")
+
+    if other:
+        parts.append(
+            "<div style='margin-bottom:12px'>"
+            f"<div style='font-weight:600;font-size:12px;color:#6b7280;margin-bottom:4px'>Other ({len(other)})</div>"
+        )
+        for n in other:
+            parts.append(_node_card(n, "#6b7280", "#f9fafb"))
+        parts.append("</div>")
+
+    if edges:
+        edge_valid = [e for e in edges if isinstance(e, dict)]
+        if edge_valid:
+            node_map = {n["id"]: _escape(str(n.get("proposition_text", "—"))[:40])
+                        for n in nodes if isinstance(n, dict) and n.get("id")}
+            parts.append(
+                "<div style='margin-top:8px;border-top:1px solid #e5e7eb;padding-top:8px'>"
+                "<div style='font-weight:600;font-size:12px;color:#374151;margin-bottom:4px'>"
+                f"Inter-Assertion Links ({len(edge_valid)})</div>"
+            )
+            for e in edge_valid[:20]:
+                src = _escape(str(e.get("src", ""))[:16])
+                dst = _escape(str(e.get("dst", ""))[:16])
+                lt = str(e.get("link_type", "?")).lower()
+                color = _GRAPH_LINK_COLORS.get(lt, "#6b7280")
+                src_label = node_map.get(e.get("src", ""), src)
+                dst_label = node_map.get(e.get("dst", ""), dst)
+                parts.append(
+                    f"<div style='font-size:11px;padding:2px 0'>"
+                    f"{src_label} "
+                    f"<span style='color:{color};font-weight:600'>→ {_escape(lt)} →</span> "
+                    f"{dst_label}</div>"
+                )
+            parts.append("</div>")
+
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
 _ASSUMPTION_STATUS_PILLS: dict[str, tuple[str, str]] = {
     "provisional": ("Provisional", "pill-orange"),
     "confirmed": ("Confirmed", "pill-green"),
@@ -7312,6 +7424,20 @@ class AppState:
             return _fmt_source_agreement(sources, domain=domain)
         except Exception as exc:
             logger.warning("load_source_agreement failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
+    def load_assertion_graph(self, matter_id: str, issue_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        iid = (issue_id or "").strip()
+        if not iid:
+            return "<div class='viz-empty'>Enter an issue ID to see assertion relationships.</div>"
+        try:
+            graph = _run_async(self.backend().get_assertion_graph(matter_id, iid))
+            domain = self._detect_domain(matter_id)
+            return _fmt_assertion_graph(graph, domain=domain)
+        except Exception as exc:
+            logger.warning("load_assertion_graph failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
     def load_content_policy_audit(self, matter_id: str, domain: str = "legal") -> str:
@@ -9593,6 +9719,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             source_agreement_html = gr.HTML(
                 "<div class='viz-empty'>Source agreement analysis will appear after selecting an issue.</div>"
             )
+            assertion_graph_html = gr.HTML(
+                "<div class='viz-empty'>Assertion relationship map will appear after selecting an issue.</div>"
+            )
 
         # ==================================================================
         # REVIEW INBOX — what AI extractions need the attorney's sign-off
@@ -11075,6 +11204,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, iid: state.load_source_agreement(mid, iid),
             inputs=[matter_id_box, issue_drilldown_id],
             outputs=[source_agreement_html],
+        ).then(
+            fn=lambda mid, iid: state.load_assertion_graph(mid, iid),
+            inputs=[matter_id_box, issue_drilldown_id],
+            outputs=[assertion_graph_html],
         )
         issue_drilldown_id.submit(
             fn=lambda mid, iid: state.load_issue_assertions(mid, iid),
@@ -11084,6 +11217,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, iid: state.load_source_agreement(mid, iid),
             inputs=[matter_id_box, issue_drilldown_id],
             outputs=[source_agreement_html],
+        ).then(
+            fn=lambda mid, iid: state.load_assertion_graph(mid, iid),
+            inputs=[matter_id_box, issue_drilldown_id],
+            outputs=[assertion_graph_html],
         )
 
         # --- Review Inbox wiring ---

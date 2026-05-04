@@ -2417,6 +2417,29 @@ class IssueStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_assertion_graph_for_issue(self, issue_id: str) -> dict:
+        """Return assertion nodes and inter-assertion edges for an issue (SO-2 graph viz).
+
+        Returns {nodes: [{id, proposition_text, belief_state, confidence, relation_type}],
+                 edges: [{src, dst, link_type}]}
+        """
+        nodes = self.get_assertions_for_issue(issue_id)
+        if not nodes:
+            return {"nodes": [], "edges": []}
+        node_ids = [n["id"] for n in nodes if isinstance(n, dict) and n.get("id")]
+        if not node_ids:
+            return {"nodes": nodes, "edges": []}
+        placeholders = ",".join("?" * len(node_ids))
+        edge_rows = self.db.execute(
+            f"""SELECT src_assertion_id AS src, dst_assertion_id AS dst, link_type
+               FROM assertion_link
+               WHERE src_assertion_id IN ({placeholders})
+                 AND dst_assertion_id IN ({placeholders})""",
+            node_ids + node_ids,
+        ).fetchall()
+        edges = [dict(r) for r in edge_rows]
+        return {"nodes": nodes, "edges": edges}
+
     def get_issues_for_assertion(self, assertion_id: str) -> list[dict]:
         """Return issues linked to an assertion with relation types (SO-2)."""
         rows = self.db.execute(

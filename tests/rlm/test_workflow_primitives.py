@@ -3866,3 +3866,55 @@ def test_quant_threshold_config_parameters():
 
     result_finance = _fmt_quant_thresholds_panel(violations_default, domain="finance")
     assert "Financial Risk Alerts" in result_finance
+
+
+def test_fmt_assertion_graph_basic():
+    from irys.ui.app import _fmt_assertion_graph
+
+    graph = {
+        "nodes": [
+            {"id": "a1", "proposition_text": "Contract signed on Jan 1", "belief_state": "accepted",
+             "confidence": 0.9, "relation_type": "supports"},
+            {"id": "a2", "proposition_text": "Defendant disputes date", "belief_state": "disputed",
+             "confidence": 0.4, "relation_type": "attacks"},
+        ],
+        "edges": [
+            {"src": "a2", "dst": "a1", "link_type": "attacks"},
+        ],
+    }
+    result = _fmt_assertion_graph(graph, domain="legal")
+    assert "Assertion Relationship Map" in result
+    assert "Contract signed" in result
+    assert "Defendant disputes" in result
+    assert "Supporting (1)" in result
+    assert "Attacking (1)" in result
+    assert "Inter-Assertion Links (1)" in result
+    assert "attacks" in result
+
+    result_finance = _fmt_assertion_graph(graph, domain="finance")
+    assert "Finding Relationship Map" in result_finance
+
+
+def test_fmt_assertion_graph_empty():
+    from irys.ui.app import _fmt_assertion_graph
+
+    result = _fmt_assertion_graph({"nodes": [], "edges": []}, domain="legal")
+    assert "viz-empty" in result
+    assert "No assertions" in result
+
+
+def test_fmt_assertion_graph_non_dict_guard():
+    from irys.ui.app import _fmt_assertion_graph
+
+    graph = {
+        "nodes": [
+            "bad",
+            None,
+            {"id": "a1", "proposition_text": "Valid", "belief_state": "accepted",
+             "confidence": 0.9, "relation_type": "supports"},
+        ],
+        "edges": ["bad-edge", {"src": "a1", "dst": "a1", "link_type": "supports"}],
+    }
+    result = _fmt_assertion_graph(graph, domain="legal")
+    assert "Valid" in result
+    assert "bad" not in result.replace("bad-edge", "")

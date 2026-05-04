@@ -86,6 +86,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_assertion_graph(self, matter_id: str, issue_id: str) -> dict:
+        """Return assertion nodes + edges for graph visualization (SO-2)."""
+        ...
+
+    @abstractmethod
     async def get_issue_authorities(self, matter_id: str, issue_id: str) -> list[dict]:
         """Return authorities linked to a specific issue with relevance (SO-4)."""
         ...

@@ -3225,6 +3225,10 @@ class MatterModel:
                 doc_map[did]["attacks"] += r["cnt"]
         return sorted(doc_map.values(), key=lambda d: d["supports"] + d["attacks"], reverse=True)
 
+    def get_assertion_graph_for_issue(self, issue_id: str) -> dict:
+        """Return assertion nodes + inter-assertion edges for graph visualization (SO-2)."""
+        return self.issues.get_assertion_graph_for_issue(issue_id)
+
     def get_system_health(self) -> dict:
         """Return system health diagnostics for the truth maintenance panel (SO-2)."""
         assertion_count = self.assertions.count()

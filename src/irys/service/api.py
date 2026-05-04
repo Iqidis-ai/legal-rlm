@@ -3065,6 +3065,17 @@ async def get_source_agreement(matter_id: str, issue_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/issues/{issue_id}/assertion-graph",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_assertion_graph(matter_id: str, issue_id: str):
+    """Return assertion nodes and inter-assertion edges for an issue (SO-2 graph viz)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_assertion_graph_for_issue(issue_id)
+
+
+@app.get(
     "/matter/{matter_id}/proof-state",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
