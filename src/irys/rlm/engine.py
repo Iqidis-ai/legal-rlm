@@ -2660,7 +2660,7 @@ class RLMEngine:
                     # Detect issues with zero supporting assertions → proof gaps (SO-7)
                     self._detect_proof_gaps()
                 except Exception as _pg_exc:
-                    logger.warning("Proof gap detection failed, continuing: %s", _pg_exc)
+                    logger.error("Proof gap detection failed — synthesis may miss unsupported issues: %s", _pg_exc)
                 try:
                     # Background maintenance: mine contradictions (SO-2) — auto-discovers
                     # heuristic contradiction links and propagates belief state changes.
@@ -6165,8 +6165,11 @@ Return:
                 _adv_enforced = self._enforce_advocacy_gate(response)
                 if _adv_enforced is not None:
                     response = _adv_enforced
-            except Exception:
-                pass  # gate is best-effort; never suppress synthesis
+            except Exception as exc:
+                logger.error(
+                    "HARD GATE FAILURE: advocacy gate failed — output may contain "
+                    "uncalibrated advocacy-source claims: %s", exc,
+                )
 
         # SO-6: Post-synthesis quantitative threshold gate.
         # If HIGH violations exist and the LLM skipped the Financial Analysis section,
@@ -6177,8 +6180,11 @@ Return:
                 _enforced = self._enforce_quant_threshold_gate(response)
                 if _enforced is not None:
                     response = _enforced
-            except Exception:
-                pass  # gate is best-effort; never suppress synthesis
+            except Exception as exc:
+                logger.error(
+                    "HARD GATE FAILURE: quant threshold gate failed — output may miss "
+                    "critical financial exposure: %s", exc,
+                )
 
         response = await self._repair_output_if_needed(
             state,

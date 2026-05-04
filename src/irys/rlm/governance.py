@@ -1168,8 +1168,12 @@ class ReadFamilyHandler:
         """
         try:
             rows = mm.assertions.list_recent(limit=60)
-        except Exception:
-            return "", "", [], []
+        except Exception as exc:
+            logger.error("_render_assertions failed — LLM will see degraded marker: %s", exc)
+            return (
+                "[ASSERTION DATA TEMPORARILY UNAVAILABLE — DO NOT ASSUME ABSENCE OF FACTS]",
+                "", [], [],
+            )
         verified_lines: list[str] = []
         candidate_lines: list[str] = []
         visible_verified_ids: list[str] = []
@@ -1414,8 +1418,9 @@ class ReadFamilyHandler:
     def _render_issues(mm: Any) -> str:
         try:
             issues = mm.issues.get_open_issues()[:20]
-        except Exception:
-            return ""
+        except Exception as exc:
+            logger.error("_render_issues failed — LLM will see degraded marker: %s", exc)
+            return "[ISSUE DATA TEMPORARILY UNAVAILABLE — DO NOT ASSUME NO OPEN ISSUES]"
         lines: list[str] = []
         for i in issues:
             if not ReadFamilyHandler._object_is_clean(mm, "issue", i.get("id")):
@@ -1431,8 +1436,9 @@ class ReadFamilyHandler:
     def _render_gaps(mm: Any) -> str:
         try:
             gaps = mm.gaps.open_gaps(limit=10)
-        except Exception:
-            return ""
+        except Exception as exc:
+            logger.error("_render_gaps failed — LLM will see degraded marker: %s", exc)
+            return "[GAP DATA TEMPORARILY UNAVAILABLE — DO NOT ASSUME NO OPEN GAPS]"
         lines: list[str] = []
         for g in gaps:
             if not ReadFamilyHandler._object_is_clean(mm, "gap", g.get("id")):
@@ -1632,73 +1638,49 @@ class QueryFamilyHandler:
     # ---- canned intents (zero-LLM) -----------------------------------------
 
     def _intent_list_quants(self) -> list[dict]:
-        try:
-            return list(self.matter_model.quant.list_all())[:50]
-        except Exception:
-            return []
+        return list(self.matter_model.quant.list_all())[:50]
 
     def _intent_list_actors(self) -> list[dict]:
-        try:
-            return list(self.matter_model.actors.list_actors(limit=100))
-        except Exception:
-            return []
+        return list(self.matter_model.actors.list_actors(limit=100))
 
     def _intent_list_documents(self) -> list[dict]:
-        try:
-            return list(self.matter_model.list_reviewable_documents())[:100]
-        except Exception:
-            return []
+        return list(self.matter_model.list_reviewable_documents())[:100]
 
     def _intent_list_gaps(self) -> list[dict]:
-        try:
-            return list(self.matter_model.gaps.open_gaps(limit=50))
-        except Exception:
-            return []
+        return list(self.matter_model.gaps.open_gaps(limit=50))
 
     def _intent_list_issues(self) -> list[dict]:
-        try:
-            return list(self.matter_model.issues.get_open_issues())[:50]
-        except Exception:
-            return []
+        return list(self.matter_model.issues.get_open_issues())[:50]
 
     def _intent_list_contradictions(self) -> list[dict]:
         """Surface assertion-link rows of type attacks/contradicts."""
-        try:
-            rows = self.matter_model.db.execute(
-                """SELECT al.src_assertion_id, al.dst_assertion_id,
-                          al.link_type,
-                          s.proposition_text AS src_text,
-                          d.proposition_text AS dst_text
-                   FROM assertion_link al
-                   JOIN assertion s ON s.id=al.src_assertion_id
-                   JOIN assertion d ON d.id=al.dst_assertion_id
-                   WHERE s.matter_id=?
-                     AND al.link_type IN ('attacks','contradicts')
-                   LIMIT 50""",
-                (self.matter_model.matter_id,),
-            ).fetchall()
-            return [dict(r) for r in rows]
-        except Exception:
-            return []
+        rows = self.matter_model.db.execute(
+            """SELECT al.src_assertion_id, al.dst_assertion_id,
+                      al.link_type,
+                      s.proposition_text AS src_text,
+                      d.proposition_text AS dst_text
+               FROM assertion_link al
+               JOIN assertion s ON s.id=al.src_assertion_id
+               JOIN assertion d ON d.id=al.dst_assertion_id
+               WHERE s.matter_id=?
+                 AND al.link_type IN ('attacks','contradicts')
+               LIMIT 50""",
+            (self.matter_model.matter_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def _intent_list_recent_facts(self) -> list[dict]:
-        try:
-            return list(self.matter_model.assertions.list_recent(limit=50))
-        except Exception:
-            return []
+        return list(self.matter_model.assertions.list_recent(limit=50))
 
     def _intent_list_authorities(self) -> list[dict]:
-        try:
-            rows = self.matter_model.db.execute(
-                """SELECT id, citation, authority_type, COALESCE(weight, 0.0) AS weight
-                   FROM authority WHERE matter_id=?
-                   ORDER BY weight DESC, citation
-                   LIMIT 50""",
-                (self.matter_model.matter_id,),
-            ).fetchall()
-            return [dict(r) for r in rows]
-        except Exception:
-            return []
+        rows = self.matter_model.db.execute(
+            """SELECT id, citation, authority_type, COALESCE(weight, 0.0) AS weight
+               FROM authority WHERE matter_id=?
+               ORDER BY weight DESC, citation
+               LIMIT 50""",
+            (self.matter_model.matter_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def _render(self, intent: str, rows: list[dict]) -> str:
         """Deterministic markdown rendering per intent. No LLM."""
