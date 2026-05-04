@@ -266,6 +266,8 @@ class MatterModel:
     _DOMAIN_PRESET_FILENAME = "_irys_domain_preset.json"
     _VALID_PRESET_DOMAINS = frozenset({"legal", "finance", "coding", "academic_research", "biomedical"})
 
+    _PRESET_MAX_SIZE = 65536
+
     def get_domain_preset(self) -> Optional[dict]:
         """Read and validate the domain preset file, if present."""
         import json as _json
@@ -278,12 +280,18 @@ class MatterModel:
         if not preset_path.is_file():
             return None
         try:
+            if preset_path.stat().st_size > self._PRESET_MAX_SIZE:
+                _log.warning("Domain preset at %s exceeds size limit (%d bytes)", preset_path, preset_path.stat().st_size)
+                return None
             data = _json.loads(preset_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                _log.warning("Domain preset at %s is not a JSON object", preset_path)
+                return None
             domain = data.get("domain")
             if domain and domain in self._VALID_PRESET_DOMAINS:
                 return data
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("get_domain_preset failed for matter %s: %s", self.matter_id, exc)
         return None
 
     def _apply_domain_preset(self, repository_path: str | Path) -> None:
@@ -293,7 +301,13 @@ class MatterModel:
         if not preset_path.is_file():
             return
         try:
+            if preset_path.stat().st_size > self._PRESET_MAX_SIZE:
+                _log.warning("Domain preset at %s exceeds size limit", preset_path)
+                return
             data = _json.loads(preset_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                _log.warning("Domain preset at %s is not a JSON object", preset_path)
+                return
             domain = data.get("domain")
             if not domain or domain not in self._VALID_PRESET_DOMAINS:
                 _log.warning("Domain preset at %s has invalid domain %r", preset_path, domain)

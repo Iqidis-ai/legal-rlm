@@ -345,7 +345,7 @@ def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Pa
             if not relpath or relpath.endswith("/"):
                 continue
             dest = (temp_dir / relpath).resolve()
-            if not str(dest).startswith(str(temp_dir.resolve())):
+            if not dest.is_relative_to(temp_dir.resolve()):
                 logger.warning("S3 key %r escapes temp dir — skipped", key)
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)

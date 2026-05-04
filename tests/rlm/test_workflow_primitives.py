@@ -10999,3 +10999,51 @@ def test_get_domain_preset_rejects_invalid_domain(tmp_path):
 
     mm = MatterModel.open(tmp_path)
     assert mm.get_domain_preset() is None
+
+
+def test_get_domain_preset_rejects_non_dict_json(tmp_path):
+    """get_domain_preset returns None when JSON is an array, not an object."""
+    from irys.matter.matter import MatterModel
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text('[{"domain":"legal"}]', encoding="utf-8")
+
+    mm = MatterModel.open(tmp_path)
+    assert mm.get_domain_preset() is None
+
+
+def test_get_domain_preset_rejects_oversized_file(tmp_path):
+    """get_domain_preset returns None when file exceeds size limit."""
+    from irys.matter.matter import MatterModel
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text("x" * (MatterModel._PRESET_MAX_SIZE + 1), encoding="utf-8")
+
+    mm = MatterModel.open(tmp_path)
+    assert mm.get_domain_preset() is None
+
+
+def test_apply_domain_preset_rejects_non_dict_json(tmp_path):
+    """_apply_domain_preset ignores non-dict JSON preset."""
+    from irys.matter.matter import MatterModel
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text('"just a string"', encoding="utf-8")
+
+    mm = MatterModel.open_in_memory("test_non_dict_apply")
+    mm._apply_domain_preset(tmp_path)
+    facets = mm.memory_broker.get_object_domain_facets("workspace", mm.matter_id, status="active")
+    assert len(facets) == 0
+
+
+def test_apply_domain_preset_rejects_oversized_file(tmp_path):
+    """_apply_domain_preset ignores oversized preset files."""
+    from irys.matter.matter import MatterModel
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text("x" * (MatterModel._PRESET_MAX_SIZE + 1), encoding="utf-8")
+
+    mm = MatterModel.open_in_memory("test_oversized_apply")
+    mm._apply_domain_preset(tmp_path)
+    facets = mm.memory_broker.get_object_domain_facets("workspace", mm.matter_id, status="active")
+    assert len(facets) == 0
