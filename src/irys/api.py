@@ -31,7 +31,6 @@ from .rlm.governance import (
     SteerFamilyResult,
     TraceFamilyHandler,
     TraceFamilyResult,
-    _PLEASANTRY_PROMPT,
     _build_pleasantry_prompt,
     _is_pleasantry,
     decision_cache_key,
