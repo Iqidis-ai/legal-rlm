@@ -5769,6 +5769,35 @@ def test_decision_leverage_labels_all_five_domains():
             assert key in labels, f"{domain} missing label '{key}'"
 
 
+def test_decision_leverage_formatter_nan_impact():
+    import math
+    from irys.ui.app import _fmt_decision_leverage
+    data = {
+        "total": 2,
+        "items": [
+            {"kind": "weak_objective", "id": "safe-1", "title": "Bad number item A",
+             "blocker": "missing", "impact": float("nan"), "detail": "d", "action": "a"},
+            {"kind": "open_gap", "id": "safe-2", "title": "Bad number item B",
+             "blocker": "x", "impact": float("inf"), "detail": "d", "action": "a"},
+        ],
+    }
+    html = _fmt_decision_leverage(data, domain="legal")
+    assert isinstance(html, str)
+    assert "nan" not in html.lower()
+    assert "inf" not in html.lower()
+
+
+def test_decision_leverage_map_nan_materiality():
+    import math
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_decision_leverage_map()
+    for item in result.get("items", []):
+        impact = item.get("impact", 0)
+        assert isinstance(impact, (int, float))
+        assert math.isfinite(impact)
+
+
 def test_backend_interface_balance_decision_leverage():
     from irys.ui.backends.base import UIBackend
     from irys.ui.backends.in_process import InProcessBackend
