@@ -3611,3 +3611,18 @@ def test_set_issue_priority_appstate_validation():
     assert state.set_issue_priority("—", "i1", "high") == "Load a matter first."
     assert state.set_issue_priority("mid-1", "", "high") == "Enter an issue ID."
     assert state.set_issue_priority("mid-1", "i1", "") == "Select a priority level."
+
+
+def test_fmt_gaps_issue_title_resolution():
+    """Gap dependencies should show issue titles when available."""
+    from irys.ui.app import _fmt_gaps
+    gaps = [
+        {"id": "g1", "gap_type": "missing_document", "description": "Need contract",
+         "materiality_score": 0.7,
+         "dependencies": [{"affected_type": "issue", "affected_id": "iss-1"}]},
+    ]
+    titles = {"iss-1": "Breach of Contract"}
+    result = _fmt_gaps(gaps, [], domain="legal", issue_titles=titles)
+    assert "Breach of Contract" in result
+    result_no_titles = _fmt_gaps(gaps, [], domain="legal")
+    assert "issue" in result_no_titles

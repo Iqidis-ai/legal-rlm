@@ -5475,8 +5475,9 @@ _GAP_LABELS: dict[str, dict[str, object]] = {
 }
 
 
-def _fmt_gaps(gaps: list, clarifications: list, domain: str = "legal") -> str:
+def _fmt_gaps(gaps: list, clarifications: list, domain: str = "legal", issue_titles: dict | None = None) -> str:
     labels = _GAP_LABELS.get(domain, _GAP_LABELS["legal"])
+    _titles = issue_titles or {}
     parts: list[str] = []
     if gaps:
         gap_rows = ""
@@ -5501,8 +5502,18 @@ def _fmt_gaps(gaps: list, clarifications: list, domain: str = "legal") -> str:
             deps = g.get("dependencies") or []
             dep_str = ""
             if deps:
-                dep_labels = [_escape(f"{d.get('affected_type','?')}") for d in deps[:3] if isinstance(d, dict)]
-                dep_str = f"<span style='font-size:10px;color:#6b7280'>{', '.join(dep_labels)}</span>"
+                dep_parts = []
+                for d in deps[:4]:
+                    if not isinstance(d, dict):
+                        continue
+                    a_type = d.get("affected_type", "?")
+                    a_id = d.get("affected_id", "")
+                    title = _titles.get(a_id, "")
+                    if title:
+                        dep_parts.append(f"{_escape(title[:30])}")
+                    else:
+                        dep_parts.append(_escape(a_type))
+                dep_str = f"<span style='font-size:10px;color:#6b7280'>{', '.join(dep_parts)}</span>"
             gap_id = _escape(str(g.get("id", "?"))[:16])
             full_gap_id = _escape(str(g.get("id", "?")))
             gap_rows += (
@@ -7656,7 +7667,12 @@ class AppState:
         try:
             gaps = _run_async(self.backend().list_gaps(matter_id))
             clarifications = _run_async(self.backend().list_clarifications(matter_id))
-            return _fmt_gaps(gaps, clarifications, domain=domain)
+            issues = _run_async(self.backend().list_issues(matter_id))
+            issue_titles = {
+                i["id"]: i.get("title", "")
+                for i in issues if isinstance(i, dict) and i.get("id")
+            }
+            return _fmt_gaps(gaps, clarifications, domain=domain, issue_titles=issue_titles)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading gaps: {_escape(exc)}</div>"
 
