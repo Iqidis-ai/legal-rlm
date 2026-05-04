@@ -9,6 +9,7 @@ Usage:
 """
 
 import logging
+import math
 import sqlite3
 import threading
 import uuid
@@ -3303,14 +3304,20 @@ class MatterModel:
         to maximally shift objective coverage or confidence."""
         items: list[dict] = []
 
+        def _safe_float(v, default: float = 0.5) -> float:
+            if isinstance(v, (int, float)) and math.isfinite(v):
+                return max(0.0, min(1.0, float(v)))
+            return default
+
         coverage_wb = self.get_objective_coverage_workbench()
         for obj in coverage_wb.get("objectives", []):
             if not isinstance(obj, dict):
                 continue
             badge = obj.get("coverage_badge", "missing")
             if badge in ("missing", "blocked", "contradicted", "thin"):
-                mat = float(obj.get("materiality", 0.5)) if isinstance(obj.get("materiality"), (int, float)) else 0.5
-                impact = mat * (1.0 - float(obj.get("coverage_fraction", 0.0)) if isinstance(obj.get("coverage_fraction"), (int, float)) else 1.0)
+                mat = _safe_float(obj.get("materiality"), 0.5)
+                cov = _safe_float(obj.get("coverage_fraction"), 0.0)
+                impact = mat * (1.0 - cov)
                 items.append({
                     "kind": "weak_objective",
                     "id": obj.get("id", ""),
@@ -3327,7 +3334,7 @@ class MatterModel:
                 if not isinstance(a, dict):
                     continue
                 linked = a.get("linked_target_count", 0)
-                if not isinstance(linked, (int, float)):
+                if not isinstance(linked, (int, float)) or not math.isfinite(linked):
                     linked = 0
                 if linked > 0:
                     items.append({
@@ -3345,7 +3352,7 @@ class MatterModel:
         try:
             taint = self.summarize_taint(limit=10)
             taint_total = taint.get("total", 0) if isinstance(taint, dict) else 0
-            if isinstance(taint_total, (int, float)) and taint_total > 0:
+            if isinstance(taint_total, (int, float)) and math.isfinite(taint_total) and taint_total > 0:
                 items.append({
                     "kind": "tainted_evidence",
                     "id": "",
@@ -3378,7 +3385,7 @@ class MatterModel:
             for gap in top_gaps:
                 if not isinstance(gap, dict):
                     continue
-                mat = float(gap.get("materiality_score", 0.5)) if isinstance(gap.get("materiality_score"), (int, float)) else 0.5
+                mat = _safe_float(gap.get("materiality_score"), 0.5)
                 items.append({
                     "kind": "open_gap",
                     "id": gap.get("id", ""),
@@ -3395,7 +3402,7 @@ class MatterModel:
             review_counts = self.count_review_queue()
             if isinstance(review_counts, dict):
                 pending = review_counts.get("candidate", 0)
-                if isinstance(pending, (int, float)) and pending > 0:
+                if isinstance(pending, (int, float)) and math.isfinite(pending) and pending > 0:
                     items.append({
                         "kind": "pending_review",
                         "id": "",

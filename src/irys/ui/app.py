@@ -14259,6 +14259,22 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_domain_composition(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[domain_composition_html],
+        ).then(
+            fn=lambda mid: state.load_objective_coverage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[objective_coverage_html],
+        ).then(
+            fn=lambda mid: state.load_knowledge_seeds(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[knowledge_seeds_html],
+        ).then(
+            fn=lambda mid: state.load_quant_facts(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[quant_facts_html],
+        ).then(
+            fn=lambda mid: state.load_decision_leverage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[decision_leverage_html],
         )
 
         clarification_dropdown.change(
