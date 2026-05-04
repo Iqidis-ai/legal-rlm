@@ -59,6 +59,10 @@ spec row below so the two stay in sync.
   rollup
 - `GET /matter/{matter_id}/cost-anomalies` — runs whose spend-per-fact
   flags outside the rolling median band
+- `GET /matter/{matter_id}/llm-usage` — aggregated LLM token usage and
+  cost breakdown; optional `run_id` query param (SO-1)
+- `GET /matter/{matter_id}/cache-stats` — reasoning cache hit rates by
+  stage with trust revision tracking (SO-1, SO-5)
 
 **SO-3 steering (shipped)**
 - `POST /matter/{matter_id}/stop`
