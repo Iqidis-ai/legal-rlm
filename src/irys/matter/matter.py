@@ -4713,6 +4713,162 @@ class MatterModel:
             "total_source_documents": total_sources,
         }
 
+    def compile_issue_brief(
+        self,
+        *,
+        issue_ids: list[str] | None = None,
+        policy_audience: str = "clean",
+        include_gaps: bool = True,
+        include_contradictions: bool = True,
+        include_quant: bool = True,
+    ) -> dict:
+        """Compile a structured issue brief from matter model state.
+
+        Gathers assertions (all belief states, not just verified), evidence
+        edges, proof gaps, contradictions, quant facts, and source citations
+        per issue.  Returns structured sections with provenance links suitable
+        for rendering as a professional deliverable.
+        """
+        _, _, primary_profile = self._read_matter_domain_composition()
+        domain = primary_profile or "legal"
+
+        readiness = self.get_investigation_readiness()
+        reliance_gate = readiness.get("readiness", "unknown")
+
+        all_issues = self.issues.get_open_issues(min_materiality=0.0)
+        if issue_ids:
+            scope_set = set(issue_ids)
+            scoped = [i for i in all_issues if isinstance(i, dict) and i.get("id") in scope_set]
+        else:
+            scoped = [i for i in all_issues if isinstance(i, dict)]
+
+        sections: list[dict] = []
+        total_assertions = 0
+        total_gaps = 0
+        total_contradictions = 0
+        all_source_docs: set[str] = set()
+
+        for iss in scoped:
+            if not isinstance(iss, dict):
+                continue
+            iid = iss.get("id", "")
+            title = (iss.get("title") or "")[:200]
+            materiality = iss.get("materiality", 0.0)
+
+            assertions: list[dict] = []
+            source_docs: list[str] = []
+            try:
+                edges = self.evidence.list_edges_for_target("issue", iid)
+                for edge in edges:
+                    if not isinstance(edge, dict):
+                        continue
+                    aid = edge.get("source_id", "")
+                    if not aid:
+                        continue
+                    arow = self.db.execute(
+                        "SELECT id, proposition_text, belief_state, confidence"
+                        " FROM assertion WHERE id=?",
+                        (aid,),
+                    ).fetchone()
+                    if not arow:
+                        continue
+                    if arow["belief_state"] in ("superseded", "withdrawn"):
+                        continue
+
+                    occ_rows = self.db.execute(
+                        "SELECT ao.source_role, d.relative_path"
+                        " FROM assertion_occurrence ao"
+                        " LEFT JOIN document_inventory d ON d.id = ao.document_id"
+                        " WHERE ao.assertion_id=? LIMIT 3",
+                        (aid,),
+                    ).fetchall()
+                    roles = set()
+                    for occ in occ_rows:
+                        if occ["relative_path"]:
+                            p = occ["relative_path"]
+                            source_docs.append(p)
+                            all_source_docs.add(p)
+                        if occ["source_role"]:
+                            roles.add(occ["source_role"])
+
+                    assertions.append({
+                        "assertion_id": aid,
+                        "proposition": (arow["proposition_text"] or "")[:300],
+                        "belief_state": arow["belief_state"],
+                        "confidence": arow["confidence"],
+                        "source_roles": sorted(roles),
+                        "edge_type": edge.get("edge_type", "supports"),
+                    })
+            except Exception as exc:
+                _log.warning("compile_issue_brief: edge lookup failed for %s: %s", iid, exc)
+
+            total_assertions += len(assertions)
+
+            gaps: list[dict] = []
+            if include_gaps:
+                try:
+                    issue_gaps = self.gaps.gaps_for_issue(iid)
+                    for g in issue_gaps:
+                        if not isinstance(g, dict):
+                            continue
+                        gaps.append({
+                            "gap_id": g.get("id", ""),
+                            "gap_type": g.get("gap_type", ""),
+                            "description": (g.get("description") or "")[:200],
+                            "materiality_score": g.get("materiality_score", 0.0),
+                        })
+                    total_gaps += len(gaps)
+                except Exception as exc:
+                    _log.warning("compile_issue_brief: gap lookup failed for %s: %s", iid, exc)
+
+            contradictions: list[dict] = []
+            if include_contradictions:
+                try:
+                    aid_set = {a["assertion_id"] for a in assertions}
+                    if aid_set:
+                        all_contradictions = self.assertions.find_contradictions(limit=50)
+                        for c in all_contradictions:
+                            if not isinstance(c, dict):
+                                continue
+                            if c.get("attacker_id") in aid_set or c.get("attacked_id") in aid_set:
+                                contradictions.append({
+                                    "attacker_id": c.get("attacker_id", ""),
+                                    "attacked_id": c.get("attacked_id", ""),
+                                    "attacker_prop": (c.get("attacker_prop") or "")[:150],
+                                    "attacked_prop": (c.get("attacked_prop") or "")[:150],
+                                })
+                    total_contradictions += len(contradictions)
+                except Exception as exc:
+                    _log.warning("compile_issue_brief: contradiction lookup for %s: %s", iid, exc)
+
+            supporting = [a for a in assertions if a.get("edge_type") == "supports"]
+            attacking = [a for a in assertions if a.get("edge_type") in ("attacks", "contradicts")]
+
+            sections.append({
+                "issue_id": iid,
+                "title": title,
+                "materiality": materiality,
+                "assertion_count": len(assertions),
+                "supporting_count": len(supporting),
+                "attacking_count": len(attacking),
+                "assertions": assertions[:20],
+                "source_documents": sorted(set(source_docs))[:15],
+                "gaps": gaps,
+                "contradictions": contradictions,
+            })
+
+        return {
+            "matter_id": self.matter_id,
+            "domain": domain,
+            "reliance_gate": reliance_gate,
+            "section_count": len(sections),
+            "total_assertions": total_assertions,
+            "total_gaps": total_gaps,
+            "total_contradictions": total_contradictions,
+            "total_source_documents": len(all_source_docs),
+            "sections": sections,
+        }
+
     # ------------------------------------------------------------------
     # Scenario branches (SO-1, SO-3)
     # ------------------------------------------------------------------

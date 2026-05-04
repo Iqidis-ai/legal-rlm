@@ -7497,3 +7497,310 @@ def test_domain_readiness_backend_interface_balance():
     assert hasattr(UIBackend, "get_domain_investigation_readiness")
     assert hasattr(InProcessBackend, "get_domain_investigation_readiness")
     assert hasattr(HttpBackend, "get_domain_investigation_readiness")
+
+
+# ------------------------------------------------------------------
+# Issue Brief Compiler
+# ------------------------------------------------------------------
+
+
+def test_issue_brief_empty_matter():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.compile_issue_brief()
+    assert result["matter_id"] == model.matter_id
+    assert result["domain"] in ("legal", "finance", "coding", "academic_research", "biomedical")
+    assert result["section_count"] == 0
+    assert result["total_assertions"] == 0
+    assert result["total_gaps"] == 0
+    assert result["total_contradictions"] == 0
+    assert result["total_source_documents"] == 0
+    assert result["sections"] == []
+
+
+def test_issue_brief_specific_issue_ids():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.compile_issue_brief(issue_ids=["nonexistent-1", "nonexistent-2"])
+    assert result["section_count"] == 0
+    assert result["sections"] == []
+
+
+def test_issue_brief_include_gaps_false():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.compile_issue_brief(include_gaps=False)
+    assert result["total_gaps"] == 0
+    for sec in result["sections"]:
+        assert sec["gaps"] == []
+
+
+def test_issue_brief_include_contradictions_false():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.compile_issue_brief(include_contradictions=False)
+    assert result["total_contradictions"] == 0
+    for sec in result["sections"]:
+        assert sec["contradictions"] == []
+
+
+def test_issue_brief_include_quant_false():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.compile_issue_brief(include_quant=False)
+    assert isinstance(result["sections"], list)
+
+
+def test_issue_brief_reliance_gate():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.compile_issue_brief()
+    assert "reliance_gate" in result
+    assert isinstance(result["reliance_gate"], str)
+
+
+def test_issue_brief_does_not_include_withdrawn():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.compile_issue_brief()
+    for sec in result["sections"]:
+        for a in sec.get("assertions", []):
+            assert a["belief_state"] not in ("superseded", "withdrawn")
+
+
+def test_issue_brief_formatter_empty():
+    from irys.ui.app import _fmt_issue_brief
+    html = _fmt_issue_brief({})
+    assert "viz-empty" in html
+
+
+def test_issue_brief_formatter_no_sections():
+    from irys.ui.app import _fmt_issue_brief
+    data = {
+        "matter_id": "test",
+        "reliance_gate": "ready",
+        "total_assertions": 0,
+        "total_gaps": 0,
+        "total_contradictions": 0,
+        "total_source_documents": 0,
+        "sections": [],
+    }
+    html = _fmt_issue_brief(data)
+    assert "viz-empty" in html
+
+
+def test_issue_brief_formatter_renders():
+    from irys.ui.app import _fmt_issue_brief
+    data = {
+        "matter_id": "test",
+        "reliance_gate": "ready",
+        "total_assertions": 2,
+        "total_gaps": 1,
+        "total_contradictions": 0,
+        "total_source_documents": 1,
+        "sections": [
+            {
+                "issue_id": "iss-1",
+                "title": "Contract breach",
+                "materiality": 0.85,
+                "assertion_count": 2,
+                "supporting_count": 1,
+                "attacking_count": 1,
+                "assertions": [
+                    {
+                        "assertion_id": "a1",
+                        "proposition": "Defendant breached clause 3",
+                        "belief_state": "verified",
+                        "confidence": 0.9,
+                        "source_roles": ["primary"],
+                        "edge_type": "supports",
+                    },
+                    {
+                        "assertion_id": "a2",
+                        "proposition": "No breach occurred",
+                        "belief_state": "disputed",
+                        "confidence": 0.4,
+                        "source_roles": ["opposing"],
+                        "edge_type": "attacks",
+                    },
+                ],
+                "gaps": [
+                    {
+                        "gap_id": "g1",
+                        "gap_type": "missing_evidence",
+                        "description": "No corroborating email",
+                        "materiality_score": 0.7,
+                    },
+                ],
+                "contradictions": [],
+                "source_documents": ["contract.pdf"],
+            },
+        ],
+    }
+    html = _fmt_issue_brief(data)
+    assert "Issue Brief" in html
+    assert "Contract breach" in html
+    assert "Defendant breached clause 3" in html
+    assert "No breach occurred" in html
+    assert "verified" in html
+    assert "disputed" in html
+    assert "No corroborating email" in html
+    assert "contract.pdf" in html
+    assert "ready" in html
+
+
+def test_issue_brief_formatter_xss():
+    from irys.ui.app import _fmt_issue_brief
+    data = {
+        "matter_id": "test",
+        "reliance_gate": "<script>xss</script>",
+        "total_assertions": 1,
+        "total_gaps": 0,
+        "total_contradictions": 0,
+        "total_source_documents": 0,
+        "sections": [
+            {
+                "issue_id": "iss-1",
+                "title": "<img onerror=alert(1) src=x>",
+                "materiality": 0.5,
+                "assertion_count": 1,
+                "supporting_count": 1,
+                "attacking_count": 0,
+                "assertions": [
+                    {
+                        "assertion_id": "a1",
+                        "proposition": "<script>alert('xss')</script>",
+                        "belief_state": "verified",
+                        "confidence": 0.9,
+                        "source_roles": ["<script>role</script>"],
+                        "edge_type": "supports",
+                    },
+                ],
+                "gaps": [
+                    {
+                        "gap_id": "g1",
+                        "gap_type": "<script>type</script>",
+                        "description": "<script>desc</script>",
+                        "materiality_score": 0.5,
+                    },
+                ],
+                "contradictions": [
+                    {
+                        "attacker_id": "x",
+                        "attacked_id": "y",
+                        "attacker_prop": "<script>a</script>",
+                        "attacked_prop": "<script>b</script>",
+                    },
+                ],
+                "source_documents": ["<script>doc</script>"],
+            },
+        ],
+    }
+    html = _fmt_issue_brief(data)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_issue_brief_formatter_non_dict_guards():
+    from irys.ui.app import _fmt_issue_brief
+    data = {
+        "matter_id": "test",
+        "reliance_gate": "ready",
+        "total_assertions": 0,
+        "total_gaps": 0,
+        "total_contradictions": 0,
+        "total_source_documents": 0,
+        "sections": ["not-a-dict", None, 42, {"issue_id": "ok", "title": "Valid"}],
+    }
+    html = _fmt_issue_brief(data)
+    assert "Issue Brief" in html
+    assert "Valid" in html
+    assert "<script>" not in html
+
+
+def test_issue_brief_formatter_non_dict_inner_guards():
+    from irys.ui.app import _fmt_issue_brief
+    data = {
+        "matter_id": "test",
+        "reliance_gate": "ready",
+        "total_assertions": 0,
+        "total_gaps": 0,
+        "total_contradictions": 0,
+        "total_source_documents": 0,
+        "sections": [
+            {
+                "issue_id": "iss-1",
+                "title": "Test",
+                "materiality": 0.5,
+                "assertion_count": 0,
+                "supporting_count": 0,
+                "attacking_count": 0,
+                "assertions": ["not-a-dict", 42],
+                "gaps": [None, "bad"],
+                "contradictions": [123, False],
+                "source_documents": [42, None, "valid.pdf"],
+            },
+        ],
+    }
+    html = _fmt_issue_brief(data)
+    assert "Issue Brief" in html
+    assert "<script>" not in html
+
+
+def test_issue_brief_labels_all_five_domains():
+    from irys.ui.app import _ISSUE_BRIEF_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _ISSUE_BRIEF_LABELS[domain]
+        assert "title" in labels
+        assert "assertions" in labels
+        assert "gaps" in labels
+        assert "empty" in labels
+        assert "no_sections" in labels
+
+
+def test_issue_brief_formatter_domain_labels():
+    from irys.ui.app import _fmt_issue_brief
+    data = {
+        "matter_id": "test",
+        "reliance_gate": "ready",
+        "total_assertions": 1,
+        "total_gaps": 0,
+        "total_contradictions": 0,
+        "total_source_documents": 0,
+        "sections": [
+            {
+                "issue_id": "iss-1",
+                "title": "Test",
+                "materiality": 0.5,
+                "assertion_count": 1,
+                "supporting_count": 1,
+                "attacking_count": 0,
+                "assertions": [
+                    {
+                        "assertion_id": "a1",
+                        "proposition": "claim",
+                        "belief_state": "verified",
+                        "confidence": 0.9,
+                        "source_roles": [],
+                        "edge_type": "supports",
+                    },
+                ],
+                "gaps": [],
+                "contradictions": [],
+                "source_documents": [],
+            },
+        ],
+    }
+    html_finance = _fmt_issue_brief(data, domain="finance")
+    assert "Analytical Memo" in html_finance
+    html_bio = _fmt_issue_brief(data, domain="biomedical")
+    assert "Evidence Summary" in html_bio
+
+
+def test_issue_brief_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    assert hasattr(UIBackend, "compile_issue_brief")
+    assert hasattr(InProcessBackend, "compile_issue_brief")
+    assert hasattr(HttpBackend, "compile_issue_brief")

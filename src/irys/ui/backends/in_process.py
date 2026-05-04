@@ -630,6 +630,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.evaluate_domain_investigation_readiness()
 
+    async def compile_issue_brief(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.compile_issue_brief()
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_objective_coverage_workbench()

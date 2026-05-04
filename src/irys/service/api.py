@@ -2852,6 +2852,31 @@ async def get_deliverable_workbench(matter_id: str):
     return model.get_deliverable_workbench()
 
 
+@app.get(
+    "/matter/{matter_id}/issue-brief",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_issue_brief(
+    matter_id: str,
+    issue_ids: Optional[str] = Query(None, description="Comma-separated issue IDs"),
+    policy_audience: str = Query("clean"),
+    include_gaps: bool = Query(True),
+    include_contradictions: bool = Query(True),
+    include_quant: bool = Query(True),
+):
+    """Compile a structured issue brief from matter model state (SO-1 through SO-7)."""
+    model = await _get_matter_model_or_404(matter_id)
+    iids = [i.strip() for i in issue_ids.split(",") if i.strip()] if issue_ids else None
+    return model.compile_issue_brief(
+        issue_ids=iids,
+        policy_audience=policy_audience,
+        include_gaps=include_gaps,
+        include_contradictions=include_contradictions,
+        include_quant=include_quant,
+    )
+
+
 @app.post(
     "/matter/{matter_id}/scenario-branches",
     tags=["Matter Model"],

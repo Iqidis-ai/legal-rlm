@@ -7039,6 +7039,191 @@ def _fmt_domain_readiness(data: dict, domain: str = "legal") -> str:
     return f"{header}{table}{repairs_html}{cross_html}</div>"
 
 
+# ── Issue Brief Compiler ─────────────────────────────────────────────
+_ISSUE_BRIEF_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Issue Brief",
+        "subtitle": "Structured analysis compiled from the matter model.",
+        "reliance": "Reliance Gate",
+        "sections": "Issue Sections",
+        "assertions": "Assertions",
+        "supporting": "Supporting",
+        "attacking": "Attacking",
+        "gaps": "Proof Gaps",
+        "contradictions": "Contradictions",
+        "sources": "Source Documents",
+        "empty": "No issue brief data. Run an investigation to populate the matter model.",
+        "no_sections": "No issues found. Run an investigation to generate issue analysis.",
+    },
+    "finance": {
+        "title": "Analytical Memo",
+        "subtitle": "Structured analysis compiled from the matter model.",
+        "reliance": "Reliance Gate", "sections": "Thesis Sections",
+        "assertions": "Claims", "supporting": "Corroborating",
+        "attacking": "Contradicting", "gaps": "Diligence Gaps",
+        "contradictions": "Contradictions", "sources": "Source Filings",
+        "empty": "No analytical memo data. Run an investigation first.",
+        "no_sections": "No theses found. Run an investigation first.",
+    },
+    "coding": {
+        "title": "Investigation Report",
+        "subtitle": "Structured analysis compiled from the matter model.",
+        "reliance": "Reliance Gate", "sections": "Requirement Sections",
+        "assertions": "Claims", "supporting": "Supporting",
+        "attacking": "Conflicting", "gaps": "Verification Gaps",
+        "contradictions": "Conflicts", "sources": "Source Files",
+        "empty": "No report data. Run an investigation first.",
+        "no_sections": "No requirements found. Run an investigation first.",
+    },
+    "academic_research": {
+        "title": "Research Brief",
+        "subtitle": "Structured analysis compiled from the matter model.",
+        "reliance": "Reliance Gate", "sections": "Question Sections",
+        "assertions": "Findings", "supporting": "Supporting",
+        "attacking": "Contradicting", "gaps": "Evidence Gaps",
+        "contradictions": "Contradictions", "sources": "Source Papers",
+        "empty": "No research brief data. Run an investigation first.",
+        "no_sections": "No research questions found. Run an investigation first.",
+    },
+    "biomedical": {
+        "title": "Evidence Summary",
+        "subtitle": "Structured analysis compiled from the matter model.",
+        "reliance": "Reliance Gate", "sections": "Mechanism Sections",
+        "assertions": "Findings", "supporting": "Supporting",
+        "attacking": "Contradicting", "gaps": "Evidence Gaps",
+        "contradictions": "Contradictions", "sources": "Source Reports",
+        "empty": "No evidence summary data. Run an investigation first.",
+        "no_sections": "No mechanisms found. Run an investigation first.",
+    },
+}
+
+
+def _fmt_issue_brief(data: dict, domain: str = "legal") -> str:
+    L = _ISSUE_BRIEF_LABELS.get(domain, _ISSUE_BRIEF_LABELS["legal"])
+
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    sections = data.get("sections", [])
+    if not isinstance(sections, list) or not sections:
+        return f"<div class='viz-empty'>{_escape(L['no_sections'])}</div>"
+
+    reliance = _escape(str(data.get("reliance_gate", "unknown")))
+    gate_colors = {"ready": "#16a34a", "caution": "#d97706", "blocked": "#dc2626"}
+    gate_color = gate_colors.get(data.get("reliance_gate", ""), "#6b7280")
+
+    total_a = _safe_int(data.get("total_assertions", 0))
+    total_g = _safe_int(data.get("total_gaps", 0))
+    total_c = _safe_int(data.get("total_contradictions", 0))
+    total_s = _safe_int(data.get("total_source_documents", 0))
+
+    header = (
+        f"<div class='viz-shell'>"
+        f"<div class='intel-panel-title'>{_escape(L['title'])}</div>"
+        f"<div style='font-size:0.8em;color:#6b7280;margin-bottom:8px;'>{_escape(L['subtitle'])}</div>"
+        f"<div style='display:flex;gap:16px;align-items:center;margin-bottom:12px;flex-wrap:wrap;'>"
+        f"<div><strong>{_escape(L['reliance'])}:</strong> "
+        f"<span style='color:{gate_color};font-weight:600;'>{reliance}</span></div>"
+        f"<div style='font-size:0.85em;color:#6b7280;'>"
+        f"{_escape(L['assertions'])}: {total_a} | "
+        f"{_escape(L['gaps'])}: {total_g} | "
+        f"{_escape(L['contradictions'])}: {total_c} | "
+        f"{_escape(L['sources'])}: {total_s}</div>"
+        f"</div>"
+    )
+
+    sections_html = ""
+    for sec in sections:
+        if not isinstance(sec, dict):
+            continue
+        title = _escape(str(sec.get("title", "Untitled"))[:200])
+        materiality = 0.0
+        try:
+            mv = float(sec.get("materiality", 0.0))
+            materiality = mv if math.isfinite(mv) else 0.0
+        except (TypeError, ValueError):
+            pass
+
+        sup_count = _safe_int(sec.get("supporting_count", 0))
+        atk_count = _safe_int(sec.get("attacking_count", 0))
+
+        sections_html += (
+            f"<div style='border:1px solid var(--border-color-primary,#e5e7eb);"
+            f"border-radius:6px;padding:10px;margin-bottom:8px;'>"
+            f"<div style='font-weight:600;margin-bottom:4px;'>{title}</div>"
+            f"<div style='font-size:0.8em;color:#6b7280;margin-bottom:6px;'>"
+            f"Materiality: {materiality:.0%} | "
+            f"{_escape(L['supporting'])}: {sup_count} | "
+            f"{_escape(L['attacking'])}: {atk_count}</div>"
+        )
+
+        assertions = sec.get("assertions", [])
+        if isinstance(assertions, list) and assertions:
+            sections_html += "<div style='margin-bottom:6px;'>"
+            for a in assertions[:10]:
+                if not isinstance(a, dict):
+                    continue
+                prop = _escape(str(a.get("proposition", ""))[:200])
+                belief = _escape(str(a.get("belief_state", "")))
+                edge = str(a.get("edge_type", "supports"))
+                edge_color = "#16a34a" if edge == "supports" else "#dc2626"
+                roles = a.get("source_roles", [])
+                role_str = ", ".join(_escape(str(r)) for r in roles[:3]) if isinstance(roles, list) else ""
+                sections_html += (
+                    f"<div style='font-size:0.82em;padding:3px 0;border-bottom:1px solid #f3f4f6;'>"
+                    f"<span style='color:{edge_color};'>&#9679;</span> {prop}"
+                    f" <span style='color:#9ca3af;font-size:0.85em;'>[{belief}]</span>"
+                )
+                if role_str:
+                    sections_html += f" <span style='color:#6b7280;font-size:0.8em;'>({role_str})</span>"
+                sections_html += "</div>"
+            sections_html += "</div>"
+
+        gaps = sec.get("gaps", [])
+        if isinstance(gaps, list) and gaps:
+            sections_html += (
+                f"<div style='margin-top:4px;font-size:0.8em;color:#dc2626;'>"
+                f"<strong>{_escape(L['gaps'])} ({len(gaps)}):</strong></div>"
+            )
+            for g in gaps[:5]:
+                if not isinstance(g, dict):
+                    continue
+                gdesc = _escape(str(g.get("description", ""))[:150])
+                gtype = _escape(str(g.get("gap_type", ""))[:30])
+                sections_html += (
+                    f"<div style='font-size:0.78em;color:#b91c1c;padding-left:12px;'>"
+                    f"&#9888; [{gtype}] {gdesc}</div>"
+                )
+
+        contradictions = sec.get("contradictions", [])
+        if isinstance(contradictions, list) and contradictions:
+            sections_html += (
+                f"<div style='margin-top:4px;font-size:0.8em;color:#d97706;'>"
+                f"<strong>{_escape(L['contradictions'])} ({len(contradictions)}):</strong></div>"
+            )
+            for c in contradictions[:3]:
+                if not isinstance(c, dict):
+                    continue
+                ap = _escape(str(c.get("attacker_prop", ""))[:100])
+                dp = _escape(str(c.get("attacked_prop", ""))[:100])
+                sections_html += (
+                    f"<div style='font-size:0.78em;color:#92400e;padding-left:12px;'>"
+                    f"&#9650; &ldquo;{ap}&rdquo; vs &ldquo;{dp}&rdquo;</div>"
+                )
+
+        source_docs = sec.get("source_documents", [])
+        if isinstance(source_docs, list) and source_docs:
+            doc_list = ", ".join(_escape(str(d)[:60]) for d in source_docs[:5] if isinstance(d, str))
+            sections_html += (
+                f"<div style='margin-top:4px;font-size:0.78em;color:#6b7280;'>"
+                f"{_escape(L['sources'])}: {doc_list}</div>"
+            )
+
+        sections_html += "</div>"
+
+    return f"{header}{sections_html}</div>"
+
+
 def _fmt_quant_panel(
     payment_recon: dict,
     invoice_chain: list,
@@ -11738,6 +11923,19 @@ class AppState:
             logger.warning("Domain readiness load failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_issue_brief(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().compile_issue_brief(matter_id))
+            if not isinstance(data, dict):
+                logger.warning("load_issue_brief: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_issue_brief(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Issue brief load failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def create_scenario_branch_ui(self, matter_id: str, name: str, assumptions_text: str, notes: str = "") -> str:
         if not matter_id or matter_id == "—":
             return "No matter loaded."
@@ -14238,6 +14436,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "Refresh Deliverable Preview", variant="secondary", size="sm",
             )
 
+        with gr.Accordion("Issue Brief — compiled analysis with provenance and gap disclosure", open=False):
+            gr.Markdown(
+                "A structured brief compiled from the matter model showing all assertions "
+                "per issue with belief state, source roles, proof gaps, contradictions, "
+                "and source document citations. Suitable for review and export."
+            )
+            issue_brief_html = gr.HTML(
+                "<div class='viz-empty'>Issue brief will appear after an investigation.</div>"
+            )
+            refresh_brief_btn = gr.Button(
+                "Compile Issue Brief", variant="primary", size="sm",
+            )
+
         with gr.Accordion("Scenario Branches — persistent what-if counterfactual analysis", open=False):
             gr.Markdown(
                 "Create named scenario branches to explore alternative interpretations. "
@@ -15002,6 +15213,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_readiness_html],
+            ).then(
+                fn=lambda mid: state.load_issue_brief(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[issue_brief_html],
             )
         else:
             submit_btn.click(
@@ -15126,6 +15341,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_readiness_html],
+            ).then(
+                fn=lambda mid: state.load_issue_brief(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[issue_brief_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -15259,6 +15478,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[domain_readiness_html],
+        ).then(
+            fn=lambda mid: state.load_issue_brief(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[issue_brief_html],
         )
 
         export_report_btn.click(
@@ -15592,6 +15815,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_deliverable_workbench(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[deliverable_workbench_html],
+        )
+        refresh_brief_btn.click(
+            fn=lambda mid: state.load_issue_brief(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[issue_brief_html],
         )
         refresh_scenario_btn.click(
             fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
@@ -16115,6 +16343,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_domain_readiness(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[domain_readiness_html],
+        ).then(
+            fn=lambda mid: state.load_issue_brief(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[issue_brief_html],
         )
 
         clarification_dropdown.change(

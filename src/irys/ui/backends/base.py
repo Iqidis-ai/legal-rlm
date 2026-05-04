@@ -247,6 +247,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def compile_issue_brief(self, matter_id: str) -> dict:
+        """Compile a structured issue brief from matter model state."""
+        ...
+
+    @abstractmethod
     async def get_objective_coverage(self, matter_id: str) -> dict:
         """Objective coverage workbench: per-objective criteria, support, gaps (SO-4)."""
         ...
