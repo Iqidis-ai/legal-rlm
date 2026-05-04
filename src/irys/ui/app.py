@@ -847,7 +847,7 @@ def _fmt_overview_panel(data: dict) -> str:
 
     coverage_rows: list[str] = []
     coverage_sorted = sorted(
-        coverage_report,
+        (item for item in coverage_report if isinstance(item, dict)),
         key=lambda issue: float(issue.get("coverage_fraction", 0.0)),
     )
     for issue in coverage_sorted:
@@ -919,12 +919,12 @@ def _fmt_overview_panel(data: dict) -> str:
             if isinstance(mat, (int, float)) and mat else ""
         )
         return f"<li><span class='pill {cls}' style='font-size:9px;padding:1px 5px'>{_escape(label)}</span> {desc}{mat_tag}</li>"
-    gap_items = "".join(_gap_li(g) for g in gaps) or "<li>No open gaps.</li>"
+    gap_items = "".join(_gap_li(g) for g in gaps if isinstance(g, dict)) or "<li>No open gaps.</li>"
     clarification_items = "".join(
         "<li>"
         f"{_escape(c.get('question_text') or c.get('question') or 'Clarification')}"
         "</li>"
-        for c in clarifications
+        for c in clarifications if isinstance(c, dict)
     ) or "<li>No pending clarifications.</li>"
 
     pricing_source = _escape(llm_totals.get("pricing_source", ""))
@@ -977,7 +977,7 @@ def _fmt_overview_panel(data: dict) -> str:
                 f"<span>{_escape(issue.get('title') or issue.get('id') or 'Issue')}</span>"
                 f"<strong>{_fmt_percent_html(_safe_float(issue.get('coverage_fraction', 0.0)))}</strong>"
                 "</div>"
-                for issue in weakest
+                for issue in weakest if isinstance(issue, dict)
             )
             if weakest
             else "<div class='viz-empty'>No issue coverage data yet.</div>"
@@ -3912,6 +3912,8 @@ def _fmt_overview(data: dict) -> str:
     if weakest:
         lines.append("\n### Weakest Issues (proof gaps)")
         for issue in weakest[:5]:
+            if not isinstance(issue, dict):
+                continue
             title = issue.get("title") or issue.get("id", "?")
             frac = issue.get("coverage_fraction")
             gap = " ⚠️" if issue.get("has_proof_gap") else ""

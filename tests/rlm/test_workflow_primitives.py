@@ -1924,6 +1924,46 @@ def test_fmt_overview_panel_xss():
     assert "&lt;script&gt;" in result
 
 
+def test_fmt_overview_panel_non_dict_guards():
+    """Non-dict items in weakest/gaps/clarifications/coverage must not crash."""
+    from irys.ui.app import _fmt_overview_panel
+
+    data = {
+        "total_issues": 2,
+        "total_assertions": 5,
+        "total_gaps": 1,
+        "total_documents": 3,
+        "coverage_report": [
+            {"id": "iss-1", "title": "Real issue", "coverage_fraction": 0.5},
+            "stale-string-entry",
+            42,
+            None,
+        ],
+        "weakest_issues": [
+            {"id": "iss-2", "title": "Weak one", "coverage_fraction": 0.1},
+            "not-a-dict",
+            None,
+        ],
+        "top_gaps": [
+            {"id": "gap-1", "gap_type": "missing_evidence", "description": "Need more"},
+            "orphan",
+            99,
+        ],
+        "pending_clarifications": [
+            {"question_text": "What happened?"},
+            "bare-string",
+            None,
+        ],
+    }
+    result = _fmt_overview_panel(data)
+    assert "Real issue" in result
+    assert "Weak one" in result
+    assert "Need more" in result
+    assert "What happened?" in result
+    assert "stale-string-entry" not in result
+    assert "not-a-dict" not in result
+
+
 # ------------------------------------------------------------------ #
 # _fmt_issues_panel tests                                              #
 # ------------------------------------------------------------------ #
