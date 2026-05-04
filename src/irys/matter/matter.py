@@ -3431,7 +3431,7 @@ class MatterModel:
                 status_badge = "fresh"
             elif "not_found" in validation_dict.get("status", ""):
                 status_badge = "unknown"
-            elif any("policy" in r for r in stale_reasons):
+            elif any(isinstance(r, str) and "policy" in r for r in stale_reasons):
                 status_badge = "policy_limited"
             else:
                 status_badge = "stale"

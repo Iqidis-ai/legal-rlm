@@ -4778,7 +4778,7 @@ def _fmt_quant_ontology(data: dict, domain: str = "legal") -> str:
     parts = [
         f"<h3 style='margin:0 0 8px;'>{_escape(labels['title'])}</h3>",
         f"<div style='display:flex;gap:24px;margin-bottom:12px;'>",
-        f"<div><b>{_escape(labels['coverage'])}:</b> {approved_count}/{total} ({pct}%)</div>",
+        f"<div><b>{_escape(labels['coverage'])}:</b> {int(approved_count)}/{int(total)} ({int(pct)}%)</div>",
         f"</div>",
         f"<div style='background:#e5e7eb;border-radius:4px;height:8px;margin-bottom:16px;'>",
         f"<div style='background:{bar_color};height:8px;border-radius:4px;width:{pct}%;'></div>",
@@ -4806,10 +4806,10 @@ def _fmt_quant_ontology(data: dict, domain: str = "legal") -> str:
             f"font-size:0.8em;'>{badge_text}</span>"
             f"</div>"
             f"<div style='color:#6b7280;font-size:0.85em;margin-top:4px;'>"
-            f"{fc} facts"
+            f"{int(fc)} facts"
         )
         if tv:
-            parts.append(f" · Total value: {tv:,.2f}")
+            parts.append(f" · Total value: {float(tv):,.2f}")
         parts.append("</div>")
 
         sample_facts = g.get("sample_facts", [])
@@ -4928,7 +4928,7 @@ def _fmt_answer_audit(data: dict, domain: str = "legal") -> str:
     if not audits:
         return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
 
-    total = data.get("total_manifests", 0)
+    total = int(data.get("total_manifests", 0))
     parts = [
         f"<h3 style='margin:0 0 8px;'>{_escape(labels['title'])}</h3>",
         f"<div style='color:#6b7280;margin-bottom:12px;'>"
@@ -4967,7 +4967,7 @@ def _fmt_answer_audit(data: dict, domain: str = "legal") -> str:
             f"font-size:0.8em;'>{badge_label}</span>"
             f"</div>"
             f"<div style='color:#6b7280;font-size:0.85em;margin-top:4px;'>"
-            f"{created} · {obj_count} evidence deps · {neg_count} missingness deps"
+            f"{created} · {int(obj_count)} evidence deps · {int(neg_count)} missingness deps"
             f"</div>"
         )
 
