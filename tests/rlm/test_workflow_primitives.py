@@ -10213,3 +10213,220 @@ def test_fmt_ledger_event_formats_event():
     assert "cascade_decision" in result
     assert "Routed to trace family" in result
     assert "Found entity reference" in result
+
+
+# --- _fmt_research_mode_label tests ---
+
+
+def test_research_mode_label_known_modes():
+    """_fmt_research_mode_label normalizes known modes to title case."""
+    from irys.ui.app import _fmt_research_mode_label
+    assert _fmt_research_mode_label("deep") == "Deep"
+    assert _fmt_research_mode_label("simple") == "Simple"
+    assert _fmt_research_mode_label("sebih_special") == "Sebih Special"
+
+
+def test_research_mode_label_none_falls_back():
+    """_fmt_research_mode_label returns the default mode label for None."""
+    from irys.ui.app import _fmt_research_mode_label
+    result = _fmt_research_mode_label(None)
+    assert result == "Deep"
+
+
+def test_research_mode_label_unknown_falls_back():
+    """_fmt_research_mode_label returns the default for unrecognized values."""
+    from irys.ui.app import _fmt_research_mode_label
+    result = _fmt_research_mode_label("nonexistent_mode_xyz")
+    assert result == "Deep"
+
+
+# --- _fmt_thinking_steps_fallback tests ---
+
+
+def test_thinking_steps_fallback_renders_numbered():
+    """_fmt_thinking_steps_fallback renders numbered lines from state."""
+    from irys.ui.app import _fmt_thinking_steps_fallback
+    from types import SimpleNamespace
+    step1 = SimpleNamespace(content="Analyzing jurisdiction")
+    step2 = SimpleNamespace(content="Checking statute of limitations")
+    state = SimpleNamespace(thinking_steps=[step1, step2])
+    result = _fmt_thinking_steps_fallback(state)
+    assert "1. Analyzing jurisdiction" in result
+    assert "2. Checking statute of limitations" in result
+
+
+def test_thinking_steps_fallback_empty():
+    """_fmt_thinking_steps_fallback returns empty string when no steps."""
+    from irys.ui.app import _fmt_thinking_steps_fallback
+    from types import SimpleNamespace
+    assert _fmt_thinking_steps_fallback(SimpleNamespace(thinking_steps=[])) == ""
+    assert _fmt_thinking_steps_fallback(SimpleNamespace()) == ""
+
+
+def test_thinking_steps_fallback_skips_blank():
+    """_fmt_thinking_steps_fallback skips steps with empty content."""
+    from irys.ui.app import _fmt_thinking_steps_fallback
+    from types import SimpleNamespace
+    step1 = SimpleNamespace(content="Valid step")
+    step2 = SimpleNamespace(content="")
+    step3 = SimpleNamespace(content="Another valid step")
+    state = SimpleNamespace(thinking_steps=[step1, step2, step3])
+    result = _fmt_thinking_steps_fallback(state)
+    assert "1. Valid step" in result
+    assert "3. Another valid step" in result
+    lines = [l for l in result.split("\n") if l.strip()]
+    assert len(lines) == 2
+
+
+# --- _fmt_route_chip tests ---
+
+
+def test_route_chip_simple():
+    """_fmt_route_chip renders 'via <label>' for a single-family route."""
+    from irys.ui.app import _fmt_route_chip
+    from types import SimpleNamespace
+    state = SimpleNamespace(findings={
+        "route": {"classifier_family": "read", "terminal_family": "read"}
+    })
+    assert _fmt_route_chip(state) == "via Quick summary"
+
+
+def test_route_chip_escalation():
+    """_fmt_route_chip shows both families when escalation happened."""
+    from irys.ui.app import _fmt_route_chip
+    from types import SimpleNamespace
+    state = SimpleNamespace(findings={
+        "route": {"classifier_family": "read", "terminal_family": "investigate"}
+    })
+    assert _fmt_route_chip(state) == "via Quick summary → Deep investigation"
+
+
+def test_route_chip_none_when_no_route():
+    """_fmt_route_chip returns None when state has no route."""
+    from irys.ui.app import _fmt_route_chip
+    from types import SimpleNamespace
+    assert _fmt_route_chip(SimpleNamespace(findings={})) is None
+    assert _fmt_route_chip(SimpleNamespace(findings=None)) is None
+    assert _fmt_route_chip(SimpleNamespace()) is None
+
+
+def test_route_chip_hides_infra_failure():
+    """_fmt_route_chip hides read_infra_failure family."""
+    from irys.ui.app import _fmt_route_chip
+    from types import SimpleNamespace
+    state = SimpleNamespace(findings={
+        "route": {"classifier_family": "read", "terminal_family": "read_infra_failure"}
+    })
+    assert _fmt_route_chip(state) is None
+
+
+# --- _fmt_span_label tests ---
+
+
+def test_span_label_page():
+    """_fmt_span_label converts 'page:3' to 'Page 3'."""
+    from irys.ui.app import _fmt_span_label
+    assert _fmt_span_label("page:3") == "Page 3"
+
+
+def test_span_label_paragraph():
+    """_fmt_span_label converts 'para:12' to 'Paragraph 12'."""
+    from irys.ui.app import _fmt_span_label
+    assert _fmt_span_label("para:12") == "Paragraph 12"
+    assert _fmt_span_label("paragraph:5") == "Paragraph 5"
+
+
+def test_span_label_section_clause_line():
+    """_fmt_span_label handles section, clause, line prefixes."""
+    from irys.ui.app import _fmt_span_label
+    assert _fmt_span_label("section:4.2") == "Section 4.2"
+    assert _fmt_span_label("clause:7") == "Clause 7"
+    assert _fmt_span_label("line:99") == "Line 99"
+
+
+def test_span_label_uuid_hidden():
+    """_fmt_span_label returns dash for UUID-like strings."""
+    from irys.ui.app import _fmt_span_label
+    assert _fmt_span_label("a1b2c3d4e5f6a1b2c3d4e5f6") == "—"
+    assert _fmt_span_label("a1b2c3d4-e5f6-a1b2-c3d4-e5f6a1b2c3d4") == "—"
+
+
+def test_span_label_empty():
+    """_fmt_span_label returns dash for None/empty."""
+    from irys.ui.app import _fmt_span_label
+    assert _fmt_span_label(None) == "—"
+    assert _fmt_span_label("") == "—"
+    assert _fmt_span_label("   ") == "—"
+
+
+def test_span_label_passthrough():
+    """_fmt_span_label passes through short human-readable labels."""
+    from irys.ui.app import _fmt_span_label
+    assert _fmt_span_label("Exhibit A") == "Exhibit A"
+
+
+def test_span_label_truncates_long():
+    """_fmt_span_label truncates labels over 40 chars."""
+    from irys.ui.app import _fmt_span_label
+    long = "X" * 50
+    result = _fmt_span_label(long)
+    assert len(result) <= 40
+    assert result.endswith("…")
+    assert "X" in result
+
+
+# --- _friendly_source_label tests ---
+
+
+def test_friendly_source_label_empty():
+    """_friendly_source_label returns dash for None/empty."""
+    from irys.ui.app import _friendly_source_label
+    assert _friendly_source_label(None) == "—"
+    assert _friendly_source_label("") == "—"
+
+
+def test_friendly_source_label_hex_hidden():
+    """_friendly_source_label hides hex-only internal IDs."""
+    from irys.ui.app import _friendly_source_label
+    assert _friendly_source_label("a1b2c3d4e5f6a1b2c3d4e5f6") == "—"
+
+
+def test_friendly_source_label_path_basename():
+    """_friendly_source_label extracts basename from file paths."""
+    from irys.ui.app import _friendly_source_label
+    assert _friendly_source_label("/docs/contracts/lease.pdf") == "lease.pdf"
+    assert _friendly_source_label("C:\\docs\\contracts\\lease.pdf") == "lease.pdf"
+
+
+def test_friendly_source_label_passthrough():
+    """_friendly_source_label passes through normal names."""
+    from irys.ui.app import _friendly_source_label
+    assert _friendly_source_label("Exhibit A") == "Exhibit A"
+
+
+def test_friendly_source_label_truncates_long():
+    """_friendly_source_label truncates names over 80 chars."""
+    from irys.ui.app import _friendly_source_label
+    long = "Z" * 100
+    result = _friendly_source_label(long)
+    assert len(result) <= 80
+    assert result.endswith("…")
+    assert "Z" in result
+
+
+# --- _provenance_tier_label tests ---
+
+
+def test_provenance_tier_label_known():
+    """_provenance_tier_label uppercases the model_tier."""
+    from irys.ui.app import _provenance_tier_label
+    assert _provenance_tier_label({"model_tier": "openai"}) == "OPENAI tier"
+    assert _provenance_tier_label({"model_tier": "anthropic"}) == "ANTHROPIC tier"
+
+
+def test_provenance_tier_label_empty_fallback():
+    """_provenance_tier_label returns 'Irys' when no tier."""
+    from irys.ui.app import _provenance_tier_label
+    assert _provenance_tier_label({}) == "Irys"
+    assert _provenance_tier_label({"model_tier": ""}) == "Irys"
+    assert _provenance_tier_label({"model_tier": None}) == "Irys"
