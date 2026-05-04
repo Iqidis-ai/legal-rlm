@@ -7703,6 +7703,24 @@ class AppState:
         except Exception as exc:
             return f"Error: {_escape(str(exc))}", ""
 
+    def do_resolve_actor(self, matter_id: str, name: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "No matter loaded."
+        name = (name or "").strip()
+        if not name:
+            return "Enter an actor name to look up."
+        try:
+            result = _run_async(self.backend().resolve_actor(matter_id, name))
+            actor_id = result.get("actor_id")
+            if not actor_id:
+                return f"No actor found matching '{_escape(name)}'."
+            actor = result.get("actor") or {}
+            display = _escape(actor.get("name", actor_id) if isinstance(actor, dict) else str(actor_id))
+            return f"Resolved: **{display}** · ID: `{_escape(str(actor_id)[:24])}`"
+        except Exception as exc:
+            logger.warning("resolve_actor failed: %s", exc)
+            return f"Error: {_escape(str(exc))}"
+
     def load_llm_analytics(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -9034,6 +9052,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             merge_confirm = gr.Checkbox(label="I understand this permanently merges these actors", value=False)
             merge_actors_btn = gr.Button("Merge Actors", variant="stop", size="sm")
             merge_result = gr.Markdown("")
+            gr.Markdown("#### Look up actor by name")
+            with gr.Row():
+                resolve_actor_name = gr.Textbox(label="Actor name", placeholder="e.g. Acme Inc", scale=3)
+                resolve_actor_btn = gr.Button("Resolve", variant="secondary", size="sm", scale=1)
+            resolve_actor_result = gr.Markdown("")
 
         with gr.Accordion("LLM Analytics — cost, latency, and stage mix", open=False):
             gr.Markdown(
@@ -9901,6 +9924,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, keep, merge, confirmed: state.do_merge_actors(mid, keep, merge, confirmed),
             inputs=[matter_id_box, merge_keep_id, merge_discard_id, merge_confirm],
             outputs=[merge_result, actor_duplicates_html],
+        )
+        resolve_actor_btn.click(
+            fn=lambda mid, name: state.do_resolve_actor(mid, name),
+            inputs=[matter_id_box, resolve_actor_name],
+            outputs=[resolve_actor_result],
         )
         refresh_llm_btn.click(
             fn=lambda mid: state.load_llm_analytics(mid),

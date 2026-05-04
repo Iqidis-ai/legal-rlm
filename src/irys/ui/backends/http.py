@@ -486,6 +486,10 @@ class HttpBackend(UIBackend):
             return {}
         return result
 
+    async def resolve_actor(self, matter_id: str, name: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/actors/resolve", {"name": name})
+        return result if isinstance(result, dict) else {"actor_id": None}
+
     async def get_decision_context(self, matter_id: str) -> "dict | None":
         result = await self._get(f"/matter/{matter_id}/decision-context")
         return result if isinstance(result, dict) else None

@@ -384,6 +384,11 @@ class UIBackend(ABC):
         """Merge merge_id into keep_id. Returns merge result."""
         ...
 
+    @abstractmethod
+    async def resolve_actor(self, matter_id: str, name: str) -> dict:
+        """Resolve an actor by name/alias. Returns {actor_id, actor} or {actor_id: None}."""
+        ...
+
     # ------------------------------------------------------------------ #
     # Decision context (SO-3)                                              #
     # ------------------------------------------------------------------ #

@@ -788,6 +788,16 @@ class InProcessBackend(UIBackend):
         model.actors.merge_actors(keep_id=keep_id, merge_id=merge_id)
         return {"keep_id": keep_id, "merged_id": merge_id, "status": "merged"}
 
+    async def resolve_actor(self, matter_id: str, name: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        actor_id = model.actors.resolve_by_name(name)
+        if actor_id is None:
+            return {"actor_id": None}
+        actor = next(
+            (a for a in model.actors.list_actors() if a["id"] == actor_id), None
+        )
+        return {"actor_id": actor_id, "actor": actor}
+
     async def get_decision_context(self, matter_id: str) -> "dict | None":
         model = self._get_matter_model(matter_id)
         return model.decision_context.get()
