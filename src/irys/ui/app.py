@@ -1218,9 +1218,11 @@ def _provenance_tier_label(event: dict[str, Any]) -> str:
 def _fmt_timeline_panel(events: list[dict]) -> str:
     if not events:
         return "<div class='viz-empty'>No timeline events available.</div>"
-    withheld_total = sum(1 for e in events if e.get("withheld"))
+    withheld_total = sum(1 for e in events if isinstance(e, dict) and e.get("withheld"))
     items: list[str] = []
     for event in events:
+        if not isinstance(event, dict):
+            continue
         raw_date = event.get("date") or ""
         precision = event.get("date_precision")
         date = _escape(_display_date(raw_date, precision) if raw_date else "Undated")
@@ -6007,13 +6009,7 @@ class AppState:
         try:
             backend = self.backend()
             assertions = _run_async(backend.list_assertions(matter_id, limit=50))
-            domain = "legal"
-            try:
-                overview = _run_async(backend.get_overview(matter_id))
-                dc = overview.get("domain_composition", {}) if isinstance(overview, dict) else {}
-                domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
-            except Exception:
-                pass
+            domain = self._detect_domain(matter_id)
             return _fmt_assertions(assertions, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading assertions: {_escape(str(exc))}</div>"
@@ -6026,13 +6022,7 @@ class AppState:
         try:
             backend = self.backend()
             results = _run_async(backend.search_assertions(matter_id, query.strip(), limit=20))
-            domain = "legal"
-            try:
-                overview = _run_async(backend.get_overview(matter_id))
-                dc = overview.get("domain_composition", {}) if isinstance(overview, dict) else {}
-                domain = dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
-            except Exception:
-                pass
+            domain = self._detect_domain(matter_id)
             if not results:
                 return f"<div class='viz-empty'>No facts matching “{_escape(query.strip())}”.</div>"
             return _fmt_assertions(results, domain=domain)
@@ -6111,7 +6101,8 @@ class AppState:
             before_count = _run_async(
                 self.backend().count_review_queue(matter_id)
             ).get("total")
-        except Exception:
+        except Exception as _exc:
+            logger.warning("review queue count (pre-verify) failed: %s", _exc)
             before_count = None
         try:
             _run_async(self.backend().verify_target(
@@ -6137,8 +6128,8 @@ class AppState:
                         f"item(s) (the fact's supporting evidence link) so the "
                         "verified-coverage bar moves up cleanly."
                     )
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.warning("review queue count (post-verify) failed: %s", _exc)
         return "✅ Verified — the verified-coverage bar moves up and the queue shrinks."
 
     def do_reject_target(
@@ -6437,13 +6428,7 @@ class AppState:
                     visible=True,
                 ),
             )
-        _batch_domain = "legal"
-        try:
-            _ov = _run_async(self.backend().get_overview(matter_id))
-            _dc = _ov.get("domain_composition", {}) if isinstance(_ov, dict) else {}
-            _batch_domain = _dc.get("primary_domain_profile_id", "legal") if isinstance(_dc, dict) else "legal"
-        except Exception:
-            pass
+        _batch_domain = self._detect_domain(matter_id)
         choices: list[tuple[str, str]] = []
         detail_lines: list[str] = []
         for r in rows:
