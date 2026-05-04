@@ -4295,6 +4295,10 @@ class MatterModel:
         )
 
         def _legal_fallback() -> dict[str, float]:
+            _log.warning(
+                "Domain composition unavailable for matter %s — falling back to legal trust weights",
+                self.matter_id,
+            )
             tw = broker.get_profile_trust_weights("legal")
             return tw if tw else dict(SOURCE_TRUST_WEIGHTS)
 
@@ -4356,6 +4360,7 @@ class MatterModel:
         """
         broker = self.memory_broker
         facets, composed_weights, primary = self._read_matter_domain_composition()
+        is_fallback = primary is None and profile_id is None
         pid = profile_id or primary or "legal"
 
         profile = broker.get_domain_profile(pid)
@@ -4373,6 +4378,7 @@ class MatterModel:
             "profile_kind": profile.get("profile_kind", pid) if profile else pid,
             "status": profile.get("status", "unknown") if profile else "not_found",
             "is_primary": pid == primary,
+            "is_fallback": is_fallback,
             "facets": facets,
             "composed_trust_weights": composed_weights,
             "neutral_kernel": neutral_kernel,

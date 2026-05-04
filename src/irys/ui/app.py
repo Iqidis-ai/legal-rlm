@@ -3310,15 +3310,29 @@ def _fmt_domain_profile_panel(summary: dict, domain: str = "legal") -> str:
     pver = int(summary.get("profile_version", 1)) if isinstance(summary.get("profile_version"), (int, float)) else 1
     pkind = _escape(summary.get("profile_kind", pid))
     is_primary = summary.get("is_primary", False)
+    is_fallback = summary.get("is_fallback", False)
 
     primary_badge = "<span style='background:#2563eb;color:white;padding:2px 8px;border-radius:10px;font-size:0.8em;margin-left:8px;'>PRIMARY</span>" if is_primary else ""
 
-    parts = [
+    parts = []
+    if is_fallback and pid == "legal":
+        parts.append(
+            "<div style='background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;"
+            "padding:10px 14px;margin-bottom:12px;'>"
+            "<div style='font-weight:700;font-size:13px;color:#92400e;margin-bottom:4px;'>"
+            "&#9888; Domain profile fallback active</div>"
+            "<div style='font-size:12px;color:#78350f;'>"
+            "No domain composition detected — using legal profile as default. "
+            "Synthesis, trust weights, and issue classification may use legal-specific "
+            "terminology. Run an investigation with domain-appropriate documents to "
+            "auto-detect the correct profile.</div></div>"
+        )
+    parts.extend([
         f"<div style='margin-bottom:16px;'>",
         f"<h3 style='margin:0 0 4px 0;'>{_escape(labels['title'])}{primary_badge}</h3>",
         f"<div style='color:#666;font-size:0.9em;'>Profile: <b>{pid}</b> v{pver} · Kind: <b>{pkind}</b> · Status: <b>{_escape(status)}</b></div>",
         f"</div>",
-    ]
+    ])
 
     kernel = summary.get("neutral_kernel", {})
     if isinstance(kernel, dict) and kernel:

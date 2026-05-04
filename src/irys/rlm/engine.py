@@ -5324,8 +5324,8 @@ Return:
                         if _primary:
                             _domain = _primary
                             state._cached_domain = _domain
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.warning("Domain detection failed during deep read, using legal fallback: %s", exc)
             else:
                 _domain = state._cached_domain
             _vocab = _DOMAIN_DEEP_READ_VOCABULARY.get(_domain, _DOMAIN_DEEP_READ_VOCABULARY["legal"])
@@ -5909,8 +5909,8 @@ Return:
                 _, _, _primary = self._matter_model._read_matter_domain_composition()
                 if _primary:
                     _synth_domain = _primary
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("Domain detection failed during synthesis, using legal fallback: %s", exc)
         _synth_template = _compose_synthesis_prompt(_synth_domain)
         prompt = _synth_template.format(
             query=state.query,
