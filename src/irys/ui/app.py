@@ -80,11 +80,16 @@ def _s3_matters_base_prefix() -> str:
 
 def _get_s3_client():
     import boto3
+    from botocore.config import Config
+    # max_pool_connections defaults to 10, which throttles the 16-way parallel
+    # upload/download paths. Bump to 32 so threaded callers don't queue on the
+    # connection pool for matter transfers with hundreds of files.
     return boto3.client(
         "s3",
         region_name=os.getenv("S3_REGION", "us-east-1"),
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID") or None,
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY") or None,
+        config=Config(max_pool_connections=32),
     )
 
 
@@ -140,13 +145,39 @@ def _s3_matter_doc_count(matter_name: str) -> str:
         return "? documents"
 
 
-def _upload_files_to_s3_matter(uploaded_files: list, name: str) -> tuple[str, str]:
+def _sanitize_s3_relpath(relpath: str) -> str:
+    """Sanitize a browser-supplied relative path for use as an S3 key suffix.
+
+    Splits on / (and \\), drops empty / `.` / `..` segments to block traversal,
+    strips whitespace per segment. Returns "" when nothing usable remains.
+    """
+    parts: list[str] = []
+    for raw in relpath.replace("\\", "/").split("/"):
+        part = raw.strip()
+        if not part or part in (".", ".."):
+            continue
+        parts.append(part)
+    return "/".join(parts)
+
+
+def _upload_files_to_s3_matter(
+    uploaded_files: list,
+    name: str,
+    relpath_json: Optional[str] = None,
+) -> tuple[str, str]:
     """Upload Gradio files to S3 under matters/<name>/.
 
     Appends to existing matter if the name already exists. Per-file failures
     are isolated (do not abort the batch), retried with exponential backoff,
     and reported in the status string. Filename collisions get a numeric
     suffix instead of silently overwriting.
+
+    When `relpath_json` is provided (a JSON object of `{leaf_name: [relpath,
+    ...]}` produced client-side from `webkitRelativePath`), folder structure
+    is preserved by using the relpath as the S3 key suffix. Multiple files
+    sharing a leaf name in different subfolders are matched in upload order
+    by popping the head of each leaf's relpath list.
+
     Returns (display_name, status_message).
     """
     bucket = _s3_bucket()
@@ -155,6 +186,20 @@ def _upload_files_to_s3_matter(uploaded_files: list, name: str) -> tuple[str, st
     safe = _sanitize_matter_name(name)
     prefix = f"{_s3_matters_base_prefix()}/{safe}"
     s3 = _get_s3_client()
+
+    # Parse relpath map from JS (best-effort; falls back to flat upload).
+    relpath_map: dict[str, list[str]] = {}
+    if relpath_json:
+        try:
+            raw = json.loads(relpath_json)
+            if isinstance(raw, dict):
+                for leaf, paths in raw.items():
+                    if isinstance(paths, list):
+                        relpath_map[leaf] = [str(p) for p in paths]
+                    elif isinstance(paths, str):
+                        relpath_map[leaf] = [paths]
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            logging.warning("Could not parse folder relpath JSON: %s", exc)
 
     # Pre-load existing keys so we can avoid silent overwrite on collision.
     used_keys: set[str] = set()
@@ -166,7 +211,11 @@ def _upload_files_to_s3_matter(uploaded_files: list, name: str) -> tuple[str, st
     except Exception as exc:
         logging.warning("S3 list before upload failed for '%s': %s", safe, exc)
 
-    saved = 0
+    # Phase 1 — serial key allocation: relpath_map is consumed in upload order
+    # (so JS-supplied relpaths line up with their files) and `used_keys` is a
+    # shared collision tracker. Both are racy under threads, so we resolve
+    # final keys here before fanning out the actual PUTs.
+    plan: list[tuple[pathlib.Path, str, str]] = []  # (source path, display name, full key)
     failed: list[tuple[str, str]] = []
     for f in uploaded_files:
         try:
@@ -183,40 +232,67 @@ def _upload_files_to_s3_matter(uploaded_files: list, name: str) -> tuple[str, st
             failed.append((str(f)[:80], f"resolve path: {exc}"))
             continue
 
-        key = f"{prefix}/{display_name}"
+        # If JS supplied a relpath for this leaf name, use it as the key suffix
+        # so subdirectory structure survives the round-trip through S3.
+        key_suffix = display_name
+        bucket_paths = relpath_map.get(display_name)
+        if bucket_paths:
+            cleaned = _sanitize_s3_relpath(bucket_paths.pop(0))
+            if cleaned:
+                key_suffix = cleaned
+
+        key = f"{prefix}/{key_suffix}"
         if key in used_keys:
-            stem = pathlib.Path(display_name).stem
-            ext = pathlib.Path(display_name).suffix
+            stem = pathlib.Path(key_suffix).stem
+            ext = pathlib.Path(key_suffix).suffix
+            parent = pathlib.Path(key_suffix).parent
             n = 2
             while True:
-                cand_name = f"{stem} ({n}){ext}"
-                cand_key = f"{prefix}/{cand_name}"
+                cand_leaf = f"{stem} ({n}){ext}"
+                cand_suffix = (
+                    str(parent / cand_leaf) if str(parent) not in (".", "") else cand_leaf
+                )
+                cand_key = f"{prefix}/{cand_suffix}"
                 if cand_key not in used_keys:
-                    display_name = cand_name
+                    display_name = cand_leaf
+                    key_suffix = cand_suffix
                     key = cand_key
                     break
                 n += 1
         used_keys.add(key)
+        plan.append((actual_path, display_name, key))
 
+    # Phase 2 — parallel upload. boto3's botocore client is documented as
+    # thread-safe for separate API calls, so 16 concurrent PUTs of small PDFs
+    # easily saturate residential bandwidth without exhausting the connection
+    # pool (default 10) plus the safety margin we configure at client init.
+    def _upload_one(item: tuple[pathlib.Path, str, str]) -> tuple[bool, str, str, str]:
+        src, name_for_log, target_key = item
         last_err: Optional[Exception] = None
-        ok = False
         for attempt in range(3):
             try:
-                s3.upload_file(str(actual_path), bucket, key)
-                ok = True
-                break
+                s3.upload_file(str(src), bucket, target_key)
+                return True, name_for_log, target_key, ""
             except Exception as exc:
                 last_err = exc
                 if attempt < 2:
                     time.sleep(0.5 * (2 ** attempt))
-        if ok:
-            saved += 1
-        else:
-            failed.append((display_name, str(last_err) if last_err else "unknown"))
-            logging.error(
-                "S3 upload failed after retries for '%s' -> %s: %s",
-                display_name, key, last_err,
-            )
+        return False, name_for_log, target_key, str(last_err) if last_err else "unknown"
+
+    saved = 0
+    if plan:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(16, len(plan)), thread_name_prefix="s3_upload"
+        ) as pool:
+            for ok, name_for_log, target_key, err in pool.map(_upload_one, plan):
+                if ok:
+                    saved += 1
+                else:
+                    failed.append((name_for_log, err))
+                    logging.error(
+                        "S3 upload failed after retries for '%s' -> %s: %s",
+                        name_for_log, target_key, err,
+                    )
 
     count = _s3_matter_doc_count(name)
     display = safe.replace("_", " ")
@@ -238,7 +314,8 @@ def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Pa
 
     Existing document files are replaced with the current S3 contents; the
     .irys/ subdirectory (matter DB) is left untouched so warm cache carries
-    over between runs on the same matter.
+    over between runs on the same matter. Subdirectory structure is recreated
+    locally so files uploaded under nested folders remain reachable.
     """
     import tempfile
     bucket = _s3_bucket()
@@ -256,19 +333,32 @@ def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Pa
             shutil.rmtree(item, ignore_errors=True)
     s3 = _get_s3_client()
     paginator = s3.get_paginator("list_objects_v2")
+    download_jobs: list[tuple[str, pathlib.Path]] = []
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
-            filename = key[len(prefix):]
-            if not filename or "/" in filename:
-                continue  # skip sub-prefixes
-            dest = temp_dir / filename
-            s3.download_file(bucket, key, str(dest))
+            relpath = key[len(prefix):]
+            if not relpath or relpath.endswith("/"):
+                continue
+            dest = temp_dir / relpath
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            download_jobs.append((key, dest))
+
+    def _download_one(job: tuple[str, pathlib.Path]) -> None:
+        key, dest = job
+        s3.download_file(bucket, key, str(dest))
+
+    if download_jobs:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(16, len(download_jobs)), thread_name_prefix="s3_download"
+        ) as pool:
+            # Materialize results so any per-file exception surfaces as before.
+            list(pool.map(_download_one, download_jobs))
     return temp_dir
 
 
 def _list_s3_matter_files(matter_name: str) -> list[str]:
-    """List document filenames in an S3 matter (flat, no sub-prefixes)."""
+    """List document relative paths in an S3 matter, including nested folders."""
     bucket = _s3_bucket()
     if not bucket or not matter_name:
         return []
@@ -280,9 +370,9 @@ def _list_s3_matter_files(matter_name: str) -> list[str]:
         files: list[str] = []
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
             for obj in page.get("Contents", []):
-                filename = obj["Key"][len(prefix):]
-                if filename and "/" not in filename:
-                    files.append(filename)
+                relpath = obj["Key"][len(prefix):]
+                if relpath and not relpath.endswith("/"):
+                    files.append(relpath)
         return sorted(files)
     except Exception as exc:
         logger.warning("Failed to list S3 matter files for %r: %s", matter_name, exc)
@@ -15862,6 +15952,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         elem_id="folder-upload",
                     )
                     add_folder_btn = gr.Button("Upload Folder", variant="primary", scale=1, min_width=120)
+                folder_upload_relpaths = gr.Textbox(
+                    visible=False,
+                    elem_id="folder-upload-relpaths",
+                    value="",
+                )
                 with gr.Accordion("Danger zone", open=False):
                     delete_matter_btn = gr.Button("Delete entire matter", variant="stop")
                 file_manage_status = gr.HTML()
@@ -15889,6 +15984,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     label="Initial folder (optional)",
                     file_count="multiple",
                     elem_id="folder-upload-new",
+                )
+                folder_upload_new_relpaths = gr.Textbox(
+                    visible=False,
+                    elem_id="folder-upload-new-relpaths",
+                    value="",
                 )
                 save_matter_btn = gr.Button("Create matter", variant="primary")
                 upload_status = gr.HTML()
@@ -17509,13 +17609,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 outputs=[matter_files_dropdown, file_manage_status, file_upload, matter_card_html],
             )
 
-            def _on_add_folder(files, matter_name):
+            def _on_add_folder(files, relpaths_json, matter_name):
                 if not matter_name:
-                    return gr.update(), _fmt_ws_status("Select a matter first", "err"), gr.update(), gr.update()
+                    return gr.update(), _fmt_ws_status("Select a matter first", "err"), gr.update(), gr.update(), ""
                 if not files:
-                    return gr.update(), _fmt_ws_status("No folder selected", "info"), gr.update(), gr.update()
+                    return gr.update(), _fmt_ws_status("No folder selected", "info"), gr.update(), gr.update(), ""
                 try:
-                    _, status_msg = _upload_files_to_s3_matter(files, matter_name.strip())
+                    _, status_msg = _upload_files_to_s3_matter(
+                        files, matter_name.strip(), relpath_json=relpaths_json
+                    )
                     updated = _list_s3_matter_files(matter_name.strip())
                     tone = "warn" if "failed" in status_msg.lower() else "ok"
                     return (
@@ -17523,15 +17625,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         _fmt_ws_status(status_msg, tone),
                         None,
                         _fmt_matter_card(matter_name, updated),
+                        "",
                     )
                 except Exception as e:
                     logger.warning("_on_add_folder: %s", e)
-                    return gr.update(), _fmt_ws_status(f"Upload failed: {e}", "err"), gr.update(), gr.update()
+                    return gr.update(), _fmt_ws_status(f"Upload failed: {e}", "err"), gr.update(), gr.update(), ""
 
             add_folder_btn.click(
                 fn=_on_add_folder,
-                inputs=[folder_upload, repo_path],
-                outputs=[matter_files_dropdown, file_manage_status, folder_upload, matter_card_html],
+                inputs=[folder_upload, folder_upload_relpaths, repo_path],
+                outputs=[matter_files_dropdown, file_manage_status, folder_upload, matter_card_html, folder_upload_relpaths],
             )
 
             # Update placeholder when domain changes
@@ -17546,14 +17649,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )
 
             # Create a new matter (with optional initial files/folder), then select it
-            def _on_save_matter(files, folder_files, name, domain_val):
+            def _on_save_matter(files, folder_files, folder_relpaths_json, name, domain_val):
                 if not name or not name.strip():
-                    return gr.update(), "", _fmt_ws_status("Enter a matter name first", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update()
+                    return gr.update(), "", _fmt_ws_status("Enter a matter name first", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update(), ""
                 try:
                     all_files = (files or []) + (folder_files or [])
                     status_msg = ""
                     if all_files:
-                        display_name, status_msg = _upload_files_to_s3_matter(all_files, name.strip())
+                        display_name, status_msg = _upload_files_to_s3_matter(
+                            all_files, name.strip(), relpath_json=folder_relpaths_json
+                        )
                     else:
                         display_name = _sanitize_matter_name(name.strip()).replace("_", " ")
                     names = _list_s3_matter_names()
@@ -17569,15 +17674,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         gr.update(visible=True),
                         gr.update(choices=new_files, value=None),
                         _fmt_matter_card(display_name, new_files),
+                        "",
                     )
                 except Exception as e:
                     logger.warning("_on_save_matter: %s", e)
-                    return gr.update(), "", _fmt_ws_status(f"Create failed: {e}", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update()
+                    return gr.update(), "", _fmt_ws_status(f"Create failed: {e}", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update(), ""
 
             save_matter_btn.click(
                 fn=_on_save_matter,
-                inputs=[file_upload_new, folder_upload_new, matter_name_input, domain_selector],
-                outputs=[matter_dropdown, repo_path, upload_status, matter_workspace, matter_files_dropdown, matter_card_html],
+                inputs=[file_upload_new, folder_upload_new, folder_upload_new_relpaths, matter_name_input, domain_selector],
+                outputs=[matter_dropdown, repo_path, upload_status, matter_workspace, matter_files_dropdown, matter_card_html, folder_upload_new_relpaths],
             )
         else:
             browse_btn.click(
@@ -19310,23 +19416,53 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 """
         demo.load(fn=None, js=_fact_select_js)
 
-        # Inject JS to enable folder selection on the folder-upload inputs
+        # Inject JS to enable folder selection on the folder-upload inputs and
+        # to capture each file's webkitRelativePath into a hidden Textbox so the
+        # server can preserve subdirectory structure on S3 upload. We post a
+        # JSON map of {leafFilename: [relpath, ...]} keyed by leaf name to
+        # disambiguate duplicate filenames living in different subfolders.
         if _s3_mode:
             _folder_upload_js = """
 () => {
-    const applyFolderAttr = () => {
-        ['folder-upload', 'folder-upload-new'].forEach(id => {
-            const el = document.getElementById(id);
-            if (!el) return;
-            el.querySelectorAll('input[type=file]').forEach(inp => {
-                inp.setAttribute('webkitdirectory', '');
-                inp.setAttribute('directory', '');
-                inp.setAttribute('multiple', '');
+    const widgets = ['folder-upload', 'folder-upload-new'];
+
+    const writeRelpathMap = (widgetId, fileList) => {
+        const map = {};
+        Array.from(fileList || []).forEach(f => {
+            const rp = f.webkitRelativePath || f.name;
+            const leaf = f.name;
+            if (!map[leaf]) map[leaf] = [];
+            map[leaf].push(rp);
+        });
+        const target = document.getElementById(widgetId + '-relpaths');
+        if (!target) return;
+        const box = target.querySelector('textarea, input[type=text]');
+        if (!box) return;
+        const desc = Object.getOwnPropertyDescriptor(box.constructor.prototype, 'value');
+        if (!desc || !desc.set) return;
+        desc.set.call(box, JSON.stringify(map));
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    const setupWidget = (widgetId) => {
+        const wrapper = document.getElementById(widgetId);
+        if (!wrapper) return;
+        wrapper.querySelectorAll('input[type=file]').forEach(inp => {
+            inp.setAttribute('webkitdirectory', '');
+            inp.setAttribute('directory', '');
+            inp.setAttribute('multiple', '');
+            if (inp.dataset.relpathBound === '1') return;
+            inp.dataset.relpathBound = '1';
+            inp.addEventListener('change', () => {
+                writeRelpathMap(widgetId, inp.files);
             });
         });
     };
-    applyFolderAttr();
-    new MutationObserver(applyFolderAttr).observe(document.body, {childList: true, subtree: true});
+
+    const apply = () => widgets.forEach(setupWidget);
+    apply();
+    new MutationObserver(apply).observe(document.body, { childList: true, subtree: true });
 }
 """
             demo.load(fn=None, js=_folder_upload_js)
