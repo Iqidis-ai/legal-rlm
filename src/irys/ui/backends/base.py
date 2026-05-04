@@ -776,6 +776,28 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def reclassify_document_sensitivity(
+        self, matter_id: str, doc_id: str, privilege_flag: bool,
+        reviewed_by_kind: str = "user", reviewed_by_id: str | None = None,
+    ) -> dict:
+        """Reclassify a document's sensitivity/privilege flag (SO-3, SO-5)."""
+        ...
+
+    @abstractmethod
+    async def mark_document_stale(
+        self, matter_id: str, doc_id: str, reason: str = "manual_stale",
+    ) -> dict:
+        """Mark a document and all direct dependents as stale (SO-5, SO-2)."""
+        ...
+
+    @abstractmethod
+    async def mark_span_stale(
+        self, matter_id: str, span_id: str, reason: str = "manual_span_stale",
+    ) -> dict:
+        """Mark a span and its direct dependents as stale (SO-5)."""
+        ...
+
+    @abstractmethod
     async def get_verification_events(
         self, matter_id: str, target_kind: Optional[str] = None,
         target_id: Optional[str] = None, limit: int = 50,

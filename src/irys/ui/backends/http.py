@@ -1103,6 +1103,43 @@ class HttpBackend(UIBackend):
             return result.get("documents", [])
         return result if isinstance(result, list) else []
 
+    async def reclassify_document_sensitivity(
+        self, matter_id: str, doc_id: str, privilege_flag: bool,
+        reviewed_by_kind: str = "user", reviewed_by_id: str | None = None,
+    ) -> dict:
+        body = {"privilege_flag": privilege_flag, "reviewed_by_kind": reviewed_by_kind}
+        if reviewed_by_id:
+            body["reviewed_by_id"] = reviewed_by_id
+        result = await self._post(
+            f"/matter/{matter_id}/documents/{doc_id}/reclassify-sensitivity", body,
+        )
+        if not isinstance(result, dict):
+            _log.warning("reclassify_document_sensitivity: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
+    async def mark_document_stale(
+        self, matter_id: str, doc_id: str, reason: str = "manual_stale",
+    ) -> dict:
+        result = await self._post(
+            f"/matter/{matter_id}/documents/{doc_id}/mark-stale", {"reason": reason},
+        )
+        if not isinstance(result, dict):
+            _log.warning("mark_document_stale: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
+    async def mark_span_stale(
+        self, matter_id: str, span_id: str, reason: str = "manual_span_stale",
+    ) -> dict:
+        result = await self._post(
+            f"/matter/{matter_id}/spans/{span_id}/mark-stale", {"reason": reason},
+        )
+        if not isinstance(result, dict):
+            _log.warning("mark_span_stale: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def get_verification_events(
         self, matter_id: str, target_kind: Optional[str] = None,
         target_id: Optional[str] = None, limit: int = 50,

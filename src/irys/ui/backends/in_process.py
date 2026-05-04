@@ -1229,6 +1229,32 @@ class InProcessBackend(UIBackend):
             review_note=review_note,
         )
 
+    async def reclassify_document_sensitivity(
+        self, matter_id: str, doc_id: str, privilege_flag: bool,
+        reviewed_by_kind: str = "user", reviewed_by_id: str | None = None,
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        staled = model.reclassify_privilege(
+            doc_id, privilege_flag,
+            reviewed_by_kind=reviewed_by_kind,
+            reviewed_by_id=reviewed_by_id,
+        )
+        return {"doc_id": doc_id, "staled_count": staled}
+
+    async def mark_document_stale(
+        self, matter_id: str, doc_id: str, reason: str = "manual_stale",
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        staled = model.mark_document_stale(doc_id, reason)
+        return {"doc_id": doc_id, "staled_count": staled}
+
+    async def mark_span_stale(
+        self, matter_id: str, span_id: str, reason: str = "manual_span_stale",
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        staled = model.mark_span_stale(span_id, reason)
+        return {"span_id": span_id, "staled_count": staled}
+
     async def get_verification_events(
         self, matter_id: str, target_kind: Optional[str] = None,
         target_id: Optional[str] = None, limit: int = 50,

@@ -3904,6 +3904,57 @@ async def get_taint_summary(
     return model.summarize_taint(limit=limit)
 
 
+@app.post(
+    "/matter/{matter_id}/documents/{doc_id}/reclassify-sensitivity",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def reclassify_document_sensitivity(
+    matter_id: str, doc_id: str, body: dict,
+):
+    """Reclassify a document's privilege/sensitivity flag (SO-3, SO-5).
+
+    Stales downstream assertions, quants, authorities, and edges so
+    clean-audience synthesis re-evaluates with the new flag.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    new_flag = body.get("privilege_flag", body.get("new_flag", False))
+    reviewed_by_kind = body.get("reviewed_by_kind", "user")
+    reviewed_by_id = body.get("reviewed_by_id")
+    staled = model.reclassify_privilege(
+        doc_id, bool(new_flag),
+        reviewed_by_kind=reviewed_by_kind,
+        reviewed_by_id=reviewed_by_id,
+    )
+    return {"doc_id": doc_id, "staled_count": staled}
+
+
+@app.post(
+    "/matter/{matter_id}/documents/{doc_id}/mark-stale",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def mark_document_stale(matter_id: str, doc_id: str, body: dict):
+    """Mark a document and all its direct dependents as stale (SO-5, SO-2)."""
+    model = await _get_matter_model_or_404(matter_id)
+    reason = body.get("reason", "manual_stale")
+    staled = model.mark_document_stale(doc_id, reason)
+    return {"doc_id": doc_id, "staled_count": staled}
+
+
+@app.post(
+    "/matter/{matter_id}/spans/{span_id}/mark-stale",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def mark_span_stale(matter_id: str, span_id: str, body: dict):
+    """Mark a single span and its direct dependents as stale (SO-5)."""
+    model = await _get_matter_model_or_404(matter_id)
+    reason = body.get("reason", "manual_span_stale")
+    staled = model.mark_span_stale(span_id, reason)
+    return {"span_id": span_id, "staled_count": staled}
+
+
 @app.get(
     "/matter/{matter_id}/domain-profile",
     tags=["Matter Model"],

@@ -3504,6 +3504,102 @@ def _fmt_taint_summary_panel(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_SENSITIVITY_REVIEW_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Sensitivity Reclassification Review",
+        "subtitle": "Review and reclassify document privilege flags to control downstream evidence handling.",
+        "doc_id": "Document ID",
+        "action": "Reclassify",
+        "stale_action": "Mark Stale",
+        "privilege_flag": "Privileged",
+        "non_privilege": "Non-Privileged",
+        "stale_reason": "Stale reason",
+        "result_header": "Result",
+        "staled_count": "Dependents staled",
+        "empty": "No reclassification actions taken yet.",
+    },
+    "finance": {
+        "title": "MNPI Reclassification Review",
+        "subtitle": "Review and reclassify material non-public information flags on artifacts.",
+        "doc_id": "Artifact ID",
+        "action": "Reclassify",
+        "stale_action": "Mark Stale",
+        "privilege_flag": "Restricted",
+        "non_privilege": "Public",
+        "stale_reason": "Stale reason",
+        "result_header": "Result",
+        "staled_count": "Dependents staled",
+        "empty": "No reclassification actions taken yet.",
+    },
+    "coding": {
+        "title": "Security Classification Review",
+        "subtitle": "Review and reclassify security sensitivity flags on artifacts.",
+        "doc_id": "Artifact ID",
+        "action": "Reclassify",
+        "stale_action": "Mark Stale",
+        "privilege_flag": "Secret/Internal",
+        "non_privilege": "Public",
+        "stale_reason": "Stale reason",
+        "result_header": "Result",
+        "staled_count": "Dependents staled",
+        "empty": "No reclassification actions taken yet.",
+    },
+    "academic_research": {
+        "title": "Access Reclassification Review",
+        "subtitle": "Review and reclassify embargo or confidentiality flags on documents.",
+        "doc_id": "Document ID",
+        "action": "Reclassify",
+        "stale_action": "Mark Stale",
+        "privilege_flag": "Embargoed",
+        "non_privilege": "Public",
+        "stale_reason": "Stale reason",
+        "result_header": "Result",
+        "staled_count": "Dependents staled",
+        "empty": "No reclassification actions taken yet.",
+    },
+    "biomedical": {
+        "title": "PHI Reclassification Review",
+        "subtitle": "Review and reclassify protected health information flags on artifacts.",
+        "doc_id": "Artifact ID",
+        "action": "Reclassify",
+        "stale_action": "Mark Stale",
+        "privilege_flag": "PHI/Restricted",
+        "non_privilege": "Public",
+        "stale_reason": "Stale reason",
+        "result_header": "Result",
+        "staled_count": "Dependents staled",
+        "empty": "No reclassification actions taken yet.",
+    },
+}
+
+
+def _fmt_sensitivity_review_result(data: dict, domain: str = "legal") -> str:
+    labels = _SENSITIVITY_REVIEW_LABELS.get(domain, _SENSITIVITY_REVIEW_LABELS["legal"])
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{labels['empty']}</div>"
+
+    if "error" in data:
+        return f"<div class='viz-empty'>Error: {_escape(str(data['error']))}</div>"
+
+    parts = [
+        f"<h3 style='margin:0 0 8px 0;'>{_escape(labels['result_header'])}</h3>",
+    ]
+
+    doc_id = data.get("doc_id") or data.get("span_id", "")
+    staled = data.get("staled_count", 0)
+    if not isinstance(staled, (int, float)):
+        staled = 0
+
+    parts.append(
+        f"<div style='padding:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;'>"
+        f"<strong>{_escape(labels['doc_id'])}:</strong> {_escape(str(doc_id))} · "
+        f"<strong>{_escape(labels['staled_count'])}:</strong> {int(staled)}"
+        f"</div>"
+    )
+
+    return "\n".join(parts)
+
+
 def _fmt_domain_profile_panel(summary: dict, domain: str = "legal") -> str:
     labels = _DOMAIN_PROFILE_LABELS.get(domain, _DOMAIN_PROFILE_LABELS["legal"])
     if not summary or not isinstance(summary, dict):
@@ -12792,6 +12888,51 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading taint summary: {_escape(exc)}</div>"
 
+    def reclassify_document_sensitivity(
+        self, matter_id: str, doc_id: str, privilege_flag: bool, domain: str = "legal",
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        if not doc_id or not doc_id.strip():
+            return "<div class='viz-empty'>Please enter a document ID.</div>"
+        try:
+            data = _run_async(self.backend().reclassify_document_sensitivity(
+                matter_id, doc_id.strip(), privilege_flag,
+            ))
+            return _fmt_sensitivity_review_result(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error reclassifying: {_escape(str(exc))}</div>"
+
+    def mark_document_stale_action(
+        self, matter_id: str, doc_id: str, reason: str, domain: str = "legal",
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        if not doc_id or not doc_id.strip():
+            return "<div class='viz-empty'>Please enter a document ID.</div>"
+        try:
+            data = _run_async(self.backend().mark_document_stale(
+                matter_id, doc_id.strip(), reason.strip() or "manual_stale",
+            ))
+            return _fmt_sensitivity_review_result(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error marking stale: {_escape(str(exc))}</div>"
+
+    def mark_span_stale_action(
+        self, matter_id: str, span_id: str, reason: str, domain: str = "legal",
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        if not span_id or not span_id.strip():
+            return "<div class='viz-empty'>Please enter a span ID.</div>"
+        try:
+            data = _run_async(self.backend().mark_span_stale(
+                matter_id, span_id.strip(), reason.strip() or "manual_span_stale",
+            ))
+            return _fmt_sensitivity_review_result(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error marking span stale: {_escape(str(exc))}</div>"
+
     def load_investigation_history(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -14967,6 +15108,43 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             taint_summary_html = gr.HTML("<div class='viz-empty'>Taint summary will appear here after an investigation.</div>")
             refresh_taint_btn = gr.Button("Refresh Taint Summary", variant="secondary", size="sm")
 
+            with gr.Accordion("Sensitivity Reclassification — change privilege or staleness flags", open=False):
+                gr.Markdown(
+                    "Reclassify a document's sensitivity flag or mark a document/span as stale. "
+                    "Reclassification stales all downstream dependents (assertions, evidence edges, "
+                    "quantitative facts) so they are re-evaluated under the new classification."
+                )
+                sensitivity_result_html = gr.HTML("<div class='viz-empty'>Results will appear here after an action.</div>")
+                with gr.Row():
+                    sensitivity_doc_id_input = gr.Textbox(
+                        label="Document ID", placeholder="Enter document ID...",
+                        scale=3,
+                    )
+                    sensitivity_flag_checkbox = gr.Checkbox(
+                        label="Mark as privileged/restricted", value=False,
+                    )
+                    reclassify_btn = gr.Button("Reclassify Sensitivity", variant="primary", size="sm", scale=1)
+                with gr.Row():
+                    stale_doc_id_input = gr.Textbox(
+                        label="Document ID (stale)", placeholder="Enter document ID to mark stale...",
+                        scale=2,
+                    )
+                    stale_reason_input = gr.Textbox(
+                        label="Reason", placeholder="e.g. superseded by v2",
+                        scale=2,
+                    )
+                    mark_doc_stale_btn = gr.Button("Mark Document Stale", variant="secondary", size="sm", scale=1)
+                with gr.Row():
+                    stale_span_id_input = gr.Textbox(
+                        label="Span ID (stale)", placeholder="Enter span ID to mark stale...",
+                        scale=2,
+                    )
+                    span_stale_reason_input = gr.Textbox(
+                        label="Reason", placeholder="e.g. clause amended",
+                        scale=2,
+                    )
+                    mark_span_stale_btn = gr.Button("Mark Span Stale", variant="secondary", size="sm", scale=1)
+
         with gr.Accordion("Communication Graph — who appears in which documents", open=False):
             gr.Markdown(
                 "Maps which people and companies appear in which documents and highlights "
@@ -16265,6 +16443,39 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[doc_triage_html],
         )
         refresh_taint_btn.click(
+            fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[taint_summary_html],
+        )
+        reclassify_btn.click(
+            fn=lambda mid, did, flag: state.reclassify_document_sensitivity(
+                mid, did, flag, domain=state._detect_domain(mid),
+            ),
+            inputs=[matter_id_box, sensitivity_doc_id_input, sensitivity_flag_checkbox],
+            outputs=[sensitivity_result_html],
+        ).then(
+            fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[taint_summary_html],
+        )
+        mark_doc_stale_btn.click(
+            fn=lambda mid, did, reason: state.mark_document_stale_action(
+                mid, did, reason, domain=state._detect_domain(mid),
+            ),
+            inputs=[matter_id_box, stale_doc_id_input, stale_reason_input],
+            outputs=[sensitivity_result_html],
+        ).then(
+            fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[taint_summary_html],
+        )
+        mark_span_stale_btn.click(
+            fn=lambda mid, sid, reason: state.mark_span_stale_action(
+                mid, sid, reason, domain=state._detect_domain(mid),
+            ),
+            inputs=[matter_id_box, stale_span_id_input, span_stale_reason_input],
+            outputs=[sensitivity_result_html],
+        ).then(
             fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[taint_summary_html],

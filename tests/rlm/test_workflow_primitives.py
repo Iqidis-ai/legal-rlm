@@ -8318,3 +8318,116 @@ def test_scenario_graph_backend_interface_balance():
         assert hasattr(UIBackend, method), f"UIBackend missing {method}"
         assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
         assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+# --- Sensitivity Reclassification Workbench (SO-3, SO-5) ---
+
+
+def test_sensitivity_review_labels_all_five_domains():
+    from irys.ui.app import _SENSITIVITY_REVIEW_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _SENSITIVITY_REVIEW_LABELS[domain]
+        assert "title" in labels
+        assert "doc_id" in labels
+        assert "privilege_flag" in labels
+        assert "non_privilege" in labels
+        assert "empty" in labels
+
+
+def test_sensitivity_review_formatter_empty():
+    from irys.ui.app import _fmt_sensitivity_review_result
+    html = _fmt_sensitivity_review_result({})
+    assert "viz-empty" in html
+
+
+def test_sensitivity_review_formatter_error():
+    from irys.ui.app import _fmt_sensitivity_review_result
+    html = _fmt_sensitivity_review_result({"error": "not found"})
+    assert "not found" in html
+    assert "viz-empty" in html
+
+
+def test_sensitivity_review_formatter_success():
+    from irys.ui.app import _fmt_sensitivity_review_result
+    html = _fmt_sensitivity_review_result({"doc_id": "doc-1", "staled_count": 5})
+    assert "doc-1" in html
+    assert "5" in html
+    assert "Result" in html
+
+
+def test_sensitivity_review_formatter_xss():
+    from irys.ui.app import _fmt_sensitivity_review_result
+    html = _fmt_sensitivity_review_result({
+        "doc_id": "<script>xss</script>",
+        "staled_count": 3,
+    })
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_sensitivity_review_formatter_domain_labels():
+    from irys.ui.app import _fmt_sensitivity_review_result
+    html_finance = _fmt_sensitivity_review_result(
+        {"doc_id": "d1", "staled_count": 2}, domain="finance",
+    )
+    assert "Result" in html_finance
+    html_bio = _fmt_sensitivity_review_result(
+        {"doc_id": "d1", "staled_count": 1}, domain="biomedical",
+    )
+    assert "Result" in html_bio
+
+
+def test_sensitivity_review_formatter_non_dict():
+    from irys.ui.app import _fmt_sensitivity_review_result
+    html = _fmt_sensitivity_review_result("bad")
+    assert "viz-empty" in html
+    html2 = _fmt_sensitivity_review_result(None)
+    assert "viz-empty" in html2
+
+
+def test_reclassify_privilege_no_change():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.reclassify_privilege(
+        "nonexistent-doc", True, reviewed_by_kind="user",
+    )
+    assert result == 0
+
+
+def test_mark_document_stale_no_doc():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.mark_document_stale("nonexistent-doc", "test")
+    assert result == 0
+
+
+def test_mark_span_stale_no_span():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.mark_span_stale("nonexistent-span", "test")
+    assert result == 0
+
+
+def test_sensitivity_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("reclassify_document_sensitivity", "mark_document_stale",
+                   "mark_span_stale"):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+def test_sensitivity_review_formatter_span_stale():
+    from irys.ui.app import _fmt_sensitivity_review_result
+    html = _fmt_sensitivity_review_result({"span_id": "span-42", "staled_count": 2})
+    assert "span-42" in html
+    assert "2" in html
+
+
+def test_sensitivity_review_formatter_staled_count_non_numeric():
+    from irys.ui.app import _fmt_sensitivity_review_result
+    html = _fmt_sensitivity_review_result({"doc_id": "d1", "staled_count": "bad"})
+    assert "d1" in html
+    assert "0" in html
