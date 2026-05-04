@@ -10465,3 +10465,82 @@ def test_answer_audit_error_dict():
     html = _fmt_answer_audit({"error": "audit service unavailable"})
     assert "Backend error" in html
     assert "audit service unavailable" in html
+
+
+# --- RLM exception hierarchy and context manager tests ---
+
+
+def test_rlm_exception_hierarchy():
+    """All RLM exceptions inherit from RLMError."""
+    from irys.rlm.exceptions import (
+        RLMError,
+        CriticalReasoningError,
+        OptionalEnrichmentError,
+        RecoverableInfrastructureError,
+        UserVisibleDegradation,
+    )
+    assert issubclass(CriticalReasoningError, RLMError)
+    assert issubclass(OptionalEnrichmentError, RLMError)
+    assert issubclass(RecoverableInfrastructureError, RLMError)
+    assert issubclass(UserVisibleDegradation, RLMError)
+    assert issubclass(RLMError, Exception)
+
+
+def test_noncritical_success_passes_through():
+    """noncritical context manager does nothing on success."""
+    from irys.rlm.exceptions import noncritical
+    executed = False
+    with noncritical("test.ok", default="fallback"):
+        executed = True
+    assert executed
+
+
+def test_noncritical_catches_and_logs(caplog):
+    """noncritical logs the exception and continues."""
+    import logging
+    from irys.rlm.exceptions import noncritical
+    with caplog.at_level(logging.WARNING, logger="irys.rlm.exceptions"):
+        with noncritical("cache.write", default=None):
+            raise ValueError("simulated cache failure")
+    assert "noncritical cache.write failed" in caplog.text
+    assert "simulated cache failure" in caplog.text
+
+
+def test_noncritical_does_not_swallow_keyboard_interrupt():
+    """noncritical must not catch BaseException subclasses."""
+    import pytest
+    from irys.rlm.exceptions import noncritical
+    with pytest.raises(KeyboardInterrupt):
+        with noncritical("test.interrupt"):
+            raise KeyboardInterrupt()
+
+
+def test_visible_degradation_success():
+    """visible_degradation does nothing on success."""
+    from irys.rlm.exceptions import visible_degradation
+    executed = False
+    with visible_degradation("test.ok"):
+        executed = True
+    assert executed
+
+
+def test_visible_degradation_raises_user_visible():
+    """visible_degradation wraps exceptions in UserVisibleDegradation."""
+    import pytest
+    from irys.rlm.exceptions import visible_degradation, UserVisibleDegradation
+    with pytest.raises(UserVisibleDegradation, match="render_gaps failed"):
+        with visible_degradation("render_gaps"):
+            raise RuntimeError("db down")
+
+
+def test_visible_degradation_calls_result_factory():
+    """visible_degradation calls result_factory instead of raising."""
+    from irys.rlm.exceptions import visible_degradation
+    captured = {}
+    def factory(component, exc):
+        captured["component"] = component
+        captured["exc"] = str(exc)
+    with visible_degradation("render_gaps", result_factory=factory):
+        raise RuntimeError("db down")
+    assert captured["component"] == "render_gaps"
+    assert "db down" in captured["exc"]
