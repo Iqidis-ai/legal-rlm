@@ -2993,3 +2993,49 @@ def test_fmt_export_issues_domain_empty():
 
     coding = _fmt_issues([], domain="coding")
     assert "No open hypotheses." in coding
+
+
+def test_fmt_timeline_panel_domain_labels():
+    from irys.ui.app import _fmt_timeline_panel
+    events = [
+        {"date": "2025-01-01", "event": "Contract signed", "kind": "execution", "withheld": True},
+        {"date": "2025-02-01", "event": "Deposition filed", "kind": "filing"},
+    ]
+    legal = _fmt_timeline_panel(events, domain="legal")
+    assert "Withheld under clean policy" in legal
+    assert "Privileged docs" in legal
+
+    finance = _fmt_timeline_panel(events, domain="finance")
+    assert "Withheld under compliance policy" in finance
+    assert "Restricted sources" in finance
+
+    coding = _fmt_timeline_panel(events, domain="coding")
+    assert "Withheld under content policy" in coding
+
+
+def test_fmt_timeline_panel_empty():
+    from irys.ui.app import _fmt_timeline_panel
+    result = _fmt_timeline_panel([], domain="biomedical")
+    assert "viz-empty" in result
+
+
+def test_fmt_export_quant_domain_labels():
+    from irys.ui.app import _fmt_quant
+    recon = {"invoiced": 100.0, "paid": 50.0, "disputed": 10.0, "exposure": 40.0, "currency": "USD"}
+    damages = [{"component": "Direct", "claimed_amount": 100.0, "source_count": 3}]
+
+    legal = _fmt_quant(recon, damages, domain="legal")
+    assert "Payment Reconciliation" in legal
+    assert "Total Invoiced" in legal
+    assert "Damages Waterfall" in legal
+
+    finance = _fmt_quant(recon, damages, domain="finance")
+    assert "Transaction Reconciliation" in finance
+    assert "Total Billed" in finance
+    assert "Amount Breakdown" in finance
+
+
+def test_fmt_export_quant_empty():
+    from irys.ui.app import _fmt_quant
+    result = _fmt_quant({}, [], domain="coding")
+    assert "investigation" in result.lower()

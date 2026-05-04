@@ -1398,9 +1398,59 @@ def _provenance_tier_label(event: dict[str, Any]) -> str:
     return "Irys"
 
 
-def _fmt_timeline_panel(events: list[dict]) -> str:
+_TIMELINE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "empty": "No timeline events available.",
+        "withheld_title": "Withheld under clean policy",
+        "withheld_notice": (
+            "under clean policy — their dates are preserved in this "
+            "timeline but the event text and source are hidden. "
+            "Privileged docs are never shown in clean mode."
+        ),
+    },
+    "finance": {
+        "empty": "No timeline events available.",
+        "withheld_title": "Withheld under compliance policy",
+        "withheld_notice": (
+            "under compliance policy — their dates are preserved "
+            "but the event text and source are hidden. Restricted "
+            "sources are never shown in clean mode."
+        ),
+    },
+    "coding": {
+        "empty": "No timeline events available.",
+        "withheld_title": "Withheld under content policy",
+        "withheld_notice": (
+            "under content policy — their dates are preserved "
+            "but the event text and source are hidden. Restricted "
+            "artifacts are never shown in clean mode."
+        ),
+    },
+    "academic_research": {
+        "empty": "No timeline events available.",
+        "withheld_title": "Withheld under review policy",
+        "withheld_notice": (
+            "under review policy — their dates are preserved "
+            "but the event text and source are hidden. Embargoed "
+            "sources are never shown in clean mode."
+        ),
+    },
+    "biomedical": {
+        "empty": "No timeline events available.",
+        "withheld_title": "Withheld under compliance policy",
+        "withheld_notice": (
+            "under compliance policy — their dates are preserved "
+            "but the event text and source are hidden. Protected "
+            "sources are never shown in clean mode."
+        ),
+    },
+}
+
+
+def _fmt_timeline_panel(events: list[dict], domain: str = "legal") -> str:
+    L = _TIMELINE_LABELS.get(domain, _TIMELINE_LABELS["legal"])
     if not events:
-        return "<div class='viz-empty'>No timeline events available.</div>"
+        return f"<div class='viz-empty'>{L['empty']}</div>"
     withheld_total = sum(1 for e in events if isinstance(e, dict) and e.get("withheld"))
     items: list[str] = []
     for event in events:
@@ -1411,7 +1461,7 @@ def _fmt_timeline_panel(events: list[dict]) -> str:
         date = _escape(_display_date(raw_date, precision) if raw_date else "Undated")
         is_withheld = bool(event.get("withheld"))
         if is_withheld:
-            title = "<em style='color:#b45309;'>Withheld under clean policy</em>"
+            title = f"<em style='color:#b45309;'>{L['withheld_title']}</em>"
             source_doc = "[withheld]"
         else:
             title = _escape(event.get("event") or "Event")
@@ -1441,10 +1491,8 @@ def _fmt_timeline_panel(events: list[dict]) -> str:
             "<div style='padding:8px 12px;border-radius:6px;"
             "background:#fef3c7;color:#78350f;font-size:12px;"
             "margin-bottom:12px;border-left:3px solid #b45309;'>"
-            f"<strong>{withheld_total} event(s) withheld</strong> under clean "
-            "policy — their dates are preserved in this timeline but the "
-            "event text and source are hidden. Privileged docs are never "
-            "shown in clean mode."
+            f"<strong>{withheld_total} event(s) withheld</strong> "
+            f"{L['withheld_notice']}"
             "</div>"
         )
     return (
@@ -5807,30 +5855,67 @@ def _fmt_content_policy_panel(decisions: list[dict], domain: str = "legal") -> s
     )
 
 
-def _fmt_quant(payment_recon: dict, damages: list) -> str:
+_EXPORT_QUANT_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "recon_title": "Payment Reconciliation",
+        "invoiced": "Total Invoiced", "paid": "Total Paid",
+        "disputed": "Disputed", "exposure": "Net Exposure",
+        "waterfall_title": "Damages Waterfall",
+        "empty": "No quantitative facts extracted yet. Run an investigation first.",
+    },
+    "finance": {
+        "recon_title": "Transaction Reconciliation",
+        "invoiced": "Total Billed", "paid": "Total Settled",
+        "disputed": "Disputed", "exposure": "Net Exposure",
+        "waterfall_title": "Amount Breakdown",
+        "empty": "No quantitative facts extracted yet. Run an analysis first.",
+    },
+    "coding": {
+        "recon_title": "Resource Reconciliation",
+        "invoiced": "Total Allocated", "paid": "Total Consumed",
+        "disputed": "Disputed", "exposure": "Net Remaining",
+        "waterfall_title": "Metric Breakdown",
+        "empty": "No quantitative facts extracted yet. Run an investigation first.",
+    },
+    "academic_research": {
+        "recon_title": "Funding Reconciliation",
+        "invoiced": "Total Budgeted", "paid": "Total Spent",
+        "disputed": "Disputed", "exposure": "Net Remaining",
+        "waterfall_title": "Amount Breakdown",
+        "empty": "No quantitative facts extracted yet. Run an analysis first.",
+    },
+    "biomedical": {
+        "recon_title": "Cost Reconciliation",
+        "invoiced": "Total Charged", "paid": "Total Paid",
+        "disputed": "Disputed", "exposure": "Net Exposure",
+        "waterfall_title": "Amount Breakdown",
+        "empty": "No quantitative facts extracted yet. Run an investigation first.",
+    },
+}
+
+
+def _fmt_quant(payment_recon: dict, damages: list, domain: str = "legal") -> str:
     """Format quant reconciliation and damages waterfall (SO-6)."""
+    L = _EXPORT_QUANT_LABELS.get(domain, _EXPORT_QUANT_LABELS["legal"])
     parts = []
 
-    # Payment reconciliation — keys match reconcile_payment_chain() output:
-    # invoiced, paid, disputed, exposure, currency
     if payment_recon and payment_recon.get("invoiced") is not None:
         inv = payment_recon.get("invoiced", 0)
         paid = payment_recon.get("paid", 0)
         disputed = payment_recon.get("disputed", 0)
         exp = payment_recon.get("exposure", 0)
         currency = payment_recon.get("currency", "USD")
-        parts.append("### Payment Reconciliation")
+        parts.append(f"### {L['recon_title']}")
         parts.append(f"| Metric | Amount ({currency}) |")
         parts.append("|--------|--------|")
-        parts.append(f"| Total Invoiced | {inv:,.2f}" if isinstance(inv, (int, float)) else f"| Total Invoiced | {inv}")
-        parts.append(f"| Total Paid | {paid:,.2f}" if isinstance(paid, (int, float)) else f"| Total Paid | {paid}")
+        parts.append(f"| {L['invoiced']} | {inv:,.2f}" if isinstance(inv, (int, float)) else f"| {L['invoiced']} | {inv}")
+        parts.append(f"| {L['paid']} | {paid:,.2f}" if isinstance(paid, (int, float)) else f"| {L['paid']} | {paid}")
         if disputed:
-            parts.append(f"| Disputed | {disputed:,.2f}" if isinstance(disputed, (int, float)) else f"| Disputed | {disputed}")
-        parts.append(f"| **Net Exposure** | **{exp:,.2f}**" if isinstance(exp, (int, float)) else f"| Net Exposure | {exp}")
+            parts.append(f"| {L['disputed']} | {disputed:,.2f}" if isinstance(disputed, (int, float)) else f"| {L['disputed']} | {disputed}")
+        parts.append(f"| **{L['exposure']}** | **{exp:,.2f}**" if isinstance(exp, (int, float)) else f"| {L['exposure']} | {exp}")
 
-    # Damages waterfall
     if damages:
-        parts.append("\n### Damages Waterfall")
+        parts.append(f"\n### {L['waterfall_title']}")
         parts.append("| Component | Claimed | Sources | Conflicts |")
         parts.append("|-----------|---------|---------|-----------|")
         for d in damages:
@@ -5844,7 +5929,7 @@ def _fmt_quant(payment_recon: dict, damages: list) -> str:
             conflict_str = f"⚠️ {conflicts}" if conflicts else "—"
             parts.append(f"| {comp} | {amt_str} | {srcs} | {conflict_str} |")
 
-    return "\n".join(parts) if parts else "No quantitative facts extracted yet. Run an investigation first."
+    return "\n".join(parts) if parts else L["empty"]
 
 
 # ---------------------------------------------------------------------------
@@ -7115,14 +7200,14 @@ class AppState:
         except Exception as exc:
             return f"Error: {_escape(str(exc))}", ""
 
-    def load_timeline(self, matter_id: str) -> str:
+    def load_timeline(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             events = _run_async(self.backend().get_timeline(
                 matter_id, limit=200, policy_audience=self.policy_audience,
             ))
-            return _fmt_timeline_panel(events)
+            return _fmt_timeline_panel(events, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading timeline: {_escape(exc)}</div>"
 
@@ -9094,7 +9179,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 f_assumptions = pool.submit(state.load_assumptions, mid)
                 f_assertions = pool.submit(state.load_assertions, mid)
                 f_quant = pool.submit(state.load_quant, mid)
-                f_timeline = pool.submit(state.load_timeline, mid)
+                f_timeline = pool.submit(state.load_timeline, mid, domain)
                 f_evidence = pool.submit(state.load_evidence_matrix, mid, domain=domain)
                 f_communication = pool.submit(state.load_communication_map, mid, domain)
                 f_llm = pool.submit(state.load_llm_analytics, mid)
@@ -9442,7 +9527,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[detect_conflicts_result, quant_md],
         )
         refresh_timeline_btn.click(
-            fn=lambda mid: state.load_timeline(mid),
+            fn=lambda mid: state.load_timeline(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[timeline_html],
         )
@@ -9593,7 +9678,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             banner = state.set_policy_audience(label)
             return (
                 banner,
-                state.load_timeline(mid),
+                state.load_timeline(mid, domain=state._detect_domain(mid)),
                 state.load_evidence_matrix(mid, domain=state._detect_domain(mid)),
             )
 
