@@ -593,6 +593,27 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_deliverable_workbench()
 
+    async def get_scenario_workbench(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_scenario_workbench()
+
+    async def create_scenario_branch(self, matter_id: str, payload: dict) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.create_scenario_branch(
+            name=payload.get("name", "Untitled"),
+            assumptions=payload.get("assumptions", []),
+            objective_ids=payload.get("objective_ids"),
+            source_branch_id=payload.get("source_branch_id"),
+            notes=payload.get("notes", ""),
+        )
+
+    async def archive_scenario_branch(self, matter_id: str, branch_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        found = model.archive_scenario_branch(branch_id)
+        if not found:
+            return {"error": "Scenario branch not found"}
+        return {"status": "archived", "branch_id": branch_id}
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_objective_coverage_workbench()

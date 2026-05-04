@@ -217,6 +217,18 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_scenario_workbench(self, matter_id: str) -> dict:
+        ...
+
+    @abstractmethod
+    async def create_scenario_branch(self, matter_id: str, payload: dict) -> dict:
+        ...
+
+    @abstractmethod
+    async def archive_scenario_branch(self, matter_id: str, branch_id: str) -> dict:
+        ...
+
+    @abstractmethod
     async def get_objective_coverage(self, matter_id: str) -> dict:
         """Objective coverage workbench: per-objective criteria, support, gaps (SO-4)."""
         ...

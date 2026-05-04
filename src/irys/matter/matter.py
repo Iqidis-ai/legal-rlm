@@ -8,6 +8,7 @@ Usage:
     model.complete_run(run_id)
 """
 
+import json
 import logging
 import math
 import sqlite3
@@ -4577,6 +4578,108 @@ class MatterModel:
             "issues": issue_sections,
             "total_verified_assertions": total_verified,
             "total_source_documents": total_sources,
+        }
+
+    # ------------------------------------------------------------------
+    # Scenario branches (SO-1, SO-3)
+    # ------------------------------------------------------------------
+
+    def create_scenario_branch(
+        self,
+        *,
+        name: str,
+        assumptions: list[dict],
+        objective_ids: list[str] | None = None,
+        source_branch_id: str | None = None,
+        notes: str = "",
+    ) -> dict:
+        """Create a persistent counterfactual branch over this matter."""
+        branch_id = str(uuid.uuid4())
+        now = _now()
+        assumptions_json = json.dumps(assumptions, default=str)
+        obj_ids_json = json.dumps(objective_ids or [])
+        self.db.execute(
+            """INSERT INTO scenario_branch
+               (id, matter_id, name, status, assumptions_json, objective_ids_json,
+                source_branch_id, notes, created_at, updated_at)
+               VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)""",
+            (branch_id, self.matter_id, name, assumptions_json, obj_ids_json,
+             source_branch_id, notes, now, now),
+        )
+        self.db.conn.commit()
+        return {
+            "branch_id": branch_id,
+            "name": name,
+            "status": "active",
+            "assumptions": assumptions,
+            "objective_ids": objective_ids or [],
+            "source_branch_id": source_branch_id,
+            "notes": notes,
+            "created_at": now,
+        }
+
+    def list_scenario_branches(self) -> list[dict]:
+        """Return all scenario branches for this matter."""
+        rows = self.db.execute(
+            """SELECT * FROM scenario_branch
+               WHERE matter_id=? ORDER BY created_at DESC""",
+            (self.matter_id,),
+        ).fetchall()
+        result = []
+        for row in rows:
+            if not isinstance(row, (dict, sqlite3.Row)):
+                continue
+            d = dict(row)
+            try:
+                d["assumptions"] = json.loads(d.pop("assumptions_json", "[]"))
+            except (TypeError, ValueError):
+                d["assumptions"] = []
+            try:
+                d["objective_ids"] = json.loads(d.pop("objective_ids_json", "[]"))
+            except (TypeError, ValueError):
+                d["objective_ids"] = []
+            result.append(d)
+        return result
+
+    def get_scenario_branch(self, branch_id: str) -> dict | None:
+        """Return a single scenario branch by ID."""
+        row = self.db.execute(
+            "SELECT * FROM scenario_branch WHERE id=? AND matter_id=?",
+            (branch_id, self.matter_id),
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        try:
+            d["assumptions"] = json.loads(d.pop("assumptions_json", "[]"))
+        except (TypeError, ValueError):
+            d["assumptions"] = []
+        try:
+            d["objective_ids"] = json.loads(d.pop("objective_ids_json", "[]"))
+        except (TypeError, ValueError):
+            d["objective_ids"] = []
+        return d
+
+    def archive_scenario_branch(self, branch_id: str) -> bool:
+        """Archive (soft-delete) a scenario branch. Returns True if found."""
+        cursor = self.db.execute(
+            "UPDATE scenario_branch SET status='archived', updated_at=? WHERE id=? AND matter_id=?",
+            (_now(), branch_id, self.matter_id),
+        )
+        self.db.conn.commit()
+        return cursor.rowcount > 0
+
+    def get_scenario_workbench(self) -> dict:
+        """Assemble scenario branch summary for UI display."""
+        branches = self.list_scenario_branches()
+        active = [b for b in branches if isinstance(b, dict) and b.get("status") == "active"]
+        archived = [b for b in branches if isinstance(b, dict) and b.get("status") == "archived"]
+        return {
+            "matter_id": self.matter_id,
+            "total_branches": len(branches),
+            "active_count": len(active),
+            "archived_count": len(archived),
+            "branches": active,
         }
 
     # ------------------------------------------------------------------

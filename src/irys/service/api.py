@@ -2852,6 +2852,62 @@ async def get_deliverable_workbench(matter_id: str):
     return model.get_deliverable_workbench()
 
 
+@app.post(
+    "/matter/{matter_id}/scenario-branches",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def create_scenario_branch(matter_id: str, payload: dict = Body(...)):
+    """Create a persistent counterfactual scenario branch (SO-1, SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.create_scenario_branch(
+        name=payload.get("name", "Untitled"),
+        assumptions=payload.get("assumptions", []),
+        objective_ids=payload.get("objective_ids"),
+        source_branch_id=payload.get("source_branch_id"),
+        notes=payload.get("notes", ""),
+    )
+
+
+@app.get(
+    "/matter/{matter_id}/scenario-branches",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def list_scenario_branches(matter_id: str):
+    """List all scenario branches for a matter (SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_scenario_workbench()
+
+
+@app.get(
+    "/matter/{matter_id}/scenario-branches/{branch_id}",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_scenario_branch(matter_id: str, branch_id: str):
+    """Get a single scenario branch by ID (SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    branch = model.get_scenario_branch(branch_id)
+    if branch is None:
+        raise HTTPException(status_code=404, detail="Scenario branch not found")
+    return branch
+
+
+@app.post(
+    "/matter/{matter_id}/scenario-branches/{branch_id}/archive",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def archive_scenario_branch(matter_id: str, branch_id: str):
+    """Archive a scenario branch (SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    found = model.archive_scenario_branch(branch_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Scenario branch not found")
+    return {"status": "archived", "branch_id": branch_id}
+
+
 _PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
 
 

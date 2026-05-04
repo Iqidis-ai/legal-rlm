@@ -6092,6 +6092,149 @@ def _fmt_deliverable_workbench(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_SCENARIO_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Scenario Branches",
+        "subtitle": "Explore alternative case theories with persistent what-if branches",
+        "empty": "No scenario branches yet. Create one to explore a hypothetical.",
+        "active": "Active",
+        "archived": "Archived",
+        "assumptions": "Assumptions",
+        "created": "Created",
+        "branch_header": "Active Branches",
+        "notes": "Notes",
+        "create_hint": "Enter a name and assumptions to create a new scenario branch.",
+    },
+    "finance": {
+        "title": "Scenario Branches",
+        "subtitle": "Explore alternative investment cases with persistent what-if branches",
+        "empty": "No scenario branches yet. Create one to model a hypothetical.",
+        "active": "Active",
+        "archived": "Archived",
+        "assumptions": "Assumptions",
+        "created": "Created",
+        "branch_header": "Active Branches",
+        "notes": "Notes",
+        "create_hint": "Enter a name and assumptions to create a new scenario branch.",
+    },
+    "coding": {
+        "title": "Design Paths",
+        "subtitle": "Explore alternative design paths with persistent what-if branches",
+        "empty": "No design paths yet. Create one to explore a hypothetical.",
+        "active": "Active",
+        "archived": "Archived",
+        "assumptions": "Assumptions",
+        "created": "Created",
+        "branch_header": "Active Paths",
+        "notes": "Notes",
+        "create_hint": "Enter a name and assumptions to create a new design path.",
+    },
+    "academic_research": {
+        "title": "Hypothesis Branches",
+        "subtitle": "Explore alternative hypotheses with persistent what-if branches",
+        "empty": "No hypothesis branches yet. Create one to test an alternative.",
+        "active": "Active",
+        "archived": "Archived",
+        "assumptions": "Assumptions",
+        "created": "Created",
+        "branch_header": "Active Hypotheses",
+        "notes": "Notes",
+        "create_hint": "Enter a name and assumptions to create a new hypothesis branch.",
+    },
+    "biomedical": {
+        "title": "Clinical Interpretations",
+        "subtitle": "Explore alternative clinical interpretations with what-if branches",
+        "empty": "No clinical interpretation branches yet. Create one to explore a differential.",
+        "active": "Active",
+        "archived": "Archived",
+        "assumptions": "Assumptions",
+        "created": "Created",
+        "branch_header": "Active Interpretations",
+        "notes": "Notes",
+        "create_hint": "Enter a name and assumptions to create a new interpretation branch.",
+    },
+}
+
+
+def _fmt_scenario_workbench(data: dict, domain: str = "legal") -> str:
+    labels = _SCENARIO_LABELS.get(domain, _SCENARIO_LABELS["legal"])
+    if not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+
+    branches = data.get("branches", [])
+    active_count = data.get("active_count", 0)
+    archived_count = data.get("archived_count", 0)
+
+    if not branches:
+        return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+
+    parts = [
+        "<div class='viz-shell'>",
+        f"<div class='viz-header'><strong>{_escape(labels['title'])}</strong>"
+        f" &mdash; {_escape(labels['subtitle'])}</div>",
+        f"<div style='margin:8px 0;font-size:0.9em;color:#6b7280;'>"
+        f"<strong>{active_count}</strong> {_escape(labels['active'])} &middot; "
+        f"<strong>{archived_count}</strong> {_escape(labels['archived'])}</div>",
+        f"<h4 style='margin:12px 0 6px 0;font-size:0.95em;'>"
+        f"{_escape(labels['branch_header'])}</h4>",
+    ]
+
+    for branch in branches:
+        if not isinstance(branch, dict):
+            continue
+        name = _escape((branch.get("name") or "")[:80])
+        bid = _escape((branch.get("id") or branch.get("branch_id") or "")[:40])
+        status = _escape(branch.get("status", ""))
+        created = _escape((branch.get("created_at") or "")[:19])
+        notes = _escape((branch.get("notes") or "")[:200])
+        assumptions = branch.get("assumptions", [])
+
+        status_color = "#16a34a" if status == "active" else "#6b7280"
+        parts.append(
+            f"<div style='padding:8px 14px;margin:4px 0;background:#f8fafc;"
+            f"border-left:3px solid {status_color};border-radius:4px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+            f"<strong>{name}</strong>"
+            f"<span style='font-size:0.8em;color:{status_color};'>{status}</span>"
+            f"</div>"
+        )
+        if created:
+            parts.append(
+                f"<div style='font-size:0.8em;color:#9ca3af;margin-top:2px;'>"
+                f"{_escape(labels['created'])}: {created}</div>"
+            )
+        if assumptions and isinstance(assumptions, list):
+            parts.append(
+                f"<div style='margin-top:4px;font-size:0.85em;color:#4b5563;'>"
+                f"<strong>{_escape(labels['assumptions'])}:</strong></div>"
+                f"<div style='padding-left:12px;'>"
+            )
+            for assumption in assumptions[:5]:
+                if isinstance(assumption, dict):
+                    text = _escape((assumption.get("text") or assumption.get("assumption") or str(assumption))[:120])
+                else:
+                    text = _escape(str(assumption)[:120])
+                parts.append(
+                    f"<div style='font-size:0.82em;color:#6b7280;margin:2px 0;'>"
+                    f"&bull; {text}</div>"
+                )
+            if len(assumptions) > 5:
+                parts.append(
+                    f"<div style='font-size:0.8em;color:#9ca3af;'>"
+                    f"… and {len(assumptions) - 5} more</div>"
+                )
+            parts.append("</div>")
+        if notes:
+            parts.append(
+                f"<div style='font-size:0.82em;color:#6b7280;margin-top:4px;'>"
+                f"<em>{_escape(labels['notes'])}: {notes}</em></div>"
+            )
+        parts.append("</div>")
+
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
 def _fmt_quant_panel(
     payment_recon: dict,
     invoice_chain: list,
@@ -10712,6 +10855,37 @@ class AppState:
             logger.warning("Deliverable workbench load failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_scenario_workbench(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_scenario_workbench(matter_id))
+            if not isinstance(data, dict):
+                logger.warning("load_scenario_workbench: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_scenario_workbench(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Scenario workbench load failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
+    def create_scenario_branch_ui(self, matter_id: str, name: str, assumptions_text: str, notes: str = "") -> str:
+        if not matter_id or matter_id == "—":
+            return "No matter loaded."
+        if not name or not name.strip():
+            return "Branch name is required."
+        assumptions = [{"text": a.strip()} for a in assumptions_text.split("\n") if a.strip()]
+        try:
+            result = _run_async(self.backend().create_scenario_branch(
+                matter_id,
+                {"name": name.strip(), "assumptions": assumptions, "notes": notes.strip()},
+            ))
+            if isinstance(result, dict) and result.get("branch_id"):
+                return f"Created branch: {_escape(result.get('name', name))}"
+            return f"Error: {_escape(str(result))}"
+        except Exception as exc:
+            logger.warning("create_scenario_branch_ui failed: %s", exc)
+            return f"Error: {_escape(str(exc))}"
+
     def load_quant_ontology(self, matter_id: str, domain: str = "legal") -> tuple[str, Any]:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>", gr.update(choices=[])
@@ -13194,6 +13368,40 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "Refresh Deliverable Preview", variant="secondary", size="sm",
             )
 
+        with gr.Accordion("Scenario Branches — persistent what-if counterfactual analysis", open=False):
+            gr.Markdown(
+                "Create named scenario branches to explore alternative interpretations. "
+                "Each branch records its assumptions and can be compared against the baseline. "
+                "Branches persist across sessions for ongoing analysis."
+            )
+            scenario_workbench_html = gr.HTML(
+                "<div class='viz-empty'>Scenario branches will appear here.</div>"
+            )
+            with gr.Row():
+                scenario_name_input = gr.Textbox(
+                    label="Branch Name", placeholder="e.g. Contract is void",
+                    scale=2,
+                )
+                scenario_notes_input = gr.Textbox(
+                    label="Notes (optional)", placeholder="Why this scenario matters",
+                    scale=2,
+                )
+            scenario_assumptions_input = gr.Textbox(
+                label="Assumptions (one per line)",
+                placeholder="The contract was signed under duress\nThe statute of limitations has run",
+                lines=3,
+            )
+            with gr.Row():
+                scenario_create_btn = gr.Button(
+                    "Create Branch", variant="primary", size="sm",
+                )
+                refresh_scenario_btn = gr.Button(
+                    "Refresh Branches", variant="secondary", size="sm",
+                )
+            scenario_create_result = gr.Textbox(
+                label="Result", interactive=False, visible=True,
+            )
+
         with gr.Accordion("Answer Audit — freshness, sources, and policy for every answer", open=False):
             gr.Markdown(
                 "Every answer Irys produces is backed by a dependency manifest that tracks "
@@ -13843,6 +14051,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_deliverable_workbench(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[deliverable_workbench_html],
+            ).then(
+                fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[scenario_workbench_html],
             )
         else:
             submit_btn.click(
@@ -13951,6 +14163,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_deliverable_workbench(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[deliverable_workbench_html],
+            ).then(
+                fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[scenario_workbench_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -14068,6 +14284,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_deliverable_workbench(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[deliverable_workbench_html],
+        ).then(
+            fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[scenario_workbench_html],
         )
 
         export_report_btn.click(
@@ -14401,6 +14621,20 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_deliverable_workbench(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[deliverable_workbench_html],
+        )
+        refresh_scenario_btn.click(
+            fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[scenario_workbench_html],
+        )
+        scenario_create_btn.click(
+            fn=lambda mid, name, assumptions, notes: state.create_scenario_branch_ui(mid, name, assumptions, notes),
+            inputs=[matter_id_box, scenario_name_input, scenario_assumptions_input, scenario_notes_input],
+            outputs=[scenario_create_result],
+        ).then(
+            fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[scenario_workbench_html],
         )
         refresh_answer_audit_btn.click(
             fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
@@ -14872,6 +15106,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_deliverable_workbench(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[deliverable_workbench_html],
+        ).then(
+            fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[scenario_workbench_html],
         )
 
         clarification_dropdown.change(

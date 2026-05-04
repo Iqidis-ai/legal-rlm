@@ -312,6 +312,27 @@ class HttpBackend(UIBackend):
             return {}
         return result
 
+    async def get_scenario_workbench(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/scenario-branches")
+        if not isinstance(result, dict):
+            _log.warning("get_scenario_workbench: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
+    async def create_scenario_branch(self, matter_id: str, payload: dict) -> dict:
+        result = await self._post(f"/matter/{matter_id}/scenario-branches", payload)
+        if not isinstance(result, dict):
+            _log.warning("create_scenario_branch: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
+    async def archive_scenario_branch(self, matter_id: str, branch_id: str) -> dict:
+        result = await self._post(f"/matter/{matter_id}/scenario-branches/{branch_id}/archive")
+        if not isinstance(result, dict):
+            _log.warning("archive_scenario_branch: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/objective-coverage")
         if not isinstance(result, dict):

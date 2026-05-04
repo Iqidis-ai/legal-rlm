@@ -224,4 +224,15 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
             "irys.matter.graph:KnowledgeSeedStore.get",
         ),
     ),
+    "scenario_branch": TableCoverageSpec(
+        writers=(
+            "irys.matter.matter:MatterModel.create_scenario_branch",
+            "irys.matter.matter:MatterModel.archive_scenario_branch",
+        ),
+        readers=(
+            "irys.matter.matter:MatterModel.list_scenario_branches",
+            "irys.matter.matter:MatterModel.get_scenario_branch",
+            "irys.matter.matter:MatterModel.get_scenario_workbench",
+        ),
+    ),
 }

@@ -6391,3 +6391,182 @@ def test_deliverable_formatter_nan_materiality():
     }
     html = _fmt_deliverable_workbench(data, domain="legal")
     assert "nan" not in html.lower()
+
+
+# ---- Scenario Branch Workbench tests ----
+
+
+def test_scenario_branch_create_and_list():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.create_scenario_branch(
+        name="Contract is void",
+        assumptions=[{"text": "The contract was signed under duress"}],
+        notes="Testing alternative theory",
+    )
+    assert isinstance(result, dict)
+    assert result["branch_id"]
+    assert result["name"] == "Contract is void"
+    assert result["status"] == "active"
+    assert len(result["assumptions"]) == 1
+
+    branches = model.list_scenario_branches()
+    assert len(branches) == 1
+    assert branches[0]["name"] == "Contract is void"
+
+
+def test_scenario_branch_get():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    created = model.create_scenario_branch(
+        name="Statute expired",
+        assumptions=[{"text": "Statute of limitations has run"}],
+    )
+    fetched = model.get_scenario_branch(created["branch_id"])
+    assert fetched is not None
+    assert fetched["name"] == "Statute expired"
+    assert fetched["assumptions"] == [{"text": "Statute of limitations has run"}]
+
+
+def test_scenario_branch_get_nonexistent():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    assert model.get_scenario_branch("nonexistent-id") is None
+
+
+def test_scenario_branch_archive():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    created = model.create_scenario_branch(
+        name="Waiver valid",
+        assumptions=[{"text": "The waiver is enforceable"}],
+    )
+    assert model.archive_scenario_branch(created["branch_id"]) is True
+    fetched = model.get_scenario_branch(created["branch_id"])
+    assert fetched["status"] == "archived"
+
+
+def test_scenario_branch_archive_nonexistent():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    assert model.archive_scenario_branch("nonexistent-id") is False
+
+
+def test_scenario_workbench_empty():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    wb = model.get_scenario_workbench()
+    assert isinstance(wb, dict)
+    assert wb["total_branches"] == 0
+    assert wb["active_count"] == 0
+    assert wb["branches"] == []
+
+
+def test_scenario_workbench_filters_archived():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    b1 = model.create_scenario_branch(name="Active one", assumptions=[])
+    b2 = model.create_scenario_branch(name="Archived one", assumptions=[])
+    model.archive_scenario_branch(b2["branch_id"])
+    wb = model.get_scenario_workbench()
+    assert wb["active_count"] == 1
+    assert wb["archived_count"] == 1
+    assert len(wb["branches"]) == 1
+    assert wb["branches"][0]["name"] == "Active one"
+
+
+def test_scenario_formatter_empty():
+    from irys.ui.app import _fmt_scenario_workbench
+    html = _fmt_scenario_workbench({}, domain="legal")
+    assert "viz-empty" in html
+
+
+def test_scenario_formatter_renders():
+    from irys.ui.app import _fmt_scenario_workbench
+    data = {
+        "total_branches": 1,
+        "active_count": 1,
+        "archived_count": 0,
+        "branches": [
+            {
+                "id": "b1",
+                "name": "Contract void",
+                "status": "active",
+                "assumptions": [{"text": "Signed under duress"}],
+                "created_at": "2026-05-04T12:00:00",
+                "notes": "Testing",
+            }
+        ],
+    }
+    html = _fmt_scenario_workbench(data, domain="legal")
+    assert "Contract void" in html
+    assert "Signed under duress" in html
+    assert "Testing" in html
+    assert "viz-shell" in html
+
+
+def test_scenario_formatter_xss():
+    from irys.ui.app import _fmt_scenario_workbench
+    data = {
+        "total_branches": 1,
+        "active_count": 1,
+        "archived_count": 0,
+        "branches": [
+            {
+                "id": "b1",
+                "name": "<script>alert('xss')</script>",
+                "status": "active",
+                "assumptions": [{"text": "<img onerror=alert(1)>"}],
+                "created_at": "2026-05-04",
+                "notes": "<b>bold</b>",
+            }
+        ],
+    }
+    html = _fmt_scenario_workbench(data, domain="legal")
+    assert "<script>" not in html
+    assert "<img " not in html
+    assert "&lt;script&gt;" in html
+    assert "&lt;img onerror" in html
+
+
+def test_scenario_formatter_non_dict_guards():
+    from irys.ui.app import _fmt_scenario_workbench
+    data = {
+        "total_branches": 2,
+        "active_count": 2,
+        "archived_count": 0,
+        "branches": ["not-a-dict", None, {"id": "b1", "name": "Valid", "status": "active"}],
+    }
+    html = _fmt_scenario_workbench(data, domain="legal")
+    assert "Valid" in html
+
+
+def test_scenario_labels_all_five_domains():
+    from irys.ui.app import _SCENARIO_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _SCENARIO_LABELS[domain]
+        for key in ("title", "subtitle", "empty", "active", "archived", "assumptions",
+                     "created", "branch_header", "notes", "create_hint"):
+            assert key in labels, f"{domain} missing key {key}"
+
+
+def test_backend_interface_balance_scenario():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("get_scenario_workbench", "create_scenario_branch", "archive_scenario_branch"):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+def test_scenario_branch_unique_name():
+    import sqlite3
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    model.create_scenario_branch(name="Same Name", assumptions=[])
+    try:
+        model.create_scenario_branch(name="Same Name", assumptions=[])
+        assert False, "Should have raised IntegrityError for duplicate name"
+    except sqlite3.IntegrityError:
+        pass

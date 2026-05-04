@@ -393,6 +393,7 @@ Required namespaces:
 - unknown_domains
 - metric_aliases
 - knowledge_seeds
+- scenario_branches
 
 Every canonical table and read surface maps to one or more required namespaces.
 There is no "where practical" exception for migrated paths.
@@ -448,6 +449,7 @@ python tools\check_memory_namespace_coverage.py
 | `quant_fact` | `quants:*`, `quants:<target_kind>:<target_id>` when target-linked |
 | `metric_alias` | `metric_aliases:*`, `metric_aliases:<domain_profile_id>` when domain-scoped |
 | `knowledge_seed` | `knowledge_seeds:*`, `knowledge_seeds:<domain_profile_id>` when domain-scoped |
+| `scenario_branch` | `scenario_branches:*` |
 | `clarification_question` | `clarifications:*`, `clarifications:objective_node:<issue_id>` when linked, `guidance:*` when injected into reasoning |
 | `reasoning_cache` | `cache_records:*`, `cache_records:cache:<cache_key>` |
 | `document_trust_override` | `trust_overrides:*`, `trust_overrides:artifact:<document_pattern>`, `policy:*` |

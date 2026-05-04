@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 65
+SCHEMA_VERSION = 66
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -3183,6 +3183,33 @@ def _migration_v65(conn) -> None:
     conn.commit()
 
 
+def _migration_v66(conn) -> None:
+    """Scenario branch substrate for persistent counterfactual analysis (SO-1, SO-3)."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS scenario_branch (
+            id                  TEXT PRIMARY KEY,
+            matter_id           TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            name                TEXT NOT NULL,
+            status              TEXT NOT NULL DEFAULT 'active',
+            assumptions_json    TEXT NOT NULL DEFAULT '[]',
+            objective_ids_json  TEXT NOT NULL DEFAULT '[]',
+            source_branch_id    TEXT,
+            assertion_delta     INTEGER NOT NULL DEFAULT 0,
+            gap_delta           INTEGER NOT NULL DEFAULT 0,
+            quant_delta         INTEGER NOT NULL DEFAULT 0,
+            notes               TEXT NOT NULL DEFAULT '',
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            UNIQUE(matter_id, name)
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_scenario_branch_matter_status"
+        " ON scenario_branch(matter_id, status)"
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -3252,6 +3279,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (63, _migration_v63),
     (64, _migration_v64),
     (65, _migration_v65),
+    (66, _migration_v66),
 ]
 
 
