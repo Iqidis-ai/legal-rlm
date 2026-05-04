@@ -2985,6 +2985,21 @@ async def compare_scenario_to_baseline(matter_id: str, branch_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/scenario-branches/{branch_id}/snapshots",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def list_scenario_snapshots(
+    matter_id: str, branch_id: str,
+    limit: int = Query(default=10, ge=1, le=100),
+):
+    """Return snapshot history for a scenario branch (SO-1, SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    snapshots = model.list_scenario_snapshots(branch_id, limit=limit)
+    return {"branch_id": branch_id, "snapshots": snapshots, "count": len(snapshots)}
+
+
+@app.get(
     "/matter/{matter_id}/alternative-theories",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

@@ -632,6 +632,13 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.compare_scenario_to_baseline(branch_id)
 
+    async def list_scenario_snapshots(
+        self, matter_id: str, branch_id: str, limit: int = 10,
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        snapshots = model.list_scenario_snapshots(branch_id, limit=limit)
+        return {"branch_id": branch_id, "snapshots": snapshots, "count": len(snapshots)}
+
     async def get_alternative_theory_portfolio(self, matter_id: str, objective_id: str | None = None) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_alternative_theory_portfolio(objective_id=objective_id)

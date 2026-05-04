@@ -247,6 +247,13 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def list_scenario_snapshots(
+        self, matter_id: str, branch_id: str, limit: int = 10,
+    ) -> dict:
+        """Return snapshot history for a scenario branch (SO-1, SO-3)."""
+        ...
+
+    @abstractmethod
     async def get_alternative_theory_portfolio(self, matter_id: str, objective_id: str | None = None) -> dict:
         ...
 

@@ -6391,6 +6391,92 @@ _SCENARIO_COMPARE_LABELS: dict[str, dict[str, str]] = {
 }
 
 
+_SNAPSHOT_HISTORY_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Scenario Snapshot History",
+        "subtitle": "Chronological record of branch evaluation snapshots.",
+        "snapshot_id": "Snapshot",
+        "delta_count": "Deltas evaluated",
+        "created_at": "Computed at",
+        "empty": "No snapshots recorded for this branch yet.",
+    },
+    "finance": {
+        "title": "Scenario Snapshot History",
+        "subtitle": "Chronological record of scenario evaluation snapshots.",
+        "snapshot_id": "Snapshot",
+        "delta_count": "Deltas evaluated",
+        "created_at": "Computed at",
+        "empty": "No snapshots recorded for this scenario yet.",
+    },
+    "coding": {
+        "title": "Path Snapshot History",
+        "subtitle": "Chronological record of design path evaluation snapshots.",
+        "snapshot_id": "Snapshot",
+        "delta_count": "Deltas evaluated",
+        "created_at": "Computed at",
+        "empty": "No snapshots recorded for this path yet.",
+    },
+    "academic_research": {
+        "title": "Hypothesis Snapshot History",
+        "subtitle": "Chronological record of hypothesis evaluation snapshots.",
+        "snapshot_id": "Snapshot",
+        "delta_count": "Deltas evaluated",
+        "created_at": "Computed at",
+        "empty": "No snapshots recorded for this hypothesis yet.",
+    },
+    "biomedical": {
+        "title": "Interpretation Snapshot History",
+        "subtitle": "Chronological record of interpretation evaluation snapshots.",
+        "snapshot_id": "Snapshot",
+        "delta_count": "Deltas evaluated",
+        "created_at": "Computed at",
+        "empty": "No snapshots recorded for this interpretation yet.",
+    },
+}
+
+
+def _fmt_scenario_snapshot_history(data: dict, domain: str = "legal") -> str:
+    L = _SNAPSHOT_HISTORY_LABELS.get(domain, _SNAPSHOT_HISTORY_LABELS["legal"])
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{L['empty']}</div>"
+
+    snapshots = data.get("snapshots", [])
+    if not isinstance(snapshots, list) or not snapshots:
+        return f"<div class='viz-empty'>{L['empty']}</div>"
+
+    branch_id = _escape(str(data.get("branch_id", "")))
+    count = len(snapshots)
+
+    parts = [
+        f"<h3 style='margin:0 0 8px 0;'>{_escape(L['title'])}</h3>",
+        f"<div style='color:#666;font-size:0.9em;margin-bottom:8px;'>"
+        f"{_escape(L['subtitle'])} Branch: {branch_id} · {count} snapshot{'s' if count != 1 else ''}</div>",
+        "<table style='border-collapse:collapse;width:100%;font-size:0.9em;'>",
+        f"<tr style='background:#f1f5f9;'>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['snapshot_id'])}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['delta_count'])}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{_escape(L['created_at'])}</th></tr>",
+    ]
+
+    for snap in snapshots:
+        if not isinstance(snap, dict):
+            continue
+        sid = _escape(str(snap.get("id", "?")))
+        dc = snap.get("delta_count", 0)
+        if not isinstance(dc, (int, float)):
+            dc = 0
+        created = _escape(str(snap.get("created_at", "?")))
+        parts.append(
+            f"<tr style='border-bottom:1px solid #e2e8f0;'>"
+            f"<td style='padding:4px 8px;font-family:monospace;font-size:0.85em;'>{sid[:12]}</td>"
+            f"<td style='padding:4px 8px;'>{int(dc)}</td>"
+            f"<td style='padding:4px 8px;'>{created}</td></tr>"
+        )
+
+    parts.append("</table>")
+    return "\n".join(parts)
+
+
 def _fmt_scenario_comparison(data: dict, domain: str = "legal") -> str:
     L = _SCENARIO_COMPARE_LABELS.get(domain, _SCENARIO_COMPARE_LABELS["legal"])
 
@@ -12279,6 +12365,20 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error comparing scenario: {_escape(str(exc))}</div>"
 
+    def load_scenario_snapshot_history(
+        self, matter_id: str, branch_id: str, domain: str = "legal",
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        bid = (branch_id or "").strip()
+        if not bid:
+            return "<div class='viz-empty'>Enter a branch ID to view snapshot history.</div>"
+        try:
+            data = _run_async(self.backend().list_scenario_snapshots(matter_id, bid))
+            return _fmt_scenario_snapshot_history(data, domain=domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading snapshots: {_escape(str(exc))}</div>"
+
     def load_alternative_theories(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -14974,6 +15074,17 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 scenario_comparison_html = gr.HTML(
                     "<div class='viz-empty'>Select a branch and click Compare to see the impact analysis.</div>"
                 )
+            with gr.Accordion("Snapshot history — chronological evaluation log", open=False):
+                with gr.Row():
+                    snapshot_history_branch_id = gr.Textbox(
+                        label="Branch ID", placeholder="Enter branch ID...", scale=3,
+                    )
+                    load_snapshots_btn = gr.Button(
+                        "Load Snapshot History", variant="secondary", size="sm", scale=1,
+                    )
+                snapshot_history_html = gr.HTML(
+                    "<div class='viz-empty'>Enter a branch ID and click Load to see snapshot history.</div>"
+                )
 
         with gr.Accordion("Alternative Theories — competing interpretations from the matter graph", open=False):
             gr.Markdown(
@@ -16389,6 +16500,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, bid: state.load_scenario_comparison(mid, bid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box, scenario_compare_branch_id],
             outputs=[scenario_comparison_html],
+        )
+        load_snapshots_btn.click(
+            fn=lambda mid, bid: state.load_scenario_snapshot_history(mid, bid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box, snapshot_history_branch_id],
+            outputs=[snapshot_history_html],
         )
         refresh_alt_theories_btn.click(
             fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),

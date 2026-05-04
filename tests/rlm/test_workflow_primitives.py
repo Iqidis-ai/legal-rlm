@@ -8431,3 +8431,119 @@ def test_sensitivity_review_formatter_staled_count_non_numeric():
     html = _fmt_sensitivity_review_result({"doc_id": "d1", "staled_count": "bad"})
     assert "d1" in html
     assert "0" in html
+
+
+# --- Scenario Snapshot History (SO-1, SO-3) ---
+
+
+def test_snapshot_history_labels_all_five_domains():
+    from irys.ui.app import _SNAPSHOT_HISTORY_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _SNAPSHOT_HISTORY_LABELS[domain]
+        assert "title" in labels
+        assert "snapshot_id" in labels
+        assert "empty" in labels
+
+
+def test_snapshot_history_formatter_empty():
+    from irys.ui.app import _fmt_scenario_snapshot_history
+    html = _fmt_scenario_snapshot_history({})
+    assert "viz-empty" in html
+
+
+def test_snapshot_history_formatter_no_snapshots():
+    from irys.ui.app import _fmt_scenario_snapshot_history
+    html = _fmt_scenario_snapshot_history({"branch_id": "b1", "snapshots": [], "count": 0})
+    assert "viz-empty" in html
+
+
+def test_snapshot_history_formatter_renders():
+    from irys.ui.app import _fmt_scenario_snapshot_history
+    data = {
+        "branch_id": "b-test",
+        "snapshots": [
+            {"id": "snap-001", "delta_count": 5, "created_at": "2026-05-04T10:00:00"},
+            {"id": "snap-002", "delta_count": 3, "created_at": "2026-05-04T09:00:00"},
+        ],
+        "count": 2,
+    }
+    html = _fmt_scenario_snapshot_history(data)
+    assert "Scenario Snapshot History" in html
+    assert "snap-001" in html
+    assert "5" in html
+    assert "2026-05-04" in html
+    assert "b-test" in html
+
+
+def test_snapshot_history_formatter_xss():
+    from irys.ui.app import _fmt_scenario_snapshot_history
+    data = {
+        "branch_id": "<script>xss</script>",
+        "snapshots": [
+            {"id": "<img onerror=alert(1)>", "delta_count": 1, "created_at": "<script>bad</script>"},
+        ],
+        "count": 1,
+    }
+    html = _fmt_scenario_snapshot_history(data)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_snapshot_history_formatter_non_dict_guard():
+    from irys.ui.app import _fmt_scenario_snapshot_history
+    data = {
+        "branch_id": "b1",
+        "snapshots": [123, "bad", None, {"id": "ok", "delta_count": 1, "created_at": "now"}],
+        "count": 4,
+    }
+    html = _fmt_scenario_snapshot_history(data)
+    assert "ok" in html
+    assert "Scenario Snapshot History" in html
+
+
+def test_snapshot_history_formatter_domain_labels():
+    from irys.ui.app import _fmt_scenario_snapshot_history
+    data = {
+        "branch_id": "b1",
+        "snapshots": [{"id": "s1", "delta_count": 1, "created_at": "now"}],
+        "count": 1,
+    }
+    html_bio = _fmt_scenario_snapshot_history(data, domain="biomedical")
+    assert "Interpretation Snapshot History" in html_bio
+    html_code = _fmt_scenario_snapshot_history(data, domain="coding")
+    assert "Path Snapshot History" in html_code
+
+
+def test_snapshot_history_formatter_non_numeric_delta():
+    from irys.ui.app import _fmt_scenario_snapshot_history
+    data = {
+        "branch_id": "b1",
+        "snapshots": [{"id": "s1", "delta_count": "bad", "created_at": "now"}],
+        "count": 1,
+    }
+    html = _fmt_scenario_snapshot_history(data)
+    assert "0" in html
+
+
+def test_snapshot_history_model_roundtrip():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    b = model.create_scenario_branch(name="hist-test", assumptions=[])
+    bid = b["branch_id"]
+    model.compute_scenario_snapshot(bid)
+    model.apply_scenario_delta(bid, "assertion", "a1", "override_belief", {"new_belief": "disputed"})
+    model.compute_scenario_snapshot(bid)
+    snaps = model.list_scenario_snapshots(bid)
+    assert len(snaps) == 2
+    assert snaps[0]["delta_count"] == 1
+    assert snaps[1]["delta_count"] == 0
+
+
+def test_snapshot_history_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("list_scenario_snapshots",):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
