@@ -239,7 +239,8 @@ class MatterModel:
             "SELECT id FROM matter WHERE repository_root=?", (repo_str,)
         ).fetchone()
 
-        if row is None:
+        is_new = row is None
+        if is_new:
             matter_id = _id()
             name = matter_name or Path(repository_path).name
             now = _now()
@@ -257,7 +258,52 @@ class MatterModel:
                     (matter_name, _now(), matter_id),
                 )
 
-        return cls(db, matter_id)
+        model = cls(db, matter_id)
+        if is_new:
+            model._apply_domain_preset(repository_path)
+        return model
+
+    _DOMAIN_PRESET_FILENAME = "_irys_domain_preset.json"
+    _VALID_PRESET_DOMAINS = frozenset({"legal", "finance", "coding", "academic_research", "biomedical"})
+
+    def _apply_domain_preset(self, repository_path: str | Path) -> None:
+        """Seed workspace domain facet from a preset file if present."""
+        import json as _json
+        preset_path = Path(repository_path) / self._DOMAIN_PRESET_FILENAME
+        if not preset_path.is_file():
+            return
+        try:
+            data = _json.loads(preset_path.read_text(encoding="utf-8"))
+            domain = data.get("domain")
+            if not domain or domain not in self._VALID_PRESET_DOMAINS:
+                _log.warning("Domain preset at %s has invalid domain %r", preset_path, domain)
+                return
+            broker = self.memory_broker
+            profile = broker.get_domain_profile(domain, 1)
+            mapping_hash = profile["mapping_hash"] if profile else "sha256:unknown"
+            detection_id = broker.record_domain_detection_event(
+                target_kind="workspace",
+                target_id=self.matter_id,
+                candidate_profile_id=domain,
+                candidate_profile_version=1,
+                confidence=1.0,
+                signals_json=_json.dumps({"source": "user_selection"}),
+                evidence_refs_json="[]",
+                detector_version="user_selection",
+            )
+            broker.upsert_object_domain_facet(
+                target_kind="workspace",
+                target_id=self.matter_id,
+                domain_profile_id=domain,
+                domain_profile_version=1,
+                profile_mapping_hash=mapping_hash,
+                confidence=1.0,
+                status="active",
+                detection_event_id=detection_id,
+            )
+            _log.info("Applied domain preset %r for matter %s", domain, self.matter_id)
+        except Exception as exc:
+            _log.warning("Failed to apply domain preset from %s: %s", preset_path, exc)
 
     @classmethod
     def open_in_memory(cls, matter_name: str = "test_matter") -> "MatterModel":

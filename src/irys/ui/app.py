@@ -357,6 +357,24 @@ def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Pa
     return temp_dir
 
 
+_DOMAIN_PRESET_FILENAME = "_irys_domain_preset.json"
+
+
+def _persist_domain_preset(matter_display_name: str, domain: str) -> None:
+    """Write a domain preset JSON file into the S3 matter prefix."""
+    bucket = _s3_bucket()
+    if not bucket or not matter_display_name:
+        return
+    safe = _sanitize_matter_name(matter_display_name)
+    key = f"{_s3_matters_base_prefix()}/{safe}/{_DOMAIN_PRESET_FILENAME}"
+    import json as _json, io as _io
+    body = _json.dumps({"domain": domain, "version": 1}).encode("utf-8")
+    try:
+        _get_s3_client().put_object(Bucket=bucket, Key=key, Body=body)
+    except Exception as exc:
+        logger.warning("Failed to persist domain preset for %r: %s", matter_display_name, exc)
+
+
 def _list_s3_matter_files(matter_name: str) -> list[str]:
     """List document relative paths in an S3 matter, including nested folders."""
     bucket = _s3_bucket()
@@ -371,7 +389,7 @@ def _list_s3_matter_files(matter_name: str) -> list[str]:
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
             for obj in page.get("Contents", []):
                 relpath = obj["Key"][len(prefix):]
-                if relpath and not relpath.endswith("/"):
+                if relpath and not relpath.endswith("/") and relpath != _DOMAIN_PRESET_FILENAME:
                     files.append(relpath)
         return sorted(files)
     except Exception as exc:
@@ -17661,6 +17679,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         )
                     else:
                         display_name = _sanitize_matter_name(name.strip()).replace("_", " ")
+                    _persist_domain_preset(display_name, domain_val or "legal")
                     names = _list_s3_matter_names()
                     new_files = _list_s3_matter_files(display_name)
                     if status_msg and "failed" in status_msg.lower():

@@ -10860,3 +10860,103 @@ def test_deliverable_handler_proceeds_with_explicit_domain():
     domain, is_explicit = handler._resolve_domain_strict()
     assert domain == "legal"
     assert is_explicit is True
+
+
+# ── Domain preset application tests ──────────────────────────────
+
+
+def test_apply_domain_preset_seeds_facet(tmp_path):
+    """MatterModel._apply_domain_preset seeds a workspace domain facet from preset file."""
+    import json
+    from irys.matter.matter import MatterModel
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text(json.dumps({"domain": "finance", "version": 1}), encoding="utf-8")
+
+    mm = MatterModel.open_in_memory("test_preset")
+    mm._apply_domain_preset(tmp_path)
+
+    facets = mm.memory_broker.get_object_domain_facets("workspace", mm.matter_id, status="active")
+    assert len(facets) >= 1
+    finance_facets = [f for f in facets if f["domain_profile_id"] == "finance"]
+    assert len(finance_facets) == 1
+    assert finance_facets[0]["confidence"] == 1.0
+
+
+def test_apply_domain_preset_no_file(tmp_path):
+    """No error when preset file is absent."""
+    from irys.matter.matter import MatterModel
+
+    mm = MatterModel.open_in_memory("test_no_preset")
+    mm._apply_domain_preset(tmp_path)
+    facets = mm.memory_broker.get_object_domain_facets("workspace", mm.matter_id, status="active")
+    assert len(facets) == 0
+
+
+def test_apply_domain_preset_invalid_domain(tmp_path):
+    """Invalid domain in preset file is rejected gracefully."""
+    import json
+    from irys.matter.matter import MatterModel
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text(json.dumps({"domain": "astrology", "version": 1}), encoding="utf-8")
+
+    mm = MatterModel.open_in_memory("test_bad_domain")
+    mm._apply_domain_preset(tmp_path)
+    facets = mm.memory_broker.get_object_domain_facets("workspace", mm.matter_id, status="active")
+    assert len(facets) == 0
+
+
+def test_apply_domain_preset_records_detection_event(tmp_path):
+    """Preset application records a domain detection event with user_selection detector."""
+    import json
+    from irys.matter.matter import MatterModel
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text(json.dumps({"domain": "biomedical", "version": 1}), encoding="utf-8")
+
+    mm = MatterModel.open_in_memory("test_detection_event")
+    mm._apply_domain_preset(tmp_path)
+
+    events = mm.memory_broker.db.execute(
+        "SELECT * FROM domain_detection_event WHERE matter_id=? AND candidate_profile_id=?",
+        (mm.matter_id, "biomedical"),
+    ).fetchall()
+    assert len(events) == 1
+    assert events[0]["detector_version"] == "user_selection"
+    assert events[0]["confidence"] == 1.0
+
+
+def test_apply_domain_preset_all_valid_domains(tmp_path):
+    """All 5 supported domains are accepted by _apply_domain_preset."""
+    import json
+    from irys.matter.matter import MatterModel
+
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+        preset_path.write_text(json.dumps({"domain": domain, "version": 1}), encoding="utf-8")
+        mm = MatterModel.open_in_memory(f"test_{domain}")
+        mm._apply_domain_preset(tmp_path)
+        facets = mm.memory_broker.get_object_domain_facets("workspace", mm.matter_id, status="active")
+        domain_facets = [f for f in facets if f["domain_profile_id"] == domain]
+        assert len(domain_facets) == 1, f"Failed for domain {domain}"
+
+
+def test_open_auto_applies_preset(tmp_path):
+    """MatterModel.open() auto-applies domain preset on first creation."""
+    import json
+    from irys.matter.matter import MatterModel
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text(json.dumps({"domain": "coding", "version": 1}), encoding="utf-8")
+
+    mm = MatterModel.open(tmp_path)
+    facets = mm.memory_broker.get_object_domain_facets("workspace", mm.matter_id, status="active")
+    coding_facets = [f for f in facets if f["domain_profile_id"] == "coding"]
+    assert len(coding_facets) == 1
+
+    # Second open should NOT re-apply (matter already exists)
+    mm2 = MatterModel.open(tmp_path)
+    facets2 = mm2.memory_broker.get_object_domain_facets("workspace", mm2.matter_id, status="active")
+    coding_facets2 = [f for f in facets2 if f["domain_profile_id"] == "coding"]
+    assert len(coding_facets2) == 1  # still just one, not doubled
