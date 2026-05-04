@@ -1696,10 +1696,48 @@ class MatterModel:
         # card itself (we just verified it).
         scope = self._collect_document_invalidation_scope(inv_id)
         scope["document_card_ids"] = set()
-        return self._apply_invalidation(
+        staled = self._apply_invalidation(
             scope,
             reason=f"privilege_reclassified:{old_flag}->{1 if new_flag else 0}",
         )
+        # Propagate privilege taint to the document and all dependents
+        # so the clean output pipeline filters them.
+        self._propagate_privilege_taint(inv_id, scope, new_flag)
+        return staled
+
+    def _propagate_privilege_taint(
+        self,
+        doc_id: str,
+        scope: dict[str, set[str]],
+        privileged: bool,
+    ) -> None:
+        """Write or remove privilege_restricted taint for a document and its dependents."""
+        taint_class = "privilege_restricted"
+        kind_map = {
+            "assertion_ids": "assertion",
+            "occurrence_ids": "assertion_occurrence",
+            "edge_ids": "evidence_edge",
+            "quant_ids": "quant_fact",
+            "authority_ids": "authority",
+        }
+        broker = self.memory_broker
+        targets: list[tuple[str, str]] = [("artifact", doc_id)]
+        for scope_key, target_kind in kind_map.items():
+            for tid in scope.get(scope_key, set()):
+                targets.append((target_kind, tid))
+        if privileged:
+            for target_kind, target_id in targets:
+                broker.record_object_taint(
+                    target_kind=target_kind,
+                    target_id=target_id,
+                    taint_class=taint_class,
+                    derivation_reason="privilege_reclassified",
+                )
+        else:
+            for target_kind, target_id in targets:
+                broker.remove_object_taint_by_class(
+                    target_kind, target_id, taint_class,
+                )
 
     def get_verification_events(
         self,

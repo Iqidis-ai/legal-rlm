@@ -572,6 +572,60 @@ def test_reclassify_privilege_no_op_when_flag_unchanged(model):
     assert model.cache.current_trust_revision() == before_rev
 
 
+def test_reclassify_privilege_writes_taint_records(model):
+    """Marking a document privileged must write privilege_restricted taint
+    for the document and its assertion dependents so build_query_context
+    filters them from the clean output pipeline."""
+    run_id = model.start_run("priv taint")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    inv_id, _ = model.inventory.upsert("secret.docx", "b" * 64, size_bytes=1)
+    model.document_cards.upsert(
+        doc_id=inv_id, title="Privileged memo", doc_type="internal",
+        privilege_flag=False,
+    )
+    aid = adapter.record_fact("Secret fact", "secret.docx")
+    # Mark privileged.
+    model.reclassify_privilege(
+        "secret.docx", new_flag=True,
+        reviewed_by_kind="attorney", reviewed_by_id="a1",
+    )
+    # Document should be tainted.
+    assert not model.memory_broker.object_is_clean("artifact", inv_id)
+    doc_taints = model.memory_broker.list_object_taint("artifact", inv_id)
+    assert any(t["taint_class"] == "privilege_restricted" for t in doc_taints)
+    # Assertion should be tainted.
+    assert not model.memory_broker.object_is_clean("assertion", aid)
+    a_taints = model.memory_broker.list_object_taint("assertion", aid)
+    assert any(t["taint_class"] == "privilege_restricted" for t in a_taints)
+
+
+def test_reclassify_privilege_clears_taint_on_unmark(model):
+    """Removing privilege from a document must clear privilege_restricted
+    taint so objects re-enter the clean output pipeline."""
+    run_id = model.start_run("priv clear")
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    inv_id, _ = model.inventory.upsert("unmark.docx", "c" * 64, size_bytes=1)
+    model.document_cards.upsert(
+        doc_id=inv_id, title="Was privileged", doc_type="internal",
+        privilege_flag=False,
+    )
+    aid = adapter.record_fact("Was secret", "unmark.docx")
+    # Mark privileged first.
+    model.reclassify_privilege(
+        "unmark.docx", new_flag=True,
+        reviewed_by_kind="attorney", reviewed_by_id="a1",
+    )
+    assert not model.memory_broker.object_is_clean("artifact", inv_id)
+    # Now remove privilege.
+    model.reclassify_privilege(
+        "unmark.docx", new_flag=False,
+        reviewed_by_kind="attorney", reviewed_by_id="a2",
+    )
+    # Taint should be cleared.
+    assert model.memory_broker.object_is_clean("artifact", inv_id)
+    assert model.memory_broker.object_is_clean("assertion", aid)
+
+
 def test_re_extraction_revives_stale_occurrence(model):
     """P0.4 review fix #1: re-extracting an existing (doc, span)
     occurrence slot must revive its stale verification to candidate.

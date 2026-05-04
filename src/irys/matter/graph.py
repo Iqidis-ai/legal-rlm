@@ -5909,6 +5909,32 @@ class MemoryBrokerStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def remove_object_taint_by_class(
+        self,
+        target_kind: str,
+        target_id: str,
+        taint_class: str,
+    ) -> int:
+        """Delete all taint records matching (kind, id, class). Returns rows deleted."""
+        canonical = self.canonical_taint_kind(target_kind)
+        aliases = self.taint_kind_aliases(target_kind)
+        now = _now()
+        with self.db.transaction():
+            cursor = self.db.execute(
+                f"""DELETE FROM object_taint
+                    WHERE matter_id=? AND target_kind IN ({','.join('?' for _ in aliases)})
+                      AND target_id=? AND taint_class=?""",
+                (self.matter_id, *aliases, target_id, taint_class),
+            )
+            deleted = cursor.rowcount
+            if deleted:
+                self._bump_namespace_revision_in_tx("object_taint", now=now)
+                self._bump_namespace_revision_in_tx(
+                    "object_taint", canonical, target_id, now=now
+                )
+                self._bump_namespace_revision_in_tx("policy", now=now)
+        return deleted
+
     def object_is_clean(self, target_kind: str, target_id: str) -> bool:
         taints = self.list_object_taint(target_kind, target_id)
         if not taints:
