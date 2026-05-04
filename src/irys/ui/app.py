@@ -15989,6 +15989,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     choices=domain_choices,
                     value="legal",
                     interactive=True,
+                    allow_custom_value=False,
                 )
                 matter_name_input = gr.Textbox(
                     label="Matter name",
@@ -17667,9 +17668,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )
 
             # Create a new matter (with optional initial files/folder), then select it
+            _VALID_DOMAINS = frozenset(_DOMAIN_CREATE_PRESETS.keys())
+
             def _on_save_matter(files, folder_files, folder_relpaths_json, name, domain_val):
                 if not name or not name.strip():
                     return gr.update(), "", _fmt_ws_status("Enter a matter name first", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update(), ""
+                safe_domain = domain_val if domain_val in _VALID_DOMAINS else "legal"
                 try:
                     all_files = (files or []) + (folder_files or [])
                     status_msg = ""
@@ -17679,7 +17683,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         )
                     else:
                         display_name = _sanitize_matter_name(name.strip()).replace("_", " ")
-                    _persist_domain_preset(display_name, domain_val or "legal")
+                    _persist_domain_preset(display_name, safe_domain)
                     names = _list_s3_matter_names()
                     new_files = _list_s3_matter_files(display_name)
                     if status_msg and "failed" in status_msg.lower():
