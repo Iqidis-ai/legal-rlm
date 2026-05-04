@@ -635,30 +635,36 @@ class ChatApp:
         if self.session is None or self.session.repo_path != repo_path:
             self.session = ChatSession(repo_path=repo_path)
 
-        # Reset current turn state
+        yield from self._stream_investigation(
+            message, history,
+            thread_target=self.run_investigation_async,
+            thread_args=(message, repo_path, True),
+        )
+
+    def _stream_investigation(
+        self,
+        message: str,
+        history: list,
+        thread_target,
+        thread_args: tuple,
+    ) -> Generator[tuple[list, str, str, str, str], None, None]:
         self.current_thinking = []
         self.current_citations = []
         self.current_facts = []
         self.update_queue = queue.Queue()
         self.is_running = True
-        self.stop_requested = False  # Reset stop flag
+        self.stop_requested = False
 
-        # Create new history with user message and placeholder
         history = history + [
             {"role": "user", "content": message},
-            {"role": "assistant", "content": "*Investigating...*"}
+            {"role": "assistant", "content": "*Investigating...*"},
         ]
 
-        # Start investigation in background
-        thread = threading.Thread(
-            target=self.run_investigation_async,
-            args=(message, repo_path, True)
-        )
+        thread = threading.Thread(target=thread_target, args=thread_args)
         thread.start()
 
         start_time = time.time()
 
-        # Stream updates
         while self.is_running:
             try:
                 update_type, data = self.update_queue.get(timeout=0.3)
@@ -669,7 +675,6 @@ class ChatApp:
                     thinking_display = "\n".join(self.current_thinking)
                     citations_display = "\n".join(self.current_citations) or "Finding sources..."
                     facts_display = "\n".join(self.current_facts) or "Extracting facts..."
-
                     history = history[:-1] + [{"role": "assistant", "content": f"*Investigating... ({len(self.current_thinking)} steps)*"}]
                     yield history, thinking_display, citations_display, facts_display, status
 
@@ -687,21 +692,17 @@ class ChatApp:
                     self.is_running = False
                     final_output = data
                     elapsed = time.time() - start_time
-
                     self.session.add_turn(
                         user_msg=message,
                         ai_msg=final_output,
                         thinking=self.current_thinking.copy(),
-                        citations=self.current_citations.copy()
+                        citations=self.current_citations.copy(),
                     )
-
                     history = history[:-1] + [{"role": "assistant", "content": final_output}]
-
                     status = f"Complete ({elapsed:.1f}s) - Turn {len(self.session.conversation)}"
                     thinking_display = "\n".join(self.current_thinking)
                     citations_display = "\n".join(self.current_citations) or "No citations found"
                     facts_display = "\n".join(self.current_facts) or "No facts extracted"
-
                     yield history, thinking_display, citations_display, facts_display, status
                     return
 
@@ -737,172 +738,60 @@ class ChatApp:
         uploaded_files: list = None,
         uploaded_folder: list = None,
     ) -> Generator[tuple[list, str, str, str], None, None]:
-        """
-        Process a chat message with uploaded files and yield updates.
-
-        This method is used for S3 mode where files are uploaded rather than
-        selected from the local filesystem.
-
-        Args:
-            message: User's message
-            history: Gradio chat history (messages format)
-            uploaded_files: List of Gradio file objects from file upload
-            uploaded_folder: List of Gradio file objects from folder upload
-
-        Yields:
-            (updated_history, thinking_log, citations_log, status)
-        """
-        # Ensure history is a mutable list of dicts
         if history is None:
             history = []
         else:
-            # Convert to list of dicts if needed
             history = [
                 msg if isinstance(msg, dict) else {"role": "user" if i % 2 == 0 else "assistant", "content": str(msg)}
                 for i, msg in enumerate(history)
             ]
 
-        # Combine files from both upload sources
         all_uploaded = []
         if uploaded_files:
             all_uploaded.extend(uploaded_files)
         if uploaded_folder:
             all_uploaded.extend(uploaded_folder)
 
-        # Validate inputs
         if not all_uploaded:
             history = history + [
                 {"role": "user", "content": message},
-                {"role": "assistant", "content": "Error: Please upload files or a folder."}
+                {"role": "assistant", "content": "Error: Please upload files or a folder."},
             ]
-            yield history, "", "", "Error: No files uploaded"
+            yield history, "", "", "", "Error: No files uploaded"
             return
 
         if not message.strip():
-            yield history, "", "", "Please enter a question"
+            yield history, "", "", "", "Please enter a question"
             return
 
-        # Extract files preserving folder structure
         files, error = self._extract_files_from_upload(all_uploaded)
         if error:
             history = history + [
                 {"role": "user", "content": message},
-                {"role": "assistant", "content": f"Error: {error}"}
+                {"role": "assistant", "content": f"Error: {error}"},
             ]
-            yield history, "", "", f"Error: {error}"
+            yield history, "", "", "", f"Error: {error}"
             return
 
         if not files:
             history = history + [
                 {"role": "user", "content": message},
-                {"role": "assistant", "content": "Error: No valid files found in upload."}
+                {"role": "assistant", "content": "Error: No valid files found in upload."},
             ]
-            yield history, "", "", "Error: No valid files found"
+            yield history, "", "", "", "Error: No valid files found"
             return
 
-        # Generate session ID for this upload
         session_id = self._generate_session_id()
         logger.info(f"Starting chat session {session_id} with {len(files)} files")
 
-        # Initialize or reset session for uploaded files
-        # Use session_id as repo_path identifier since files are temporary
         if self.session is None or self.session.repo_path != session_id:
             self.session = ChatSession(repo_path=session_id)
 
-        # Reset current turn state
-        self.current_thinking = []
-        self.current_citations = []
-        self.current_facts = []
-        self.update_queue = queue.Queue()
-        self.is_running = True
-        self.stop_requested = False
-
-        # Create new history with user message and placeholder
-        history = history + [
-            {"role": "user", "content": message},
-            {"role": "assistant", "content": "*Investigating...*"}
-        ]
-
-        # Start investigation in background
-        thread = threading.Thread(
-            target=self.run_investigation_with_upload_async,
-            args=(message, files, session_id, True)
+        yield from self._stream_investigation(
+            message, history,
+            thread_target=self.run_investigation_with_upload_async,
+            thread_args=(message, files, session_id, True),
         )
-        thread.start()
-
-        start_time = time.time()
-
-        # Stream updates (same loop as chat())
-        while self.is_running:
-            try:
-                update_type, data = self.update_queue.get(timeout=0.3)
-
-                if update_type == "thinking":
-                    elapsed = time.time() - start_time
-                    status = f"Investigating... ({elapsed:.1f}s) - {len(self.current_thinking)} steps"
-                    thinking_display = "\n".join(self.current_thinking)
-                    citations_display = "\n".join(self.current_citations) or "Finding sources..."
-                    facts_display = "\n".join(self.current_facts) or "Extracting facts..."
-
-                    history = history[:-1] + [{"role": "assistant", "content": f"*Investigating... ({len(self.current_thinking)} steps)*"}]
-                    yield history, thinking_display, citations_display, facts_display, status
-
-                elif update_type == "citation":
-                    citations_display = "\n".join(self.current_citations)
-                    facts_display = "\n".join(self.current_facts) or "Extracting facts..."
-                    yield history, "\n".join(self.current_thinking), citations_display, facts_display, f"Found {len(self.current_citations)} citations"
-
-                elif update_type == "fact":
-                    facts_display = "\n".join(self.current_facts)
-                    citations_display = "\n".join(self.current_citations) or "Finding sources..."
-                    yield history, "\n".join(self.current_thinking), citations_display, facts_display, f"Extracted {len(self.current_facts)} facts"
-
-                elif update_type == "complete":
-                    self.is_running = False
-                    final_output = data
-                    elapsed = time.time() - start_time
-
-                    self.session.add_turn(
-                        user_msg=message,
-                        ai_msg=final_output,
-                        thinking=self.current_thinking.copy(),
-                        citations=self.current_citations.copy()
-                    )
-
-                    history = history[:-1] + [{"role": "assistant", "content": final_output}]
-
-                    status = f"Complete ({elapsed:.1f}s) - Turn {len(self.session.conversation)}"
-                    thinking_display = "\n".join(self.current_thinking)
-                    citations_display = "\n".join(self.current_citations) or "No citations found"
-                    facts_display = "\n".join(self.current_facts) or "No facts extracted"
-
-                    yield history, thinking_display, citations_display, facts_display, status
-                    return
-
-                elif update_type == "stopped":
-                    self.is_running = False
-                    elapsed = time.time() - start_time
-                    stop_msg = f"*Investigation stopped after {elapsed:.1f}s*\n\nPartial findings:\n" + "\n".join(self.current_thinking[-5:])
-                    history = history[:-1] + [{"role": "assistant", "content": stop_msg}]
-                    yield history, "\n".join(self.current_thinking), "\n".join(self.current_citations), "\n".join(self.current_facts), "Stopped by user"
-                    return
-
-                elif update_type == "error":
-                    self.is_running = False
-                    error_msg = f"Error: {data}"
-                    history = history[:-1] + [{"role": "assistant", "content": error_msg}]
-                    yield history, "\n".join(self.current_thinking), "\n".join(self.current_citations), "\n".join(self.current_facts), f"Error: {data}"
-                    return
-
-            except queue.Empty:
-                if self.current_thinking:
-                    elapsed = time.time() - start_time
-                    thinking_display = "\n".join(self.current_thinking)
-                    citations_display = "\n".join(self.current_citations) or "Finding sources..."
-                    facts_display = "\n".join(self.current_facts) or "Extracting facts..."
-                    yield history, thinking_display, citations_display, facts_display, f"Investigating... ({elapsed:.1f}s)"
-
-        thread.join()
 
     def stop_investigation(self) -> str:
         """Stop the current investigation."""
