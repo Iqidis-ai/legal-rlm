@@ -4145,8 +4145,26 @@ def test_advocacy_gate_injects_advisory_when_absent():
     assert "advocacy-only" in result.lower()
 
 
-def test_advocacy_gate_no_action_when_marker_present():
-    """Gate must return None when Source Calibration Advisory is already in output."""
+def test_advocacy_gate_no_action_when_marker_present_with_valid_content():
+    """Gate must return None when Source Calibration Advisory covers all active issues."""
+    from irys.rlm.engine import RLMEngine
+    model = MatterModel.open_in_memory()
+    _seed_advocacy_issue(model)  # issue titled "Breach of contract"
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    output = (
+        "## Executive Summary\nBrief.\n"
+        "## Source Calibration Advisory\n"
+        "- **Breach of contract** — advocacy-only (trust-weighted support: 0.30)\n"
+    )
+    result = engine._enforce_advocacy_gate(output)
+    assert result is None, "Gate must return None when advisory covers all active issues"
+
+
+def test_advocacy_gate_reinjects_when_marker_present_but_empty():
+    """Gate must re-inject when advisory header exists but doesn't list active issues."""
     from irys.rlm.engine import RLMEngine
     model = MatterModel.open_in_memory()
     _seed_advocacy_issue(model)
@@ -4156,7 +4174,8 @@ def test_advocacy_gate_no_action_when_marker_present():
 
     output = "## Executive Summary\nBrief.\n## Source Calibration Advisory\nAlready flagged.\n"
     result = engine._enforce_advocacy_gate(output)
-    assert result is None, "Gate must return None when advisory marker already present"
+    assert result is not None, "Gate must re-inject when advisory is empty/wrong"
+    assert "Breach of contract" in result
 
 
 def test_advocacy_gate_no_action_when_no_advocacy_issues():
@@ -4247,11 +4266,12 @@ def test_advocacy_gate_no_violation_with_hedging_in_key_findings():
     engine = RLMEngine.__new__(RLMEngine)
     engine._matter_model = model
 
-    # Marker present AND title in Key Findings is properly hedged.
+    # Marker present with valid content AND title in Key Findings is properly hedged.
     output = (
         "## Executive Summary\nAnalysis complete.\n"
         "### Key Findings\n- Plaintiff alleges breach of contract per complaint.\n"
-        "## Source Calibration Advisory\nAlready flagged.\n"
+        "## Source Calibration Advisory\n"
+        "- **Breach of contract** — advocacy-only (trust-weighted support: 0.30)\n"
     )
     result = engine._enforce_advocacy_gate(output)
     assert result is None, (

@@ -1867,7 +1867,20 @@ class RLMEngine:
         cached = getattr(state, "_cached_domain", None) if state is not None else None
         result = _resolve_matter_domain(self._matter_model, cached)
         if state is not None:
-            state._cached_domain = result
+            if cached == result:
+                pass  # already cached, nothing to do
+            elif result != "legal":
+                state._cached_domain = result
+            elif self._matter_model is not None:
+                # Only cache "legal" if the model explicitly returns it, not
+                # from the silent fallback.  Prevents sticky "legal" caching
+                # when domain composition is not yet available.
+                try:
+                    _, _, primary = self._matter_model._read_matter_domain_composition()
+                    if primary == "legal":
+                        state._cached_domain = result
+                except Exception:
+                    pass
         return result
 
     def _get_semaphore(self) -> asyncio.Semaphore:
@@ -6299,7 +6312,10 @@ Return:
         markers, biomedical uses sponsor-only markers, etc.
         """
         domain = self._resolve_active_domain(state)
-        policy = _DOMAIN_RELIANCE_POLICY.get(domain, _DOMAIN_RELIANCE_POLICY["legal"])
+        policy = _DOMAIN_RELIANCE_POLICY.get(domain)
+        if policy is None:
+            logger.warning("No reliance policy for domain %r — falling back to legal", domain)
+            policy = _DOMAIN_RELIANCE_POLICY["legal"]
         if self._matter_model is None:
             return None
         try:
@@ -6429,10 +6445,19 @@ Return:
                     break
 
         # If the advisory section header is already present AND no structural violation,
-        # gate is satisfied. Uses module-level _ADVOCACY_MARKER_PAT (anchored to
-        # line-start + end-of-line; accepts ## and ###; case-insensitive).
-        if _ADVOCACY_MARKER_PAT.search(synthesis_output) and not _STRUCTURAL_VIOLATION:
-            return None
+        # AND the advisory section actually references the active issues, gate is
+        # satisfied.  An empty or wrong advisory header injected by the LLM must NOT
+        # suppress the gate (LLM output is untrusted input).
+        _marker_match = _ADVOCACY_MARKER_PAT.search(synthesis_output)
+        if _marker_match and not _STRUCTURAL_VIOLATION:
+            _advisory_section = synthesis_output[_marker_match.start():]
+            _advisory_lower = _advisory_section.lower()
+            _titles_covered = sum(
+                1 for t in advocacy_titles
+                if len(t) >= 4 and t.lower() in _advisory_lower
+            )
+            if _titles_covered >= len([t for t in advocacy_titles if len(t) >= 4]):
+                return None
 
         violation_note = ""
         if _STRUCTURAL_VIOLATION:
