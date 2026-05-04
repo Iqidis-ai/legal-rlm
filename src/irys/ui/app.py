@@ -12629,7 +12629,7 @@ class AppState:
             return _fmt_overview_panel(data, domain=domain)
         except Exception as exc:
             logger.warning("load_overview: %s", exc)
-            return f"<div class='viz-empty'>Error loading overview: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading overview: {_escape(str(exc))}</div>"
 
     def load_issues(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -12639,7 +12639,7 @@ class AppState:
             return _fmt_issues_panel(issues, domain=domain)
         except Exception as exc:
             logger.warning("load_issues: %s", exc)
-            return f"<div class='viz-empty'>Error loading issues: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading issues: {_escape(str(exc))}</div>"
 
     def load_assertions(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
@@ -12957,7 +12957,7 @@ class AppState:
         def _err_html(label: str, exc: BaseException) -> str:
             return (
                 "<div class='viz-empty'>"
-                f"Couldn't load {_escape(label)}: {_escape(exc)}. "
+                f"Couldn't load {_escape(label)}: {_escape(str(exc))}. "
                 "Try the panel's own Refresh button."
                 "</div>"
             )
@@ -13361,7 +13361,7 @@ class AppState:
             return panel_html, choices
         except Exception as exc:
             logger.warning("Steering panel load failed: %s", exc)
-            return f"<div class='viz-empty'>Error loading recommendations: {_escape(exc)}</div>", []
+            return f"<div class='viz-empty'>Error loading recommendations: {_escape(str(exc))}</div>", []
 
     def execute_steering_action(
         self, matter_id: str, action_json: str, user_input: str
@@ -13424,7 +13424,7 @@ class AppState:
             return _fmt_gaps(gaps, clarifications, domain=domain, issue_titles=issue_titles)
         except Exception as exc:
             logger.warning("load_gaps_detail: %s", exc)
-            return f"<div class='viz-empty'>Error loading gaps: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading gaps: {_escape(str(exc))}</div>"
 
     def load_gap_workbench(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
@@ -13601,7 +13601,7 @@ class AppState:
             )
         except Exception as exc:
             logger.warning("load_quant: %s", exc)
-            return f"<div class='viz-empty'>Error loading quantitative data: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading quantitative data: {_escape(str(exc))}</div>"
 
     def do_detect_quant_conflicts(self, matter_id: str) -> tuple[str, str]:
         if not matter_id or matter_id == "—":
@@ -14013,7 +14013,7 @@ class AppState:
             return _fmt_timeline_panel(events, domain=domain)
         except Exception as exc:
             logger.warning("load_timeline: %s", exc)
-            return f"<div class='viz-empty'>Error loading timeline: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading timeline: {_escape(str(exc))}</div>"
 
     def load_answer_audits(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -14035,7 +14035,7 @@ class AppState:
             return _fmt_evidence_matrix_panel(matrix, domain=domain)
         except Exception as exc:
             logger.warning("load_evidence_matrix: %s", exc)
-            return f"<div class='viz-empty'>Error loading evidence matrix: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading evidence matrix: {_escape(str(exc))}</div>"
 
     def _detect_domain(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
@@ -14058,7 +14058,7 @@ class AppState:
             return _fmt_proof_state_panel(summary, issues, domain)
         except Exception as exc:
             logger.warning("load_proof_state: %s", exc)
-            return f"<div class='viz-empty'>Error loading proof state: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading proof state: {_escape(str(exc))}</div>"
 
     def recompute_proof_state(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -14068,7 +14068,7 @@ class AppState:
             return self.load_proof_state(matter_id, domain)
         except Exception as exc:
             logger.warning("recompute_proof_state: %s", exc)
-            return f"<div class='viz-empty'>Error recomputing proof state: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error recomputing proof state: {_escape(str(exc))}</div>"
 
     def recompute_issue_proof_state(self, matter_id: str, issue_id: str) -> tuple[str, str]:
         if not matter_id or matter_id == "—":
@@ -14095,7 +14095,7 @@ class AppState:
             return _fmt_authority_panel(data, domain)
         except Exception as exc:
             logger.warning("load_authority_network: %s", exc)
-            return f"<div class='viz-empty'>Error loading authorities: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading authorities: {_escape(str(exc))}</div>"
 
     def search_authorities(self, matter_id: str, query: str) -> str:
         if not matter_id or matter_id == "—":
@@ -14191,7 +14191,7 @@ class AppState:
             return _fmt_document_intelligence_panel(data, domain, trust_overrides=overrides)
         except Exception as exc:
             logger.warning("load_document_intelligence: %s", exc)
-            return f"<div class='viz-empty'>Error loading document intelligence: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading document intelligence: {_escape(str(exc))}</div>"
 
     def load_belief_revisions(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -14201,7 +14201,7 @@ class AppState:
             return _fmt_belief_revision_panel(data, domain)
         except Exception as exc:
             logger.warning("load_belief_revisions: %s", exc)
-            return f"<div class='viz-empty'>Error loading belief revisions: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading belief revisions: {_escape(str(exc))}</div>"
 
     def load_contradictions(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -14211,7 +14211,7 @@ class AppState:
             return _fmt_contradiction_panel(data, domain)
         except Exception as exc:
             logger.warning("load_contradictions: %s", exc)
-            return f"<div class='viz-empty'>Error loading contradictions: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading contradictions: {_escape(str(exc))}</div>"
 
     def mine_and_load_contradictions(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -14222,7 +14222,7 @@ class AppState:
             return _fmt_contradiction_panel(data, domain)
         except Exception as exc:
             logger.warning("mine_and_load_contradictions: %s", exc)
-            return f"<div class='viz-empty'>Error mining contradictions: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error mining contradictions: {_escape(str(exc))}</div>"
 
     def resolve_contradiction(
         self, matter_id: str, attacker_id: str, attacked_id: str,
@@ -14391,7 +14391,7 @@ class AppState:
             return _fmt_document_versions_panel(data, domain)
         except Exception as exc:
             logger.warning("load_document_versions: %s", exc)
-            return f"<div class='viz-empty'>Error loading document versions: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading document versions: {_escape(str(exc))}</div>"
 
     def detect_and_load_document_versions(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -14402,7 +14402,7 @@ class AppState:
             return _fmt_document_versions_panel(data, domain)
         except Exception as exc:
             logger.warning("detect_and_load_document_versions: %s", exc)
-            return f"<div class='viz-empty'>Error detecting version chains: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error detecting version chains: {_escape(str(exc))}</div>"
 
     def lookup_operative_version(
         self, matter_id: str, doc_id: str, domain: str = "legal",
@@ -14434,7 +14434,7 @@ class AppState:
             return _fmt_quant_thresholds_panel(data, domain)
         except Exception as exc:
             logger.warning("load_quant_thresholds: %s", exc)
-            return f"<div class='viz-empty'>Error loading quant thresholds: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading quant thresholds: {_escape(str(exc))}</div>"
 
     def load_system_health(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -14444,7 +14444,7 @@ class AppState:
             return _fmt_system_health_panel(data, domain)
         except Exception as exc:
             logger.warning("load_system_health: %s", exc)
-            return f"<div class='viz-empty'>Error loading system health: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading system health: {_escape(str(exc))}</div>"
 
     def flush_pending_propagation(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -14457,7 +14457,7 @@ class AppState:
             return status + health_html
         except Exception as exc:
             logger.warning("flush_pending_propagation: %s", exc)
-            return f"<div class='viz-empty'>Error flushing pending propagation: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error flushing pending propagation: {_escape(str(exc))}</div>"
 
     def load_so_scorecard(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -14467,7 +14467,7 @@ class AppState:
             return _fmt_so_scorecard_panel(data, domain)
         except Exception as exc:
             logger.warning("load_so_scorecard: %s", exc)
-            return f"<div class='viz-empty'>Error loading SO scorecard: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading SO scorecard: {_escape(str(exc))}</div>"
 
     def load_domain_profile(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -14477,7 +14477,7 @@ class AppState:
             return _fmt_domain_profile_panel(data, domain)
         except Exception as exc:
             logger.warning("load_domain_profile: %s", exc)
-            return f"<div class='viz-empty'>Error loading domain profile: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading domain profile: {_escape(str(exc))}</div>"
 
     def load_domain_composition(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -14529,7 +14529,7 @@ class AppState:
             return _fmt_doc_triage_panel(data, domain)
         except Exception as exc:
             logger.warning("load_document_triage: %s", exc)
-            return f"<div class='viz-empty'>Error loading document triage: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading document triage: {_escape(str(exc))}</div>"
 
     def load_document_card(self, matter_id: str, document_ref: str) -> str:
         if not matter_id or matter_id == "—":
@@ -14641,7 +14641,7 @@ class AppState:
             return _fmt_taint_summary_panel(data, domain)
         except Exception as exc:
             logger.warning("load_taint_summary: %s", exc)
-            return f"<div class='viz-empty'>Error loading taint summary: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading taint summary: {_escape(str(exc))}</div>"
 
     def reclassify_document_sensitivity(
         self, matter_id: str, doc_id: str, privilege_flag: bool, domain: str = "legal",
@@ -14699,7 +14699,7 @@ class AppState:
             return _fmt_investigation_history_panel(runs, domain)
         except Exception as exc:
             logger.warning("load_investigation_history: %s", exc)
-            return f"<div class='viz-empty'>Error loading investigation history: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading investigation history: {_escape(str(exc))}</div>"
 
     def load_clarification_choices(self, matter_id: str) -> list:
         if not matter_id or matter_id == "—":
@@ -14808,7 +14808,7 @@ class AppState:
             return _fmt_trust_overrides(data, domain=domain)
         except Exception as exc:
             logger.warning("load_trust_overrides: %s", exc)
-            return f"<div class='viz-empty'>Error loading trust overrides: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading trust overrides: {_escape(str(exc))}</div>"
 
     def do_set_trust_override(
         self, matter_id: str, document_pattern: str, trust_level: str, note: str
@@ -14892,7 +14892,7 @@ class AppState:
             return _fmt_communication_map_panel(graph, domain=domain)
         except Exception as exc:
             logger.warning("load_communication_map: %s", exc)
-            return f"<div class='viz-empty'>Error loading communication map: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading communication map: {_escape(str(exc))}</div>"
 
     def load_duplicate_actors(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -14902,7 +14902,7 @@ class AppState:
             return _fmt_duplicate_actors_panel(pairs, domain)
         except Exception as exc:
             logger.warning("load_duplicate_actors: %s", exc)
-            return f"<div class='viz-empty'>Error scanning for duplicates: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error scanning for duplicates: {_escape(str(exc))}</div>"
 
     def do_merge_actors(self, matter_id: str, keep_id: str, merge_id: str, confirmed: bool = False) -> tuple[str, str]:
         if not matter_id or matter_id == "—":
@@ -14957,7 +14957,7 @@ class AppState:
             return _fmt_llm_analytics_panel(summary, calls, breakdown, anomalies)
         except Exception as exc:
             logger.warning("load_llm_analytics: %s", exc)
-            return f"<div class='viz-empty'>Error loading LLM analytics: {_escape(exc)}</div>"
+            return f"<div class='viz-empty'>Error loading LLM analytics: {_escape(str(exc))}</div>"
 
     def load_decision_context(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
