@@ -4561,14 +4561,100 @@ def _fmt_gaps(gaps: list, clarifications: list, domain: str = "legal") -> str:
     )
 
 
-_REVIEW_BUCKET_LABELS = {
-    0: ("Gap blocker", "#b91c1c"),       # red — gap-blocked issue
-    1: ("Disputed", "#b45309"),          # amber — contradicted
-    2: ("Supports a claim", "#2563eb"),  # blue — issue-linked
-    3: ("Element of proof", "#0d9488"),  # teal — predicate
-    4: ("Number", "#7c3aed"),            # purple — quant
-    5: ("Citation / Authority", "#6b7280"),  # grey — authority
-    6: ("Other", "#94a3b8"),             # light grey
+_REVIEW_BUCKET_LABELS: dict[str, dict[int, tuple[str, str]]] = {
+    "legal": {
+        0: ("Gap blocker", "#b91c1c"),
+        1: ("Disputed", "#b45309"),
+        2: ("Supports a claim", "#2563eb"),
+        3: ("Element of proof", "#0d9488"),
+        4: ("Number", "#7c3aed"),
+        5: ("Citation / Authority", "#6b7280"),
+        6: ("Other", "#94a3b8"),
+    },
+    "finance": {
+        0: ("Gap blocker", "#b91c1c"),
+        1: ("Disputed", "#b45309"),
+        2: ("Supports a position", "#2563eb"),
+        3: ("Compliance element", "#0d9488"),
+        4: ("Figure", "#7c3aed"),
+        5: ("Reference / Standard", "#6b7280"),
+        6: ("Other", "#94a3b8"),
+    },
+    "coding": {
+        0: ("Gap blocker", "#b91c1c"),
+        1: ("Disputed", "#b45309"),
+        2: ("Supports a finding", "#2563eb"),
+        3: ("Acceptance criterion", "#0d9488"),
+        4: ("Metric", "#7c3aed"),
+        5: ("Spec / Standard", "#6b7280"),
+        6: ("Other", "#94a3b8"),
+    },
+    "academic_research": {
+        0: ("Gap blocker", "#b91c1c"),
+        1: ("Disputed", "#b45309"),
+        2: ("Supports a hypothesis", "#2563eb"),
+        3: ("Methodological criterion", "#0d9488"),
+        4: ("Statistic", "#7c3aed"),
+        5: ("Citation / Reference", "#6b7280"),
+        6: ("Other", "#94a3b8"),
+    },
+    "biomedical": {
+        0: ("Gap blocker", "#b91c1c"),
+        1: ("Disputed", "#b45309"),
+        2: ("Supports a conclusion", "#2563eb"),
+        3: ("Endpoint criterion", "#0d9488"),
+        4: ("Measurement", "#7c3aed"),
+        5: ("Protocol / Guideline", "#6b7280"),
+        6: ("Other", "#94a3b8"),
+    },
+}
+
+_REVIEW_KIND_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "assertion": "Fact",
+        "assertion_occurrence": "Raw utterance",
+        "evidence_edge": "Evidence link",
+        "issue_predicate": "Proof element",
+        "quant_fact": "Number",
+        "authority": "Citation / Authority",
+        "document_card": "Document classification",
+    },
+    "finance": {
+        "assertion": "Finding",
+        "assertion_occurrence": "Raw extract",
+        "evidence_edge": "Evidence link",
+        "issue_predicate": "Compliance element",
+        "quant_fact": "Figure",
+        "authority": "Reference / Standard",
+        "document_card": "Document classification",
+    },
+    "coding": {
+        "assertion": "Finding",
+        "assertion_occurrence": "Raw snippet",
+        "evidence_edge": "Evidence link",
+        "issue_predicate": "Acceptance criterion",
+        "quant_fact": "Metric",
+        "authority": "Spec / Standard",
+        "document_card": "Artifact classification",
+    },
+    "academic_research": {
+        "assertion": "Claim",
+        "assertion_occurrence": "Raw excerpt",
+        "evidence_edge": "Evidence link",
+        "issue_predicate": "Methodological criterion",
+        "quant_fact": "Statistic",
+        "authority": "Citation / Reference",
+        "document_card": "Source classification",
+    },
+    "biomedical": {
+        "assertion": "Finding",
+        "assertion_occurrence": "Raw observation",
+        "evidence_edge": "Evidence link",
+        "issue_predicate": "Endpoint criterion",
+        "quant_fact": "Measurement",
+        "authority": "Protocol / Guideline",
+        "document_card": "Source classification",
+    },
 }
 
 
@@ -4595,7 +4681,7 @@ def _fmt_privilege_banner(audience: str) -> str:
     )
 
 
-def _fmt_review_count_badge(total: int, bucket_counts: dict[int, int]) -> str:
+def _fmt_review_count_badge(total: int, bucket_counts: dict[int, int], domain: str = "legal") -> str:
     """Render the sidebar review-queue badge from precomputed counts.
     Shared by load_review_count_badge and load_post_review_snapshot so
     both paths produce identical HTML (OPT-2b)."""
@@ -4607,10 +4693,11 @@ def _fmt_review_count_badge(total: int, bucket_counts: dict[int, int]) -> str:
             "✓ All findings reviewed."
             "</div>"
         )
+    bucket_labels = _REVIEW_BUCKET_LABELS.get(domain, _REVIEW_BUCKET_LABELS["legal"])
     lines: list[str] = []
     for bucket in sorted(bucket_counts):
-        label, color = _REVIEW_BUCKET_LABELS.get(
-            bucket, _REVIEW_BUCKET_LABELS[6],
+        label, color = bucket_labels.get(
+            bucket, bucket_labels[6],
         )
         count = bucket_counts[bucket]
         lines.append(
@@ -4630,9 +4717,10 @@ def _fmt_review_count_badge(total: int, bucket_counts: dict[int, int]) -> str:
     )
 
 
-def _review_bucket_badge(bucket: int, score: float) -> str:
-    label, color = _REVIEW_BUCKET_LABELS.get(
-        int(bucket or 6), _REVIEW_BUCKET_LABELS[6],
+def _review_bucket_badge(bucket: int, score: float, domain: str = "legal") -> str:
+    bucket_labels = _REVIEW_BUCKET_LABELS.get(domain, _REVIEW_BUCKET_LABELS["legal"])
+    label, color = bucket_labels.get(
+        int(bucket or 6), bucket_labels[6],
     )
     meter = ""
     if score and score > 0:
@@ -4644,13 +4732,13 @@ def _review_bucket_badge(bucket: int, score: float) -> str:
     )
 
 
-def _fmt_review_queue(queue: list[dict]) -> str:
-    """Render the prioritized review queue in attorney-readable form.
+def _fmt_review_queue(queue: list[dict], domain: str = "legal") -> str:
+    """Render the prioritized review queue in domain-professional-readable form.
 
     No raw IDs, no internal store names. Each row shows:
       - bucket badge (proof-critical / contradicted / issue-linked / etc.)
       - the finding text or citation
-      - the kind tag (Fact / Number / Citation / Predicate)
+      - the kind tag (domain-aware label)
       - a copyable target id truncated for selection — hidden text, not shown
     """
     if not queue:
@@ -4660,6 +4748,7 @@ def _fmt_review_queue(queue: list[dict]) -> str:
             "or has no AI-extracted material yet."
             "</div>"
         )
+    kind_labels = _REVIEW_KIND_LABELS.get(domain, _REVIEW_KIND_LABELS["legal"])
     rows_html = []
     for row in queue:
         if not isinstance(row, dict):
@@ -4667,7 +4756,6 @@ def _fmt_review_queue(queue: list[dict]) -> str:
         bucket = row.get("priority_bucket", 6)
         score = row.get("priority_score", 0.0)
         kind = row.get("target_kind", "unknown")
-        # Pick the right context field per kind.
         text = (
             row.get("proposition_text")
             or row.get("quant_raw_text")
@@ -4675,21 +4763,13 @@ def _fmt_review_queue(queue: list[dict]) -> str:
             or row.get("predicate_description")
             or "(no preview)"
         )
-        kind_pretty = {
-            "assertion": "Fact",
-            "assertion_occurrence": "Raw utterance",
-            "evidence_edge": "Evidence link",
-            "issue_predicate": "Proof element",
-            "quant_fact": "Number",
-            "authority": "Citation / Authority",
-            "document_card": "Document classification",
-        }.get(kind, kind.replace("_", " ").title())
+        kind_pretty = kind_labels.get(kind, kind.replace("_", " ").title())
         truncated = _truncate(text, 180)
         rows_html.append(
             f"<div style='padding:10px 12px;border-left:3px solid #e5e7eb;"
             f"margin-bottom:8px;background:#f9fafb;border-radius:0 6px 6px 0;'>"
             f"<div style='margin-bottom:4px;'>"
-            f"{_review_bucket_badge(bucket, score)}"
+            f"{_review_bucket_badge(bucket, score, domain)}"
             f"<span style='margin-left:10px;font-size:12px;color:#6b7280;"
             f"text-transform:uppercase;letter-spacing:0.03em;'>{kind_pretty}</span>"
             f"</div>"
@@ -5984,7 +6064,7 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading content policy audit: {_escape(str(exc))}</div>"
 
-    def load_review_queue(self, matter_id: str) -> tuple[str, gr.update]:
+    def load_review_queue(self, matter_id: str, domain: str = "legal") -> tuple[str, gr.update]:
         """Return (html_render, dropdown_update) for the review queue.
 
         The dropdown is keyed as "kind:id" strings so one selection
@@ -6005,7 +6085,7 @@ class AppState:
                 "Try refreshing after the current investigation finishes.</div>",
                 gr.update(choices=[], value=None),
             )
-        html = _fmt_review_queue(queue)
+        html = _fmt_review_queue(queue, domain=domain)
         choices = _review_queue_choices(queue)
         value = choices[0][1] if choices else None
         return html, gr.update(choices=choices, value=value)
@@ -6092,7 +6172,7 @@ class AppState:
             "for re-check so the memo won't rely on them."
         )
 
-    def load_review_count_badge(self, matter_id: str) -> str:
+    def load_review_count_badge(self, matter_id: str, domain: str = "legal") -> str:
         """Small HTML chip showing how many findings are awaiting
         review, broken down by the top buckets. Renders quiet when
         the queue is empty.
@@ -6110,10 +6190,10 @@ class AppState:
         bucket_counts = {
             int(k): int(v) for k, v in (counts.get("by_bucket") or {}).items()
         }
-        return _fmt_review_count_badge(total, bucket_counts)
+        return _fmt_review_count_badge(total, bucket_counts, domain=domain)
 
     def load_post_review_snapshot(
-        self, matter_id: str, target_handle: str,
+        self, matter_id: str, target_handle: str, domain: str = "legal",
     ) -> dict:
         """OPT-2b: one round-trip fetch for the seven panels that the
         verify/reject handlers refresh. Each underlying backend read
@@ -6174,7 +6254,7 @@ class AppState:
             queue_html = _err_html("the review queue", queue)
             dropdown = gr.update(choices=[], value=None)
         else:
-            queue_html = _fmt_review_queue(queue)
+            queue_html = _fmt_review_queue(queue, domain=domain)
             choices = _review_queue_choices(queue)
             dropdown_value = choices[0][1] if choices else None
             dropdown = gr.update(choices=choices, value=dropdown_value)
@@ -6193,7 +6273,7 @@ class AppState:
             bucket_counts = {
                 int(k): int(v) for k, v in (counts.get("by_bucket") or {}).items()
             }
-            badge_html = _fmt_review_count_badge(total, bucket_counts)
+            badge_html = _fmt_review_count_badge(total, bucket_counts, domain=domain)
 
         if kind_tid is not None:
             kind, tid = kind_tid
@@ -8562,7 +8642,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 f_quant_thresh = pool.submit(state.load_quant_thresholds, mid, domain=domain)
                 f_sys_health = pool.submit(state.load_system_health, mid, domain=domain)
                 f_so_scorecard = pool.submit(state.load_so_scorecard, mid, domain=domain)
-                f_review = pool.submit(state.load_review_count_badge, mid)
+                f_review = pool.submit(state.load_review_count_badge, mid, domain)
                 f_docs = pool.submit(state.load_document_picker_choices, mid)
 
             gaps_text, top_issue = f_gaps.result()
@@ -9096,10 +9176,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
         # --- Review Inbox wiring ---
         def _refresh_review_and_drawer(mid):
-            queue_html, dropdown_update = state.load_review_queue(mid)
+            domain = state._detect_domain(mid)
+            queue_html, dropdown_update = state.load_review_queue(mid, domain=domain)
             new_value = dropdown_update.get("value") if isinstance(dropdown_update, dict) else None
             drawer = state.load_source_drawer(mid, new_value or "")
-            badge = state.load_review_count_badge(mid)
+            badge = state.load_review_count_badge(mid, domain=domain)
             return queue_html, dropdown_update, drawer, badge
 
         refresh_review_btn.click(
@@ -9122,11 +9203,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         )
 
         def _verify_and_refresh(mid, target, note):
-            # Snapshot target before the write so the drawer shows the
-            # transition we just made (prior_target).
             prior_target = target
             result = state.do_verify_target(mid, target, note)
-            snap = state.load_post_review_snapshot(mid, prior_target)
+            domain = state._detect_domain(mid)
+            snap = state.load_post_review_snapshot(mid, prior_target, domain=domain)
             doc_choices = state.load_document_picker_choices(mid)
             return (
                 result,
@@ -9155,7 +9235,8 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         def _reject_and_refresh(mid, target, reason):
             prior_target = target
             result = state.do_reject_target(mid, target, reason)
-            snap = state.load_post_review_snapshot(mid, prior_target)
+            domain = state._detect_domain(mid)
+            snap = state.load_post_review_snapshot(mid, prior_target, domain=domain)
             doc_choices = state.load_document_picker_choices(mid)
             return (
                 result,
@@ -9183,10 +9264,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
         def _bulk_verify_doc_and_refresh(mid, doc_ref):
             result = state.do_bulk_verify_by_document(mid, doc_ref)
-            queue_html, dropdown_update = state.load_review_queue(mid)
+            domain = state._detect_domain(mid)
+            queue_html, dropdown_update = state.load_review_queue(mid, domain=domain)
             return (
                 result, queue_html, dropdown_update,
-                state.load_review_count_badge(mid),
+                state.load_review_count_badge(mid, domain=domain),
                 state.load_assertions(mid),
                 state.load_issues(mid),
                 state.load_overview(mid),
@@ -9217,11 +9299,13 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
 
         def _batch_verify_and_refresh(mid, selected):
             updates = state.do_batch_verify_selected(mid, selected)
+            domain = state._detect_domain(mid)
+            queue_html, dropdown_update = state.load_review_queue(mid, domain=domain)
             return (
                 *updates,
-                state.load_review_queue(mid)[0],
-                state.load_review_queue(mid)[1],
-                state.load_review_count_badge(mid),
+                queue_html,
+                dropdown_update,
+                state.load_review_count_badge(mid, domain=domain),
                 state.load_assertions(mid),
                 state.load_issues(mid),
                 state.load_overview(mid),

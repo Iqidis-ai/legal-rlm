@@ -2435,3 +2435,60 @@ def test_bar_row_escapes_label():
     from irys.ui.app import _bar_row
     result = _bar_row("<img src=x onerror=alert(1)>", 5.0, 10.0)
     assert "<img " not in result
+
+
+# ------------------------------------------------------------------ #
+# Domain-aware review queue labels (SO-3)                             #
+# ------------------------------------------------------------------ #
+
+def test_fmt_review_queue_legal_domain():
+    from irys.ui.app import _fmt_review_queue
+    queue = [{"priority_bucket": 3, "priority_score": 0.8, "target_kind": "assertion", "proposition_text": "Test fact"}]
+    result = _fmt_review_queue(queue, domain="legal")
+    assert "Fact" in result
+    assert "Element of proof" in result
+
+
+def test_fmt_review_queue_finance_domain():
+    from irys.ui.app import _fmt_review_queue
+    queue = [{"priority_bucket": 3, "priority_score": 0.8, "target_kind": "assertion", "proposition_text": "Test finding"}]
+    result = _fmt_review_queue(queue, domain="finance")
+    assert "Finding" in result
+    assert "Compliance element" in result
+
+
+def test_fmt_review_queue_coding_domain():
+    from irys.ui.app import _fmt_review_queue
+    queue = [{"priority_bucket": 4, "priority_score": 0.5, "target_kind": "quant_fact", "quant_raw_text": "latency 200ms"}]
+    result = _fmt_review_queue(queue, domain="coding")
+    assert "Metric" in result
+
+
+def test_fmt_review_queue_academic_domain():
+    from irys.ui.app import _fmt_review_queue
+    queue = [{"priority_bucket": 2, "priority_score": 0.6, "target_kind": "assertion", "proposition_text": "Hypothesis claim"}]
+    result = _fmt_review_queue(queue, domain="academic_research")
+    assert "Claim" in result
+    assert "Supports a hypothesis" in result
+
+
+def test_fmt_review_queue_biomedical_domain():
+    from irys.ui.app import _fmt_review_queue
+    queue = [{"priority_bucket": 5, "priority_score": 0.3, "target_kind": "authority", "authority_citation": "FDA Guideline"}]
+    result = _fmt_review_queue(queue, domain="biomedical")
+    assert "Protocol / Guideline" in result
+
+
+def test_review_count_badge_domain_labels():
+    from irys.ui.app import _fmt_review_count_badge
+    result = _fmt_review_count_badge(5, {3: 3, 4: 2}, domain="finance")
+    assert "Compliance element" in result
+    assert "Figure" in result
+
+
+def test_review_queue_xss():
+    from irys.ui.app import _fmt_review_queue
+    queue = [{"priority_bucket": 0, "priority_score": 1.0, "target_kind": "assertion", "proposition_text": "<script>alert(1)</script>"}]
+    result = _fmt_review_queue(queue)
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
