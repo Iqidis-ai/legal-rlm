@@ -1356,7 +1356,6 @@ class MatterModel:
                  AND COALESCE(vs.status, 'candidate')='candidate'""",
             (self.matter_id, span_id),
         ).fetchall()
-        import sqlite3 as _sqlite3
         specs = [{"target_kind": "assertion", "target_id": r["id"]} for r in rows]
         ids = self.verification.bulk_set_status(
             specs,
