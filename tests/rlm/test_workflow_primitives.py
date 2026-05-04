@@ -2405,3 +2405,33 @@ def test_http_backend_flush_pending_passthrough():
         backend.flush_pending("m1")
     )
     assert result == expected
+
+
+# ------------------------------------------------------------------ #
+# XSS regression: _metric_card and _bar_row                          #
+# ------------------------------------------------------------------ #
+
+def test_metric_card_escapes_detail():
+    from irys.ui.app import _metric_card
+    result = _metric_card("Title", "42", detail="<script>alert(1)</script>")
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+def test_metric_card_escapes_title():
+    from irys.ui.app import _metric_card
+    result = _metric_card("<img src=x onerror=alert(1)>", "42")
+    assert "<img " not in result
+
+
+def test_bar_row_escapes_meta():
+    from irys.ui.app import _bar_row
+    result = _bar_row("Label", 5.0, 10.0, meta="<script>alert(1)</script>")
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+def test_bar_row_escapes_label():
+    from irys.ui.app import _bar_row
+    result = _bar_row("<img src=x onerror=alert(1)>", 5.0, 10.0)
+    assert "<img " not in result

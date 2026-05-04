@@ -658,7 +658,7 @@ def _fmt_money_short(value: Any) -> str:
 
 
 def _metric_card(title: str, value: str, detail: str = "", tone: str = "default") -> str:
-    detail_html = f"<div class='viz-card-detail'>{detail}</div>" if detail else ""
+    detail_html = f"<div class='viz-card-detail'>{_escape(detail)}</div>" if detail else ""
     return (
         f"<div class='viz-card tone-{_escape(tone)}'>"
         f"<div class='viz-card-title'>{_escape(title)}</div>"
@@ -670,7 +670,7 @@ def _metric_card(title: str, value: str, detail: str = "", tone: str = "default"
 
 def _bar_row(label: str, value: float, maximum: float, meta: str = "", tone: str = "blue") -> str:
     pct = 0.0 if maximum <= 0 else min(100.0, max(4.0, (value / maximum) * 100.0))
-    meta_html = f"<div class='viz-bar-meta'>{meta}</div>" if meta else ""
+    meta_html = f"<div class='viz-bar-meta'>{_escape(meta)}</div>" if meta else ""
     return (
         "<div class='viz-bar-row'>"
         f"<div class='viz-bar-label'>{_escape(label)}</div>"
@@ -5363,8 +5363,8 @@ class AppState:
                         if runs:
                             self.current_run_id = runs[0]["id"]
                             self.current_matter_id = engine._matter_model.matter_id
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    logger.warning("run_id capture failed: %s", _exc)
         return _callback
 
     def _run_thread(
@@ -5555,8 +5555,8 @@ class AppState:
                                 lines = [f for f in formatted if f is not None]
                                 if lines:
                                     structured_trace = "\n".join(lines)
-                        except Exception:
-                            pass  # keep raw thinking fallback
+                        except Exception as _exc:
+                            logger.warning("structured trace format failed: %s", _exc)
                     # Cheap-path families (read, query, trace, etc.)
                     # don't run the full engine and therefore don't
                     # stream thinking or emit ledger events. Fall back
@@ -5769,8 +5769,8 @@ class AppState:
                                 ]
                                 if lines:
                                     structured_trace = "\n".join(lines)
-                        except Exception:
-                            pass
+                        except Exception as _exc:
+                            logger.warning("session-stream structured trace failed: %s", _exc)
                     # adv#13 Finding #3: the session-stream path
                     # drifted from the other stream path. Cheap-path
                     # families seed state.thinking_steps via
@@ -5897,8 +5897,8 @@ class AppState:
                         ).fetchone()
                         if row:
                             engine._matter_model.ledger.request_stop(row["id"])
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    logger.warning("early stop request failed: %s", _exc)
             _ASYNC_EXECUTOR.submit(_early_stop)
         # current_run_id intentionally NOT cleared here — see docstring.
         return gr.update()
