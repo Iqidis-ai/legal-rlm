@@ -2950,6 +2950,10 @@ class RLMEngine:
                 )
             except Exception:
                 pass
+            if state.cache_manifest_hash and state.working_set:
+                state.working_set.dependency_manifest_hash = (
+                    state.cache_manifest_hash
+                )
 
         # MVP.6: cap the durable matter_context block so new stores
         # can't silently inflate the orientation prompt. The repo file

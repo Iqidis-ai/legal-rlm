@@ -9704,3 +9704,31 @@ def test_remove_object_taint_by_class_broker():
     deleted2 = broker.remove_object_taint_by_class("assertion", "a1", "unknown_taint")
     assert deleted2 == 1
     assert broker.object_is_clean("assertion", "a1")
+
+
+def test_dependency_manifest_hash_propagates_to_working_set():
+    """cache_manifest_hash flows from InvestigationState to WorkingSet."""
+    state = InvestigationState.create("test query", ".")
+    state.working_set = WorkingSet()
+    assert state.working_set.dependency_manifest_hash is None
+    state.cache_manifest_hash = "sha256:abc123"
+    state.working_set.dependency_manifest_hash = state.cache_manifest_hash
+    assert state.working_set.dependency_manifest_hash == "sha256:abc123"
+    envelope = OutputEnvelope.create(
+        output_text="answer",
+        workflow_kind=WorkflowKind.ANALYSIS.value,
+        output_shape="answer",
+        emitter="test",
+        dependency_manifest_hash=state.working_set.dependency_manifest_hash,
+    )
+    assert envelope.dependency_manifest_hash == "sha256:abc123"
+
+
+def test_dependency_manifest_hash_survives_working_set_roundtrip():
+    """WorkingSet serialization preserves dependency_manifest_hash."""
+    ws = WorkingSet()
+    ws.dependency_manifest_hash = "sha256:test_hash_42"
+    data = ws.to_dict()
+    assert data["dependency_manifest_hash"] == "sha256:test_hash_42"
+    restored = WorkingSet.from_dict(data)
+    assert restored.dependency_manifest_hash == "sha256:test_hash_42"
