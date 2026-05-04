@@ -1266,7 +1266,9 @@ def _fmt_issues_panel(issues: list, domain: str = "legal") -> str:
         verified_cov = max(0.0, min(1.0, _safe_float(issue.get("verified_coverage_fraction", 0.0))))
         verified_cnt = _safe_int(issue.get("verified_supporting_count", 0))
         candidate_cnt = _safe_int(issue.get("candidate_supporting_count", 0))
-        title = _escape(issue.get("title") or issue.get("id") or labels["issue_fallback"])
+        issue_id = issue.get("id") or ""
+        title = _escape(issue.get("title") or issue_id or labels["issue_fallback"])
+        short_issue_id = _escape(str(issue_id)[:12])
         proof = _escape(issue.get("proof_status", "none"))
         attack = _safe_int(issue.get("attacking_count", 0))
         contested = _safe_int(issue.get("contested_predicates", 0))
@@ -1296,7 +1298,9 @@ def _fmt_issues_panel(issues: list, domain: str = "legal") -> str:
             f"<div class='issue-row' style='--issue-indent:{depth * 18}px'>"
             f"<div class='issue-head'>"
             f"<span class='proof-pill proof-{proof}'>{proof}</span>"
-            f"<span class='issue-title'>{title}</span>{gap_marker}"
+            f"<span class='issue-title'>{title}</span>"
+            f"<span style='font-size:9px;color:#9ca3af;font-family:monospace;margin-left:6px;' title='{_escape(str(issue_id))}'>{short_issue_id}</span>"
+            f"{gap_marker}"
             f"<span class='issue-pct' title='Verified / Advisory'>"
             f"{verified_cov:.0%} / {coverage:.0%}</span>"
             f"</div>"
@@ -1961,6 +1965,8 @@ def _fmt_authority_panel(data: dict, domain: str = "legal") -> str:
     by_type: dict[str, int] = {}
     by_weight: dict[str, int] = {}
     for auth in authorities:
+        if not isinstance(auth, dict):
+            continue
         t = auth.get("authority_type", "unknown")
         w = auth.get("weight", "unknown")
         by_type[t] = by_type.get(t, 0) + 1
@@ -1998,6 +2004,8 @@ def _fmt_authority_panel(data: dict, domain: str = "legal") -> str:
 
     rows_html = ""
     for auth in authorities:
+        if not isinstance(auth, dict):
+            continue
         aid = auth.get("id", "")
         citation = auth.get("citation", "—")
         name = auth.get("name") or ""
@@ -2014,7 +2022,7 @@ def _fmt_authority_panel(data: dict, domain: str = "legal") -> str:
                 f"color:{relevance_colors.get(lk.get('relevance', 'neutral'), '#6b7280')};"
                 f"font-size:10px;margin:1px;' title='{_escape(lk.get('relevance', 'neutral'))} · ID: {_escape(lk.get('issue_id', '?'))}'>"
                 f"{_escape((lk.get('issue_title') or lk.get('issue_id', '?'))[:20])}</span>"
-                for lk in links
+                for lk in links if isinstance(lk, dict)
             )
         else:
             link_badges = "<span style='color:#94a3b8;font-size:11px;'>none</span>"
@@ -5539,16 +5547,16 @@ def _fmt_steering(actions: list, domain: str = "legal") -> str:
             continue
         action_type = a.get("action_type", "unknown")
         action_label = L.get(action_type, action_type.replace("_", " ").title())
-        description = a.get("description", "")
-        rationale = a.get("rationale", "")
-        priority = a.get("priority", "")
+        description = _escape(a.get("description", ""))
+        rationale = _escape(a.get("rationale", ""))
+        priority = _escape(str(a.get("priority", "")))
         priority_str = f" **[{priority.upper()}]**" if priority else ""
         lines.append(f"**{action_label}**{priority_str}: {description}")
         if rationale:
             lines.append(f"  > {rationale}")
         params = a.get("params", {})
-        if params:
-            param_str = " | ".join(f"`{k}: {str(v)}`" for k, v in params.items() if v)
+        if isinstance(params, dict) and params:
+            param_str = " | ".join(f"`{_escape(str(k))}: {_escape(str(v))}`" for k, v in params.items() if v)
             lines.append(f"  *Params: {param_str}*")
         lines.append("")
     return "\n".join(lines)

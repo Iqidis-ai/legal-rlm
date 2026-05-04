@@ -3160,3 +3160,45 @@ def test_xss_authority_curation_escape():
     aid = _escape(xss_payload[:12])
     msg = f"Added authority {aid}"
     assert "<img" not in msg
+
+
+def test_xss_fmt_steering_escapes_backend_data():
+    """XSS regression: _fmt_steering must escape description/rationale/params from backend."""
+    from irys.ui.app import _fmt_steering
+    xss = '<script>alert(1)</script>'
+    actions = [
+        {
+            "action_type": "redirect_focus",
+            "description": xss,
+            "rationale": xss,
+            "priority": "high",
+            "params": {xss: xss},
+        }
+    ]
+    result = _fmt_steering(actions, domain="legal")
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+def test_fmt_authority_panel_non_dict_guard():
+    """Non-dict guard: authority panel must skip non-dict items without crashing."""
+    from irys.ui.app import _fmt_authority_panel
+    data = {
+        "authorities": ["not-a-dict", None, 42, {"id": "A1", "citation": "Test", "weight": "binding"}],
+        "issue_links": {"A1": ["bad-link", {"issue_id": "I1", "issue_title": "T", "relevance": "supporting"}]},
+    }
+    result = _fmt_authority_panel(data, domain="legal")
+    assert "Test" in result
+    assert "supporting" in result.lower() or "T" in result
+
+
+def test_fmt_steering_params_non_dict_guard():
+    """Non-dict guard: _fmt_steering handles non-dict params gracefully."""
+    from irys.ui.app import _fmt_steering
+    actions = [
+        {"action_type": "redirect_focus", "description": "test", "params": "not-a-dict"},
+        {"action_type": "redirect_focus", "description": "test2", "params": None},
+    ]
+    result = _fmt_steering(actions, domain="legal")
+    assert "test" in result
+    assert "test2" in result

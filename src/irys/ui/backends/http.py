@@ -582,7 +582,11 @@ class HttpBackend(UIBackend):
         if jurisdiction:
             body["jurisdiction"] = jurisdiction
         result = await self._post(f"/matter/{matter_id}/authorities", body)
-        return result if isinstance(result, dict) else {}
+        if not isinstance(result, dict):
+            return {}
+        if "authority_id" not in result and "id" in result:
+            result["authority_id"] = result["id"]
+        return result
 
     async def link_authority_to_issue(
         self,
@@ -591,10 +595,12 @@ class HttpBackend(UIBackend):
         issue_id: str,
         relevance: str = "supporting",
     ) -> dict:
-        result = await self._post(
+        r = await self._client.post(
             f"/matter/{matter_id}/authorities/{authority_id}/issues/{issue_id}",
-            {"relevance": relevance},
+            params={"relevance": relevance},
         )
+        r.raise_for_status()
+        result = r.json()
         return result if isinstance(result, dict) else {"status": "linked"}
 
     async def unlink_authority_from_issue(
