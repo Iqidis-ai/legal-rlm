@@ -3587,7 +3587,7 @@ def _fmt_sensitivity_review_result(data: dict, domain: str = "legal") -> str:
 
     doc_id = data.get("doc_id") or data.get("span_id", "")
     staled = data.get("staled_count", 0)
-    if not isinstance(staled, (int, float)):
+    if not isinstance(staled, (int, float)) or not math.isfinite(float(staled)):
         staled = 0
 
     parts.append(
@@ -6463,7 +6463,7 @@ def _fmt_scenario_snapshot_history(data: dict, domain: str = "legal") -> str:
             continue
         sid = _escape(str(snap.get("id", "?")))
         dc = snap.get("delta_count", 0)
-        if not isinstance(dc, (int, float)):
+        if not isinstance(dc, (int, float)) or not math.isfinite(float(dc)):
             dc = 0
         created = _escape(str(snap.get("created_at", "?")))
         parts.append(
