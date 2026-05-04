@@ -519,6 +519,17 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_document_card(
+        self,
+        matter_id: str,
+        *,
+        relative_path: str | None = None,
+        doc_id: str | None = None,
+    ) -> dict:
+        """Return a single document intelligence card (SO-1, SO-5)."""
+        ...
+
+    @abstractmethod
     async def get_taint_summary(
         self, matter_id: str, limit: int = 50
     ) -> dict:

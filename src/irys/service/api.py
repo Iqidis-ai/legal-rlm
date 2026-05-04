@@ -4153,6 +4153,31 @@ async def get_document_cards(matter_id: str, limit: int = 200):
 
 
 @app.get(
+    "/matter/{matter_id}/documents/card",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_document_card(
+    matter_id: str,
+    relative_path: Optional[str] = None,
+    doc_id: Optional[str] = None,
+):
+    """Return a single document intelligence card by path or doc_id."""
+    if not relative_path and not doc_id:
+        raise HTTPException(400, "Provide relative_path or doc_id")
+    if relative_path and doc_id:
+        raise HTTPException(400, "Provide only one of relative_path or doc_id")
+    model = await _get_matter_model_or_404(matter_id)
+    card = model.get_document_card(relative_path=relative_path, doc_id=doc_id)
+    return {
+        "matter_id": matter_id,
+        "relative_path": relative_path,
+        "doc_id": doc_id,
+        "card": card,
+    }
+
+
+@app.get(
     "/matter/{matter_id}/llm-calls",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

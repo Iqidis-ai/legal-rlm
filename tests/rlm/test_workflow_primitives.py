@@ -9218,3 +9218,162 @@ def test_source_calibration_api_endpoint_exists():
     from irys.service.api import app as fastapi_app
     routes = [r.path for r in fastapi_app.routes]
     assert "/matter/{matter_id}/source-calibration" in routes
+
+
+# ── Document Card Inspector ──────────────────────────────────────
+
+
+def test_document_card_labels_all_domains():
+    from irys.ui.app import _DOCUMENT_CARD_LABELS
+    for d in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        assert d in _DOCUMENT_CARD_LABELS, f"Missing domain {d}"
+        assert "title" in _DOCUMENT_CARD_LABELS[d]
+        assert "empty" in _DOCUMENT_CARD_LABELS[d]
+        assert "type" in _DOCUMENT_CARD_LABELS[d]
+        assert "privilege" in _DOCUMENT_CARD_LABELS[d]
+
+
+def test_document_card_formatter_empty():
+    from irys.ui.app import _fmt_document_card
+    html = _fmt_document_card({})
+    assert "viz-empty" in html
+    html2 = _fmt_document_card({"card": None})
+    assert "viz-empty" in html2
+    html3 = _fmt_document_card(None)
+    assert "viz-empty" in html3
+
+
+def test_document_card_formatter_non_dict():
+    from irys.ui.app import _fmt_document_card
+    html = _fmt_document_card("bad")
+    assert "viz-empty" in html
+
+
+def test_document_card_formatter_renders():
+    from irys.ui.app import _fmt_document_card
+    data = {
+        "card": {
+            "title": "Master Purchase Agreement",
+            "doc_type": "contract",
+            "doc_subtype": "purchase",
+            "source_side": "plaintiff",
+            "author": "Jane Smith",
+            "sender": "Legal Dept",
+            "recipient": "Finance Dept",
+            "creation_date": "2025-01-15",
+            "sent_date": "2025-01-16",
+            "effective_date": "2025-02-01",
+            "purpose": "Governs product purchase terms",
+            "rhetorical_posture": "assertive",
+            "reliability_posture": "high",
+            "operative_status": "operative",
+            "privilege_flag": False,
+            "unresolved_flags": ["missing_exhibit_A", "date_discrepancy"],
+            "source_role": "operative",
+            "signatories_json": '["Jane Smith", "John Doe"]',
+        }
+    }
+    html = _fmt_document_card(data)
+    assert "Document Card" in html
+    assert "Master Purchase Agreement" in html
+    assert "contract" in html
+    assert "purchase" in html
+    assert "plaintiff" in html
+    assert "Jane Smith" in html
+    assert "John Doe" in html
+    assert "Legal Dept" in html
+    assert "Finance Dept" in html
+    assert "2025-01-15" in html
+    assert "Governs product purchase terms" in html
+    assert "assertive" in html
+    assert "operative" in html.lower()
+    assert "missing_exhibit_A" in html
+    assert "date_discrepancy" in html
+    assert "PRIVILEGED" not in html
+
+
+def test_document_card_privilege_badge():
+    from irys.ui.app import _fmt_document_card
+    data = {"card": {"title": "Secret Memo", "privilege_flag": True, "doc_type": "memo"}}
+    html = _fmt_document_card(data)
+    assert "PRIVILEGED" in html
+
+
+def test_document_card_xss():
+    from irys.ui.app import _fmt_document_card
+    data = {
+        "card": {
+            "title": "<script>alert(1)</script>",
+            "doc_type": "<img onerror=x>",
+            "author": "<b>evil</b>",
+            "purpose": "<script>xss</script>",
+            "rhetorical_posture": "<b>bad</b>",
+            "source_role": "<em>test</em>",
+            "unresolved_flags": ["<script>flag</script>"],
+            "signatories_json": '["<b>sig</b>"]',
+        }
+    }
+    html = _fmt_document_card(data)
+    assert "<script>" not in html
+    assert "<img onerror" not in html
+    assert "<b>evil</b>" not in html
+    assert "<b>bad</b>" not in html
+    assert "<em>test</em>" not in html
+    assert "<b>sig</b>" not in html
+
+
+def test_document_card_domain_labels():
+    from irys.ui.app import _fmt_document_card
+    data = {"card": {"title": "Test", "doc_type": "report"}}
+    legal_html = _fmt_document_card(data, domain="legal")
+    assert "Document Card" in legal_html
+    finance_html = _fmt_document_card(data, domain="finance")
+    assert "Filing Card" in finance_html
+    coding_html = _fmt_document_card(data, domain="coding")
+    assert "Artifact Card" in coding_html
+    research_html = _fmt_document_card(data, domain="academic_research")
+    assert "Citation Card" in research_html
+    bio_html = _fmt_document_card(data, domain="biomedical")
+    assert "Clinical Record Card" in bio_html
+
+
+def test_document_card_hidden_empty_fields():
+    from irys.ui.app import _fmt_document_card
+    data = {"card": {"title": "Minimal", "doc_type": "report"}}
+    html = _fmt_document_card(data)
+    assert "Sender" not in html
+    assert "Recipient" not in html
+    assert "Signatories" not in html
+
+
+def test_document_card_malformed_flags():
+    from irys.ui.app import _fmt_document_card
+    data = {"card": {"title": "Test", "unresolved_flags": "not-a-list"}}
+    html = _fmt_document_card(data)
+    assert "viz-empty" not in html
+
+    data2 = {"card": {"title": "Test", "unresolved_flags": [123, None, {"bad": True}]}}
+    html2 = _fmt_document_card(data2)
+    assert "viz-empty" not in html2
+
+
+def test_document_card_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("get_document_card",):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+def test_document_card_appstate_methods_exist():
+    from irys.ui.app import AppState
+    assert hasattr(AppState, "load_document_card")
+    assert hasattr(AppState, "get_document_card_choices")
+
+
+def test_document_card_api_endpoint_exists():
+    from irys.service.api import app as fastapi_app
+    routes = [r.path for r in fastapi_app.routes]
+    assert "/matter/{matter_id}/documents/card" in routes

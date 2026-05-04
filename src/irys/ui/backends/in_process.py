@@ -1018,6 +1018,17 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.list_documents_needing_profile(limit=limit)
 
+    async def get_document_card(
+        self,
+        matter_id: str,
+        *,
+        relative_path: str | None = None,
+        doc_id: str | None = None,
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        card = model.get_document_card(relative_path=relative_path, doc_id=doc_id)
+        return {"card": card}
+
     async def get_taint_summary(
         self, matter_id: str, limit: int = 50
     ) -> dict:

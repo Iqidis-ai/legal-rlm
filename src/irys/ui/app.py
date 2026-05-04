@@ -3395,6 +3395,284 @@ _DOMAIN_PROFILE_LABELS: dict[str, dict[str, str]] = {
 }
 
 
+_DOCUMENT_CARD_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Document Card",
+        "empty": "No document card has been profiled for this source yet.",
+        "type": "Document Type",
+        "source_side": "Source Side",
+        "author": "Author",
+        "sender": "Sender",
+        "recipient": "Recipient",
+        "purpose": "Purpose",
+        "rhetorical": "Rhetorical Posture",
+        "reliability": "Reliability",
+        "operative": "Operative Status",
+        "privilege": "Privilege",
+        "flags": "Unresolved Flags",
+        "source_role": "Source Role",
+        "signatories": "Signatories",
+        "dates": "Key Dates",
+        "privileged": "PRIVILEGED",
+        "not_privileged": "Not privileged",
+    },
+    "finance": {
+        "title": "Filing Card",
+        "empty": "No filing card has been profiled for this document yet.",
+        "type": "Document Type",
+        "source_side": "Issuer / Counterparty",
+        "author": "Preparer",
+        "sender": "Sender",
+        "recipient": "Recipient",
+        "purpose": "Purpose",
+        "rhetorical": "Presentation Posture",
+        "reliability": "Reliability",
+        "operative": "Effective Status",
+        "privilege": "Confidentiality",
+        "flags": "Unresolved Issues",
+        "source_role": "Source Role",
+        "signatories": "Signatories",
+        "dates": "Key Dates",
+        "privileged": "CONFIDENTIAL",
+        "not_privileged": "Not restricted",
+    },
+    "coding": {
+        "title": "Artifact Card",
+        "empty": "No artifact card has been profiled for this source yet.",
+        "type": "Artifact Type",
+        "source_side": "Component",
+        "author": "Author",
+        "sender": "Sender",
+        "recipient": "Recipient",
+        "purpose": "Purpose",
+        "rhetorical": "Documentation Style",
+        "reliability": "Reliability",
+        "operative": "Current Status",
+        "privilege": "Access Level",
+        "flags": "Unresolved Issues",
+        "source_role": "Source Role",
+        "signatories": "Reviewers",
+        "dates": "Key Dates",
+        "privileged": "RESTRICTED",
+        "not_privileged": "Public",
+    },
+    "academic_research": {
+        "title": "Citation Card",
+        "empty": "No citation card has been profiled for this source yet.",
+        "type": "Source Type",
+        "source_side": "Affiliation",
+        "author": "Author(s)",
+        "sender": "Sender",
+        "recipient": "Recipient",
+        "purpose": "Purpose",
+        "rhetorical": "Argumentative Stance",
+        "reliability": "Reliability",
+        "operative": "Publication Status",
+        "privilege": "Access",
+        "flags": "Unresolved Issues",
+        "source_role": "Source Role",
+        "signatories": "Co-authors",
+        "dates": "Key Dates",
+        "privileged": "EMBARGOED",
+        "not_privileged": "Open access",
+    },
+    "biomedical": {
+        "title": "Clinical Record Card",
+        "empty": "No clinical record card has been profiled for this source yet.",
+        "type": "Record Type",
+        "source_side": "Facility / Provider",
+        "author": "Author",
+        "sender": "Sender",
+        "recipient": "Recipient",
+        "purpose": "Purpose",
+        "rhetorical": "Clinical Stance",
+        "reliability": "Reliability",
+        "operative": "Record Status",
+        "privilege": "Patient Privacy",
+        "flags": "Unresolved Issues",
+        "source_role": "Source Role",
+        "signatories": "Attestors",
+        "dates": "Key Dates",
+        "privileged": "PROTECTED",
+        "not_privileged": "Not restricted",
+    },
+}
+
+
+def _fmt_document_card(data: dict, domain: str = "legal") -> str:
+    if not data or not isinstance(data, dict):
+        L = _DOCUMENT_CARD_LABELS.get(domain, _DOCUMENT_CARD_LABELS["legal"])
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    L = _DOCUMENT_CARD_LABELS.get(domain, _DOCUMENT_CARD_LABELS["legal"])
+    card = data.get("card")
+    if not card or not isinstance(card, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    title = _escape(str(card.get("title", "") or ""))
+    doc_type = _escape(str(card.get("doc_type", "") or ""))
+    doc_subtype = _escape(str(card.get("doc_subtype", "") or ""))
+    source_side = _escape(str(card.get("source_side", "") or ""))
+    author = _escape(str(card.get("author", "") or ""))
+    sender = _escape(str(card.get("sender", "") or ""))
+    recipient = _escape(str(card.get("recipient", "") or ""))
+    purpose = _escape(str(card.get("purpose", "") or ""))
+    rhetorical = _escape(str(card.get("rhetorical_posture", "") or ""))
+    reliability = _escape(str(card.get("reliability_posture", "") or ""))
+    operative = _escape(str(card.get("operative_status", "") or ""))
+    source_role = _escape(str(card.get("source_role", "") or ""))
+    privilege = card.get("privilege_flag")
+
+    parts: list[str] = []
+    parts.append("<div style='margin-bottom:16px;'>")
+
+    # Title + privilege badge
+    priv_badge = ""
+    if privilege:
+        priv_badge = (
+            f" <span style='display:inline-block;padding:2px 10px;background:#dc2626;"
+            f"color:white;font-weight:700;font-size:11px;border-radius:4px;'>"
+            f"{_escape(L['privileged'])}</span>"
+        )
+    parts.append(
+        f"<h3 style='margin:0 0 8px;'>{_escape(L['title'])}: "
+        f"{title or '<em>untitled</em>'}{priv_badge}</h3>"
+    )
+
+    # Identity section
+    identity_rows = []
+    if doc_type:
+        type_str = doc_type
+        if doc_subtype:
+            type_str += f" / {doc_subtype}"
+        identity_rows.append((L["type"], type_str))
+    if source_side:
+        identity_rows.append((L["source_side"], source_side))
+    if source_role:
+        identity_rows.append((L["source_role"], source_role))
+    if operative:
+        op_color = "#059669" if operative.lower() in ("operative", "effective", "current") else "#d97706"
+        identity_rows.append((L["operative"], f"<span style='color:{op_color};font-weight:600;'>{operative}</span>"))
+
+    if identity_rows:
+        parts.append(
+            "<div style='margin-bottom:12px;padding:10px;background:#f0fdf4;"
+            "border:1px solid #bbf7d0;border-radius:6px;'>"
+        )
+        for label, val in identity_rows:
+            parts.append(
+                f"<div style='font-size:12px;margin-bottom:2px;'>"
+                f"<strong>{_escape(label)}:</strong> {val}</div>"
+            )
+        parts.append("</div>")
+
+    # Parties section
+    party_rows = []
+    if author:
+        party_rows.append((L["author"], author))
+    if sender:
+        party_rows.append((L["sender"], sender))
+    if recipient:
+        party_rows.append((L["recipient"], recipient))
+
+    sigs_raw = card.get("signatories_json")
+    if sigs_raw:
+        try:
+            if isinstance(sigs_raw, str):
+                import json as _json_mod_local
+                sigs = _json_mod_local.loads(sigs_raw)
+            else:
+                sigs = sigs_raw
+            if isinstance(sigs, list):
+                sig_strs = [_escape(str(s)[:60]) for s in sigs if not isinstance(s, dict)][:6]
+                if sig_strs:
+                    party_rows.append((L["signatories"], ", ".join(sig_strs)))
+        except (ValueError, TypeError):
+            pass
+
+    if party_rows:
+        parts.append("<div style='margin-bottom:12px;'>")
+        for label, val in party_rows:
+            parts.append(
+                f"<div style='font-size:12px;margin-bottom:2px;'>"
+                f"<strong>{_escape(label)}:</strong> {val}</div>"
+            )
+        parts.append("</div>")
+
+    # Dates section
+    date_fields = [
+        ("creation_date", "Created"),
+        ("sent_date", "Sent"),
+        ("effective_date", "Effective"),
+        ("discovery_date", "Discovered"),
+    ]
+    date_parts = []
+    for field, label in date_fields:
+        val = card.get(field)
+        if val:
+            date_parts.append(f"{label}: {_escape(str(val)[:20])}")
+    if date_parts:
+        parts.append(
+            f"<div style='font-size:12px;margin-bottom:8px;color:#6b7280;'>"
+            f"<strong>{_escape(L['dates'])}:</strong> {' | '.join(date_parts)}</div>"
+        )
+
+    # Purpose and posture
+    if purpose:
+        parts.append(
+            f"<div style='font-size:12px;margin-bottom:4px;'>"
+            f"<strong>{_escape(L['purpose'])}:</strong> {purpose}</div>"
+        )
+    if rhetorical:
+        parts.append(
+            f"<div style='font-size:12px;margin-bottom:4px;'>"
+            f"<strong>{_escape(L['rhetorical'])}:</strong> {rhetorical}</div>"
+        )
+    if reliability:
+        rel_color = "#059669" if reliability.lower() in ("high", "authoritative") else "#d97706" if reliability.lower() in ("medium", "moderate") else "#6b7280"
+        parts.append(
+            f"<div style='font-size:12px;margin-bottom:4px;'>"
+            f"<strong>{_escape(L['reliability'])}:</strong> "
+            f"<span style='color:{rel_color};font-weight:600;'>{reliability}</span></div>"
+        )
+
+    # Privilege status
+    if not privilege:
+        parts.append(
+            f"<div style='font-size:11px;color:#6b7280;margin-bottom:4px;'>"
+            f"{_escape(L['privilege'])}: {_escape(L['not_privileged'])}</div>"
+        )
+
+    # Unresolved flags
+    flags_raw = card.get("unresolved_flags")
+    flags: list[str] = []
+    if isinstance(flags_raw, list):
+        flags = [_escape(str(f)[:80]) for f in flags_raw if isinstance(f, str)]
+    elif isinstance(flags_raw, str):
+        try:
+            import json as _json_mod_local
+            parsed = _json_mod_local.loads(flags_raw)
+            if isinstance(parsed, list):
+                flags = [_escape(str(f)[:80]) for f in parsed if isinstance(f, str)]
+        except (ValueError, TypeError):
+            pass
+
+    if flags:
+        flag_badges = " ".join(
+            f"<span style='display:inline-block;padding:2px 8px;background:#fef3c7;"
+            f"border:1px solid #fde68a;border-radius:4px;font-size:11px;"
+            f"color:#92400e;margin:2px;'>{f}</span>"
+            for f in flags[:8]
+        )
+        parts.append(
+            f"<div style='margin-top:6px;'>"
+            f"<strong style='font-size:12px;'>{_escape(L['flags'])}:</strong> {flag_badges}</div>"
+        )
+
+    parts.append("</div>")
+    return "".join(parts)
+
+
 _DOC_TRIAGE_LABELS: dict[str, dict[str, str]] = {
     "legal": {
         "title": "Document Triage Queue",
@@ -13569,6 +13847,47 @@ class AppState:
             logger.warning("load_document_triage: %s", exc)
             return f"<div class='viz-empty'>Error loading document triage: {_escape(exc)}</div>"
 
+    def load_document_card(self, matter_id: str, document_ref: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        ref = (document_ref or "").strip()
+        if not ref:
+            return "<div class='viz-empty'>Select a document to view its card.</div>"
+        try:
+            domain = self._detect_domain(matter_id)
+            data = _run_async(
+                self.backend().get_document_card(matter_id, relative_path=ref)
+            )
+            if not isinstance(data, dict):
+                logger.warning("load_document_card: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_document_card(data, domain=domain)
+        except Exception as exc:
+            logger.warning("load_document_card failed: %s", exc)
+            return f"<div class='viz-empty'>Error loading document card: {_escape(str(exc))}</div>"
+
+    def get_document_card_choices(self, matter_id: str) -> list:
+        if not matter_id or matter_id == "—":
+            return []
+        try:
+            data = _run_async(self.backend().list_reviewable_documents(matter_id))
+            if not isinstance(data, list):
+                return []
+            choices = []
+            for doc in data:
+                if not isinstance(doc, dict):
+                    continue
+                path = doc.get("path", "")
+                if not path:
+                    continue
+                dtype = doc.get("doc_type", "")
+                label = f"{path} ({dtype})" if dtype else str(path)
+                choices.append((label, str(path)))
+            return choices
+        except Exception as exc:
+            logger.warning("get_document_card_choices: %s", exc)
+            return []
+
     def load_taint_summary(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -15469,6 +15788,29 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     delete_annotation_id = gr.Textbox(label="Annotation ID", placeholder="Copy from ID column above", scale=3)
                     delete_annotation_btn = gr.Button("Delete Note", variant="stop", size="sm", scale=1)
 
+            with gr.Accordion("Document Card Inspector — structured intelligence for a single source", open=False):
+                gr.Markdown(
+                    "Select a document to view its intelligence card: type classification, "
+                    "source side, authorship, operative status, privilege flags, rhetorical "
+                    "posture, reliability, and unresolved issues."
+                )
+                doc_card_selector = gr.Dropdown(
+                    label="Select document",
+                    choices=[],
+                    interactive=True,
+                    allow_custom_value=True,
+                )
+                with gr.Row():
+                    load_doc_card_btn = gr.Button(
+                        "Load Card", variant="primary", size="sm", scale=1,
+                    )
+                    refresh_doc_card_choices_btn = gr.Button(
+                        "Refresh document list", variant="secondary", size="sm", scale=1,
+                    )
+                document_card_html = gr.HTML(
+                    "<div class='viz-empty'>Select a document to view its card.</div>"
+                )
+
             with gr.Accordion("Document Review Console — deep-dive into a single source", open=False):
                 gr.Markdown(
                     "Select a document to see its full profile: type, privilege status, "
@@ -16458,6 +16800,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 inputs=[matter_id_box],
                 outputs=[taint_summary_html],
             ).then(
+                fn=lambda mid: gr.update(choices=state.get_document_card_choices(mid)),
+                inputs=[matter_id_box],
+                outputs=[doc_card_selector],
+            ).then(
                 fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[investigation_history_html],
@@ -16597,6 +16943,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[taint_summary_html],
+            ).then(
+                fn=lambda mid: gr.update(choices=state.get_document_card_choices(mid)),
+                inputs=[matter_id_box],
+                outputs=[doc_card_selector],
             ).then(
                 fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
@@ -16738,6 +17088,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[taint_summary_html],
+        ).then(
+            fn=lambda mid: gr.update(choices=state.get_document_card_choices(mid)),
+            inputs=[matter_id_box],
+            outputs=[doc_card_selector],
         ).then(
             fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -17085,6 +17439,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, doc: state.load_document_console(mid, doc),
             inputs=[matter_id_box, doc_console_selector],
             outputs=[doc_console_html],
+        )
+        load_doc_card_btn.click(
+            fn=lambda mid, doc: state.load_document_card(mid, doc),
+            inputs=[matter_id_box, doc_card_selector],
+            outputs=[document_card_html],
+        )
+        refresh_doc_card_choices_btn.click(
+            fn=lambda mid: gr.update(choices=state.get_document_card_choices(mid)),
+            inputs=[matter_id_box],
+            outputs=[doc_card_selector],
         )
         refresh_belief_btn.click(
             fn=lambda mid: state.load_belief_revisions(mid, domain=state._detect_domain(mid)),
@@ -17698,6 +18062,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[taint_summary_html],
+        ).then(
+            fn=lambda mid: gr.update(choices=state.get_document_card_choices(mid)),
+            inputs=[matter_id_box],
+            outputs=[doc_card_selector],
         ).then(
             fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],

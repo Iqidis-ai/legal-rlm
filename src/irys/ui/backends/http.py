@@ -666,6 +666,26 @@ class HttpBackend(UIBackend):
         _log.warning("list_documents_needing_profile: unexpected type %s", type(result).__name__)
         return []
 
+    async def get_document_card(
+        self,
+        matter_id: str,
+        *,
+        relative_path: str | None = None,
+        doc_id: str | None = None,
+    ) -> dict:
+        params: dict[str, str] = {}
+        if relative_path:
+            params["relative_path"] = relative_path
+        if doc_id:
+            params["doc_id"] = doc_id
+        result = await self._get(
+            f"/matter/{matter_id}/documents/card", params
+        )
+        if not isinstance(result, dict):
+            _log.warning("get_document_card: expected dict, got %s", type(result).__name__)
+            return {"error": f"unexpected response type: {type(result).__name__}"}
+        return result
+
     async def get_taint_summary(
         self, matter_id: str, limit: int = 50
     ) -> dict:
