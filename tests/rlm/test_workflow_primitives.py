@@ -11047,3 +11047,49 @@ def test_apply_domain_preset_rejects_oversized_file(tmp_path):
     mm._apply_domain_preset(tmp_path)
     facets = mm.memory_broker.get_object_domain_facets("workspace", mm.matter_id, status="active")
     assert len(facets) == 0
+
+
+# ── Taint default resolution tests ──────────────────────────────
+
+
+def test_resolve_taint_default_reads_from_preset(tmp_path):
+    """_resolve_taint_default returns taint_default from the domain preset."""
+    import json
+    from irys.matter.matter import MatterModel
+    from irys.rlm.engine import RLMEngine
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text(json.dumps({
+        "domain": "biomedical",
+        "version": 1,
+        "taint_default": "patient_deidentified",
+    }), encoding="utf-8")
+
+    mm = MatterModel.open(tmp_path)
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = mm
+    assert engine._resolve_taint_default() == "patient_deidentified"
+
+
+def test_resolve_taint_default_fallback_without_preset():
+    """_resolve_taint_default falls back to public_clean without a preset."""
+    from irys.rlm.engine import RLMEngine
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = None
+    assert engine._resolve_taint_default() == "public_clean"
+
+
+def test_resolve_taint_default_fallback_without_taint_field(tmp_path):
+    """_resolve_taint_default falls back when preset has no taint_default."""
+    import json
+    from irys.matter.matter import MatterModel
+    from irys.rlm.engine import RLMEngine
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text(json.dumps({"domain": "finance", "version": 1}), encoding="utf-8")
+
+    mm = MatterModel.open(tmp_path)
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = mm
+    assert engine._resolve_taint_default() == "public_clean"

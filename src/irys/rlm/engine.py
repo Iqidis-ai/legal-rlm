@@ -1893,6 +1893,18 @@ class RLMEngine:
                     pass
         return result
 
+    def _resolve_taint_default(self) -> str:
+        """Return the domain preset's taint_default, or 'public_clean'."""
+        if self._matter_model is None:
+            return "public_clean"
+        try:
+            preset = self._matter_model.get_domain_preset()
+            if preset and isinstance(preset.get("taint_default"), str):
+                return preset["taint_default"]
+        except Exception:
+            pass
+        return "public_clean"
+
     def _get_semaphore(self) -> asyncio.Semaphore:
         """Get or create the operation semaphore.
 
@@ -3041,7 +3053,9 @@ class RLMEngine:
         if self._matter_model is not None:
             try:
                 state.cache_manifest_hash = (
-                    self._matter_model.build_semantic_cache_manifest()
+                    self._matter_model.build_semantic_cache_manifest(
+                        taint_class=self._resolve_taint_default(),
+                    )
                 )
             except Exception as exc:
                 logger.warning("build_semantic_cache_manifest failed: %s", exc)
@@ -7568,6 +7582,7 @@ Return:
                 manifest_hash = self._matter_model.build_output_dependency_manifest(
                     purpose="synthesis",
                     policy_audience=policy_audience,
+                    taint_class=self._resolve_taint_default(),
                     object_refs=consumed_refs,
                     namespace_keys=ns_keys,
                 )
