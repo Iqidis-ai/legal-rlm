@@ -1864,10 +1864,13 @@ def _fmt_proof_state_panel(summary: dict, issues: list, domain: str = "legal") -
                 f"text-transform:uppercase;'>{_escape(labels['advocacy_badge'])}</span>"
             )
 
+        short_iid = _escape(str(issue_id)[:12])
         rows_html += (
             f"<tr>"
             f"<td style='max-width:220px;overflow:hidden;text-overflow:ellipsis;"
-            f"white-space:nowrap;' title='{_escape(issue_title)}'>{display_title}{adv_badge}</td>"
+            f"white-space:nowrap;' title='{_escape(issue_title)}'>{display_title}{adv_badge}"
+            f"<span style='font-size:9px;color:#9ca3af;font-family:monospace;margin-left:6px;'"
+            f" title='{_escape(str(issue_id))}'>{short_iid}</span></td>"
             f"<td><span style='display:inline-block;padding:1px 8px;border-radius:8px;"
             f"background:{status_color}22;color:{status_color};font-size:11px;"
             f"font-weight:600;'>{_escape(proof_status)}</span></td>"
@@ -7469,6 +7472,23 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error recomputing proof state: {_escape(exc)}</div>"
 
+    def recompute_issue_proof_state(self, matter_id: str, issue_id: str) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        iid = (issue_id or "").strip()
+        if not iid:
+            return "Enter an issue ID.", ""
+        try:
+            result = _run_async(self.backend().compute_issue_proof_state(matter_id, iid))
+            status = result.get("proof_status", "unknown") if isinstance(result, dict) else "done"
+            suf = result.get("sufficiency", "?") if isinstance(result, dict) else "?"
+            domain = self._detect_domain(matter_id)
+            html = self.load_proof_state(matter_id, domain)
+            return f"Recomputed issue {_escape(iid[:12])}: {_escape(status)} ({suf})", html
+        except Exception as exc:
+            logger.warning("recompute_issue_proof_state failed: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
+
     def load_authority_network(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -9006,6 +9026,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             with gr.Row():
                 refresh_proof_btn = gr.Button("Refresh Proof State", variant="secondary", size="sm")
                 recompute_proof_btn = gr.Button("Recompute Proof State", variant="primary", size="sm")
+            with gr.Accordion("Recompute single issue", open=False):
+                with gr.Row():
+                    proof_issue_id_input = gr.Textbox(label="Issue ID", placeholder="Paste issue ID from table above", scale=3)
+                    recompute_issue_proof_btn = gr.Button("Recompute Issue", variant="secondary", size="sm", scale=1)
+                recompute_issue_result = gr.Markdown("")
 
         with gr.Accordion("Authorities & References — cited sources of law, standards, and precedent", open=False):
             gr.Markdown(
@@ -9975,6 +10000,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_overview(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[overview_md],
+        )
+        recompute_issue_proof_btn.click(
+            fn=lambda mid, iid: state.recompute_issue_proof_state(mid, iid),
+            inputs=[matter_id_box, proof_issue_id_input],
+            outputs=[recompute_issue_result, proof_state_html],
         )
         refresh_authority_btn.click(
             fn=lambda mid: state.load_authority_network(mid, domain=state._detect_domain(mid)),

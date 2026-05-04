@@ -3243,3 +3243,35 @@ def test_fmt_domain_composition_panel_non_dict_guard():
     }
     result = _fmt_domain_composition_panel(data, domain="legal")
     assert "legal:1" in result
+
+
+def test_fmt_proof_state_panel_issue_id_display():
+    from irys.ui.app import _fmt_proof_state_panel
+    summary = {"total_issues_tracked": 1, "avg_sufficiency": 0.5, "by_status": {}, "gap_count": 0}
+    issues = [
+        {
+            "issue_id": "iss-abc123456789",
+            "issue_title": "Test Issue",
+            "sufficiency": 0.6,
+            "proof_status": "partial",
+            "supporting_count": 3,
+            "attacking_count": 1,
+            "total_predicate_count": 5,
+            "satisfied_predicate_count": 3,
+            "trust_weighted_support": 0.7,
+            "trust_weighted_attack": 0.2,
+        }
+    ]
+    result = _fmt_proof_state_panel(summary, issues, domain="legal")
+    assert "iss-abc12345" in result
+    assert "font-family:monospace" in result
+    assert "Test Issue" in result
+
+
+def test_fmt_proof_state_panel_issue_id_all_domains():
+    from irys.ui.app import _fmt_proof_state_panel
+    summary = {"total_issues_tracked": 1, "avg_sufficiency": 0.5, "by_status": {}, "gap_count": 0}
+    issues = [{"issue_id": "x", "sufficiency": 0.5, "proof_status": "partial"}]
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        result = _fmt_proof_state_panel(summary, issues, domain=domain)
+        assert "font-family:monospace" in result
