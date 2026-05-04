@@ -636,6 +636,13 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_answer_audits(
+        self, matter_id: str, manifest_hash: str | None = None,
+    ) -> dict:
+        """Answer audit workbench: freshness, sources, policy for recent answers (SO-1)."""
+        ...
+
+    @abstractmethod
     async def get_verification_events(
         self, matter_id: str, target_kind: Optional[str] = None,
         target_id: Optional[str] = None, limit: int = 50,

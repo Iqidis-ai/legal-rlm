@@ -3457,6 +3457,20 @@ async def approve_quant_metric(
 
 
 @app.get(
+    "/matter/{matter_id}/answer-audits",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_answer_audits(
+    matter_id: str,
+    manifest_hash: str = Query(default=None),
+):
+    """Answer audit workbench: freshness, sources, taint, and policy for recent answers."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_answer_audit_workbench(manifest_hash=manifest_hash)
+
+
+@app.get(
     "/matter/{matter_id}/system-health",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

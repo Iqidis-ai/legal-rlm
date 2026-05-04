@@ -615,6 +615,12 @@ class InProcessBackend(UIBackend):
             unit=unit,
         )
 
+    async def get_answer_audits(
+        self, matter_id: str, manifest_hash: str | None = None,
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_answer_audit_workbench(manifest_hash=manifest_hash)
+
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         """Document picker feed for the bulk-verify dropdown — every
         doc in the matter with pending/verified counts so reviewers

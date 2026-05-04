@@ -4859,3 +4859,123 @@ def test_fmt_quant_ontology_sample_facts_non_dict_guard():
     }
     html = _fmt_quant_ontology(data, domain="legal")
     assert "valid fact" in html
+
+
+# --- Answer Audit Workbench tests ---
+
+
+def test_fmt_answer_audit_empty_returns_placeholder():
+    from irys.ui.app import _fmt_answer_audit
+    html = _fmt_answer_audit({}, domain="legal")
+    assert "No answer audits" in html
+
+
+def test_fmt_answer_audit_renders_fresh_and_stale():
+    from irys.ui.app import _fmt_answer_audit
+    data = {
+        "audits": [
+            {
+                "manifest_hash": "abc123def456",
+                "purpose": "synthesis",
+                "created_at": "2026-05-04T10:00:00",
+                "domain_profile_id": "legal",
+                "policy_audience": "clean",
+                "taint_class": "public",
+                "status_badge": "fresh",
+                "valid": True,
+                "stale_reasons": [],
+                "object_dependency_count": 5,
+                "negative_dependency_count": 2,
+                "object_groups": {"assertions": [{"target_id": "a1"}]},
+                "negative_dependencies": [{"namespace": "gaps", "query_predicate": "none"}],
+            },
+            {
+                "manifest_hash": "xyz789",
+                "purpose": "orient",
+                "created_at": "2026-05-04T09:00:00",
+                "domain_profile_id": "finance",
+                "policy_audience": "internal",
+                "taint_class": "sensitive",
+                "status_badge": "stale",
+                "valid": False,
+                "stale_reasons": ["namespace claims:*: expected 3, current 5"],
+                "object_dependency_count": 10,
+                "negative_dependency_count": 0,
+                "object_groups": {},
+                "negative_dependencies": [],
+            },
+        ],
+        "total_manifests": 5,
+    }
+    html = _fmt_answer_audit(data, domain="legal")
+    assert "synthesis" in html
+    assert "Fresh" in html
+    assert "Stale" in html
+    assert "orient" in html
+    assert "expected 3" in html
+    assert "2 of 5" in html
+
+
+def test_fmt_answer_audit_xss_escapes():
+    from irys.ui.app import _fmt_answer_audit
+    data = {
+        "audits": [
+            {
+                "manifest_hash": "<script>alert(1)</script>",
+                "purpose": "<img onerror=evil>",
+                "created_at": "2026-05-04T10:00:00",
+                "domain_profile_id": "legal",
+                "policy_audience": "clean",
+                "taint_class": "public",
+                "status_badge": "fresh",
+                "valid": True,
+                "stale_reasons": ["<b>xss</b>"],
+                "object_dependency_count": 0,
+                "negative_dependency_count": 0,
+                "object_groups": {},
+                "negative_dependencies": [],
+            },
+        ],
+        "total_manifests": 1,
+    }
+    html = _fmt_answer_audit(data, domain="legal")
+    assert "<script>" not in html
+    assert "<img onerror" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_fmt_answer_audit_non_dict_guard():
+    from irys.ui.app import _fmt_answer_audit
+    data = {
+        "audits": [
+            "not_a_dict",
+            None,
+            {
+                "manifest_hash": "valid",
+                "purpose": "test",
+                "created_at": "2026-05-04",
+                "domain_profile_id": "legal",
+                "policy_audience": "clean",
+                "taint_class": "public",
+                "status_badge": "unknown",
+                "valid": False,
+                "stale_reasons": [],
+                "object_dependency_count": 0,
+                "negative_dependency_count": 0,
+                "object_groups": {},
+                "negative_dependencies": [],
+            },
+        ],
+        "total_manifests": 1,
+    }
+    html = _fmt_answer_audit(data, domain="legal")
+    assert "test" in html
+
+
+def test_answer_audit_labels_all_five_domains():
+    from irys.ui.app import _ANSWER_AUDIT_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        assert domain in _ANSWER_AUDIT_LABELS
+        labels = _ANSWER_AUDIT_LABELS[domain]
+        for key in ("title", "fresh", "stale", "empty", "evidence", "missingness"):
+            assert key in labels, f"Missing key {key} for {domain}"

@@ -6500,6 +6500,21 @@ class MemoryBrokerStore:
             current_revisions=current_revisions,
         )
 
+    def list_recent_manifests(self, limit: int = 50) -> list[dict]:
+        rows = self.db.execute(
+            """SELECT id, manifest_hash, broker_version, purpose,
+                      policy_audience, taint_class, domain_profile_id,
+                      domain_profile_version, profile_mapping_hash,
+                      object_dependency_count, negative_dependency_count,
+                      created_at
+               FROM dependency_manifest
+               WHERE matter_id=?
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (self.matter_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def _validate_object_dependency(self, obj_dep) -> list[str]:
         issues: list[str] = []
         kind = obj_dep.target_kind

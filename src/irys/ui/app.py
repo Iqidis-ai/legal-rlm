@@ -4858,6 +4858,169 @@ def _canonical_metric_choices(domain: str = "legal") -> list[str]:
     return _CANONICAL_METRICS.get(domain, _CANONICAL_METRICS["legal"])
 
 
+_ANSWER_AUDIT_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Answer Audit Trail",
+        "fresh": "Fresh",
+        "stale": "Stale",
+        "policy_limited": "Policy-limited",
+        "unknown": "Unknown",
+        "empty": "No answer audits available. Run an investigation to generate dependency manifests.",
+        "evidence": "Consumed evidence",
+        "changes": "Changes since answer",
+        "missingness": "Missingness dependencies",
+        "domain_policy": "Domain & policy",
+    },
+    "finance": {
+        "title": "Analysis Audit Trail",
+        "fresh": "Fresh",
+        "stale": "Stale",
+        "policy_limited": "Policy-limited",
+        "unknown": "Unknown",
+        "empty": "No analysis audits available.",
+        "evidence": "Consumed data",
+        "changes": "Changes since analysis",
+        "missingness": "Missingness dependencies",
+        "domain_policy": "Domain & policy",
+    },
+    "coding": {
+        "title": "Reasoning Audit Trail",
+        "fresh": "Fresh",
+        "stale": "Stale",
+        "policy_limited": "Policy-limited",
+        "unknown": "Unknown",
+        "empty": "No reasoning audits available.",
+        "evidence": "Consumed artifacts",
+        "changes": "Changes since analysis",
+        "missingness": "Missingness dependencies",
+        "domain_policy": "Domain & policy",
+    },
+    "academic_research": {
+        "title": "Research Audit Trail",
+        "fresh": "Fresh",
+        "stale": "Stale",
+        "policy_limited": "Policy-limited",
+        "unknown": "Unknown",
+        "empty": "No research audits available.",
+        "evidence": "Consumed sources",
+        "changes": "Changes since analysis",
+        "missingness": "Missingness dependencies",
+        "domain_policy": "Domain & policy",
+    },
+    "biomedical": {
+        "title": "Clinical Audit Trail",
+        "fresh": "Fresh",
+        "stale": "Stale",
+        "policy_limited": "Policy-limited",
+        "unknown": "Unknown",
+        "empty": "No clinical audits available.",
+        "evidence": "Consumed evidence",
+        "changes": "Changes since analysis",
+        "missingness": "Missingness dependencies",
+        "domain_policy": "Domain & policy",
+    },
+}
+
+
+def _fmt_answer_audit(data: dict, domain: str = "legal") -> str:
+    labels = _ANSWER_AUDIT_LABELS.get(domain, _ANSWER_AUDIT_LABELS["legal"])
+    audits = data.get("audits", []) if isinstance(data, dict) else []
+    if not audits:
+        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+
+    total = data.get("total_manifests", 0)
+    parts = [
+        f"<h3 style='margin:0 0 8px;'>{_escape(labels['title'])}</h3>",
+        f"<div style='color:#6b7280;margin-bottom:12px;'>"
+        f"{len(audits)} of {total} manifests shown</div>",
+    ]
+
+    badge_colors = {
+        "fresh": "#22c55e",
+        "stale": "#dc2626",
+        "policy_limited": "#f59e0b",
+        "unknown": "#6b7280",
+    }
+
+    for audit in audits:
+        if not isinstance(audit, dict):
+            continue
+
+        mh = _escape(str(audit.get("manifest_hash", ""))[:16])
+        purpose = _escape(str(audit.get("purpose", "")))
+        created = _escape(str(audit.get("created_at", ""))[:19])
+        badge = audit.get("status_badge", "unknown")
+        badge_label = _escape(labels.get(badge, badge))
+        badge_color = badge_colors.get(badge, "#6b7280")
+
+        profile = _escape(str(audit.get("domain_profile_id", "")))
+        audience = _escape(str(audit.get("policy_audience", "")))
+        taint = _escape(str(audit.get("taint_class", "")))
+        obj_count = audit.get("object_dependency_count", 0)
+        neg_count = audit.get("negative_dependency_count", 0)
+
+        parts.append(
+            f"<div style='border:1px solid #e5e7eb;border-radius:6px;padding:12px;margin-bottom:10px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+            f"<div><b>{purpose}</b> <span style='color:#9ca3af;font-size:0.8em;'>{mh}…</span></div>"
+            f"<span style='background:{badge_color};color:white;padding:2px 10px;border-radius:10px;"
+            f"font-size:0.8em;'>{badge_label}</span>"
+            f"</div>"
+            f"<div style='color:#6b7280;font-size:0.85em;margin-top:4px;'>"
+            f"{created} · {obj_count} evidence deps · {neg_count} missingness deps"
+            f"</div>"
+        )
+
+        parts.append(
+            f"<div style='margin-top:6px;font-size:0.85em;'>"
+            f"<b>{_escape(labels['domain_policy'])}:</b> "
+            f"Profile: {profile} · Audience: {audience} · Taint: {taint}"
+            f"</div>"
+        )
+
+        stale_reasons = audit.get("stale_reasons", [])
+        if stale_reasons:
+            parts.append(
+                f"<div style='margin-top:6px;font-size:0.82em;color:#dc2626;'>"
+                f"<b>{_escape(labels['changes'])}:</b>"
+            )
+            for reason in stale_reasons[:5]:
+                if not isinstance(reason, str):
+                    continue
+                parts.append(f"<div>· {_escape(reason[:120])}</div>")
+            parts.append("</div>")
+
+        obj_groups = audit.get("object_groups", {})
+        if isinstance(obj_groups, dict) and obj_groups:
+            parts.append(
+                f"<div style='margin-top:6px;font-size:0.82em;color:#4b5563;'>"
+                f"<b>{_escape(labels['evidence'])}:</b>"
+            )
+            for kind, items in obj_groups.items():
+                if not isinstance(items, list):
+                    continue
+                parts.append(f"<div>{_escape(str(kind))}: {len(items)} dep(s)</div>")
+            parts.append("</div>")
+
+        neg_deps = audit.get("negative_dependencies", [])
+        if neg_deps:
+            parts.append(
+                f"<div style='margin-top:6px;font-size:0.82em;color:#7c3aed;'>"
+                f"<b>{_escape(labels['missingness'])}:</b>"
+            )
+            for nd in neg_deps[:5]:
+                if not isinstance(nd, dict):
+                    continue
+                ns = _escape(str(nd.get("namespace", "")))
+                pred = _escape(str(nd.get("query_predicate", ""))[:60])
+                parts.append(f"<div>· {ns}: {pred}</div>")
+            parts.append("</div>")
+
+        parts.append("</div>")
+
+    return "\n".join(parts)
+
+
 def _fmt_quant_panel(
     payment_recon: dict,
     invoice_chain: list,
@@ -9408,6 +9571,16 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading timeline: {_escape(exc)}</div>"
 
+    def load_answer_audits(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_answer_audits(matter_id))
+            return _fmt_answer_audit(data if isinstance(data, dict) else {}, domain=domain)
+        except Exception as exc:
+            logger.warning("load_answer_audits failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def load_evidence_matrix(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -11567,6 +11740,15 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             so_scorecard_html = gr.HTML("<div class='viz-empty'>SO scorecard will appear here after an investigation.</div>")
             refresh_so_scorecard_btn = gr.Button("Refresh SO Scorecard", variant="secondary", size="sm")
 
+        with gr.Accordion("Answer Audit — freshness, sources, and policy for every answer", open=False):
+            gr.Markdown(
+                "Every answer Irys produces is backed by a dependency manifest that tracks "
+                "exactly which evidence was consumed, under which domain profile, and whether "
+                "anything has changed since the answer was generated. Stale answers are flagged."
+            )
+            answer_audit_html = gr.HTML("<div class='viz-empty'>Answer audit trail will appear here after an investigation.</div>")
+            refresh_answer_audit_btn = gr.Button("Refresh Answer Audit", variant="secondary", size="sm")
+
         with gr.Accordion("Domain Profile — how Irys interprets this subject area", open=False):
             gr.Markdown(
                 "Shows the active domain profile: which vocabulary maps concepts to domain terms, "
@@ -12314,6 +12496,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_quant_ontology(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[quant_ontology_html, quant_alias_raw_dropdown],
+        ).then(
+            fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[answer_audit_html],
         )
 
         export_report_btn.click(
@@ -12572,6 +12758,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_so_scorecard(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[so_scorecard_html],
+        )
+        refresh_answer_audit_btn.click(
+            fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[answer_audit_html],
         )
         refresh_domain_profile_btn.click(
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),

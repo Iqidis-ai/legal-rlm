@@ -3361,6 +3361,108 @@ class MatterModel:
         return True
 
     # ------------------------------------------------------------------
+    # Answer audit workbench (SO-1, SO-2, SO-3, SO-5, SO-7)
+    # ------------------------------------------------------------------
+
+    def get_answer_audit_workbench(self, manifest_hash: str | None = None) -> dict:
+        _, _, primary_profile = self._read_matter_domain_composition()
+        domain = primary_profile or "legal"
+
+        manifests = self.broker.list_recent_manifests(limit=50)
+        if not manifests:
+            return {
+                "matter_id": self.matter_id,
+                "domain": domain,
+                "audits": [],
+                "total_manifests": 0,
+            }
+
+        if manifest_hash:
+            targets = [m for m in manifests if m.get("manifest_hash") == manifest_hash]
+            if not targets:
+                return {
+                    "matter_id": self.matter_id,
+                    "domain": domain,
+                    "audits": [],
+                    "total_manifests": len(manifests),
+                    "error": "Manifest not found",
+                }
+        else:
+            targets = manifests[:10]
+
+        audits: list[dict] = []
+        for m in targets:
+            if not isinstance(m, dict):
+                continue
+            mh = m.get("manifest_hash", "")
+            try:
+                validation = self.broker.validate_dependency_manifest(mh)
+                validation_dict = validation.to_canonical_dict() if validation else {}
+            except Exception as exc:
+                _log.warning("validate_dependency_manifest failed for %s: %s", mh, exc)
+                validation_dict = {"valid": False, "status": "error", "stale_reasons": [str(exc)]}
+
+            full_manifest = None
+            obj_groups: dict[str, list[dict]] = {}
+            neg_deps: list[dict] = []
+            try:
+                full_manifest = self.broker.get_dependency_manifest(mh)
+                if full_manifest:
+                    for od in full_manifest.object_dependencies:
+                        kind = od.target_kind or "unknown"
+                        obj_groups.setdefault(kind, []).append({
+                            "target_id": od.target_id,
+                            "target_kind": od.target_kind,
+                            "digest": getattr(od, "digest", ""),
+                        })
+                    for nd in full_manifest.negative_dependencies:
+                        neg_deps.append({
+                            "namespace": nd.namespace,
+                            "query_predicate": nd.query_predicate,
+                            "revision": nd.revision,
+                        })
+            except Exception as exc:
+                _log.warning("get_dependency_manifest failed for %s: %s", mh, exc)
+
+            valid = validation_dict.get("valid", False)
+            stale_reasons = validation_dict.get("stale_reasons", [])
+
+            if valid:
+                status_badge = "fresh"
+            elif "not_found" in validation_dict.get("status", ""):
+                status_badge = "unknown"
+            elif any("policy" in r for r in stale_reasons):
+                status_badge = "policy_limited"
+            else:
+                status_badge = "stale"
+
+            audits.append({
+                "manifest_hash": mh,
+                "purpose": m.get("purpose", ""),
+                "created_at": m.get("created_at", ""),
+                "domain_profile_id": m.get("domain_profile_id", ""),
+                "domain_profile_version": m.get("domain_profile_version", 0),
+                "policy_audience": m.get("policy_audience", ""),
+                "taint_class": m.get("taint_class", ""),
+                "broker_version": m.get("broker_version", ""),
+                "profile_mapping_hash": m.get("profile_mapping_hash", ""),
+                "object_dependency_count": m.get("object_dependency_count", 0),
+                "negative_dependency_count": m.get("negative_dependency_count", 0),
+                "status_badge": status_badge,
+                "valid": valid,
+                "stale_reasons": stale_reasons,
+                "object_groups": {k: v[:5] for k, v in obj_groups.items()},
+                "negative_dependencies": neg_deps[:10],
+            })
+
+        return {
+            "matter_id": self.matter_id,
+            "domain": domain,
+            "audits": audits,
+            "total_manifests": len(manifests),
+        }
+
+    # ------------------------------------------------------------------
     # Assertion trace with impact (SO-2, SO-3, SO-5)
     # ------------------------------------------------------------------
 

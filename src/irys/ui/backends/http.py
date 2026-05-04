@@ -862,6 +862,15 @@ class HttpBackend(UIBackend):
         result = await self._post(f"/matter/{matter_id}/quant-ontology/approve", params=params)
         return isinstance(result, dict) and result.get("success", False)
 
+    async def get_answer_audits(
+        self, matter_id: str, manifest_hash: str | None = None,
+    ) -> dict:
+        params = {}
+        if manifest_hash:
+            params["manifest_hash"] = manifest_hash
+        result = await self._get(f"/matter/{matter_id}/answer-audits", params or None)
+        return result if isinstance(result, dict) else {}
+
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         result = await self._get(
             f"/matter/{matter_id}/review-queue/documents",
