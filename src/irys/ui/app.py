@@ -5085,7 +5085,8 @@ def _fmt_knowledge_seeds(data: dict, domain: str = "legal") -> str:
     if not isinstance(data, dict):
         return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
 
-    total = int(data.get("total", 0))
+    _raw_total = data.get("total", 0)
+    total = int(_raw_total) if isinstance(_raw_total, (int, float)) else 0
     counts = data.get("counts", {})
     if not isinstance(counts, dict):
         counts = {}
@@ -5096,9 +5097,12 @@ def _fmt_knowledge_seeds(data: dict, domain: str = "legal") -> str:
     if total == 0:
         return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
 
-    p_count = int(counts.get("promotable", 0))
-    a_count = int(counts.get("matter_local", 0))
-    r_count = int(counts.get("rejected", 0))
+    _raw_p = counts.get("promotable", 0)
+    p_count = int(_raw_p) if isinstance(_raw_p, (int, float)) else 0
+    _raw_a = counts.get("matter_local", 0)
+    a_count = int(_raw_a) if isinstance(_raw_a, (int, float)) else 0
+    _raw_r = counts.get("rejected", 0)
+    r_count = int(_raw_r) if isinstance(_raw_r, (int, float)) else 0
 
     parts = [
         f"<h3 style='margin:0 0 8px;'>{_escape(labels['title'])}</h3>",

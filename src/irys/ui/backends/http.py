@@ -886,7 +886,10 @@ class HttpBackend(UIBackend):
 
     async def get_knowledge_seeds(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/knowledge-seeds")
-        return result if isinstance(result, dict) else {}
+        if not isinstance(result, dict):
+            _log.warning("get_knowledge_seeds: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
 
     async def review_knowledge_seed(
         self, matter_id: str, seed_id: str, decision: str,
@@ -894,7 +897,10 @@ class HttpBackend(UIBackend):
     ) -> dict:
         params = {"seed_id": seed_id, "decision": decision, "review_note": review_note}
         result = await self._post(f"/matter/{matter_id}/knowledge-seeds/review", params=params)
-        return result if isinstance(result, dict) else {}
+        if not isinstance(result, dict):
+            _log.warning("review_knowledge_seed: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
 
     async def promote_knowledge_seed(
         self, matter_id: str, seed_kind: str, domain_profile_id: str,
@@ -908,7 +914,10 @@ class HttpBackend(UIBackend):
         if source_matter_id:
             params["source_matter_id"] = source_matter_id
         result = await self._post(f"/matter/{matter_id}/knowledge-seeds/promote", params=params)
-        return result if isinstance(result, dict) else {}
+        if not isinstance(result, dict):
+            _log.warning("promote_knowledge_seed: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
 
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         result = await self._get(
