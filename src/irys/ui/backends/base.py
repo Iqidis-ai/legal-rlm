@@ -296,7 +296,10 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
-    async def get_quant_thresholds(self, matter_id: str, currency: str = "USD") -> list[dict]:
+    async def get_quant_thresholds(
+        self, matter_id: str, currency: str = "USD",
+        *, exposure_high: float = 10_000.0, disputed_fraction_min: float = 0.10,
+    ) -> list[dict]:
         """Return quantitative threshold violations."""
         ...
 

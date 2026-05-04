@@ -3553,13 +3553,20 @@ class QuantStore:
         result.sort(key=lambda x: x["invoiced"], reverse=True)
         return result
 
-    def compute_thresholds(self, gap_store: "GapStore", currency: str = "USD") -> list[dict]:
+    def compute_thresholds(
+        self,
+        gap_store: "GapStore",
+        currency: str = "USD",
+        *,
+        exposure_high: float = 10_000.0,
+        disputed_fraction_min: float = 0.10,
+    ) -> list[dict]:
         """Detect quantitative threshold violations and record them as gaps (SO-6).
 
         Thresholds checked:
         1. Positive exposure (invoiced > paid) → MISSING_DOCUMENT gap so synthesis
            must address the outstanding balance with hard specificity.
-        2. High disputed fraction (>10% of invoiced) → UNRESOLVED_CONTRADICTION gap.
+        2. High disputed fraction (>disputed_fraction_min of invoiced) → UNRESOLVED_CONTRADICTION gap.
         3. Numeric conflicts → UNRESOLVED_CONTRADICTION gap per conflict group.
 
         Returns list of violation dicts:
@@ -3579,7 +3586,7 @@ class QuantStore:
 
         # Threshold 1: positive financial exposure
         if exposure > 0:
-            level = "HIGH" if exposure >= 10_000 else "MED"
+            level = "HIGH" if exposure >= exposure_high else "MED"
             desc = (
                 f"Claimed financial exposure: {currency} {exposure:,.2f} "
                 f"(invoiced {currency} {invoiced:,.2f} − paid {currency} {chain.get('paid', 0):,.2f})"
@@ -3588,7 +3595,7 @@ class QuantStore:
                 gap_store.record(
                     gap_type=GapType.MISSING_DOCUMENT,
                     description=desc,
-                    materiality=0.9 if exposure >= 10_000 else 0.6,
+                    materiality=0.9 if exposure >= exposure_high else 0.6,
                     affected_type="quant",
                     affected_id="exposure",
                 )
@@ -3600,8 +3607,9 @@ class QuantStore:
         # Threshold 2: high disputed fraction
         if invoiced > 0 and disputed > 0:
             frac = disputed / invoiced
-            if frac >= 0.10:
-                level = "HIGH" if frac >= 0.30 else "MED"
+            if frac >= disputed_fraction_min:
+                disputed_high = disputed_fraction_min * 3
+                level = "HIGH" if frac >= disputed_high else "MED"
                 desc = (
                     f"Disputed amounts ({currency} {disputed:,.2f}) represent "
                     f"{frac:.0%} of total invoiced — significant contested balance"
@@ -3610,7 +3618,7 @@ class QuantStore:
                     gap_store.record(
                         gap_type=GapType.UNRESOLVED_CONTRADICTION,
                         description=desc,
-                        materiality=0.8 if frac >= 0.30 else 0.5,
+                        materiality=0.8 if frac >= disputed_high else 0.5,
                         affected_type="quant",
                         affected_id="disputed_fraction",
                     )

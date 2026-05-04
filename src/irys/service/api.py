@@ -3285,6 +3285,8 @@ async def get_content_policy_audit(
 async def get_quant_thresholds(
     matter_id: str,
     currency: str = Query(default="USD", pattern=r"^[A-Z]{3}$"),
+    exposure_high: float = Query(default=10_000.0, ge=0),
+    disputed_fraction_min: float = Query(default=0.10, ge=0, le=1.0),
 ):
     """Return quantitative threshold violations: exposure, dispute rate, numeric conflicts.
 
@@ -3292,7 +3294,10 @@ async def get_quant_thresholds(
     Used to surface financial health issues in the dashboard.
     """
     model = await _get_matter_model_or_404(matter_id)
-    return model.compute_quant_thresholds(currency=currency)
+    return model.compute_quant_thresholds(
+        currency=currency, exposure_high=exposure_high,
+        disputed_fraction_min=disputed_fraction_min,
+    )
 
 
 @app.get(

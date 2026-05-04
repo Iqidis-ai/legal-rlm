@@ -696,9 +696,15 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.list_content_policy_decisions(limit=limit)
 
-    async def get_quant_thresholds(self, matter_id: str, currency: str = "USD") -> list[dict]:
+    async def get_quant_thresholds(
+        self, matter_id: str, currency: str = "USD",
+        *, exposure_high: float = 10_000.0, disputed_fraction_min: float = 0.10,
+    ) -> list[dict]:
         model = self._get_matter_model(matter_id)
-        return model.compute_quant_thresholds(currency=currency)
+        return model.compute_quant_thresholds(
+            currency=currency, exposure_high=exposure_high,
+            disputed_fraction_min=disputed_fraction_min,
+        )
 
     async def get_amount_conflicts(self, matter_id: str) -> list[dict]:
         model = self._get_matter_model(matter_id)

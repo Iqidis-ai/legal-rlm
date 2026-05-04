@@ -8195,11 +8195,17 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error detecting version chains: {_escape(exc)}</div>"
 
-    def load_quant_thresholds(self, matter_id: str, domain: str = "legal") -> str:
+    def load_quant_thresholds(
+        self, matter_id: str, domain: str = "legal",
+        exposure_high: float = 10_000.0, disputed_fraction_min: float = 0.10,
+    ) -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
-            data = _run_async(self.backend().get_quant_thresholds(matter_id))
+            data = _run_async(self.backend().get_quant_thresholds(
+                matter_id, exposure_high=exposure_high,
+                disputed_fraction_min=disputed_fraction_min,
+            ))
             return _fmt_quant_thresholds_panel(data, domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading quant thresholds: {_escape(exc)}</div>"
@@ -9954,6 +9960,20 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "Detects financial exposure, disputed amount fractions, and numeric conflicts. "
                 "Each alert indicates a threshold breach that requires attention in the analysis."
             )
+            with gr.Accordion("Configure thresholds", open=False):
+                with gr.Row():
+                    exposure_high_input = gr.Number(
+                        label="Exposure HIGH threshold",
+                        value=10000.0, minimum=0, step=1000,
+                        info="Amounts above this are flagged HIGH severity",
+                        scale=1,
+                    )
+                    disputed_fraction_input = gr.Number(
+                        label="Disputed fraction threshold",
+                        value=0.10, minimum=0, maximum=1.0, step=0.01,
+                        info="Fraction of invoiced amount that triggers an alert",
+                        scale=1,
+                    )
             quant_thresholds_html = gr.HTML("<div class='viz-empty'>Financial health alerts will appear here after an investigation.</div>")
             refresh_quant_thresholds_btn = gr.Button("Refresh Financial Health", variant="secondary", size="sm")
 
@@ -10882,8 +10902,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[doc_versions_html],
         )
         refresh_quant_thresholds_btn.click(
-            fn=lambda mid: state.load_quant_thresholds(mid, domain=state._detect_domain(mid)),
-            inputs=[matter_id_box],
+            fn=lambda mid, eh, df: state.load_quant_thresholds(
+                mid, domain=state._detect_domain(mid),
+                exposure_high=float(eh) if eh else 10_000.0,
+                disputed_fraction_min=float(df) if df else 0.10,
+            ),
+            inputs=[matter_id_box, exposure_high_input, disputed_fraction_input],
             outputs=[quant_thresholds_html],
         )
         refresh_system_health_btn.click(

@@ -3847,3 +3847,22 @@ def test_fmt_source_agreement_domain_labels():
     ]:
         result = _fmt_source_agreement(sources, domain=domain)
         assert expected_col in result
+
+
+def test_quant_threshold_config_parameters():
+    from irys.ui.app import _fmt_quant_thresholds_panel
+
+    violations_default = [
+        {"threshold": "positive_exposure", "level": "HIGH", "description": "Exposure: USD 15,000.00", "amount": 15000.0},
+        {"threshold": "disputed_fraction", "level": "MED", "description": "Disputed 12% of invoiced", "amount": 1200.0},
+    ]
+    result = _fmt_quant_thresholds_panel(violations_default, domain="legal")
+    assert "Financial Health Alerts" in result
+    assert "HIGH" in result
+    assert "MED" in result
+
+    result_empty = _fmt_quant_thresholds_panel([], domain="legal")
+    assert "viz-empty" in result_empty
+
+    result_finance = _fmt_quant_thresholds_panel(violations_default, domain="finance")
+    assert "Financial Risk Alerts" in result_finance

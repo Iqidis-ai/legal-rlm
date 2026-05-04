@@ -341,8 +341,15 @@ class HttpBackend(UIBackend):
             return []
         return result
 
-    async def get_quant_thresholds(self, matter_id: str, currency: str = "USD") -> list[dict]:
-        result = await self._get(f"/matter/{matter_id}/quant-thresholds", {"currency": currency})
+    async def get_quant_thresholds(
+        self, matter_id: str, currency: str = "USD",
+        *, exposure_high: float = 10_000.0, disputed_fraction_min: float = 0.10,
+    ) -> list[dict]:
+        result = await self._get(f"/matter/{matter_id}/quant-thresholds", {
+            "currency": currency,
+            "exposure_high": exposure_high,
+            "disputed_fraction_min": disputed_fraction_min,
+        })
         return result if isinstance(result, list) else []
 
     async def get_amount_conflicts(self, matter_id: str) -> list[dict]:

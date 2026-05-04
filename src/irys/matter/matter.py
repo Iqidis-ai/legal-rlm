@@ -3271,14 +3271,23 @@ class MatterModel:
             ) else "attention_needed",
         }
 
-    def compute_quant_thresholds(self, currency: str = "USD") -> list[dict]:
+    def compute_quant_thresholds(
+        self,
+        currency: str = "USD",
+        *,
+        exposure_high: float = 10_000.0,
+        disputed_fraction_min: float = 0.10,
+    ) -> list[dict]:
         """Detect quantitative threshold violations and record them as gaps (SO-6).
 
         Checks positive exposure, high disputed fraction, and numeric conflicts.
         Records violations as gaps in the gap store for downstream synthesis.
         Returns list of violation dicts with threshold, level, description, amount.
         """
-        return self.quant.compute_thresholds(self.gaps, currency=currency)
+        return self.quant.compute_thresholds(
+            self.gaps, currency=currency,
+            exposure_high=exposure_high, disputed_fraction_min=disputed_fraction_min,
+        )
 
     # ------------------------------------------------------------------
     # Gap management
