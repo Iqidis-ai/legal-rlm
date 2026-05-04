@@ -7162,6 +7162,204 @@ _LINKED_ISSUES_LABELS: dict[str, dict[str, str]] = {
 }
 
 
+_ASSERTION_TRACE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Assertion Impact Trace",
+        "sources": "Source Documents",
+        "issues": "Affected Issues",
+        "dependents": "Dependent Assertions",
+        "revisions": "Belief Revision History",
+        "verification": "Verification Status",
+    },
+    "finance": {
+        "title": "Data Point Impact Trace",
+        "sources": "Source Documents",
+        "issues": "Affected Positions",
+        "dependents": "Dependent Data Points",
+        "revisions": "Revision History",
+        "verification": "Verification Status",
+    },
+    "coding": {
+        "title": "Finding Impact Trace",
+        "sources": "Source Artifacts",
+        "issues": "Affected Requirements",
+        "dependents": "Dependent Findings",
+        "revisions": "Revision History",
+        "verification": "Verification Status",
+    },
+    "academic_research": {
+        "title": "Claim Impact Trace",
+        "sources": "Source Citations",
+        "issues": "Affected Claims",
+        "dependents": "Dependent Claims",
+        "revisions": "Revision History",
+        "verification": "Verification Status",
+    },
+    "biomedical": {
+        "title": "Finding Impact Trace",
+        "sources": "Source Records",
+        "issues": "Affected Findings",
+        "dependents": "Dependent Findings",
+        "revisions": "Revision History",
+        "verification": "Verification Status",
+    },
+}
+
+
+def _fmt_assertion_trace(data: dict, domain: str = "legal") -> str:
+    if not data or not isinstance(data, dict):
+        return "<div class='viz-empty'>No trace data available.</div>"
+    if data.get("error"):
+        return f"<div class='viz-empty'>{_escape(str(data['error']))}</div>"
+
+    L = _ASSERTION_TRACE_LABELS.get(domain, _ASSERTION_TRACE_LABELS["legal"])
+    prop = _escape(str(data.get("proposition_text", "")))
+    bs = _escape(str(data.get("belief_state", "")))
+    conf = _safe_float(data.get("confidence", 0))
+    speech = _escape(str(data.get("speech_act", "")))
+    impact = data.get("impact_summary", {})
+    if not isinstance(impact, dict):
+        impact = {}
+
+    bs_colors = {
+        "operative": "#059669", "admitted": "#059669", "resolved": "#059669",
+        "alleged": "#f59e0b", "argued": "#f59e0b", "inferred": "#f59e0b",
+        "disputed": "#dc2626", "withdrawn": "#9ca3af", "superseded": "#9ca3af",
+    }
+    bs_color = bs_colors.get(bs.lower(), "#6b7280")
+
+    parts = [
+        f"<div style='margin-bottom:16px;'>",
+        f"<h3 style='margin:0 0 8px;'>{_escape(L['title'])}</h3>",
+        f"<div style='padding:12px;background:#f9fafb;border-radius:8px;margin-bottom:12px;"
+        f"border-left:4px solid {bs_color};'>"
+        f"<div style='font-size:14px;color:#1f2937;line-height:1.5;margin-bottom:6px;'>{prop}</div>"
+        f"<div style='display:flex;gap:12px;font-size:12px;color:#6b7280;'>"
+        f"<span>Belief: <strong style='color:{bs_color};'>{bs}</strong></span>"
+        f"<span>Confidence: <strong>{conf:.2f}</strong></span>"
+        f"<span>Speech act: <strong>{speech}</strong></span>"
+        f"</div></div>",
+    ]
+
+    # Impact summary metrics
+    parts.append(
+        f"<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;'>"
+    )
+    for label, val in [
+        (L["sources"], str(impact.get("source_doc_count", 0))),
+        (L["issues"], str(impact.get("issues_affected", 0))),
+        (L["dependents"], str(impact.get("dependents_count", 0))),
+        (L["revisions"], str(impact.get("revision_count", 0))),
+    ]:
+        parts.append(
+            f"<div style='text-align:center;padding:8px;background:#f9fafb;border-radius:8px;'>"
+            f"<div style='font-size:20px;font-weight:700;color:#1f2937;'>{_escape(val)}</div>"
+            f"<div style='font-size:11px;color:#6b7280;'>{_escape(label)}</div></div>"
+        )
+    parts.append("</div>")
+
+    # Source documents
+    sources = data.get("source_documents", [])
+    if sources:
+        parts.append(
+            f"<div style='margin-bottom:12px;'>"
+            f"<div style='font-size:13px;font-weight:700;margin-bottom:6px;'>"
+            f"{_escape(L['sources'])} ({len(sources)})</div>"
+        )
+        for s in sources[:8]:
+            if not isinstance(s, dict):
+                continue
+            doc = _escape(str(s.get("document_label", "—")))
+            sec = _escape(str(s.get("section_label", "") or ""))
+            parts.append(
+                f"<div style='padding:4px 8px;font-size:12px;border-bottom:1px solid #f3f4f6;'>"
+                f"&#128196; {doc}"
+                + (f" <span style='color:#6b7280;'>({sec})</span>" if sec else "")
+                + "</div>"
+            )
+        parts.append("</div>")
+
+    # Affected issues
+    issues = data.get("affected_issues", [])
+    if issues:
+        parts.append(
+            f"<div style='margin-bottom:12px;'>"
+            f"<div style='font-size:13px;font-weight:700;margin-bottom:6px;'>"
+            f"{_escape(L['issues'])} ({len(issues)})</div>"
+            f"<div style='display:flex;flex-wrap:wrap;gap:6px;'>"
+        )
+        for iss in issues[:8]:
+            if not isinstance(iss, dict):
+                continue
+            title = _escape(str(iss.get("title", ""))[:40])
+            mat = float(iss.get("materiality", 0))
+            mat_color = "#dc2626" if mat >= 0.7 else "#f59e0b" if mat >= 0.4 else "#6b7280"
+            parts.append(
+                f"<span style='display:inline-block;padding:3px 10px;border-radius:10px;"
+                f"background:#f3f4f6;font-size:12px;border-left:3px solid {mat_color};'>"
+                f"{title}</span>"
+            )
+        parts.append("</div></div>")
+
+    # Dependent assertions
+    deps = data.get("dependent_assertions", [])
+    if deps:
+        parts.append(
+            f"<div style='margin-bottom:12px;'>"
+            f"<div style='font-size:13px;font-weight:700;margin-bottom:6px;'>"
+            f"{_escape(L['dependents'])} ({len(deps)})</div>"
+        )
+        for d in deps[:5]:
+            if not isinstance(d, dict):
+                continue
+            dprop = _escape(str(d.get("proposition_text", ""))[:60])
+            dbs = _escape(str(d.get("belief_state", "")))
+            dbs_color = bs_colors.get(dbs.lower(), "#6b7280")
+            parts.append(
+                f"<div style='padding:4px 8px;font-size:12px;border-bottom:1px solid #f3f4f6;'>"
+                f"{dprop} <span style='color:{dbs_color};font-weight:600;'>({dbs})</span></div>"
+            )
+        parts.append("</div>")
+
+    # Revision history
+    revisions = data.get("revision_history", [])
+    if revisions:
+        parts.append(
+            f"<div style='margin-bottom:12px;'>"
+            f"<div style='font-size:13px;font-weight:700;margin-bottom:6px;'>"
+            f"{_escape(L['revisions'])}</div>"
+        )
+        for r in revisions[:5]:
+            if not isinstance(r, dict):
+                continue
+            old = _escape(str(r.get("old_state", "")))
+            new = _escape(str(r.get("new_state", "")))
+            cause = _escape(str(r.get("cause", "")))
+            parts.append(
+                f"<div style='padding:4px 8px;font-size:12px;border-bottom:1px solid #f3f4f6;'>"
+                f"<strong>{old}</strong> → <strong>{new}</strong>"
+                f" <span style='color:#6b7280;'>({cause})</span></div>"
+            )
+        parts.append("</div>")
+
+    # Verification status
+    ver = data.get("verification", {})
+    if isinstance(ver, dict) and ver:
+        vstatus = _escape(str(ver.get("status", "candidate")))
+        vcolor = "#059669" if vstatus == "verified" else "#dc2626" if vstatus == "rejected" else "#f59e0b"
+        parts.append(
+            f"<div style='margin-bottom:8px;'>"
+            f"<div style='font-size:13px;font-weight:700;margin-bottom:4px;'>"
+            f"{_escape(L['verification'])}</div>"
+            f"<span style='display:inline-block;padding:3px 12px;border-radius:10px;"
+            f"background:{vcolor};color:white;font-size:12px;font-weight:600;'>"
+            f"{vstatus}</span></div>"
+        )
+
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def _fmt_assertion_inspector(health: dict, history: list | None = None, domain: str = "legal") -> str:
     if health.get("error"):
         return f"<div class='viz-empty'>Assertion not found.</div>"
@@ -8185,6 +8383,20 @@ class AppState:
             return _fmt_assertion_inspector(health, history=history, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error inspecting assertion: {_escape(str(exc))}</div>"
+
+    def load_assertion_trace(self, matter_id: str, assertion_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        aid = (assertion_id or "").strip()
+        if not aid:
+            return "<div class='viz-empty'>Enter an assertion ID to trace.</div>"
+        try:
+            domain = self._detect_domain(matter_id)
+            data = _run_async(self.backend().get_assertion_trace(matter_id, aid))
+            return _fmt_assertion_trace(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Assertion trace failed: %s", exc)
+            return f"<div class='viz-empty'>Error tracing assertion: {_escape(str(exc))}</div>"
 
     def load_issue_assertions(self, matter_id: str, issue_id: str) -> str:
         if not matter_id or matter_id == "—":
@@ -10640,6 +10852,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inspector_html = gr.HTML(
                 "<div class='viz-empty'>Enter an assertion ID to see its provenance and evidence summary.</div>"
             )
+            trace_btn = gr.Button("Show Impact Trace", variant="secondary", size="sm")
+            trace_html = gr.HTML(
+                "<div class='viz-empty'>Click <em>Show Impact Trace</em> to see "
+                "source documents, affected issues, dependent facts, and revision history.</div>"
+            )
 
         # ==================================================================
         # ISSUE EVIDENCE DRILL-DOWN — see assertions linked to a specific issue
@@ -12258,6 +12475,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, aid: state.inspect_assertion(mid, aid),
             inputs=[matter_id_box, inspector_assertion_id],
             outputs=[inspector_html],
+        )
+        trace_btn.click(
+            fn=lambda mid, aid: state.load_assertion_trace(mid, aid),
+            inputs=[matter_id_box, inspector_assertion_id],
+            outputs=[trace_html],
         )
         inspector_assertion_id.submit(
             fn=lambda mid, aid: state.inspect_assertion(mid, aid),

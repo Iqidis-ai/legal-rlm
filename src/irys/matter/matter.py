@@ -3293,6 +3293,119 @@ class MatterModel:
         )
 
     # ------------------------------------------------------------------
+    # Assertion trace with impact (SO-2, SO-3, SO-5)
+    # ------------------------------------------------------------------
+
+    def get_assertion_trace(self, assertion_id: str) -> dict:
+        """Full impact trace for a single assertion: source documents,
+        affected issues, dependent assertions, verification status,
+        and belief revision history."""
+        record = self.assertions.get(assertion_id)
+        if not record:
+            return {"error": "Assertion not found", "assertion_id": assertion_id}
+
+        a = record.__dict__ if hasattr(record, "__dict__") else dict(record)
+
+        occurrences = self.assertions.get_occurrences(assertion_id)
+        source_docs: list[dict] = []
+        for occ in occurrences:
+            if not isinstance(occ, dict):
+                continue
+            doc_id = occ.get("document_inventory_id") or occ.get("document_id")
+            span_id = occ.get("span_id")
+            doc_label = doc_id
+            section_label = span_id
+            if occ.get("document_inventory_id"):
+                try:
+                    inv = self.inventory.get_by_id(occ["document_inventory_id"])
+                    if inv:
+                        doc_label = inv.get("relative_path") or doc_id
+                except Exception:
+                    pass
+            if span_id:
+                try:
+                    span_row = self.db.execute(
+                        "SELECT section_ref, clause_ref FROM span WHERE id=?",
+                        (span_id,),
+                    ).fetchone()
+                    if span_row:
+                        section_label = span_row["section_ref"] or span_row["clause_ref"] or span_id
+                except Exception:
+                    pass
+            source_docs.append({
+                "document_id": doc_id,
+                "document_label": doc_label,
+                "span_id": span_id,
+                "section_label": section_label,
+            })
+
+        affected_issue_ids = self._issues_affected_by_target("assertion", assertion_id)
+        affected_issues: list[dict] = []
+        for iid in affected_issue_ids:
+            try:
+                iss = self.issues.get(iid)
+                if iss:
+                    affected_issues.append({
+                        "id": iid,
+                        "title": iss.get("title", "") if hasattr(iss, "get") else getattr(iss, "title", ""),
+                        "materiality": iss.get("materiality", 0) if hasattr(iss, "get") else getattr(iss, "materiality", 0),
+                    })
+            except Exception:
+                affected_issues.append({"id": iid, "title": "", "materiality": 0})
+
+        dependent_ids = self.assertions.get_dependents(assertion_id)
+        dependents: list[dict] = []
+        for did in dependent_ids[:10]:
+            dep = self.assertions.get(did)
+            if dep:
+                d = dep.__dict__ if hasattr(dep, "__dict__") else dict(dep)
+                dependents.append({
+                    "id": did,
+                    "proposition_text": d.get("proposition_text", ""),
+                    "belief_state": d.get("belief_state", ""),
+                })
+
+        verification = {}
+        try:
+            vs_row = self.verification.get_status(assertion_id, "assertion")
+            if vs_row:
+                verification = dict(vs_row) if hasattr(vs_row, "keys") else {}
+        except Exception:
+            pass
+
+        revisions: list[dict] = []
+        try:
+            rev_rows = self.db.execute(
+                """SELECT old_state, new_state, cause, explanation, created_at
+                   FROM belief_revision_event
+                   WHERE assertion_id=?
+                   ORDER BY created_at DESC LIMIT 10""",
+                (assertion_id,),
+            ).fetchall()
+            revisions = [dict(r) for r in rev_rows]
+        except Exception:
+            pass
+
+        return {
+            "assertion_id": assertion_id,
+            "proposition_text": a.get("proposition_text", ""),
+            "belief_state": a.get("belief_state", ""),
+            "confidence": a.get("confidence", 0),
+            "speech_act": a.get("speech_act", ""),
+            "source_documents": source_docs,
+            "affected_issues": affected_issues,
+            "dependent_assertions": dependents,
+            "verification": verification,
+            "revision_history": revisions,
+            "impact_summary": {
+                "issues_affected": len(affected_issues),
+                "dependents_count": len(dependent_ids),
+                "source_doc_count": len(source_docs),
+                "revision_count": len(revisions),
+            },
+        }
+
+    # ------------------------------------------------------------------
     # Gap management
     # ------------------------------------------------------------------
 

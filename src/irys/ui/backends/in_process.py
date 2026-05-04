@@ -440,6 +440,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_investigation_readiness()
 
+    async def get_assertion_trace(self, matter_id: str, assertion_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_assertion_trace(assertion_id)
+
     async def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str = "") -> bool:
         model = self._get_matter_model(matter_id)
         return model.gaps.resolve_gap(gap_id, resolution_note)

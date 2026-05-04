@@ -4500,3 +4500,120 @@ def test_document_console_non_dict_guard():
     result = _fmt_document_console(data, domain="legal")
     assert "Valid" in result
     assert "Real issue" in result
+
+
+# ------------------------------------------------------------------
+# Assertion Impact Trace formatter tests (SO-2, SO-3, SO-5)
+# ------------------------------------------------------------------
+
+def test_assertion_trace_basic():
+    from irys.ui.app import _fmt_assertion_trace
+    data = {
+        "assertion_id": "a-123",
+        "proposition_text": "Payment was due on signing",
+        "belief_state": "operative",
+        "confidence": 0.9,
+        "speech_act": "alleged",
+        "source_documents": [
+            {"document_label": "contract.pdf", "section_label": "Section 4.2", "span_id": "sp1"},
+        ],
+        "affected_issues": [
+            {"id": "i1", "title": "Breach of contract", "materiality": 0.9},
+        ],
+        "dependent_assertions": [
+            {"id": "a-456", "proposition_text": "Late penalty accrues", "belief_state": "inferred"},
+        ],
+        "verification": {"status": "verified"},
+        "revision_history": [
+            {"old_state": "alleged", "new_state": "operative", "cause": "corroboration"},
+        ],
+        "impact_summary": {
+            "source_doc_count": 1,
+            "issues_affected": 1,
+            "dependents_count": 1,
+            "revision_count": 1,
+        },
+    }
+    result = _fmt_assertion_trace(data, domain="legal")
+    assert "Payment was due on signing" in result
+    assert "operative" in result
+    assert "contract.pdf" in result
+    assert "Section 4.2" in result
+    assert "Breach of contract" in result
+    assert "Late penalty accrues" in result
+    assert "verified" in result
+    assert "alleged" in result and "corroboration" in result
+
+
+def test_assertion_trace_xss():
+    from irys.ui.app import _fmt_assertion_trace
+    data = {
+        "assertion_id": "a-x",
+        "proposition_text": "<script>alert(1)</script>",
+        "belief_state": "disputed",
+        "confidence": 0.5,
+        "speech_act": "alleged",
+        "source_documents": [{"document_label": "<img onerror=x>", "section_label": ""}],
+        "affected_issues": [{"id": "i1", "title": "<b>XSS</b>", "materiality": 0.5}],
+        "dependent_assertions": [{"id": "a-2", "proposition_text": "<script>bad</script>", "belief_state": "operative"}],
+        "verification": {},
+        "revision_history": [],
+        "impact_summary": {"source_doc_count": 1, "issues_affected": 1, "dependents_count": 1, "revision_count": 0},
+    }
+    result = _fmt_assertion_trace(data, domain="legal")
+    assert "<script>" not in result
+    assert "<img onerror" not in result
+    assert "&lt;" in result
+
+
+def test_assertion_trace_empty():
+    from irys.ui.app import _fmt_assertion_trace
+    result = _fmt_assertion_trace({}, domain="legal")
+    assert "viz-empty" in result
+
+
+def test_assertion_trace_error():
+    from irys.ui.app import _fmt_assertion_trace
+    result = _fmt_assertion_trace({"error": "Assertion not found"}, domain="legal")
+    assert "not found" in result.lower()
+
+
+def test_assertion_trace_domain_labels():
+    from irys.ui.app import _fmt_assertion_trace
+    data = {
+        "assertion_id": "a-1",
+        "proposition_text": "Test",
+        "belief_state": "alleged",
+        "confidence": 0.5,
+        "speech_act": "alleged",
+        "source_documents": [],
+        "affected_issues": [],
+        "dependent_assertions": [],
+        "verification": {},
+        "revision_history": [],
+        "impact_summary": {"source_doc_count": 0, "issues_affected": 0, "dependents_count": 0, "revision_count": 0},
+    }
+    result = _fmt_assertion_trace(data, domain="finance")
+    assert "Data Point Impact Trace" in result
+    result_bio = _fmt_assertion_trace(data, domain="biomedical")
+    assert "Finding Impact Trace" in result_bio
+
+
+def test_assertion_trace_non_dict_guard():
+    from irys.ui.app import _fmt_assertion_trace
+    data = {
+        "assertion_id": "a-1",
+        "proposition_text": "Test",
+        "belief_state": "operative",
+        "confidence": 0.8,
+        "speech_act": "alleged",
+        "source_documents": ["bad", {"document_label": "real.pdf", "section_label": "S1"}],
+        "affected_issues": [42, {"id": "i1", "title": "Real", "materiality": 0.5}],
+        "dependent_assertions": ["nope"],
+        "verification": {},
+        "revision_history": [None, {"old_state": "alleged", "new_state": "operative", "cause": "test"}],
+        "impact_summary": {"source_doc_count": 1, "issues_affected": 1, "dependents_count": 0, "revision_count": 1},
+    }
+    result = _fmt_assertion_trace(data, domain="legal")
+    assert "real.pdf" in result
+    assert "Real" in result

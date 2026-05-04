@@ -2639,6 +2639,20 @@ async def get_investigation_readiness(matter_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/assertions/{assertion_id}/trace",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_assertion_trace(matter_id: str, assertion_id: str):
+    """Full impact trace for a single assertion (SO-2, SO-3, SO-5)."""
+    model = await _get_matter_model_or_404(matter_id)
+    result = model.get_assertion_trace(assertion_id)
+    if result.get("error"):
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@app.get(
     "/matter/{matter_id}/gaps",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

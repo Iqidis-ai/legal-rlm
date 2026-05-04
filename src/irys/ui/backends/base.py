@@ -115,6 +115,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_assertion_trace(self, matter_id: str, assertion_id: str) -> dict:
+        """Full impact trace for a single assertion (SO-2, SO-3, SO-5)."""
+        ...
+
+    @abstractmethod
     async def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str = "") -> bool:
         """Mark a gap as resolved with an optional note (SO-7)."""
         ...
