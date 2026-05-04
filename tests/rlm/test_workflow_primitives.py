@@ -2037,6 +2037,19 @@ def test_fmt_timeline_panel_xss():
     assert "<script>" not in result
 
 
+def test_fmt_timeline_panel_skips_non_dict():
+    from irys.ui.app import _fmt_timeline_panel
+    events = [
+        {"date": "2024-01-01", "event": "Valid event", "kind": "meeting"},
+        "not a dict",
+        42,
+        None,
+    ]
+    result = _fmt_timeline_panel(events)
+    assert "Valid event" in result
+    assert "not a dict" not in result
+
+
 # ------------------------------------------------------------------ #
 # _fmt_evidence_matrix_panel tests                                     #
 # ------------------------------------------------------------------ #
