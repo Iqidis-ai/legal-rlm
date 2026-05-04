@@ -1174,3 +1174,10 @@ class HttpBackend(UIBackend):
         if isinstance(result, dict):
             return result.get("events", [])
         return result if isinstance(result, list) else []
+
+    async def get_query_context(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/query-context")
+        if not isinstance(result, dict):
+            _log.warning("get_query_context: expected dict, got %s", type(result).__name__)
+            return {}
+        return result

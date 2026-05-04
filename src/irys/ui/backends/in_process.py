@@ -1388,3 +1388,8 @@ class InProcessBackend(UIBackend):
                 update_q.put(("error", str(exc)))
 
         asyncio.run(_inner())
+
+    async def get_query_context(self, matter_id: str) -> dict:
+        from dataclasses import asdict
+        model = self._get_matter_model(matter_id)
+        return asdict(model.build_query_context())

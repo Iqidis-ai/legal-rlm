@@ -3662,6 +3662,17 @@ async def get_operative_document_version(matter_id: str, doc_id: str):
     }
 
 
+@app.get(
+    "/matter/{matter_id}/query-context",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_query_context(matter_id: str):
+    """Return the engine's query context snapshot for the next investigation run (SO-1, SO-3, SO-4, SO-7)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return asdict(model.build_query_context())
+
+
 # ---------------------------------------------------------------------------
 # Provenance Trail (SO-5 sourcing transparency)
 # ---------------------------------------------------------------------------

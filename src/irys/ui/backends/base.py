@@ -816,3 +816,8 @@ class UIBackend(ABC):
     ) -> list[dict]:
         """Return verification event history."""
         ...
+
+    @abstractmethod
+    async def get_query_context(self, matter_id: str) -> dict:
+        """Return the engine's query context snapshot (SO-1, SO-3, SO-4, SO-7)."""
+        ...

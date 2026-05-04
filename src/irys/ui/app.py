@@ -9532,6 +9532,196 @@ def _fmt_readiness_panel(data: dict, domain: str = "legal") -> str:
     return "".join(parts)
 
 
+# Query Context Inspector (SO-1, SO-3, SO-4, SO-7)
+
+_QUERY_CONTEXT_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Case Context",
+        "subtitle": "what Irys will carry into the next legal analysis",
+        "issues": "Issues",
+        "gaps": "Evidence Gaps",
+        "weakest": "Weakest Issue",
+        "actors": "Parties & Witnesses",
+        "predicates": "Typed Claim Signals",
+        "empty": "No query context available — run an investigation first.",
+    },
+    "finance": {
+        "title": "Diligence Context",
+        "subtitle": "what Irys will carry into the next financial analysis",
+        "issues": "Diligence Questions",
+        "gaps": "Diligence Gaps",
+        "weakest": "Weakest Diligence Question",
+        "actors": "Companies & Executives",
+        "predicates": "Metric Relationship Signals",
+        "empty": "No query context available — run an investigation first.",
+    },
+    "coding": {
+        "title": "Codebase Context",
+        "subtitle": "what Irys will carry into the next engineering analysis",
+        "issues": "Engineering Objectives",
+        "gaps": "Implementation Gaps",
+        "weakest": "Weakest Objective",
+        "actors": "Components & Owners",
+        "predicates": "Dependency Signals",
+        "empty": "No query context available — run an investigation first.",
+    },
+    "academic_research": {
+        "title": "Research Context",
+        "subtitle": "what Irys will carry into the next literature analysis",
+        "issues": "Research Questions",
+        "gaps": "Literature Gaps",
+        "weakest": "Weakest Research Question",
+        "actors": "Authors & Institutions",
+        "predicates": "Claim Relationship Signals",
+        "empty": "No query context available — run an investigation first.",
+    },
+    "biomedical": {
+        "title": "Clinical Evidence Context",
+        "subtitle": "what Irys will carry into the next biomedical analysis",
+        "issues": "Clinical Questions",
+        "gaps": "Evidence Gaps",
+        "weakest": "Weakest Clinical Question",
+        "actors": "Sponsors, Regulators & Cohorts",
+        "predicates": "Clinical Relationship Signals",
+        "empty": "No query context available — run an investigation first.",
+    },
+}
+
+
+def _fmt_query_context(data: dict, domain: str = "legal") -> str:
+    L = _QUERY_CONTEXT_LABELS.get(domain, _QUERY_CONTEXT_LABELS["legal"])
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    if "error" in data:
+        return f"<div class='viz-empty'>Error: {_escape(str(data['error']))}</div>"
+
+    assertions = int(data.get("existing_assertion_count", 0)) if isinstance(data.get("existing_assertion_count"), (int, float)) and math.isfinite(float(data.get("existing_assertion_count", 0))) else 0
+    actors = int(data.get("existing_actor_count", 0)) if isinstance(data.get("existing_actor_count"), (int, float)) and math.isfinite(float(data.get("existing_actor_count", 0))) else 0
+    doc_count = len(data.get("known_document_ids", []) or [])
+    card_count = int(data.get("document_card_count", 0)) if isinstance(data.get("document_card_count"), (int, float)) and math.isfinite(float(data.get("document_card_count", 0))) else 0
+    assumption_count = len(data.get("active_assumptions", []) or [])
+
+    open_issues = data.get("open_issues", []) or []
+    open_gaps = data.get("open_gaps", []) or []
+    weakest_id = data.get("weakest_issue_id")
+    known_actors = data.get("known_actors", []) or []
+    known_docs = data.get("known_document_ids", []) or []
+    clarifications = data.get("answered_clarifications", []) or []
+    annotations = data.get("document_annotations", []) or []
+    predicates = data.get("key_predicates", []) or []
+    domain_facets = data.get("domain_facets", []) or []
+    trust_weights = data.get("composed_trust_weights", {}) or {}
+    if not isinstance(trust_weights, dict):
+        trust_weights = {}
+    profile_id = data.get("primary_domain_profile_id") or "none"
+
+    parts: list[str] = []
+    parts.append(f"<div style='margin-bottom:16px;'>")
+    parts.append(
+        f"<h3 style='margin:0 0 4px;'>{_escape(L['title'])}</h3>"
+        f"<div style='font-size:12px;color:#6b7280;margin-bottom:12px;'>{_escape(L['subtitle'])}</div>"
+    )
+
+    # KPI row
+    kpi_style = "display:inline-block;padding:6px 14px;margin:0 6px 6px 0;border-radius:8px;background:#f3f4f6;font-size:13px;"
+    parts.append("<div style='margin-bottom:12px;'>")
+    parts.append(f"<span style='{kpi_style}'><strong>{assertions}</strong> assertions</span>")
+    parts.append(f"<span style='{kpi_style}'><strong>{actors}</strong> actors</span>")
+    parts.append(f"<span style='{kpi_style}'><strong>{doc_count}</strong> documents</span>")
+    parts.append(f"<span style='{kpi_style}'><strong>{card_count}</strong> document cards</span>")
+    parts.append(f"<span style='{kpi_style}'><strong>{assumption_count}</strong> active assumptions</span>")
+    parts.append("</div>")
+
+    # Next Run Focus
+    parts.append(
+        "<div style='margin-bottom:12px;padding:10px;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;'>"
+        "<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>Next Run Focus</div>"
+    )
+    if weakest_id:
+        parts.append(f"<div style='font-size:12px;'>{_escape(L['weakest'])}: <strong>{_escape(str(weakest_id)[:40])}</strong></div>")
+    parts.append(f"<div style='font-size:12px;'>{_escape(L['issues'])}: <strong>{len(open_issues)}</strong> open</div>")
+    parts.append(f"<div style='font-size:12px;'>{_escape(L['gaps'])}: <strong>{len(open_gaps)}</strong> open</div>")
+    if open_gaps:
+        parts.append("<ul style='margin:4px 0 0;padding-left:18px;font-size:11px;color:#92400e;'>")
+        for g in open_gaps[:5]:
+            if not isinstance(g, dict):
+                continue
+            desc = _escape(str(g.get("description", g.get("gap_type", "")))[:60])
+            parts.append(f"<li>{desc}</li>")
+        if len(open_gaps) > 5:
+            parts.append(f"<li style='color:#9ca3af;'>+{len(open_gaps)-5} more</li>")
+        parts.append("</ul>")
+    parts.append("</div>")
+
+    # Reuse Inputs
+    parts.append(
+        "<div style='margin-bottom:12px;padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;'>"
+        "<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>Reuse Inputs</div>"
+    )
+    parts.append(f"<div style='font-size:12px;'>Known documents: <strong>{len(known_docs)}</strong></div>")
+    if known_actors:
+        parts.append(f"<div style='font-size:12px;'>{_escape(L['actors'])}: ")
+        actor_tags = ", ".join(_escape(str(a)[:30]) for a in known_actors[:10])
+        parts.append(f"<span style='color:#059669;'>{actor_tags}</span>")
+        if len(known_actors) > 10:
+            parts.append(f" <span style='color:#9ca3af;'>+{len(known_actors)-10} more</span>")
+        parts.append("</div>")
+    parts.append(f"<div style='font-size:12px;'>Answered clarifications: <strong>{len(clarifications)}</strong></div>")
+    parts.append(f"<div style='font-size:12px;'>Document annotations: <strong>{len(annotations)}</strong></div>")
+    parts.append("</div>")
+
+    # Typed Graph Signals
+    if predicates:
+        parts.append(
+            "<div style='margin-bottom:12px;padding:10px;background:#ede9fe;border:1px solid #c4b5fd;border-radius:6px;'>"
+            f"<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>{_escape(L['predicates'])}</div>"
+        )
+        parts.append("<div style='display:flex;flex-wrap:wrap;gap:4px;'>")
+        for p in predicates[:15]:
+            parts.append(
+                f"<span style='display:inline-block;padding:2px 8px;background:#ddd6fe;border-radius:4px;"
+                f"font-size:11px;color:#5b21b6;'>{_escape(str(p)[:40])}</span>"
+            )
+        if len(predicates) > 15:
+            parts.append(f"<span style='font-size:11px;color:#9ca3af;'>+{len(predicates)-15} more</span>")
+        parts.append("</div></div>")
+
+    # Domain Calibration
+    parts.append(
+        "<div style='padding:10px;background:#e0f2fe;border:1px solid #7dd3fc;border-radius:6px;'>"
+        "<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>Domain Calibration</div>"
+        f"<div style='font-size:12px;'>Primary profile: <strong>{_escape(str(profile_id))}</strong></div>"
+    )
+    if domain_facets:
+        parts.append("<div style='font-size:12px;margin-top:4px;'>Active facets: ")
+        facet_tags = []
+        for f in domain_facets[:8]:
+            if not isinstance(f, dict):
+                continue
+            fname = _escape(str(f.get("facet_name", f.get("name", "")))[:30])
+            if fname:
+                facet_tags.append(fname)
+        parts.append(", ".join(facet_tags) if facet_tags else "none")
+        if len(domain_facets) > 8:
+            parts.append(f" +{len(domain_facets)-8} more")
+        parts.append("</div>")
+    if trust_weights:
+        parts.append("<div style='font-size:12px;margin-top:4px;'>Trust weights: ")
+        tw_parts = []
+        for k, v in list(trust_weights.items())[:8]:
+            val = float(v) if isinstance(v, (int, float)) and math.isfinite(float(v)) else 0.0
+            tw_parts.append(f"{_escape(str(k)[:20])}={val:.2f}")
+        parts.append(", ".join(tw_parts))
+        if len(trust_weights) > 8:
+            parts.append(f" +{len(trust_weights)-8} more")
+        parts.append("</div>")
+    parts.append("</div>")
+
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def _fmt_gaps(gaps: list, clarifications: list, domain: str = "legal", issue_titles: dict | None = None) -> str:
     labels = _GAP_LABELS.get(domain, _GAP_LABELS["legal"])
     _titles = issue_titles or {}
@@ -12202,6 +12392,17 @@ class AppState:
             logger.warning("Readiness panel load failed: %s", exc)
             return f"<div class='viz-empty'>Error loading readiness: {_escape(str(exc))}</div>"
 
+    def load_query_context(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            domain = self._detect_domain(matter_id)
+            data = _run_async(self.backend().get_query_context(matter_id))
+            return _fmt_query_context(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Query context load failed: %s", exc)
+            return f"<div class='viz-empty'>Error loading query context: {_escape(str(exc))}</div>"
+
     def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str) -> tuple[str, str]:
         if not matter_id or matter_id == "—":
             return "Load a matter first.", ""
@@ -14600,6 +14801,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "Refresh Readiness", variant="secondary", size="sm",
             )
 
+        with gr.Accordion("Next Run Context — what Irys will carry into the next investigation", open=True):
+            gr.Markdown(
+                "Snapshot of the engine's query context: what assertions, actors, documents, "
+                "gaps, and domain calibration Irys will carry into the next run. "
+                "Use this to verify the system's starting knowledge before re-investigating."
+            )
+            query_context_html = gr.HTML(
+                "<div class='viz-empty'>Query context will appear after investigation.</div>"
+            )
+            refresh_query_context_btn = gr.Button(
+                "Refresh Context", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Gap-to-Action Workbench — consolidated gap review", open=True):
             gr.Markdown(
                 "Consolidated view of every open gap with affected issues, missing sources, "
@@ -15875,6 +16089,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 inputs=[matter_id_box],
                 outputs=[readiness_html],
             ).then(
+                fn=lambda mid: state.load_query_context(mid),
+                inputs=[matter_id_box],
+                outputs=[query_context_html],
+            ).then(
                 fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_profile_html],
@@ -16006,6 +16224,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_investigation_readiness(mid),
                 inputs=[matter_id_box],
                 outputs=[readiness_html],
+            ).then(
+                fn=lambda mid: state.load_query_context(mid),
+                inputs=[matter_id_box],
+                outputs=[query_context_html],
             ).then(
                 fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
@@ -16139,6 +16361,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_investigation_readiness(mid),
             inputs=[matter_id_box],
             outputs=[readiness_html],
+        ).then(
+            fn=lambda mid: state.load_query_context(mid),
+            inputs=[matter_id_box],
+            outputs=[query_context_html],
         ).then(
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -16284,6 +16510,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box],
             outputs=[readiness_html],
         )
+        refresh_query_context_btn.click(
+            fn=lambda mid: state.load_query_context(mid),
+            inputs=[matter_id_box],
+            outputs=[query_context_html],
+        )
         refresh_gap_workbench_btn.click(
             fn=lambda mid: state.load_gap_workbench(mid),
             inputs=[matter_id_box],
@@ -16336,6 +16567,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_investigation_readiness(mid),
             inputs=[matter_id_box],
             outputs=[readiness_html],
+        ).then(
+            fn=lambda mid: state.load_query_context(mid),
+            inputs=[matter_id_box],
+            outputs=[query_context_html],
         ).then(
             fn=lambda mid: state.load_objective_coverage(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -17073,6 +17308,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_investigation_readiness(mid),
             inputs=[matter_id_box],
             outputs=[readiness_html],
+        ).then(
+            fn=lambda mid: state.load_query_context(mid),
+            inputs=[matter_id_box],
+            outputs=[query_context_html],
         ).then(
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],

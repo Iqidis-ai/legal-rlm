@@ -8643,3 +8643,219 @@ def test_operative_version_backend_interface_balance():
         assert hasattr(UIBackend, method), f"UIBackend missing {method}"
         assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
         assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+# ---------------------------------------------------------------------------
+# Query Context Inspector (SO-1, SO-3, SO-4, SO-7)
+# ---------------------------------------------------------------------------
+
+
+def test_query_context_labels_all_five_domains():
+    from irys.ui.app import _QUERY_CONTEXT_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _QUERY_CONTEXT_LABELS[domain]
+        assert "title" in labels
+        assert "subtitle" in labels
+        assert "issues" in labels
+        assert "gaps" in labels
+        assert "weakest" in labels
+        assert "actors" in labels
+        assert "predicates" in labels
+        assert "empty" in labels
+
+
+def test_query_context_formatter_empty():
+    from irys.ui.app import _fmt_query_context
+    html = _fmt_query_context({})
+    assert "viz-empty" in html
+
+
+def test_query_context_formatter_error():
+    from irys.ui.app import _fmt_query_context
+    html = _fmt_query_context({"error": "db down"})
+    assert "db down" in html
+    assert "viz-empty" in html
+
+
+def test_query_context_formatter_non_dict():
+    from irys.ui.app import _fmt_query_context
+    html = _fmt_query_context("not a dict")
+    assert "viz-empty" in html
+
+
+def test_query_context_formatter_renders_kpis():
+    from irys.ui.app import _fmt_query_context
+    data = {
+        "matter_id": "m1",
+        "matter_name": "Test",
+        "existing_assertion_count": 12,
+        "existing_actor_count": 3,
+        "known_document_ids": ["d1", "d2"],
+        "document_card_count": 5,
+        "active_assumptions": [{"id": "a1"}],
+        "open_issues": [{"id": "i1"}],
+        "open_gaps": [{"id": "g1", "description": "missing doc"}],
+        "weakest_issue_id": "i1",
+        "known_actors": ["Alice"],
+        "answered_clarifications": [],
+        "document_annotations": [],
+        "key_predicates": ["owes_money_to"],
+        "domain_facets": [],
+        "composed_trust_weights": {"official_record": 0.95},
+        "primary_domain_profile_id": "legal",
+    }
+    html = _fmt_query_context(data)
+    assert "<strong>12</strong> assertions" in html
+    assert "<strong>3</strong> actors" in html
+    assert "<strong>2</strong> documents" in html
+    assert "<strong>5</strong> document cards" in html
+    assert "<strong>1</strong> active assumptions" in html
+    assert "Next Run Focus" in html
+    assert "i1" in html
+    assert "missing doc" in html
+    assert "Alice" in html
+    assert "owes_money_to" in html
+    assert "official_record" in html
+    assert "legal" in html
+
+
+def test_query_context_formatter_xss():
+    from irys.ui.app import _fmt_query_context
+    data = {
+        "matter_id": "m1",
+        "matter_name": "<script>alert(1)</script>",
+        "existing_assertion_count": 0,
+        "existing_actor_count": 0,
+        "known_document_ids": [],
+        "document_card_count": 0,
+        "active_assumptions": [],
+        "open_issues": [],
+        "open_gaps": [{"description": "<img onerror=alert(1)>"}],
+        "weakest_issue_id": "<script>x</script>",
+        "known_actors": ["<b>evil</b>"],
+        "answered_clarifications": [],
+        "document_annotations": [],
+        "key_predicates": ["<script>p</script>"],
+        "domain_facets": [],
+        "composed_trust_weights": {},
+        "primary_domain_profile_id": "legal",
+    }
+    html = _fmt_query_context(data)
+    assert "<script>" not in html
+    assert "<img onerror" not in html
+    assert "<b>evil</b>" not in html
+
+
+def test_query_context_formatter_domain_labels():
+    from irys.ui.app import _fmt_query_context
+    data = {
+        "matter_id": "m1",
+        "matter_name": "Test",
+        "open_issues": [],
+        "open_gaps": [],
+        "weakest_issue_id": None,
+        "known_actors": [],
+        "existing_assertion_count": 0,
+        "existing_actor_count": 0,
+        "known_document_ids": [],
+        "document_card_count": 0,
+        "active_assumptions": [],
+        "answered_clarifications": [],
+        "document_annotations": [],
+        "key_predicates": [],
+        "domain_facets": [],
+        "composed_trust_weights": {},
+        "primary_domain_profile_id": None,
+    }
+    legal_html = _fmt_query_context(data, domain="legal")
+    assert "Case Context" in legal_html
+    finance_html = _fmt_query_context(data, domain="finance")
+    assert "Diligence Context" in finance_html
+    coding_html = _fmt_query_context(data, domain="coding")
+    assert "Codebase Context" in coding_html
+    research_html = _fmt_query_context(data, domain="academic_research")
+    assert "Research Context" in research_html
+    bio_html = _fmt_query_context(data, domain="biomedical")
+    assert "Clinical Evidence Context" in bio_html
+
+
+def test_query_context_formatter_nan_guard():
+    from irys.ui.app import _fmt_query_context
+    data = {
+        "matter_id": "m1",
+        "matter_name": "Test",
+        "existing_assertion_count": float("nan"),
+        "existing_actor_count": float("inf"),
+        "known_document_ids": [],
+        "document_card_count": "not_a_number",
+        "active_assumptions": [],
+        "open_issues": [],
+        "open_gaps": [],
+        "weakest_issue_id": None,
+        "known_actors": [],
+        "answered_clarifications": [],
+        "document_annotations": [],
+        "key_predicates": [],
+        "domain_facets": [],
+        "composed_trust_weights": {"w1": float("nan")},
+        "primary_domain_profile_id": None,
+    }
+    html = _fmt_query_context(data)
+    assert "<strong>0</strong> assertions" in html
+    assert "<strong>0</strong> actors" in html
+    assert "<strong>0</strong> document cards" in html
+
+
+def test_query_context_formatter_trust_weights_non_dict():
+    from irys.ui.app import _fmt_query_context
+    data = {
+        "matter_id": "m1",
+        "matter_name": "Test",
+        "existing_assertion_count": 0,
+        "existing_actor_count": 0,
+        "known_document_ids": [],
+        "document_card_count": 0,
+        "active_assumptions": [],
+        "open_issues": [],
+        "open_gaps": [],
+        "weakest_issue_id": None,
+        "known_actors": [],
+        "answered_clarifications": [],
+        "document_annotations": [],
+        "key_predicates": [],
+        "domain_facets": [],
+        "composed_trust_weights": "not_a_dict",
+        "primary_domain_profile_id": None,
+    }
+    html = _fmt_query_context(data)
+    assert "Domain Calibration" in html
+
+
+def test_query_context_model_roundtrip():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    ctx = model.build_query_context()
+    assert ctx.matter_id == model.matter_id
+    assert isinstance(ctx.open_issues, list)
+    assert isinstance(ctx.composed_trust_weights, dict)
+
+
+def test_query_context_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("get_query_context",):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+def test_query_context_appstate_method_exists():
+    from irys.ui.app import AppState
+    assert hasattr(AppState, "load_query_context")
+
+
+def test_query_context_api_endpoint_exists():
+    from irys.service.api import app as fastapi_app
+    routes = [r.path for r in fastapi_app.routes]
+    assert "/matter/{matter_id}/query-context" in routes
