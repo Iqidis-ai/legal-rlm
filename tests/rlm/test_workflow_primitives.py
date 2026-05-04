@@ -7804,3 +7804,233 @@ def test_issue_brief_backend_interface_balance():
     assert hasattr(UIBackend, "compile_issue_brief")
     assert hasattr(InProcessBackend, "compile_issue_brief")
     assert hasattr(HttpBackend, "compile_issue_brief")
+
+
+# ------------------------------------------------------------------
+# Assumption Review Workbench
+# ------------------------------------------------------------------
+
+
+def test_assumption_review_empty_matter():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_assumption_review_workbench()
+    assert result["total"] == 0
+    assert result["provisional"] == []
+    assert result["confirmed"] == []
+    assert result["invalidated"] == []
+    assert result["counts"]["provisional"] == 0
+    assert result["counts"]["confirmed"] == 0
+    assert result["counts"]["invalidated"] == 0
+
+
+def test_assumption_review_grouping():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    model.assumptions.upsert(statement="Test assumption A", rationale="for testing")
+    result = model.get_assumption_review_workbench()
+    assert result["total"] >= 1
+    assert result["counts"]["provisional"] >= 1
+    found = False
+    for a in result["provisional"]:
+        if isinstance(a, dict) and "Test assumption A" in str(a.get("statement", "")):
+            found = True
+            break
+    assert found
+
+
+def test_assumption_review_linked_targets():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    model.assumptions.upsert(statement="Linked assumption", rationale="test")
+    result = model.get_assumption_review_workbench()
+    for a in result["provisional"]:
+        if isinstance(a, dict):
+            assert "linked_target_count" in a
+            assert "linked_targets" in a
+
+
+def test_assumption_review_after_invalidate():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    model.assumptions.upsert(statement="Will invalidate", rationale="test")
+    wb = model.get_assumption_review_workbench()
+    prov = [a for a in wb["provisional"] if isinstance(a, dict) and "Will invalidate" in str(a.get("statement", ""))]
+    assert len(prov) >= 1
+    aid = prov[0]["id"]
+    review_result = model.review_assumption(aid, "invalidated", reason="test reason")
+    assert review_result.get("success") is True
+    wb2 = model.get_assumption_review_workbench()
+    assert wb2["counts"]["invalidated"] >= 1
+    inv_ids = {a["id"] for a in wb2["invalidated"] if isinstance(a, dict)}
+    assert aid in inv_ids
+
+
+def test_assumption_review_invalid_decision():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.review_assumption("fake-id", "bogus_decision")
+    assert "error" in result
+
+
+def test_assumption_review_not_found():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.review_assumption("nonexistent", "confirmed")
+    assert "error" in result
+    assert "not found" in result["error"]
+
+
+def test_assumption_review_formatter_empty():
+    from irys.ui.app import _fmt_assumption_review_workbench
+    html = _fmt_assumption_review_workbench({})
+    assert "viz-empty" in html
+
+
+def test_assumption_review_formatter_zero_total():
+    from irys.ui.app import _fmt_assumption_review_workbench
+    data = {
+        "total": 0,
+        "provisional": [],
+        "confirmed": [],
+        "invalidated": [],
+        "counts": {"provisional": 0, "confirmed": 0, "invalidated": 0},
+    }
+    html = _fmt_assumption_review_workbench(data)
+    assert "viz-empty" in html
+
+
+def test_assumption_review_formatter_renders():
+    from irys.ui.app import _fmt_assumption_review_workbench
+    data = {
+        "total": 3,
+        "provisional": [
+            {
+                "id": "a1",
+                "statement": "Contract was signed before deadline",
+                "status": "provisional",
+                "rationale": "Based on metadata",
+                "invalidation_condition": "If signing date is after Jan 1",
+                "linked_target_count": 2,
+                "linked_targets": [
+                    {"target_type": "predicate", "target_id": "p1"},
+                    {"target_type": "issue", "target_id": "i1"},
+                ],
+            },
+        ],
+        "confirmed": [
+            {
+                "id": "a2",
+                "statement": "Party A is the plaintiff",
+                "status": "confirmed",
+                "rationale": "Verified from filing",
+                "invalidation_condition": "",
+                "linked_target_count": 0,
+                "linked_targets": [],
+            },
+        ],
+        "invalidated": [
+            {
+                "id": "a3",
+                "statement": "Deadline was March 15",
+                "status": "invalidated",
+                "rationale": "Contradicted by exhibit B",
+                "invalidation_condition": "",
+                "linked_target_count": 1,
+                "linked_targets": [{"target_type": "predicate", "target_id": "p2"}],
+            },
+        ],
+        "counts": {"provisional": 1, "confirmed": 1, "invalidated": 1},
+    }
+    html = _fmt_assumption_review_workbench(data)
+    assert "Assumption Review Workbench" in html
+    assert "Contract was signed before deadline" in html
+    assert "Party A is the plaintiff" in html
+    assert "Deadline was March 15" in html
+    assert "Provisional" in html
+    assert "Confirmed" in html
+    assert "Invalidated" in html
+    assert "Linked targets" in html
+    assert "predicate, issue" in html or "issue, predicate" in html
+
+
+def test_assumption_review_formatter_xss():
+    from irys.ui.app import _fmt_assumption_review_workbench
+    data = {
+        "total": 1,
+        "provisional": [
+            {
+                "id": "<script>xss</script>",
+                "statement": "<img onerror=alert(1) src=x>",
+                "status": "provisional",
+                "rationale": "<script>bad</script>",
+                "invalidation_condition": "<script>cond</script>",
+                "linked_target_count": 1,
+                "linked_targets": [{"target_type": "<script>type</script>", "target_id": "t1"}],
+            },
+        ],
+        "confirmed": [],
+        "invalidated": [],
+        "counts": {"provisional": 1, "confirmed": 0, "invalidated": 0},
+    }
+    html = _fmt_assumption_review_workbench(data)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_assumption_review_formatter_non_dict_guards():
+    from irys.ui.app import _fmt_assumption_review_workbench
+    data = {
+        "total": 3,
+        "provisional": ["not-a-dict", None, 42],
+        "confirmed": [123],
+        "invalidated": ["bad"],
+        "counts": {"provisional": 3, "confirmed": 1, "invalidated": 1},
+    }
+    html = _fmt_assumption_review_workbench(data)
+    assert "Assumption Review Workbench" in html
+    assert "<script>" not in html
+
+
+def test_assumption_review_labels_all_five_domains():
+    from irys.ui.app import _ASSUMPTION_REVIEW_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _ASSUMPTION_REVIEW_LABELS[domain]
+        assert "title" in labels
+        assert "provisional" in labels
+        assert "confirmed" in labels
+        assert "invalidated" in labels
+        assert "empty" in labels
+
+
+def test_assumption_review_formatter_domain_labels():
+    from irys.ui.app import _fmt_assumption_review_workbench
+    data = {
+        "total": 1,
+        "provisional": [
+            {"id": "a1", "statement": "test", "status": "provisional",
+             "rationale": "", "invalidation_condition": "",
+             "linked_target_count": 0, "linked_targets": []},
+        ],
+        "confirmed": [],
+        "invalidated": [],
+        "counts": {"provisional": 1, "confirmed": 0, "invalidated": 0},
+    }
+    html_finance = _fmt_assumption_review_workbench(data, domain="finance")
+    assert "Thesis Assumption Review" in html_finance
+    html_bio = _fmt_assumption_review_workbench(data, domain="biomedical")
+    assert "Mechanism Assumption Review" in html_bio
+    html_code = _fmt_assumption_review_workbench(data, domain="coding")
+    assert "Design Assumption Review" in html_code
+
+
+def test_assumption_review_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    assert hasattr(UIBackend, "get_assumption_review")
+    assert hasattr(InProcessBackend, "get_assumption_review")
+    assert hasattr(HttpBackend, "get_assumption_review")
+    assert hasattr(UIBackend, "review_assumption")
+    assert hasattr(InProcessBackend, "review_assumption")
+    assert hasattr(HttpBackend, "review_assumption")

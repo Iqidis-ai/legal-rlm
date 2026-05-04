@@ -8543,6 +8543,138 @@ def _fmt_assumptions(assumptions: list, domain: str = "legal") -> str:
     )
 
 
+_ASSUMPTION_REVIEW_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Assumption Review Workbench",
+        "subtitle": "Lifecycle review of every assumption underlying the analysis.",
+        "provisional": "Provisional",
+        "confirmed": "Confirmed",
+        "invalidated": "Invalidated",
+        "linked": "Linked targets",
+        "empty": "No assumptions recorded. Irys will log assumptions as it builds the matter model.",
+    },
+    "finance": {
+        "title": "Thesis Assumption Review",
+        "subtitle": "Lifecycle review of every assumption underlying the thesis.",
+        "provisional": "Provisional",
+        "confirmed": "Confirmed",
+        "invalidated": "Invalidated",
+        "linked": "Linked targets",
+        "empty": "No assumptions recorded. Irys will log assumptions during analysis.",
+    },
+    "coding": {
+        "title": "Design Assumption Review",
+        "subtitle": "Lifecycle review of every design assumption.",
+        "provisional": "Provisional",
+        "confirmed": "Confirmed",
+        "invalidated": "Invalidated",
+        "linked": "Linked targets",
+        "empty": "No assumptions recorded. Irys will log assumptions during investigation.",
+    },
+    "academic_research": {
+        "title": "Methodology Assumption Review",
+        "subtitle": "Lifecycle review of every methodology assumption.",
+        "provisional": "Provisional",
+        "confirmed": "Confirmed",
+        "invalidated": "Invalidated",
+        "linked": "Linked targets",
+        "empty": "No assumptions recorded. Irys will log assumptions during research.",
+    },
+    "biomedical": {
+        "title": "Mechanism Assumption Review",
+        "subtitle": "Lifecycle review of every clinical and mechanism assumption.",
+        "provisional": "Provisional",
+        "confirmed": "Confirmed",
+        "invalidated": "Invalidated",
+        "linked": "Linked targets",
+        "empty": "No assumptions recorded. Irys will log assumptions during analysis.",
+    },
+}
+
+
+def _fmt_assumption_review_workbench(data: dict, domain: str = "legal") -> str:
+    L = _ASSUMPTION_REVIEW_LABELS.get(domain, _ASSUMPTION_REVIEW_LABELS["legal"])
+
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    counts = data.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    total = _safe_int(data.get("total", 0))
+    prov_n = _safe_int(counts.get("provisional", 0))
+    conf_n = _safe_int(counts.get("confirmed", 0))
+    inv_n = _safe_int(counts.get("invalidated", 0))
+
+    if total == 0:
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    header = (
+        f"<div class='viz-shell'>"
+        f"<div class='intel-panel-title'>{_escape(L['title'])}</div>"
+        f"<div style='font-size:0.8em;color:#6b7280;margin-bottom:8px;'>{_escape(L['subtitle'])}</div>"
+        f"<div style='display:flex;gap:16px;align-items:center;margin-bottom:12px;flex-wrap:wrap;'>"
+        f"<div style='font-size:0.85em;'>"
+        f"<span class='pill pill-neutral'>{_escape(L['provisional'])}: {prov_n}</span> "
+        f"<span class='pill pill-green'>{_escape(L['confirmed'])}: {conf_n}</span> "
+        f"<span class='pill pill-red'>{_escape(L['invalidated'])}: {inv_n}</span>"
+        f"</div>"
+        f"<div style='font-size:0.8em;color:#9ca3af;'>Total: {total}</div>"
+        f"</div>"
+    )
+
+    def _render_bucket(items: list, bucket_label: str, color: str) -> str:
+        if not isinstance(items, list) or not items:
+            return ""
+        html = (
+            f"<div style='margin-bottom:12px;'>"
+            f"<div style='font-weight:600;color:{color};margin-bottom:4px;font-size:0.9em;'>"
+            f"{_escape(bucket_label)} ({len(items)})</div>"
+        )
+        for a in items[:25]:
+            if not isinstance(a, dict):
+                continue
+            stmt = _escape(str(a.get("statement") or "?")[:250])
+            aid = _escape(str(a.get("id") or "?")[:16])
+            full_aid = _escape(str(a.get("id") or "?"))
+            rationale = _escape(str(a.get("rationale") or "")[:200])
+            cond = _escape(str(a.get("invalidation_condition") or "")[:200])
+            target_count = _safe_int(a.get("linked_target_count", 0))
+
+            html += (
+                f"<div style='border:1px solid var(--border-color-primary,#e5e7eb);"
+                f"border-radius:6px;padding:8px;margin-bottom:6px;'>"
+                f"<div style='font-weight:500;'>{stmt}</div>"
+                f"<div style='font-size:0.78em;color:#9ca3af;margin-top:2px;'>"
+                f"ID: <code style='font-size:10px;cursor:pointer;' title='{full_aid}'>{aid}</code></div>"
+            )
+            if rationale:
+                html += f"<div style='font-size:0.8em;color:#6b7280;margin-top:3px;'>Rationale: {rationale}</div>"
+            if cond:
+                html += f"<div style='font-size:0.8em;color:#dc2626;margin-top:2px;'>Invalidated if: {cond}</div>"
+            if target_count:
+                targets = a.get("linked_targets", [])
+                target_types = set()
+                for t in (targets if isinstance(targets, list) else []):
+                    if isinstance(t, dict):
+                        target_types.add(t.get("target_type", "item"))
+                type_str = ", ".join(sorted(target_types)) if target_types else "items"
+                html += (
+                    f"<div style='font-size:0.78em;color:#7c3aed;margin-top:2px;'>"
+                    f"{_escape(L['linked'])}: {target_count} {_escape(type_str)}</div>"
+                )
+            html += "</div>"
+        html += "</div>"
+        return html
+
+    body = ""
+    body += _render_bucket(data.get("provisional", []), L["provisional"], "#6b7280")
+    body += _render_bucket(data.get("invalidated", []), L["invalidated"], "#dc2626")
+    body += _render_bucket(data.get("confirmed", []), L["confirmed"], "#16a34a")
+
+    return f"{header}{body}</div>"
+
+
 _GAP_LABELS: dict[str, dict[str, object]] = {
     "legal": {
         "title": "Open Gaps & Missingness",
@@ -11717,6 +11849,15 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading assumptions: {_escape(str(exc))}</div>"
 
+    def load_assumption_review(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_assumption_review(matter_id))
+            return _fmt_assumption_review_workbench(data, domain=domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error loading assumption review: {_escape(str(exc))}</div>"
+
     def update_assumption_status(self, matter_id: str, assumption_id: str, action: str, reason: str) -> tuple[str, str]:
         if not matter_id or matter_id == "—":
             return "Load a matter first.", ""
@@ -14074,6 +14215,20 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     assumption_action_btn = gr.Button("Apply", variant="primary", size="sm", scale=1)
                 assumption_action_result = gr.Markdown("")
 
+        with gr.Accordion("Assumption Review Workbench — lifecycle buckets with impact links", open=False):
+            gr.Markdown(
+                "Assumptions grouped by lifecycle status: provisional, confirmed, "
+                "and invalidated. Each shows linked targets (predicates, issues) "
+                "and impact on downstream analysis. Use the controls above to "
+                "confirm, invalidate, or reset assumptions."
+            )
+            assumption_review_html = gr.HTML(
+                "<div class='viz-empty'>Assumption review will appear here after an investigation.</div>"
+            )
+            refresh_assumption_review_btn = gr.Button(
+                "Refresh Assumption Review", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Financials — payments, damages, and numeric disputes", open=False):
             gr.Markdown(
                 "Invoices, payments, damages claims, and numeric conflicts — "
@@ -15217,6 +15372,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_issue_brief(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[issue_brief_html],
+            ).then(
+                fn=lambda mid: state.load_assumption_review(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[assumption_review_html],
             )
         else:
             submit_btn.click(
@@ -15345,6 +15504,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_issue_brief(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[issue_brief_html],
+            ).then(
+                fn=lambda mid: state.load_assumption_review(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[assumption_review_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -15482,6 +15645,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_issue_brief(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[issue_brief_html],
+        ).then(
+            fn=lambda mid: state.load_assumption_review(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[assumption_review_html],
         )
 
         export_report_btn.click(
@@ -15607,6 +15774,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box],
             outputs=[assumptions_detail_html],
         )
+        refresh_assumption_review_btn.click(
+            fn=lambda mid: state.load_assumption_review(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[assumption_review_html],
+        )
         assumption_action_btn.click(
             fn=lambda mid, aid, action, reason: state.update_assumption_status(mid, aid, action, reason),
             inputs=[matter_id_box, assumption_id_input, assumption_action_dropdown, assumption_reason_input],
@@ -15615,6 +15787,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_objective_coverage(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[objective_coverage_html],
+        ).then(
+            fn=lambda mid: state.load_assumption_review(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[assumption_review_html],
         )
         priority_apply_btn.click(
             fn=lambda mid, iid, p: state.set_issue_priority(mid, iid, p),
@@ -16347,6 +16523,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_issue_brief(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[issue_brief_html],
+        ).then(
+            fn=lambda mid: state.load_assumption_review(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[assumption_review_html],
         )
 
         clarification_dropdown.change(
