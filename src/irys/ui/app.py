@@ -785,7 +785,86 @@ _DS_CSS = """<style>
 </style>"""
 
 
-def _fmt_overview_panel(data: dict) -> str:
+_OVERVIEW_PANEL_LABELS = {
+    "legal": {
+        "assertions": "Assertions",
+        "open_issues": "Open Issues",
+        "actors": "Actors",
+        "quant_facts": "Quant facts",
+        "version_chains": "Version chains",
+        "issue_coverage": "Issue Coverage",
+        "calibration": "Calibration",
+        "coverage_dist": "Coverage distribution",
+        "weakest": "Weakest issues",
+        "issue_fallback": "Issue",
+        "gaps": "Gaps",
+        "clarifications": "Clarifications",
+        "open_work": "Open work",
+    },
+    "finance": {
+        "assertions": "Claims",
+        "open_issues": "Open Theses",
+        "actors": "Entities",
+        "quant_facts": "Quant facts",
+        "version_chains": "Filing versions",
+        "issue_coverage": "Thesis Coverage",
+        "calibration": "Calibration",
+        "coverage_dist": "Coverage distribution",
+        "weakest": "Weakest theses",
+        "issue_fallback": "Thesis",
+        "gaps": "Diligence gaps",
+        "clarifications": "Clarifications",
+        "open_work": "Open work",
+    },
+    "coding": {
+        "assertions": "Findings",
+        "open_issues": "Open Hypotheses",
+        "actors": "Components",
+        "quant_facts": "Metrics",
+        "version_chains": "Artifact versions",
+        "issue_coverage": "Hypothesis Coverage",
+        "calibration": "Calibration",
+        "coverage_dist": "Coverage distribution",
+        "weakest": "Weakest hypotheses",
+        "issue_fallback": "Hypothesis",
+        "gaps": "Verification gaps",
+        "clarifications": "Clarifications",
+        "open_work": "Open work",
+    },
+    "academic_research": {
+        "assertions": "Claims",
+        "open_issues": "Open Questions",
+        "actors": "Authors",
+        "quant_facts": "Quant facts",
+        "version_chains": "Source versions",
+        "issue_coverage": "Claim Coverage",
+        "calibration": "Calibration",
+        "coverage_dist": "Coverage distribution",
+        "weakest": "Weakest claims",
+        "issue_fallback": "Claim",
+        "gaps": "Evidence gaps",
+        "clarifications": "Clarifications",
+        "open_work": "Open work",
+    },
+    "biomedical": {
+        "assertions": "Findings",
+        "open_issues": "Open Questions",
+        "actors": "Entities",
+        "quant_facts": "Quant facts",
+        "version_chains": "Record versions",
+        "issue_coverage": "Finding Coverage",
+        "calibration": "Calibration",
+        "coverage_dist": "Coverage distribution",
+        "weakest": "Weakest findings",
+        "issue_fallback": "Finding",
+        "gaps": "Evidence gaps",
+        "clarifications": "Clarifications",
+        "open_work": "Open work",
+    },
+}
+
+
+def _fmt_overview_panel(data: dict, domain: str = "legal") -> str:
     if not data:
         return (
             _DS_CSS
@@ -797,6 +876,7 @@ def _fmt_overview_panel(data: dict) -> str:
             "</div>"
         )
 
+    labels = _OVERVIEW_PANEL_LABELS.get(domain, _OVERVIEW_PANEL_LABELS["legal"])
     stats = data.get("stats", {})
     so = data.get("so_metrics", {})
     llm = stats.get("llm", {}) if isinstance(stats.get("llm"), dict) else {}
@@ -807,22 +887,22 @@ def _fmt_overview_panel(data: dict) -> str:
     clarifications = data.get("pending_clarifications", []) or []
 
     cards = [
-        _metric_card("Assertions", f"{_safe_int(stats.get('assertion_count', 0)):,}"),
+        _metric_card(labels["assertions"], f"{_safe_int(stats.get('assertion_count', 0)):,}"),
         _metric_card(
-            "Open Issues",
+            labels["open_issues"],
             f"{_safe_int(stats.get('open_issue_count', 0)):,}",
             detail=(
-                f"Gaps: {_safe_int(stats.get('open_gap_count', 0)):,}"
+                f"{labels['gaps']}: {_safe_int(stats.get('open_gap_count', 0)):,}"
                 + (f" | Conflicts: {_safe_int(data.get('contradiction_count', 0)):,}"
                    if data.get("contradiction_count") else "")
             ),
         ),
         _metric_card(
-            "Actors",
+            labels["actors"],
             f"{_safe_int(stats.get('actor_count', 0)):,}",
             detail=(
-                f"Quant facts: {_safe_int(stats.get('quant_fact_count', 0)):,}"
-                + (f" | Version chains: {_safe_int(data.get('version_chain_count', 0)):,}"
+                f"{labels['quant_facts']}: {_safe_int(stats.get('quant_fact_count', 0)):,}"
+                + (f" | {labels['version_chains']}: {_safe_int(data.get('version_chain_count', 0)):,}"
                    if data.get("version_chain_count") else "")
             ),
         ),
@@ -833,13 +913,13 @@ def _fmt_overview_panel(data: dict) -> str:
             tone="amber",
         ),
         _metric_card(
-            "Issue Coverage",
+            labels["issue_coverage"],
             _fmt_percent_html(so.get("issue_coverage_avg")),
             detail=f"Reuse: {_fmt_percent_html(so.get('reuse_rate'))}",
             tone="green",
         ),
         _metric_card(
-            "Calibration",
+            labels["calibration"],
             _fmt_percent_html(so.get("source_role_known_rate")),
             detail=f"Structured: {_fmt_percent_html(so.get('assertion_structure_rate'))}",
         ),
@@ -939,7 +1019,7 @@ def _fmt_overview_panel(data: dict) -> str:
         + "</div>"
         + "<div class='viz-two-col'>"
         + "<div class='viz-panel'>"
-        + "<div class='viz-panel-title'>Coverage distribution</div>"
+        + f"<div class='viz-panel-title'>{_escape(labels['coverage_dist'])}</div>"
         + (
             "".join(coverage_rows)
             if coverage_rows
@@ -970,11 +1050,11 @@ def _fmt_overview_panel(data: dict) -> str:
         + "</div>"
         + "<div class='viz-two-col'>"
         + "<div class='viz-panel'>"
-        + "<div class='viz-panel-title'>Weakest issues</div>"
+        + f"<div class='viz-panel-title'>{_escape(labels['weakest'])}</div>"
         + (
             "".join(
                 "<div class='viz-list-row'>"
-                f"<span>{_escape(issue.get('title') or issue.get('id') or 'Issue')}</span>"
+                f"<span>{_escape(issue.get('title') or issue.get('id') or labels['issue_fallback'])}</span>"
                 f"<strong>{_fmt_percent_html(_safe_float(issue.get('coverage_fraction', 0.0)))}</strong>"
                 "</div>"
                 for issue in weakest if isinstance(issue, dict)
@@ -984,12 +1064,12 @@ def _fmt_overview_panel(data: dict) -> str:
         )
         + "</div>"
         + "<div class='viz-panel'>"
-        + "<div class='viz-panel-title'>Open work</div>"
+        + f"<div class='viz-panel-title'>{_escape(labels['open_work'])}</div>"
         + "<div class='viz-list-columns'>"
-        + "<div><div class='viz-subtitle'>Gaps</div><ul>"
+        + f"<div><div class='viz-subtitle'>{_escape(labels['gaps'])}</div><ul>"
         + gap_items
         + "</ul></div>"
-        + "<div><div class='viz-subtitle'>Clarifications</div><ul>"
+        + f"<div><div class='viz-subtitle'>{_escape(labels['clarifications'])}</div><ul>"
         + clarification_items
         + "</ul></div>"
         + "</div>"
@@ -6096,12 +6176,12 @@ class AppState:
         # current_run_id intentionally NOT cleared here — see docstring.
         return gr.update()
 
-    def load_overview(self, matter_id: str) -> str:
+    def load_overview(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded. Run an investigation first.</div>"
         try:
             data = _run_async(self.backend().get_overview(matter_id))
-            return _fmt_overview_panel(data)
+            return _fmt_overview_panel(data, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading overview: {_escape(exc)}</div>"
 
@@ -6413,7 +6493,7 @@ class AppState:
         overview_html = (
             _err_html("the overview", overview)
             if isinstance(overview, BaseException)
-            else _fmt_overview_panel(overview)
+            else _fmt_overview_panel(overview, domain=_ov_domain)
         )
 
         return {
@@ -8719,7 +8799,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             domain = state._detect_domain(mid)
 
             with ThreadPoolExecutor(max_workers=6) as pool:
-                f_overview = pool.submit(state.load_overview, mid)
+                f_overview = pool.submit(state.load_overview, mid, domain)
                 f_issues = pool.submit(state.load_issues, mid)
                 f_gaps = pool.submit(state.load_gaps, mid)
                 f_assumptions = pool.submit(state.load_assumptions, mid)
@@ -9264,7 +9344,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     _fmt_correction_result(result_text),
                     state.load_assertions(mid),
                     state.load_issues(mid),
-                    state.load_overview(mid),
+                    state.load_overview(mid, domain=state._detect_domain(mid)),
                 )
             return _fmt_correction_result(result_text), gr.update(), gr.update(), gr.update()
 
@@ -9383,7 +9463,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 state.load_review_count_badge(mid, domain=domain),
                 state.load_assertions(mid),
                 state.load_issues(mid),
-                state.load_overview(mid),
+                state.load_overview(mid, domain=domain),
             )
 
         bulk_verify_btn.click(
@@ -9420,7 +9500,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 state.load_review_count_badge(mid, domain=domain),
                 state.load_assertions(mid),
                 state.load_issues(mid),
-                state.load_overview(mid),
+                state.load_overview(mid, domain=domain),
             )
 
         batch_verify_selected_btn.click(

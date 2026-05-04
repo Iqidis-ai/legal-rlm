@@ -1924,6 +1924,32 @@ def test_fmt_overview_panel_xss():
     assert "&lt;script&gt;" in result
 
 
+def test_fmt_overview_panel_domain_labels():
+    """Each domain renders its own terminology in the overview panel."""
+    from irys.ui.app import _fmt_overview_panel
+
+    data = {
+        "stats": {"assertion_count": 5, "open_issue_count": 2, "actor_count": 3},
+        "so_metrics": {},
+        "coverage_report": [],
+        "weakest_issues": [],
+        "top_gaps": [],
+        "pending_clarifications": [],
+    }
+    domain_terms = {
+        "legal": ("Assertions", "Open Issues", "Actors"),
+        "finance": ("Claims", "Open Theses", "Entities"),
+        "coding": ("Findings", "Open Hypotheses", "Components"),
+        "academic_research": ("Claims", "Open Questions", "Authors"),
+        "biomedical": ("Findings", "Open Questions", "Entities"),
+    }
+    for domain, (assertions_label, issues_label, actors_label) in domain_terms.items():
+        result = _fmt_overview_panel(data, domain=domain)
+        assert assertions_label in result, f"{domain}: missing '{assertions_label}'"
+        assert issues_label in result, f"{domain}: missing '{issues_label}'"
+        assert actors_label in result, f"{domain}: missing '{actors_label}'"
+
+
 def test_fmt_overview_panel_non_dict_guards():
     """Non-dict items in weakest/gaps/clarifications/coverage must not crash."""
     from irys.ui.app import _fmt_overview_panel
