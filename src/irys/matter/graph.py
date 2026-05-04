@@ -1714,6 +1714,16 @@ class GapStore:
             result.append(d)
         return result
 
+    def resolve_gap(self, gap_id: str, resolution_note: str = "") -> bool:
+        now = datetime.now(timezone.utc).isoformat()
+        cur = self.db.execute(
+            "UPDATE gap SET status='resolved', resolution_note=?, updated_at=? "
+            "WHERE id=? AND matter_id=? AND status='open'",
+            (resolution_note, now, gap_id, self.matter_id),
+        )
+        self.db.conn.commit()
+        return cur.rowcount > 0
+
     def count_open(self) -> int:
         row = self.db.execute(
             "SELECT COUNT(*) FROM gap WHERE matter_id=? AND status='open'",

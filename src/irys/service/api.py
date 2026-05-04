@@ -2585,6 +2585,20 @@ async def get_matter_gaps(matter_id: str, min_materiality: float = 0.0, limit: O
     return model.gaps.open_gaps(min_materiality=min_materiality, limit=limit)
 
 
+@app.post(
+    "/matter/{matter_id}/gaps/{gap_id}/resolve",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def resolve_gap(matter_id: str, gap_id: str, resolution_note: str = ""):
+    """Mark a gap as resolved with an optional resolution note (SO-7)."""
+    model = await _get_matter_model_or_404(matter_id)
+    resolved = model.gaps.resolve_gap(gap_id, resolution_note)
+    if not resolved:
+        raise HTTPException(status_code=404, detail=f"Gap '{gap_id}' not found or already resolved")
+    return {"resolved": True, "gap_id": gap_id}
+
+
 @app.get(
     "/matter/{matter_id}/assertions/{assertion_id}/correct/revisions",
     tags=["Matter Model"],

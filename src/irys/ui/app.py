@@ -5490,19 +5490,22 @@ def _fmt_gaps(gaps: list, clarifications: list, domain: str = "legal") -> str:
             if deps:
                 dep_labels = [_escape(f"{d.get('affected_type','?')}") for d in deps[:3] if isinstance(d, dict)]
                 dep_str = f"<span style='font-size:10px;color:#6b7280'>{', '.join(dep_labels)}</span>"
+            gap_id = _escape(str(g.get("id", "?"))[:16])
+            full_gap_id = _escape(str(g.get("id", "?")))
             gap_rows += (
                 f"<tr>"
                 f"<td><span class='pill {cls}'>{_escape(label)}</span></td>"
                 f"<td>{desc}</td>"
                 f"<td>{mat_bar}</td>"
                 f"<td>{dep_str}</td>"
+                f"<td><code style='font-size:10px;cursor:pointer;' title='{full_gap_id}'>{gap_id}</code></td>"
                 f"</tr>"
             )
         gap_count = len([g for g in gaps if isinstance(g, dict)])
         parts.append(
             f"<div class='viz-header'><strong>{labels['title']}</strong> — {gap_count} unresolved</div>"
             "<div class='table-wrap'><table class='viz-table'>"
-            "<thead><tr><th>Type</th><th>Description</th><th>Materiality</th><th>Affects</th></tr></thead>"
+            "<thead><tr><th>Type</th><th>Description</th><th>Materiality</th><th>Affects</th><th>ID</th></tr></thead>"
             "<tbody>" + gap_rows + "</tbody></table></div>"
         )
     if clarifications:
@@ -7644,6 +7647,23 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading gaps: {_escape(exc)}</div>"
 
+    def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        gid = (gap_id or "").strip()
+        if not gid:
+            return "Enter a gap ID.", ""
+        try:
+            resolved = _run_async(self.backend().resolve_gap(matter_id, gid, resolution_note.strip()))
+            if not resolved:
+                return f"Gap {_escape(gid[:16])} not found or already resolved.", ""
+            domain = self._detect_domain(matter_id)
+            html = self.load_gaps_detail(matter_id, domain)
+            return f"Resolved gap {_escape(gid[:16])}.", html
+        except Exception as exc:
+            logger.warning("resolve_gap failed: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
+
     def load_assumptions(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -9343,6 +9363,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )
             gaps_detail_html = gr.HTML("<div class='viz-empty'>Gaps will appear here after an investigation.</div>")
             refresh_gaps_btn = gr.Button("Refresh Gaps", variant="secondary", size="sm")
+            with gr.Accordion("Resolve a gap", open=False):
+                with gr.Row():
+                    resolve_gap_id_input = gr.Textbox(
+                        label="Gap ID (copy from table above)", scale=3,
+                    )
+                    resolve_gap_note_input = gr.Textbox(
+                        label="Resolution note (optional)", scale=4,
+                    )
+                    resolve_gap_btn = gr.Button("Resolve Gap", variant="primary", size="sm", scale=1)
+                resolve_gap_result = gr.Markdown("")
 
         with gr.Accordion("Next Steps — prioritized recommendations for your review", open=False):
             gr.Markdown(
@@ -10331,6 +10361,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[gaps_detail_html],
+        )
+        resolve_gap_btn.click(
+            fn=lambda mid, gid, note: state.resolve_gap(mid, gid, note),
+            inputs=[matter_id_box, resolve_gap_id_input, resolve_gap_note_input],
+            outputs=[resolve_gap_result, gaps_detail_html],
         )
         refresh_steering_btn.click(
             fn=lambda mid: state.load_steering_panel(mid, domain=state._detect_domain(mid)),

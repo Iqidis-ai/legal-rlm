@@ -614,6 +614,18 @@
     {
       "source": "src/irys/matter/graph.py",
       "writes": [
+        "gaps"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "GapStore.resolve_gap"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
         "criteria"
       ],
       "broker_status": "legacy_direct_writer",

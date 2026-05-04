@@ -90,6 +90,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str = "") -> bool:
+        """Mark a gap as resolved with an optional note (SO-7)."""
+        ...
+
+    @abstractmethod
     async def list_clarifications(self, matter_id: str, limit: int = 20) -> list[dict]:
         ...
 

@@ -3444,3 +3444,43 @@ def test_xss_proof_status_class_whitelist():
     result = _fmt_issues_panel(issues, domain="legal")
     assert f"proof-{malicious.lower()}" not in result
     assert "proof-none" in result
+
+
+def test_fmt_gaps_shows_gap_id():
+    """Gap resolution UI needs gap IDs visible in the table."""
+    from irys.ui.app import _fmt_gaps
+    gaps = [
+        {"id": "gap-abc123", "gap_type": "missing_document", "description": "Need contract",
+         "materiality_score": 0.8, "dependencies": []},
+    ]
+    result = _fmt_gaps(gaps, [], domain="legal")
+    assert "gap-abc123" in result
+    assert "<th>ID</th>" in result
+    assert "<code" in result
+
+
+def test_resolve_gap_backend_interface():
+    """Verify resolve_gap exists in the backend interface with correct signature."""
+    import inspect
+    from irys.ui.backends.base import UIBackend
+    assert hasattr(UIBackend, "resolve_gap")
+    sig = inspect.signature(UIBackend.resolve_gap)
+    params = list(sig.parameters.keys())
+    assert "matter_id" in params
+    assert "gap_id" in params
+    assert "resolution_note" in params
+
+
+def test_fmt_gaps_non_dict_guard_with_id():
+    """Gap list with mixed types should only render valid dicts."""
+    from irys.ui.app import _fmt_gaps
+    gaps = [
+        {"id": "g1", "gap_type": "missing_predicate", "description": "Need proof",
+         "materiality_score": 0.5},
+        "bad_entry",
+        42,
+        None,
+    ]
+    result = _fmt_gaps(gaps, [], domain="legal")
+    assert "1 unresolved" in result
+    assert "g1" in result
