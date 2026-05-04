@@ -5520,3 +5520,137 @@ def test_backend_interface_balance_predicate_management():
         assert hasattr(UIBackend, method), f"UIBackend missing {method}"
         assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
         assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+# ---- Quant fact review workbench (SO-6) ---- #
+
+def test_quant_fact_workbench_empty():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    wb = model.get_quant_fact_workbench()
+    assert wb["total"] == 0
+    assert wb["total_conflicted"] == 0
+    assert isinstance(wb["by_kind"], list)
+
+
+def test_quant_fact_workbench_with_facts():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    model.quant.record("amount", "$50,000", amount_value=50000.0, currency="USD", subject_type="invoice", subject_id="INV-001")
+    model.quant.record("amount", "$75,000", amount_value=75000.0, currency="USD", subject_type="invoice", subject_id="INV-002")
+    model.quant.record("date", "2025-01-15", date_value="2025-01-15")
+    model.quant.record("rate", "3.5%", rate_value=0.035)
+    wb = model.get_quant_fact_workbench()
+    assert wb["total"] == 4
+    amount_group = next(g for g in wb["by_kind"] if g["kind"] == "amount")
+    assert amount_group["count"] == 2
+    date_group = next(g for g in wb["by_kind"] if g["kind"] == "date")
+    assert date_group["count"] == 1
+
+
+def test_quant_fact_workbench_conflict_detection():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    model.quant.record("amount", "$50,000 on INV-001", amount_value=50000.0, currency="USD", subject_type="invoice", subject_id="INV-001")
+    model.quant.record("amount", "$55,000 on INV-001", amount_value=55000.0, currency="USD", subject_type="invoice", subject_id="INV-001")
+    wb = model.get_quant_fact_workbench()
+    assert wb["total_conflicted"] >= 1
+    assert wb["conflict_groups"] >= 1
+    amount_group = next(g for g in wb["by_kind"] if g["kind"] == "amount")
+    assert amount_group["conflicted"] >= 1
+    conflicted_facts = [f for f in amount_group["facts"] if f.get("has_conflict")]
+    assert len(conflicted_facts) >= 1
+
+
+def test_quant_fact_formatter_empty():
+    from irys.ui.app import _fmt_quant_facts
+    html = _fmt_quant_facts({}, domain="legal")
+    assert "No quantitative facts" in html
+
+
+def test_quant_fact_formatter_renders():
+    from irys.ui.app import _fmt_quant_facts
+    data = {
+        "total": 2,
+        "total_conflicted": 1,
+        "conflict_groups": 1,
+        "by_kind": [
+            {
+                "kind": "amount",
+                "count": 2,
+                "conflicted": 1,
+                "facts": [
+                    {"id": "f1", "raw_text": "$50,000", "amount_value": 50000.0, "currency": "USD",
+                     "subject_type": "invoice", "subject_id": "INV-001", "has_conflict": True},
+                    {"id": "f2", "raw_text": "$55,000", "amount_value": 55000.0, "currency": "USD",
+                     "subject_type": "invoice", "subject_id": "INV-001", "has_conflict": True},
+                ],
+            },
+        ],
+    }
+    html = _fmt_quant_facts(data, domain="legal")
+    assert "Monetary Amounts" in html
+    assert "50,000" in html
+    assert "conflict" in html.lower()
+
+
+def test_quant_fact_formatter_xss():
+    from irys.ui.app import _fmt_quant_facts
+    data = {
+        "total": 1,
+        "total_conflicted": 0,
+        "conflict_groups": 0,
+        "by_kind": [
+            {
+                "kind": "amount",
+                "count": 1,
+                "conflicted": 0,
+                "facts": [
+                    {"id": "xss-id", "raw_text": "<script>alert('xss')</script>",
+                     "amount_value": 100.0, "currency": "USD",
+                     "subject_type": "<b>evil</b>", "subject_id": None, "has_conflict": False},
+                ],
+            },
+        ],
+    }
+    html = _fmt_quant_facts(data, domain="legal")
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_quant_fact_formatter_non_dict_guard():
+    from irys.ui.app import _fmt_quant_facts
+    data = {
+        "total": 1,
+        "total_conflicted": 0,
+        "conflict_groups": 0,
+        "by_kind": [
+            {
+                "kind": "amount",
+                "count": 1,
+                "conflicted": 0,
+                "facts": ["not-a-dict", None, 42],
+            },
+        ],
+    }
+    html = _fmt_quant_facts(data, domain="legal")
+    assert isinstance(html, str)
+
+
+def test_quant_fact_labels_all_five_domains():
+    from irys.ui.app import _QUANT_FACT_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        assert domain in _QUANT_FACT_LABELS
+        labels = _QUANT_FACT_LABELS[domain]
+        for key in ("title", "empty", "amount", "date", "rate", "conflict", "source", "subject"):
+            assert key in labels, f"{domain} missing label '{key}'"
+
+
+def test_backend_interface_balance_quant_facts():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("get_quant_facts",):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"

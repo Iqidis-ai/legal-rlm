@@ -197,6 +197,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_quant_facts(self, matter_id: str, limit: int = 200) -> dict:
+        """Quant fact review workbench: extracted numbers by kind with conflict status (SO-6)."""
+        ...
+
+    @abstractmethod
     async def get_objective_coverage(self, matter_id: str) -> dict:
         """Objective coverage workbench: per-objective criteria, support, gaps (SO-4)."""
         ...

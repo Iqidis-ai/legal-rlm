@@ -577,6 +577,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.assumptions.set_status(assumption_id, status, reason or None)
 
+    async def get_quant_facts(self, matter_id: str, limit: int = 200) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_quant_fact_workbench(limit=limit)
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_objective_coverage_workbench()

@@ -3295,6 +3295,67 @@ class MatterModel:
         )
 
     # ------------------------------------------------------------------
+    # Quant fact review workbench (SO-6)
+    # ------------------------------------------------------------------
+
+    def get_quant_fact_workbench(self, limit: int = 200) -> dict:
+        """Professional quant fact review surface: extracted numbers grouped
+        by kind, with source doc, conflict status, and assertion links."""
+        all_facts = self.quant.list_all(limit=limit)
+        conflicts = self.quant.get_conflicts()
+        conflict_subjects: set[tuple] = set()
+        for c in conflicts:
+            if isinstance(c, dict):
+                conflict_subjects.add((
+                    c.get("subject_type", ""),
+                    c.get("subject_id") or "",
+                    c.get("currency") or "",
+                ))
+
+        by_kind: dict[str, list[dict]] = {}
+        for fact in all_facts:
+            if not isinstance(fact, dict):
+                continue
+            kind = fact.get("quant_kind", "unknown")
+            subj_key = (
+                fact.get("subject_type", ""),
+                fact.get("subject_id") or "",
+                fact.get("currency") or "",
+            )
+            fact["has_conflict"] = subj_key in conflict_subjects
+            by_kind.setdefault(kind, []).append(fact)
+
+        kind_summaries = []
+        for kind in ("amount", "date", "date_range", "rate", "balance", "count"):
+            items = by_kind.get(kind, [])
+            conflicted = sum(1 for f in items if f.get("has_conflict"))
+            kind_summaries.append({
+                "kind": kind,
+                "count": len(items),
+                "conflicted": conflicted,
+                "facts": items,
+            })
+        other_kinds = [k for k in by_kind if k not in ("amount", "date", "date_range", "rate", "balance", "count")]
+        for kind in other_kinds:
+            items = by_kind[kind]
+            kind_summaries.append({
+                "kind": kind,
+                "count": len(items),
+                "conflicted": sum(1 for f in items if f.get("has_conflict")),
+                "facts": items,
+            })
+
+        total = sum(ks["count"] for ks in kind_summaries)
+        total_conflicted = sum(ks["conflicted"] for ks in kind_summaries)
+
+        return {
+            "total": total,
+            "total_conflicted": total_conflicted,
+            "conflict_groups": len(conflicts),
+            "by_kind": kind_summaries,
+        }
+
+    # ------------------------------------------------------------------
     # Quantitative ontology workbench (SO-6, SO-1, SO-3)
     # ------------------------------------------------------------------
 

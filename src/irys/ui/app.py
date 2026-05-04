@@ -5395,6 +5395,187 @@ def _fmt_knowledge_seeds(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_QUANT_FACT_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Extracted Numeric Facts",
+        "empty": "No quantitative facts extracted yet. Run an investigation over financial documents.",
+        "amount": "Monetary Amounts",
+        "date": "Dates",
+        "date_range": "Date Ranges",
+        "rate": "Rates / Percentages",
+        "balance": "Balances",
+        "count": "Counts",
+        "conflict": "Conflicted",
+        "source": "Source",
+        "subject": "Subject",
+    },
+    "finance": {
+        "title": "Extracted Financial Data Points",
+        "empty": "No data points extracted yet. Run an investigation over financial documents.",
+        "amount": "Dollar Amounts",
+        "date": "Dates",
+        "date_range": "Date Ranges",
+        "rate": "Rates / Yields",
+        "balance": "Account Balances",
+        "count": "Counts",
+        "conflict": "Conflicted",
+        "source": "Source",
+        "subject": "Entity / Instrument",
+    },
+    "coding": {
+        "title": "Extracted Metrics",
+        "empty": "No metrics extracted yet. Run an investigation.",
+        "amount": "Numeric Values",
+        "date": "Dates",
+        "date_range": "Date Ranges",
+        "rate": "Percentages",
+        "balance": "Counters",
+        "count": "Counts",
+        "conflict": "Conflicted",
+        "source": "Source",
+        "subject": "Component",
+    },
+    "academic_research": {
+        "title": "Extracted Quantitative Data",
+        "empty": "No quantitative data extracted yet. Run an investigation.",
+        "amount": "Measurements",
+        "date": "Dates",
+        "date_range": "Study Periods",
+        "rate": "Effect Sizes / Rates",
+        "balance": "Baselines",
+        "count": "Sample Sizes",
+        "conflict": "Conflicted",
+        "source": "Source",
+        "subject": "Variable / Endpoint",
+    },
+    "biomedical": {
+        "title": "Extracted Clinical Data",
+        "empty": "No clinical data extracted yet. Run an investigation.",
+        "amount": "Dosages / Measurements",
+        "date": "Dates",
+        "date_range": "Treatment Periods",
+        "rate": "Rates / Hazard Ratios",
+        "balance": "Baselines",
+        "count": "Patient Counts",
+        "conflict": "Conflicted",
+        "source": "Source",
+        "subject": "Endpoint / Biomarker",
+    },
+}
+
+
+def _fmt_quant_facts(data: dict, domain: str = "legal") -> str:
+    labels = _QUANT_FACT_LABELS.get(domain, _QUANT_FACT_LABELS["legal"])
+    if not isinstance(data, dict):
+        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+
+    by_kind = data.get("by_kind", [])
+    if not isinstance(by_kind, list) or not by_kind:
+        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+
+    _raw_total = data.get("total", 0)
+    total = int(_raw_total) if isinstance(_raw_total, (int, float)) else 0
+    _raw_conflicted = data.get("total_conflicted", 0)
+    total_conflicted = int(_raw_conflicted) if isinstance(_raw_conflicted, (int, float)) else 0
+
+    parts = [
+        f"<h3 style='margin:0 0 8px;'>{_escape(labels['title'])}</h3>",
+        f"<div style='display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;'>",
+        f"<span style='color:#4b5563;font-size:0.85em;'>{total} facts</span>",
+    ]
+    if total_conflicted > 0:
+        parts.append(
+            f"<span style='background:#dc2626;color:white;padding:2px 10px;"
+            f"border-radius:10px;font-size:0.85em;'>"
+            f"{total_conflicted} {_escape(labels['conflict'])}</span>"
+        )
+    parts.append("</div>")
+
+    kind_colors = {
+        "amount": "#22c55e", "date": "#3b82f6", "date_range": "#6366f1",
+        "rate": "#f59e0b", "balance": "#8b5cf6", "count": "#6b7280",
+    }
+
+    for group in by_kind:
+        if not isinstance(group, dict):
+            continue
+        kind = str(group.get("kind", "unknown"))
+        facts = group.get("facts", [])
+        if not isinstance(facts, list) or not facts:
+            continue
+        count = int(group.get("count", 0)) if isinstance(group.get("count"), (int, float)) else len(facts)
+        conflicted = int(group.get("conflicted", 0)) if isinstance(group.get("conflicted"), (int, float)) else 0
+        kind_label = _escape(labels.get(kind, kind.replace("_", " ").title()))
+        kind_color = kind_colors.get(kind, "#6b7280")
+
+        parts.append(
+            f"<div style='border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:10px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+            f"<div><b style='color:{kind_color};'>{kind_label}</b>"
+            f" <span style='color:#9ca3af;font-size:0.85em;'>({count})</span></div>"
+        )
+        if conflicted > 0:
+            parts.append(
+                f"<span style='background:#dc2626;color:white;padding:2px 8px;"
+                f"border-radius:8px;font-size:0.78em;'>{conflicted} conflict(s)</span>"
+            )
+        parts.append("</div>")
+
+        parts.append("<div style='margin-top:8px;font-size:0.82em;'>")
+        for fact in facts[:20]:
+            if not isinstance(fact, dict):
+                continue
+            raw = _escape(str(fact.get("raw_text", ""))[:120])
+            amount = fact.get("amount_value")
+            currency = _escape(str(fact.get("currency") or ""))
+            subj_type = _escape(str(fact.get("subject_type") or ""))
+            subj_id = _escape(str(fact.get("subject_id") or "")[:40])
+            has_conflict = fact.get("has_conflict", False)
+            fid = _escape(str(fact.get("id", ""))[:16])
+
+            amount_display = ""
+            if amount is not None and isinstance(amount, (int, float)) and math.isfinite(amount):
+                if currency:
+                    amount_display = f"{currency} {amount:,.2f}"
+                else:
+                    amount_display = f"{amount:,.2f}"
+            elif fact.get("rate_value") is not None:
+                rv = fact["rate_value"]
+                if isinstance(rv, (int, float)) and math.isfinite(rv):
+                    amount_display = f"{rv:.2%}" if abs(rv) < 10 else f"{rv:,.2f}"
+            elif fact.get("date_value"):
+                amount_display = _escape(str(fact["date_value"])[:20])
+
+            conflict_badge = ""
+            if has_conflict:
+                conflict_badge = (
+                    " <span style='background:#fecaca;color:#991b1b;padding:1px 6px;"
+                    "border-radius:4px;font-size:0.82em;'>conflict</span>"
+                )
+
+            subject_info = ""
+            if subj_type:
+                subject_info = f" <span style='color:#6b7280;'>({subj_type}"
+                if subj_id:
+                    subject_info += f": {subj_id}"
+                subject_info += ")</span>"
+
+            parts.append(
+                f"<div style='margin:3px 0;padding:4px 8px;background:#f9fafb;"
+                f"border-radius:4px;border-left:3px solid {kind_color};'>"
+                f"<span style='font-weight:500;'>{_escape(amount_display)}</span>"
+                f"{conflict_badge}{subject_info}"
+                f" <span style='color:#9ca3af;font-size:0.85em;'>{raw}</span>"
+                f" <span style='color:#d1d5db;font-size:0.75em;cursor:pointer;' title='{fid}'>{fid}</span>"
+                f"</div>"
+            )
+        if len(facts) > 20:
+            parts.append(f"<div style='color:#9ca3af;margin-top:4px;'>... and {len(facts) - 20} more</div>")
+        parts.append("</div></div>")
+
+    return "\n".join(parts)
+
+
 def _fmt_quant_panel(
     payment_recon: dict,
     invoice_chain: list,
@@ -9896,6 +10077,19 @@ class AppState:
         except Exception as exc:
             return f"Error: {_escape(str(exc))}", ""
 
+    def load_quant_facts(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_quant_facts(matter_id))
+            if not isinstance(data, dict):
+                logger.warning("load_quant_facts: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_quant_facts(data, domain=domain)
+        except Exception as exc:
+            logger.warning("load_quant_facts failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def load_quant_ontology(self, matter_id: str, domain: str = "legal") -> tuple[str, Any]:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>", gr.update(choices=[])
@@ -12024,6 +12218,17 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     approve_quant_alias_btn = gr.Button("Approve", variant="primary", size="sm", scale=1)
                 quant_alias_result = gr.Markdown("")
 
+            with gr.Accordion("Quant Fact Review — inspect every extracted number", open=False):
+                gr.Markdown(
+                    "Every numeric fact extracted from documents: amounts, dates, rates, counts. "
+                    "Grouped by type with conflict detection. Review individual facts and their "
+                    "source linkage to ensure the numbers driving the analysis are correct."
+                )
+                quant_facts_html = gr.HTML(
+                    "<div class='viz-empty'>Quant facts will appear after an investigation.</div>"
+                )
+                refresh_quant_facts_btn = gr.Button("Refresh Quant Facts", variant="secondary", size="sm")
+
         with gr.Accordion("Timeline — dated events across the matter", open=False):
             gr.Markdown(
                 "Chronological events from dated facts and claims pinned to a point in time."
@@ -12934,6 +13139,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_knowledge_seeds(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[knowledge_seeds_html],
+            ).then(
+                fn=lambda mid: state.load_quant_facts(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[quant_facts_html],
             )
         else:
             submit_btn.click(
@@ -13020,6 +13229,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_knowledge_seeds(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[knowledge_seeds_html],
+            ).then(
+                fn=lambda mid: state.load_quant_facts(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[quant_facts_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -13115,6 +13328,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_knowledge_seeds(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[knowledge_seeds_html],
+        ).then(
+            fn=lambda mid: state.load_quant_facts(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[quant_facts_html],
         )
 
         export_report_btn.click(
@@ -13242,6 +13459,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, raw, canonical, unit: state.approve_quant_alias(mid, raw, canonical, unit),
             inputs=[matter_id_box, quant_alias_raw_dropdown, quant_alias_canonical_dropdown, quant_alias_unit_input],
             outputs=[quant_alias_result, quant_ontology_html, quant_alias_raw_dropdown],
+        )
+        refresh_quant_facts_btn.click(
+            fn=lambda mid: state.load_quant_facts(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[quant_facts_html],
         )
         refresh_timeline_btn.click(
             fn=lambda mid: state.load_timeline(mid, domain=state._detect_domain(mid)),

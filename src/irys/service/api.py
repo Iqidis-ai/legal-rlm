@@ -2806,6 +2806,17 @@ async def add_criterion(
     return {"predicate_id": pid, "objective_id": objective_id}
 
 
+@app.get(
+    "/matter/{matter_id}/quant-facts",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_quant_facts(matter_id: str, limit: int = Query(default=200, ge=1, le=1000)):
+    """Return quant fact review workbench: extracted numbers grouped by kind with conflict status (SO-6)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_quant_fact_workbench(limit=limit)
+
+
 _PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
 
 
