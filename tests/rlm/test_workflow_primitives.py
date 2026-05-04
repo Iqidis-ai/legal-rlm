@@ -3350,3 +3350,61 @@ def test_fmt_issue_assertions_with_authorities():
     assert "Linked Authorities" in result
     assert "case" in result
     assert "binding" in result
+
+
+def test_fmt_investigation_history_domain_labels():
+    from irys.ui.app import _fmt_investigation_history_panel
+    runs = [
+        {"query": "What happened?", "operation_type": "query", "status": "completed",
+         "research_mode": "deep", "llm_request_count": 5, "llm_estimated_cost_usd": 0.02,
+         "started_at": "2026-05-01T10:00:00"},
+    ]
+    legal = _fmt_investigation_history_panel(runs, domain="legal")
+    assert "Investigation History" in legal
+    assert "Investigation" in legal
+    assert "1 run recorded" in legal
+
+    finance = _fmt_investigation_history_panel(runs, domain="finance")
+    assert "Analysis History" in finance
+    assert "Analysis" in finance
+
+    bio = _fmt_investigation_history_panel(runs, domain="biomedical")
+    assert "Case Review History" in bio
+    assert "Case Review" in bio
+    assert "Clinical Query" in bio
+
+    research = _fmt_investigation_history_panel(runs, domain="academic_research")
+    assert "Research Session History" in research
+    assert "Research Question" in research
+    assert "1 session recorded" in research
+
+
+def test_fmt_investigation_history_domain_operation_labels():
+    from irys.ui.app import _fmt_investigation_history_panel
+    runs = [
+        {"query": "Fix bug", "operation_type": "correction", "status": "completed"},
+    ]
+    legal = _fmt_investigation_history_panel(runs, domain="legal")
+    assert "Correction" in legal
+
+    coding = _fmt_investigation_history_panel(runs, domain="coding")
+    assert "Patch" in coding
+
+    bio = _fmt_investigation_history_panel(runs, domain="biomedical")
+    assert "Amendment" in bio
+
+
+def test_fmt_investigation_history_empty_all_domains():
+    from irys.ui.app import _fmt_investigation_history_panel
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        result = _fmt_investigation_history_panel([], domain=domain)
+        assert "viz-empty" in result
+        assert len(result) > 20
+
+
+def test_fmt_investigation_history_non_dict_guard():
+    from irys.ui.app import _fmt_investigation_history_panel
+    runs = [{"query": "Q1", "status": "completed"}, "bad", 42, None]
+    result = _fmt_investigation_history_panel(runs, domain="legal")
+    assert "1 run recorded" in result
+    assert "Q1" in result

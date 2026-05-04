@@ -2779,43 +2779,154 @@ _RUN_STATUS_COLORS: dict[str, str] = {
     "error": "#ef4444",
 }
 
-_OPERATION_LABELS: dict[str, str] = {
-    "query": "Investigation",
-    "clarification_answer": "Clarification",
-    "redirect": "Redirect",
-    "resume": "Resume",
-    "correction": "Correction",
-    "verify": "Verification",
+_OPERATION_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "query": "Investigation",
+        "clarification_answer": "Clarification",
+        "redirect": "Redirect",
+        "resume": "Resume",
+        "correction": "Correction",
+        "verify": "Verification",
+    },
+    "finance": {
+        "query": "Analysis",
+        "clarification_answer": "Data Request",
+        "redirect": "Rebalance",
+        "resume": "Resume",
+        "correction": "Adjustment",
+        "verify": "Reconciliation",
+    },
+    "coding": {
+        "query": "Analysis",
+        "clarification_answer": "Clarification",
+        "redirect": "Redirect",
+        "resume": "Resume",
+        "correction": "Patch",
+        "verify": "Verification",
+    },
+    "academic_research": {
+        "query": "Literature Review",
+        "clarification_answer": "Clarification",
+        "redirect": "Reorientation",
+        "resume": "Resume",
+        "correction": "Revision",
+        "verify": "Peer Review",
+    },
+    "biomedical": {
+        "query": "Case Review",
+        "clarification_answer": "Clinical Query",
+        "redirect": "Differential Pivot",
+        "resume": "Resume",
+        "correction": "Amendment",
+        "verify": "Validation",
+    },
+}
+
+_INVESTIGATION_HISTORY_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Investigation History",
+        "empty": "No investigation runs recorded yet.",
+        "col_query": "Query",
+        "col_type": "Type",
+        "col_status": "Status",
+        "col_mode": "Mode",
+        "col_llm": "LLM Calls",
+        "col_cost": "Cost",
+        "col_reuse": "Reuse",
+        "col_started": "Started",
+        "run_unit": "run",
+        "runs_unit": "runs",
+    },
+    "finance": {
+        "title": "Analysis History",
+        "empty": "No analysis runs recorded yet.",
+        "col_query": "Query",
+        "col_type": "Type",
+        "col_status": "Status",
+        "col_mode": "Mode",
+        "col_llm": "Model Calls",
+        "col_cost": "Cost",
+        "col_reuse": "Cache Rate",
+        "col_started": "Started",
+        "run_unit": "run",
+        "runs_unit": "runs",
+    },
+    "coding": {
+        "title": "Analysis History",
+        "empty": "No analysis runs recorded yet.",
+        "col_query": "Query",
+        "col_type": "Type",
+        "col_status": "Status",
+        "col_mode": "Mode",
+        "col_llm": "LLM Calls",
+        "col_cost": "Cost",
+        "col_reuse": "Cache Rate",
+        "col_started": "Started",
+        "run_unit": "run",
+        "runs_unit": "runs",
+    },
+    "academic_research": {
+        "title": "Research Session History",
+        "empty": "No research sessions recorded yet.",
+        "col_query": "Research Question",
+        "col_type": "Type",
+        "col_status": "Status",
+        "col_mode": "Mode",
+        "col_llm": "LLM Calls",
+        "col_cost": "Cost",
+        "col_reuse": "Reuse",
+        "col_started": "Started",
+        "run_unit": "session",
+        "runs_unit": "sessions",
+    },
+    "biomedical": {
+        "title": "Case Review History",
+        "empty": "No case reviews recorded yet.",
+        "col_query": "Clinical Query",
+        "col_type": "Type",
+        "col_status": "Status",
+        "col_mode": "Mode",
+        "col_llm": "Model Calls",
+        "col_cost": "Cost",
+        "col_reuse": "Reuse",
+        "col_started": "Started",
+        "run_unit": "review",
+        "runs_unit": "reviews",
+    },
 }
 
 
 def _fmt_investigation_history_panel(runs: list, domain: str = "legal") -> str:
+    L = _INVESTIGATION_HISTORY_LABELS.get(domain, _INVESTIGATION_HISTORY_LABELS["legal"])
+    OL = _OPERATION_LABELS.get(domain, _OPERATION_LABELS["legal"])
     if not runs or not isinstance(runs, list):
-        return "<div class='viz-empty'>No investigation runs recorded yet.</div>"
+        return f"<div class='viz-empty'>{L['empty']}</div>"
 
     valid = [r for r in runs if isinstance(r, dict)]
     if not valid:
-        return "<div class='viz-empty'>No investigation runs recorded yet.</div>"
+        return f"<div class='viz-empty'>{L['empty']}</div>"
 
+    count = len(valid)
+    unit = L["run_unit"] if count == 1 else L["runs_unit"]
     parts = [
-        "<h3 style='margin:0 0 8px 0;'>Investigation History</h3>",
-        f"<div style='color:#666;font-size:0.9em;margin-bottom:8px;'>{len(valid)} run{'s' if len(valid) != 1 else ''} recorded</div>",
+        f"<h3 style='margin:0 0 8px 0;'>{L['title']}</h3>",
+        f"<div style='color:#666;font-size:0.9em;margin-bottom:8px;'>{count} {unit} recorded</div>",
         "<table style='border-collapse:collapse;width:100%;font-size:0.85em;'>",
         "<tr style='background:#f1f5f9;'>"
-        "<th style='text-align:left;padding:4px 8px;'>Query</th>"
-        "<th style='text-align:left;padding:4px 8px;'>Type</th>"
-        "<th style='text-align:left;padding:4px 8px;'>Status</th>"
-        "<th style='text-align:left;padding:4px 8px;'>Mode</th>"
-        "<th style='text-align:left;padding:4px 8px;'>LLM Calls</th>"
-        "<th style='text-align:left;padding:4px 8px;'>Cost</th>"
-        "<th style='text-align:left;padding:4px 8px;'>Reuse</th>"
-        "<th style='text-align:left;padding:4px 8px;'>Started</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{L['col_query']}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{L['col_type']}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{L['col_status']}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{L['col_mode']}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{L['col_llm']}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{L['col_cost']}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{L['col_reuse']}</th>"
+        f"<th style='text-align:left;padding:4px 8px;'>{L['col_started']}</th>"
         "</tr>",
     ]
     for run in valid:
         query = _escape(str(run.get("query", "—"))[:60])
         op_type = str(run.get("operation_type", "query"))
-        op_label = _escape(_OPERATION_LABELS.get(op_type, op_type.replace("_", " ").title()))
+        op_label = _escape(OL.get(op_type, op_type.replace("_", " ").title()))
         status = str(run.get("status", "unknown"))
         status_color = _RUN_STATUS_COLORS.get(status, "#94a3b8")
         status_display = _escape(status)
