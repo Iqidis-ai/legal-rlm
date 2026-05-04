@@ -371,7 +371,8 @@ def _try_rehydrate_matter_model(matter_id: str, config: ServiceConfig) -> Option
                 ).fetchone()
                 if row is not None:
                     return MatterModel(db, matter_id)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Skipping corpus dir %s during rehydration: %s", corpus_dir, exc)
                 continue
     except Exception as e:
         logger.debug(f"Matter model rehydration failed for {matter_id}: {e}")
@@ -433,8 +434,8 @@ async def health_check():
             s3 = boto3.client("s3", region_name=config.s3_region)
             s3.head_bucket(Bucket=config.s3_bucket)
             s3_connected = True
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("S3 head_bucket check failed for %s: %s", config.s3_bucket, exc)
 
     # Check Gemini connection
     gemini_connected = bool(config.gemini_api_key)
@@ -588,8 +589,8 @@ async def _run_investigation(
             _mm = _active_matter_models[job.matter_id]
             try:
                 job.open_gaps = _mm.gaps.open_gaps(min_materiality=0.3)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("open_gaps failed for job %s matter %s: %s", job_id, job.matter_id, exc)
 
         logger.info(f"Job {job_id} {job.status.value} in {job.duration_seconds:.1f}s")
 
@@ -900,8 +901,8 @@ async def _run_upload_investigation(
         if job.matter_id and job.matter_id in _active_matter_models:
             try:
                 job.open_gaps = _active_matter_models[job.matter_id].gaps.open_gaps(min_materiality=0.3)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("open_gaps failed for upload job %s: %s", job_id, exc)
         logger.info(f"Upload job {job_id} {job.status.value} in {job.duration_seconds:.1f}s (mode={'local' if is_local else 's3'})")
 
         # Call webhook if provided
@@ -1050,8 +1051,8 @@ async def upload_search(
         elif s3_repo and s3_prefix:
             try:
                 await s3_repo.delete_prefix(s3_prefix)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("S3 cleanup failed for prefix %s: %s", s3_prefix, exc)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         _active_sync_requests -= 1
@@ -1209,8 +1210,8 @@ async def upload_investigate_sync(
                 _sm = _active_matter_models.get(sync_matter_id)
                 if _sm is not None:
                     _sync_open_gaps = _sm.gaps.open_gaps(min_materiality=0.3)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("open_gaps failed for sync matter %s: %s", sync_matter_id, exc)
         # Use exact state._run_id set by engine; reasoning_trail[0] is best-effort only (r40 fix).
         _sync_run_id = (getattr(result.state, "_run_id", None)
                         or (((getattr(result.state, "reasoning_trail", None) or []) or [{}])[0].get("run_id")))
@@ -1249,8 +1250,8 @@ async def upload_investigate_sync(
         elif s3_repo and s3_prefix:
             try:
                 await s3_repo.delete_prefix(s3_prefix)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("S3 cleanup failed for prefix %s: %s", s3_prefix, exc)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         _active_sync_requests -= 1
@@ -1392,8 +1393,8 @@ async def _run_urls_investigation(
             _url_mm = _active_matter_models[job.matter_id]
             try:
                 job.open_gaps = _url_mm.gaps.open_gaps(min_materiality=0.3)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("open_gaps failed for URL job %s: %s", job_id, exc)
 
         logger.info(f"URLs job {job_id} {job.status.value} in {job.duration_seconds:.1f}s")
 
@@ -1549,8 +1550,8 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
                 _um = _active_matter_models.get(urls_matter_id)
                 if _um is not None:
                     _urls_open_gaps = _um.gaps.open_gaps(min_materiality=0.3)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("open_gaps failed for URL sync matter %s: %s", urls_matter_id, exc)
         # Use exact state._run_id set by engine; reasoning_trail[0] is best-effort only (r40 fix).
         _urls_run_id = (getattr(result.state, "_run_id", None)
                         or (((getattr(result.state, "reasoning_trail", None) or []) or [{}])[0].get("run_id")))
@@ -1808,7 +1809,8 @@ async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
             ).fetchone()
             if not _tv:
                 _trust_run_id = None
-        except Exception:
+        except Exception as exc:
+            logger.warning("trust_override run validation query failed for %s: %s", model.matter_id, exc)
             _trust_run_id = None
     if not _trust_run_id:
         try:
@@ -1820,8 +1822,8 @@ async def set_trust_override(matter_id: str, request: TrustOverrideRequest):
             ).fetchone()
             if _trust_run_row is not None:
                 _trust_run_id = _trust_run_row["id"]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("trust_override run lookup failed for %s: %s", model.matter_id, exc)
     try:
         override_id = model.set_trust_override(
             request.document_pattern, request.trust_level, request.note,
@@ -2646,7 +2648,8 @@ async def correct_assertion(
             ).fetchone()
             if not _valid:
                 _active_run_id = None  # stale or foreign run — fall through to lookup
-        except Exception:
+        except Exception as exc:
+            logger.warning("correct_assertion run validation query failed for %s: %s", model.matter_id, exc)
             _active_run_id = None
     if not _active_run_id:
         try:
@@ -2658,8 +2661,8 @@ async def correct_assertion(
             ).fetchone()
             if _active_run_row is not None:
                 _active_run_id = _active_run_row["id"]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("correct_assertion run lookup failed for %s: %s", model.matter_id, exc)
 
     try:
         result = model.correct_assertion(
@@ -2700,8 +2703,8 @@ async def correct_assertion(
                 f"Assertion '{prop_text}' corrected to {request.new_belief_state}. "
                 f"Re-examine evidence related to this claim. {synth_note}".strip(),
             )
-    except Exception:
-        pass  # steering injection is best-effort; never block the response
+    except Exception as exc:
+        logger.warning("steering injection failed for matter %s: %s", matter_id, exc)
 
     # SO-2 convergence: if BFS was truncated after 3 inline rounds, deferred work
     # is in the durable pending queue but will only run on the next investigation flush.
@@ -2777,7 +2780,8 @@ def _background_flush_loop(matter_id: str, model) -> None:
                     _threading.Thread(
                         target=_background_flush_loop, args=(matter_id, model), daemon=False
                     ).start()
-                except Exception:
+                except Exception as exc:
+                    logger.warning("background_flush thread start failed for %s: %s", matter_id, exc)
                     model._bg_flush_running.release()
 
 
@@ -3561,14 +3565,14 @@ async def get_matter_overview(matter_id: str):
     coverage_report: list = []
     try:
         coverage_report = model.get_issue_coverage_report()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("get_issue_coverage_report failed for %s: %s", matter_id, exc)
 
     so = {}
     try:
         so = model.get_so_metrics(_coverage_report=coverage_report)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("get_so_metrics failed for %s: %s", matter_id, exc)
 
     # Weakest issues — lowest coverage_fraction first, limit 5
     weakest_issues = []
@@ -3581,15 +3585,15 @@ async def get_matter_overview(matter_id: str):
     top_gaps = []
     try:
         top_gaps = model.gaps.open_gaps(limit=5)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("open_gaps failed for overview %s: %s", matter_id, exc)
 
     # Pending clarifications — limit 5
     clarifications = []
     try:
         clarifications = model.clarifications.get_pending(limit=5)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("get_pending clarifications failed for %s: %s", matter_id, exc)
 
     domain_composition = {}
     try:
@@ -3599,8 +3603,8 @@ async def get_matter_overview(matter_id: str):
             "composed_trust_weights": tw,
             "primary_domain_profile_id": primary,
         }
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("domain_composition read failed for %s: %s", matter_id, exc)
 
     return {
         "matter_id": matter_id,
@@ -3711,8 +3715,8 @@ async def stream_run_events(matter_id: str, run_id: str, after_seq: int = -1, re
                     # Emit any remaining events before closing
                     yield f"data: {_json.dumps({'event': 'run_terminal', 'status': run_row['status']})}\n\n"
                     break
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("SSE run_session poll failed for run %s: %s", run_id, exc)
 
             await asyncio.sleep(poll_interval)
 
