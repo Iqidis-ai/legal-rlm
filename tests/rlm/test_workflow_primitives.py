@@ -9641,3 +9641,66 @@ def test_promote_knowledge_seed_backend_balance():
     assert hasattr(UIBackend, "promote_knowledge_seed")
     assert hasattr(InProcessBackend, "promote_knowledge_seed")
     assert hasattr(HttpBackend, "promote_knowledge_seed")
+
+
+# ------------------------------------------------------------------ #
+# Privilege taint propagation (SO-5, SO-7, SO-2)
+# ------------------------------------------------------------------ #
+
+
+def test_privilege_taint_propagation_model():
+    """reclassify_privilege writes privilege_restricted taint and build_query_context filters it."""
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("priv test")
+    from irys.matter.runtime import MatterRuntimeAdapter
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    inv_id, _ = model.inventory.upsert("priv.docx", "a" * 64, size_bytes=1)
+    model.document_cards.upsert(doc_id=inv_id, title="Priv doc", doc_type="internal", privilege_flag=False)
+    aid = adapter.record_fact("Privileged fact", "priv.docx")
+    # Before privilege: assertion is clean.
+    assert model.memory_broker.object_is_clean("assertion", aid)
+    # Mark privileged.
+    model.reclassify_privilege("priv.docx", new_flag=True, reviewed_by_kind="user")
+    # After: assertion and document are tainted.
+    assert not model.memory_broker.object_is_clean("assertion", aid)
+    assert not model.memory_broker.object_is_clean("artifact", inv_id)
+    # build_query_context should filter tainted assertions.
+    ctx = model.build_query_context()
+    assert inv_id not in ctx.known_document_ids
+
+
+def test_privilege_taint_removal_model():
+    """Removing privilege clears taint records so objects re-enter clean pipeline."""
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("priv clear")
+    from irys.matter.runtime import MatterRuntimeAdapter
+    adapter = MatterRuntimeAdapter(model, run_id=run_id)
+    inv_id, _ = model.inventory.upsert("was-priv.docx", "b" * 64, size_bytes=1)
+    model.document_cards.upsert(doc_id=inv_id, title="Was priv", doc_type="internal", privilege_flag=False)
+    aid = adapter.record_fact("Was secret", "was-priv.docx")
+    model.reclassify_privilege("was-priv.docx", new_flag=True, reviewed_by_kind="user")
+    assert not model.memory_broker.object_is_clean("assertion", aid)
+    # Remove privilege.
+    model.reclassify_privilege("was-priv.docx", new_flag=False, reviewed_by_kind="user")
+    assert model.memory_broker.object_is_clean("assertion", aid)
+    assert model.memory_broker.object_is_clean("artifact", inv_id)
+
+
+def test_remove_object_taint_by_class_broker():
+    """MemoryBrokerStore.remove_object_taint_by_class deletes only the specified class."""
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    broker = model.memory_broker
+    broker.record_object_taint(target_kind="assertion", target_id="a1", taint_class="privilege_restricted")
+    broker.record_object_taint(target_kind="assertion", target_id="a1", taint_class="unknown_taint")
+    assert not broker.object_is_clean("assertion", "a1")
+    deleted = broker.remove_object_taint_by_class("assertion", "a1", "privilege_restricted")
+    assert deleted == 1
+    # Still tainted by unknown_taint.
+    assert not broker.object_is_clean("assertion", "a1")
+    # Remove the other one.
+    deleted2 = broker.remove_object_taint_by_class("assertion", "a1", "unknown_taint")
+    assert deleted2 == 1
+    assert broker.object_is_clean("assertion", "a1")
