@@ -583,6 +583,13 @@ def _escape(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
 
+def _error_html(data: Any) -> str | None:
+    """If data is an error dict from the HTTP backend, return visible error HTML. Otherwise None."""
+    if isinstance(data, dict) and "error" in data:
+        return f"<div class='viz-empty'>Backend error: {_escape(data['error'])}</div>"
+    return None
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -876,6 +883,8 @@ _OVERVIEW_PANEL_LABELS = {
 
 
 def _fmt_overview_panel(data: dict, domain: str = "legal") -> str:
+    if err := _error_html(data):
+        return err
     if not data:
         return (
             _DS_CSS
@@ -3806,6 +3815,8 @@ _DOC_CONSOLE_LABELS: dict[str, dict[str, str]] = {
 def _fmt_document_console(data: dict, domain: str = "legal") -> str:
     if not data or not isinstance(data, dict):
         return "<div class='viz-empty'>No document data available.</div>"
+    if err := _error_html(data):
+        return err
 
     L = _DOC_CONSOLE_LABELS.get(domain, _DOC_CONSOLE_LABELS["legal"])
     ref = _escape(str(data.get("document_ref", "")))
@@ -4021,6 +4032,8 @@ def _fmt_taint_summary_panel(data: dict, domain: str = "legal") -> str:
     labels = _TAINT_LABELS.get(domain, _TAINT_LABELS["legal"])
     if not data or not isinstance(data, dict):
         return f"<div class='viz-empty'>{labels['empty']}</div>"
+    if err := _error_html(data):
+        return err
 
     total = int(data.get("total", 0)) if isinstance(data.get("total"), (int, float)) else 0
     if total == 0:
@@ -4347,6 +4360,8 @@ def _fmt_domain_composition_panel(data: dict, domain: str = "legal") -> str:
     L = _DOMAIN_COMPOSITION_LABELS.get(domain, _DOMAIN_COMPOSITION_LABELS["legal"])
     if not data or not isinstance(data, dict):
         return f"<div class='viz-empty'>{L['empty']}</div>"
+    if err := _error_html(data):
+        return err
 
     primary = _escape(str(data.get("primary_domain_profile_id") or "unknown"))
     facets = data.get("facets") or {}
@@ -7027,6 +7042,8 @@ def _fmt_scenario_snapshot_history(data: dict, domain: str = "legal") -> str:
     L = _SNAPSHOT_HISTORY_LABELS.get(domain, _SNAPSHOT_HISTORY_LABELS["legal"])
     if not data or not isinstance(data, dict):
         return f"<div class='viz-empty'>{L['empty']}</div>"
+    if err := _error_html(data):
+        return err
 
     snapshots = data.get("snapshots", [])
     if not isinstance(snapshots, list) or not snapshots:
@@ -7953,6 +7970,8 @@ def _fmt_domain_readiness(data: dict, domain: str = "legal") -> str:
 
     if not data or not isinstance(data, dict):
         return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+    if err := _error_html(data):
+        return err
 
     profiles = data.get("profiles", [])
     if not isinstance(profiles, list) or not profiles:
@@ -8150,6 +8169,8 @@ def _fmt_issue_brief(data: dict, domain: str = "legal") -> str:
 
     if not data or not isinstance(data, dict):
         return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+    if err := _error_html(data):
+        return err
 
     sections = data.get("sections", [])
     if not isinstance(sections, list) or not sections:
@@ -9644,6 +9665,8 @@ def _fmt_assumption_review_workbench(data: dict, domain: str = "legal") -> str:
 
     if not data or not isinstance(data, dict):
         return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+    if err := _error_html(data):
+        return err
 
     counts = data.get("counts", {})
     if not isinstance(counts, dict):
@@ -10042,6 +10065,8 @@ _READINESS_SEVERITY_COLORS: dict[str, str] = {
 def _fmt_readiness_panel(data: dict, domain: str = "legal") -> str:
     if not data or not isinstance(data, dict):
         return "<div class='viz-empty'>No readiness data available.</div>"
+    if err := _error_html(data):
+        return err
 
     L = _READINESS_LABELS.get(domain, _READINESS_LABELS["legal"])
     readiness = data.get("readiness", "blocked")
