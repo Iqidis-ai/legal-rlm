@@ -3216,6 +3216,8 @@ def _fmt_communication_map_panel(graph: dict) -> str:
     actor_weights: dict[str, int] = defaultdict(int)
     document_weights: dict[str, int] = defaultdict(int)
     for edge in edges:
+        if not isinstance(edge, dict):
+            continue
         actor_id = edge.get("actor_id")
         document_id = edge.get("document_id")
         count = _safe_int(edge.get("occurrence_count", 0))
@@ -3224,7 +3226,7 @@ def _fmt_communication_map_panel(graph: dict) -> str:
         if document_id:
             document_weights[document_id] += count
 
-    actor_lookup = {actor.get("id"): actor for actor in actors}
+    actor_lookup = {actor.get("id"): actor for actor in actors if isinstance(actor, dict)}
     actor_ids = sorted(actor_weights, key=lambda key: actor_weights[key], reverse=True)[:12]
     doc_ids = sorted(document_weights, key=lambda key: document_weights[key], reverse=True)[:14]
     actor_index = {actor_id: idx for idx, actor_id in enumerate(actor_ids)}
@@ -3232,7 +3234,7 @@ def _fmt_communication_map_panel(graph: dict) -> str:
     filtered_edges = [
         edge
         for edge in edges
-        if edge.get("actor_id") in actor_index and edge.get("document_id") in doc_index
+        if isinstance(edge, dict) and edge.get("actor_id") in actor_index and edge.get("document_id") in doc_index
     ]
     if not filtered_edges:
         return "<div class='viz-empty'>Communication graph has no dense connections to render.</div>"
@@ -3286,6 +3288,8 @@ def _fmt_communication_map_panel(graph: dict) -> str:
     actor_doc_counts: dict[str, int] = defaultdict(int)
     document_actor_counts: dict[str, set[str]] = defaultdict(set)
     for edge in edges:
+        if not isinstance(edge, dict):
+            continue
         actor_id = edge.get("actor_id")
         document_id = edge.get("document_id")
         if actor_id and document_id:
@@ -3397,7 +3401,7 @@ def _fmt_llm_analytics_panel(
         total = _safe_int(b_totals.get(key) or summary.get(key, 0))
         if total or not calls:
             return total
-        return sum(_safe_int(call.get(key, 0)) for call in calls)
+        return sum(_safe_int(call.get(key, 0)) for call in calls if isinstance(call, dict))
 
     input_tokens = _token_total("input_tokens")
     cache_tokens = _token_total("cache_read_tokens")
@@ -3416,6 +3420,8 @@ def _fmt_llm_analytics_panel(
     latency_count = 0
     sampled_failures = 0
     for call in calls:
+        if not isinstance(call, dict):
+            continue
         latency = _safe_float(call.get("latency_ms"), 0.0)
         if latency > 0:
             total_latency += latency
@@ -3487,7 +3493,7 @@ def _fmt_llm_analytics_panel(
     # Per-stage panel: prefer richer breakdown data when present.
     by_stage = (breakdown or {}).get("by_stage") or []
     if by_stage:
-        stage_max = max((s.get("estimated_cost_usd") or 0) for s in by_stage)
+        stage_max = max((s.get("estimated_cost_usd") or 0) for s in by_stage if isinstance(s, dict))
         stage_rows = "".join(
             _bar_row(
                 s.get("stage") or "unknown",
@@ -3507,12 +3513,14 @@ def _fmt_llm_analytics_panel(
                 ),
                 tone="amber",
             )
-            for s in by_stage
+            for s in by_stage if isinstance(s, dict)
         )
     else:
         stage_costs: dict[str, float] = defaultdict(float)
         stage_calls: dict[str, int] = defaultdict(int)
         for call in calls:
+            if not isinstance(call, dict):
+                continue
             label = call.get("usage_label") or "unknown"
             stage_costs[label] += _safe_float(call.get("estimated_cost_usd", 0.0))
             stage_calls[label] += 1
@@ -3531,7 +3539,7 @@ def _fmt_llm_analytics_panel(
     # Per-tier panel.
     by_tier = (breakdown or {}).get("by_tier") or []
     if by_tier:
-        tier_max = max((t.get("estimated_cost_usd") or 0) for t in by_tier)
+        tier_max = max((t.get("estimated_cost_usd") or 0) for t in by_tier if isinstance(t, dict))
         model_rows = "".join(
             _bar_row(
                 str(t.get("model_tier") or "unknown").upper(),
@@ -3547,11 +3555,13 @@ def _fmt_llm_analytics_panel(
                 ),
                 tone="blue",
             )
-            for t in by_tier
+            for t in by_tier if isinstance(t, dict)
         )
     else:
         model_costs: dict[str, float] = defaultdict(float)
         for call in calls:
+            if not isinstance(call, dict):
+                continue
             model_costs[call.get("model_tier") or "unknown"] += _safe_float(
                 call.get("estimated_cost_usd", 0.0)
             )
@@ -3582,7 +3592,7 @@ def _fmt_llm_analytics_panel(
             f"<td>{_escape(_z_cell(a.get('latency_z')))}</td>"
             f"<td>{_fmt_money(a.get('baseline_cost', 0.0))}</td>"
             "</tr>"
-            for a in anomalies
+            for a in anomalies if isinstance(a, dict)
         )
         anomalies_block = (
             "<div class='viz-panel'>"
@@ -3611,7 +3621,7 @@ def _fmt_llm_analytics_panel(
         f"<td>{_escape(call.get('run_id') or '')}</td>"
         f"<td>{'ok' if call.get('success', True) else _escape(call.get('error_kind') or 'error')}</td>"
         "</tr>"
-        for call in calls
+        for call in calls if isinstance(call, dict)
     )
 
     pricing_source = _escape(
@@ -3681,7 +3691,7 @@ def _fmt_quant_panel(
         )
 
     max_amount = max(
-        (_safe_float(row.get("claimed_amount", 0.0)) for row in damages),
+        (_safe_float(row.get("claimed_amount", 0.0)) for row in damages if isinstance(row, dict)),
         default=0.0,
     )
     damage_rows = "".join(
@@ -3697,7 +3707,7 @@ def _fmt_quant_panel(
             tone="red",
         )
         for row in sorted(
-            damages,
+            (d for d in damages if isinstance(d, dict)),
             key=lambda item: _safe_float(item.get("claimed_amount", 0.0)),
             reverse=True,
         )
@@ -3723,7 +3733,7 @@ def _fmt_quant_panel(
             f"<td>{_fmt_money_short(span.get('amount', 0.0))}</td>"
             f"<td>{_escape(_fmt_span_label(span.get('span_id')))}</td>"
             "</tr>"
-            for span in payment_recon.get("source_spans", []) or []
+            for span in payment_recon.get("source_spans", []) or [] if isinstance(span, dict)
         )
 
     invoice_rows = "".join(
@@ -3734,7 +3744,7 @@ def _fmt_quant_panel(
         f"<td>{_fmt_money_short(invoice.get('outstanding', 0.0))}</td>"
         f"<td>{'<br>'.join(_escape(_fmt_span_label(span.get('span_id'))) for span in (invoice.get('source_spans') or []))}</td>"
         "</tr>"
-        for invoice in invoice_chain
+        for invoice in invoice_chain if isinstance(invoice, dict)
     )
 
     damage_details = "".join(
@@ -3766,7 +3776,7 @@ def _fmt_quant_panel(
             )
             + "</ul></div></details>"
         )
-        for row in damages
+        for row in damages if isinstance(row, dict)
     )
 
     amount_conflict_details = "".join(
@@ -3789,7 +3799,7 @@ def _fmt_quant_panel(
             else ""
         )
         + "</details>"
-        for conflict in amount_conflicts
+        for conflict in amount_conflicts if isinstance(conflict, dict)
     )
 
     return (
@@ -3924,6 +3934,8 @@ def _fmt_overview(data: dict) -> str:
     if top_gaps:
         lines.append("\n### Open Gaps")
         for gap in top_gaps[:5]:
+            if not isinstance(gap, dict):
+                continue
             desc = gap.get("description") or gap.get("gap_type", "—")
             lines.append(f"- {desc}")
 
@@ -3932,6 +3944,8 @@ def _fmt_overview(data: dict) -> str:
     if clarifications:
         lines.append("\n### Pending Clarifications")
         for c in clarifications[:5]:
+            if not isinstance(c, dict):
+                continue
             q = c.get("question_text") or c.get("question", "—")
             lines.append(f"- {q}")
 
@@ -3943,9 +3957,11 @@ def _fmt_issues(issues: list) -> str:
         return "No open issues."
 
     # Build lookup for tree rendering
-    by_id = {i["id"]: i for i in issues}
-    # Sort by depth then coverage so tree structure is visible
-    sorted_issues = sorted(issues, key=lambda i: (i.get("depth", 0), i.get("coverage_fraction", 0)))
+    by_id = {i["id"]: i for i in issues if isinstance(i, dict) and "id" in i}
+    sorted_issues = sorted(
+        (i for i in issues if isinstance(i, dict)),
+        key=lambda i: (i.get("depth", 0), i.get("coverage_fraction", 0)),
+    )
 
     # Render as indented list with coverage bars
     _proof_icons = {
@@ -4829,6 +4845,8 @@ def _fmt_source_drawer(
             "Where this came from</div>"
         ]
         for ev in provenance_rows[:5]:
+            if not isinstance(ev, dict):
+                continue
             doc = ev.get("source_document_ref") or "—"
             span_raw = ev.get("source_span_id")
             span_status = ev.get("source_span_status") or "unknown"
@@ -4873,6 +4891,8 @@ def _fmt_source_drawer(
             "Review history</div>"
         ]
         for ev in verification_events[:20]:
+            if not isinstance(ev, dict):
+                continue
             new_s = ev.get("new_status") or "—"
             reviewer_key = ev.get("reviewed_by_kind") or ev.get("actor_kind") or "system"
             actor_label = reviewer_labels.get(
@@ -4927,6 +4947,8 @@ def _review_queue_choices(queue: list[dict]) -> list[tuple[str, str]]:
     value is the internal "kind:id" handle used by verify/reject."""
     choices = []
     for row in queue:
+        if not isinstance(row, dict):
+            continue
         kind = row.get("target_kind") or ""
         tid = row.get("target_id") or ""
         text = (
@@ -5365,6 +5387,8 @@ def _fmt_quant(payment_recon: dict, damages: list) -> str:
         parts.append("| Component | Claimed | Sources | Conflicts |")
         parts.append("|-----------|---------|---------|-----------|")
         for d in damages:
+            if not isinstance(d, dict):
+                continue
             comp = d.get("component") or "(uncategorised)"
             amt = d.get("claimed_amount", 0)
             amt_str = f"{amt:,.2f}" if isinstance(amt, (int, float)) else str(amt)
