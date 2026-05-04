@@ -8488,6 +8488,29 @@ class AppState:
         except Exception as exc:
             return f"Error: {_escape(str(exc))}", ""
 
+    _EXPORT_LABELS: dict[str, dict[str, str]] = {
+        "legal": {"title": "MATTER SUMMARY REPORT", "issues": "ISSUES BY EVIDENCE COVERAGE (weakest first)",
+                  "assertions": "KEY ASSERTIONS", "gaps": "OPEN GAPS", "contradictions": "CONTRADICTIONS",
+                  "proof": "PROOF STATE BY ISSUE", "authorities": "AUTHORITIES & REFERENCES",
+                  "financial": "FINANCIAL RECONCILIATION", "issue_unit": "issues", "assertion_unit": "assertions"},
+        "finance": {"title": "ANALYSIS SUMMARY REPORT", "issues": "THESES BY EVIDENCE COVERAGE (weakest first)",
+                    "assertions": "KEY FINDINGS", "gaps": "OPEN GAPS", "contradictions": "DATA CONFLICTS",
+                    "proof": "PROOF STATE BY THESIS", "authorities": "REFERENCES & SOURCES",
+                    "financial": "FINANCIAL RECONCILIATION", "issue_unit": "theses", "assertion_unit": "findings"},
+        "coding": {"title": "ANALYSIS SUMMARY REPORT", "issues": "HYPOTHESES BY EVIDENCE COVERAGE (weakest first)",
+                   "assertions": "KEY FINDINGS", "gaps": "OPEN GAPS", "contradictions": "CONTRADICTIONS",
+                   "proof": "PROOF STATE BY HYPOTHESIS", "authorities": "REFERENCES & DOCUMENTATION",
+                   "financial": "METRIC RECONCILIATION", "issue_unit": "hypotheses", "assertion_unit": "findings"},
+        "academic_research": {"title": "RESEARCH SESSION SUMMARY", "issues": "CLAIMS BY EVIDENCE COVERAGE (weakest first)",
+                              "assertions": "KEY CLAIMS", "gaps": "OPEN GAPS", "contradictions": "CONFLICTING FINDINGS",
+                              "proof": "PROOF STATE BY CLAIM", "authorities": "CITATIONS & SOURCES",
+                              "financial": "QUANTITATIVE RECONCILIATION", "issue_unit": "claims", "assertion_unit": "claims"},
+        "biomedical": {"title": "CASE REVIEW SUMMARY", "issues": "FINDINGS BY EVIDENCE COVERAGE (weakest first)",
+                       "assertions": "KEY FINDINGS", "gaps": "OPEN GAPS", "contradictions": "CONFLICTING EVIDENCE",
+                       "proof": "PROOF STATE BY FINDING", "authorities": "CLINICAL REFERENCES",
+                       "financial": "QUANTITATIVE RECONCILIATION", "issue_unit": "findings", "assertion_unit": "findings"},
+    }
+
     def export_summary_report(self, matter_id: str) -> "str | None":
         if not matter_id or matter_id == "—":
             raise gr.Error("Load a matter first before exporting.")
@@ -8500,23 +8523,25 @@ class AppState:
             raise gr.Error("Export returned empty data.")
         import json as _json
         import tempfile as _tempfile
+        domain = self._detect_domain(matter_id)
+        el = self._EXPORT_LABELS.get(domain, self._EXPORT_LABELS["legal"])
         lines: list[str] = []
-        lines.append(f"MATTER SUMMARY REPORT")
+        lines.append(el["title"])
         lines.append(f"Matter ID: {data.get('matter_id', '—')}")
         lines.append(f"Generated: {data.get('generated_at', '—')}")
         stats = data.get("stats", {})
         lines.append(f"\n{'='*60}")
         lines.append("OVERVIEW")
         lines.append(f"{'='*60}")
-        lines.append(f"  Assertions:     {stats.get('assertion_count', 0)}")
-        lines.append(f"  Open issues:    {stats.get('open_issue_count', 0)}")
+        lines.append(f"  {el['assertion_unit'].title()}:     {stats.get('assertion_count', 0)}")
+        lines.append(f"  Open {el['issue_unit']}:    {stats.get('open_issue_count', 0)}")
         lines.append(f"  Open gaps:      {stats.get('open_gap_count', 0)}")
         lines.append(f"  Actors:         {stats.get('actor_count', 0)}")
         lines.append(f"  Clarifications: {stats.get('pending_clarifications', 0)} pending")
         issues = data.get("issues", [])
         if issues:
             lines.append(f"\n{'='*60}")
-            lines.append("ISSUES BY EVIDENCE COVERAGE (weakest first)")
+            lines.append(el["issues"])
             lines.append(f"{'='*60}")
             for iss in issues[:20]:
                 cov = float(iss.get("coverage_fraction", 0))
@@ -8527,7 +8552,7 @@ class AppState:
         assertions = data.get("assertions", [])
         if assertions:
             lines.append(f"\n{'='*60}")
-            lines.append("KEY ASSERTIONS (first 50)")
+            lines.append(f"{el['assertions']} (first 50)")
             lines.append(f"{'='*60}")
             for a in assertions[:50]:
                 bs = a.get("belief_state", "—")
@@ -8538,14 +8563,14 @@ class AppState:
         gaps = data.get("gaps", [])
         if gaps:
             lines.append(f"\n{'='*60}")
-            lines.append("OPEN GAPS")
+            lines.append(el["gaps"])
             lines.append(f"{'='*60}")
             for g in gaps[:20]:
                 lines.append(f"  - {g.get('description', '—')[:100]}")
         contradictions = data.get("contradictions", [])
         if contradictions:
             lines.append(f"\n{'='*60}")
-            lines.append("CONTRADICTIONS")
+            lines.append(el["contradictions"])
             lines.append(f"{'='*60}")
             for c in contradictions[:15]:
                 lines.append(f"  - {c.get('a_text', '—')[:60]}")
@@ -8574,7 +8599,7 @@ class AppState:
             proof_issues = proof.get("issues", []) if isinstance(proof, dict) else []
             if proof_issues:
                 lines.append(f"\n{'='*60}")
-                lines.append("PROOF STATE BY ISSUE")
+                lines.append(el["proof"])
                 lines.append(f"{'='*60}")
                 summary = proof.get("summary", {}) if isinstance(proof, dict) else {}
                 lines.append(f"  Average sufficiency: {summary.get('avg_sufficiency', 0):.0%}")
@@ -8596,7 +8621,7 @@ class AppState:
             authorities = auth_data.get("authorities", []) if isinstance(auth_data, dict) else []
             if authorities:
                 lines.append(f"\n{'='*60}")
-                lines.append("AUTHORITIES & REFERENCES")
+                lines.append(el["authorities"])
                 lines.append(f"{'='*60}")
                 for auth in authorities[:30]:
                     if not isinstance(auth, dict):
@@ -8614,7 +8639,7 @@ class AppState:
             recon = quant.get("payment_reconciliation", {}) if isinstance(quant, dict) else {}
             if recon and recon.get("invoiced") is not None:
                 lines.append(f"\n{'='*60}")
-                lines.append("FINANCIAL RECONCILIATION")
+                lines.append(el["financial"])
                 lines.append(f"{'='*60}")
                 ccy = recon.get("currency", "USD")
                 for label, key in [("Invoiced", "invoiced"), ("Paid", "paid"),
