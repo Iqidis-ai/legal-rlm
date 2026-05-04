@@ -3328,7 +3328,8 @@ def _fmt_domain_composition_panel(data: dict, domain: str = "legal") -> str:
         if not isinstance(evt, dict):
             continue
         profile = _escape(str(evt.get("candidate_profile_id") or "?"))
-        conf = float(evt.get("confidence") or 0)
+        _raw_conf = evt.get("confidence")
+        conf = float(_raw_conf) if isinstance(_raw_conf, (int, float)) else 0.0
         target = _escape(f"{evt.get('target_kind', '?')}:{str(evt.get('target_id', '?'))[:16]}")
         ts = _escape(str(evt.get("created_at") or "")[:19])
         conf_color = "#16a34a" if conf >= 0.7 else ("#eab308" if conf >= 0.4 else "#6b7280")
@@ -7484,7 +7485,7 @@ class AppState:
             suf = result.get("sufficiency", "?") if isinstance(result, dict) else "?"
             domain = self._detect_domain(matter_id)
             html = self.load_proof_state(matter_id, domain)
-            return f"Recomputed issue {_escape(iid[:12])}: {_escape(status)} ({suf})", html
+            return f"Recomputed issue {_escape(iid[:12])}: {_escape(status)} ({_escape(str(suf))})", html
         except Exception as exc:
             logger.warning("recompute_issue_proof_state failed: %s", exc)
             return f"Error: {_escape(str(exc))}", ""

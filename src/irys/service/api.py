@@ -3625,8 +3625,8 @@ async def get_domain_composition(matter_id: str):
             (model.matter_id,),
         ).fetchall()
         detection_events = [dict(r) for r in rows]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("domain_detection_event query failed for %s: %s", matter_id, exc)
 
     return {
         "matter_id": matter_id,
