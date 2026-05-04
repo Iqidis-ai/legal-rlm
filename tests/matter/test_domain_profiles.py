@@ -314,9 +314,10 @@ def test_ui_domain_label_dicts_cover_all_profiles():
 
 def test_deep_read_prompt_formats_for_all_domains():
     """DEEP_READ_PROMPT must format cleanly with every domain vocabulary."""
-    from irys.rlm.engine import DEEP_READ_PROMPT, _DOMAIN_DEEP_READ_VOCABULARY
+    from irys.rlm.engine import DEEP_READ_PROMPT, _DOMAIN_DEEP_READ_VOCABULARY, _DOMAIN_DEEP_READ_EXAMPLES
 
     for domain, vocab in _DOMAIN_DEEP_READ_VOCABULARY.items():
+        dr_ex = _DOMAIN_DEEP_READ_EXAMPLES.get(domain, _DOMAIN_DEEP_READ_EXAMPLES["legal"])
         result = DEEP_READ_PROMPT.format(
             filename="test.pdf",
             page_range="1-10",
@@ -324,6 +325,9 @@ def test_deep_read_prompt_formats_for_all_domains():
             query="Test query",
             focus="Test focus",
             domain_vocabulary=vocab,
+            domain_deep_read_examples=dr_ex["deep_read_examples"],
+            domain_numeric_subjects=dr_ex["numeric_subjects"],
+            domain_numeric_subject_id_example=dr_ex["numeric_subject_id_example"],
         )
         assert len(result) > 500, f"Prompt for {domain} unexpectedly short"
         assert "key_facts" in result

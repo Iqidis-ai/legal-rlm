@@ -549,13 +549,14 @@ CONDUCT A FOCUSED ANALYSIS. IMPORTANT: Keep response under 4000 characters total
    - Directly relevant to the query/focus
    - Specific (include dates, amounts, names)
    - Keep each fact under 100 characters
-   - Format each fact as: {{"fact": "...", "page": N, "issue_relation": "supports|attacks|neutral", "effective_date": "YYYY-MM-DD or null", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD by March 2023"}}
+   - Format each fact as: {{"fact": "...", "page": N, "issue_relation": "supports|attacks|neutral", "effective_date": "YYYY-MM-DD or null", "subject": "entity_name", "predicate": "snake_case_verb", "object": "value_or_target"}}
    - issue_relation: whether the fact SUPPORTS the investigation focus, ATTACKS/undermines it, or is NEUTRAL
    - effective_date: ISO date when this fact became effective/occurred (null if not temporally scoped)
-   - subject: entity performing the action (person, company) — REQUIRED; provide best-effort (e.g. "plaintiff", "defendant", "contracting_party")
-   - predicate: verb/action in snake_case — REQUIRED (e.g. "agreed_to_pay", "was_employed_by", "executed_contract", "disputes_claim")
-   - object: what the predicate applies to (amount, party, date, condition) — REQUIRED; include the key value
+   - subject: entity performing the action — REQUIRED; provide best-effort
+   - predicate: verb/action in snake_case — REQUIRED
+   - object: what the predicate applies to — REQUIRED; include the key value
    - Omit subject/predicate/object ONLY when the fact has no entity relationship (purely procedural)
+{domain_deep_read_examples}
 
 2. CRITICAL QUOTES (STRICT LIMIT: 3 maximum): Identify the most important passages:
    - Direct admissions or acknowledgments
@@ -572,8 +573,8 @@ CONDUCT A FOCUSED ANALYSIS. IMPORTANT: Keep response under 4000 characters total
 4. NUMERIC FACTS (SO-6 — extract ALL monetary amounts, dates, rates, counts):
    For each number, provide a structured object:
    - kind: "amount" | "date" | "date_range" | "rate" | "balance" | "count"
-   - subject: one-word subject type — "invoice" | "payment" | "fee" | "damages" | "balance" | "rate" | "deposit" | "penalty" | "other"
-   - subject_id: specific identifier if present (e.g. "Invoice #1042", "Payment #3", null if none)
+   - subject: one-word subject type — {domain_numeric_subjects}
+   - subject_id: specific identifier if present (e.g. {domain_numeric_subject_id_example}, null if none)
    - raw: exact text from document (preserve original wording)
    - value: for amounts/rates/counts: numeric value. For dates: ALWAYS use ISO format YYYY-MM-DD (e.g. "2023-03-15"). For date_range: use "YYYY-MM-DD/YYYY-MM-DD". If only month is known use first of month (e.g. "2023-03-01"). If only year, use "2023-01-01". If only quarter, use first day of quarter (Q1="01-01", Q2="04-01", Q3="07-01", Q4="10-01").
    - date_precision: REQUIRED for kind="date" or "date_range": "day" | "month" | "quarter" | "year" (how precise the original date is)
@@ -707,6 +708,54 @@ _DOMAIN_DEEP_READ_VOCABULARY = {
         "failed_safety_threshold, exceeded_non_inferiority_margin, achieved_response_rate\n"
         "- Numeric focus: hazard ratios, odds ratios, NNT, p-values, survival rates, dosage, AE frequency"
     ),
+}
+
+_DOMAIN_DEEP_READ_EXAMPLES: dict[str, dict[str, str]] = {
+    "legal": {
+        "deep_read_examples": (
+            '   - subject examples: "plaintiff", "defendant", "contracting_party"\n'
+            '   - predicate examples: "agreed_to_pay", "executed_contract", "filed_motion"\n'
+            '   - object examples: "50000 USD by March 2023", "the services agreement"'
+        ),
+        "numeric_subjects": '"invoice" | "payment" | "fee" | "damages" | "balance" | "rate" | "deposit" | "penalty" | "other"',
+        "numeric_subject_id_example": '"Invoice #1042", "Payment #3"',
+    },
+    "finance": {
+        "deep_read_examples": (
+            '   - subject examples: "Company_X", "auditor", "management"\n'
+            '   - predicate examples: "reported_revenue", "restated_earnings", "breached_covenant"\n'
+            '   - object examples: "12.5M USD", "the credit facility", "Q3 2024"'
+        ),
+        "numeric_subjects": '"revenue" | "expense" | "asset" | "liability" | "ratio" | "margin" | "rate" | "share_price" | "other"',
+        "numeric_subject_id_example": '"Revenue FY2024", "Debt Facility #2"',
+    },
+    "coding": {
+        "deep_read_examples": (
+            '   - subject examples: "auth_service", "UserController", "CI_pipeline"\n'
+            '   - predicate examples: "introduced_bug", "deprecated_api", "changed_behavior"\n'
+            '   - object examples: "v2.3.1", "login endpoint", "rate limit threshold"'
+        ),
+        "numeric_subjects": '"latency" | "error_rate" | "coverage" | "version" | "threshold" | "count" | "size" | "duration" | "other"',
+        "numeric_subject_id_example": '"PR #1042", "Issue #567"',
+    },
+    "academic_research": {
+        "deep_read_examples": (
+            '   - subject examples: "treatment_group", "Smith_et_al_2023", "variable_X"\n'
+            '   - predicate examples: "demonstrated_effect", "controlled_for", "found_no_significance"\n'
+            '   - object examples: "p=0.003", "n=1200", "depression score"'
+        ),
+        "numeric_subjects": '"sample_size" | "effect_size" | "p_value" | "confidence_interval" | "correlation" | "mean" | "variance" | "duration" | "other"',
+        "numeric_subject_id_example": '"Study A", "Experiment 3"',
+    },
+    "biomedical": {
+        "deep_read_examples": (
+            '   - subject examples: "Drug_X", "treatment_arm", "FDA"\n'
+            '   - predicate examples: "demonstrated_efficacy", "showed_adverse_event", "met_primary_endpoint"\n'
+            '   - object examples: "HR=0.72", "Grade 3 AE", "overall survival endpoint"'
+        ),
+        "numeric_subjects": '"hazard_ratio" | "odds_ratio" | "nnt" | "dosage" | "ae_rate" | "survival_rate" | "p_value" | "sample_size" | "other"',
+        "numeric_subject_id_example": '"Trial NCT0001", "Cohort B"',
+    },
 }
 
 _DOMAIN_ORIENTATION_CONTEXT: dict[str, dict[str, str]] = {
@@ -5481,6 +5530,7 @@ Return:
 
             _domain = self._resolve_active_domain(state)
             _vocab = _DOMAIN_DEEP_READ_VOCABULARY.get(_domain, _DOMAIN_DEEP_READ_VOCABULARY["legal"])
+            _dr_ex = _DOMAIN_DEEP_READ_EXAMPLES.get(_domain, _DOMAIN_DEEP_READ_EXAMPLES["legal"])
 
             prompt = DEEP_READ_PROMPT.format(
                 filename=doc.filename,
@@ -5489,6 +5539,9 @@ Return:
                 query=state.query,
                 focus=state.hypothesis or state.query,
                 domain_vocabulary=_vocab,
+                domain_deep_read_examples=_dr_ex["deep_read_examples"],
+                domain_numeric_subjects=_dr_ex["numeric_subjects"],
+                domain_numeric_subject_id_example=_dr_ex["numeric_subject_id_example"],
             )
 
             # Use LITE for bulk reading; JSON mode forces valid JSON output
