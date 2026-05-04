@@ -348,6 +348,16 @@ class HttpBackend(UIBackend):
             return {}
         return result
 
+    async def get_steering_impact_preview(self, matter_id: str, action_type: str, payload: dict) -> dict:
+        result = await self._post(
+            f"/matter/{matter_id}/steering-impact-preview",
+            body={"action_type": action_type, "payload": payload},
+        )
+        if not isinstance(result, dict):
+            _log.warning("get_steering_impact_preview: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/objective-coverage")
         if not isinstance(result, dict):

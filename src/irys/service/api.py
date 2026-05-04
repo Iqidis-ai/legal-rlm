@@ -4029,6 +4029,28 @@ async def get_steering_surface(matter_id: str, run_id: Optional[str] = None):
     return model.get_ledger_steering_surface(run_id=run_id)
 
 
+@app.post(
+    "/matter/{matter_id}/steering-impact-preview",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def post_steering_impact_preview(
+    matter_id: str,
+    action_type: str = Body(...),
+    payload: dict = Body(...),
+    domain_profile_id: Optional[str] = Body(None),
+    policy_audience: str = Body("clean"),
+):
+    """Preview the projected impact of a steering action without mutating (SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_steering_impact_preview(
+        action_type=action_type,
+        payload=payload,
+        domain_profile_id=domain_profile_id,
+        policy_audience=policy_audience,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Actor Resolution — alias matching and duplicate detection (SO-5)
 # ---------------------------------------------------------------------------

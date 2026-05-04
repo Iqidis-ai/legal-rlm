@@ -3694,7 +3694,7 @@ class MatterModel:
                     (self.matter_id, run_id),
                 ).fetchall()
                 for r in rows:
-                    h = r["dependency_manifest_hash"] if isinstance(r, dict) else (r[0] if r else None)
+                    h = r["dependency_manifest_hash"]
                     if h:
                         run_linked.add(h)
             except Exception as exc:
@@ -4922,7 +4922,7 @@ class MatterModel:
                         if row and int(row["c"]) > 0:
                             count += 1
                     except Exception:
-                        pass
+                        _log.warning("_taint_count: error checking taint for %s", aid, exc_info=True)
             return count
 
         def _confidence_range(assertions: list[dict]) -> list[float]:
@@ -4937,7 +4937,7 @@ class MatterModel:
                         if math.isfinite(fv):
                             confs.append(fv)
                     except (TypeError, ValueError):
-                        pass
+                        _log.debug("_confidence_range: non-numeric confidence %r", c)
             if not confs:
                 return [0.0, 0.0]
             return [round(min(confs), 3), round(max(confs), 3)]
@@ -7615,6 +7615,226 @@ class MatterModel:
         _priority_order = {"high": 0, "medium": 1, "low": 2}
         actions.sort(key=lambda a: _priority_order.get(a["priority"], 99))
         return actions[:limit]
+
+    _PREVIEW_ACTION_TYPES = frozenset({
+        "resolve_gap", "correct_assertion", "resolve_contradiction",
+        "approve_metric_alias", "escalate_gap",
+    })
+
+    def get_steering_impact_preview(
+        self,
+        action_type: str,
+        payload: dict,
+        *,
+        domain_profile_id: str | None = None,
+        policy_audience: str = "clean",
+    ) -> dict:
+        """Project the impact of a steering action without mutating state (SO-3).
+
+        Reads current system health / SO metrics, computes what would change
+        for the given action_type + payload, and returns a structured
+        before/after/delta dict.  No database writes occur.
+        """
+        if action_type not in self._PREVIEW_ACTION_TYPES:
+            return {
+                "action_type": action_type,
+                "valid": False,
+                "warnings": [f"Unknown action_type: {action_type}"],
+                "before": {},
+                "after": {},
+                "deltas": {},
+                "recommended_followups": [],
+            }
+
+        warnings: list[str] = []
+        affected_objectives: list[str] = []
+        affected_assertions: list[str] = []
+
+        health = self.get_system_health()
+        coverage_report = self.get_issue_coverage_report(policy_audience)
+        coverage_avg = 0.0
+        if coverage_report:
+            fracs = [float(r.get("coverage_fraction", 0.0)) for r in coverage_report]
+            coverage_avg = round(sum(fracs) / len(fracs), 4) if fracs else 0.0
+
+        before = {
+            "issue_coverage_avg": coverage_avg,
+            "open_gap_count": health.get("open_gap_count", 0),
+            "contradiction_count": health.get("contradiction_count", 0),
+            "disputed_count": health.get("disputed_count", 0),
+            "readiness": health.get("health_score", "unknown"),
+        }
+
+        gaps_closed = 0
+        gaps_opened = 0
+        contradictions_resolved = 0
+        coverage_delta = 0.0
+        disputed_delta = 0
+
+        if action_type == "resolve_gap":
+            gap_id = payload.get("gap_id", "")
+            if not gap_id:
+                warnings.append("Missing required field: gap_id")
+            else:
+                gap_row = self.db.execute(
+                    "SELECT id, gap_type, status FROM gap WHERE id=? AND matter_id=?",
+                    (gap_id, self.matter_id),
+                ).fetchone()
+                if not gap_row:
+                    warnings.append(f"Gap {gap_id} not found")
+                elif gap_row["status"] != "open":
+                    warnings.append(f"Gap {gap_id} is already {gap_row['status']}")
+                else:
+                    gaps_closed = 1
+                    link_rows = self.db.execute(
+                        "SELECT affected_type, affected_id FROM gap_link WHERE gap_id=?",
+                        (gap_id,),
+                    ).fetchall()
+                    for lr in link_rows:
+                        if lr["affected_type"] == "issue":
+                            affected_objectives.append(lr["affected_id"])
+                    if affected_objectives and coverage_report:
+                        n_issues = len(coverage_report)
+                        if n_issues > 0:
+                            coverage_delta = round(0.05 / n_issues, 4)
+
+        elif action_type == "correct_assertion":
+            assertion_id = payload.get("assertion_id", "")
+            new_state = payload.get("new_state", "")
+            if not assertion_id:
+                warnings.append("Missing required field: assertion_id")
+            elif not new_state:
+                warnings.append("Missing required field: new_state")
+            else:
+                rec = self.assertions.get(assertion_id)
+                if not rec:
+                    warnings.append(f"Assertion {assertion_id} not found")
+                else:
+                    affected_assertions.append(assertion_id)
+                    dependents = self.assertions.get_dependents(assertion_id)
+                    affected_assertions.extend(dependents)
+
+                    old_is_disputed = rec.belief_state == "disputed"
+                    new_is_disputed = new_state == "disputed"
+                    if old_is_disputed and not new_is_disputed:
+                        disputed_delta = -1
+                    elif not old_is_disputed and new_is_disputed:
+                        disputed_delta = 1
+
+                    old_inactive = rec.belief_state in ("superseded", "withdrawn", "resolved")
+                    new_inactive = new_state in ("superseded", "withdrawn", "resolved")
+                    if old_inactive and not new_inactive and coverage_report:
+                        n_issues = len(coverage_report)
+                        if n_issues > 0:
+                            coverage_delta = round(0.03 / n_issues, 4)
+                    elif not old_inactive and new_inactive and coverage_report:
+                        n_issues = len(coverage_report)
+                        if n_issues > 0:
+                            coverage_delta = round(-0.03 / n_issues, 4)
+
+        elif action_type == "resolve_contradiction":
+            attacker_id = payload.get("attacker_id", "")
+            attacked_id = payload.get("attacked_id", "")
+            decision = payload.get("decision", "")
+            if not attacker_id or not attacked_id:
+                warnings.append("Missing required fields: attacker_id, attacked_id")
+            elif decision not in ("prefer_attacker", "prefer_attacked",
+                                  "mark_both_disputed", "request_evidence"):
+                warnings.append(f"Invalid decision: {decision}")
+            else:
+                contradictions_resolved = 1
+                affected_assertions.extend([attacker_id, attacked_id])
+                if decision == "mark_both_disputed":
+                    disputed_delta = 2
+                elif decision in ("prefer_attacker", "prefer_attacked"):
+                    disputed_delta = 0
+                if decision == "request_evidence":
+                    gaps_opened = 1
+                    contradictions_resolved = 0
+                else:
+                    gaps_closed_rows = self.db.execute(
+                        "SELECT COUNT(*) AS n FROM gap WHERE matter_id=? AND status='open'"
+                        " AND gap_type='unresolved_contradiction'",
+                        (self.matter_id,),
+                    ).fetchone()
+                    if gaps_closed_rows and int(gaps_closed_rows["n"]) > 0:
+                        gaps_closed = 1
+
+        elif action_type == "approve_metric_alias":
+            raw_label = payload.get("raw_label", "")
+            canonical_metric = payload.get("canonical_metric", "")
+            if not raw_label or not canonical_metric:
+                warnings.append("Missing required fields: raw_label, canonical_metric")
+
+        elif action_type == "escalate_gap":
+            gap_id = payload.get("gap_id", "")
+            if not gap_id:
+                warnings.append("Missing required field: gap_id")
+            else:
+                gap_row = self.db.execute(
+                    "SELECT id, status, blocker_score FROM gap WHERE id=? AND matter_id=?",
+                    (gap_id, self.matter_id),
+                ).fetchone()
+                if not gap_row:
+                    warnings.append(f"Gap {gap_id} not found")
+                elif gap_row["status"] != "open":
+                    warnings.append(f"Gap {gap_id} is already {gap_row['status']}")
+                else:
+                    link_rows = self.db.execute(
+                        "SELECT affected_type, affected_id FROM gap_link WHERE gap_id=?",
+                        (gap_id,),
+                    ).fetchall()
+                    for lr in link_rows:
+                        if lr["affected_type"] == "issue":
+                            affected_objectives.append(lr["affected_id"])
+
+        after_gap_count = max(0, before["open_gap_count"] - gaps_closed + gaps_opened)
+        after_contradiction_count = max(0, before["contradiction_count"] - contradictions_resolved)
+        after_disputed = max(0, before["disputed_count"] + disputed_delta)
+        after_coverage = round(min(1.0, max(0.0, coverage_avg + coverage_delta)), 4)
+
+        after_health = before["readiness"]
+        if after_gap_count < before["open_gap_count"] or after_contradiction_count < before["contradiction_count"]:
+            if before["readiness"] == "attention_needed" and after_disputed == 0:
+                after_health = "good"
+
+        after = {
+            "issue_coverage_avg": after_coverage,
+            "open_gap_count": after_gap_count,
+            "contradiction_count": after_contradiction_count,
+            "disputed_count": after_disputed,
+            "readiness": after_health,
+        }
+
+        deltas = {
+            "coverage_delta": coverage_delta,
+            "gaps_closed": gaps_closed,
+            "gaps_opened": gaps_opened,
+            "contradictions_resolved": contradictions_resolved,
+            "disputed_delta": disputed_delta,
+            "affected_objectives": affected_objectives,
+            "affected_assertions": affected_assertions,
+        }
+
+        followups: list[str] = []
+        if gaps_closed > 0 and after_gap_count > 0:
+            followups.append("Review remaining open gaps")
+        if contradictions_resolved > 0 and after_contradiction_count > 0:
+            followups.append("Review remaining contradictions")
+        if disputed_delta > 0:
+            followups.append("Review newly disputed assertions for evidence")
+        if affected_assertions and len(affected_assertions) > 1:
+            followups.append(f"Review {len(affected_assertions) - 1} dependent assertions affected by propagation")
+
+        return {
+            "action_type": action_type,
+            "valid": len(warnings) == 0,
+            "warnings": warnings,
+            "before": before,
+            "after": after,
+            "deltas": deltas,
+            "recommended_followups": followups,
+        }
 
     def list_belief_revisions(self, limit: int = 100) -> list[dict]:
         """Return recent belief revision events with assertion context.

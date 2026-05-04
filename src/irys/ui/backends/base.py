@@ -237,6 +237,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_steering_impact_preview(self, matter_id: str, action_type: str, payload: dict) -> dict:
+        """Project impact of a steering action without mutating (SO-3)."""
+        ...
+
+    @abstractmethod
     async def get_objective_coverage(self, matter_id: str) -> dict:
         """Objective coverage workbench: per-objective criteria, support, gaps (SO-4)."""
         ...

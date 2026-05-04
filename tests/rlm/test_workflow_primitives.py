@@ -7048,3 +7048,264 @@ def test_manifest_backend_interface_balance():
     assert hasattr(UIBackend, "get_dependency_manifest_inspector")
     assert hasattr(InProcessBackend, "get_dependency_manifest_inspector")
     assert hasattr(HttpBackend, "get_dependency_manifest_inspector")
+
+
+# ── Steering Impact Preview ─────────────────────────────────────────
+
+
+def test_impact_preview_unknown_action():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_steering_impact_preview("bogus_action", {})
+    assert result["valid"] is False
+    assert "Unknown action_type" in result["warnings"][0]
+
+
+def test_impact_preview_resolve_gap_missing_id():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_steering_impact_preview("resolve_gap", {})
+    assert result["valid"] is False
+    assert "gap_id" in result["warnings"][0]
+
+
+def test_impact_preview_resolve_gap_not_found():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_steering_impact_preview("resolve_gap", {"gap_id": "nonexistent"})
+    assert result["valid"] is False
+    assert "not found" in result["warnings"][0]
+
+
+def test_impact_preview_resolve_gap_valid():
+    from irys.matter.matter import MatterModel
+    from irys.matter.enums import GapType
+    model = MatterModel.open_in_memory()
+    gap_id = model.gaps.record(
+        GapType.MISSING_DOCUMENT,
+        "Missing contract exhibit A",
+        materiality=0.8,
+    )
+    result = model.get_steering_impact_preview("resolve_gap", {"gap_id": gap_id})
+    assert result["valid"] is True
+    assert result["action_type"] == "resolve_gap"
+    assert result["before"]["open_gap_count"] >= 1
+    assert result["after"]["open_gap_count"] < result["before"]["open_gap_count"]
+    assert result["deltas"]["gaps_closed"] == 1
+    gap_row = model.db.execute(
+        "SELECT status FROM gap WHERE id=?", (gap_id,)
+    ).fetchone()
+    assert gap_row["status"] == "open"
+
+
+def test_impact_preview_correct_assertion_missing_fields():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_steering_impact_preview("correct_assertion", {"assertion_id": ""})
+    assert result["valid"] is False
+    assert "assertion_id" in result["warnings"][0]
+
+
+def test_impact_preview_correct_assertion_valid():
+    from irys.matter.matter import MatterModel
+    from irys.matter.models import AssertionCandidate
+    from irys.matter.enums import SpeechAct, SourceRole
+    model = MatterModel.open_in_memory()
+    model.assertions.upsert_occurrence(AssertionCandidate(
+        proposition_text="Test proposition for impact preview",
+        document_id="doc.pdf",
+        speech_act=SpeechAct.EXTRACTED,
+        source_role=SourceRole.UNKNOWN,
+    ))
+    assertions = model.db.execute(
+        "SELECT id FROM assertion WHERE matter_id=?", (model.matter_id,)
+    ).fetchall()
+    assert len(assertions) > 0
+    aid = assertions[0]["id"]
+    result = model.get_steering_impact_preview("correct_assertion", {
+        "assertion_id": aid,
+        "new_state": "disputed",
+    })
+    assert result["valid"] is True
+    assert aid in result["deltas"]["affected_assertions"]
+    rec = model.assertions.get(aid)
+    assert rec.belief_state != "disputed"
+
+
+def test_impact_preview_resolve_contradiction_invalid_decision():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_steering_impact_preview("resolve_contradiction", {
+        "attacker_id": "a1",
+        "attacked_id": "a2",
+        "decision": "invalid_choice",
+    })
+    assert result["valid"] is False
+    assert "Invalid decision" in result["warnings"][0]
+
+
+def test_impact_preview_resolve_contradiction_valid():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_steering_impact_preview("resolve_contradiction", {
+        "attacker_id": "a1",
+        "attacked_id": "a2",
+        "decision": "prefer_attacker",
+    })
+    assert result["valid"] is True
+    assert result["deltas"]["contradictions_resolved"] == 1
+    assert "a1" in result["deltas"]["affected_assertions"]
+    assert "a2" in result["deltas"]["affected_assertions"]
+
+
+def test_impact_preview_escalate_gap_missing_id():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_steering_impact_preview("escalate_gap", {})
+    assert result["valid"] is False
+    assert "gap_id" in result["warnings"][0]
+
+
+def test_impact_preview_does_not_mutate():
+    from irys.matter.matter import MatterModel
+    from irys.matter.enums import GapType
+    model = MatterModel.open_in_memory()
+    gap_id = model.gaps.record(GapType.MISSING_DOCUMENT, "Test gap for preview")
+    before_count = model.gaps.count_open()
+    model.get_steering_impact_preview("resolve_gap", {"gap_id": gap_id})
+    after_count = model.gaps.count_open()
+    assert before_count == after_count
+
+
+def test_impact_preview_formatter_empty():
+    from irys.ui.app import _fmt_impact_preview
+    html = _fmt_impact_preview({})
+    assert "viz-empty" in html
+    assert "Select a steering action" in html
+
+
+def test_impact_preview_formatter_valid():
+    from irys.ui.app import _fmt_impact_preview
+    data = {
+        "action_type": "resolve_gap",
+        "valid": True,
+        "warnings": [],
+        "before": {
+            "issue_coverage_avg": 0.42,
+            "open_gap_count": 5,
+            "contradiction_count": 2,
+            "disputed_count": 1,
+            "readiness": "attention_needed",
+        },
+        "after": {
+            "issue_coverage_avg": 0.45,
+            "open_gap_count": 4,
+            "contradiction_count": 2,
+            "disputed_count": 1,
+            "readiness": "attention_needed",
+        },
+        "deltas": {
+            "coverage_delta": 0.03,
+            "gaps_closed": 1,
+            "gaps_opened": 0,
+            "contradictions_resolved": 0,
+            "disputed_delta": 0,
+            "affected_objectives": ["obj-1"],
+            "affected_assertions": [],
+        },
+        "recommended_followups": ["Review remaining gaps"],
+    }
+    html = _fmt_impact_preview(data, domain="legal")
+    assert "Steering Impact Preview" in html
+    assert "resolve_gap" in html
+    assert "42.0%" in html
+    assert "45.0%" in html
+    assert "Review remaining gaps" in html
+    assert "Affected objectives: 1" in html
+
+
+def test_impact_preview_formatter_invalid():
+    from irys.ui.app import _fmt_impact_preview
+    data = {
+        "action_type": "bogus",
+        "valid": False,
+        "warnings": ["Unknown action_type: bogus"],
+        "before": {},
+        "after": {},
+        "deltas": {},
+        "recommended_followups": [],
+    }
+    html = _fmt_impact_preview(data, domain="legal")
+    assert "Invalid action" in html
+    assert "Unknown action_type" in html
+
+
+def test_impact_preview_formatter_xss():
+    from irys.ui.app import _fmt_impact_preview
+    data = {
+        "action_type": "<script>alert(1)</script>",
+        "valid": True,
+        "warnings": [],
+        "before": {
+            "issue_coverage_avg": 0.5,
+            "open_gap_count": 1,
+            "contradiction_count": 0,
+            "disputed_count": 0,
+            "readiness": "<img onerror=alert(1)>",
+        },
+        "after": {
+            "issue_coverage_avg": 0.5,
+            "open_gap_count": 0,
+            "contradiction_count": 0,
+            "disputed_count": 0,
+            "readiness": "good",
+        },
+        "deltas": {
+            "coverage_delta": 0.0,
+            "gaps_closed": 1,
+            "gaps_opened": 0,
+            "contradictions_resolved": 0,
+            "disputed_delta": 0,
+            "affected_objectives": [],
+            "affected_assertions": [],
+        },
+        "recommended_followups": ["<script>xss</script>"],
+    }
+    html = _fmt_impact_preview(data)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_impact_preview_formatter_non_dict_guards():
+    from irys.ui.app import _fmt_impact_preview
+    data = {
+        "action_type": "resolve_gap",
+        "valid": True,
+        "warnings": [],
+        "before": "not-a-dict",
+        "after": None,
+        "deltas": 42,
+        "recommended_followups": [123, None, "Valid followup"],
+    }
+    html = _fmt_impact_preview(data)
+    assert "Steering Impact Preview" in html
+    assert "Valid followup" in html
+
+
+def test_impact_preview_labels_all_five_domains():
+    from irys.ui.app import _IMPACT_PREVIEW_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _IMPACT_PREVIEW_LABELS[domain]
+        assert "title" in labels
+        assert "coverage" in labels
+        assert "gaps" in labels
+        assert "empty" in labels
+
+
+def test_impact_preview_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    assert hasattr(UIBackend, "get_steering_impact_preview")
+    assert hasattr(InProcessBackend, "get_steering_impact_preview")
+    assert hasattr(HttpBackend, "get_steering_impact_preview")

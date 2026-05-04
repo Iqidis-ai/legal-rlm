@@ -3782,7 +3782,11 @@ def _fmt_so_scorecard_panel(so: dict, domain: str = "legal") -> str:
         elif isinstance(target, bool):
             tgt_str = "Yes" if target else "No"
         else:
-            tgt_str = f"{float(target) * 100:.0f}%"
+            try:
+                tval = float(target)
+                tgt_str = f"{tval * 100:.0f}%" if math.isfinite(tval) else "—"
+            except (TypeError, ValueError):
+                tgt_str = "—"
         if passed is True:
             pill = "<span class='pill pill-green'>Pass</span>"
         elif passed is False:
@@ -6622,6 +6626,218 @@ def _fmt_manifest_inspector(data: dict, domain: str = "legal") -> str:
 
     parts.append("</div>")
     return "\n".join(parts)
+
+
+# ── Steering Impact Preview ──────────────────────────────────────────
+_IMPACT_PREVIEW_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Steering Impact Preview",
+        "subtitle": "Project the effect of a correction before committing it.",
+        "before": "Current State",
+        "after": "Projected State",
+        "coverage": "Issue Coverage",
+        "gaps": "Open Gaps",
+        "contradictions": "Contradictions",
+        "disputed": "Disputed Assertions",
+        "readiness": "Readiness",
+        "followups": "Recommended Follow-ups",
+        "empty": "Select a steering action and click Preview to see projected impact.",
+        "invalid": "Invalid action — check warnings below.",
+    },
+    "finance": {
+        "title": "Action Impact Preview",
+        "subtitle": "Project the effect of a correction before committing it.",
+        "before": "Current Position",
+        "after": "Projected Position",
+        "coverage": "Thesis Coverage",
+        "gaps": "Open Diligence Gaps",
+        "contradictions": "Contradictions",
+        "disputed": "Disputed Claims",
+        "readiness": "Readiness",
+        "followups": "Recommended Follow-ups",
+        "empty": "Select an action and click Preview to see projected impact.",
+        "invalid": "Invalid action — check warnings below.",
+    },
+    "coding": {
+        "title": "Action Impact Preview",
+        "subtitle": "Project the effect of a correction before committing it.",
+        "before": "Current State",
+        "after": "Projected State",
+        "coverage": "Requirement Coverage",
+        "gaps": "Open Verification Gaps",
+        "contradictions": "Conflicts",
+        "disputed": "Disputed Claims",
+        "readiness": "Readiness",
+        "followups": "Recommended Follow-ups",
+        "empty": "Select an action and click Preview to see projected impact.",
+        "invalid": "Invalid action — check warnings below.",
+    },
+    "academic_research": {
+        "title": "Action Impact Preview",
+        "subtitle": "Project the effect of a correction before committing it.",
+        "before": "Current State",
+        "after": "Projected State",
+        "coverage": "Question Coverage",
+        "gaps": "Open Evidence Gaps",
+        "contradictions": "Contradictions",
+        "disputed": "Disputed Findings",
+        "readiness": "Readiness",
+        "followups": "Recommended Follow-ups",
+        "empty": "Select an action and click Preview to see projected impact.",
+        "invalid": "Invalid action — check warnings below.",
+    },
+    "biomedical": {
+        "title": "Action Impact Preview",
+        "subtitle": "Project the effect of a correction before committing it.",
+        "before": "Current State",
+        "after": "Projected State",
+        "coverage": "Mechanism Coverage",
+        "gaps": "Open Evidence Gaps",
+        "contradictions": "Contradictions",
+        "disputed": "Disputed Findings",
+        "readiness": "Readiness",
+        "followups": "Recommended Follow-ups",
+        "empty": "Select an action and click Preview to see projected impact.",
+        "invalid": "Invalid action — check warnings below.",
+    },
+}
+
+
+def _fmt_impact_preview(data: dict, domain: str = "legal") -> str:
+    L = _IMPACT_PREVIEW_LABELS.get(domain, _IMPACT_PREVIEW_LABELS["legal"])
+
+    if not data:
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    if not data.get("valid", False):
+        warnings = data.get("warnings", [])
+        warn_html = "".join(
+            f"<div style='color:#dc2626;font-size:0.85em;'>&#9888; {_escape(str(w)[:200])}</div>"
+            for w in warnings if isinstance(w, str)
+        )
+        return (
+            f"<div class='viz-shell'><div class='intel-panel-title'>{_escape(L['title'])}</div>"
+            f"<div style='color:#dc2626;font-weight:600;'>{_escape(L['invalid'])}</div>"
+            f"{warn_html}</div>"
+        )
+
+    before = data.get("before", {})
+    after = data.get("after", {})
+    deltas = data.get("deltas", {})
+
+    if not isinstance(before, dict):
+        before = {}
+    if not isinstance(after, dict):
+        after = {}
+    if not isinstance(deltas, dict):
+        deltas = {}
+
+    def _safe_float(v: object) -> float:
+        try:
+            fv = float(v)  # type: ignore[arg-type]
+            return fv if math.isfinite(fv) else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _safe_int(v: object) -> int:
+        try:
+            iv = int(v)  # type: ignore[arg-type]
+            return iv if isinstance(iv, int) and iv >= 0 else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def _delta_badge(before_val: object, after_val: object, lower_is_better: bool = True) -> str:
+        bv = _safe_float(before_val)
+        av = _safe_float(after_val)
+        diff = av - bv
+        if abs(diff) < 0.0001:
+            return "<span style='color:#6b7280;'>&#8212;</span>"
+        improved = (diff < 0) if lower_is_better else (diff > 0)
+        color = "#16a34a" if improved else "#dc2626"
+        arrow = "&#9660;" if diff < 0 else "&#9650;"
+        return f"<span style='color:{color};font-weight:600;'>{arrow} {abs(diff):.2f}</span>"
+
+    def _metric_row(label: str, bv: object, av: object, is_pct: bool = False, lower_is_better: bool = True) -> str:
+        if is_pct:
+            b_str = f"{_safe_float(bv) * 100:.1f}%"
+            a_str = f"{_safe_float(av) * 100:.1f}%"
+        else:
+            b_str = str(_safe_int(bv))
+            a_str = str(_safe_int(av))
+        badge = _delta_badge(bv, av, lower_is_better=lower_is_better)
+        return (
+            f"<tr><td>{_escape(label)}</td>"
+            f"<td style='text-align:center;'>{b_str}</td>"
+            f"<td style='text-align:center;'>{a_str}</td>"
+            f"<td style='text-align:center;'>{badge}</td></tr>"
+        )
+
+    rows = (
+        _metric_row(L["coverage"], before.get("issue_coverage_avg"), after.get("issue_coverage_avg"), is_pct=True, lower_is_better=False)
+        + _metric_row(L["gaps"], before.get("open_gap_count"), after.get("open_gap_count"))
+        + _metric_row(L["contradictions"], before.get("contradiction_count"), after.get("contradiction_count"))
+        + _metric_row(L["disputed"], before.get("disputed_count"), after.get("disputed_count"))
+    )
+
+    before_readiness = _escape(str(before.get("readiness", "unknown")))
+    after_readiness = _escape(str(after.get("readiness", "unknown")))
+    readiness_color = "#16a34a" if after_readiness == "good" else "#d97706"
+    rows += (
+        f"<tr><td>{_escape(L['readiness'])}</td>"
+        f"<td style='text-align:center;'>{before_readiness}</td>"
+        f"<td style='text-align:center;color:{readiness_color};font-weight:600;'>{after_readiness}</td>"
+        f"<td></td></tr>"
+    )
+
+    action_type = _escape(str(data.get("action_type", "")))
+
+    table = (
+        f"<div class='viz-shell'>"
+        f"<div class='intel-panel-title'>{_escape(L['title'])}</div>"
+        f"<div style='font-size:0.8em;color:#6b7280;margin-bottom:8px;'>"
+        f"{_escape(L['subtitle'])} Action: <strong>{action_type}</strong></div>"
+        f"<div class='table-wrap'><table class='viz-table'>"
+        f"<thead><tr><th>Metric</th><th>{_escape(L['before'])}</th>"
+        f"<th>{_escape(L['after'])}</th><th>Delta</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>"
+    )
+
+    affected_objs = deltas.get("affected_objectives", [])
+    affected_asns = deltas.get("affected_assertions", [])
+    if isinstance(affected_objs, list) and affected_objs:
+        table += (
+            f"<div style='margin-top:8px;font-size:0.8em;color:#6b7280;'>"
+            f"Affected objectives: {len(affected_objs)}</div>"
+        )
+    if isinstance(affected_asns, list) and affected_asns:
+        table += (
+            f"<div style='font-size:0.8em;color:#6b7280;'>"
+            f"Affected assertions: {len(affected_asns)}</div>"
+        )
+
+    followups = data.get("recommended_followups", [])
+    if isinstance(followups, list) and followups:
+        fu_items = "".join(
+            f"<li>{_escape(str(f)[:200])}</li>"
+            for f in followups if isinstance(f, str)
+        )
+        table += (
+            f"<div style='margin-top:10px;'>"
+            f"<div class='viz-subtitle'>{_escape(L['followups'])}</div>"
+            f"<ul style='margin:4px 0;padding-left:18px;font-size:0.85em;'>{fu_items}</ul></div>"
+        )
+
+    warnings = data.get("warnings", [])
+    if isinstance(warnings, list) and warnings:
+        for w in warnings:
+            if isinstance(w, str):
+                table += (
+                    f"<div style='color:#d97706;font-size:0.8em;margin-top:4px;'>"
+                    f"&#9888; {_escape(str(w)[:200])}</div>"
+                )
+
+    table += "</div>"
+    return table
 
 
 def _fmt_quant_panel(
@@ -11283,6 +11499,33 @@ class AppState:
             logger.warning("Manifest inspector load failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_impact_preview(
+        self, matter_id: str, action_type: str, payload_json: str, domain: str = "legal",
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        if not action_type:
+            return _fmt_impact_preview({}, domain=domain)
+        try:
+            import json as _json
+            payload = _json.loads(payload_json) if payload_json else {}
+        except (ValueError, TypeError):
+            return (
+                "<div class='viz-empty' style='color:#dc2626;'>"
+                "Invalid payload JSON. Enter a valid JSON object.</div>"
+            )
+        try:
+            data = _run_async(
+                self.backend().get_steering_impact_preview(matter_id, action_type, payload)
+            )
+            if not isinstance(data, dict):
+                logger.warning("load_impact_preview: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_impact_preview(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Impact preview load failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def create_scenario_branch_ui(self, matter_id: str, name: str, assumptions_text: str, notes: str = "") -> str:
         if not matter_id or matter_id == "—":
             return "No matter loaded."
@@ -13843,6 +14086,31 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "Refresh Manifests", variant="secondary", size="sm",
             )
 
+        with gr.Accordion("Steering Impact Preview — project the effect of corrections before committing", open=False):
+            gr.Markdown(
+                "Select a steering action type, provide the relevant payload as JSON, "
+                "and preview the projected impact on coverage, gaps, contradictions, "
+                "and readiness before committing the change."
+            )
+            with gr.Row():
+                impact_action_type = gr.Dropdown(
+                    choices=["resolve_gap", "correct_assertion", "resolve_contradiction",
+                             "approve_metric_alias", "escalate_gap"],
+                    label="Action Type",
+                    value="resolve_gap",
+                )
+                impact_payload = gr.Textbox(
+                    label="Payload (JSON)",
+                    placeholder='{"gap_id": "..."}',
+                    lines=2,
+                )
+            impact_preview_btn = gr.Button(
+                "Preview Impact", variant="primary", size="sm",
+            )
+            impact_preview_html = gr.HTML(
+                "<div class='viz-empty'>Select a steering action and click Preview to see projected impact.</div>"
+            )
+
         with gr.Accordion("Answer Audit — freshness, sources, and policy for every answer", open=False):
             gr.Markdown(
                 "Every answer Irys produces is backed by a dependency manifest that tracks "
@@ -15110,6 +15378,13 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[manifest_inspector_html],
+        )
+        impact_preview_btn.click(
+            fn=lambda mid, at, pj: state.load_impact_preview(
+                mid, at, pj, domain=state._detect_domain(mid),
+            ),
+            inputs=[matter_id_box, impact_action_type, impact_payload],
+            outputs=[impact_preview_html],
         )
         refresh_answer_audit_btn.click(
             fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
