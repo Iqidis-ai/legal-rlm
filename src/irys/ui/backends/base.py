@@ -202,6 +202,20 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def set_criterion_status(
+        self, matter_id: str, predicate_id: str, status: str, reason: str = "",
+    ) -> dict:
+        """Set criterion/predicate status: open, resolved, contested, or blocked (SO-4)."""
+        ...
+
+    @abstractmethod
+    async def add_criterion(
+        self, matter_id: str, objective_id: str, description: str, burden_side: str = "",
+    ) -> dict:
+        """Add a criterion/predicate to an objective (SO-4)."""
+        ...
+
+    @abstractmethod
     async def get_assumption_review(self, matter_id: str) -> dict:
         """Assumption review workbench: lifecycle groups with impact data (SO-3, SO-7)."""
         ...

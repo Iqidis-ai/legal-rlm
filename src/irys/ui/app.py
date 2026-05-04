@@ -15,6 +15,7 @@ import asyncio
 import concurrent.futures
 import html
 import logging
+import math
 import os
 import pathlib
 import queue
@@ -5151,11 +5152,18 @@ def _fmt_objective_coverage(data: dict, domain: str = "legal") -> str:
         badge_color = badge_colors.get(badge, "#6b7280")
         mat = obj.get("materiality", 0.5)
         materiality = float(mat) if isinstance(mat, (int, float)) else 0.5
+        if not math.isfinite(materiality):
+            materiality = 0.5
+        materiality = max(0.0, min(1.0, materiality))
         cov_frac = obj.get("coverage_fraction", 0.0)
         coverage = float(cov_frac) if isinstance(cov_frac, (int, float)) else 0.0
+        if not math.isfinite(coverage):
+            coverage = 0.0
+        coverage = max(0.0, min(1.0, coverage))
         cov_pct = int(coverage * 100)
         supporting = obj.get("supporting_count", 0)
         supporting_ct = int(supporting) if isinstance(supporting, (int, float)) else 0
+        supporting_ct = max(0, supporting_ct)
 
         pred_total = obj.get("predicate_total", 0)
         pt = int(pred_total) if isinstance(pred_total, (int, float)) else 0
@@ -10174,10 +10182,65 @@ class AppState:
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             data = _run_async(self.backend().get_objective_coverage(matter_id))
-            return _fmt_objective_coverage(data if isinstance(data, dict) else {}, domain=domain)
+            if not isinstance(data, dict):
+                logger.warning("load_objective_coverage: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_objective_coverage(data, domain=domain)
         except Exception as exc:
             logger.warning("load_objective_coverage failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
+    def set_criterion_status(
+        self, matter_id: str, predicate_id: str, status: str, reason: str,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        pid = (predicate_id or "").strip()
+        if not pid:
+            return "Enter a criterion ID.", ""
+        if not status:
+            return "Select a status.", ""
+        try:
+            result = _run_async(self.backend().set_criterion_status(
+                matter_id, pid, status, (reason or "").strip(),
+            ))
+            if not isinstance(result, dict):
+                return "Unexpected response.", ""
+            if result.get("error"):
+                return f"Error: {_escape(str(result['error']))}", ""
+            domain = self._detect_domain(matter_id)
+            html = self.load_objective_coverage(matter_id, domain)
+            return f"Criterion {_escape(pid[:16])} → {_escape(status)}", html
+        except Exception as exc:
+            logger.warning("set_criterion_status failed: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
+
+    def add_criterion(
+        self, matter_id: str, objective_id: str, description: str, burden_side: str,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        oid = (objective_id or "").strip()
+        desc = (description or "").strip()
+        if not oid:
+            return "Enter an objective ID.", ""
+        if not desc:
+            return "Enter a description.", ""
+        try:
+            result = _run_async(self.backend().add_criterion(
+                matter_id, oid, desc, (burden_side or "").strip(),
+            ))
+            if not isinstance(result, dict):
+                return "Unexpected response.", ""
+            if result.get("error"):
+                return f"Error: {_escape(str(result['error']))}", ""
+            pid = result.get("predicate_id", "")
+            domain = self._detect_domain(matter_id)
+            html = self.load_objective_coverage(matter_id, domain)
+            return f"Added criterion {_escape(str(pid)[:16])} to {_escape(oid[:16])}", html
+        except Exception as exc:
+            logger.warning("add_criterion failed: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
 
     def load_knowledge_seeds(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -12218,6 +12281,32 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             objective_coverage_html = gr.HTML("<div class='viz-empty'>Objective coverage will appear here after an investigation.</div>")
             refresh_objective_coverage_btn = gr.Button("Refresh Coverage", variant="secondary", size="sm")
 
+            with gr.Accordion("Manage criteria", open=False):
+                with gr.Row():
+                    criterion_predicate_id = gr.Textbox(label="Criterion ID", placeholder="Paste the criterion/predicate ID", scale=2)
+                    criterion_status_dropdown = gr.Dropdown(
+                        choices=[
+                            ("Open", "open"),
+                            ("Resolved", "resolved"),
+                            ("Contested", "contested"),
+                            ("Blocked", "blocked"),
+                        ],
+                        label="Status",
+                        value="open",
+                        scale=1,
+                    )
+                criterion_reason_input = gr.Textbox(label="Reason (optional)", placeholder="Why this status change?")
+                set_criterion_btn = gr.Button("Set Criterion Status", variant="primary", size="sm")
+                criterion_result = gr.Textbox(label="Result", interactive=False, visible=True)
+
+                gr.Markdown("---")
+                with gr.Row():
+                    add_criterion_objective_id = gr.Textbox(label="Objective ID", placeholder="Paste the objective/issue ID", scale=2)
+                    add_criterion_burden = gr.Textbox(label="Burden side (optional)", placeholder="e.g. plaintiff, defendant", scale=1)
+                add_criterion_desc = gr.Textbox(label="Criterion description", placeholder="What must be proven?")
+                add_criterion_btn = gr.Button("Add Criterion", variant="primary", size="sm")
+                add_criterion_result = gr.Textbox(label="Result", interactive=False, visible=True)
+
         with gr.Accordion("Answer Audit — freshness, sources, and policy for every answer", open=False):
             gr.Markdown(
                 "Every answer Irys produces is backed by a dependency manifest that tracks "
@@ -13124,6 +13213,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, aid, action, reason: state.update_assumption_status(mid, aid, action, reason),
             inputs=[matter_id_box, assumption_id_input, assumption_action_dropdown, assumption_reason_input],
             outputs=[assumption_action_result, assumptions_detail_html],
+        ).then(
+            fn=lambda mid: state.load_objective_coverage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[objective_coverage_html],
         )
         priority_apply_btn.click(
             fn=lambda mid, iid, p: state.set_issue_priority(mid, iid, p),
@@ -13294,6 +13387,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_objective_coverage(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[objective_coverage_html],
+        )
+        set_criterion_btn.click(
+            fn=lambda mid, pid, st, reason: state.set_criterion_status(mid, pid, st, reason),
+            inputs=[matter_id_box, criterion_predicate_id, criterion_status_dropdown, criterion_reason_input],
+            outputs=[criterion_result, objective_coverage_html],
+        )
+        add_criterion_btn.click(
+            fn=lambda mid, oid, desc, burden: state.add_criterion(mid, oid, desc, burden),
+            inputs=[matter_id_box, add_criterion_objective_id, add_criterion_desc, add_criterion_burden],
+            outputs=[add_criterion_result, objective_coverage_html],
         )
         refresh_answer_audit_btn.click(
             fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),

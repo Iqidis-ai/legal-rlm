@@ -290,6 +290,32 @@ class HttpBackend(UIBackend):
             return {}
         return result
 
+    async def set_criterion_status(
+        self, matter_id: str, predicate_id: str, status: str, reason: str = "",
+    ) -> dict:
+        pid_enc = _url_quote(predicate_id, safe="")
+        result = await self._post(
+            f"/matter/{matter_id}/criteria/{pid_enc}/status",
+            {"status": status, "reason": reason},
+        )
+        if not isinstance(result, dict):
+            _log.warning("set_criterion_status: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
+    async def add_criterion(
+        self, matter_id: str, objective_id: str, description: str, burden_side: str = "",
+    ) -> dict:
+        oid_enc = _url_quote(objective_id, safe="")
+        result = await self._post(
+            f"/matter/{matter_id}/objectives/{oid_enc}/criteria",
+            {"description": description, "burden_side": burden_side},
+        )
+        if not isinstance(result, dict):
+            _log.warning("add_criterion: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def get_assumption_review(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/assumption-review")
         if not isinstance(result, dict):

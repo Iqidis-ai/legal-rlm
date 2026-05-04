@@ -3628,17 +3628,21 @@ class MatterModel:
         """Professional objective coverage dashboard: per-objective criteria,
         support/attack counts, coverage badges, and open gaps."""
         coverage_report = self.get_issue_coverage_report()
-        coverage_map = {r["id"]: r for r in coverage_report if isinstance(r, dict)}
+        coverage_map = {r["id"]: r for r in coverage_report if isinstance(r, dict) and "id" in r}
 
         open_issues = self.issues.get_open_issues(min_materiality=0.0)
         objectives = []
         for issue in open_issues:
             if not isinstance(issue, dict):
                 continue
-            iid = issue["id"]
+            iid = issue.get("id")
+            if not iid:
+                continue
             cov = coverage_map.get(iid, {})
 
-            predicates = self.issues.get_predicates(iid)
+            predicates = self.issues.get_predicates_by_status(
+                iid, statuses=("open", "resolved", "contested", "blocked"),
+            )
             pred_total = len(predicates)
             pred_satisfied = sum(1 for p in predicates if isinstance(p, dict) and p.get("status") == "resolved")
             pred_blocked = sum(1 for p in predicates if isinstance(p, dict) and p.get("status") == "blocked")
@@ -3723,7 +3727,10 @@ class MatterModel:
         for a in all_assumptions:
             if not isinstance(a, dict):
                 continue
-            targets = self.assumptions.get_linked_targets(a["id"])
+            aid = a.get("id")
+            if not aid:
+                continue
+            targets = self.assumptions.get_linked_targets(aid)
             a["linked_target_count"] = len(targets)
             a["linked_targets"] = targets[:5]
             status = a.get("status", "provisional")

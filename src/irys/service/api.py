@@ -2767,6 +2767,45 @@ async def get_objective_coverage(matter_id: str):
     return model.get_objective_coverage_workbench()
 
 
+@app.post(
+    "/matter/{matter_id}/criteria/{predicate_id}/status",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def set_criterion_status(
+    matter_id: str,
+    predicate_id: str,
+    status: str = Query(...),
+    reason: str = Query(default=""),
+):
+    """Set criterion/predicate status: open, resolved, contested, or blocked (SO-4)."""
+    model = await _get_matter_model_or_404(matter_id)
+    valid = ("open", "resolved", "contested", "blocked")
+    if status not in valid:
+        raise HTTPException(status_code=400, detail=f"Invalid status '{status}'. Must be one of: {', '.join(valid)}")
+    updated = model.issues.set_predicate_status(predicate_id, status, reason or None)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Criterion '{predicate_id}' not found")
+    return {"updated": True, "predicate_id": predicate_id, "status": status}
+
+
+@app.post(
+    "/matter/{matter_id}/objectives/{objective_id}/criteria",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def add_criterion(
+    matter_id: str,
+    objective_id: str,
+    description: str = Query(...),
+    burden_side: str = Query(default=""),
+):
+    """Add a criterion/predicate to an objective (SO-4)."""
+    model = await _get_matter_model_or_404(matter_id)
+    pid = model.issues.add_predicate(objective_id, description, burden_side or None)
+    return {"predicate_id": pid, "objective_id": objective_id}
+
+
 _PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
 
 

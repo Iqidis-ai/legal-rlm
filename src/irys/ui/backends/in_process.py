@@ -581,6 +581,25 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_objective_coverage_workbench()
 
+    async def set_criterion_status(
+        self, matter_id: str, predicate_id: str, status: str, reason: str = "",
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        valid = ("open", "resolved", "contested", "blocked")
+        if status not in valid:
+            return {"error": f"Invalid status '{status}'. Must be one of: {', '.join(valid)}"}
+        updated = model.issues.set_predicate_status(predicate_id, status, reason or None)
+        if not updated:
+            return {"error": f"Criterion '{predicate_id}' not found"}
+        return {"updated": True, "predicate_id": predicate_id, "status": status}
+
+    async def add_criterion(
+        self, matter_id: str, objective_id: str, description: str, burden_side: str = "",
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        pid = model.issues.add_predicate(objective_id, description, burden_side or None)
+        return {"predicate_id": pid, "objective_id": objective_id}
+
     async def get_assumption_review(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_assumption_review_workbench()

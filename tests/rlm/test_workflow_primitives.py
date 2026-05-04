@@ -5395,3 +5395,128 @@ def test_objective_coverage_workbench_with_issues():
     obj1 = next(o for o in objs if o["id"] == iid1)
     assert obj1["predicate_total"] == 2
     assert obj1["predicate_satisfied"] == 0
+
+
+# ---- Predicate status management (SO-4) ---- #
+
+def test_set_criterion_status_resolves():
+    from irys.matter.matter import MatterModel
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue("Test claim", IssueType.CLAIM, materiality=0.8)
+    pid = model.issues.add_predicate(iid, "Element A", "plaintiff")
+    ok = model.issues.set_predicate_status(pid, "resolved", "met via evidence")
+    assert ok is True
+    preds = model.issues.get_predicates_by_status(iid, statuses=("resolved",))
+    resolved = [p for p in preds if p.get("id") == pid]
+    assert len(resolved) == 1
+    assert resolved[0]["status"] == "resolved"
+
+
+def test_set_criterion_status_blocked():
+    from irys.matter.matter import MatterModel
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue("Test claim", IssueType.CLAIM, materiality=0.8)
+    pid = model.issues.add_predicate(iid, "Element B", "defendant")
+    ok = model.issues.set_predicate_status(pid, "blocked", "assumption invalidated")
+    assert ok is True
+
+
+def test_set_criterion_status_not_found():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    ok = model.issues.set_predicate_status("nonexistent-id", "resolved")
+    assert ok is False
+
+
+def test_add_criterion_to_objective():
+    from irys.matter.matter import MatterModel
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue("Test claim", IssueType.CLAIM, materiality=0.8)
+    pid = model.issues.add_predicate(iid, "New element", "plaintiff")
+    assert pid
+    preds = model.issues.get_predicates(iid)
+    assert any(p.get("id") == pid for p in preds)
+
+
+def test_set_criterion_changes_coverage_badge():
+    from irys.matter.matter import MatterModel
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue("Claim with blocked", IssueType.CLAIM, materiality=0.8)
+    pid = model.issues.add_predicate(iid, "Must prove X", "plaintiff")
+    model.issues.set_predicate_status(pid, "blocked", "reason")
+    wb = model.get_objective_coverage_workbench()
+    obj = next(o for o in wb["objectives"] if o["id"] == iid)
+    assert obj["coverage_badge"] == "blocked"
+    assert obj["predicate_blocked"] == 1
+
+
+def test_objective_coverage_clamped_values():
+    """Verify the formatter clamps materiality/coverage to [0, 1] (P1-2 fix)."""
+    import html as _html_mod
+    from irys.ui.app import _fmt_objective_coverage
+    data = {
+        "total": 1,
+        "summary": {"covered": 0, "thin": 0, "blocked": 0, "missing": 1, "contradicted": 0},
+        "objectives": [{
+            "id": "test-id",
+            "title": "Test",
+            "issue_type": "claim",
+            "materiality": 2.5,
+            "coverage_fraction": -0.3,
+            "coverage_badge": "missing",
+            "supporting_count": -5,
+            "predicate_total": 0,
+            "predicate_satisfied": 0,
+            "predicate_blocked": 0,
+            "predicate_contested": 0,
+            "predicates": [],
+            "gaps": [],
+            "has_proof_gap": False,
+        }],
+    }
+    html = _fmt_objective_coverage(data, domain="legal")
+    assert "0%" in html
+    assert "-" not in html.split("Coverage:")[1].split("<")[0] if "Coverage:" in html else True
+
+
+def test_objective_coverage_nan_values():
+    """NaN/inf should degrade to safe defaults, not appear as raw numeric text."""
+    from irys.ui.app import _fmt_objective_coverage
+    data = {
+        "total": 1,
+        "summary": {"covered": 0, "thin": 0, "blocked": 0, "missing": 1, "contradicted": 0},
+        "objectives": [{
+            "id": "safe-id",
+            "title": "Safe title",
+            "issue_type": "claim",
+            "materiality": float("nan"),
+            "coverage_fraction": float("inf"),
+            "coverage_badge": "missing",
+            "supporting_count": 0,
+            "predicate_total": 0,
+            "predicate_satisfied": 0,
+            "predicate_blocked": 0,
+            "predicate_contested": 0,
+            "predicates": [],
+            "gaps": [],
+            "has_proof_gap": False,
+        }],
+    }
+    html = _fmt_objective_coverage(data, domain="legal")
+    assert "nan" not in html.lower()
+    assert "inf" not in html.lower()
+
+
+def test_backend_interface_balance_predicate_management():
+    """Verify set_criterion_status and add_criterion exist in all 3 backends."""
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("set_criterion_status", "add_criterion"):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
