@@ -2828,6 +2828,18 @@ async def get_decision_leverage(matter_id: str, top_n: int = Query(default=15, g
     return model.get_decision_leverage_map(top_n=top_n)
 
 
+@app.get(
+    "/matter/{matter_id}/output-quality",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_output_quality(matter_id: str, run_id: str | None = None):
+    """Output quality contract workbench: reliance-readiness obligations,
+    recent run summaries, manifest freshness, and blocker inventory (SO-3, SO-4)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_output_quality_workbench(run_id=run_id)
+
+
 _PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
 
 

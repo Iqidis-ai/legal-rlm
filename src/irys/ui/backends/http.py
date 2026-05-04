@@ -297,6 +297,14 @@ class HttpBackend(UIBackend):
             return {}
         return result
 
+    async def get_output_quality(self, matter_id: str, run_id: str | None = None) -> dict:
+        params = {"run_id": run_id} if run_id else {}
+        result = await self._get(f"/matter/{matter_id}/output-quality", params)
+        if not isinstance(result, dict):
+            _log.warning("get_output_quality: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/objective-coverage")
         if not isinstance(result, dict):

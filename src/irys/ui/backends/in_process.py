@@ -585,6 +585,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_decision_leverage_map(top_n=top_n)
 
+    async def get_output_quality(self, matter_id: str, run_id: str | None = None) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_output_quality_workbench(run_id=run_id)
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_objective_coverage_workbench()

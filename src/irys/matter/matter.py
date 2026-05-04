@@ -4354,6 +4354,131 @@ class MatterModel:
         }
 
     # ------------------------------------------------------------------
+    # SO-3/SO-4: output quality contract workbench
+    # ------------------------------------------------------------------
+
+    def get_output_quality_workbench(self, run_id: Optional[str] = None) -> dict:
+        """Aggregate output quality signals into a professional review surface.
+
+        Combines: latest run session metadata, ledger completion events,
+        readiness blockers, manifest freshness, and LLM efficiency metrics
+        into a single workbench for domain professionals to assess whether
+        an investigation's output is reliance-ready.
+        """
+        runs = self.ledger.recent_runs(limit=5)
+        run_summaries: list[dict] = []
+        for r in runs:
+            if not isinstance(r, dict):
+                continue
+            rid = r.get("id", "")
+            status = r.get("status", "unknown")
+            started = r.get("started_at", "")
+            completed = r.get("completed_at", "")
+            query = (r.get("query") or "")[:100]
+            op_type = r.get("operation_type", "query")
+            research_mode = r.get("research_mode", "deep")
+
+            completion_summary = ""
+            event_count = 0
+            try:
+                events = self.ledger.get_events(rid)
+                event_count = len(events)
+                for e in reversed(events):
+                    if not isinstance(e, dict):
+                        continue
+                    if e.get("event_type") in ("run_completed", "run_failed"):
+                        completion_summary = (e.get("summary") or "")[:200]
+                        break
+            except Exception:
+                pass
+
+            llm_avoided = r.get("llm_calls_avoided") or 0
+            llm_required = r.get("llm_calls_required") or 0
+            llm_total = llm_avoided + llm_required
+            reuse_rate = round(llm_avoided / max(llm_total, 1), 3)
+
+            run_summaries.append({
+                "run_id": rid,
+                "status": status,
+                "started_at": started,
+                "completed_at": completed,
+                "query": query,
+                "operation_type": op_type,
+                "research_mode": research_mode,
+                "event_count": event_count,
+                "completion_summary": completion_summary,
+                "llm_calls_avoided": llm_avoided,
+                "llm_calls_required": llm_required,
+                "cache_reuse_rate": reuse_rate,
+            })
+
+        readiness = self.get_investigation_readiness(run_id=run_id)
+
+        manifest_fresh = False
+        manifest_count = 0
+        stale_count = 0
+        try:
+            manifests = self.broker.list_recent_manifests(limit=10)
+            manifest_count = len(manifests)
+            for m in manifests:
+                if not isinstance(m, dict):
+                    continue
+                mh = m.get("manifest_hash", "")
+                try:
+                    validation = self.broker.validate_dependency_manifest(mh)
+                    if validation and getattr(validation, "valid", False):
+                        manifest_fresh = True
+                    else:
+                        stale_count += 1
+                except Exception:
+                    stale_count += 1
+        except Exception:
+            pass
+
+        obligations: list[dict] = []
+        blocker_types = set()
+        for b in readiness.get("blockers", []):
+            if not isinstance(b, dict):
+                continue
+            btype = b.get("type", "unknown")
+            blocker_types.add(btype)
+            obligations.append({
+                "name": b.get("label", btype),
+                "satisfied": False,
+                "severity": b.get("severity", "medium"),
+                "item_count": len(b.get("items", [])),
+            })
+
+        standard_checks = [
+            ("no_contradictions", "No unresolved contradictions", "contradictions"),
+            ("no_proof_gaps", "No missing elements of proof", "proof_gap"),
+            ("coverage_adequate", "All issues above 50% coverage", "low_coverage"),
+            ("no_high_mat_gaps", "No high-materiality gaps open", "high_materiality_gaps"),
+            ("clarifications_answered", "All clarifications answered", "pending_clarifications"),
+            ("critical_facts_verified", "Critical facts have verified evidence", "unverified_critical"),
+        ]
+        for check_id, label, btype in standard_checks:
+            if btype not in blocker_types:
+                obligations.append({
+                    "name": label,
+                    "satisfied": True,
+                    "severity": "passed",
+                    "item_count": 0,
+                })
+
+        return {
+            "matter_id": self.matter_id,
+            "readiness": readiness.get("readiness", "unknown"),
+            "blocker_count": readiness.get("blocker_count", 0),
+            "runs": run_summaries,
+            "obligations": obligations,
+            "manifest_count": manifest_count,
+            "manifest_fresh": manifest_fresh,
+            "stale_manifest_count": stale_count,
+            "summary": readiness.get("summary", {}),
+        }
+
+    # ------------------------------------------------------------------
 
     def _card_provenance(
         self,

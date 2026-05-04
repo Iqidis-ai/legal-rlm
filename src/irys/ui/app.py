@@ -5735,6 +5735,198 @@ def _fmt_decision_leverage(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_OUTPUT_QUALITY_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Output Quality Contract",
+        "subtitle": "Is this analysis ready for professional reliance?",
+        "empty": "No investigation data available. Run an investigation first.",
+        "ready": "Ready for reliance",
+        "caution": "Proceed with caution",
+        "blocked": "Not ready — action required",
+        "run_header": "Recent Investigations",
+        "obligations_header": "Reliance Obligations",
+        "manifest_header": "Dependency Freshness",
+    },
+    "finance": {
+        "title": "Output Quality Contract",
+        "subtitle": "Is this analysis ready for investment reliance?",
+        "empty": "No investigation data available. Run an analysis first.",
+        "ready": "Ready for reliance",
+        "caution": "Proceed with caution",
+        "blocked": "Not ready — action required",
+        "run_header": "Recent Analyses",
+        "obligations_header": "Reliance Obligations",
+        "manifest_header": "Dependency Freshness",
+    },
+    "coding": {
+        "title": "Output Quality Contract",
+        "subtitle": "Is this assessment ready for implementation?",
+        "empty": "No investigation data available. Run an assessment first.",
+        "ready": "Ready for action",
+        "caution": "Proceed with caution",
+        "blocked": "Not ready — action required",
+        "run_header": "Recent Assessments",
+        "obligations_header": "Quality Obligations",
+        "manifest_header": "Dependency Freshness",
+    },
+    "academic_research": {
+        "title": "Output Quality Contract",
+        "subtitle": "Is this literature review ready for citation?",
+        "empty": "No investigation data available. Run a review first.",
+        "ready": "Ready for citation",
+        "caution": "Proceed with caution",
+        "blocked": "Not ready — action required",
+        "run_header": "Recent Reviews",
+        "obligations_header": "Scholarly Obligations",
+        "manifest_header": "Dependency Freshness",
+    },
+    "biomedical": {
+        "title": "Output Quality Contract",
+        "subtitle": "Is this clinical analysis ready for reliance?",
+        "empty": "No investigation data available. Run a clinical analysis first.",
+        "ready": "Ready for reliance",
+        "caution": "Proceed with caution",
+        "blocked": "Not ready — action required",
+        "run_header": "Recent Analyses",
+        "obligations_header": "Clinical Obligations",
+        "manifest_header": "Dependency Freshness",
+    },
+}
+
+
+def _fmt_output_quality(data: dict, domain: str = "legal") -> str:
+    labels = _OUTPUT_QUALITY_LABELS.get(domain, _OUTPUT_QUALITY_LABELS["legal"])
+    if not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+
+    readiness = data.get("readiness", "unknown")
+    blocker_count = data.get("blocker_count", 0)
+    runs = data.get("runs", [])
+    obligations = data.get("obligations", [])
+    manifest_count = data.get("manifest_count", 0)
+    manifest_fresh = data.get("manifest_fresh", False)
+    stale_count = data.get("stale_manifest_count", 0)
+    summary = data.get("summary", {})
+
+    if not runs and not obligations:
+        return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+
+    readiness_colors = {
+        "ready": ("#16a34a", labels["ready"]),
+        "caution": ("#d97706", labels["caution"]),
+        "blocked": ("#dc2626", labels["blocked"]),
+    }
+    r_color, r_label = readiness_colors.get(readiness, ("#6b7280", readiness))
+
+    parts = [
+        "<div class='viz-shell'>",
+        f"<div class='viz-header'>"
+        f"<strong>{_escape(labels['title'])}</strong> &mdash; "
+        f"{_escape(labels['subtitle'])}</div>",
+        f"<div style='padding:12px 16px;background:{r_color}11;"
+        f"border-left:4px solid {r_color};margin:8px 0;border-radius:4px;'>"
+        f"<span style='color:{r_color};font-weight:700;font-size:1.1em;'>"
+        f"{'&#x2705;' if readiness == 'ready' else '&#x26A0;&#xFE0F;' if readiness == 'caution' else '&#x274C;'} "
+        f"{_escape(r_label)}</span>",
+    ]
+    if blocker_count:
+        parts.append(
+            f"<span style='margin-left:12px;color:#6b7280;font-size:0.9em;'>"
+            f"{blocker_count} blocker{'s' if blocker_count != 1 else ''}</span>"
+        )
+    avg_cov = summary.get("avg_coverage", 0)
+    if isinstance(avg_cov, (int, float)) and math.isfinite(avg_cov):
+        parts.append(
+            f"<span style='margin-left:12px;color:#6b7280;font-size:0.9em;'>"
+            f"Avg coverage: {int(avg_cov * 100)}%</span>"
+        )
+    parts.append("</div>")
+
+    if obligations:
+        parts.append(
+            f"<h4 style='margin:12px 0 6px 0;font-size:0.95em;'>"
+            f"{_escape(labels['obligations_header'])}</h4>"
+        )
+        for ob in obligations:
+            if not isinstance(ob, dict):
+                continue
+            satisfied = ob.get("satisfied", False)
+            severity = ob.get("severity", "medium")
+            name = _escape(str(ob.get("name", ""))[:120])
+            item_count = ob.get("item_count", 0)
+            if satisfied:
+                icon = "&#x2705;"
+                bg = "#f0fdf4"
+                border = "#16a34a"
+            else:
+                sev_colors = {"high": "#dc2626", "medium": "#d97706", "low": "#6b7280"}
+                border = sev_colors.get(severity, "#6b7280")
+                icon = "&#x274C;" if severity == "high" else "&#x26A0;&#xFE0F;"
+                bg = "#fef2f2" if severity == "high" else "#fffbeb"
+            count_badge = ""
+            if not satisfied and item_count:
+                count_badge = (
+                    f" <span style='background:{border};color:white;padding:1px 6px;"
+                    f"border-radius:10px;font-size:0.8em;'>{item_count}</span>"
+                )
+            parts.append(
+                f"<div style='padding:6px 12px;margin:3px 0;background:{bg};"
+                f"border-left:3px solid {border};border-radius:3px;font-size:0.9em;'>"
+                f"{icon} {name}{count_badge}</div>"
+            )
+
+    if runs:
+        parts.append(
+            f"<h4 style='margin:12px 0 6px 0;font-size:0.95em;'>"
+            f"{_escape(labels['run_header'])}</h4>"
+            "<div class='matrix-wrap'><table class='analytics-table'>"
+            "<thead><tr><th>Status</th><th>Query</th><th>Mode</th>"
+            "<th>Events</th><th>Cache Reuse</th><th>Summary</th></tr></thead><tbody>"
+        )
+        for r in runs[:5]:
+            if not isinstance(r, dict):
+                continue
+            status = r.get("status", "unknown")
+            status_colors = {
+                "completed": "#16a34a", "running": "#2563eb",
+                "failed": "#dc2626", "stopped": "#d97706",
+            }
+            s_color = status_colors.get(status, "#6b7280")
+            query = _escape((r.get("query") or "")[:50])
+            mode = _escape(r.get("research_mode", ""))
+            events = r.get("event_count", 0)
+            reuse = r.get("cache_reuse_rate", 0)
+            if isinstance(reuse, (int, float)) and math.isfinite(reuse):
+                reuse_pct = f"{int(reuse * 100)}%"
+            else:
+                reuse_pct = "—"
+            comp_summary = _escape((r.get("completion_summary") or "")[:80])
+            parts.append(
+                f"<tr><td><span style='color:{s_color};font-weight:600;'>"
+                f"{_escape(status)}</span></td>"
+                f"<td>{query}</td><td>{mode}</td>"
+                f"<td style='text-align:center;'>{events}</td>"
+                f"<td style='text-align:center;'>{reuse_pct}</td>"
+                f"<td style='font-size:0.85em;color:#6b7280;'>{comp_summary}</td></tr>"
+            )
+        parts.append("</tbody></table></div>")
+
+    manifest_icon = "&#x2705;" if manifest_fresh else "&#x26A0;&#xFE0F;"
+    parts.append(
+        f"<h4 style='margin:12px 0 6px 0;font-size:0.95em;'>"
+        f"{_escape(labels['manifest_header'])}</h4>"
+        f"<div style='font-size:0.9em;color:#6b7280;'>"
+        f"{manifest_icon} {manifest_count} manifest(s) tracked"
+    )
+    if stale_count:
+        parts.append(
+            f" &middot; <span style='color:#dc2626;font-weight:600;'>"
+            f"{stale_count} stale</span>"
+        )
+    parts.append("</div></div>")
+    return "\n".join(parts)
+
+
 def _fmt_quant_panel(
     payment_recon: dict,
     invoice_chain: list,
@@ -10328,6 +10520,20 @@ class AppState:
             logger.warning("load_decision_leverage failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_output_quality(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            run_id = getattr(self, "current_run_id", None)
+            data = _run_async(self.backend().get_output_quality(matter_id, run_id=run_id))
+            if not isinstance(data, dict):
+                logger.warning("load_output_quality: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_output_quality(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Output quality workbench load failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def load_quant_ontology(self, matter_id: str, domain: str = "legal") -> tuple[str, Any]:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>", gr.update(choices=[])
@@ -12784,6 +12990,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 add_criterion_btn = gr.Button("Add Criterion", variant="primary", size="sm")
                 add_criterion_result = gr.Textbox(label="Result", interactive=False, visible=True)
 
+        with gr.Accordion("Output Quality Contract — is this analysis reliance-ready?", open=False):
+            gr.Markdown(
+                "Aggregated quality assessment: which professional obligations are satisfied, "
+                "recent investigation run summaries, dependency manifest freshness, and any "
+                "remaining blockers that must be resolved before the output can be relied upon."
+            )
+            output_quality_html = gr.HTML(
+                "<div class='viz-empty'>Quality contract will appear after an investigation.</div>"
+            )
+            refresh_output_quality_btn = gr.Button(
+                "Refresh Quality Contract", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Answer Audit — freshness, sources, and policy for every answer", open=False):
             gr.Markdown(
                 "Every answer Irys produces is backed by a dependency manifest that tracks "
@@ -13425,6 +13644,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 )(state.load_steering_panel(mid, domain=state._detect_domain(mid))),
                 inputs=[matter_id_box],
                 outputs=[steering_panel_html, steering_action_dropdown],
+            ).then(
+                fn=lambda mid: state.load_output_quality(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[output_quality_html],
             )
         else:
             submit_btn.click(
@@ -13525,6 +13748,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 )(state.load_steering_panel(mid, domain=state._detect_domain(mid))),
                 inputs=[matter_id_box],
                 outputs=[steering_panel_html, steering_action_dropdown],
+            ).then(
+                fn=lambda mid: state.load_output_quality(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[output_quality_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -13634,6 +13861,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )(state.load_steering_panel(mid, domain=state._detect_domain(mid))),
             inputs=[matter_id_box],
             outputs=[steering_panel_html, steering_action_dropdown],
+        ).then(
+            fn=lambda mid: state.load_output_quality(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[output_quality_html],
         )
 
         export_report_btn.click(
@@ -13957,6 +14188,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, oid, desc, burden: state.add_criterion(mid, oid, desc, burden),
             inputs=[matter_id_box, add_criterion_objective_id, add_criterion_desc, add_criterion_burden],
             outputs=[add_criterion_result, objective_coverage_html],
+        )
+        refresh_output_quality_btn.click(
+            fn=lambda mid: state.load_output_quality(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[output_quality_html],
         )
         refresh_answer_audit_btn.click(
             fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
@@ -14420,6 +14656,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )(state.load_steering_panel(mid, domain=state._detect_domain(mid))),
             inputs=[matter_id_box],
             outputs=[steering_panel_html, steering_action_dropdown],
+        ).then(
+            fn=lambda mid: state.load_output_quality(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[output_quality_html],
         )
 
         clarification_dropdown.change(

@@ -6046,3 +6046,178 @@ def test_execute_steering_action_unknown_type_xss():
     result = state.execute_steering_action("m1", action_json, "")
     assert "<script>" not in result
     assert "&lt;script&gt;" in result
+
+
+# ── Output Quality Contract Workbench ────────────────────────────────
+
+def test_output_quality_workbench_empty():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_output_quality_workbench()
+    assert isinstance(result, dict)
+    assert result["matter_id"] == model.matter_id
+    assert result["readiness"] in ("ready", "caution", "blocked")
+    assert isinstance(result["runs"], list)
+    assert isinstance(result["obligations"], list)
+    assert isinstance(result["manifest_count"], int)
+
+
+def test_output_quality_workbench_with_run():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    run_id = model.start_run("Test quality question")
+    model.complete_run(run_id, "Run completed.")
+    result = model.get_output_quality_workbench()
+    assert len(result["runs"]) >= 1
+    run = result["runs"][0]
+    assert run["run_id"] == run_id
+    assert run["status"] == "completed"
+    assert "completion_summary" in run
+
+
+def test_output_quality_workbench_obligations_pass():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_output_quality_workbench()
+    passed = [o for o in result["obligations"] if o.get("satisfied")]
+    assert len(passed) > 0
+
+
+def test_output_quality_formatter_empty():
+    from irys.ui.app import _fmt_output_quality
+    result = _fmt_output_quality({}, domain="legal")
+    assert "viz-empty" in result
+
+
+def test_output_quality_formatter_renders():
+    from irys.ui.app import _fmt_output_quality
+    data = {
+        "readiness": "blocked",
+        "blocker_count": 2,
+        "runs": [
+            {
+                "run_id": "r-1",
+                "status": "completed",
+                "query": "What happened?",
+                "research_mode": "deep",
+                "event_count": 5,
+                "cache_reuse_rate": 0.7,
+                "completion_summary": "Run complete.",
+            }
+        ],
+        "obligations": [
+            {"name": "No contradictions", "satisfied": True, "severity": "passed", "item_count": 0},
+            {"name": "2 high-materiality gaps open", "satisfied": False, "severity": "high", "item_count": 2},
+        ],
+        "manifest_count": 3,
+        "manifest_fresh": False,
+        "stale_manifest_count": 1,
+        "summary": {"avg_coverage": 0.65},
+    }
+    html = _fmt_output_quality(data, domain="legal")
+    assert "Output Quality Contract" in html
+    assert "Not ready" in html
+    assert "No contradictions" in html
+    assert "2 high-materiality" in html
+    assert "completed" in html
+    assert "70%" in html
+    assert "1 stale" in html
+
+
+def test_output_quality_formatter_xss():
+    from irys.ui.app import _fmt_output_quality
+    data = {
+        "readiness": "ready",
+        "blocker_count": 0,
+        "runs": [
+            {
+                "run_id": "r-1",
+                "status": "completed",
+                "query": "<script>alert(1)</script>",
+                "research_mode": "deep",
+                "event_count": 1,
+                "cache_reuse_rate": 0.5,
+                "completion_summary": "<img onerror=alert(1)>",
+            }
+        ],
+        "obligations": [
+            {"name": "<b>xss</b>", "satisfied": True, "severity": "passed", "item_count": 0},
+        ],
+        "manifest_count": 0,
+        "manifest_fresh": True,
+        "stale_manifest_count": 0,
+        "summary": {},
+    }
+    html = _fmt_output_quality(data, domain="legal")
+    assert "<script>" not in html
+    assert "<img " not in html
+    assert "<b>" not in html
+
+
+def test_output_quality_formatter_non_dict_guards():
+    from irys.ui.app import _fmt_output_quality
+    data = {
+        "readiness": "ready",
+        "blocker_count": 0,
+        "runs": ["not-a-dict", {"run_id": "r-1", "status": "completed", "query": "Q",
+                                "research_mode": "deep", "event_count": 1,
+                                "cache_reuse_rate": 0.5, "completion_summary": "done"}],
+        "obligations": ["not-a-dict", {"name": "Check", "satisfied": True, "severity": "passed", "item_count": 0}],
+        "manifest_count": 1,
+        "manifest_fresh": True,
+        "stale_manifest_count": 0,
+        "summary": {},
+    }
+    html = _fmt_output_quality(data, domain="legal")
+    assert "completed" in html
+    assert "Check" in html
+
+
+def test_output_quality_labels_all_five_domains():
+    from irys.ui.app import _OUTPUT_QUALITY_LABELS
+    required_keys = {
+        "title", "subtitle", "empty", "ready", "caution", "blocked",
+        "run_header", "obligations_header", "manifest_header",
+    }
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        assert domain in _OUTPUT_QUALITY_LABELS, f"Missing domain: {domain}"
+        for key in required_keys:
+            assert key in _OUTPUT_QUALITY_LABELS[domain], f"Missing key {key} in {domain}"
+
+
+def test_backend_interface_balance_output_quality():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("get_output_quality",):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+def test_output_quality_formatter_nan_reuse_rate():
+    import math
+    from irys.ui.app import _fmt_output_quality
+    data = {
+        "readiness": "ready",
+        "blocker_count": 0,
+        "runs": [
+            {
+                "run_id": "r-1",
+                "status": "completed",
+                "query": "Test",
+                "research_mode": "deep",
+                "event_count": 1,
+                "cache_reuse_rate": float("nan"),
+                "completion_summary": "done",
+            }
+        ],
+        "obligations": [],
+        "manifest_count": 0,
+        "manifest_fresh": True,
+        "stale_manifest_count": 0,
+        "summary": {"avg_coverage": float("inf")},
+    }
+    html = _fmt_output_quality(data, domain="legal")
+    assert "nan" not in html.lower()
+    assert "inf" not in html.lower()

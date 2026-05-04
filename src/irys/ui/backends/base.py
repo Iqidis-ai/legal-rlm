@@ -207,6 +207,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_output_quality(self, matter_id: str, run_id: str | None = None) -> dict:
+        """Output quality contract workbench: obligations, run summaries, manifest freshness."""
+        ...
+
+    @abstractmethod
     async def get_objective_coverage(self, matter_id: str) -> dict:
         """Objective coverage workbench: per-objective criteria, support, gaps (SO-4)."""
         ...
