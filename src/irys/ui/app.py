@@ -5525,20 +5525,22 @@ def _review_queue_choices(queue: list[dict]) -> list[tuple[str, str]]:
     return choices
 
 
-def _fmt_steering(actions: list) -> str:
+def _fmt_steering(actions: list, domain: str = "legal") -> str:
     """Format get_ledger_steering_surface() output as actionable recommendations."""
+    L = _STEERING_ACTION_LABELS.get(domain, _STEERING_ACTION_LABELS["legal"])
     if not actions:
-        return "No steering recommendations available."
-    lines = ["### Steering Recommendations\n"]
+        return L["empty"]
+    lines = [f"### {L['title']}\n"]
     for a in actions:
         if not isinstance(a, dict):
             continue
         action_type = a.get("action_type", "unknown")
+        action_label = L.get(action_type, action_type.replace("_", " ").title())
         description = a.get("description", "")
         rationale = a.get("rationale", "")
         priority = a.get("priority", "")
         priority_str = f" **[{priority.upper()}]**" if priority else ""
-        lines.append(f"**{action_type}**{priority_str}: {description}")
+        lines.append(f"**{action_label}**{priority_str}: {description}")
         if rationale:
             lines.append(f"  > {rationale}")
         params = a.get("params", {})
@@ -7187,7 +7189,7 @@ class AppState:
         try:
             run_id = getattr(self, "current_run_id", None)
             actions = _run_async(self.backend().get_steering_surface(matter_id, run_id=run_id))
-            steering_section = _fmt_steering(actions)
+            steering_section = _fmt_steering(actions, domain=_domain)
         except Exception as exc:
             steering_section = f"⚠️ Steering surface error: {exc}"
         sections = [gap_section]

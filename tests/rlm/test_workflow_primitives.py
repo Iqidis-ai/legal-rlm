@@ -3063,3 +3063,45 @@ def test_fmt_quant_panel_empty():
     from irys.ui.app import _fmt_quant_panel
     result = _fmt_quant_panel({}, [], [], [], domain="biomedical")
     assert "viz-empty" in result
+
+
+def test_fmt_steering_domain_labels():
+    from irys.ui.app import _fmt_steering
+    actions = [
+        {"action_type": "correct_assertion", "description": "Fix item", "priority": "high"},
+        {"action_type": "redirect_focus", "description": "Shift", "params": {"issue_id": "I1"}},
+    ]
+    legal = _fmt_steering(actions, domain="legal")
+    assert "Recommended Next Steps" in legal
+    assert "Correct a Fact" in legal
+    assert "Redirect Investigation" in legal
+
+    finance = _fmt_steering(actions, domain="finance")
+    assert "Recommended Actions" in finance
+    assert "Correct a Finding" in finance
+    assert "Redirect Analysis" in finance
+
+    coding = _fmt_steering(actions, domain="coding")
+    assert "Suggested Improvements" in coding
+    assert "Correct Finding" in coding
+
+    research = _fmt_steering(actions, domain="academic_research")
+    assert "Research Recommendations" in research
+    assert "Correct Claim" in research
+
+    bio = _fmt_steering(actions, domain="biomedical")
+    assert "Clinical Recommendations" in bio
+    assert "Correct Finding" in bio
+
+
+def test_fmt_steering_empty():
+    from irys.ui.app import _fmt_steering
+    assert "analysis model" in _fmt_steering([], domain="finance")
+    assert "code model" in _fmt_steering([], domain="coding")
+    assert "matter model" in _fmt_steering([], domain="legal")
+
+
+def test_fmt_steering_non_dict_guard():
+    from irys.ui.app import _fmt_steering
+    result = _fmt_steering(["not-a-dict", 42, None], domain="legal")
+    assert "Recommended Next Steps" in result
