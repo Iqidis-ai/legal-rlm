@@ -661,7 +661,7 @@ def _fmt_span_label(span_id: Optional[str]) -> str:
 
 def _fmt_percent_html(value: Optional[float]) -> str:
     if value is None:
-        return "&mdash;"
+        return "—"
     return f"{value:.0%}"
 
 

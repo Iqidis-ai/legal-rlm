@@ -2901,7 +2901,7 @@ def test_fmt_coverage():
 
 def test_fmt_percent_html():
     from irys.ui.app import _fmt_percent_html
-    assert _fmt_percent_html(None) == "&mdash;"
+    assert _fmt_percent_html(None) == "—"
     assert _fmt_percent_html(0.75) == "75%"
     assert _fmt_percent_html(0.0) == "0%"
 
