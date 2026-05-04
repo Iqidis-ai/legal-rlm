@@ -137,7 +137,7 @@ def test_engine_seeds_workflow_state_from_execution_contract():
 
     assert state.run_objective is not None
     assert state.run_objective.workflow_kind == WorkflowKind.DRAFTING.value
-    assert state.run_objective.output_shape == "legal_work_product"
+    assert state.run_objective.output_shape == "domain_work_product"
     assert "follow the selected work-product template" in (
         state.run_objective.success_criteria
     )
@@ -179,7 +179,7 @@ def test_workflow_quality_section_surfaces_contract_for_synthesis():
 
     assert "Workflow Quality Contract" in section
     assert "Workflow kind: drafting" in section
-    assert "Output shape: legal_work_product" in section
+    assert "Output shape: domain_work_product" in section
     assert "[draft_template]" in section
     assert "[human_review_required]" in section
     assert "dependency manifest hash: dep123" in section
@@ -10697,3 +10697,31 @@ def test_query_intents_per_domain():
         assert len(intents) == 8, f"{domain} has {len(intents)} intents, expected 8"
         names = {n for n, _ in intents}
         assert names == expected_names, f"{domain} intent names mismatch"
+
+
+# ── Shared domain resolver tests ──────────────────────────────────────
+
+
+def test_resolve_matter_domain_defaults_to_legal():
+    """resolve_matter_domain returns 'legal' with no matter model."""
+    from irys.rlm.governance import resolve_matter_domain
+    assert resolve_matter_domain(None) == "legal"
+
+
+def test_resolve_matter_domain_uses_cached():
+    """resolve_matter_domain returns cached value if valid."""
+    from irys.rlm.governance import resolve_matter_domain
+    assert resolve_matter_domain(None, "finance") == "finance"
+
+
+def test_resolve_matter_domain_rejects_unknown_cached():
+    """resolve_matter_domain falls back if cached value is not in supported set."""
+    from irys.rlm.governance import resolve_matter_domain
+    assert resolve_matter_domain(None, "unknown_domain") == "legal"
+
+
+def test_resolve_matter_domain_validates_supported_set():
+    """All five target domains are in the supported set."""
+    from irys.rlm.governance import _SUPPORTED_DOMAINS
+    for domain in _ALL_DOMAINS:
+        assert domain in _SUPPORTED_DOMAINS

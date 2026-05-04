@@ -21,6 +21,7 @@ from ..core.search import SearchResults, SearchHit
 from ..core.utils import jaccard_similarity as _jaccard_similarity
 from ..matter.enums import SourceRole as _SourceRole
 from ..matter.runtime import infer_source_role as _infer_source_role
+from .governance import resolve_matter_domain as _resolve_matter_domain
 from .state import (
     InvestigationState,
     StepType,
@@ -1787,18 +1788,11 @@ class RLMEngine:
         self._known_filenames: Optional[set] = None
 
     def _resolve_active_domain(self, state=None) -> str:
-        if state is not None and getattr(state, "_cached_domain", None):
-            return state._cached_domain
-        if self._matter_model is not None:
-            try:
-                _, _, primary = self._matter_model._read_matter_domain_composition()
-                if primary:
-                    if state is not None:
-                        state._cached_domain = primary
-                    return primary
-            except Exception:
-                pass
-        return "legal"
+        cached = getattr(state, "_cached_domain", None) if state is not None else None
+        result = _resolve_matter_domain(self._matter_model, cached)
+        if state is not None:
+            state._cached_domain = result
+        return result
 
     def _get_semaphore(self) -> asyncio.Semaphore:
         """Get or create the operation semaphore.

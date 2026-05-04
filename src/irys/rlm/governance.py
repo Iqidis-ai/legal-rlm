@@ -32,6 +32,27 @@ from ..core.models import GeminiClient, ModelTier
 
 logger = logging.getLogger(__name__)
 
+_SUPPORTED_DOMAINS = frozenset({"legal", "finance", "coding", "academic_research", "biomedical"})
+
+
+def resolve_matter_domain(matter_model: Any, cached: Optional[str] = None) -> str:
+    """Resolve the active domain for a matter model, returning a validated domain ID.
+
+    Returns the cached value if truthy and valid, otherwise reads from the
+    matter model's domain composition. Falls back to 'legal' if the matter
+    model is None, the read fails, or the domain is not in the supported set.
+    """
+    if cached and cached in _SUPPORTED_DOMAINS:
+        return cached
+    if matter_model is not None:
+        try:
+            _, _, primary = matter_model._read_matter_domain_composition()
+            if primary and primary in _SUPPORTED_DOMAINS:
+                return primary
+        except Exception:
+            pass
+    return "legal"
+
 
 # ---------------------------------------------------------------------------
 # Contract shapes
@@ -309,17 +330,9 @@ class CascadeGovernor:
         self._cached_domain: Optional[str] = None
 
     def _resolve_domain(self) -> str:
-        if self._cached_domain:
-            return self._cached_domain
-        if self.matter_model is not None:
-            try:
-                _, _, primary = self.matter_model._read_matter_domain_composition()
-                if primary:
-                    self._cached_domain = primary
-                    return primary
-            except Exception:
-                pass
-        return "legal"
+        result = resolve_matter_domain(self.matter_model, self._cached_domain)
+        self._cached_domain = result
+        return result
 
     # MVI-2b (Fix D): decision-cache stage name for reasoning_cache.
     _CACHE_STAGE = "cascade_decision"
@@ -757,7 +770,7 @@ class CascadeGovernor:
                 family="deliverable",
                 workflow_kind="drafting",
                 output_contract={
-                    "output_shape": "legal_work_product",
+                    "output_shape": "domain_work_product",
                     "requires_template": True,
                     "requires_output_validator": True,
                     "requires_review_before_service": True,
@@ -1066,17 +1079,9 @@ class ReadFamilyHandler:
         self._cached_domain: Optional[str] = None
 
     def _resolve_domain(self) -> str:
-        if self._cached_domain:
-            return self._cached_domain
-        if self.matter_model is not None:
-            try:
-                _, _, primary = self.matter_model._read_matter_domain_composition()
-                if primary:
-                    self._cached_domain = primary
-                    return primary
-            except Exception:
-                pass
-        return "legal"
+        result = resolve_matter_domain(self.matter_model, self._cached_domain)
+        self._cached_domain = result
+        return result
 
     async def run(
         self,
@@ -1741,17 +1746,9 @@ class QueryFamilyHandler:
         self._cached_domain: Optional[str] = None
 
     def _resolve_domain(self) -> str:
-        if self._cached_domain:
-            return self._cached_domain
-        if self.matter_model is not None:
-            try:
-                _, _, primary = self.matter_model._read_matter_domain_composition()
-                if primary:
-                    self._cached_domain = primary
-                    return primary
-            except Exception:
-                pass
-        return "legal"
+        result = resolve_matter_domain(self.matter_model, self._cached_domain)
+        self._cached_domain = result
+        return result
 
     async def run(
         self,
@@ -2748,17 +2745,9 @@ class ScenarioFamilyHandler:
         self._cached_domain: Optional[str] = None
 
     def _resolve_domain(self) -> str:
-        if self._cached_domain:
-            return self._cached_domain
-        if self.matter_model is not None:
-            try:
-                _, _, primary = self.matter_model._read_matter_domain_composition()
-                if primary:
-                    self._cached_domain = primary
-                    return primary
-            except Exception:
-                pass
-        return "legal"
+        result = resolve_matter_domain(self.matter_model, self._cached_domain)
+        self._cached_domain = result
+        return result
 
     async def run(
         self,
@@ -2924,17 +2913,9 @@ class DeliverableFamilyHandler:
         self._cached_domain: Optional[str] = None
 
     def _resolve_domain(self) -> str:
-        if self._cached_domain:
-            return self._cached_domain
-        if self.matter_model is not None:
-            try:
-                _, _, primary = self.matter_model._read_matter_domain_composition()
-                if primary:
-                    self._cached_domain = primary
-                    return primary
-            except Exception:
-                pass
-        return "legal"
+        result = resolve_matter_domain(self.matter_model, self._cached_domain)
+        self._cached_domain = result
+        return result
 
     async def run(
         self,
