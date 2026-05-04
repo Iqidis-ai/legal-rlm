@@ -11589,6 +11589,7 @@ class AppState:
             data = _run_async(self.backend().get_overview(matter_id))
             return _fmt_overview_panel(data, domain=domain)
         except Exception as exc:
+            logger.warning("load_overview: %s", exc)
             return f"<div class='viz-empty'>Error loading overview: {_escape(exc)}</div>"
 
     def load_issues(self, matter_id: str, domain: str = "legal") -> str:
@@ -11598,6 +11599,7 @@ class AppState:
             issues = _run_async(self.backend().list_issues(matter_id))
             return _fmt_issues_panel(issues, domain=domain)
         except Exception as exc:
+            logger.warning("load_issues: %s", exc)
             return f"<div class='viz-empty'>Error loading issues: {_escape(exc)}</div>"
 
     def load_assertions(self, matter_id: str) -> str:
@@ -11609,6 +11611,7 @@ class AppState:
             domain = self._detect_domain(matter_id)
             return _fmt_assertions(assertions, domain=domain)
         except Exception as exc:
+            logger.warning("load_assertions: %s", exc)
             return f"<div class='viz-empty'>Error loading assertions: {_escape(str(exc))}</div>"
 
     def search_assertions(self, matter_id: str, query: str) -> str:
@@ -11624,6 +11627,7 @@ class AppState:
                 return f"<div class='viz-empty'>No facts matching “{_escape(query.strip())}”.</div>"
             return _fmt_assertions(results, domain=domain)
         except Exception as exc:
+            logger.warning("search_assertions: %s", exc)
             return f"<div class='viz-empty'>Error searching: {_escape(str(exc))}</div>"
 
     def inspect_assertion(self, matter_id: str, assertion_id: str) -> str:
@@ -11640,6 +11644,7 @@ class AppState:
             domain = self._detect_domain(matter_id)
             return _fmt_assertion_inspector(health, history=history, domain=domain)
         except Exception as exc:
+            logger.warning("inspect_assertion: %s", exc)
             return f"<div class='viz-empty'>Error inspecting assertion: {_escape(str(exc))}</div>"
 
     def load_assertion_trace(self, matter_id: str, assertion_id: str) -> str:
@@ -11727,6 +11732,7 @@ class AppState:
             decisions = _run_async(self.backend().list_content_policy_decisions(matter_id, limit=50))
             return _fmt_content_policy_panel(decisions, domain=domain)
         except Exception as exc:
+            logger.warning("load_content_policy_audit: %s", exc)
             return f"<div class='viz-empty'>Error loading content policy audit: {_escape(str(exc))}</div>"
 
     def load_review_queue(self, matter_id: str, domain: str = "legal") -> tuple[str, gr.update]:
@@ -12008,6 +12014,7 @@ class AppState:
         try:
             prov = _run_async(self.backend().get_provenance(matter_id, kind, tid))
         except Exception as exc:
+            logger.warning("load_source_drawer: %s", exc)
             logger.debug("Provenance fetch failed: %s", exc)
             prov = []
         try:
@@ -12015,6 +12022,7 @@ class AppState:
                 self.backend().get_verification_events(matter_id, kind, tid)
             )
         except Exception as exc:
+            logger.warning("load_source_drawer: %s", exc)
             logger.debug("Verification events fetch failed: %s", exc)
             events = []
         return _fmt_source_drawer(kind, tid, prov, events, domain=domain)
@@ -12266,6 +12274,7 @@ class AppState:
             clarifications = _run_async(self.backend().list_clarifications(matter_id))
             gap_section = _fmt_gaps(gaps, clarifications, domain=_domain)
         except Exception as exc:
+            logger.warning("load_gaps: %s", exc)
             gap_section = f"⚠️ Error loading gaps: {exc}"
         actions: list = []
         try:
@@ -12273,6 +12282,7 @@ class AppState:
             actions = _run_async(self.backend().get_steering_surface(matter_id, run_id=run_id))
             steering_section = _fmt_steering(actions, domain=_domain)
         except Exception as exc:
+            logger.warning("load_gaps: %s", exc)
             steering_section = f"⚠️ Steering surface error: {exc}"
         sections = [gap_section]
         if steering_section:
@@ -12374,6 +12384,7 @@ class AppState:
             }
             return _fmt_gaps(gaps, clarifications, domain=domain, issue_titles=issue_titles)
         except Exception as exc:
+            logger.warning("load_gaps_detail: %s", exc)
             return f"<div class='viz-empty'>Error loading gaps: {_escape(exc)}</div>"
 
     def load_gap_workbench(self, matter_id: str) -> str:
@@ -12468,6 +12479,7 @@ class AppState:
             assumptions = _run_async(self.backend().list_assumptions(matter_id))
             return _fmt_assumptions(assumptions, domain=domain)
         except Exception as exc:
+            logger.warning("load_assumptions: %s", exc)
             return f"<div class='viz-empty'>Error loading assumptions: {_escape(str(exc))}</div>"
 
     def load_assumption_review(self, matter_id: str, domain: str = "legal") -> str:
@@ -12477,6 +12489,7 @@ class AppState:
             data = _run_async(self.backend().get_assumption_review(matter_id))
             return _fmt_assumption_review_workbench(data, domain=domain)
         except Exception as exc:
+            logger.warning("load_assumption_review: %s", exc)
             return f"<div class='viz-empty'>Error loading assumption review: {_escape(str(exc))}</div>"
 
     def update_assumption_status(self, matter_id: str, assumption_id: str, action: str, reason: str) -> tuple[str, str]:
@@ -12537,6 +12550,7 @@ class AppState:
                 domain=domain,
             )
         except Exception as exc:
+            logger.warning("load_quant: %s", exc)
             return f"<div class='viz-empty'>Error loading quantitative data: {_escape(exc)}</div>"
 
     def do_detect_quant_conflicts(self, matter_id: str) -> tuple[str, str]:
@@ -12551,6 +12565,7 @@ class AppState:
             refreshed = self.load_quant(matter_id, domain=self._detect_domain(matter_id))
             return msg, refreshed
         except Exception as exc:
+            logger.warning("do_detect_quant_conflicts: %s", exc)
             return f"Error: {_escape(str(exc))}", ""
 
     def load_quant_facts(self, matter_id: str, domain: str = "legal") -> str:
@@ -12794,6 +12809,7 @@ class AppState:
             ))
             return _fmt_timeline_panel(events, domain=domain)
         except Exception as exc:
+            logger.warning("load_timeline: %s", exc)
             return f"<div class='viz-empty'>Error loading timeline: {_escape(exc)}</div>"
 
     def load_answer_audits(self, matter_id: str, domain: str = "legal") -> str:
@@ -12815,6 +12831,7 @@ class AppState:
             ))
             return _fmt_evidence_matrix_panel(matrix, domain=domain)
         except Exception as exc:
+            logger.warning("load_evidence_matrix: %s", exc)
             return f"<div class='viz-empty'>Error loading evidence matrix: {_escape(exc)}</div>"
 
     def _detect_domain(self, matter_id: str) -> str:
@@ -12837,6 +12854,7 @@ class AppState:
             issues = data.get("issues", []) if isinstance(data, dict) else []
             return _fmt_proof_state_panel(summary, issues, domain)
         except Exception as exc:
+            logger.warning("load_proof_state: %s", exc)
             return f"<div class='viz-empty'>Error loading proof state: {_escape(exc)}</div>"
 
     def recompute_proof_state(self, matter_id: str, domain: str = "legal") -> str:
@@ -12846,6 +12864,7 @@ class AppState:
             _run_async(self.backend().compute_proof_state(matter_id))
             return self.load_proof_state(matter_id, domain)
         except Exception as exc:
+            logger.warning("recompute_proof_state: %s", exc)
             return f"<div class='viz-empty'>Error recomputing proof state: {_escape(exc)}</div>"
 
     def recompute_issue_proof_state(self, matter_id: str, issue_id: str) -> tuple[str, str]:
@@ -12872,6 +12891,7 @@ class AppState:
             data = _run_async(self.backend().get_authority_network(matter_id))
             return _fmt_authority_panel(data, domain)
         except Exception as exc:
+            logger.warning("load_authority_network: %s", exc)
             return f"<div class='viz-empty'>Error loading authorities: {_escape(exc)}</div>"
 
     def search_authorities(self, matter_id: str, query: str) -> str:
@@ -12967,6 +12987,7 @@ class AppState:
             overrides = _run_async(self.backend().list_trust_overrides(matter_id))
             return _fmt_document_intelligence_panel(data, domain, trust_overrides=overrides)
         except Exception as exc:
+            logger.warning("load_document_intelligence: %s", exc)
             return f"<div class='viz-empty'>Error loading document intelligence: {_escape(exc)}</div>"
 
     def load_belief_revisions(self, matter_id: str, domain: str = "legal") -> str:
@@ -12976,6 +12997,7 @@ class AppState:
             data = _run_async(self.backend().list_belief_revisions(matter_id))
             return _fmt_belief_revision_panel(data, domain)
         except Exception as exc:
+            logger.warning("load_belief_revisions: %s", exc)
             return f"<div class='viz-empty'>Error loading belief revisions: {_escape(exc)}</div>"
 
     def load_contradictions(self, matter_id: str, domain: str = "legal") -> str:
@@ -12985,6 +13007,7 @@ class AppState:
             data = _run_async(self.backend().get_contradictions(matter_id))
             return _fmt_contradiction_panel(data, domain)
         except Exception as exc:
+            logger.warning("load_contradictions: %s", exc)
             return f"<div class='viz-empty'>Error loading contradictions: {_escape(exc)}</div>"
 
     def mine_and_load_contradictions(self, matter_id: str, domain: str = "legal") -> str:
@@ -12995,6 +13018,7 @@ class AppState:
             data = _run_async(self.backend().get_contradictions(matter_id))
             return _fmt_contradiction_panel(data, domain)
         except Exception as exc:
+            logger.warning("mine_and_load_contradictions: %s", exc)
             return f"<div class='viz-empty'>Error mining contradictions: {_escape(exc)}</div>"
 
     def resolve_contradiction(
@@ -13131,6 +13155,7 @@ class AppState:
             data = _run_async(self.backend().get_document_versions(matter_id))
             return _fmt_document_versions_panel(data, domain)
         except Exception as exc:
+            logger.warning("load_document_versions: %s", exc)
             return f"<div class='viz-empty'>Error loading document versions: {_escape(exc)}</div>"
 
     def detect_and_load_document_versions(self, matter_id: str, domain: str = "legal") -> str:
@@ -13141,6 +13166,7 @@ class AppState:
             data = _run_async(self.backend().get_document_versions(matter_id))
             return _fmt_document_versions_panel(data, domain)
         except Exception as exc:
+            logger.warning("detect_and_load_document_versions: %s", exc)
             return f"<div class='viz-empty'>Error detecting version chains: {_escape(exc)}</div>"
 
     def lookup_operative_version(
@@ -13172,6 +13198,7 @@ class AppState:
             ))
             return _fmt_quant_thresholds_panel(data, domain)
         except Exception as exc:
+            logger.warning("load_quant_thresholds: %s", exc)
             return f"<div class='viz-empty'>Error loading quant thresholds: {_escape(exc)}</div>"
 
     def load_system_health(self, matter_id: str, domain: str = "legal") -> str:
@@ -13181,6 +13208,7 @@ class AppState:
             data = _run_async(self.backend().get_system_health(matter_id))
             return _fmt_system_health_panel(data, domain)
         except Exception as exc:
+            logger.warning("load_system_health: %s", exc)
             return f"<div class='viz-empty'>Error loading system health: {_escape(exc)}</div>"
 
     def flush_pending_propagation(self, matter_id: str, domain: str = "legal") -> str:
@@ -13193,6 +13221,7 @@ class AppState:
             status = f"<div class='status-badge' style='background:#059669;color:white;padding:4px 10px;border-radius:4px;margin-bottom:8px;display:inline-block;'>Flush complete — {revised} assertion(s) revised</div>"
             return status + health_html
         except Exception as exc:
+            logger.warning("flush_pending_propagation: %s", exc)
             return f"<div class='viz-empty'>Error flushing pending propagation: {_escape(exc)}</div>"
 
     def load_so_scorecard(self, matter_id: str, domain: str = "legal") -> str:
@@ -13202,6 +13231,7 @@ class AppState:
             data = _run_async(self.backend().get_so_scorecard(matter_id))
             return _fmt_so_scorecard_panel(data, domain)
         except Exception as exc:
+            logger.warning("load_so_scorecard: %s", exc)
             return f"<div class='viz-empty'>Error loading SO scorecard: {_escape(exc)}</div>"
 
     def load_domain_profile(self, matter_id: str, domain: str = "legal") -> str:
@@ -13211,6 +13241,7 @@ class AppState:
             data = _run_async(self.backend().get_domain_profile_summary(matter_id))
             return _fmt_domain_profile_panel(data, domain)
         except Exception as exc:
+            logger.warning("load_domain_profile: %s", exc)
             return f"<div class='viz-empty'>Error loading domain profile: {_escape(exc)}</div>"
 
     def load_domain_composition(self, matter_id: str, domain: str = "legal") -> str:
@@ -13220,6 +13251,7 @@ class AppState:
             data = _run_async(self.backend().get_domain_composition(matter_id))
             return _fmt_domain_composition_panel(data, domain)
         except Exception as exc:
+            logger.warning("load_domain_composition: %s", exc)
             return f"<div class='viz-empty'>Error loading domain composition: {_escape(str(exc))}</div>"
 
     def load_document_console(self, matter_id: str, document_ref: str) -> str:
@@ -13261,6 +13293,7 @@ class AppState:
             data = _run_async(self.backend().list_documents_needing_profile(matter_id))
             return _fmt_doc_triage_panel(data, domain)
         except Exception as exc:
+            logger.warning("load_document_triage: %s", exc)
             return f"<div class='viz-empty'>Error loading document triage: {_escape(exc)}</div>"
 
     def load_taint_summary(self, matter_id: str, domain: str = "legal") -> str:
@@ -13270,6 +13303,7 @@ class AppState:
             data = _run_async(self.backend().get_taint_summary(matter_id))
             return _fmt_taint_summary_panel(data, domain)
         except Exception as exc:
+            logger.warning("load_taint_summary: %s", exc)
             return f"<div class='viz-empty'>Error loading taint summary: {_escape(exc)}</div>"
 
     def reclassify_document_sensitivity(
@@ -13327,6 +13361,7 @@ class AppState:
             runs = _run_async(self.backend().list_runs(matter_id, limit=20))
             return _fmt_investigation_history_panel(runs, domain)
         except Exception as exc:
+            logger.warning("load_investigation_history: %s", exc)
             return f"<div class='viz-empty'>Error loading investigation history: {_escape(exc)}</div>"
 
     def load_clarification_choices(self, matter_id: str) -> list:
@@ -13413,6 +13448,7 @@ class AppState:
                 return "Answer recorded successfully."
             return "Clarification question not found — it may have already been answered."
         except Exception as exc:
+            logger.warning("do_answer_clarification: %s", exc)
             return f"Error: {exc}"
 
     def do_generate_clarifications(self, matter_id: str) -> str:
@@ -13424,6 +13460,7 @@ class AppState:
                 return f"Generated {len(ids)} clarification question{'s' if len(ids) != 1 else ''}."
             return "No new questions generated — all high-materiality gaps already have pending questions."
         except Exception as exc:
+            logger.warning("do_generate_clarifications: %s", exc)
             return f"Error: {exc}"
 
     def load_trust_overrides(self, matter_id: str, domain: str = "legal") -> str:
@@ -13433,6 +13470,7 @@ class AppState:
             data = _run_async(self.backend().list_trust_overrides(matter_id))
             return _fmt_trust_overrides(data, domain=domain)
         except Exception as exc:
+            logger.warning("load_trust_overrides: %s", exc)
             return f"<div class='viz-empty'>Error loading trust overrides: {_escape(exc)}</div>"
 
     def do_set_trust_override(
@@ -13452,6 +13490,7 @@ class AppState:
                 return f"Trust override set (ID: {override_id[:8]}…). Belief revision triggered on affected assertions."
             return "Override set."
         except Exception as exc:
+            logger.warning("do_set_trust_override: %s", exc)
             return f"Error: {exc}"
 
     def do_delete_trust_override(self, matter_id: str, document_pattern: str) -> tuple[str, str]:
@@ -13468,6 +13507,7 @@ class AppState:
                 return "Trust override removed.", refreshed
             return "Override not found — check the document pattern.", ""
         except Exception as exc:
+            logger.warning("do_delete_trust_override: %s", exc)
             return f"Error: {_escape(str(exc))}", ""
 
     def set_policy_audience(self, label: str) -> str:
@@ -13514,6 +13554,7 @@ class AppState:
             graph = _run_async(self.backend().get_communication_map(matter_id))
             return _fmt_communication_map_panel(graph, domain=domain)
         except Exception as exc:
+            logger.warning("load_communication_map: %s", exc)
             return f"<div class='viz-empty'>Error loading communication map: {_escape(exc)}</div>"
 
     def load_duplicate_actors(self, matter_id: str, domain: str = "legal") -> str:
@@ -13523,6 +13564,7 @@ class AppState:
             pairs = _run_async(self.backend().find_duplicate_actors(matter_id))
             return _fmt_duplicate_actors_panel(pairs, domain)
         except Exception as exc:
+            logger.warning("load_duplicate_actors: %s", exc)
             return f"<div class='viz-empty'>Error scanning for duplicates: {_escape(exc)}</div>"
 
     def do_merge_actors(self, matter_id: str, keep_id: str, merge_id: str, confirmed: bool = False) -> tuple[str, str]:
@@ -13541,6 +13583,7 @@ class AppState:
             refreshed = self.load_duplicate_actors(matter_id)
             return f"Merged {merge_id.strip()[:12]} into {keep_id.strip()[:12]}.", refreshed
         except Exception as exc:
+            logger.warning("do_merge_actors: %s", exc)
             return f"Error: {_escape(str(exc))}", ""
 
     def do_resolve_actor(self, matter_id: str, name: str) -> str:
@@ -13576,6 +13619,7 @@ class AppState:
             )
             return _fmt_llm_analytics_panel(summary, calls, breakdown, anomalies)
         except Exception as exc:
+            logger.warning("load_llm_analytics: %s", exc)
             return f"<div class='viz-empty'>Error loading LLM analytics: {_escape(exc)}</div>"
 
     def load_decision_context(self, matter_id: str, domain: str = "legal") -> str:
@@ -13585,6 +13629,7 @@ class AppState:
             ctx = _run_async(self.backend().get_decision_context(matter_id))
             return _fmt_decision_context(ctx, domain=domain)
         except Exception as exc:
+            logger.warning("load_decision_context: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
     def do_set_decision_context(
@@ -13605,6 +13650,7 @@ class AppState:
             domain = self._detect_domain(matter_id)
             return "Decision context updated.", self.load_decision_context(matter_id, domain=domain)
         except Exception as exc:
+            logger.warning("do_set_decision_context: %s", exc)
             return f"Error: {_escape(str(exc))}", ""
 
     def do_clear_decision_context(self, matter_id: str) -> tuple[str, str]:
@@ -13614,6 +13660,7 @@ class AppState:
             _run_async(self.backend().clear_decision_context(matter_id))
             return "Decision context cleared.", "<div class='viz-empty'>No decision context set.</div>"
         except Exception as exc:
+            logger.warning("do_clear_decision_context: %s", exc)
             return f"Error: {_escape(str(exc))}", ""
 
     def load_annotations(self, matter_id: str, domain: str = "legal") -> str:
@@ -13623,6 +13670,7 @@ class AppState:
             annotations = _run_async(self.backend().list_annotations(matter_id))
             return _fmt_annotations_panel(annotations, domain=domain)
         except Exception as exc:
+            logger.warning("load_annotations: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
     def do_add_annotation(self, matter_id: str, doc: str, text: str, ann_type: str) -> tuple[str, str]:
@@ -13639,6 +13687,7 @@ class AppState:
             refreshed = self.load_annotations(matter_id, domain=self._detect_domain(matter_id))
             return "Note added.", refreshed
         except Exception as exc:
+            logger.warning("do_add_annotation: %s", exc)
             return f"Error: {_escape(str(exc))}", ""
 
     def do_delete_annotation(self, matter_id: str, annotation_id: str) -> tuple[str, str]:
@@ -13653,6 +13702,7 @@ class AppState:
                 return "Note deleted.", refreshed
             return "Annotation not found — check the ID.", ""
         except Exception as exc:
+            logger.warning("do_delete_annotation: %s", exc)
             return f"Error: {_escape(str(exc))}", ""
 
     _EXPORT_LABELS: dict[str, dict[str, str]] = {
@@ -13883,6 +13933,7 @@ class AppState:
                 return f"❌ {result.get('detail', result)}"
             return f"✅ Corrected: {result}"
         except Exception as exc:
+            logger.warning("do_correct_assertion: %s", exc)
             return f"❌ Error: {exc}"
 
     def do_resume(self, matter_id: str, run_id: str, research_mode: str = "deep") -> str:
@@ -13917,6 +13968,7 @@ class AppState:
                         self.current_run_id = new_rid
                         self._last_resume_error = None
             except Exception as exc:
+                logger.warning("_do_resume: %s", exc)
                 self._last_resume_error = str(exc)
         self._last_resume_error = None  # clear stale error before submit (LOW r69)
         future = _ASYNC_EXECUTOR.submit(_do_resume)
@@ -13953,6 +14005,7 @@ class AppState:
                 msg += f"\n⚠️ {result['note']}"
             return msg
         except Exception as exc:
+            logger.warning("do_redirect: %s", exc)
             return f"❌ Error: {exc}"
 
 
@@ -15854,6 +15907,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         _fmt_matter_card(matter_name, updated),
                     )
                 except Exception as e:
+                    logger.warning("_on_add_files: %s", e)
                     return gr.update(), _fmt_ws_status(f"Upload failed: {e}", "err"), gr.update(), gr.update()
 
             add_files_btn.click(
@@ -15878,6 +15932,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         _fmt_matter_card(matter_name, updated),
                     )
                 except Exception as e:
+                    logger.warning("_on_add_folder: %s", e)
                     return gr.update(), _fmt_ws_status(f"Upload failed: {e}", "err"), gr.update(), gr.update()
 
             add_folder_btn.click(
@@ -15912,6 +15967,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                         _fmt_matter_card(display_name, new_files),
                     )
                 except Exception as e:
+                    logger.warning("_on_save_matter: %s", e)
                     return gr.update(), "", _fmt_ws_status(f"Create failed: {e}", "err"), gr.update(visible=False), gr.update(choices=[], value=None), gr.update()
 
             save_matter_btn.click(
@@ -16027,6 +16083,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 try:
                     temp_dir = _download_s3_matter_to_temp(matter_name.strip(), session_id)
                 except Exception as e:
+                    logger.warning("_stream_s3: %s", e)
                     yield ("", "", "", f"❌ Failed to load matter: {e}", "")
                     return
                 try:
