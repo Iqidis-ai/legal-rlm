@@ -10158,3 +10158,58 @@ def test_source_drawer_reviewer_labels_all_domains():
         labels = _SOURCE_DRAWER_REVIEWER_LABELS[domain]
         assert "user" in labels
         assert "system" in labels
+
+
+# ── Utility formatter tests ──────────────────────────────────────────
+
+
+def test_fmt_ws_status_escapes():
+    """_fmt_ws_status escapes message content."""
+    from irys.ui.app import _fmt_ws_status
+    html = _fmt_ws_status("<script>xss</script>", kind="ok")
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "ws-ok" in html
+
+
+def test_fmt_ws_status_empty():
+    """_fmt_ws_status returns empty string for empty message."""
+    from irys.ui.app import _fmt_ws_status
+    assert _fmt_ws_status("") == ""
+
+
+def test_fmt_matter_card_escapes_files():
+    """_fmt_matter_card escapes file names."""
+    from irys.ui.app import _fmt_matter_card
+    html = _fmt_matter_card("test-matter", ["<img src=x>"])
+    assert "<img " not in html
+    assert "&lt;img" in html
+
+
+def test_fmt_matter_card_empty():
+    """_fmt_matter_card shows empty state when no name."""
+    from irys.ui.app import _fmt_matter_card
+    html = _fmt_matter_card("", [])
+    assert "No matter selected" in html
+
+
+def test_fmt_ledger_event_returns_none_for_sentinel():
+    """_fmt_ledger_event returns None for terminal sentinel dicts."""
+    from irys.ui.app import _fmt_ledger_event
+    assert _fmt_ledger_event({"event": "run_terminal"}) is None
+    assert _fmt_ledger_event({"error": "something broke"}) is None
+
+
+def test_fmt_ledger_event_formats_event():
+    """_fmt_ledger_event renders a valid event dict."""
+    from irys.ui.app import _fmt_ledger_event
+    result = _fmt_ledger_event({
+        "event_type": "cascade_decision",
+        "seq_no": 3,
+        "summary": "Routed to trace family",
+        "why": "Found entity reference",
+    })
+    assert "#3" in result
+    assert "cascade_decision" in result
+    assert "Routed to trace family" in result
+    assert "Found entity reference" in result
