@@ -32,7 +32,7 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, File, UploadFile, Form, Request, Query
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Body, Depends, File, UploadFile, Form, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, RedirectResponse
 import httpx
@@ -2590,7 +2590,7 @@ async def get_matter_gaps(matter_id: str, min_materiality: float = 0.0, limit: O
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
 )
-async def resolve_gap(matter_id: str, gap_id: str, resolution_note: str = ""):
+async def resolve_gap(matter_id: str, gap_id: str, resolution_note: str = Body("")):
     """Mark a gap as resolved with an optional resolution note (SO-7)."""
     model = await _get_matter_model_or_404(matter_id)
     resolved = model.gaps.resolve_gap(gap_id, resolution_note)
@@ -2604,7 +2604,7 @@ async def resolve_gap(matter_id: str, gap_id: str, resolution_note: str = ""):
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
 )
-async def get_matter_assumptions(matter_id: str, limit: int = 100):
+async def get_matter_assumptions(matter_id: str, limit: int = Query(default=100, ge=1, le=1000)):
     """Return all assumptions for a matter (SO-3 — user-steerable reasoning)."""
     model = await _get_matter_model_or_404(matter_id)
     return model.assumptions.get_all(max_rows=limit)
@@ -2615,7 +2615,7 @@ async def get_matter_assumptions(matter_id: str, limit: int = 100):
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},
 )
-async def update_assumption_status(matter_id: str, assumption_id: str, status: str, reason: str = ""):
+async def update_assumption_status(matter_id: str, assumption_id: str, status: str = Body(...), reason: str = Body("")):
     """Set assumption status: provisional, confirmed, or invalidated (SO-3)."""
     model = await _get_matter_model_or_404(matter_id)
     valid_statuses = ("provisional", "confirmed", "invalidated")

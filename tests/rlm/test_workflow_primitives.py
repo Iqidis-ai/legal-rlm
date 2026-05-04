@@ -3500,6 +3500,7 @@ def test_clarification_context_rendering():
             "status": "pending",
         },
     }
+    state._clarification_cache_matter = "mid-1"
     result = state.get_clarification_context("mid-1", "q1")
     assert "What was the contract date?" in result
     assert "Statute of limitations" in result
@@ -3520,6 +3521,7 @@ def test_clarification_context_empty_fields():
             "status": "pending",
         },
     }
+    state._clarification_cache_matter = "mid-1"
     result = state.get_clarification_context("mid-1", "q2")
     assert "Confirm amount?" in result
     assert "Why it matters" not in result
@@ -3532,6 +3534,16 @@ def test_clarification_context_missing_id():
     state = AppState.__new__(AppState)
     state._clarification_cache = {}
     result = state.get_clarification_context("mid-1", "nonexistent")
+    assert result == ""
+
+
+def test_clarification_cache_cross_matter_isolation():
+    """Cache from one matter must not leak into another matter's context."""
+    from irys.ui.app import AppState
+    state = AppState.__new__(AppState)
+    state._clarification_cache = {"q1": {"id": "q1", "question_text": "Leaked?"}}
+    state._clarification_cache_matter = "matter-A"
+    result = state.get_clarification_context("matter-B", "q1")
     assert result == ""
 
 

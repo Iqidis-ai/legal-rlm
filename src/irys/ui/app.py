@@ -8035,6 +8035,8 @@ class AppState:
 
     def load_clarification_choices(self, matter_id: str) -> list:
         if not matter_id or matter_id == "—":
+            self._clarification_cache = {}
+            self._clarification_cache_matter = ""
             return []
         try:
             items = _run_async(self.backend().list_clarifications(matter_id))
@@ -8042,6 +8044,7 @@ class AppState:
                 c.get("id", ""): c for c in items
                 if isinstance(c, dict) and c.get("status") == "pending"
             }
+            self._clarification_cache_matter = matter_id
             return [
                 (f"{c.get('question_text', '?')[:80]}", c.get("id", ""))
                 for c in items
@@ -8049,12 +8052,16 @@ class AppState:
             ]
         except Exception as exc:
             logger.warning("Failed to load clarification choices for %s: %s", matter_id, exc)
+            self._clarification_cache = {}
+            self._clarification_cache_matter = ""
             return []
 
     def get_clarification_context(self, matter_id: str, question_id: str) -> str:
         if not question_id or not matter_id or matter_id == "—":
             return ""
         cache = getattr(self, "_clarification_cache", {})
+        if getattr(self, "_clarification_cache_matter", "") != matter_id:
+            return ""
         c = cache.get(question_id)
         if not c or not isinstance(c, dict):
             return ""
@@ -10316,6 +10323,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.get_domain_dropdown_updates(mid),
                 inputs=[matter_id_box],
                 outputs=[dc_maker_type, dc_objective],
+            ).then(
+                fn=lambda mid: state.load_domain_composition(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[domain_composition_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
