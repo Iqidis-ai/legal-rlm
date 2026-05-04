@@ -2790,3 +2790,81 @@ def test_review_queue_xss():
     result = _fmt_review_queue(queue)
     assert "<script>" not in result
     assert "&lt;script&gt;" in result
+
+
+# ------------------------------------------------------------------ #
+# Utility formatter tests                                              #
+# ------------------------------------------------------------------ #
+
+def test_fmt_coverage():
+    from irys.ui.app import _fmt_coverage
+    assert _fmt_coverage(None) == "—"
+    assert _fmt_coverage(0.5) == "50%"
+    assert _fmt_coverage(1.0) == "100%"
+    assert _fmt_coverage(0.0) == "0%"
+
+
+def test_fmt_percent_html():
+    from irys.ui.app import _fmt_percent_html
+    assert _fmt_percent_html(None) == "&mdash;"
+    assert _fmt_percent_html(0.75) == "75%"
+    assert _fmt_percent_html(0.0) == "0%"
+
+
+def test_fmt_money():
+    from irys.ui.app import _fmt_money
+    assert _fmt_money(1234.5678) == "$1,234.5678"
+    assert _fmt_money(0) == "$0.0000"
+    assert _fmt_money(None) == "$0.0000"
+    assert _fmt_money("bad") == "$0.0000"
+
+
+def test_fmt_money_short():
+    from irys.ui.app import _fmt_money_short
+    assert _fmt_money_short(1234.5) == "$1,234.50"
+    assert _fmt_money_short(0) == "$0.00"
+
+
+def test_fmt_money_decimals():
+    from irys.ui.app import _fmt_money
+    assert _fmt_money(99.99, decimals=2) == "$99.99"
+
+
+# ------------------------------------------------------------------ #
+# _fmt_issues (markdown export) tests                                  #
+# ------------------------------------------------------------------ #
+
+def test_fmt_issues_empty():
+    from irys.ui.app import _fmt_issues
+    assert _fmt_issues([]) == "No open issues."
+
+
+def test_fmt_issues_basic():
+    from irys.ui.app import _fmt_issues
+    issues = [
+        {
+            "id": "iss-1",
+            "title": "Breach of contract",
+            "depth": 0,
+            "coverage_fraction": 0.6,
+            "proof_status": "partial",
+            "supporting_count": 3,
+            "attacking_count": 1,
+        },
+    ]
+    result = _fmt_issues(issues)
+    assert "Breach of contract" in result
+    assert "3 supporting" in result
+    assert "1 attacking" in result
+
+
+def test_fmt_issues_non_dict_guard():
+    from irys.ui.app import _fmt_issues
+    issues = [
+        {"id": "iss-1", "title": "Real issue", "depth": 0, "coverage_fraction": 0.5},
+        "stale-string",
+        None,
+    ]
+    result = _fmt_issues(issues)
+    assert "Real issue" in result
+    assert "stale-string" not in result
