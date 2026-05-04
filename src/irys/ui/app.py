@@ -13736,6 +13736,22 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )(state.load_steering_panel(mid, domain=state._detect_domain(mid))),
             inputs=[matter_id_box],
             outputs=[steering_panel_html, steering_action_dropdown],
+        ).then(
+            fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[gaps_detail_html],
+        ).then(
+            fn=lambda mid: state.load_investigation_readiness(mid),
+            inputs=[matter_id_box],
+            outputs=[readiness_html],
+        ).then(
+            fn=lambda mid: state.load_objective_coverage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[objective_coverage_html],
+        ).then(
+            fn=lambda mid: state.load_decision_leverage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[decision_leverage_html],
         )
         refresh_assumptions_btn.click(
             fn=lambda mid: state.load_assumptions(mid, domain=state._detect_domain(mid)),
