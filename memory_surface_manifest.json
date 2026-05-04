@@ -1689,6 +1689,30 @@
       "taint_behavior": "legacy_unknown_until_brokered",
       "profile_behavior": "legacy_unknown_until_profile_bound",
       "surface": "MatterModel.archive_scenario_branch"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "scenario_branches"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.apply_scenario_delta"
+    },
+    {
+      "source": "src/irys/matter/matter.py",
+      "writes": [
+        "scenario_branches"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "MatterModel.compute_scenario_snapshot"
     }
   ],
   "write_surface_groups": [],

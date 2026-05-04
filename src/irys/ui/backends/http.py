@@ -333,6 +333,42 @@ class HttpBackend(UIBackend):
             return {}
         return result
 
+    async def apply_scenario_delta(self, matter_id: str, branch_id: str,
+                                   target_kind: str, target_id: str,
+                                   operation: str, payload: dict) -> dict:
+        result = await self._post(
+            f"/matter/{matter_id}/scenario-branches/{branch_id}/deltas",
+            json={"target_kind": target_kind, "target_id": target_id,
+                  "operation": operation, "payload": payload},
+        )
+        if not isinstance(result, dict):
+            _log.warning("apply_scenario_delta: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
+    async def list_scenario_deltas(self, matter_id: str, branch_id: str) -> list[dict]:
+        result = await self._get(f"/matter/{matter_id}/scenario-branches/{branch_id}/deltas")
+        if isinstance(result, dict):
+            return result.get("deltas", [])
+        if isinstance(result, list):
+            return result
+        _log.warning("list_scenario_deltas: unexpected type %s", type(result).__name__)
+        return []
+
+    async def compute_scenario_snapshot(self, matter_id: str, branch_id: str) -> dict:
+        result = await self._post(f"/matter/{matter_id}/scenario-branches/{branch_id}/snapshot")
+        if not isinstance(result, dict):
+            _log.warning("compute_scenario_snapshot: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
+    async def compare_scenario_to_baseline(self, matter_id: str, branch_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/scenario-branches/{branch_id}/compare")
+        if not isinstance(result, dict):
+            _log.warning("compare_scenario_to_baseline: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def get_alternative_theory_portfolio(self, matter_id: str, objective_id: str | None = None) -> dict:
         params = f"?objective_id={_url_quote(objective_id, safe='')}" if objective_id else ""
         result = await self._get(f"/matter/{matter_id}/alternative-theories{params}")

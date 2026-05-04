@@ -2933,6 +2933,57 @@ async def archive_scenario_branch(matter_id: str, branch_id: str):
     return {"status": "archived", "branch_id": branch_id}
 
 
+@app.post(
+    "/matter/{matter_id}/scenario-branches/{branch_id}/deltas",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def apply_scenario_delta(
+    matter_id: str,
+    branch_id: str,
+    target_kind: str = Body(...),
+    target_id: str = Body(...),
+    operation: str = Body(...),
+    payload: dict = Body(default={}),
+):
+    """Apply a delta to a scenario branch without mutating baseline (SO-1, SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.apply_scenario_delta(branch_id, target_kind, target_id, operation, payload)
+
+
+@app.get(
+    "/matter/{matter_id}/scenario-branches/{branch_id}/deltas",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def list_scenario_deltas(matter_id: str, branch_id: str):
+    """List all deltas for a scenario branch (SO-1, SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return {"deltas": model.list_scenario_deltas(branch_id)}
+
+
+@app.post(
+    "/matter/{matter_id}/scenario-branches/{branch_id}/snapshot",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def compute_scenario_snapshot(matter_id: str, branch_id: str):
+    """Compute a snapshot comparing branch state against baseline (SO-1, SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.compute_scenario_snapshot(branch_id)
+
+
+@app.get(
+    "/matter/{matter_id}/scenario-branches/{branch_id}/compare",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def compare_scenario_to_baseline(matter_id: str, branch_id: str):
+    """Side-by-side comparison of scenario branch vs baseline (SO-1, SO-3)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.compare_scenario_to_baseline(branch_id)
+
+
 @app.get(
     "/matter/{matter_id}/alternative-theories",
     tags=["Matter Model"],

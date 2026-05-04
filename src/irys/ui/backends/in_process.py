@@ -614,6 +614,24 @@ class InProcessBackend(UIBackend):
             return {"error": "Scenario branch not found"}
         return {"status": "archived", "branch_id": branch_id}
 
+    async def apply_scenario_delta(self, matter_id: str, branch_id: str,
+                                   target_kind: str, target_id: str,
+                                   operation: str, payload: dict) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.apply_scenario_delta(branch_id, target_kind, target_id, operation, payload)
+
+    async def list_scenario_deltas(self, matter_id: str, branch_id: str) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.list_scenario_deltas(branch_id)
+
+    async def compute_scenario_snapshot(self, matter_id: str, branch_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.compute_scenario_snapshot(branch_id)
+
+    async def compare_scenario_to_baseline(self, matter_id: str, branch_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.compare_scenario_to_baseline(branch_id)
+
     async def get_alternative_theory_portfolio(self, matter_id: str, objective_id: str | None = None) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_alternative_theory_portfolio(objective_id=objective_id)

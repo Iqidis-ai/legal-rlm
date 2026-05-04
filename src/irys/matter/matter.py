@@ -4972,6 +4972,298 @@ class MatterModel:
         }
 
     # ------------------------------------------------------------------
+    # Durable Scenario Graphs (SO-1, SO-3)
+    # ------------------------------------------------------------------
+
+    _DELTA_OPERATIONS = frozenset({
+        "override_belief", "suppress", "add_gap", "resolve_gap",
+        "add_assertion", "assume",
+    })
+    _DELTA_KINDS = frozenset({
+        "assertion", "issue", "predicate", "quant_fact", "authority", "gap",
+    })
+
+    def apply_scenario_delta(
+        self,
+        branch_id: str,
+        target_kind: str,
+        target_id: str,
+        operation: str,
+        payload: dict | None = None,
+    ) -> dict:
+        """Apply a delta to a scenario branch without mutating baseline state."""
+        branch = self.get_scenario_branch(branch_id)
+        if not branch:
+            return {"error": f"Branch {branch_id} not found"}
+        if branch.get("status") != "active":
+            return {"error": f"Branch {branch_id} is not active"}
+        if target_kind not in self._DELTA_KINDS:
+            return {"error": f"Invalid target_kind. Must be one of: {', '.join(sorted(self._DELTA_KINDS))}"}
+        if operation not in self._DELTA_OPERATIONS:
+            return {"error": f"Invalid operation. Must be one of: {', '.join(sorted(self._DELTA_OPERATIONS))}"}
+
+        delta_id = str(uuid.uuid4())
+        now = _now()
+        self.db.execute(
+            """INSERT INTO scenario_branch_delta
+               (id, branch_id, target_kind, target_id, operation, payload_json,
+                created_at, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'user')""",
+            (delta_id, branch_id, target_kind, target_id, operation,
+             json.dumps(payload or {}, default=str), now),
+        )
+
+        delta_counts = self.db.execute(
+            "SELECT COUNT(*) AS n FROM scenario_branch_delta WHERE branch_id=?",
+            (branch_id,),
+        ).fetchone()
+        dc = int(delta_counts["n"]) if delta_counts else 1
+
+        kind_counts = {}
+        for kind in ("assertion", "gap", "quant_fact"):
+            row = self.db.execute(
+                "SELECT COUNT(*) AS n FROM scenario_branch_delta"
+                " WHERE branch_id=? AND target_kind=?",
+                (branch_id, kind),
+            ).fetchone()
+            kind_counts[kind] = int(row["n"]) if row else 0
+
+        self.db.execute(
+            "UPDATE scenario_branch SET assertion_delta=?, gap_delta=?, quant_delta=?,"
+            " updated_at=? WHERE id=?",
+            (kind_counts.get("assertion", 0), kind_counts.get("gap", 0),
+             kind_counts.get("quant_fact", 0), now, branch_id),
+        )
+        self.db.conn.commit()
+
+        return {
+            "delta_id": delta_id,
+            "branch_id": branch_id,
+            "operation": operation,
+            "target_kind": target_kind,
+            "target_id": target_id,
+            "total_deltas": dc,
+        }
+
+    def list_scenario_deltas(self, branch_id: str) -> list[dict]:
+        """Return all deltas for a scenario branch."""
+        rows = self.db.execute(
+            """SELECT id, branch_id, target_kind, target_id, operation,
+                      payload_json, created_at, created_by
+               FROM scenario_branch_delta
+               WHERE branch_id=?
+               ORDER BY created_at""",
+            (branch_id,),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["payload"] = json.loads(d.pop("payload_json", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                d["payload"] = {}
+            result.append(d)
+        return result
+
+    def compute_scenario_snapshot(self, branch_id: str) -> dict:
+        """Compute a snapshot comparing branch state against baseline.
+
+        Evaluates each delta to project changes to issue coverage, gaps, and
+        SO metrics without mutating the actual matter state. Returns a snapshot
+        record with baseline vs branch comparison data.
+        """
+        branch = self.get_scenario_branch(branch_id)
+        if not branch:
+            return {"error": f"Branch {branch_id} not found"}
+
+        deltas = self.list_scenario_deltas(branch_id)
+
+        baseline_coverage = {}
+        try:
+            cov = self.get_objective_coverage_workbench()
+            baseline_coverage = {
+                "total_issues": cov.get("total_issues", 0),
+                "covered_issues": cov.get("fully_covered", 0),
+                "partial_issues": cov.get("partially_covered", 0),
+            }
+        except Exception as exc:
+            _log.warning("compute_scenario_snapshot: coverage failed: %s", exc)
+
+        baseline_gaps = {}
+        try:
+            gap_count = self.gaps.count_open()
+            baseline_gaps = {"open_gaps": gap_count}
+        except Exception as exc:
+            _log.warning("compute_scenario_snapshot: gap count failed: %s", exc)
+
+        baseline_so = {}
+        try:
+            so = self.get_so_metrics()
+            if isinstance(so, dict):
+                baseline_so = {k: v for k, v in so.items() if isinstance(v, (int, float, str, bool))}
+        except Exception as exc:
+            _log.warning("compute_scenario_snapshot: SO metrics failed: %s", exc)
+
+        branch_coverage = dict(baseline_coverage)
+        branch_gaps = dict(baseline_gaps)
+        overridden_beliefs: dict[str, str] = {}
+        suppressed_ids: set[str] = set()
+        new_gaps: list[str] = []
+        resolved_gaps: list[str] = []
+        new_assertions: list[str] = []
+
+        for delta in deltas:
+            if not isinstance(delta, dict):
+                continue
+            op = delta.get("operation", "")
+            tkind = delta.get("target_kind", "")
+            tid = delta.get("target_id", "")
+            payload = delta.get("payload", {})
+
+            if op == "override_belief" and tkind == "assertion":
+                overridden_beliefs[tid] = str(payload.get("new_belief", ""))
+            elif op == "suppress":
+                suppressed_ids.add(tid)
+            elif op == "add_gap":
+                new_gaps.append(tid)
+                branch_gaps["open_gaps"] = branch_gaps.get("open_gaps", 0) + 1
+            elif op == "resolve_gap" and tkind == "gap":
+                resolved_gaps.append(tid)
+                branch_gaps["open_gaps"] = max(0, branch_gaps.get("open_gaps", 0) - 1)
+            elif op == "add_assertion":
+                new_assertions.append(tid)
+
+        snapshot_id = str(uuid.uuid4())
+        now = _now()
+
+        coverage_json = json.dumps({
+            "baseline": baseline_coverage,
+            "branch": branch_coverage,
+        }, default=str)
+        gap_json = json.dumps({
+            "baseline": baseline_gaps,
+            "branch": branch_gaps,
+            "new_gaps": new_gaps,
+            "resolved_gaps": resolved_gaps,
+        }, default=str)
+        so_json = json.dumps({"baseline": baseline_so}, default=str)
+
+        self.db.execute(
+            """INSERT INTO scenario_branch_snapshot
+               (id, branch_id, baseline_manifest, branch_manifest,
+                coverage_json, gap_json, so_metrics_json, delta_count, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (snapshot_id, branch_id, "", "", coverage_json, gap_json,
+             so_json, len(deltas), now),
+        )
+        self.db.conn.commit()
+
+        return {
+            "snapshot_id": snapshot_id,
+            "branch_id": branch_id,
+            "branch_name": branch.get("name", ""),
+            "delta_count": len(deltas),
+            "overridden_beliefs": overridden_beliefs,
+            "suppressed_ids": list(suppressed_ids),
+            "new_gaps": new_gaps,
+            "resolved_gaps": resolved_gaps,
+            "new_assertions": new_assertions,
+            "coverage": {"baseline": baseline_coverage, "branch": branch_coverage},
+            "gaps": {"baseline": baseline_gaps, "branch": branch_gaps},
+            "so_metrics": {"baseline": baseline_so},
+        }
+
+    def list_scenario_snapshots(self, branch_id: str, limit: int = 10) -> list[dict]:
+        """Return snapshot history for a scenario branch from scenario_branch_snapshot."""
+        rows = self.db.execute(
+            """SELECT id, branch_id, delta_count, created_at
+               FROM scenario_branch_snapshot
+               WHERE branch_id=?
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (branch_id, max(1, min(limit, 100))),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def compare_scenario_to_baseline(self, branch_id: str) -> dict:
+        """Side-by-side comparison of a scenario branch vs baseline state.
+
+        Returns structured diff showing what changed and what the impact is,
+        suitable for professional decision-making.
+        """
+        branch = self.get_scenario_branch(branch_id)
+        if not branch:
+            return {"error": f"Branch {branch_id} not found"}
+
+        deltas = self.list_scenario_deltas(branch_id)
+
+        belief_changes: list[dict] = []
+        suppressions: list[dict] = []
+        new_gaps: list[dict] = []
+        resolved_gaps_list: list[dict] = []
+        new_assertions_list: list[dict] = []
+
+        for delta in deltas:
+            if not isinstance(delta, dict):
+                continue
+            op = delta.get("operation", "")
+            tkind = delta.get("target_kind", "")
+            tid = delta.get("target_id", "")
+            payload = delta.get("payload", {})
+
+            if op == "override_belief" and tkind == "assertion":
+                current = self.assertions.get(tid)
+                belief_changes.append({
+                    "assertion_id": tid,
+                    "proposition": (current.proposition_text if current else "")[:200],
+                    "baseline_belief": current.belief_state if current else "unknown",
+                    "branch_belief": str(payload.get("new_belief", "")),
+                })
+            elif op == "suppress":
+                label = ""
+                if tkind == "assertion":
+                    rec = self.assertions.get(tid)
+                    label = (rec.proposition_text if rec else "")[:200]
+                suppressions.append({
+                    "target_kind": tkind,
+                    "target_id": tid,
+                    "label": label,
+                })
+            elif op == "add_gap":
+                new_gaps.append({
+                    "target_id": tid,
+                    "description": str(payload.get("description", ""))[:200],
+                    "gap_type": str(payload.get("gap_type", "")),
+                })
+            elif op == "resolve_gap":
+                resolved_gaps_list.append({
+                    "gap_id": tid,
+                    "reason": str(payload.get("reason", ""))[:200],
+                })
+            elif op == "add_assertion":
+                new_assertions_list.append({
+                    "assertion_id": tid,
+                    "proposition": str(payload.get("proposition", ""))[:200],
+                    "belief_state": str(payload.get("belief_state", "provisional")),
+                })
+
+        raw = branch.get("assumptions", [])
+        assumptions = [a for a in raw if isinstance(a, dict)] if isinstance(raw, list) else []
+
+        return {
+            "branch_id": branch_id,
+            "branch_name": branch.get("name", ""),
+            "branch_status": branch.get("status", ""),
+            "delta_count": len(deltas),
+            "assumptions": assumptions,
+            "belief_changes": belief_changes,
+            "suppressions": suppressions,
+            "new_gaps": new_gaps,
+            "resolved_gaps": resolved_gaps_list,
+            "new_assertions": new_assertions_list,
+        }
+
+    # ------------------------------------------------------------------
     # Alternative Theory Portfolio (SO-2, SO-3, SO-4, SO-5, SO-7)
     # ------------------------------------------------------------------
 

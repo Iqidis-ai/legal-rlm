@@ -8034,3 +8034,275 @@ def test_assumption_review_backend_interface_balance():
     assert hasattr(UIBackend, "review_assumption")
     assert hasattr(InProcessBackend, "review_assumption")
     assert hasattr(HttpBackend, "review_assumption")
+
+
+# ------------------------------------------------------------------
+# Durable Scenario Graphs
+# ------------------------------------------------------------------
+
+
+def test_scenario_delta_invalid_kind():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    b = model.create_scenario_branch(name="test-branch", assumptions=[])
+    bid = b["branch_id"]
+    result = model.apply_scenario_delta(bid, "bogus_kind", "t1", "suppress")
+    assert "error" in result
+    assert "target_kind" in result["error"]
+
+
+def test_scenario_delta_invalid_operation():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    b = model.create_scenario_branch(name="test-op", assumptions=[])
+    bid = b["branch_id"]
+    result = model.apply_scenario_delta(bid, "assertion", "a1", "bogus_op")
+    assert "error" in result
+    assert "operation" in result["error"]
+
+
+def test_scenario_delta_branch_not_found():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.apply_scenario_delta("nonexistent", "assertion", "a1", "suppress")
+    assert "error" in result
+    assert "not found" in result["error"]
+
+
+def test_scenario_delta_apply_valid():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    b = model.create_scenario_branch(name="valid-delta", assumptions=[])
+    bid = b["branch_id"]
+    result = model.apply_scenario_delta(
+        bid, "assertion", "a1", "override_belief", {"new_belief": "disputed"},
+    )
+    assert "delta_id" in result
+    assert result["branch_id"] == bid
+    assert result["total_deltas"] == 1
+
+
+def test_scenario_delta_does_not_mutate_baseline():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    b = model.create_scenario_branch(name="no-mutate", assumptions=[])
+    bid = b["branch_id"]
+    model.apply_scenario_delta(bid, "assertion", "a1", "override_belief", {"new_belief": "disputed"})
+    rec = model.assertions.get("a1")
+    assert rec is None
+
+
+def test_scenario_list_deltas():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    b = model.create_scenario_branch(name="list-deltas", assumptions=[])
+    bid = b["branch_id"]
+    model.apply_scenario_delta(bid, "assertion", "a1", "suppress")
+    model.apply_scenario_delta(bid, "gap", "g1", "resolve_gap", {"reason": "resolved"})
+    deltas = model.list_scenario_deltas(bid)
+    assert len(deltas) == 2
+    assert deltas[0]["operation"] == "suppress"
+    assert deltas[1]["operation"] == "resolve_gap"
+    assert deltas[1]["payload"]["reason"] == "resolved"
+
+
+def test_scenario_snapshot_empty_branch():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    b = model.create_scenario_branch(name="snap-empty", assumptions=[])
+    bid = b["branch_id"]
+    snap = model.compute_scenario_snapshot(bid)
+    assert snap["delta_count"] == 0
+    assert snap["branch_id"] == bid
+    assert "coverage" in snap
+    assert "gaps" in snap
+
+
+def test_scenario_snapshot_with_deltas():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    b = model.create_scenario_branch(name="snap-deltas", assumptions=[])
+    bid = b["branch_id"]
+    model.apply_scenario_delta(bid, "assertion", "a1", "override_belief", {"new_belief": "disputed"})
+    model.apply_scenario_delta(bid, "gap", "g1", "add_gap", {"description": "test gap"})
+    snap = model.compute_scenario_snapshot(bid)
+    assert snap["delta_count"] == 2
+    assert "a1" in snap["overridden_beliefs"]
+    assert "g1" in snap["new_gaps"]
+
+
+def test_scenario_compare_branch_not_found():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.compare_scenario_to_baseline("nonexistent")
+    assert "error" in result
+
+
+def test_scenario_compare_with_deltas():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    b = model.create_scenario_branch(name="compare-test", assumptions=[{"text": "assume X"}])
+    bid = b["branch_id"]
+    model.apply_scenario_delta(bid, "assertion", "a1", "override_belief", {"new_belief": "disputed"})
+    model.apply_scenario_delta(bid, "assertion", "a2", "suppress")
+    model.apply_scenario_delta(bid, "gap", "g1", "add_gap", {"description": "new gap", "gap_type": "missing_doc"})
+    result = model.compare_scenario_to_baseline(bid)
+    assert result["delta_count"] == 3
+    assert len(result["belief_changes"]) == 1
+    assert result["belief_changes"][0]["branch_belief"] == "disputed"
+    assert len(result["suppressions"]) == 1
+    assert len(result["new_gaps"]) == 1
+    assert result["assumptions"][0]["text"] == "assume X"
+
+
+def test_scenario_compare_formatter_empty():
+    from irys.ui.app import _fmt_scenario_comparison
+    html = _fmt_scenario_comparison({})
+    assert "viz-empty" in html
+
+
+def test_scenario_compare_formatter_no_deltas():
+    from irys.ui.app import _fmt_scenario_comparison
+    data = {
+        "branch_id": "b1",
+        "branch_name": "Test",
+        "branch_status": "active",
+        "delta_count": 0,
+        "assumptions": [],
+        "belief_changes": [],
+        "suppressions": [],
+        "new_gaps": [],
+        "resolved_gaps": [],
+        "new_assertions": [],
+    }
+    html = _fmt_scenario_comparison(data)
+    assert "viz-empty" in html
+
+
+def test_scenario_compare_formatter_renders():
+    from irys.ui.app import _fmt_scenario_comparison
+    data = {
+        "branch_id": "b1",
+        "branch_name": "Void contract theory",
+        "branch_status": "active",
+        "delta_count": 3,
+        "assumptions": [{"text": "Contract was signed under duress"}],
+        "belief_changes": [
+            {
+                "assertion_id": "a1",
+                "proposition": "Contract is enforceable",
+                "baseline_belief": "verified",
+                "branch_belief": "disputed",
+            },
+        ],
+        "suppressions": [
+            {"target_kind": "assertion", "target_id": "a2", "label": "Payment was made on time"},
+        ],
+        "new_gaps": [
+            {"target_id": "g1", "description": "Missing duress evidence", "gap_type": "missing_document"},
+        ],
+        "resolved_gaps": [
+            {"gap_id": "g2", "reason": "Resolved by testimony"},
+        ],
+        "new_assertions": [
+            {"assertion_id": "a3", "proposition": "Duress alleged", "belief_state": "provisional"},
+        ],
+    }
+    html = _fmt_scenario_comparison(data)
+    assert "Scenario Comparison" in html
+    assert "Void contract theory" in html
+    assert "Contract is enforceable" in html
+    assert "verified" in html
+    assert "disputed" in html
+    assert "Payment was made on time" in html
+    assert "Missing duress evidence" in html
+    assert "Resolved by testimony" in html
+    assert "Duress alleged" in html
+
+
+def test_scenario_compare_formatter_xss():
+    from irys.ui.app import _fmt_scenario_comparison
+    data = {
+        "branch_id": "b1",
+        "branch_name": "<script>xss</script>",
+        "branch_status": "active",
+        "delta_count": 1,
+        "assumptions": [{"text": "<script>bad</script>"}],
+        "belief_changes": [
+            {
+                "assertion_id": "a1",
+                "proposition": "<img onerror=alert(1)>",
+                "baseline_belief": "<script>b</script>",
+                "branch_belief": "<script>d</script>",
+            },
+        ],
+        "suppressions": [{"target_kind": "<script>k</script>", "target_id": "t1", "label": "<script>l</script>"}],
+        "new_gaps": [{"target_id": "g1", "description": "<script>g</script>", "gap_type": "<script>t</script>"}],
+        "resolved_gaps": [{"gap_id": "rg1", "reason": "<script>r</script>"}],
+        "new_assertions": [{"assertion_id": "na1", "proposition": "<script>p</script>", "belief_state": "<script>s</script>"}],
+    }
+    html = _fmt_scenario_comparison(data)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_scenario_compare_formatter_non_dict_guards():
+    from irys.ui.app import _fmt_scenario_comparison
+    data = {
+        "branch_id": "b1",
+        "branch_name": "Test",
+        "branch_status": "active",
+        "delta_count": 2,
+        "assumptions": ["not-a-dict", None],
+        "belief_changes": [42, "bad"],
+        "suppressions": [None],
+        "new_gaps": [123],
+        "resolved_gaps": [False],
+        "new_assertions": ["bad"],
+    }
+    html = _fmt_scenario_comparison(data)
+    assert "Scenario Comparison" in html
+    assert "<script>" not in html
+
+
+def test_scenario_compare_labels_all_five_domains():
+    from irys.ui.app import _SCENARIO_COMPARE_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _SCENARIO_COMPARE_LABELS[domain]
+        assert "title" in labels
+        assert "belief_changes" in labels
+        assert "empty" in labels
+        assert "new_gaps" in labels
+
+
+def test_scenario_compare_formatter_domain_labels():
+    from irys.ui.app import _fmt_scenario_comparison
+    data = {
+        "branch_id": "b1",
+        "branch_name": "Test",
+        "branch_status": "active",
+        "delta_count": 1,
+        "assumptions": [],
+        "belief_changes": [
+            {"assertion_id": "a1", "proposition": "x", "baseline_belief": "a", "branch_belief": "b"},
+        ],
+        "suppressions": [],
+        "new_gaps": [],
+        "resolved_gaps": [],
+        "new_assertions": [],
+    }
+    html_finance = _fmt_scenario_comparison(data, domain="finance")
+    assert "Scenario Comparison" in html_finance
+    html_bio = _fmt_scenario_comparison(data, domain="biomedical")
+    assert "Interpretation Comparison" in html_bio
+
+
+def test_scenario_graph_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("apply_scenario_delta", "list_scenario_deltas",
+                   "compute_scenario_snapshot", "compare_scenario_to_baseline"):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"

@@ -229,6 +229,24 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def apply_scenario_delta(self, matter_id: str, branch_id: str,
+                                   target_kind: str, target_id: str,
+                                   operation: str, payload: dict) -> dict:
+        ...
+
+    @abstractmethod
+    async def list_scenario_deltas(self, matter_id: str, branch_id: str) -> list[dict]:
+        ...
+
+    @abstractmethod
+    async def compute_scenario_snapshot(self, matter_id: str, branch_id: str) -> dict:
+        ...
+
+    @abstractmethod
+    async def compare_scenario_to_baseline(self, matter_id: str, branch_id: str) -> dict:
+        ...
+
+    @abstractmethod
     async def get_alternative_theory_portfolio(self, matter_id: str, objective_id: str | None = None) -> dict:
         ...
 

@@ -6243,6 +6243,177 @@ def _fmt_scenario_workbench(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_SCENARIO_COMPARE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Scenario Comparison",
+        "subtitle": "Side-by-side analysis of branch vs baseline matter state.",
+        "belief_changes": "Belief State Changes",
+        "suppressions": "Suppressed Items",
+        "new_gaps": "New Gaps",
+        "resolved_gaps": "Resolved Gaps",
+        "new_assertions": "New Assertions",
+        "assumptions": "Branch Assumptions",
+        "empty": "Select a branch and click Compare to see the impact analysis.",
+        "no_changes": "No changes — this branch has no deltas applied.",
+    },
+    "finance": {
+        "title": "Scenario Comparison",
+        "subtitle": "Side-by-side analysis of scenario vs base case.",
+        "belief_changes": "Belief State Changes", "suppressions": "Suppressed Items",
+        "new_gaps": "New Diligence Gaps", "resolved_gaps": "Resolved Gaps",
+        "new_assertions": "New Claims", "assumptions": "Scenario Assumptions",
+        "empty": "Select a scenario and click Compare to see the impact.",
+        "no_changes": "No changes — this scenario has no deltas applied.",
+    },
+    "coding": {
+        "title": "Path Comparison",
+        "subtitle": "Side-by-side analysis of design path vs baseline.",
+        "belief_changes": "Belief State Changes", "suppressions": "Suppressed Items",
+        "new_gaps": "New Gaps", "resolved_gaps": "Resolved Gaps",
+        "new_assertions": "New Claims", "assumptions": "Path Assumptions",
+        "empty": "Select a path and click Compare to see the impact.",
+        "no_changes": "No changes — this path has no deltas applied.",
+    },
+    "academic_research": {
+        "title": "Hypothesis Comparison",
+        "subtitle": "Side-by-side analysis of hypothesis vs baseline.",
+        "belief_changes": "Belief State Changes", "suppressions": "Suppressed Items",
+        "new_gaps": "New Evidence Gaps", "resolved_gaps": "Resolved Gaps",
+        "new_assertions": "New Findings", "assumptions": "Hypothesis Assumptions",
+        "empty": "Select a hypothesis and click Compare to see the impact.",
+        "no_changes": "No changes — this hypothesis has no deltas applied.",
+    },
+    "biomedical": {
+        "title": "Interpretation Comparison",
+        "subtitle": "Side-by-side analysis of clinical interpretation vs baseline.",
+        "belief_changes": "Belief State Changes", "suppressions": "Suppressed Items",
+        "new_gaps": "New Evidence Gaps", "resolved_gaps": "Resolved Gaps",
+        "new_assertions": "New Findings", "assumptions": "Interpretation Assumptions",
+        "empty": "Select an interpretation and click Compare to see the impact.",
+        "no_changes": "No changes — this interpretation has no deltas applied.",
+    },
+}
+
+
+def _fmt_scenario_comparison(data: dict, domain: str = "legal") -> str:
+    L = _SCENARIO_COMPARE_LABELS.get(domain, _SCENARIO_COMPARE_LABELS["legal"])
+
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    if data.get("error"):
+        return f"<div class='viz-empty'>Error: {_escape(str(data['error']))}</div>"
+
+    delta_count = _safe_int(data.get("delta_count", 0))
+    if delta_count == 0:
+        return f"<div class='viz-empty'>{_escape(L['no_changes'])}</div>"
+
+    branch_name = _escape(str(data.get("branch_name", ""))[:80])
+    status = _escape(str(data.get("branch_status", "")))
+
+    header = (
+        f"<div class='viz-shell'>"
+        f"<div class='intel-panel-title'>{_escape(L['title'])}</div>"
+        f"<div style='font-size:0.8em;color:#6b7280;margin-bottom:8px;'>{_escape(L['subtitle'])}</div>"
+        f"<div style='display:flex;gap:16px;align-items:center;margin-bottom:12px;flex-wrap:wrap;'>"
+        f"<div><strong>Branch:</strong> {branch_name}</div>"
+        f"<div style='font-size:0.85em;color:#6b7280;'>Status: {status} | Deltas: {delta_count}</div>"
+        f"</div>"
+    )
+
+    body = ""
+
+    assumptions = data.get("assumptions", [])
+    if isinstance(assumptions, list) and assumptions:
+        body += f"<div style='margin-bottom:10px;'><strong>{_escape(L['assumptions'])}:</strong>"
+        for a in assumptions[:10]:
+            if isinstance(a, dict):
+                text = _escape(str(a.get("text") or a.get("assumption") or str(a))[:150])
+            else:
+                text = _escape(str(a)[:150])
+            body += f"<div style='font-size:0.82em;color:#6b7280;padding-left:12px;'>&bull; {text}</div>"
+        body += "</div>"
+
+    belief_changes = data.get("belief_changes", [])
+    if isinstance(belief_changes, list) and belief_changes:
+        body += (
+            f"<div style='margin-bottom:10px;'>"
+            f"<strong style='color:#d97706;'>{_escape(L['belief_changes'])} ({len(belief_changes)}):</strong>"
+        )
+        for bc in belief_changes[:10]:
+            if not isinstance(bc, dict):
+                continue
+            prop = _escape(str(bc.get("proposition", ""))[:150])
+            bl = _escape(str(bc.get("baseline_belief", "")))
+            br = _escape(str(bc.get("branch_belief", "")))
+            body += (
+                f"<div style='font-size:0.82em;padding:3px 0;border-bottom:1px solid #f3f4f6;'>"
+                f"{prop} — <span style='color:#dc2626;'>{bl}</span>"
+                f" → <span style='color:#16a34a;'>{br}</span></div>"
+            )
+        body += "</div>"
+
+    suppressions = data.get("suppressions", [])
+    if isinstance(suppressions, list) and suppressions:
+        body += (
+            f"<div style='margin-bottom:10px;'>"
+            f"<strong style='color:#dc2626;'>{_escape(L['suppressions'])} ({len(suppressions)}):</strong>"
+        )
+        for s in suppressions[:10]:
+            if not isinstance(s, dict):
+                continue
+            kind = _escape(str(s.get("target_kind", "")))
+            label = _escape(str(s.get("label", s.get("target_id", "")))[:150])
+            body += f"<div style='font-size:0.82em;color:#b91c1c;padding-left:12px;'>&#9888; [{kind}] {label}</div>"
+        body += "</div>"
+
+    new_gaps = data.get("new_gaps", [])
+    if isinstance(new_gaps, list) and new_gaps:
+        body += (
+            f"<div style='margin-bottom:10px;'>"
+            f"<strong style='color:#dc2626;'>{_escape(L['new_gaps'])} ({len(new_gaps)}):</strong>"
+        )
+        for g in new_gaps[:10]:
+            if isinstance(g, dict):
+                desc = _escape(str(g.get("description", ""))[:150])
+                gtype = _escape(str(g.get("gap_type", "")))
+                body += f"<div style='font-size:0.82em;color:#b91c1c;padding-left:12px;'>&#9888; [{gtype}] {desc}</div>"
+            else:
+                body += f"<div style='font-size:0.82em;color:#b91c1c;padding-left:12px;'>&#9888; {_escape(str(g)[:100])}</div>"
+        body += "</div>"
+
+    resolved_gaps = data.get("resolved_gaps", [])
+    if isinstance(resolved_gaps, list) and resolved_gaps:
+        body += (
+            f"<div style='margin-bottom:10px;'>"
+            f"<strong style='color:#16a34a;'>{_escape(L['resolved_gaps'])} ({len(resolved_gaps)}):</strong>"
+        )
+        for rg in resolved_gaps[:10]:
+            if isinstance(rg, dict):
+                reason = _escape(str(rg.get("reason", ""))[:150])
+                body += f"<div style='font-size:0.82em;color:#047857;padding-left:12px;'>&#10003; {reason}</div>"
+            else:
+                body += f"<div style='font-size:0.82em;color:#047857;padding-left:12px;'>&#10003; {_escape(str(rg)[:100])}</div>"
+        body += "</div>"
+
+    new_assertions = data.get("new_assertions", [])
+    if isinstance(new_assertions, list) and new_assertions:
+        body += (
+            f"<div style='margin-bottom:10px;'>"
+            f"<strong style='color:#2563eb;'>{_escape(L['new_assertions'])} ({len(new_assertions)}):</strong>"
+        )
+        for na in new_assertions[:10]:
+            if isinstance(na, dict):
+                prop = _escape(str(na.get("proposition", ""))[:150])
+                bs = _escape(str(na.get("belief_state", "")))
+                body += f"<div style='font-size:0.82em;padding-left:12px;'>+ {prop} [{bs}]</div>"
+            else:
+                body += f"<div style='font-size:0.82em;padding-left:12px;'>+ {_escape(str(na)[:100])}</div>"
+        body += "</div>"
+
+    return f"{header}{body}</div>"
+
+
 _ALTERNATIVE_THEORY_LABELS: dict[str, dict[str, str]] = {
     "legal": {
         "title": "Alternative Theories",
@@ -12000,6 +12171,18 @@ class AppState:
             logger.warning("Scenario workbench load failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_scenario_comparison(self, matter_id: str, branch_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        bid = (branch_id or "").strip()
+        if not bid:
+            return "<div class='viz-empty'>Enter a branch ID to compare.</div>"
+        try:
+            data = _run_async(self.backend().compare_scenario_to_baseline(matter_id, bid))
+            return _fmt_scenario_comparison(data, domain=domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error comparing scenario: {_escape(str(exc))}</div>"
+
     def load_alternative_theories(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -14639,6 +14822,17 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             scenario_create_result = gr.Textbox(
                 label="Result", interactive=False, visible=True,
             )
+            with gr.Accordion("Compare branch to baseline", open=False):
+                with gr.Row():
+                    scenario_compare_branch_id = gr.Textbox(
+                        label="Branch ID (copy from branch list above)", scale=3,
+                    )
+                    scenario_compare_btn = gr.Button(
+                        "Compare to Baseline", variant="primary", size="sm", scale=1,
+                    )
+                scenario_comparison_html = gr.HTML(
+                    "<div class='viz-empty'>Select a branch and click Compare to see the impact analysis.</div>"
+                )
 
         with gr.Accordion("Alternative Theories — competing interpretations from the matter graph", open=False):
             gr.Markdown(
@@ -16012,6 +16206,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[scenario_workbench_html],
+        )
+        scenario_compare_btn.click(
+            fn=lambda mid, bid: state.load_scenario_comparison(mid, bid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box, scenario_compare_branch_id],
+            outputs=[scenario_comparison_html],
         )
         refresh_alt_theories_btn.click(
             fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),

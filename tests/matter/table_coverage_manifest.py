@@ -228,11 +228,28 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
         writers=(
             "irys.matter.matter:MatterModel.create_scenario_branch",
             "irys.matter.matter:MatterModel.archive_scenario_branch",
+            "irys.matter.matter:MatterModel.apply_scenario_delta",
         ),
         readers=(
             "irys.matter.matter:MatterModel.list_scenario_branches",
             "irys.matter.matter:MatterModel.get_scenario_branch",
             "irys.matter.matter:MatterModel.get_scenario_workbench",
+        ),
+    ),
+    "scenario_branch_delta": TableCoverageSpec(
+        writers=(
+            "irys.matter.matter:MatterModel.apply_scenario_delta",
+        ),
+        readers=(
+            "irys.matter.matter:MatterModel.list_scenario_deltas",
+        ),
+    ),
+    "scenario_branch_snapshot": TableCoverageSpec(
+        writers=(
+            "irys.matter.matter:MatterModel.compute_scenario_snapshot",
+        ),
+        readers=(
+            "irys.matter.matter:MatterModel.list_scenario_snapshots",
         ),
     ),
 }

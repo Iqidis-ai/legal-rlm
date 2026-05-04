@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 66
+SCHEMA_VERSION = 67
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -3210,6 +3210,44 @@ def _migration_v66(conn) -> None:
     conn.commit()
 
 
+def _migration_v67(conn) -> None:
+    """Durable scenario graph: delta overlay and snapshot tables (SO-1, SO-3)."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS scenario_branch_delta (
+            id                  TEXT PRIMARY KEY,
+            branch_id           TEXT NOT NULL REFERENCES scenario_branch(id) ON DELETE CASCADE,
+            target_kind         TEXT NOT NULL,
+            target_id           TEXT NOT NULL,
+            operation           TEXT NOT NULL,
+            payload_json        TEXT NOT NULL DEFAULT '{}',
+            created_at          TEXT NOT NULL,
+            created_by          TEXT NOT NULL DEFAULT 'user'
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_scenario_branch_delta_branch"
+        " ON scenario_branch_delta(branch_id)"
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS scenario_branch_snapshot (
+            id                  TEXT PRIMARY KEY,
+            branch_id           TEXT NOT NULL REFERENCES scenario_branch(id) ON DELETE CASCADE,
+            baseline_manifest   TEXT NOT NULL DEFAULT '',
+            branch_manifest     TEXT NOT NULL DEFAULT '',
+            coverage_json       TEXT NOT NULL DEFAULT '{}',
+            gap_json            TEXT NOT NULL DEFAULT '{}',
+            so_metrics_json     TEXT NOT NULL DEFAULT '{}',
+            delta_count         INTEGER NOT NULL DEFAULT 0,
+            created_at          TEXT NOT NULL
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_scenario_branch_snapshot_branch"
+        " ON scenario_branch_snapshot(branch_id)"
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -3280,6 +3318,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (64, _migration_v64),
     (65, _migration_v65),
     (66, _migration_v66),
+    (67, _migration_v67),
 ]
 
 
