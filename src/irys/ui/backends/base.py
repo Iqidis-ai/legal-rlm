@@ -229,6 +229,10 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_alternative_theory_portfolio(self, matter_id: str, objective_id: str | None = None) -> dict:
+        ...
+
+    @abstractmethod
     async def get_objective_coverage(self, matter_id: str) -> dict:
         """Objective coverage workbench: per-objective criteria, support, gaps (SO-4)."""
         ...

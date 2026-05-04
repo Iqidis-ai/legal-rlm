@@ -2908,6 +2908,24 @@ async def archive_scenario_branch(matter_id: str, branch_id: str):
     return {"status": "archived", "branch_id": branch_id}
 
 
+@app.get(
+    "/matter/{matter_id}/alternative-theories",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_alternative_theories(
+    matter_id: str,
+    objective_id: str | None = None,
+    max_theories: int = Query(default=5, ge=1, le=10),
+):
+    """Derive competing interpretations from the matter graph (SO-2, SO-3, SO-5, SO-7)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_alternative_theory_portfolio(
+        objective_id=objective_id,
+        max_theories=max_theories,
+    )
+
+
 _PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
 
 

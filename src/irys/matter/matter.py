@@ -4683,6 +4683,255 @@ class MatterModel:
         }
 
     # ------------------------------------------------------------------
+    # Alternative Theory Portfolio (SO-2, SO-3, SO-4, SO-5, SO-7)
+    # ------------------------------------------------------------------
+
+    def get_alternative_theory_portfolio(
+        self,
+        *,
+        objective_id: str | None = None,
+        max_theories: int = 5,
+        include_discriminators: bool = True,
+    ) -> dict:
+        """Derive competing interpretations from the matter graph.
+
+        Returns theories ranked by support/attack/missingness that represent
+        the strongest alternative explanations for the facts in this matter.
+        """
+        facets, composed_weights, primary = self._read_matter_domain_composition()
+        domain_profile_id = primary or "legal"
+
+        max_theories = max(1, min(max_theories, 10))
+
+        issues = self.issues.get_open_issues(min_materiality=0.0)
+        if objective_id:
+            issues = [i for i in issues if isinstance(i, dict) and i.get("id") == objective_id]
+
+        all_assertions = self.assertions.list_recent(limit=500)
+        if objective_id and issues:
+            linked_aids: set[str] = set()
+            for issue in issues:
+                if not isinstance(issue, dict):
+                    continue
+                iid = issue.get("id", "")
+                if iid:
+                    linked = self.issues.get_assertions_for_issue(iid)
+                    for la in linked:
+                        if isinstance(la, dict):
+                            linked_aids.add(la.get("assertion_id", "") or la.get("id", ""))
+            if linked_aids:
+                all_assertions = [a for a in all_assertions if isinstance(a, dict) and a.get("id") in linked_aids]
+
+        all_gaps = self.gaps.workbench(min_materiality=0.0, limit=200)
+        all_assumptions = self.assumptions.get_all(max_rows=200)
+
+        active_beliefs = {
+            "operative", "admitted", "resolved", "performed",
+        }
+        contested_beliefs = {
+            "disputed", "alleged", "argued", "inferred",
+        }
+        negative_beliefs = {
+            "not_performed", "superseded", "withdrawn",
+        }
+
+        supporting = []
+        attacking = []
+        uncertain = []
+        negative = []
+
+        for a in all_assertions:
+            if not isinstance(a, dict):
+                continue
+            bs = str(a.get("belief_state", "unknown")).lower()
+            if bs in active_beliefs:
+                supporting.append(a)
+            elif bs in negative_beliefs:
+                negative.append(a)
+            elif bs in contested_beliefs:
+                uncertain.append(a)
+            else:
+                uncertain.append(a)
+
+        for a in all_assertions:
+            if not isinstance(a, dict):
+                continue
+            attackers = self.assertions.get_attackers(a.get("id", ""))
+            if attackers:
+                attacking.append(a)
+
+        def _source_role_mix(assertions: list[dict]) -> dict[str, int]:
+            mix: dict[str, int] = {}
+            for a in assertions:
+                if not isinstance(a, dict):
+                    continue
+                roles = a.get("source_roles", [])
+                if isinstance(roles, str):
+                    roles = [r.strip() for r in roles.split(",") if r.strip()]
+                elif not isinstance(roles, list):
+                    roles = []
+                for role in roles:
+                    mix[str(role)] = mix.get(str(role), 0) + 1
+            return mix
+
+        def _taint_count(assertions: list[dict]) -> int:
+            count = 0
+            for a in assertions:
+                if not isinstance(a, dict):
+                    continue
+                aid = a.get("id", "")
+                if aid:
+                    try:
+                        row = self.db.execute(
+                            "SELECT COUNT(*) AS c FROM object_taint WHERE matter_id=? AND target_kind='assertion' AND target_id=?",
+                            (self.matter_id, aid),
+                        ).fetchone()
+                        if row and int(row["c"]) > 0:
+                            count += 1
+                    except Exception:
+                        pass
+            return count
+
+        def _confidence_range(assertions: list[dict]) -> list[float]:
+            confs = []
+            for a in assertions:
+                if not isinstance(a, dict):
+                    continue
+                c = a.get("confidence")
+                if c is not None:
+                    try:
+                        fv = float(c)
+                        if math.isfinite(fv):
+                            confs.append(fv)
+                    except (TypeError, ValueError):
+                        pass
+            if not confs:
+                return [0.0, 0.0]
+            return [round(min(confs), 3), round(max(confs), 3)]
+
+        open_gap_ids = [g.get("id", "") for g in all_gaps if isinstance(g, dict) and g.get("status") == "open"]
+        provisional_assumptions = [a for a in all_assumptions if isinstance(a, dict) and a.get("status") == "provisional"]
+
+        def _disc_questions(theory_assertions: list[dict], other_assertions: list[dict]) -> list[str]:
+            if not include_discriminators:
+                return []
+            questions: list[str] = []
+            theory_ids = {a.get("id") for a in theory_assertions if isinstance(a, dict)}
+            for g in all_gaps:
+                if not isinstance(g, dict):
+                    continue
+                deps = g.get("dependencies", [])
+                for dep in deps:
+                    if not isinstance(dep, dict):
+                        continue
+                    aid = dep.get("affected_id", "")
+                    if aid in theory_ids:
+                        desc = str(g.get("description", ""))[:200]
+                        if desc and desc not in questions:
+                            questions.append(desc)
+                        break
+                if len(questions) >= 5:
+                    break
+            if len(questions) < 3:
+                for a_other in other_assertions[:5]:
+                    if not isinstance(a_other, dict):
+                        continue
+                    prop = str(a_other.get("proposition_text", ""))[:200]
+                    if prop:
+                        q = f"Is it true that: {prop}?"
+                        if q not in questions:
+                            questions.append(q)
+                    if len(questions) >= 5:
+                        break
+            return questions[:5]
+
+        theories: list[dict] = []
+        theory_idx = 0
+
+        if supporting:
+            theory_idx += 1
+            theories.append({
+                "id": f"theory-baseline-{theory_idx}",
+                "label": "Baseline Theory (strongest supported interpretation)",
+                "domain_profile_id": domain_profile_id,
+                "stance": "supporting",
+                "supporting_assertions": len(supporting),
+                "attacking_assertions": len([a for a in supporting if a in attacking]),
+                "assumptions": len([a for a in provisional_assumptions
+                                    if isinstance(a, dict)]),
+                "open_gaps": len(open_gap_ids),
+                "discriminator_questions": _disc_questions(supporting, uncertain + negative),
+                "confidence_range": _confidence_range(supporting),
+                "source_role_mix": _source_role_mix(supporting),
+                "taint_summary": {"tainted_assertion_count": _taint_count(supporting)},
+            })
+
+        if negative:
+            theory_idx += 1
+            theories.append({
+                "id": f"theory-opposition-{theory_idx}",
+                "label": "Opposition Theory (strongest contrary interpretation)",
+                "domain_profile_id": domain_profile_id,
+                "stance": "opposing",
+                "supporting_assertions": len(negative),
+                "attacking_assertions": len([a for a in negative if a in attacking]),
+                "assumptions": len(provisional_assumptions),
+                "open_gaps": len(open_gap_ids),
+                "discriminator_questions": _disc_questions(negative, supporting),
+                "confidence_range": _confidence_range(negative),
+                "source_role_mix": _source_role_mix(negative),
+                "taint_summary": {"tainted_assertion_count": _taint_count(negative)},
+            })
+
+        if uncertain:
+            theory_idx += 1
+            theories.append({
+                "id": f"theory-uncertainty-{theory_idx}",
+                "label": "Uncertainty Theory (contested / under-determined facts)",
+                "domain_profile_id": domain_profile_id,
+                "stance": "uncertain",
+                "supporting_assertions": len(uncertain),
+                "attacking_assertions": len([a for a in uncertain if a in attacking]),
+                "assumptions": len(provisional_assumptions),
+                "open_gaps": len(open_gap_ids),
+                "discriminator_questions": _disc_questions(uncertain, supporting + negative),
+                "confidence_range": _confidence_range(uncertain),
+                "source_role_mix": _source_role_mix(uncertain),
+                "taint_summary": {"tainted_assertion_count": _taint_count(uncertain)},
+            })
+
+        if all_gaps:
+            theory_idx += 1
+            theories.append({
+                "id": f"theory-missing-{theory_idx}",
+                "label": "Missing-Evidence Theory (what we don't know yet)",
+                "domain_profile_id": domain_profile_id,
+                "stance": "missing",
+                "supporting_assertions": 0,
+                "attacking_assertions": 0,
+                "assumptions": len(provisional_assumptions),
+                "open_gaps": len(open_gap_ids),
+                "discriminator_questions": [
+                    str(g.get("description", ""))[:200]
+                    for g in all_gaps[:5]
+                    if isinstance(g, dict) and g.get("description")
+                ],
+                "confidence_range": [0.0, 0.0],
+                "source_role_mix": {},
+                "taint_summary": {"tainted_assertion_count": 0},
+            })
+
+        theories = theories[:max_theories]
+
+        return {
+            "matter_id": self.matter_id,
+            "domain_profile_id": domain_profile_id,
+            "objective_id": objective_id,
+            "theory_count": len(theories),
+            "theories": theories,
+        }
+
+    # ------------------------------------------------------------------
 
     def _card_provenance(
         self,

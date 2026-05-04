@@ -333,6 +333,14 @@ class HttpBackend(UIBackend):
             return {}
         return result
 
+    async def get_alternative_theory_portfolio(self, matter_id: str, objective_id: str | None = None) -> dict:
+        params = f"?objective_id={_url_quote(objective_id, safe='')}" if objective_id else ""
+        result = await self._get(f"/matter/{matter_id}/alternative-theories{params}")
+        if not isinstance(result, dict):
+            _log.warning("get_alternative_theory_portfolio: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/objective-coverage")
         if not isinstance(result, dict):

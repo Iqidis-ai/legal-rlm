@@ -6239,6 +6239,192 @@ def _fmt_scenario_workbench(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_ALTERNATIVE_THEORY_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Alternative Theories",
+        "subtitle": "Competing interpretations derived from the matter graph",
+        "empty": "No alternative theories yet — add assertions and evidence first.",
+        "support": "Supporting",
+        "attack": "Attacking",
+        "assumptions": "Assumptions",
+        "gaps": "Open Gaps",
+        "confidence": "Confidence",
+        "taint": "Tainted",
+        "discriminators": "Key Discriminators",
+        "promote": "Promote to Scenario",
+    },
+    "finance": {
+        "title": "Competing Theses",
+        "subtitle": "Alternative investment interpretations from the analysis model",
+        "empty": "No competing theses yet — add positions and evidence first.",
+        "support": "Supporting",
+        "attack": "Contradicting",
+        "assumptions": "Assumptions",
+        "gaps": "Open Gaps",
+        "confidence": "Confidence",
+        "taint": "Tainted",
+        "discriminators": "Key Questions",
+        "promote": "Promote to Scenario",
+    },
+    "coding": {
+        "title": "Alternative Interpretations",
+        "subtitle": "Competing explanations from the analysis model",
+        "empty": "No alternative interpretations yet — add findings first.",
+        "support": "Supporting",
+        "attack": "Contradicting",
+        "assumptions": "Assumptions",
+        "gaps": "Open Gaps",
+        "confidence": "Confidence",
+        "taint": "Tainted",
+        "discriminators": "Key Questions",
+        "promote": "Promote to Design Path",
+    },
+    "academic_research": {
+        "title": "Rival Hypotheses",
+        "subtitle": "Competing interpretations from the research model",
+        "empty": "No rival hypotheses yet — add claims and evidence first.",
+        "support": "Supporting",
+        "attack": "Contradicting",
+        "assumptions": "Assumptions",
+        "gaps": "Open Gaps",
+        "confidence": "Confidence",
+        "taint": "Tainted",
+        "discriminators": "Discriminating Questions",
+        "promote": "Promote to Hypothesis Branch",
+    },
+    "biomedical": {
+        "title": "Differential Diagnoses",
+        "subtitle": "Competing clinical interpretations from the analysis model",
+        "empty": "No differential diagnoses yet — add findings and evidence first.",
+        "support": "Supporting",
+        "attack": "Contradicting",
+        "assumptions": "Assumptions",
+        "gaps": "Open Gaps",
+        "confidence": "Confidence",
+        "taint": "Tainted",
+        "discriminators": "Key Discriminators",
+        "promote": "Promote to Clinical Branch",
+    },
+}
+
+
+def _fmt_alternative_theories(data: dict, domain: str = "legal") -> str:
+    L = _ALTERNATIVE_THEORY_LABELS.get(domain, _ALTERNATIVE_THEORY_LABELS["legal"])
+    if not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    theories = data.get("theories", [])
+    if not theories or not isinstance(theories, list):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    parts = [
+        "<div class='viz-shell'>",
+        f"<div class='viz-header'><strong>{_escape(L['title'])}</strong>"
+        f" &mdash; {_escape(L['subtitle'])}</div>",
+        f"<div style='margin:8px 0;font-size:0.9em;color:#6b7280;'>"
+        f"<strong>{len(theories)}</strong> theories identified</div>",
+    ]
+
+    stance_colors = {
+        "supporting": "#16a34a",
+        "opposing": "#dc2626",
+        "uncertain": "#d97706",
+        "missing": "#6b7280",
+    }
+
+    for theory in theories:
+        if not isinstance(theory, dict):
+            continue
+        label = _escape(str(theory.get("label", ""))[:120])
+        stance = str(theory.get("stance", "")).lower()
+        color = stance_colors.get(stance, "#6b7280")
+        def _safe_int(v: object) -> int:
+            try:
+                iv = int(v)  # type: ignore[arg-type]
+                return iv if isinstance(iv, int) and iv >= 0 else 0
+            except (TypeError, ValueError):
+                return 0
+
+        supporting = _safe_int(theory.get("supporting_assertions", 0))
+        attacking_count = _safe_int(theory.get("attacking_assertions", 0))
+        assumptions_count = _safe_int(theory.get("assumptions", 0))
+        gaps_count = _safe_int(theory.get("open_gaps", 0))
+        conf = theory.get("confidence_range", [0.0, 0.0])
+        if not isinstance(conf, list) or len(conf) < 2:
+            conf = [0.0, 0.0]
+        try:
+            c_lo = float(conf[0])
+            c_hi = float(conf[1])
+            if not (math.isfinite(c_lo) and math.isfinite(c_hi)):
+                c_lo, c_hi = 0.0, 0.0
+        except (TypeError, ValueError):
+            c_lo, c_hi = 0.0, 0.0
+
+        taint = theory.get("taint_summary", {})
+        taint_count = 0
+        if isinstance(taint, dict):
+            tc = taint.get("tainted_assertion_count", 0)
+            try:
+                taint_count = int(tc) if isinstance(tc, (int, float)) and math.isfinite(float(tc)) else 0
+            except (TypeError, ValueError):
+                taint_count = 0
+
+        src_mix = theory.get("source_role_mix", {})
+        if not isinstance(src_mix, dict):
+            src_mix = {}
+        mix_parts = []
+        for role, count in list(src_mix.items())[:5]:
+            mix_parts.append(f"{_escape(str(role))}: {_safe_int(count)}")
+        mix_str = ", ".join(mix_parts) if mix_parts else "—"
+
+        parts.append(
+            f"<div style='padding:10px 14px;margin:6px 0;background:#f8fafc;"
+            f"border-left:4px solid {color};border-radius:4px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+            f"<strong style='font-size:0.95em;'>{label}</strong>"
+            f"<span class='pill' style='background:{color};color:#fff;font-size:0.75em;'>"
+            f"{_escape(stance)}</span></div>"
+            f"<div style='display:flex;gap:16px;margin-top:6px;font-size:0.85em;color:#4b5563;'>"
+            f"<span>{_escape(L['support'])}: <strong>{supporting}</strong></span>"
+            f"<span>{_escape(L['attack'])}: <strong>{attacking_count}</strong></span>"
+            f"<span>{_escape(L['assumptions'])}: <strong>{assumptions_count}</strong></span>"
+            f"<span>{_escape(L['gaps'])}: <strong>{gaps_count}</strong></span>"
+            f"<span>{_escape(L['confidence'])}: {c_lo:.0%}–{c_hi:.0%}</span>"
+            f"</div>"
+        )
+
+        if taint_count > 0:
+            parts.append(
+                f"<div style='font-size:0.8em;color:#dc2626;margin-top:4px;'>"
+                f"⚠ {taint_count} {_escape(L['taint'])} assertion(s)</div>"
+            )
+
+        if mix_str != "—":
+            parts.append(
+                f"<div style='font-size:0.8em;color:#6b7280;margin-top:2px;'>"
+                f"Sources: {mix_str}</div>"
+            )
+
+        disc_qs = theory.get("discriminator_questions", [])
+        if isinstance(disc_qs, list) and disc_qs:
+            parts.append(
+                f"<div style='margin-top:6px;font-size:0.82em;color:#4b5563;'>"
+                f"<strong>{_escape(L['discriminators'])}:</strong></div>"
+            )
+            for q in disc_qs[:5]:
+                if not isinstance(q, str):
+                    continue
+                parts.append(
+                    f"<div style='padding-left:12px;font-size:0.8em;color:#6b7280;margin:2px 0;'>"
+                    f"&bull; {_escape(q[:200])}</div>"
+                )
+
+        parts.append("</div>")
+
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
 def _fmt_quant_panel(
     payment_recon: dict,
     invoice_chain: list,
@@ -10872,6 +11058,19 @@ class AppState:
             logger.warning("Scenario workbench load failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_alternative_theories(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_alternative_theory_portfolio(matter_id))
+            if not isinstance(data, dict):
+                logger.warning("load_alternative_theories: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_alternative_theories(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Alternative theories load failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def create_scenario_branch_ui(self, matter_id: str, name: str, assumptions_text: str, notes: str = "") -> str:
         if not matter_id or matter_id == "—":
             return "No matter loaded."
@@ -13406,6 +13605,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 label="Result", interactive=False, visible=True,
             )
 
+        with gr.Accordion("Alternative Theories — competing interpretations from the matter graph", open=False):
+            gr.Markdown(
+                "Irys derives the strongest competing interpretations from the current matter model. "
+                "Each theory shows its supporting and attacking assertions, key assumptions, open gaps, "
+                "and discriminator questions that would help distinguish between theories."
+            )
+            alt_theories_html = gr.HTML(
+                "<div class='viz-empty'>Alternative theories will appear here after an investigation.</div>"
+            )
+            refresh_alt_theories_btn = gr.Button(
+                "Refresh Theories", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Answer Audit — freshness, sources, and policy for every answer", open=False):
             gr.Markdown(
                 "Every answer Irys produces is backed by a dependency manifest that tracks "
@@ -14059,6 +14271,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[scenario_workbench_html],
+            ).then(
+                fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[alt_theories_html],
             )
         else:
             submit_btn.click(
@@ -14171,6 +14387,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[scenario_workbench_html],
+            ).then(
+                fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[alt_theories_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -14292,6 +14512,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[scenario_workbench_html],
+        ).then(
+            fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[alt_theories_html],
         )
 
         export_report_btn.click(
@@ -14639,6 +14863,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[scenario_workbench_html],
+        )
+        refresh_alt_theories_btn.click(
+            fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[alt_theories_html],
         )
         refresh_answer_audit_btn.click(
             fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
@@ -15114,6 +15343,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_scenario_workbench(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[scenario_workbench_html],
+        ).then(
+            fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[alt_theories_html],
         )
 
         clarification_dropdown.change(

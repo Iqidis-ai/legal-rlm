@@ -614,6 +614,10 @@ class InProcessBackend(UIBackend):
             return {"error": "Scenario branch not found"}
         return {"status": "archived", "branch_id": branch_id}
 
+    async def get_alternative_theory_portfolio(self, matter_id: str, objective_id: str | None = None) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_alternative_theory_portfolio(objective_id=objective_id)
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_objective_coverage_workbench()

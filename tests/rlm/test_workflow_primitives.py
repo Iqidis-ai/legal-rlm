@@ -6707,3 +6707,185 @@ def test_so_scorecard_backend_balance():
     assert hasattr(UIBackend, "get_so_scorecard")
     assert hasattr(InProcessBackend, "get_so_scorecard")
     assert hasattr(HttpBackend, "get_so_scorecard")
+
+
+# ── Alternative Theory Portfolio ──────────────────────────────────────
+
+def test_alt_theory_portfolio_empty():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_alternative_theory_portfolio()
+    assert isinstance(result, dict)
+    assert result["matter_id"] == model.matter_id
+    assert result["theory_count"] == 0
+    assert result["theories"] == []
+
+
+def test_alt_theory_portfolio_with_assertions():
+    from irys.matter.matter import MatterModel
+    from irys.matter.models import AssertionCandidate
+    from irys.matter.enums import SpeechAct, SourceRole
+    model = MatterModel.open_in_memory()
+    model.assertions.upsert_occurrence(AssertionCandidate(
+        proposition_text="The contract was signed on January 1",
+        document_id="doc1.pdf",
+        speech_act=SpeechAct.EXTRACTED,
+        source_role=SourceRole.UNKNOWN,
+    ))
+    model.assertions.upsert_occurrence(AssertionCandidate(
+        proposition_text="Payment was not received by deadline",
+        document_id="doc2.pdf",
+        speech_act=SpeechAct.EXTRACTED,
+        source_role=SourceRole.UNKNOWN,
+    ))
+    result = model.get_alternative_theory_portfolio()
+    assert result["theory_count"] >= 1
+    theories = result["theories"]
+    assert isinstance(theories, list)
+    for t in theories:
+        assert isinstance(t, dict)
+        assert "id" in t
+        assert "label" in t
+        assert "stance" in t
+        assert "supporting_assertions" in t
+        assert "attacking_assertions" in t
+        assert "confidence_range" in t
+        assert isinstance(t["confidence_range"], list)
+
+
+def test_alt_theory_portfolio_max_theories():
+    from irys.matter.matter import MatterModel
+    from irys.matter.models import AssertionCandidate
+    from irys.matter.enums import SpeechAct, SourceRole
+    model = MatterModel.open_in_memory()
+    model.assertions.upsert_occurrence(AssertionCandidate(
+        proposition_text="Fact A",
+        document_id="d.pdf",
+        speech_act=SpeechAct.EXTRACTED,
+        source_role=SourceRole.UNKNOWN,
+    ))
+    result = model.get_alternative_theory_portfolio(max_theories=1)
+    assert result["theory_count"] <= 1
+
+
+def test_alt_theory_portfolio_objective_filter():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_alternative_theory_portfolio(objective_id="nonexistent-id")
+    assert result["objective_id"] == "nonexistent-id"
+    assert isinstance(result["theories"], list)
+
+
+def test_alt_theory_portfolio_domain_profile():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_alternative_theory_portfolio()
+    assert "domain_profile_id" in result
+    assert isinstance(result["domain_profile_id"], str)
+
+
+def test_alt_theory_formatter_empty():
+    from irys.ui.app import _fmt_alternative_theories
+    html = _fmt_alternative_theories({}, domain="legal")
+    assert "viz-empty" in html
+
+
+def test_alt_theory_formatter_no_theories():
+    from irys.ui.app import _fmt_alternative_theories
+    html = _fmt_alternative_theories({"theories": []}, domain="legal")
+    assert "viz-empty" in html
+
+
+def test_alt_theory_formatter_renders():
+    from irys.ui.app import _fmt_alternative_theories
+    data = {
+        "theories": [
+            {
+                "id": "theory-1",
+                "label": "Baseline Theory",
+                "stance": "supporting",
+                "supporting_assertions": 5,
+                "attacking_assertions": 1,
+                "assumptions": 2,
+                "open_gaps": 3,
+                "confidence_range": [0.6, 0.9],
+                "source_role_mix": {"ADVOCATE": 3, "OPERATIVE": 2},
+                "taint_summary": {"tainted_assertion_count": 0},
+                "discriminator_questions": ["Was the contract valid?"],
+            },
+        ],
+    }
+    html = _fmt_alternative_theories(data, domain="legal")
+    assert "viz-shell" in html
+    assert "Baseline Theory" in html
+    assert "supporting" in html
+    assert "Was the contract valid?" in html
+
+
+def test_alt_theory_formatter_xss():
+    from irys.ui.app import _fmt_alternative_theories
+    data = {
+        "theories": [
+            {
+                "id": "t1",
+                "label": "<script>alert(1)</script>",
+                "stance": "supporting",
+                "supporting_assertions": 1,
+                "attacking_assertions": 0,
+                "assumptions": 0,
+                "open_gaps": 0,
+                "confidence_range": [0.5, 0.8],
+                "source_role_mix": {"<img onerror=alert(1)>": 1},
+                "taint_summary": {"tainted_assertion_count": 0},
+                "discriminator_questions": ["<b onmouseover=alert(1)>test</b>"],
+            },
+        ],
+    }
+    html = _fmt_alternative_theories(data, domain="legal")
+    assert "<script>" not in html
+    assert "<img " not in html
+    assert "<b " not in html
+
+
+def test_alt_theory_formatter_non_dict_guards():
+    from irys.ui.app import _fmt_alternative_theories
+    data = {"theories": ["not-a-dict", None, 42, {"id": "valid", "label": "Test", "stance": "uncertain"}]}
+    html = _fmt_alternative_theories(data, domain="legal")
+    assert "viz-shell" in html
+    assert "Test" in html
+
+
+def test_alt_theory_formatter_nan_confidence():
+    import math
+    from irys.ui.app import _fmt_alternative_theories
+    data = {
+        "theories": [{
+            "id": "t1", "label": "Test", "stance": "supporting",
+            "supporting_assertions": 1, "attacking_assertions": 0,
+            "assumptions": 0, "open_gaps": 0,
+            "confidence_range": [float("nan"), float("inf")],
+            "source_role_mix": {},
+            "taint_summary": {"tainted_assertion_count": 0},
+            "discriminator_questions": [],
+        }],
+    }
+    html = _fmt_alternative_theories(data, domain="legal")
+    assert "nan" not in html.lower().replace("provenance", "").replace("governance", "").replace("finance", "")
+
+
+def test_alt_theory_labels_all_five_domains():
+    from irys.ui.app import _ALTERNATIVE_THEORY_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _ALTERNATIVE_THEORY_LABELS[domain]
+        for key in ("title", "subtitle", "empty", "support", "attack",
+                     "assumptions", "gaps", "confidence", "taint", "discriminators"):
+            assert key in labels, f"{domain} missing key {key}"
+
+
+def test_alt_theory_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    assert hasattr(UIBackend, "get_alternative_theory_portfolio")
+    assert hasattr(InProcessBackend, "get_alternative_theory_portfolio")
+    assert hasattr(HttpBackend, "get_alternative_theory_portfolio")
