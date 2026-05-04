@@ -4188,14 +4188,24 @@ async def patch_document_card(matter_id: str, doc_id: str, body: dict):
     unknown = set(body.keys()) - _allowed - {"reviewed_by_kind", "reviewed_by_id"}
     if unknown:
         raise HTTPException(400, f"Unknown fields: {', '.join(sorted(unknown))}")
+    pf = body.get("privilege_flag")
+    if pf is not None and not isinstance(pf, bool):
+        raise HTTPException(400, "privilege_flag must be a boolean")
+    uf = body.get("unresolved_flags")
+    if uf is not None and not isinstance(uf, list):
+        raise HTTPException(400, "unresolved_flags must be a list")
+    for f in ("doc_type", "source_role", "operative_status"):
+        v = body.get(f)
+        if v is not None and not isinstance(v, str):
+            raise HTTPException(400, f"{f} must be a string")
     model = await _get_matter_model_or_404(matter_id)
     result = model.reclassify_document_card_fields(
         doc_id,
         doc_type=body.get("doc_type"),
         source_role=body.get("source_role"),
-        privilege_flag=body.get("privilege_flag"),
+        privilege_flag=pf,
         operative_status=body.get("operative_status"),
-        unresolved_flags=body.get("unresolved_flags"),
+        unresolved_flags=uf,
         reviewed_by_kind=body.get("reviewed_by_kind", "user"),
         reviewed_by_id=body.get("reviewed_by_id"),
     )

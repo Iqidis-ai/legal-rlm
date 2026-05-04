@@ -13887,12 +13887,17 @@ class AppState:
             if isinstance(inv_row, dict) and isinstance(inv_row.get("card"), dict):
                 doc_id = inv_row["card"].get("doc_id", ref)
 
+            current_priv = False
+            if isinstance(inv_row, dict) and isinstance(inv_row.get("card"), dict):
+                current_priv = bool(inv_row["card"].get("privilege_flag"))
+
             fields: dict = {}
             if doc_type and doc_type.strip():
                 fields["doc_type"] = doc_type.strip()
             if source_role and source_role.strip():
                 fields["source_role"] = source_role.strip()
-            fields["privilege_flag"] = bool(privilege_flag)
+            if bool(privilege_flag) != current_priv:
+                fields["privilege_flag"] = bool(privilege_flag)
             if operative_status and operative_status.strip():
                 fields["operative_status"] = operative_status.strip()
             if flags_text and flags_text.strip():
