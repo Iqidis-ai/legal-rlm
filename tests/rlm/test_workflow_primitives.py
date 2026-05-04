@@ -8116,6 +8116,7 @@ def test_scenario_snapshot_empty_branch():
     assert snap["branch_id"] == bid
     assert "coverage" in snap
     assert "gaps" in snap
+    assert isinstance(snap["warnings"], list)
 
 
 def test_scenario_snapshot_with_deltas():
@@ -8295,6 +8296,17 @@ def test_scenario_compare_formatter_domain_labels():
     assert "Scenario Comparison" in html_finance
     html_bio = _fmt_scenario_comparison(data, domain="biomedical")
     assert "Interpretation Comparison" in html_bio
+
+
+def test_scenario_snapshot_includes_warnings_on_metric_failure():
+    """P2 fix: snapshot must surface warnings when baseline metrics fail."""
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    b = model.create_scenario_branch(name="warn-test", assumptions=[])
+    bid = b["branch_id"]
+    snap = model.compute_scenario_snapshot(bid)
+    assert "warnings" in snap
+    assert isinstance(snap["warnings"], list)
 
 
 def test_scenario_graph_backend_interface_balance():

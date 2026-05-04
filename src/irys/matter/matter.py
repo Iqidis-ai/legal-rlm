@@ -4921,11 +4921,13 @@ class MatterModel:
             d = dict(row)
             try:
                 d["assumptions"] = json.loads(d.pop("assumptions_json", "[]"))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
+                _log.warning("list_scenario_branches: malformed assumptions_json for %s: %s", d.get("id", "?"), exc)
                 d["assumptions"] = []
             try:
                 d["objective_ids"] = json.loads(d.pop("objective_ids_json", "[]"))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
+                _log.warning("list_scenario_branches: malformed objective_ids_json for %s: %s", d.get("id", "?"), exc)
                 d["objective_ids"] = []
             result.append(d)
         return result
@@ -5078,6 +5080,8 @@ class MatterModel:
 
         deltas = self.list_scenario_deltas(branch_id)
 
+        warnings: list[str] = []
+
         baseline_coverage = {}
         try:
             cov = self.get_objective_coverage_workbench()
@@ -5088,6 +5092,7 @@ class MatterModel:
             }
         except Exception as exc:
             _log.warning("compute_scenario_snapshot: coverage failed: %s", exc)
+            warnings.append(f"coverage unavailable: {exc}")
 
         baseline_gaps = {}
         try:
@@ -5095,6 +5100,7 @@ class MatterModel:
             baseline_gaps = {"open_gaps": gap_count}
         except Exception as exc:
             _log.warning("compute_scenario_snapshot: gap count failed: %s", exc)
+            warnings.append(f"gap count unavailable: {exc}")
 
         baseline_so = {}
         try:
@@ -5103,6 +5109,7 @@ class MatterModel:
                 baseline_so = {k: v for k, v in so.items() if isinstance(v, (int, float, str, bool))}
         except Exception as exc:
             _log.warning("compute_scenario_snapshot: SO metrics failed: %s", exc)
+            warnings.append(f"SO metrics unavailable: {exc}")
 
         branch_coverage = dict(baseline_coverage)
         branch_gaps = dict(baseline_gaps)
@@ -5171,6 +5178,7 @@ class MatterModel:
             "coverage": {"baseline": baseline_coverage, "branch": branch_coverage},
             "gaps": {"baseline": baseline_gaps, "branch": branch_gaps},
             "so_metrics": {"baseline": baseline_so},
+            "warnings": warnings,
         }
 
     def list_scenario_snapshots(self, branch_id: str, limit: int = 10) -> list[dict]:
@@ -5183,7 +5191,13 @@ class MatterModel:
                LIMIT ?""",
             (branch_id, max(1, min(limit, 100))),
         ).fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            if not isinstance(r, (dict, sqlite3.Row)):
+                _log.warning("list_scenario_snapshots: unexpected row type %s", type(r).__name__)
+                continue
+            result.append(dict(r))
+        return result
 
     def compare_scenario_to_baseline(self, branch_id: str) -> dict:
         """Side-by-side comparison of a scenario branch vs baseline state.

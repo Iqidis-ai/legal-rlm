@@ -351,6 +351,7 @@ class HttpBackend(UIBackend):
         if isinstance(result, dict):
             return result.get("deltas", [])
         if isinstance(result, list):
+            _log.warning("list_scenario_deltas: expected dict envelope, got bare list")
             return result
         _log.warning("list_scenario_deltas: unexpected type %s", type(result).__name__)
         return []
