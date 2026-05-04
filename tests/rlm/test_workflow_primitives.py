@@ -3626,3 +3626,20 @@ def test_fmt_gaps_issue_title_resolution():
     assert "Breach of Contract" in result
     result_no_titles = _fmt_gaps(gaps, [], domain="legal")
     assert "issue" in result_no_titles
+
+
+def test_doc_intel_trust_distribution():
+    """Document intelligence panel shows trust override distribution."""
+    from irys.ui.app import _fmt_document_intelligence_panel
+    data = {"cards": [], "total_inventory": 5, "ingested_count": 3}
+    overrides = [
+        {"trust_level": "high", "document_pattern": "contract.pdf"},
+        {"trust_level": "low", "document_pattern": "unverified.pdf"},
+        {"trust_level": "high", "document_pattern": "pleading.pdf"},
+    ]
+    result = _fmt_document_intelligence_panel(data, domain="legal", trust_overrides=overrides)
+    assert "Source Trust" in result
+    assert "2 high" in result
+    assert "1 low" in result
+    result_no_overrides = _fmt_document_intelligence_panel(data, domain="legal")
+    assert "Source Trust" not in result_no_overrides

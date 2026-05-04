@@ -2112,7 +2112,7 @@ _DOC_PANEL_LABELS = {
 }
 
 
-def _fmt_document_intelligence_panel(data: dict, domain: str = "legal") -> str:
+def _fmt_document_intelligence_panel(data: dict, domain: str = "legal", trust_overrides: list | None = None) -> str:
     """Render the document intelligence panel (SO-5)."""
     cards = data.get("cards", [])
     total_inv = data.get("total_inventory", 0)
@@ -2228,7 +2228,37 @@ def _fmt_document_intelligence_panel(data: dict, domain: str = "legal") -> str:
         + "</tbody></table></div>"
     )
 
-    return f"<div class='viz-shell'>{header}{table}</div>"
+    trust_section = ""
+    _overrides = trust_overrides or []
+    if _overrides:
+        trust_dist: dict[str, int] = {}
+        for ov in _overrides:
+            if not isinstance(ov, dict):
+                continue
+            lvl = str(ov.get("trust_level", "normal")).lower()
+            trust_dist[lvl] = trust_dist.get(lvl, 0) + 1
+        _trust_colors = {"high": "#16a34a", "normal": "#2563eb", "low": "#dc2626"}
+        pills = []
+        for lvl in ("high", "normal", "low"):
+            cnt = trust_dist.get(lvl, 0)
+            if cnt:
+                color = _trust_colors.get(lvl, "#6b7280")
+                pills.append(
+                    f"<span style='display:inline-block;padding:2px 10px;border-radius:8px;"
+                    f"background:{color}18;color:{color};font-size:12px;font-weight:600;"
+                    f"margin-right:8px;'>{cnt} {lvl}</span>"
+                )
+        if pills:
+            trust_section = (
+                "<div style='margin-bottom:12px;padding:8px 12px;border-radius:8px;"
+                "background:#f8fafc;border:1px solid #e2e8f0;'>"
+                "<span style='font-size:11px;font-weight:600;color:#475569;"
+                "margin-right:8px;'>Source Trust:</span>"
+                + "".join(pills)
+                + "</div>"
+            )
+
+    return f"<div class='viz-shell'>{header}{trust_section}{table}</div>"
 
 
 _BELIEF_REVISION_LABELS: dict[str, dict[str, str]] = {
@@ -7942,7 +7972,8 @@ class AppState:
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             data = _run_async(self.backend().get_document_intelligence(matter_id))
-            return _fmt_document_intelligence_panel(data, domain)
+            overrides = _run_async(self.backend().list_trust_overrides(matter_id))
+            return _fmt_document_intelligence_panel(data, domain, trust_overrides=overrides)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading document intelligence: {_escape(exc)}</div>"
 
