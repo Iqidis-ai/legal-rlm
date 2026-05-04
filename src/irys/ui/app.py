@@ -5505,11 +5505,55 @@ _GAP_LABELS: dict[str, dict[str, object]] = {
 }
 
 
+_MISSING_DOC_TYPES = frozenset({
+    "missing_document", "expected_absent_attachment", "expected_absent_notice",
+})
+
+_MISSING_DOC_HEADER: dict[str, str] = {
+    "legal": "Missing Documents & Exhibits",
+    "finance": "Missing Filings & Reports",
+    "coding": "Missing Specs & Artifacts",
+    "academic_research": "Missing Sources & Appendices",
+    "biomedical": "Missing Records & Disclosures",
+}
+
+
 def _fmt_gaps(gaps: list, clarifications: list, domain: str = "legal", issue_titles: dict | None = None) -> str:
     labels = _GAP_LABELS.get(domain, _GAP_LABELS["legal"])
     _titles = issue_titles or {}
     parts: list[str] = []
     if gaps:
+        doc_gaps = [
+            g for g in gaps
+            if isinstance(g, dict) and g.get("gap_type") in _MISSING_DOC_TYPES
+        ]
+        if doc_gaps:
+            doc_header = _MISSING_DOC_HEADER.get(domain, _MISSING_DOC_HEADER["legal"])
+            checklist = ""
+            for dg in doc_gaps:
+                desc = _escape(str(dg.get("description") or "?"))
+                mat = _safe_float(dg.get("materiality_score") or dg.get("materiality") or 0)
+                urgency = "color:#dc2626;font-weight:700" if mat >= 0.7 else "color:#92400e" if mat >= 0.4 else "color:#6b7280"
+                dep_names = []
+                for d in (dg.get("dependencies") or [])[:3]:
+                    if not isinstance(d, dict):
+                        continue
+                    t = _titles.get(d.get("affected_id", ""), "")
+                    if t:
+                        dep_names.append(_escape(t[:25]))
+                dep_note = f" — blocks: {', '.join(dep_names)}" if dep_names else ""
+                checklist += (
+                    f"<li style='margin:4px 0;{urgency}'>"
+                    f"{'&#9744;' if mat >= 0.5 else '&#9634;'} {desc}{dep_note}</li>"
+                )
+            parts.append(
+                "<div style='background:#fef2f2;border:1px solid #fecaca;border-radius:8px;"
+                "padding:10px 14px;margin-bottom:12px;'>"
+                f"<div style='font-weight:700;font-size:13px;color:#991b1b;margin-bottom:6px;'>"
+                f"{_escape(doc_header)} ({len(doc_gaps)})</div>"
+                f"<ul style='list-style:none;padding:0;margin:0;'>{checklist}</ul>"
+                "</div>"
+            )
         gap_rows = ""
         for g in gaps:
             if not isinstance(g, dict):

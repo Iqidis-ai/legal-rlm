@@ -3628,6 +3628,36 @@ def test_fmt_gaps_issue_title_resolution():
     assert "issue" in result_no_titles
 
 
+def test_fmt_gaps_missing_document_tracker():
+    """Missing document gaps get a highlighted checklist above the main table."""
+    from irys.ui.app import _fmt_gaps
+    gaps = [
+        {"id": "g1", "gap_type": "missing_document", "description": "Need signed contract",
+         "materiality_score": 0.8, "dependencies": [{"affected_type": "issue", "affected_id": "i1"}]},
+        {"id": "g2", "gap_type": "expected_absent_attachment", "description": "Expected Exhibit A",
+         "materiality_score": 0.5, "dependencies": []},
+        {"id": "g3", "gap_type": "missing_issue_predicate", "description": "Need proof of breach",
+         "materiality_score": 0.6, "dependencies": []},
+    ]
+    titles = {"i1": "Breach of Contract"}
+    result = _fmt_gaps(gaps, [], domain="legal", issue_titles=titles)
+    assert "Missing Documents" in result
+    assert "Need signed contract" in result
+    assert "Expected Exhibit A" in result
+    assert "Breach of Contract" in result
+    assert "(2)" in result
+
+
+def test_fmt_gaps_missing_document_domain_labels():
+    """Missing document tracker uses domain-appropriate headers."""
+    from irys.ui.app import _fmt_gaps
+    gaps = [{"id": "g1", "gap_type": "missing_document", "description": "Need report",
+             "materiality_score": 0.5, "dependencies": []}]
+    assert "Missing Filings" in _fmt_gaps(gaps, [], domain="finance")
+    assert "Missing Sources" in _fmt_gaps(gaps, [], domain="academic_research")
+    assert "Missing Records" in _fmt_gaps(gaps, [], domain="biomedical")
+
+
 def test_doc_intel_trust_distribution():
     """Document intelligence panel shows trust override distribution."""
     from irys.ui.app import _fmt_document_intelligence_panel
