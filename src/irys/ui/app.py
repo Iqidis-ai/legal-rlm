@@ -9006,6 +9006,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.recompute_proof_state(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[proof_state_html],
+        ).then(
+            fn=lambda mid: state.load_so_scorecard(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[so_scorecard_html],
+        ).then(
+            fn=lambda mid: state.load_overview(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[overview_md],
         )
         refresh_authority_btn.click(
             fn=lambda mid: state.load_authority_network(mid, domain=state._detect_domain(mid)),
@@ -9056,6 +9064,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.flush_pending_propagation(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[system_health_html],
+        ).then(
+            fn=lambda mid: state.load_proof_state(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[proof_state_html],
+        ).then(
+            fn=lambda mid: state.load_belief_revisions(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[belief_revision_html],
         )
         refresh_so_scorecard_btn.click(
             fn=lambda mid: state.load_so_scorecard(mid, domain=state._detect_domain(mid)),
@@ -9346,6 +9362,66 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, mode: state.do_resume(mid, state.current_run_id or "", mode),
             inputs=[matter_id_box, research_mode],
             outputs=[resume_result],
+        ).then(
+            fn=_refresh_all,
+            inputs=[matter_id_box],
+            outputs=[
+                review_badge_md,
+                overview_md,
+                issues_md,
+                gaps_md,
+                assumptions_md,
+                assertions_md,
+                quant_md,
+                timeline_html,
+                evidence_matrix_html,
+                communication_html,
+                llm_analytics_html,
+                proof_state_html,
+                authority_html,
+                doc_intel_html,
+                belief_revision_html,
+                contradiction_html,
+                doc_versions_html,
+                quant_thresholds_html,
+                system_health_html,
+                so_scorecard_html,
+                redirect_issue_id,
+                bulk_doc_ref,
+                correction_new_state,
+            ],
+        ).then(
+            fn=lambda mid: state.load_assumptions(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[assumptions_detail_html],
+        ).then(
+            fn=lambda mid: state.load_content_policy_audit(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[content_policy_html],
+        ).then(
+            fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[gaps_detail_html],
+        ).then(
+            fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[domain_profile_html],
+        ).then(
+            fn=lambda mid: state.load_document_triage(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[doc_triage_html],
+        ).then(
+            fn=lambda mid: state.load_taint_summary(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[taint_summary_html],
+        ).then(
+            fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[investigation_history_html],
+        ).then(
+            fn=lambda mid: state.get_domain_dropdown_updates(mid),
+            inputs=[matter_id_box],
+            outputs=[dc_maker_type, dc_objective],
         )
 
         answer_clarification_btn.click(
