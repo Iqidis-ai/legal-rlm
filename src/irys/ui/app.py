@@ -4455,7 +4455,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
     state = AppState(api_key=api_key)
     _s3_mode = _get_storage_mode() == "s3"
 
-    with gr.Blocks(title="Irys — Legal Intelligence", theme=_theme, css=_css) as demo:
+    with gr.Blocks(title="Irys — Legal Intelligence") as demo:
 
         # Hidden matter_id state — auto-populated, never shown prominently
         matter_id_box = gr.Textbox(visible=False)
@@ -5643,7 +5643,7 @@ def main():
         print("No GEMINI_API_KEY set — pass --api-key or set the env var")
 
     demo = create_app(api_key=api_key)
-    demo.launch(server_port=args.port, share=args.share)
+    demo.launch(server_port=args.port, share=args.share, theme=_theme, css=_css)
 
 
 if __name__ == "__main__":
