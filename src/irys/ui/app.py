@@ -11036,7 +11036,7 @@ def _fmt_review_count_badge(total: int, bucket_counts: dict[int, int], domain: s
 def _review_bucket_badge(bucket: int, score: float, domain: str = "legal") -> str:
     bucket_labels = _REVIEW_BUCKET_LABELS.get(domain, _REVIEW_BUCKET_LABELS["legal"])
     label, color = bucket_labels.get(
-        int(bucket or 6), bucket_labels[6],
+        int(bucket) if bucket is not None else 6, bucket_labels[6],
     )
     meter = ""
     if score and score > 0:

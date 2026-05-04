@@ -10081,3 +10081,80 @@ def test_document_console_formatter_xss():
     }
     html = _fmt_document_console(data, domain="legal")
     assert "<script>" not in html
+
+
+# ── Review queue label tests ─────────────────────────────────────────
+
+
+def test_review_count_badge_all_domains():
+    """_fmt_review_count_badge renders bucket labels per domain."""
+    from irys.ui.app import _fmt_review_count_badge
+    bucket_counts = {0: 2, 2: 5, 4: 1}
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        html = _fmt_review_count_badge(8, bucket_counts, domain=domain)
+        assert "8 finding(s)" in html
+
+
+def test_review_count_badge_zero():
+    """_fmt_review_count_badge shows success when no items need review."""
+    from irys.ui.app import _fmt_review_count_badge
+    html = _fmt_review_count_badge(0, {}, domain="legal")
+    assert "All findings reviewed" in html
+
+
+def test_review_bucket_badge_all_domains():
+    """_review_bucket_badge renders domain-specific labels."""
+    from irys.ui.app import _review_bucket_badge
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        html = _review_bucket_badge(0, 0.85, domain=domain)
+        assert "blocker" in html.lower()
+        assert "85%" in html
+
+
+def test_review_queue_formatter_all_domains():
+    """_fmt_review_queue renders kind labels per domain."""
+    from irys.ui.app import _fmt_review_queue
+    queue = [
+        {
+            "priority_bucket": 2,
+            "priority_score": 0.7,
+            "target_kind": "assertion",
+            "target_id": "a-001",
+            "proposition_text": "Payment was made on Jan 5",
+        },
+    ]
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        html = _fmt_review_queue(queue, domain=domain)
+        assert "Payment was made" in html
+
+
+def test_review_queue_empty():
+    """_fmt_review_queue shows empty state."""
+    from irys.ui.app import _fmt_review_queue
+    html = _fmt_review_queue([], domain="legal")
+    assert "No findings need review" in html
+
+
+def test_review_queue_xss():
+    """_fmt_review_queue escapes untrusted proposition text."""
+    from irys.ui.app import _fmt_review_queue
+    queue = [
+        {
+            "priority_bucket": 1,
+            "priority_score": 0.5,
+            "target_kind": "assertion",
+            "target_id": "a-xss",
+            "proposition_text": "<img src=x onerror=alert(1)>",
+        },
+    ]
+    html = _fmt_review_queue(queue, domain="legal")
+    assert "<img " not in html
+
+
+def test_source_drawer_reviewer_labels_all_domains():
+    """_SOURCE_DRAWER_REVIEWER_LABELS has entries for all 5 domains."""
+    from irys.ui.app import _SOURCE_DRAWER_REVIEWER_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _SOURCE_DRAWER_REVIEWER_LABELS[domain]
+        assert "user" in labels
+        assert "system" in labels
