@@ -680,7 +680,7 @@ def _metric_card(title: str, value: str, detail: str = "", tone: str = "default"
     return (
         f"<div class='viz-card tone-{_escape(tone)}'>"
         f"<div class='viz-card-title'>{_escape(title)}</div>"
-        f"<div class='viz-card-value'>{value}</div>"
+        f"<div class='viz-card-value'>{_escape(value)}</div>"
         f"{detail_html}"
         f"</div>"
     )
@@ -5475,6 +5475,8 @@ def _fmt_quant_ontology(data: dict, domain: str = "legal") -> str:
     labels = _QUANT_ONTOLOGY_LABELS.get(domain, _QUANT_ONTOLOGY_LABELS["legal"])
     if not data or not data.get("metric_groups"):
         return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+    if err := _error_html(data):
+        return err
 
     groups = data["metric_groups"]
     approved_count = data.get("approved_count", 0)
@@ -7764,6 +7766,8 @@ def _fmt_impact_preview(data: dict, domain: str = "legal") -> str:
 
     if not data:
         return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+    if err := _error_html(data):
+        return err
 
     if not data.get("valid", False):
         warnings = data.get("warnings", [])
@@ -8538,6 +8542,8 @@ _EXPORT_OVERVIEW_LABELS: dict[str, dict[str, str]] = {
 def _fmt_overview(data: dict, domain: str = "legal") -> str:
     if not data:
         return "No matter loaded."
+    if err := _error_html(data):
+        return err
     L = _EXPORT_OVERVIEW_LABELS.get(domain, _EXPORT_OVERVIEW_LABELS["legal"])
     stats = data.get("stats", {})
     so = data.get("so_metrics", {})
