@@ -1641,6 +1641,30 @@
       "taint_behavior": "legacy_unknown_until_brokered",
       "profile_behavior": "legacy_unknown_until_profile_bound",
       "surface": "MatterModel.resolve_contradiction"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "knowledge_seeds"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "domain_profile_scoped",
+      "surface": "KnowledgeSeedStore.upsert"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "knowledge_seeds"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "domain_profile_scoped",
+      "surface": "KnowledgeSeedStore.review"
     }
   ],
   "write_surface_groups": [],

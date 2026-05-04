@@ -884,6 +884,32 @@ class HttpBackend(UIBackend):
         result = await self._post(f"/matter/{matter_id}/resolve-contradiction", params=params)
         return result if isinstance(result, dict) else {}
 
+    async def get_knowledge_seeds(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/knowledge-seeds")
+        return result if isinstance(result, dict) else {}
+
+    async def review_knowledge_seed(
+        self, matter_id: str, seed_id: str, decision: str,
+        review_note: str = "",
+    ) -> dict:
+        params = {"seed_id": seed_id, "decision": decision, "review_note": review_note}
+        result = await self._post(f"/matter/{matter_id}/knowledge-seeds/review", params=params)
+        return result if isinstance(result, dict) else {}
+
+    async def promote_knowledge_seed(
+        self, matter_id: str, seed_kind: str, domain_profile_id: str,
+        payload_json: str, source_matter_id: str | None = None,
+    ) -> dict:
+        params = {
+            "seed_kind": seed_kind,
+            "domain_profile_id": domain_profile_id,
+            "payload_json": payload_json,
+        }
+        if source_matter_id:
+            params["source_matter_id"] = source_matter_id
+        result = await self._post(f"/matter/{matter_id}/knowledge-seeds/promote", params=params)
+        return result if isinstance(result, dict) else {}
+
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         result = await self._get(
             f"/matter/{matter_id}/review-queue/documents",

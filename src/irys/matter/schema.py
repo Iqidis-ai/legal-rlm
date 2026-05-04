@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 64
+SCHEMA_VERSION = 65
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -27,6 +27,7 @@ _MIGRATION_NAMES: dict[int, str] = {
     62: "broker_dependency_manifest_and_packet",
     63: "domain_composition_substrate",
     64: "metric_alias_ontology",
+    65: "knowledge_seed_promotion",
 }
 
 
@@ -3156,6 +3157,32 @@ def _migration_v64(conn) -> None:
     conn.commit()
 
 
+def _migration_v65(conn) -> None:
+    """Add knowledge_seed table for cross-matter intelligence reuse (SO-1)."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS knowledge_seed (
+            id                      TEXT PRIMARY KEY,
+            matter_id               TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            seed_kind               TEXT NOT NULL,
+            source_matter_id        TEXT,
+            domain_profile_id       TEXT NOT NULL,
+            payload_json            TEXT NOT NULL,
+            promotion_status        TEXT NOT NULL DEFAULT 'promotable',
+            promoted_by             TEXT,
+            promoted_at             TEXT,
+            review_note             TEXT,
+            created_at              TEXT NOT NULL,
+            updated_at              TEXT NOT NULL,
+            UNIQUE(matter_id, seed_kind, payload_json)
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_knowledge_seed_matter_status"
+        " ON knowledge_seed(matter_id, promotion_status)"
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -3224,6 +3251,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (62, _migration_v62),
     (63, _migration_v63),
     (64, _migration_v64),
+    (65, _migration_v65),
 ]
 
 

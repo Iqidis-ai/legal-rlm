@@ -3902,6 +3902,107 @@ class MetricAliasStore:
         return row[0]
 
 
+class KnowledgeSeedStore:
+    """Cross-matter intelligence reuse: promote, review, and apply knowledge seeds (SO-1)."""
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def upsert(
+        self,
+        seed_kind: str,
+        domain_profile_id: str,
+        payload_json: str,
+        source_matter_id: str | None = None,
+    ) -> str:
+        now = _now()
+        seed_id = _id()
+        with self.db.transaction():
+            existing = self.db.execute(
+                """SELECT id FROM knowledge_seed
+                   WHERE matter_id=? AND seed_kind=? AND payload_json=?""",
+                (self.matter_id, seed_kind, payload_json),
+            ).fetchone()
+            if existing:
+                self.db.execute(
+                    """UPDATE knowledge_seed
+                       SET domain_profile_id=?, source_matter_id=?, updated_at=?
+                       WHERE id=?""",
+                    (domain_profile_id, source_matter_id, now, existing["id"]),
+                )
+                return existing["id"]
+            self.db.execute(
+                """INSERT INTO knowledge_seed
+                   (id, matter_id, seed_kind, source_matter_id, domain_profile_id,
+                    payload_json, promotion_status, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,'promotable',?,?)""",
+                (seed_id, self.matter_id, seed_kind, source_matter_id,
+                 domain_profile_id, payload_json, now, now),
+            )
+            return seed_id
+
+    def list_by_status(
+        self,
+        status: str = "promotable",
+        limit: int = 100,
+    ) -> list[dict]:
+        rows = self.db.execute(
+            """SELECT * FROM knowledge_seed
+               WHERE matter_id=? AND promotion_status=?
+               ORDER BY created_at DESC LIMIT ?""",
+            (self.matter_id, status, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_all(self, limit: int = 200) -> list[dict]:
+        rows = self.db.execute(
+            """SELECT * FROM knowledge_seed
+               WHERE matter_id=?
+               ORDER BY created_at DESC LIMIT ?""",
+            (self.matter_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def review(
+        self,
+        seed_id: str,
+        decision: str,
+        promoted_by: str | None = None,
+        review_note: str | None = None,
+    ) -> bool:
+        valid = ("promotable", "matter_local", "rejected")
+        if decision not in valid:
+            raise ValueError(f"Invalid decision '{decision}'; must be one of {valid}")
+        now = _now()
+        promoted_at = now if decision == "promotable" else None
+        cur = self.db.execute(
+            """UPDATE knowledge_seed
+               SET promotion_status=?, promoted_by=?, promoted_at=?, review_note=?, updated_at=?
+               WHERE id=? AND matter_id=?""",
+            (decision, promoted_by, promoted_at, review_note, now,
+             seed_id, self.matter_id),
+        )
+        self.db.conn.commit()
+        return cur.rowcount > 0
+
+    def count_by_status(self) -> dict[str, int]:
+        rows = self.db.execute(
+            """SELECT promotion_status, COUNT(*) as cnt
+               FROM knowledge_seed WHERE matter_id=?
+               GROUP BY promotion_status""",
+            (self.matter_id,),
+        ).fetchall()
+        return {r["promotion_status"]: r["cnt"] for r in rows}
+
+    def get(self, seed_id: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT * FROM knowledge_seed WHERE id=? AND matter_id=?",
+            (seed_id, self.matter_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 class DocumentInventoryStore:
     """
     Tracks which documents have been ingested into the matter model.

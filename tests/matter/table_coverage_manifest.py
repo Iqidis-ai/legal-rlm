@@ -212,4 +212,16 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
             "irys.matter.graph:MetricAliasStore.count_approved",
         ),
     ),
+    "knowledge_seed": TableCoverageSpec(
+        writers=(
+            "irys.matter.graph:KnowledgeSeedStore.upsert",
+            "irys.matter.graph:KnowledgeSeedStore.review",
+        ),
+        readers=(
+            "irys.matter.graph:KnowledgeSeedStore.list_all",
+            "irys.matter.graph:KnowledgeSeedStore.list_by_status",
+            "irys.matter.graph:KnowledgeSeedStore.count_by_status",
+            "irys.matter.graph:KnowledgeSeedStore.get",
+        ),
+    ),
 }

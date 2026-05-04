@@ -5000,3 +5000,174 @@ def test_resolve_contradiction_missing_assertion():
     result = model.resolve_contradiction("nonexistent", "also_nonexistent", "prefer_attacker", "test")
     assert result.get("error")
     assert "not found" in result["error"]
+
+
+# --- Knowledge Seed Reuse tests ---
+
+
+def test_fmt_knowledge_seeds_empty_returns_placeholder():
+    from irys.ui.app import _fmt_knowledge_seeds
+    html = _fmt_knowledge_seeds({})
+    assert "No knowledge seeds" in html or "viz-empty" in html
+
+
+def test_fmt_knowledge_seeds_renders_groups():
+    from irys.ui.app import _fmt_knowledge_seeds
+    data = {
+        "total": 2,
+        "counts": {"promotable": 1, "matter_local": 1},
+        "promotable": [
+            {"id": "seed1abc", "seed_kind": "metric_alias", "source_matter_id": "m1",
+             "domain_profile_id": "legal:1", "created_at": "2026-05-04T00:00:00Z",
+             "promotion_status": "promotable", "review_note": None},
+        ],
+        "accepted": [
+            {"id": "seed2def", "seed_kind": "contradiction_resolution", "source_matter_id": None,
+             "domain_profile_id": "finance:1", "created_at": "2026-05-04T01:00:00Z",
+             "promotion_status": "matter_local", "review_note": "Looks good"},
+        ],
+        "rejected": [],
+    }
+    html = _fmt_knowledge_seeds(data, domain="legal")
+    assert "metric_alias" in html
+    assert "seed1abc" in html[:200] or "seed1abc" in html
+    assert "Promotable" in html
+    assert "Accepted" in html
+
+
+def test_fmt_knowledge_seeds_xss_escapes():
+    from irys.ui.app import _fmt_knowledge_seeds
+    data = {
+        "total": 1,
+        "counts": {"promotable": 1},
+        "promotable": [
+            {"id": "xss<script>", "seed_kind": "<img onerror=alert(1)>",
+             "source_matter_id": None, "domain_profile_id": "legal:1",
+             "created_at": "2026-05-04", "promotion_status": "promotable",
+             "review_note": None},
+        ],
+        "accepted": [],
+        "rejected": [],
+    }
+    html = _fmt_knowledge_seeds(data)
+    assert "<script>" not in html
+    assert "<img onerror" not in html
+    assert "&lt;script&gt;" in html or "&lt;img" in html
+
+
+def test_fmt_knowledge_seeds_non_dict_guard():
+    from irys.ui.app import _fmt_knowledge_seeds
+    data = {
+        "total": 1,
+        "counts": {"promotable": 1},
+        "promotable": ["not a dict", 42],
+        "accepted": [],
+        "rejected": [],
+    }
+    html = _fmt_knowledge_seeds(data)
+    assert "Promotable" in html
+
+
+def test_knowledge_seed_labels_all_five_domains():
+    from irys.ui.app import _KNOWLEDGE_SEED_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        assert domain in _KNOWLEDGE_SEED_LABELS
+        labels = _KNOWLEDGE_SEED_LABELS[domain]
+        for key in ("title", "empty", "promotable", "matter_local", "rejected", "seed_kind"):
+            assert key in labels, f"Missing key {key} for {domain}"
+
+
+def test_knowledge_seed_store_upsert_and_list():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    seed_id = model.knowledge_seeds.upsert(
+        seed_kind="metric_alias",
+        domain_profile_id="legal:1",
+        payload_json='{"raw":"test","canonical":"revenue"}',
+        source_matter_id="src_matter_1",
+    )
+    assert seed_id
+    seeds = model.knowledge_seeds.list_all()
+    assert len(seeds) == 1
+    assert seeds[0]["seed_kind"] == "metric_alias"
+    assert seeds[0]["promotion_status"] == "promotable"
+
+
+def test_knowledge_seed_store_review():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    seed_id = model.knowledge_seeds.upsert(
+        seed_kind="contradiction_resolution",
+        domain_profile_id="legal:1",
+        payload_json='{"decision":"prefer_attacker"}',
+    )
+    ok = model.knowledge_seeds.review(seed_id, "matter_local", review_note="Approved")
+    assert ok
+    seed = model.knowledge_seeds.get(seed_id)
+    assert seed["promotion_status"] == "matter_local"
+    assert seed["review_note"] == "Approved"
+
+
+def test_knowledge_seed_store_review_invalid_decision():
+    from irys.matter.matter import MatterModel
+    import pytest
+    model = MatterModel.open_in_memory()
+    seed_id = model.knowledge_seeds.upsert(
+        seed_kind="test",
+        domain_profile_id="legal:1",
+        payload_json='{}',
+    )
+    with pytest.raises(ValueError, match="Invalid decision"):
+        model.knowledge_seeds.review(seed_id, "bad_decision")
+
+
+def test_knowledge_seed_store_count_by_status():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    model.knowledge_seeds.upsert("a", "legal:1", '{"a":1}')
+    model.knowledge_seeds.upsert("b", "legal:1", '{"b":2}')
+    sid = model.knowledge_seeds.upsert("c", "legal:1", '{"c":3}')
+    model.knowledge_seeds.review(sid, "rejected", review_note="Bad")
+    counts = model.knowledge_seeds.count_by_status()
+    assert counts.get("promotable") == 2
+    assert counts.get("rejected") == 1
+
+
+def test_knowledge_seed_workbench_facade():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    model.knowledge_seeds.upsert("metric", "legal:1", '{"x":1}')
+    model.knowledge_seeds.upsert("resolution", "legal:1", '{"y":2}')
+    wb = model.get_knowledge_seed_workbench()
+    assert wb["total"] == 2
+    assert len(wb["promotable"]) == 2
+    assert len(wb["accepted"]) == 0
+
+
+def test_review_knowledge_seed_facade():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    sid = model.knowledge_seeds.upsert("test", "legal:1", '{"z":1}')
+    result = model.review_knowledge_seed(sid, "matter_local", review_note="OK")
+    assert result["success"]
+    assert result["decision"] == "matter_local"
+
+
+def test_review_knowledge_seed_invalid():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.review_knowledge_seed("nonexistent", "matter_local")
+    assert result.get("error")
+
+
+def test_promote_knowledge_seed_facade():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.promote_knowledge_seed(
+        seed_kind="alias", domain_profile_id="finance:1",
+        payload_json='{"metric":"revenue"}', source_matter_id="src1",
+    )
+    assert result["success"]
+    assert result["seed_id"]
+    seeds = model.knowledge_seeds.list_all()
+    assert len(seeds) == 1

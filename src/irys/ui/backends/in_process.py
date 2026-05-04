@@ -631,6 +631,29 @@ class InProcessBackend(UIBackend):
             decision=decision, rationale=rationale,
         )
 
+    async def get_knowledge_seeds(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_knowledge_seed_workbench()
+
+    async def review_knowledge_seed(
+        self, matter_id: str, seed_id: str, decision: str,
+        review_note: str = "",
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.review_knowledge_seed(
+            seed_id=seed_id, decision=decision, review_note=review_note or None,
+        )
+
+    async def promote_knowledge_seed(
+        self, matter_id: str, seed_kind: str, domain_profile_id: str,
+        payload_json: str, source_matter_id: str | None = None,
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.promote_knowledge_seed(
+            seed_kind=seed_kind, domain_profile_id=domain_profile_id,
+            payload_json=payload_json, source_matter_id=source_matter_id,
+        )
+
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         """Document picker feed for the bulk-verify dropdown — every
         doc in the matter with pending/verified counts so reviewers

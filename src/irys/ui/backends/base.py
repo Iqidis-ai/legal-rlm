@@ -651,6 +651,27 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_knowledge_seeds(self, matter_id: str) -> dict:
+        """Knowledge seed workbench: cross-matter reuse review data (SO-1)."""
+        ...
+
+    @abstractmethod
+    async def review_knowledge_seed(
+        self, matter_id: str, seed_id: str, decision: str,
+        review_note: str = "",
+    ) -> dict:
+        """Review a knowledge seed: approve, reject, or keep promotable (SO-1)."""
+        ...
+
+    @abstractmethod
+    async def promote_knowledge_seed(
+        self, matter_id: str, seed_kind: str, domain_profile_id: str,
+        payload_json: str, source_matter_id: str | None = None,
+    ) -> dict:
+        """Promote intelligence as a reusable knowledge seed (SO-1)."""
+        ...
+
+    @abstractmethod
     async def get_verification_events(
         self, matter_id: str, target_kind: Optional[str] = None,
         target_id: Optional[str] = None, limit: int = 50,

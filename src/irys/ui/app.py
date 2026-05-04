@@ -5021,6 +5021,147 @@ def _fmt_answer_audit(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_KNOWLEDGE_SEED_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Reusable Intelligence Seeds",
+        "empty": "No knowledge seeds available for this matter.",
+        "promotable": "Promotable",
+        "matter_local": "Accepted",
+        "rejected": "Rejected",
+        "seed_kind": "Kind",
+        "source": "Source Matter",
+        "domain": "Domain Profile",
+        "review": "Review Note",
+    },
+    "finance": {
+        "title": "Reusable Analytical Seeds",
+        "empty": "No analytical seeds available for this portfolio.",
+        "promotable": "Promotable",
+        "matter_local": "Accepted",
+        "rejected": "Rejected",
+        "seed_kind": "Seed Type",
+        "source": "Source Portfolio",
+        "domain": "Domain Profile",
+        "review": "Review Note",
+    },
+    "coding": {
+        "title": "Reusable Pattern Seeds",
+        "empty": "No pattern seeds available for this codebase.",
+        "promotable": "Promotable",
+        "matter_local": "Accepted",
+        "rejected": "Rejected",
+        "seed_kind": "Pattern Type",
+        "source": "Source Codebase",
+        "domain": "Domain Profile",
+        "review": "Review Note",
+    },
+    "academic_research": {
+        "title": "Reusable Methodology Seeds",
+        "empty": "No methodology seeds available for this study.",
+        "promotable": "Promotable",
+        "matter_local": "Accepted",
+        "rejected": "Rejected",
+        "seed_kind": "Methodology Type",
+        "source": "Source Study",
+        "domain": "Domain Profile",
+        "review": "Review Note",
+    },
+    "biomedical": {
+        "title": "Reusable Clinical Seeds",
+        "empty": "No clinical seeds available for this protocol.",
+        "promotable": "Promotable",
+        "matter_local": "Accepted",
+        "rejected": "Rejected",
+        "seed_kind": "Seed Category",
+        "source": "Source Protocol",
+        "domain": "Domain Profile",
+        "review": "Review Note",
+    },
+}
+
+
+def _fmt_knowledge_seeds(data: dict, domain: str = "legal") -> str:
+    labels = _KNOWLEDGE_SEED_LABELS.get(domain, _KNOWLEDGE_SEED_LABELS["legal"])
+    if not isinstance(data, dict):
+        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+
+    total = int(data.get("total", 0))
+    counts = data.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    promotable = data.get("promotable", [])
+    accepted = data.get("accepted", [])
+    rejected = data.get("rejected", [])
+
+    if total == 0:
+        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+
+    p_count = int(counts.get("promotable", 0))
+    a_count = int(counts.get("matter_local", 0))
+    r_count = int(counts.get("rejected", 0))
+
+    parts = [
+        f"<h3 style='margin:0 0 8px;'>{_escape(labels['title'])}</h3>",
+        f"<div style='display:flex;gap:16px;margin-bottom:12px;'>",
+        f"<span style='background:#3b82f6;color:white;padding:2px 10px;border-radius:10px;"
+        f"font-size:0.85em;'>{p_count} {_escape(labels['promotable'])}</span>",
+        f"<span style='background:#22c55e;color:white;padding:2px 10px;border-radius:10px;"
+        f"font-size:0.85em;'>{a_count} {_escape(labels['matter_local'])}</span>",
+        f"<span style='background:#dc2626;color:white;padding:2px 10px;border-radius:10px;"
+        f"font-size:0.85em;'>{r_count} {_escape(labels['rejected'])}</span>",
+        f"</div>",
+    ]
+
+    status_colors = {
+        "promotable": "#3b82f6",
+        "matter_local": "#22c55e",
+        "rejected": "#dc2626",
+    }
+
+    for group_label, group_items, status_key in [
+        (labels["promotable"], promotable, "promotable"),
+        (labels["matter_local"], accepted, "matter_local"),
+        (labels["rejected"], rejected, "rejected"),
+    ]:
+        if not isinstance(group_items, list) or not group_items:
+            continue
+        parts.append(
+            f"<div style='margin-top:8px;'>"
+            f"<b style='color:{status_colors[status_key]};'>{_escape(group_label)}</b>"
+            f"</div>"
+        )
+        for seed in group_items:
+            if not isinstance(seed, dict):
+                continue
+            sid = _escape(str(seed.get("id", ""))[:16])
+            kind = _escape(str(seed.get("seed_kind", "")))
+            source = _escape(str(seed.get("source_matter_id", "") or "—")[:20])
+            profile = _escape(str(seed.get("domain_profile_id", "")))
+            created = _escape(str(seed.get("created_at", ""))[:19])
+            note = _escape(str(seed.get("review_note", "") or ""))
+
+            parts.append(
+                f"<div style='border:1px solid #e5e7eb;border-radius:6px;padding:10px;margin:4px 0;'>"
+                f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                f"<div><b>{kind}</b> <span style='color:#9ca3af;font-size:0.8em;'>{sid}…</span></div>"
+                f"<span style='color:{status_colors[status_key]};font-size:0.82em;'>"
+                f"{_escape(labels[status_key])}</span>"
+                f"</div>"
+                f"<div style='color:#6b7280;font-size:0.85em;margin-top:4px;'>"
+                f"{_escape(labels['source'])}: {source} · {_escape(labels['domain'])}: {profile} · {created}"
+                f"</div>"
+            )
+            if note:
+                parts.append(
+                    f"<div style='color:#4b5563;font-size:0.82em;margin-top:4px;'>"
+                    f"<b>{_escape(labels['review'])}:</b> {note[:200]}"
+                    f"</div>"
+                )
+            parts.append("</div>")
+
+    return "\n".join(parts)
+
+
 def _fmt_quant_panel(
     payment_recon: dict,
     invoice_chain: list,
@@ -9800,6 +9941,40 @@ class AppState:
             logger.warning("resolve_contradiction failed: %s", exc)
             return f"Error: {_escape(str(exc))}", ""
 
+    def load_knowledge_seeds(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_knowledge_seeds(matter_id))
+            return _fmt_knowledge_seeds(data if isinstance(data, dict) else {}, domain=domain)
+        except Exception as exc:
+            logger.warning("load_knowledge_seeds failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
+    def review_knowledge_seed(
+        self, matter_id: str, seed_id: str, decision: str, review_note: str,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        if not seed_id:
+            return "Enter a seed ID.", ""
+        if not decision:
+            return "Select a review decision.", ""
+        try:
+            result = _run_async(self.backend().review_knowledge_seed(
+                matter_id, seed_id.strip(), decision, review_note.strip(),
+            ))
+            if not isinstance(result, dict):
+                return "Unexpected response.", ""
+            if result.get("error"):
+                return f"Error: {_escape(str(result['error']))}", ""
+            domain = self._detect_domain(matter_id)
+            refreshed = self.load_knowledge_seeds(matter_id, domain=domain)
+            return f"Reviewed: {_escape(result.get('seed_kind', ''))} → {_escape(decision)}", refreshed
+        except Exception as exc:
+            logger.warning("review_knowledge_seed failed: %s", exc)
+            return f"Error: {_escape(str(exc))}", ""
+
     def load_document_versions(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -11805,6 +11980,30 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             answer_audit_html = gr.HTML("<div class='viz-empty'>Answer audit trail will appear here after an investigation.</div>")
             refresh_answer_audit_btn = gr.Button("Refresh Answer Audit", variant="secondary", size="sm")
 
+        with gr.Accordion("Knowledge Reuse — cross-matter intelligence seeds", open=False):
+            gr.Markdown(
+                "When Irys resolves contradictions, approves metric classifications, or calibrates "
+                "domain weights, those decisions can be promoted as reusable seeds. New matters "
+                "inherit approved seeds, accelerating analysis and reducing repeated reasoning."
+            )
+            knowledge_seeds_html = gr.HTML("<div class='viz-empty'>Knowledge seeds will appear here after an investigation.</div>")
+            refresh_knowledge_seeds_btn = gr.Button("Refresh Seeds", variant="secondary", size="sm")
+
+            with gr.Accordion("Review a seed", open=False):
+                seed_id_input = gr.Textbox(label="Seed ID", placeholder="Paste the seed ID to review")
+                seed_decision_input = gr.Dropdown(
+                    choices=[
+                        ("Accept for this matter", "matter_local"),
+                        ("Keep as promotable", "promotable"),
+                        ("Reject", "rejected"),
+                    ],
+                    label="Decision",
+                    value="matter_local",
+                )
+                seed_review_note_input = gr.Textbox(label="Review note (optional)", placeholder="Why this decision?")
+                seed_review_btn = gr.Button("Submit Review", variant="primary", size="sm")
+                seed_review_status = gr.Textbox(label="Status", interactive=False, visible=True)
+
         with gr.Accordion("Domain Profile — how Irys interprets this subject area", open=False):
             gr.Markdown(
                 "Shows the active domain profile: which vocabulary maps concepts to domain terms, "
@@ -12391,6 +12590,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_domain_composition(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_composition_html],
+            ).then(
+                fn=lambda mid: state.load_knowledge_seeds(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[knowledge_seeds_html],
             )
         else:
             submit_btn.click(
@@ -12469,6 +12672,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_domain_composition(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_composition_html],
+            ).then(
+                fn=lambda mid: state.load_knowledge_seeds(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[knowledge_seeds_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -12556,6 +12763,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[answer_audit_html],
+        ).then(
+            fn=lambda mid: state.load_knowledge_seeds(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[knowledge_seeds_html],
         )
 
         export_report_btn.click(
@@ -12824,6 +13035,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[answer_audit_html],
+        )
+        refresh_knowledge_seeds_btn.click(
+            fn=lambda mid: state.load_knowledge_seeds(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[knowledge_seeds_html],
+        )
+        seed_review_btn.click(
+            fn=lambda mid, sid, dec, note: state.review_knowledge_seed(mid, sid, dec, note),
+            inputs=[matter_id_box, seed_id_input, seed_decision_input, seed_review_note_input],
+            outputs=[seed_review_status, knowledge_seeds_html],
         )
         refresh_domain_profile_btn.click(
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),

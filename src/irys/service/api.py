@@ -3493,6 +3493,59 @@ async def resolve_contradiction(
 
 
 @app.get(
+    "/matter/{matter_id}/knowledge-seeds",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_knowledge_seeds(matter_id: str):
+    """Return knowledge seed workbench data for cross-matter reuse review."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_knowledge_seed_workbench()
+
+
+@app.post(
+    "/matter/{matter_id}/knowledge-seeds/review",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def review_knowledge_seed(
+    matter_id: str,
+    seed_id: str = Query(...),
+    decision: str = Query(...),
+    review_note: str = Query(default=""),
+):
+    """Review a knowledge seed: approve (matter_local), reject, or keep promotable."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.review_knowledge_seed(
+        seed_id=seed_id,
+        decision=decision,
+        review_note=review_note or None,
+    )
+
+
+@app.post(
+    "/matter/{matter_id}/knowledge-seeds/promote",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def promote_knowledge_seed(
+    matter_id: str,
+    seed_kind: str = Query(...),
+    domain_profile_id: str = Query(...),
+    payload_json: str = Query(...),
+    source_matter_id: str = Query(default=None),
+):
+    """Promote a piece of intelligence as a reusable knowledge seed."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.promote_knowledge_seed(
+        seed_kind=seed_kind,
+        domain_profile_id=domain_profile_id,
+        payload_json=payload_json,
+        source_matter_id=source_matter_id,
+    )
+
+
+@app.get(
     "/matter/{matter_id}/system-health",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

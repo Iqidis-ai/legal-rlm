@@ -21,7 +21,7 @@ _log = logging.getLogger(__name__)
 from ..core.models import LLMCallRecord, PRICING_SOURCE_URL, PRICING_VERIFIED_AT
 from .db import SQLiteMatterDB
 from .graph import (
-    AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore, MetricAliasStore,
+    AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore, MetricAliasStore, KnowledgeSeedStore,
     DocumentInventoryStore, DocumentCardStore, SpanStore, DocumentActorRoleStore,
     ReasoningCacheStore, TrustOverrideStore, DocumentAnnotationStore,
     DecisionContextStore, AuthorityStore, ProofStateStore, AssumptionStore,
@@ -100,6 +100,7 @@ class MatterModel:
         self.clarifications = ClarificationStore(db, matter_id)
         self.quant = QuantStore(db, matter_id)
         self.metric_aliases = MetricAliasStore(db, matter_id)
+        self.knowledge_seeds = KnowledgeSeedStore(db, matter_id)
         self.ledger = ReasoningLedgerStore(db, matter_id)
         self.belief = BeliefRevisionEngine(db, self.assertions, self.ledger)
         self.inventory = DocumentInventoryStore(db, matter_id)
@@ -3559,6 +3560,65 @@ class MatterModel:
             (self.matter_id, attacker_id, attacked_id),
         ).fetchall()
         return [r["id"] for r in rows]
+
+    # ------------------------------------------------------------------
+    # Cross-matter knowledge reuse (SO-1)
+    # ------------------------------------------------------------------
+
+    def get_knowledge_seed_workbench(self) -> dict:
+        """Dashboard data for the knowledge seed reuse review panel."""
+        all_seeds = self.knowledge_seeds.list_all()
+        counts = self.knowledge_seeds.count_by_status()
+        promotable = [s for s in all_seeds if s.get("promotion_status") == "promotable"]
+        accepted = [s for s in all_seeds if s.get("promotion_status") == "matter_local"]
+        rejected = [s for s in all_seeds if s.get("promotion_status") == "rejected"]
+        return {
+            "total": len(all_seeds),
+            "counts": counts,
+            "promotable": promotable,
+            "accepted": accepted,
+            "rejected": rejected,
+        }
+
+    def review_knowledge_seed(
+        self,
+        seed_id: str,
+        decision: str,
+        promoted_by: str | None = None,
+        review_note: str | None = None,
+    ) -> dict:
+        """Review a knowledge seed: approve (matter_local), reject, or keep promotable."""
+        valid = ("promotable", "matter_local", "rejected")
+        if decision not in valid:
+            return {"error": f"Invalid decision. Must be one of: {', '.join(valid)}"}
+        seed = self.knowledge_seeds.get(seed_id)
+        if not seed:
+            return {"error": f"Seed {seed_id} not found"}
+        ok = self.knowledge_seeds.review(seed_id, decision, promoted_by, review_note)
+        if not ok:
+            return {"error": "Failed to update seed"}
+        return {
+            "success": True,
+            "seed_id": seed_id,
+            "decision": decision,
+            "seed_kind": seed.get("seed_kind"),
+        }
+
+    def promote_knowledge_seed(
+        self,
+        seed_kind: str,
+        domain_profile_id: str,
+        payload_json: str,
+        source_matter_id: str | None = None,
+    ) -> dict:
+        """Create a new knowledge seed from the current matter for cross-matter reuse."""
+        seed_id = self.knowledge_seeds.upsert(
+            seed_kind=seed_kind,
+            domain_profile_id=domain_profile_id,
+            payload_json=payload_json,
+            source_matter_id=source_matter_id,
+        )
+        return {"success": True, "seed_id": seed_id, "seed_kind": seed_kind}
 
     # ------------------------------------------------------------------
     # Assertion trace with impact (SO-2, SO-3, SO-5)
