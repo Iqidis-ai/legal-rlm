@@ -838,6 +838,13 @@ class HttpBackend(UIBackend):
             return result.get("assertions", [])
         return result if isinstance(result, list) else []
 
+    async def get_document_console(self, matter_id: str, document_ref: str) -> dict:
+        result = await self._get(
+            f"/matter/{matter_id}/document-console",
+            {"document_ref": document_ref},
+        )
+        return result if isinstance(result, dict) else {}
+
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         result = await self._get(
             f"/matter/{matter_id}/review-queue/documents",

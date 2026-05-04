@@ -3164,6 +3164,211 @@ def _fmt_doc_triage_panel(docs: list, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_DOC_CONSOLE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Document Review Console",
+        "candidates": "Candidate facts",
+        "verified": "Verified",
+        "rejected": "Rejected",
+        "linked_issues": "Linked Issues",
+        "actors": "Actors & Roles",
+        "no_card": "No document profile available yet.",
+    },
+    "finance": {
+        "title": "Document Review Console",
+        "candidates": "Candidate data points",
+        "verified": "Verified",
+        "rejected": "Rejected",
+        "linked_issues": "Linked Positions",
+        "actors": "Entities & Roles",
+        "no_card": "No document profile available yet.",
+    },
+    "coding": {
+        "title": "Artifact Review Console",
+        "candidates": "Candidate findings",
+        "verified": "Verified",
+        "rejected": "Rejected",
+        "linked_issues": "Linked Requirements",
+        "actors": "Components & Roles",
+        "no_card": "No artifact profile available yet.",
+    },
+    "academic_research": {
+        "title": "Source Review Console",
+        "candidates": "Candidate claims",
+        "verified": "Verified",
+        "rejected": "Rejected",
+        "linked_issues": "Linked Claims",
+        "actors": "Authors & Roles",
+        "no_card": "No source profile available yet.",
+    },
+    "biomedical": {
+        "title": "Record Review Console",
+        "candidates": "Candidate findings",
+        "verified": "Verified",
+        "rejected": "Rejected",
+        "linked_issues": "Linked Findings",
+        "actors": "Providers & Roles",
+        "no_card": "No record profile available yet.",
+    },
+}
+
+
+def _fmt_document_console(data: dict, domain: str = "legal") -> str:
+    if not data or not isinstance(data, dict):
+        return "<div class='viz-empty'>No document data available.</div>"
+
+    L = _DOC_CONSOLE_LABELS.get(domain, _DOC_CONSOLE_LABELS["legal"])
+    ref = _escape(str(data.get("document_ref", "")))
+    card = data.get("card", {})
+    if not isinstance(card, dict):
+        card = {}
+    cand_count = int(data.get("candidate_count", 0))
+    ver_count = int(data.get("verified_count", 0))
+    rej_count = int(data.get("rejected_count", 0))
+    total = cand_count + ver_count + rej_count
+    candidates = data.get("candidates", [])
+    linked_issues = data.get("linked_issues", [])
+    actor_roles = data.get("actor_roles", [])
+
+    parts = [
+        f"<div style='margin-bottom:16px;'>",
+        f"<h3 style='margin:0 0 8px;'>{_escape(L['title'])}: {ref}</h3>",
+    ]
+
+    # Card metadata
+    if card:
+        doc_type = _escape(str(card.get("doc_type", "unknown")))
+        privilege = card.get("privilege_flag")
+        priv_label = "Privileged" if privilege else "Not privileged"
+        priv_color = "#dc2626" if privilege else "#059669"
+        parties = _escape(str(card.get("parties_summary", "") or ""))
+        date_range = _escape(str(card.get("date_range", "") or ""))
+
+        parts.append(
+            f"<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;"
+            f"padding:10px;background:#f9fafb;border-radius:8px;'>"
+            f"<div><div style='font-size:11px;color:#6b7280;font-weight:600;'>Type</div>"
+            f"<div style='font-size:13px;'>{doc_type}</div></div>"
+            f"<div><div style='font-size:11px;color:#6b7280;font-weight:600;'>Privilege</div>"
+            f"<div style='font-size:13px;color:{priv_color};font-weight:600;'>{_escape(priv_label)}</div></div>"
+            f"<div><div style='font-size:11px;color:#6b7280;font-weight:600;'>Parties</div>"
+            f"<div style='font-size:13px;'>{parties or '—'}</div></div>"
+            f"<div><div style='font-size:11px;color:#6b7280;font-weight:600;'>Date Range</div>"
+            f"<div style='font-size:13px;'>{date_range or '—'}</div></div>"
+            f"</div>"
+        )
+    else:
+        parts.append(f"<div style='color:#9ca3af;font-style:italic;margin-bottom:8px;'>{_escape(L['no_card'])}</div>")
+
+    # Counts summary
+    ver_pct = round(ver_count / total * 100) if total > 0 else 0
+    parts.append(
+        f"<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;'>"
+    )
+    for label, val, color in [
+        (L["candidates"], str(cand_count), "#f59e0b" if cand_count > 0 else "#059669"),
+        (L["verified"], str(ver_count), "#059669"),
+        (L["rejected"], str(rej_count), "#dc2626" if rej_count > 0 else "#6b7280"),
+    ]:
+        parts.append(
+            f"<div style='text-align:center;padding:10px;background:#f9fafb;border-radius:8px;'>"
+            f"<div style='font-size:22px;font-weight:700;color:{color};'>{_escape(val)}</div>"
+            f"<div style='font-size:11px;color:#6b7280;font-weight:600;margin-top:2px;'>"
+            f"{_escape(label)}</div></div>"
+        )
+    parts.append("</div>")
+
+    # Progress bar
+    parts.append(
+        f"<div style='margin-bottom:16px;'>"
+        f"<div style='font-size:12px;color:#6b7280;margin-bottom:4px;font-weight:600;'>"
+        f"Review progress: {ver_pct}% verified</div>"
+        f"<div style='width:100%;height:12px;background:#e5e7eb;border-radius:6px;'>"
+        f"<div style='width:{ver_pct}%;height:100%;background:#059669;"
+        f"border-radius:6px;transition:width 0.3s;'></div></div></div>"
+    )
+
+    # Linked issues
+    if linked_issues:
+        parts.append(
+            f"<div style='margin-bottom:12px;'>"
+            f"<div style='font-size:13px;font-weight:700;color:#1f2937;margin-bottom:6px;'>"
+            f"{_escape(L['linked_issues'])} ({len(linked_issues)})</div>"
+            f"<div style='display:flex;flex-wrap:wrap;gap:6px;'>"
+        )
+        for iss in linked_issues[:10]:
+            if not isinstance(iss, dict):
+                continue
+            title = _escape(str(iss.get("title", ""))[:40])
+            mat = float(iss.get("materiality", 0))
+            mat_color = "#dc2626" if mat >= 0.7 else "#f59e0b" if mat >= 0.4 else "#6b7280"
+            parts.append(
+                f"<span style='display:inline-block;padding:3px 10px;border-radius:10px;"
+                f"background:#f3f4f6;font-size:12px;border-left:3px solid {mat_color};'>"
+                f"{title}</span>"
+            )
+        parts.append("</div></div>")
+
+    # Actor roles
+    if actor_roles:
+        parts.append(
+            f"<div style='margin-bottom:12px;'>"
+            f"<div style='font-size:13px;font-weight:700;color:#1f2937;margin-bottom:6px;'>"
+            f"{_escape(L['actors'])} ({len(actor_roles)})</div>"
+            f"<div style='display:flex;flex-wrap:wrap;gap:6px;'>"
+        )
+        for ar in actor_roles[:8]:
+            if not isinstance(ar, dict):
+                continue
+            name = _escape(str(ar.get("actor_name", "")))
+            role = _escape(str(ar.get("role", "")))
+            parts.append(
+                f"<span style='display:inline-block;padding:3px 10px;border-radius:10px;"
+                f"background:#ede9fe;font-size:12px;'>"
+                f"<strong>{name}</strong> — {role}</span>"
+            )
+        parts.append("</div></div>")
+
+    # Candidate facts table
+    if candidates:
+        parts.append(
+            f"<div style='margin-bottom:8px;'>"
+            f"<div style='font-size:13px;font-weight:700;color:#1f2937;margin-bottom:6px;'>"
+            f"{_escape(L['candidates'])} ({cand_count})</div>"
+            f"<div style='max-height:300px;overflow-y:auto;'>"
+            f"<table style='width:100%;border-collapse:collapse;font-size:12px;'>"
+            f"<tr style='background:#f8fafc;'>"
+            f"<th style='padding:4px 8px;text-align:left;'>Proposition</th>"
+            f"<th style='padding:4px 8px;text-align:left;'>Belief State</th>"
+            f"<th style='padding:4px 8px;text-align:left;'>Confidence</th>"
+            f"</tr>"
+        )
+        for c in candidates[:30]:
+            if not isinstance(c, dict):
+                continue
+            prop = _escape(str(c.get("proposition_text", ""))[:80])
+            bs = _escape(str(c.get("belief_state", "")))
+            conf = _safe_float(c.get("confidence", 0))
+            conf_color = "#059669" if conf >= 0.7 else "#f59e0b" if conf >= 0.4 else "#dc2626"
+            parts.append(
+                f"<tr>"
+                f"<td style='padding:4px 8px;border-bottom:1px solid #e5e7eb;'>{prop}</td>"
+                f"<td style='padding:4px 8px;border-bottom:1px solid #e5e7eb;'>{bs}</td>"
+                f"<td style='padding:4px 8px;border-bottom:1px solid #e5e7eb;"
+                f"color:{conf_color};font-weight:600;'>{conf:.2f}</td>"
+                f"</tr>"
+            )
+        if cand_count > 30:
+            parts.append(
+                f"<tr><td colspan='3' style='padding:4px 8px;color:#9ca3af;'>"
+                f"+{cand_count - 30} more (use bulk verify to approve all)</td></tr>"
+            )
+        parts.append("</table></div></div>")
+
+    parts.append("</div>")
+    return "".join(parts)
+
+
 _TAINT_LABELS: dict[str, dict[str, str]] = {
     "legal": {
         "title": "Sensitivity & Taint Summary",
@@ -9073,6 +9278,38 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading domain composition: {_escape(str(exc))}</div>"
 
+    def load_document_console(self, matter_id: str, document_ref: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        ref = (document_ref or "").strip()
+        if not ref:
+            return "<div class='viz-empty'>Select a document to review.</div>"
+        try:
+            domain = self._detect_domain(matter_id)
+            data = _run_async(self.backend().get_document_console(matter_id, ref))
+            return _fmt_document_console(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Document console load failed: %s", exc)
+            return f"<div class='viz-empty'>Error loading document console: {_escape(str(exc))}</div>"
+
+    def get_reviewable_doc_choices(self, matter_id: str) -> list[tuple[str, str]]:
+        if not matter_id or matter_id == "—":
+            return []
+        try:
+            docs = _run_async(self.backend().list_reviewable_documents(matter_id))
+            choices = []
+            for d in docs:
+                if not isinstance(d, dict):
+                    continue
+                path = str(d.get("path", ""))
+                pending = int(d.get("pending", 0))
+                verified = int(d.get("verified", 0))
+                choices.append((f"{path} ({pending} pending, {verified} verified)", path))
+            return choices
+        except Exception as exc:
+            logger.warning("get_reviewable_doc_choices failed: %s", exc)
+            return []
+
     def load_document_triage(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -10805,6 +11042,27 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                     delete_annotation_id = gr.Textbox(label="Annotation ID", placeholder="Copy from ID column above", scale=3)
                     delete_annotation_btn = gr.Button("Delete Note", variant="stop", size="sm", scale=1)
 
+            with gr.Accordion("Document Review Console — deep-dive into a single source", open=False):
+                gr.Markdown(
+                    "Select a document to see its full profile: type, privilege status, "
+                    "linked issues, actors, and every candidate fact ready for review."
+                )
+                doc_console_selector = gr.Dropdown(
+                    label="Select document",
+                    choices=[],
+                    interactive=True,
+                    allow_custom_value=True,
+                )
+                refresh_doc_console_choices_btn = gr.Button(
+                    "Refresh document list", variant="secondary", size="sm",
+                )
+                doc_console_html = gr.HTML(
+                    "<div class='viz-empty'>Select a document to review.</div>"
+                )
+                load_doc_console_btn = gr.Button(
+                    "Load Document Console", variant="primary", size="sm",
+                )
+
         with gr.Accordion("Belief Revisions — how the system's understanding has changed over time", open=False):
             gr.Markdown(
                 "Every time an assertion's belief state or confidence changes, the revision "
@@ -11806,6 +12064,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_document_intelligence(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[doc_intel_html],
+        )
+        refresh_doc_console_choices_btn.click(
+            fn=lambda mid: gr.update(choices=state.get_reviewable_doc_choices(mid)),
+            inputs=[matter_id_box],
+            outputs=[doc_console_selector],
+        )
+        load_doc_console_btn.click(
+            fn=lambda mid, doc: state.load_document_console(mid, doc),
+            inputs=[matter_id_box, doc_console_selector],
+            outputs=[doc_console_html],
         )
         refresh_belief_btn.click(
             fn=lambda mid: state.load_belief_revisions(mid, domain=state._detect_domain(mid)),

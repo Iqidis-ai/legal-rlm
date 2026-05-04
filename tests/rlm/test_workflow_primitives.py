@@ -4382,3 +4382,121 @@ def test_readiness_panel_non_dict_guard():
     }
     result = _fmt_readiness_panel(data, domain="legal")
     assert "1 contradiction" in result
+
+
+# ------------------------------------------------------------------
+# Document Review Console formatter tests (SO-3, SO-5)
+# ------------------------------------------------------------------
+
+def test_document_console_basic():
+    from irys.ui.app import _fmt_document_console
+    data = {
+        "document_ref": "contract_2024.pdf",
+        "card": {
+            "doc_type": "contract",
+            "privilege_flag": False,
+            "parties_summary": "Acme vs TechCo",
+            "date_range": "2024-01-01 to 2024-12-31",
+        },
+        "candidate_count": 5,
+        "verified_count": 3,
+        "rejected_count": 1,
+        "candidates": [
+            {"proposition_text": "Payment due on signing", "belief_state": "operative", "confidence": 0.9},
+            {"proposition_text": "30-day termination clause", "belief_state": "alleged", "confidence": 0.6},
+        ],
+        "linked_issues": [
+            {"id": "i1", "title": "Breach of contract", "status": "open", "materiality": 0.9},
+        ],
+        "actor_roles": [
+            {"actor_name": "Acme Corp", "role": "plaintiff", "confidence": 0.95},
+        ],
+    }
+    result = _fmt_document_console(data, domain="legal")
+    assert "contract_2024.pdf" in result
+    assert "contract" in result
+    assert "Not privileged" in result
+    assert "Acme vs TechCo" in result
+    assert "Payment due on signing" in result
+    assert "Breach of contract" in result
+    assert "Acme Corp" in result
+    assert "plaintiff" in result
+
+
+def test_document_console_no_card():
+    from irys.ui.app import _fmt_document_console
+    data = {
+        "document_ref": "unknown.pdf",
+        "card": {},
+        "candidate_count": 0,
+        "verified_count": 0,
+        "rejected_count": 0,
+        "candidates": [],
+        "linked_issues": [],
+        "actor_roles": [],
+    }
+    result = _fmt_document_console(data, domain="legal")
+    assert "No document profile" in result
+    assert "unknown.pdf" in result
+
+
+def test_document_console_xss():
+    from irys.ui.app import _fmt_document_console
+    data = {
+        "document_ref": "<script>alert(1)</script>",
+        "card": {"doc_type": "<img onerror=x>", "privilege_flag": True},
+        "candidate_count": 1,
+        "verified_count": 0,
+        "rejected_count": 0,
+        "candidates": [
+            {"proposition_text": "<b>XSS</b>", "belief_state": "test", "confidence": 0.5},
+        ],
+        "linked_issues": [{"id": "i1", "title": "<script>bad</script>", "materiality": 0.5}],
+        "actor_roles": [{"actor_name": "<img src=x>", "role": "test"}],
+    }
+    result = _fmt_document_console(data, domain="legal")
+    assert "<script>" not in result
+    assert "<img onerror" not in result
+    assert "<img src=" not in result
+    assert "&lt;" in result
+
+
+def test_document_console_domain_labels():
+    from irys.ui.app import _fmt_document_console
+    data = {
+        "document_ref": "data.xlsx",
+        "card": {},
+        "candidate_count": 2,
+        "verified_count": 1,
+        "rejected_count": 0,
+        "candidates": [],
+        "linked_issues": [],
+        "actor_roles": [],
+    }
+    result = _fmt_document_console(data, domain="finance")
+    assert "Document Review Console" in result
+    result_bio = _fmt_document_console(data, domain="biomedical")
+    assert "Record Review Console" in result_bio
+
+
+def test_document_console_empty():
+    from irys.ui.app import _fmt_document_console
+    result = _fmt_document_console({}, domain="legal")
+    assert "viz-empty" in result
+
+
+def test_document_console_non_dict_guard():
+    from irys.ui.app import _fmt_document_console
+    data = {
+        "document_ref": "test.pdf",
+        "card": {},
+        "candidate_count": 1,
+        "verified_count": 0,
+        "rejected_count": 0,
+        "candidates": ["not a dict", {"proposition_text": "Valid", "belief_state": "operative", "confidence": 0.8}],
+        "linked_issues": ["bad", {"id": "i1", "title": "Real issue", "materiality": 0.7}],
+        "actor_roles": [42],
+    }
+    result = _fmt_document_console(data, domain="legal")
+    assert "Valid" in result
+    assert "Real issue" in result

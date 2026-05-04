@@ -2420,6 +2420,19 @@ async def list_candidate_assertions_for_document(
 
 
 @app.get(
+    "/matter/{matter_id}/document-console",
+    tags=["Review Queue"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_document_console(
+    matter_id: str, document_ref: str = Query(...),
+):
+    """Consolidated per-document review surface (SO-3, SO-5)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_document_console(document_ref)
+
+
+@app.get(
     "/matter/{matter_id}/verification-events",
     tags=["Review Queue"],
     responses={404: {"model": ErrorResponse}},

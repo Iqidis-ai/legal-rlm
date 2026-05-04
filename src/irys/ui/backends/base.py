@@ -609,6 +609,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_document_console(self, matter_id: str, document_ref: str) -> dict:
+        """Consolidated per-document review surface (SO-3, SO-5)."""
+        ...
+
+    @abstractmethod
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         """Return documents with pending/verified counts for the review picker."""
         ...

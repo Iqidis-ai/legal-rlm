@@ -3761,6 +3761,99 @@ class MatterModel:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_document_console(self, document_ref: str) -> dict:
+        """Consolidated per-document review surface (SO-3, SO-5).
+
+        Returns card metadata, candidate/verified fact counts, the facts
+        themselves, linked issues, and actor roles — everything a reviewer
+        needs to assess and act on a single source document."""
+        ref_norm = (document_ref or "").replace("\\", "/")
+
+        card: dict = {}
+        try:
+            inv_row = self.inventory.get_by_path(ref_norm)
+            if inv_row:
+                doc_id = inv_row["id"] if hasattr(inv_row, "__getitem__") else getattr(inv_row, "id", None)
+                card = self.get_document_card(doc_id=doc_id) or {}
+                if hasattr(card, "keys"):
+                    card = dict(card)
+            if not card:
+                card = self.get_document_card(relative_path=ref_norm) or {}
+                if hasattr(card, "keys"):
+                    card = dict(card)
+        except Exception:
+            pass
+
+        candidates = self.list_candidate_assertions_for_document(ref_norm)
+        candidate_count = len(candidates)
+
+        verified_count = 0
+        rejected_count = 0
+        for c in candidates:
+            if not isinstance(c, dict):
+                continue
+        all_rows = self.db.execute(
+            """SELECT COUNT(*) AS n,
+                      SUM(CASE WHEN vs.status='verified' THEN 1 ELSE 0 END) AS verified,
+                      SUM(CASE WHEN vs.status='rejected' THEN 1 ELSE 0 END) AS rejected
+               FROM assertion_occurrence ao
+               JOIN assertion a ON a.id=ao.assertion_id
+               LEFT JOIN document_inventory di ON di.id = ao.document_inventory_id
+               LEFT JOIN verification_state vs
+                 ON vs.target_kind='assertion' AND vs.target_id=a.id AND vs.matter_id=a.matter_id
+               WHERE a.matter_id=?
+                 AND (ao.document_id=? OR ao.document_id=? OR di.relative_path=?)""",
+            (self.matter_id, ref_norm, ref_norm.rsplit("/", 1)[-1] if "/" in ref_norm else ref_norm, ref_norm),
+        ).fetchone()
+        if all_rows:
+            verified_count = int(all_rows["verified"] or 0)
+            rejected_count = int(all_rows["rejected"] or 0)
+
+        linked_issues: list[dict] = []
+        try:
+            issue_rows = self.db.execute(
+                """SELECT DISTINCT i.id, i.title, i.status, i.materiality
+                   FROM assertion_occurrence ao
+                   JOIN assertion_issue_link ail ON ail.assertion_id = ao.assertion_id
+                   JOIN issue i ON i.id = ail.issue_id
+                   LEFT JOIN document_inventory di ON di.id = ao.document_inventory_id
+                   WHERE i.matter_id=?
+                     AND (ao.document_id=? OR di.relative_path=?)
+                   ORDER BY i.materiality DESC""",
+                (self.matter_id, ref_norm, ref_norm),
+            ).fetchall()
+            linked_issues = [dict(r) for r in issue_rows]
+        except Exception:
+            pass
+
+        actor_roles: list[dict] = []
+        try:
+            role_rows = self.db.execute(
+                """SELECT dar.actor_id, act.name AS actor_name,
+                          dar.role, dar.confidence
+                   FROM document_actor_role dar
+                   JOIN actor act ON act.id = dar.actor_id
+                   LEFT JOIN document_inventory di ON di.id = dar.doc_id
+                   WHERE act.matter_id=?
+                     AND (dar.doc_id=? OR di.relative_path=?)
+                   ORDER BY dar.confidence DESC""",
+                (self.matter_id, ref_norm, ref_norm),
+            ).fetchall()
+            actor_roles = [dict(r) for r in role_rows]
+        except Exception:
+            pass
+
+        return {
+            "document_ref": document_ref,
+            "card": card,
+            "candidate_count": candidate_count,
+            "verified_count": verified_count,
+            "rejected_count": rejected_count,
+            "candidates": candidates[:50],
+            "linked_issues": linked_issues,
+            "actor_roles": actor_roles,
+        }
+
     def list_documents_needing_profile(self, limit: int = 200) -> list[dict]:
         """Return docs that need query-agnostic profiling."""
         return self.inventory.list_needing_profile(limit=limit)

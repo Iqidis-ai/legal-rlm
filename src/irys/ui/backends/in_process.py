@@ -593,6 +593,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_timeline(limit=limit, policy_audience=policy_audience)
 
+    async def get_document_console(self, matter_id: str, document_ref: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_document_console(document_ref)
+
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         """Document picker feed for the bulk-verify dropdown — every
         doc in the matter with pending/verified counts so reviewers
