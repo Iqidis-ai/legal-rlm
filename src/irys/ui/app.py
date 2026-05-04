@@ -4111,32 +4111,88 @@ def _fmt_llm_analytics_panel(
     )
 
 
+_QUANT_PANEL_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "empty": "No quantitative facts extracted yet.",
+        "invoiced": "Invoiced", "paid": "Paid", "disputed": "Disputed", "exposure": "Net exposure",
+        "waterfall": "Damages waterfall", "no_waterfall": "No damages waterfall available.",
+        "categories": "Category totals", "no_categories": "No category totals available.",
+        "invoice_recon": "Invoice reconciliation", "no_invoices": "No invoice chain available.",
+        "grounding": "Payment grounding", "no_grounding": "No source span grounding available.",
+        "conflicts": "Amount conflicts", "no_conflicts": "No amount conflicts detected.",
+        "damage_detail": "Damage detail",
+    },
+    "finance": {
+        "empty": "No quantitative facts extracted yet.",
+        "invoiced": "Billed", "paid": "Settled", "disputed": "Disputed", "exposure": "Net exposure",
+        "waterfall": "Amount breakdown", "no_waterfall": "No amount breakdown available.",
+        "categories": "Category totals", "no_categories": "No category totals available.",
+        "invoice_recon": "Transaction reconciliation", "no_invoices": "No transaction chain available.",
+        "grounding": "Transaction grounding", "no_grounding": "No source grounding available.",
+        "conflicts": "Amount conflicts", "no_conflicts": "No amount conflicts detected.",
+        "damage_detail": "Amount detail",
+    },
+    "coding": {
+        "empty": "No quantitative facts extracted yet.",
+        "invoiced": "Allocated", "paid": "Consumed", "disputed": "Disputed", "exposure": "Net remaining",
+        "waterfall": "Metric breakdown", "no_waterfall": "No metric breakdown available.",
+        "categories": "Category totals", "no_categories": "No category totals available.",
+        "invoice_recon": "Resource reconciliation", "no_invoices": "No resource chain available.",
+        "grounding": "Metric grounding", "no_grounding": "No source grounding available.",
+        "conflicts": "Metric conflicts", "no_conflicts": "No metric conflicts detected.",
+        "damage_detail": "Metric detail",
+    },
+    "academic_research": {
+        "empty": "No quantitative facts extracted yet.",
+        "invoiced": "Budgeted", "paid": "Spent", "disputed": "Disputed", "exposure": "Net remaining",
+        "waterfall": "Amount breakdown", "no_waterfall": "No amount breakdown available.",
+        "categories": "Category totals", "no_categories": "No category totals available.",
+        "invoice_recon": "Funding reconciliation", "no_invoices": "No funding chain available.",
+        "grounding": "Funding grounding", "no_grounding": "No source grounding available.",
+        "conflicts": "Amount conflicts", "no_conflicts": "No amount conflicts detected.",
+        "damage_detail": "Amount detail",
+    },
+    "biomedical": {
+        "empty": "No quantitative facts extracted yet.",
+        "invoiced": "Charged", "paid": "Paid", "disputed": "Disputed", "exposure": "Net exposure",
+        "waterfall": "Cost breakdown", "no_waterfall": "No cost breakdown available.",
+        "categories": "Category totals", "no_categories": "No category totals available.",
+        "invoice_recon": "Cost reconciliation", "no_invoices": "No cost chain available.",
+        "grounding": "Cost grounding", "no_grounding": "No source grounding available.",
+        "conflicts": "Amount conflicts", "no_conflicts": "No amount conflicts detected.",
+        "damage_detail": "Cost detail",
+    },
+}
+
+
 def _fmt_quant_panel(
     payment_recon: dict,
     invoice_chain: list,
     amount_conflicts: list,
     damages: list,
+    domain: str = "legal",
 ) -> str:
+    L = _QUANT_PANEL_LABELS.get(domain, _QUANT_PANEL_LABELS["legal"])
     has_recon = bool(payment_recon and payment_recon.get("invoiced") is not None)
     has_invoice_chain = bool(invoice_chain)
     has_amount_conflicts = bool(amount_conflicts)
     has_damages = bool(damages)
     if not has_recon and not has_invoice_chain and not has_amount_conflicts and not has_damages:
-        return "<div class='viz-empty'>No quantitative facts extracted yet.</div>"
+        return f"<div class='viz-empty'>{L['empty']}</div>"
 
     cards: list[str] = []
     if has_recon:
         cards.extend(
             [
-                _metric_card("Invoiced", _fmt_money_short(payment_recon.get("invoiced", 0.0))),
-                _metric_card("Paid", _fmt_money_short(payment_recon.get("paid", 0.0)), tone="green"),
+                _metric_card(L["invoiced"], _fmt_money_short(payment_recon.get("invoiced", 0.0))),
+                _metric_card(L["paid"], _fmt_money_short(payment_recon.get("paid", 0.0)), tone="green"),
                 _metric_card(
-                    "Disputed",
+                    L["disputed"],
                     _fmt_money_short(payment_recon.get("disputed", 0.0)),
                     tone="amber",
                 ),
                 _metric_card(
-                    "Net exposure",
+                    L["exposure"],
                     _fmt_money_short(payment_recon.get("exposure", 0.0)),
                     tone="red",
                 ),
@@ -4164,7 +4220,7 @@ def _fmt_quant_panel(
             key=lambda item: _safe_float(item.get("claimed_amount", 0.0)),
             reverse=True,
         )
-    ) or "<div class='viz-empty'>No damages waterfall available.</div>"
+    ) or f"<div class='viz-empty'>{L['no_waterfall']}</div>"
 
     category_rows = ""
     if has_recon and isinstance(payment_recon.get("by_category"), dict):
@@ -4258,35 +4314,35 @@ def _fmt_quant_panel(
     return (
         "<div class='viz-shell'>"
         + ("<div class='viz-card-grid'>" + "".join(cards) + "</div>" if cards else "")
-        + "<div class='viz-panel'><div class='viz-panel-title'>Damages waterfall</div>"
+        + f"<div class='viz-panel'><div class='viz-panel-title'>{L['waterfall']}</div>"
         + damage_rows
         + "</div>"
         + (
             "<div class='viz-two-col'>"
-            + "<div class='viz-panel'><div class='viz-panel-title'>Category totals</div>"
+            + f"<div class='viz-panel'><div class='viz-panel-title'>{L['categories']}</div>"
             + (
                 "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
                 "<th>Category</th><th>Total</th><th>Facts</th></tr></thead><tbody>"
                 + category_rows
                 + "</tbody></table></div>"
                 if category_rows
-                else "<div class='viz-empty'>No category totals available.</div>"
+                else f"<div class='viz-empty'>{L['no_categories']}</div>"
             )
             + "</div>"
-            + "<div class='viz-panel'><div class='viz-panel-title'>Invoice reconciliation</div>"
+            + f"<div class='viz-panel'><div class='viz-panel-title'>{L['invoice_recon']}</div>"
             + (
                 "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
-                "<th>Invoice</th><th>Invoiced</th><th>Paid</th><th>Outstanding</th><th>Source spans</th>"
+                f"<th>Invoice</th><th>{L['invoiced']}</th><th>{L['paid']}</th><th>Outstanding</th><th>Source spans</th>"
                 "</tr></thead><tbody>"
                 + invoice_rows
                 + "</tbody></table></div>"
                 if invoice_rows
-                else "<div class='viz-empty'>No invoice chain available.</div>"
+                else f"<div class='viz-empty'>{L['no_invoices']}</div>"
             )
             + "</div></div>"
         )
         + (
-            "<div class='viz-panel'><div class='viz-panel-title'>Payment grounding</div>"
+            f"<div class='viz-panel'><div class='viz-panel-title'>{L['grounding']}</div>"
             + (
                 "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
                 "<th>Type</th><th>Subject</th><th>Amount</th><th>Location</th>"
@@ -4294,22 +4350,22 @@ def _fmt_quant_panel(
                 + source_span_rows
                 + "</tbody></table></div>"
                 if source_span_rows
-                else "<div class='viz-empty'>No source span grounding available.</div>"
+                else f"<div class='viz-empty'>{L['no_grounding']}</div>"
             )
             + "</div>"
             if has_recon
             else ""
         )
         + (
-            "<div class='viz-panel'><div class='viz-panel-title'>Damages source detail</div>"
+            f"<div class='viz-panel'><div class='viz-panel-title'>{L['damage_detail']}</div>"
             + (damage_details or "<div class='viz-empty'>No component detail available.</div>")
             + "</div>"
             if has_damages
             else ""
         )
         + (
-            "<div class='viz-panel'><div class='viz-panel-title'>Amount conflicts</div>"
-            + (amount_conflict_details or "<div class='viz-empty'>No amount conflicts detected.</div>")
+            f"<div class='viz-panel'><div class='viz-panel-title'>{L['conflicts']}</div>"
+            + (amount_conflict_details or f"<div class='viz-empty'>{L['no_conflicts']}</div>")
             + "</div>"
             if has_amount_conflicts
             else ""
@@ -7172,7 +7228,7 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading assumptions: {_escape(str(exc))}</div>"
 
-    def load_quant(self, matter_id: str) -> str:
+    def load_quant(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
@@ -7182,6 +7238,7 @@ class AppState:
                 quant_data.get("invoice_reconciliation", []),
                 quant_data.get("amount_conflicts", []),
                 quant_data.get("damages_waterfall", []),
+                domain=domain,
             )
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading quantitative data: {_escape(exc)}</div>"
@@ -7195,7 +7252,7 @@ class AppState:
                 msg = f"Detected {len(gap_ids)} new conflict(s). Gaps recorded, assertions marked DISPUTED."
             else:
                 msg = "No new conflicts detected. All amounts are consistent."
-            refreshed = self.load_quant(matter_id)
+            refreshed = self.load_quant(matter_id, domain=self._detect_domain(matter_id))
             return msg, refreshed
         except Exception as exc:
             return f"Error: {_escape(str(exc))}", ""
@@ -9176,9 +9233,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 f_overview = pool.submit(state.load_overview, mid, domain)
                 f_issues = pool.submit(state.load_issues, mid, domain)
                 f_gaps = pool.submit(state.load_gaps, mid)
-                f_assumptions = pool.submit(state.load_assumptions, mid)
+                f_assumptions = pool.submit(state.load_assumptions, mid, domain)
                 f_assertions = pool.submit(state.load_assertions, mid)
-                f_quant = pool.submit(state.load_quant, mid)
+                f_quant = pool.submit(state.load_quant, mid, domain)
                 f_timeline = pool.submit(state.load_timeline, mid, domain)
                 f_evidence = pool.submit(state.load_evidence_matrix, mid, domain=domain)
                 f_communication = pool.submit(state.load_communication_map, mid, domain)
@@ -9517,7 +9574,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[assumptions_detail_html],
         )
         refresh_quant_btn.click(
-            fn=lambda mid: state.load_quant(mid),
+            fn=lambda mid: state.load_quant(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[quant_md],
         )

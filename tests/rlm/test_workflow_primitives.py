@@ -3039,3 +3039,27 @@ def test_fmt_export_quant_empty():
     from irys.ui.app import _fmt_quant
     result = _fmt_quant({}, [], domain="coding")
     assert "investigation" in result.lower()
+
+
+def test_fmt_quant_panel_domain_labels():
+    from irys.ui.app import _fmt_quant_panel
+    recon = {"invoiced": 100.0, "paid": 50.0, "disputed": 10.0, "exposure": 40.0}
+    damages = [{"component": "Direct", "claimed_amount": 100.0, "source_count": 2}]
+
+    legal = _fmt_quant_panel(recon, [], [], damages, domain="legal")
+    assert "Invoiced" in legal
+    assert "Damages waterfall" in legal
+
+    finance = _fmt_quant_panel(recon, [], [], damages, domain="finance")
+    assert "Billed" in finance
+    assert "Amount breakdown" in finance
+
+    coding = _fmt_quant_panel(recon, [], [], damages, domain="coding")
+    assert "Allocated" in coding
+    assert "Metric breakdown" in coding
+
+
+def test_fmt_quant_panel_empty():
+    from irys.ui.app import _fmt_quant_panel
+    result = _fmt_quant_panel({}, [], [], [], domain="biomedical")
+    assert "viz-empty" in result

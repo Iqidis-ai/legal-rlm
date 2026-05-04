@@ -435,7 +435,8 @@ class HttpBackend(UIBackend):
             r = await self._client.delete(f"/matter/{matter_id}/trust-overrides/{pattern_enc}")
             r.raise_for_status()
             return True
-        except Exception:
+        except Exception as exc:
+            _log.warning("Failed to delete trust override %r for %s: %s", document_pattern, matter_id, exc)
             return False
 
     async def generate_clarifications(self, matter_id: str, top_n: int = 3) -> list[str]:
