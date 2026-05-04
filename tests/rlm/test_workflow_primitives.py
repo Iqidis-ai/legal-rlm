@@ -10430,3 +10430,38 @@ def test_provenance_tier_label_empty_fallback():
     assert _provenance_tier_label({}) == "Irys"
     assert _provenance_tier_label({"model_tier": ""}) == "Irys"
     assert _provenance_tier_label({"model_tier": None}) == "Irys"
+
+
+# --- _error_html guard regression tests (previously unguarded formatters) ---
+
+
+def test_authority_panel_error_dict():
+    """_fmt_authority_panel surfaces error dicts instead of silent empty state."""
+    from irys.ui.app import _fmt_authority_panel
+    html = _fmt_authority_panel({"error": "network timeout"})
+    assert "Backend error" in html
+    assert "network timeout" in html
+
+
+def test_authority_panel_xss_in_error():
+    """_fmt_authority_panel escapes XSS in error messages."""
+    from irys.ui.app import _fmt_authority_panel
+    html = _fmt_authority_panel({"error": "<script>alert(1)</script>"})
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_document_intelligence_panel_error_dict():
+    """_fmt_document_intelligence_panel surfaces error dicts."""
+    from irys.ui.app import _fmt_document_intelligence_panel
+    html = _fmt_document_intelligence_panel({"error": "db unreachable"})
+    assert "Backend error" in html
+    assert "db unreachable" in html
+
+
+def test_answer_audit_error_dict():
+    """_fmt_answer_audit surfaces error dicts instead of silent empty state."""
+    from irys.ui.app import _fmt_answer_audit
+    html = _fmt_answer_audit({"error": "audit service unavailable"})
+    assert "Backend error" in html
+    assert "audit service unavailable" in html
