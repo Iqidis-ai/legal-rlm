@@ -1080,16 +1080,49 @@ def _fmt_overview_panel(data: dict, domain: str = "legal") -> str:
     )
 
 
-def _fmt_trust_notice(issues: list) -> str:
-    """P0.2 + P0.5 visibility banner: tell the attorney up front
-    which issues the synthesis memo is hedging on. Mirrors the
-    logic of engine._build_trust_abstention_block — if verified
-    support is zero or a proof gap exists, the memo refuses a
-    definitive claim, and the attorney should see that in-app
-    rather than only inside the memo prose.
-    """
+_TRUST_NOTICE_LABELS = {
+    "legal": {
+        "issues_word": "issue(s)",
+        "reviewer": "attorney",
+        "proof_gap": "proof gap",
+        "all_verified": "All {total} {issues_word} have verified support. The memo makes definitive claims only where the {reviewer} has signed off. No hedging needed.",
+        "hedging": "Hedging on {hedged} of {total} {issues_word}. The memo frames findings as provisional or unresolved on: {detail}. Verify supporting facts in the Review Inbox to promote these to definitive claims.",
+    },
+    "finance": {
+        "issues_word": "thesis(es)",
+        "reviewer": "analyst",
+        "proof_gap": "evidence gap",
+        "all_verified": "All {total} {issues_word} have confirmed support. The report makes definitive claims only where the {reviewer} has signed off. No hedging needed.",
+        "hedging": "Hedging on {hedged} of {total} {issues_word}. The report frames findings as provisional or unresolved on: {detail}. Verify supporting facts in the Review Inbox to promote these to definitive claims.",
+    },
+    "coding": {
+        "issues_word": "hypothesis(es)",
+        "reviewer": "engineer",
+        "proof_gap": "verification gap",
+        "all_verified": "All {total} {issues_word} have confirmed support. The analysis makes definitive claims only where the {reviewer} has signed off. No hedging needed.",
+        "hedging": "Hedging on {hedged} of {total} {issues_word}. The analysis frames findings as provisional or unresolved on: {detail}. Verify supporting facts in the Review Inbox to promote these to definitive claims.",
+    },
+    "academic_research": {
+        "issues_word": "claim(s)",
+        "reviewer": "reviewer",
+        "proof_gap": "evidence gap",
+        "all_verified": "All {total} {issues_word} have verified support. The review makes definitive claims only where the {reviewer} has signed off. No hedging needed.",
+        "hedging": "Hedging on {hedged} of {total} {issues_word}. The review frames findings as provisional or unresolved on: {detail}. Verify supporting facts in the Review Inbox to promote these to definitive claims.",
+    },
+    "biomedical": {
+        "issues_word": "finding(s)",
+        "reviewer": "clinician",
+        "proof_gap": "evidence gap",
+        "all_verified": "All {total} {issues_word} have verified support. The summary makes definitive claims only where the {reviewer} has signed off. No hedging needed.",
+        "hedging": "Hedging on {hedged} of {total} {issues_word}. The summary frames findings as provisional or unresolved on: {detail}. Verify supporting facts in the Review Inbox to promote these to definitive claims.",
+    },
+}
+
+
+def _fmt_trust_notice(issues: list, domain: str = "legal") -> str:
     if not issues:
         return ""
+    labels = _TRUST_NOTICE_LABELS.get(domain, _TRUST_NOTICE_LABELS["legal"])
     total = len(issues)
     fully_verified = 0
     candidate_only = 0
@@ -1108,7 +1141,7 @@ def _fmt_trust_notice(issues: list) -> str:
             continue
         if has_gap:
             gap_blocked += 1
-            issue_names.append(f"{title} (proof gap)")
+            issue_names.append(f"{title} ({labels['proof_gap']})")
         elif v == 0 and c > 0:
             candidate_only += 1
             issue_names.append(f"{title} (candidate-only)")
@@ -1117,30 +1150,30 @@ def _fmt_trust_notice(issues: list) -> str:
             issue_names.append(f"{title} (unsupported)")
     hedged = candidate_only + gap_blocked + no_support
     if hedged == 0:
-        # Everything proved — quiet green banner.
+        msg = labels["all_verified"].format(
+            total=total, issues_word=labels["issues_word"], reviewer=labels["reviewer"],
+        )
         return (
             "<div style='padding:10px 14px;border-radius:8px;"
             "background:#dcfce7;color:#14532d;border-left:4px solid #15803d;"
             "margin-bottom:12px;font-size:13px;'>"
-            f"<strong>All {total} issue(s) have verified support.</strong> "
-            "The memo makes definitive claims only where the attorney has "
-            "signed off. No hedging needed."
+            f"<strong>{_escape(msg)}</strong>"
             "</div>"
         )
-    # Hedging banner. List up to 4 issue names; summarize the rest.
     shown = issue_names[:4]
     remainder = len(issue_names) - len(shown)
     detail = "; ".join(_escape(n) for n in shown)
     if remainder > 0:
         detail += f"; and {remainder} more"
+    msg = labels["hedging"].format(
+        hedged=hedged, total=total, issues_word=labels["issues_word"], detail=detail,
+    )
     return (
         "<div style='padding:10px 14px;border-radius:8px;"
         "background:#fef3c7;color:#78350f;border-left:4px solid #b45309;"
         "margin-bottom:12px;font-size:13px;'>"
-        f"<strong>⚠ Hedging on {hedged} of {total} issue(s).</strong> "
-        f"The memo frames findings as <em>provisional</em> or <em>unresolved</em> "
-        f"on: {detail}. Verify supporting facts in the Review Inbox to promote "
-        f"these to definitive claims."
+        f"<strong>⚠ {_escape(str(hedged))} of {_escape(str(total))} {_escape(labels['issues_word'])}</strong> "
+        f"— {msg}"
         "</div>"
     )
 
@@ -1285,7 +1318,7 @@ def _fmt_issues_panel(issues: list, domain: str = "legal") -> str:
         f" {_escape(labels['advisory_cov'])}</span>"
         "</div>"
     )
-    notice = _fmt_trust_notice(issues)
+    notice = _fmt_trust_notice(issues, domain=domain)
     return (
         "<div class='viz-shell'>"
         + notice
