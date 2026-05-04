@@ -2136,6 +2136,23 @@ def test_fmt_trust_notice_domain_labels():
     assert "engineer" in result_coding.lower()
 
 
+def test_fmt_trust_notice_domain_hedging_labels():
+    """Trust notice hedging path uses domain-aware candidate/unsupported labels."""
+    from irys.ui.app import _fmt_trust_notice
+    candidate_issue = [
+        {"verified_supporting_count": 0, "candidate_supporting_count": 2, "has_proof_gap": False, "title": "T1"},
+    ]
+    unsupported_issue = [
+        {"verified_supporting_count": 0, "candidate_supporting_count": 0, "has_proof_gap": False, "title": "T2"},
+    ]
+    assert "candidate-only" in _fmt_trust_notice(candidate_issue, domain="legal")
+    assert "unconfirmed" in _fmt_trust_notice(candidate_issue, domain="finance")
+    assert "unverified" in _fmt_trust_notice(candidate_issue, domain="coding")
+    assert "unsupported" in _fmt_trust_notice(unsupported_issue, domain="legal")
+    assert "unsourced" in _fmt_trust_notice(unsupported_issue, domain="finance")
+    assert "uncited" in _fmt_trust_notice(unsupported_issue, domain="academic_research")
+
+
 def test_fmt_trust_notice_xss():
     from irys.ui.app import _fmt_trust_notice
     issues = [

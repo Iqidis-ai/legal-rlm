@@ -1090,6 +1090,8 @@ _TRUST_NOTICE_LABELS = {
         "issues_word": "issue(s)",
         "reviewer": "attorney",
         "proof_gap": "proof gap",
+        "candidate_only": "candidate-only",
+        "unsupported": "unsupported",
         "all_verified": "All {total} {issues_word} have verified support. The memo makes definitive claims only where the {reviewer} has signed off. No hedging needed.",
         "hedging": "Hedging on {hedged} of {total} {issues_word}. The memo frames findings as provisional or unresolved on: {detail}. Verify supporting facts in the Review Inbox to promote these to definitive claims.",
     },
@@ -1097,6 +1099,8 @@ _TRUST_NOTICE_LABELS = {
         "issues_word": "thesis(es)",
         "reviewer": "analyst",
         "proof_gap": "evidence gap",
+        "candidate_only": "unconfirmed",
+        "unsupported": "unsourced",
         "all_verified": "All {total} {issues_word} have confirmed support. The report makes definitive claims only where the {reviewer} has signed off. No hedging needed.",
         "hedging": "Hedging on {hedged} of {total} {issues_word}. The report frames findings as provisional or unresolved on: {detail}. Verify supporting facts in the Review Inbox to promote these to definitive claims.",
     },
@@ -1104,6 +1108,8 @@ _TRUST_NOTICE_LABELS = {
         "issues_word": "hypothesis(es)",
         "reviewer": "engineer",
         "proof_gap": "verification gap",
+        "candidate_only": "unverified",
+        "unsupported": "no evidence",
         "all_verified": "All {total} {issues_word} have confirmed support. The analysis makes definitive claims only where the {reviewer} has signed off. No hedging needed.",
         "hedging": "Hedging on {hedged} of {total} {issues_word}. The analysis frames findings as provisional or unresolved on: {detail}. Verify supporting facts in the Review Inbox to promote these to definitive claims.",
     },
@@ -1111,6 +1117,8 @@ _TRUST_NOTICE_LABELS = {
         "issues_word": "claim(s)",
         "reviewer": "reviewer",
         "proof_gap": "evidence gap",
+        "candidate_only": "unverified",
+        "unsupported": "uncited",
         "all_verified": "All {total} {issues_word} have verified support. The review makes definitive claims only where the {reviewer} has signed off. No hedging needed.",
         "hedging": "Hedging on {hedged} of {total} {issues_word}. The review frames findings as provisional or unresolved on: {detail}. Verify supporting facts in the Review Inbox to promote these to definitive claims.",
     },
@@ -1118,6 +1126,8 @@ _TRUST_NOTICE_LABELS = {
         "issues_word": "finding(s)",
         "reviewer": "clinician",
         "proof_gap": "evidence gap",
+        "candidate_only": "unverified",
+        "unsupported": "unsourced",
         "all_verified": "All {total} {issues_word} have verified support. The summary makes definitive claims only where the {reviewer} has signed off. No hedging needed.",
         "hedging": "Hedging on {hedged} of {total} {issues_word}. The summary frames findings as provisional or unresolved on: {detail}. Verify supporting facts in the Review Inbox to promote these to definitive claims.",
     },
@@ -1149,10 +1159,10 @@ def _fmt_trust_notice(issues: list, domain: str = "legal") -> str:
             issue_names.append(f"{title} ({labels['proof_gap']})")
         elif v == 0 and c > 0:
             candidate_only += 1
-            issue_names.append(f"{title} (candidate-only)")
+            issue_names.append(f"{title} ({labels['candidate_only']})")
         else:
             no_support += 1
-            issue_names.append(f"{title} (unsupported)")
+            issue_names.append(f"{title} ({labels['unsupported']})")
     hedged = candidate_only + gap_blocked + no_support
     if hedged == 0:
         msg = labels["all_verified"].format(
