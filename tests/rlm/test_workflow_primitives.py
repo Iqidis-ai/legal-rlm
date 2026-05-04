@@ -3148,3 +3148,15 @@ def test_authority_backend_interface_methods():
     assert "citation" in sig.parameters
     assert "authority_type" in sig.parameters
     assert "weight" in sig.parameters
+
+
+def test_xss_authority_curation_escape():
+    """XSS regression: authority curation status messages must escape user input."""
+    from irys.ui.app import _escape
+    xss_payload = '<img src=x onerror=alert(1)>'
+    escaped = _escape(xss_payload)
+    assert "<img" not in escaped
+    assert "&lt;" in escaped
+    aid = _escape(xss_payload[:12])
+    msg = f"Added authority {aid}"
+    assert "<img" not in msg

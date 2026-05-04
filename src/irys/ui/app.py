@@ -7345,10 +7345,10 @@ class AppState:
             verb = "Added" if is_new else "Updated"
             domain = self._detect_domain(matter_id)
             html = self.load_authority_network(matter_id, domain)
-            return f"{verb} authority {aid[:12]}", html
+            return f"{verb} authority {_escape(aid[:12])}", html
         except Exception as exc:
             logger.warning("upsert_authority failed for %s: %s", matter_id, exc)
-            return f"Error: {exc}", ""
+            return f"Error: {_escape(str(exc))}", ""
 
     def do_link_authority_issue(
         self, matter_id: str, authority_id: str, issue_id: str, relevance: str,
@@ -7366,10 +7366,10 @@ class AppState:
             ))
             domain = self._detect_domain(matter_id)
             html = self.load_authority_network(matter_id, domain)
-            return f"Linked {authority_id[:12]} → {issue_id[:12]} ({relevance})", html
+            return f"Linked {_escape(authority_id[:12])} → {_escape(issue_id[:12])} ({_escape(relevance or '')})", html
         except Exception as exc:
             logger.warning("link_authority_to_issue failed: %s", exc)
-            return f"Error: {exc}", ""
+            return f"Error: {_escape(str(exc))}", ""
 
     def do_unlink_authority_issue(
         self, matter_id: str, authority_id: str, issue_id: str,
@@ -7386,10 +7386,10 @@ class AppState:
             ))
             domain = self._detect_domain(matter_id)
             html = self.load_authority_network(matter_id, domain)
-            return f"Unlinked {authority_id[:12]} from {issue_id[:12]}", html
+            return f"Unlinked {_escape(authority_id[:12])} from {_escape(issue_id[:12])}", html
         except Exception as exc:
             logger.warning("unlink_authority_from_issue failed: %s", exc)
-            return f"Error: {exc}", ""
+            return f"Error: {_escape(str(exc))}", ""
 
     def load_document_intelligence(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
