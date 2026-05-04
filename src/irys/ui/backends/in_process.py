@@ -408,6 +408,10 @@ class InProcessBackend(UIBackend):
                 a["rejection_reason"] = vs.get("rejection_reason")
         return assertions
 
+    async def get_issue_assertions(self, matter_id: str, issue_id: str) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.assertions.get_assertions_for_issue(issue_id)
+
     async def list_gaps(self, matter_id: str, limit: int = 50) -> list[dict]:
         model = self._get_matter_model(matter_id)
         return model.gaps.open_gaps(limit=limit)

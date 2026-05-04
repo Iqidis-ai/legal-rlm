@@ -5074,6 +5074,100 @@ def _fmt_assertions(assertions: list, domain: str = "legal") -> str:
     )
 
 
+_ISSUE_ASSERTIONS_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "supporting": "Supporting Evidence",
+        "attacking": "Attacking Evidence",
+        "neutral": "Neutral / Background",
+        "empty": "No linked assertions found for this issue.",
+    },
+    "finance": {
+        "supporting": "Corroborating Data",
+        "attacking": "Contradicting Data",
+        "neutral": "Contextual Data",
+        "empty": "No linked data points found for this objective.",
+    },
+    "coding": {
+        "supporting": "Supporting Findings",
+        "attacking": "Contradicting Findings",
+        "neutral": "Contextual Findings",
+        "empty": "No linked findings for this objective.",
+    },
+    "academic_research": {
+        "supporting": "Supporting Findings",
+        "attacking": "Contradicting Findings",
+        "neutral": "Contextual References",
+        "empty": "No linked findings for this question.",
+    },
+    "biomedical": {
+        "supporting": "Supporting Evidence",
+        "attacking": "Contradicting Evidence",
+        "neutral": "Contextual Evidence",
+        "empty": "No linked evidence for this hypothesis.",
+    },
+}
+
+
+def _fmt_issue_assertions(assertions: list, issue_id: str, domain: str = "legal") -> str:
+    L = _ISSUE_ASSERTIONS_LABELS.get(domain, _ISSUE_ASSERTIONS_LABELS["legal"])
+    if not assertions:
+        return f"<div class='viz-empty'>{L['empty']}</div>"
+
+    groups: dict[str, list[dict]] = {"supporting": [], "attacking": [], "neutral": []}
+    for a in assertions:
+        if not isinstance(a, dict):
+            continue
+        rel = (a.get("relation_type") or "neutral").lower()
+        bucket = rel if rel in groups else "neutral"
+        groups[bucket].append(a)
+
+    parts = [f"<div class='viz-shell'><div style='padding:8px 12px;'>"]
+    parts.append(
+        f"<div style='font-size:12px;color:#6b7280;margin-bottom:8px;'>"
+        f"Issue: <code>{_escape(str(issue_id)[:24])}</code> · "
+        f"{len(assertions)} linked assertion(s)</div>"
+    )
+
+    section_styles = {
+        "supporting": ("#16a34a", "#f0fdf4"),
+        "attacking": ("#dc2626", "#fef2f2"),
+        "neutral": ("#6b7280", "#f9fafb"),
+    }
+
+    for bucket in ("supporting", "attacking", "neutral"):
+        items = groups[bucket]
+        if not items:
+            continue
+        color, bg = section_styles[bucket]
+        label = L.get(bucket, bucket.title())
+        parts.append(
+            f"<div style='margin-bottom:12px;'>"
+            f"<div style='font-weight:600;font-size:13px;color:{color};margin-bottom:4px;'>"
+            f"{_escape(label)} ({len(items)})</div>"
+        )
+        for a in items:
+            prop = _escape((a.get("proposition_text") or "—")[:200])
+            belief = a.get("belief_state") or "undetermined"
+            belief_label = _escape(_domain_belief_label(belief, domain))
+            conf = a.get("confidence")
+            conf_str = f"{float(conf):.2f}" if isinstance(conf, (int, float)) else "—"
+            aid = _escape(str(a.get("id", "?"))[:12])
+            parts.append(
+                f"<div style='padding:6px 10px;margin-bottom:4px;border-radius:6px;"
+                f"background:{bg};border-left:3px solid {color};font-size:12px;'>"
+                f"<div>{prop}</div>"
+                f"<div style='font-size:11px;color:#6b7280;margin-top:2px;'>"
+                f"<span class='belief-pill belief-{belief.lower()}'>{belief_label}</span>"
+                f" · Confidence: {conf_str}"
+                f" · <code style='font-size:10px;'>{aid}</code></div>"
+                f"</div>"
+            )
+        parts.append("</div>")
+
+    parts.append("</div></div>")
+    return "\n".join(parts)
+
+
 _ASSUMPTION_STATUS_PILLS: dict[str, tuple[str, str]] = {
     "provisional": ("Provisional", "pill-orange"),
     "confirmed": ("Confirmed", "pill-green"),
@@ -6823,6 +6917,22 @@ class AppState:
             return _fmt_assertion_inspector(health, history=history, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error inspecting assertion: {_escape(str(exc))}</div>"
+
+    def load_issue_assertions(self, matter_id: str, issue_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        iid = (issue_id or "").strip()
+        if not iid:
+            return "<div class='viz-empty'>Enter an issue ID to see its linked evidence.</div>"
+        try:
+            assertions = _run_async(self.backend().get_issue_assertions(matter_id, iid))
+            if not assertions:
+                return f"<div class='viz-empty'>No assertions linked to issue {_escape(iid[:12])}.</div>"
+            domain = self._detect_domain(matter_id)
+            return _fmt_issue_assertions(assertions, iid, domain=domain)
+        except Exception as exc:
+            logger.warning("load_issue_assertions failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
     def load_content_policy_audit(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
@@ -8921,6 +9031,30 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )
 
         # ==================================================================
+        # ISSUE EVIDENCE DRILL-DOWN — see assertions linked to a specific issue
+        # ==================================================================
+
+        with gr.Accordion(
+            "Issue Evidence — drill into the facts backing a specific issue",
+            open=False,
+        ):
+            gr.Markdown(
+                "Copy an Issue ID from the Issues panel or Proof State table "
+                "and click **Show Evidence** to see all assertions linked to that "
+                "issue, grouped by supporting, attacking, and neutral."
+            )
+            with gr.Row():
+                issue_drilldown_id = gr.Textbox(
+                    label="Issue ID",
+                    placeholder="Paste issue ID from issues panel or proof state table",
+                    scale=3,
+                )
+                issue_drilldown_btn = gr.Button("Show Evidence", variant="primary", size="sm", scale=1)
+            issue_assertions_html = gr.HTML(
+                "<div class='viz-empty'>Enter an issue ID to see its linked evidence.</div>"
+            )
+
+        # ==================================================================
         # REVIEW INBOX — what AI extractions need the attorney's sign-off
         # ==================================================================
 
@@ -10284,6 +10418,18 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, aid: state.inspect_assertion(mid, aid),
             inputs=[matter_id_box, inspector_assertion_id],
             outputs=[inspector_html],
+        )
+
+        # --- Issue Evidence Drill-Down wiring ---
+        issue_drilldown_btn.click(
+            fn=lambda mid, iid: state.load_issue_assertions(mid, iid),
+            inputs=[matter_id_box, issue_drilldown_id],
+            outputs=[issue_assertions_html],
+        )
+        issue_drilldown_id.submit(
+            fn=lambda mid, iid: state.load_issue_assertions(mid, iid),
+            inputs=[matter_id_box, issue_drilldown_id],
+            outputs=[issue_assertions_html],
         )
 
         # --- Review Inbox wiring ---

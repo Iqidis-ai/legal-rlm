@@ -76,6 +76,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_issue_assertions(self, matter_id: str, issue_id: str) -> list[dict]:
+        """Return assertions linked to a specific issue with relation types (SO-4)."""
+        ...
+
+    @abstractmethod
     async def list_gaps(self, matter_id: str, limit: int = 50) -> list[dict]:
         ...
 

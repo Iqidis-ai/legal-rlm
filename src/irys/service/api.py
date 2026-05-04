@@ -2976,6 +2976,17 @@ async def compute_issue_proof_state(matter_id: str, issue_id: str):
 
 
 @app.get(
+    "/matter/{matter_id}/issues/{issue_id}/assertions",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_issue_assertions(matter_id: str, issue_id: str):
+    """Return assertions linked to a specific issue with relation types (SO-4)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.assertions.get_assertions_for_issue(issue_id)
+
+
+@app.get(
     "/matter/{matter_id}/proof-state",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

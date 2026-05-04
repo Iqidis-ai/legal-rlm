@@ -3275,3 +3275,55 @@ def test_fmt_proof_state_panel_issue_id_all_domains():
     for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
         result = _fmt_proof_state_panel(summary, issues, domain=domain)
         assert "font-family:monospace" in result
+
+
+def test_fmt_issue_assertions_domain_labels():
+    from irys.ui.app import _fmt_issue_assertions
+    assertions = [
+        {"id": "a1", "proposition_text": "Test claim", "belief_state": "accepted",
+         "confidence": 0.9, "relation_type": "supporting"},
+        {"id": "a2", "proposition_text": "Counter claim", "belief_state": "disputed",
+         "confidence": 0.4, "relation_type": "attacking"},
+        {"id": "a3", "proposition_text": "Background", "belief_state": "undetermined",
+         "confidence": 0.5, "relation_type": "neutral"},
+    ]
+    legal = _fmt_issue_assertions(assertions, "iss-1", domain="legal")
+    assert "Supporting Evidence" in legal
+    assert "Attacking Evidence" in legal
+    assert "Test claim" in legal
+
+    finance = _fmt_issue_assertions(assertions, "iss-1", domain="finance")
+    assert "Corroborating Data" in finance
+    assert "Contradicting Data" in finance
+
+    biomedical = _fmt_issue_assertions(assertions, "iss-1", domain="biomedical")
+    assert "Supporting Evidence" in biomedical
+    assert "Contradicting Evidence" in biomedical
+
+
+def test_fmt_issue_assertions_empty():
+    from irys.ui.app import _fmt_issue_assertions
+    result = _fmt_issue_assertions([], "iss-1", domain="coding")
+    assert "viz-empty" in result
+    assert "No linked findings" in result
+
+
+def test_fmt_issue_assertions_non_dict_guard():
+    from irys.ui.app import _fmt_issue_assertions
+    assertions = [
+        "not-a-dict",
+        {"id": "a1", "proposition_text": "Valid", "relation_type": "supporting"},
+    ]
+    result = _fmt_issue_assertions(assertions, "iss-1", domain="legal")
+    assert "Valid" in result
+    assert "1" in result
+
+
+def test_issue_assertions_backend_interface():
+    import inspect
+    from irys.ui.backends.base import UIBackend
+    assert hasattr(UIBackend, "get_issue_assertions")
+    sig = inspect.signature(UIBackend.get_issue_assertions)
+    params = list(sig.parameters.keys())
+    assert "matter_id" in params
+    assert "issue_id" in params
