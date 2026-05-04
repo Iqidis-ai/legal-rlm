@@ -308,6 +308,84 @@ class ChatApp:
 
         return None
 
+    def _build_folder_tree_markdown(self, uploaded_files: list | None) -> str:
+        if not uploaded_files:
+            return ""
+
+        relpaths: list[str] = []
+        unnamed_count = 0
+        for f in uploaded_files:
+            rp = self._get_display_relpath(f)
+            if rp:
+                relpaths.append(rp)
+            else:
+                unnamed_count += 1
+
+        if not relpaths and unnamed_count == 0:
+            return ""
+
+        tree: dict = {}
+        for rp in relpaths:
+            parts = rp.replace("\\", "/").split("/")
+            node = tree
+            for part in parts[:-1]:
+                node = node.setdefault(part, {})
+            node[parts[-1]] = None  # leaf file
+
+        def _render(node: dict, indent: int) -> list[str]:
+            lines: list[str] = []
+            folders = sorted(
+                ((k, v) for k, v in node.items() if v is not None),
+                key=lambda x: x[0].lower(),
+            )
+            files = sorted(
+                (k for k, v in node.items() if v is None),
+                key=lambda x: x.lower(),
+            )
+            prefix = "  " * indent
+            for name, children in folders:
+                file_count = _count_leaves(children)
+                lines.append(f"{prefix}- **{name}/** ({file_count} file{'s' if file_count != 1 else ''})")
+                lines.extend(_render(children, indent + 1))
+            for name in files:
+                lines.append(f"{prefix}- {name}")
+            return lines
+
+        def _count_leaves(node: dict) -> int:
+            total = 0
+            for v in node.values():
+                if v is None:
+                    total += 1
+                else:
+                    total += _count_leaves(v)
+            return total
+
+        top_folders = [(k, v) for k, v in tree.items() if v is not None]
+        top_files = [k for k, v in tree.items() if v is None]
+
+        lines: list[str] = []
+
+        has_folders = bool(top_folders)
+
+        if top_files and has_folders:
+            lines.append(f"**(root)** ({len(top_files)} file{'s' if len(top_files) != 1 else ''})")
+            for name in sorted(top_files, key=str.lower):
+                lines.append(f"  - {name}")
+
+        for name, children in sorted(top_folders, key=lambda x: x[0].lower()):
+            count = _count_leaves(children)
+            lines.append(f"**{name}/** ({count} file{'s' if count != 1 else ''})")
+            lines.extend(_render(children, 1))
+
+        if top_files and not has_folders:
+            for name in sorted(top_files, key=str.lower):
+                lines.append(f"- {name}")
+
+        if unnamed_count:
+            lines.append(f"*(unnamed)* ({unnamed_count} file{'s' if unnamed_count != 1 else ''})")
+
+        return "\n".join(lines)
+
     def _extract_files_from_upload(
         self,
         uploaded_files: list,
@@ -936,6 +1014,7 @@ def create_chat_app(api_key: Optional[str] = None) -> gr.Blocks:
                                 "*Select a folder to upload all documents including subfolders. "
                                 "Folder structure will be preserved.*",
                             )
+                            folder_tree_md = gr.Markdown("")
 
                 # Chat interface (Gradio 6.x uses messages format by default)
                 chatbot = gr.Chatbot(
@@ -1030,6 +1109,12 @@ def create_chat_app(api_key: Optional[str] = None) -> gr.Blocks:
             )
         else:
             # S3/Cloud mode: file upload
+            folder_upload.change(
+                fn=app._build_folder_tree_markdown,
+                inputs=[folder_upload],
+                outputs=[folder_tree_md],
+            )
+
             submit_btn.click(
                 fn=app.chat_with_upload,
                 inputs=[msg, chatbot, file_upload, folder_upload],

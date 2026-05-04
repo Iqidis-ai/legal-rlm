@@ -73,3 +73,91 @@ class TestGetDisplayRelpath:
         # No orig_name, no extension on disk name, no .path -> can't recover
         f = _gradio_file(name="/tmp/uploads/" + "b" * 40)
         assert app._get_display_relpath(f) is None
+
+
+class TestBuildFolderTreeMarkdown:
+    def test_empty_list_returns_empty(self, app):
+        assert app._build_folder_tree_markdown([]) == ""
+
+    def test_none_returns_empty(self, app):
+        assert app._build_folder_tree_markdown(None) == ""
+
+    def test_flat_files_only(self, app):
+        files = [
+            _gradio_file(name="/tmp/a.pdf", orig_name="report.pdf"),
+            _gradio_file(name="/tmp/b.pdf", orig_name="contract.docx"),
+        ]
+        result = app._build_folder_tree_markdown(files)
+        assert "- contract.docx" in result
+        assert "- report.pdf" in result
+        assert "**" not in result
+
+    def test_single_nested_folder(self, app):
+        files = [
+            _gradio_file(name="/tmp/a.pdf", orig_name="Pleadings/answer.pdf"),
+            _gradio_file(name="/tmp/b.pdf", orig_name="Pleadings/complaint.pdf"),
+        ]
+        result = app._build_folder_tree_markdown(files)
+        assert "**Pleadings/**" in result
+        assert "2 files" in result
+        assert "  - answer.pdf" in result
+        assert "  - complaint.pdf" in result
+
+    def test_multiple_top_level_folders_sorted(self, app):
+        files = [
+            _gradio_file(name="/tmp/a.pdf", orig_name="Zebra/z.pdf"),
+            _gradio_file(name="/tmp/b.pdf", orig_name="Alpha/a.pdf"),
+        ]
+        result = app._build_folder_tree_markdown(files)
+        lines = result.splitlines()
+        alpha_idx = next(i for i, l in enumerate(lines) if "Alpha" in l)
+        zebra_idx = next(i for i, l in enumerate(lines) if "Zebra" in l)
+        assert alpha_idx < zebra_idx
+
+    def test_deep_nesting(self, app):
+        files = [
+            _gradio_file(name="/tmp/a.pdf", orig_name="L1/L2/L3/deep.pdf"),
+        ]
+        result = app._build_folder_tree_markdown(files)
+        assert "**L1/**" in result
+        assert "  - **L2/**" in result
+        assert "    - **L3/**" in result
+        assert "      - deep.pdf" in result
+
+    def test_unnamed_files_grouped(self, app):
+        files = [
+            _gradio_file(name="/tmp/" + "f" * 40),
+            _gradio_file(name="/tmp/a.pdf", orig_name="real.pdf"),
+        ]
+        result = app._build_folder_tree_markdown(files)
+        assert "(unnamed)" in result
+        assert "1 file)" in result
+        assert "- real.pdf" in result
+
+    def test_traversal_segments_sanitized(self, app):
+        files = [
+            _gradio_file(name="/tmp/a.pdf", orig_name="../escape/../../file.pdf"),
+        ]
+        result = app._build_folder_tree_markdown(files)
+        assert ".." not in result
+        assert "file.pdf" in result
+
+    def test_mixed_root_and_nested(self, app):
+        files = [
+            _gradio_file(name="/tmp/a.pdf", orig_name="root_file.pdf"),
+            _gradio_file(name="/tmp/b.pdf", orig_name="Folder/nested.pdf"),
+        ]
+        result = app._build_folder_tree_markdown(files)
+        assert "(root)" in result
+        assert "root_file.pdf" in result
+        assert "**Folder/**" in result
+        assert "nested.pdf" in result
+
+    def test_folder_file_count_accurate(self, app):
+        files = [
+            _gradio_file(name="/tmp/a.pdf", orig_name="Docs/a.pdf"),
+            _gradio_file(name="/tmp/b.pdf", orig_name="Docs/b.pdf"),
+            _gradio_file(name="/tmp/c.pdf", orig_name="Docs/sub/c.pdf"),
+        ]
+        result = app._build_folder_tree_markdown(files)
+        assert "3 files" in result
