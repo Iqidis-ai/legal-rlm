@@ -11093,3 +11093,47 @@ def test_resolve_taint_default_fallback_without_taint_field(tmp_path):
     engine = RLMEngine.__new__(RLMEngine)
     engine._matter_model = mm
     assert engine._resolve_taint_default() == "public_clean"
+
+
+def test_resolve_taint_default_falls_back_to_domain_composition(tmp_path):
+    """When preset file is deleted, _resolve_taint_default derives taint from DB domain."""
+    import json
+    from irys.matter.matter import MatterModel
+    from irys.rlm.engine import RLMEngine
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text(json.dumps({
+        "domain": "biomedical",
+        "version": 1,
+        "taint_default": "patient_deidentified",
+    }), encoding="utf-8")
+
+    mm = MatterModel.open(tmp_path)
+    # Verify facet was seeded at open time
+    facets = mm.memory_broker.get_object_domain_facets("workspace", mm.matter_id, status="active")
+    assert any(f["domain_profile_id"] == "biomedical" for f in facets)
+
+    # Delete the preset file — simulates TOCTOU scenario
+    preset_path.unlink()
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = mm
+    # Should still return patient_deidentified via domain composition fallback
+    assert engine._resolve_taint_default() == "patient_deidentified"
+
+
+def test_resolve_taint_default_legal_domain_no_preset(tmp_path):
+    """Legal domain without preset falls back to public_clean (no special mapping)."""
+    import json
+    from irys.matter.matter import MatterModel
+    from irys.rlm.engine import RLMEngine
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text(json.dumps({"domain": "legal", "version": 1}), encoding="utf-8")
+
+    mm = MatterModel.open(tmp_path)
+    preset_path.unlink()
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = mm
+    assert engine._resolve_taint_default() == "public_clean"

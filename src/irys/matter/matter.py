@@ -280,8 +280,9 @@ class MatterModel:
         if not preset_path.is_file():
             return None
         try:
-            if preset_path.stat().st_size > self._PRESET_MAX_SIZE:
-                _log.warning("Domain preset at %s exceeds size limit (%d bytes)", preset_path, preset_path.stat().st_size)
+            file_size = preset_path.stat().st_size
+            if file_size > self._PRESET_MAX_SIZE:
+                _log.warning("Domain preset at %s exceeds size limit (%d bytes)", preset_path, file_size)
                 return None
             data = _json.loads(preset_path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
