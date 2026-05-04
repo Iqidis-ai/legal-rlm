@@ -618,6 +618,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_alternative_theory_portfolio(objective_id=objective_id)
 
+    async def get_dependency_manifest_inspector(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_dependency_manifest_inspector()
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_objective_coverage_workbench()

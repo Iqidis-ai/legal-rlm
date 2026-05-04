@@ -6425,6 +6425,205 @@ def _fmt_alternative_theories(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_MANIFEST_INSPECTOR_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Dependency Manifests",
+        "subtitle": "Exact evidence and freshness behind each analysis output",
+        "empty": "No dependency manifests recorded yet.",
+        "fresh": "Fresh",
+        "stale": "Stale",
+        "taint_blocked": "Taint-Blocked",
+        "policy_limited": "Policy-Limited",
+        "unknown": "Unknown",
+        "objects": "Objects",
+        "negative": "Negative Deps",
+        "profile": "Profile",
+        "audience": "Audience",
+    },
+    "finance": {
+        "title": "Dependency Manifests",
+        "subtitle": "Exact evidence and freshness behind each analysis output",
+        "empty": "No dependency manifests recorded yet.",
+        "fresh": "Fresh",
+        "stale": "Stale",
+        "taint_blocked": "Taint-Blocked",
+        "policy_limited": "Policy-Limited",
+        "unknown": "Unknown",
+        "objects": "Objects",
+        "negative": "Negative Deps",
+        "profile": "Profile",
+        "audience": "Audience",
+    },
+    "coding": {
+        "title": "Dependency Manifests",
+        "subtitle": "Exact evidence and freshness behind each analysis output",
+        "empty": "No dependency manifests recorded yet.",
+        "fresh": "Fresh",
+        "stale": "Stale",
+        "taint_blocked": "Taint-Blocked",
+        "policy_limited": "Policy-Limited",
+        "unknown": "Unknown",
+        "objects": "Objects",
+        "negative": "Negative Deps",
+        "profile": "Profile",
+        "audience": "Audience",
+    },
+    "academic_research": {
+        "title": "Dependency Manifests",
+        "subtitle": "Exact evidence and freshness behind each analysis output",
+        "empty": "No dependency manifests recorded yet.",
+        "fresh": "Fresh",
+        "stale": "Stale",
+        "taint_blocked": "Taint-Blocked",
+        "policy_limited": "Policy-Limited",
+        "unknown": "Unknown",
+        "objects": "Objects",
+        "negative": "Negative Deps",
+        "profile": "Profile",
+        "audience": "Audience",
+    },
+    "biomedical": {
+        "title": "Dependency Manifests",
+        "subtitle": "Exact evidence and freshness behind each analysis output",
+        "empty": "No dependency manifests recorded yet.",
+        "fresh": "Fresh",
+        "stale": "Stale",
+        "taint_blocked": "Taint-Blocked",
+        "policy_limited": "Policy-Limited",
+        "unknown": "Unknown",
+        "objects": "Objects",
+        "negative": "Negative Deps",
+        "profile": "Profile",
+        "audience": "Audience",
+    },
+}
+
+
+def _fmt_manifest_inspector(data: dict, domain: str = "legal") -> str:
+    L = _MANIFEST_INSPECTOR_LABELS.get(domain, _MANIFEST_INSPECTOR_LABELS["legal"])
+    if not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    manifests = data.get("manifests", [])
+    if not manifests or not isinstance(manifests, list):
+        return f"<div class='viz-empty'>{_escape(L['empty'])}</div>"
+
+    total = data.get("total_count", 0)
+    fresh = data.get("fresh_count", 0)
+    stale = data.get("stale_count", 0)
+
+    def _safe_count(v: object) -> int:
+        try:
+            iv = int(v)  # type: ignore[arg-type]
+            return iv if isinstance(iv, int) and iv >= 0 else 0
+        except (TypeError, ValueError):
+            return 0
+
+    total = _safe_count(total)
+    fresh = _safe_count(fresh)
+    stale = _safe_count(stale)
+
+    status_styles = {
+        "fresh": ("pill-green", L["fresh"]),
+        "stale": ("pill-red", L["stale"]),
+        "taint_blocked": ("pill-orange", L["taint_blocked"]),
+        "policy_limited": ("pill-orange", L["policy_limited"]),
+        "unknown": ("pill-neutral", L["unknown"]),
+    }
+
+    parts = [
+        "<div class='viz-shell'>",
+        f"<div class='viz-header'><strong>{_escape(L['title'])}</strong>"
+        f" &mdash; {_escape(L['subtitle'])}</div>",
+        f"<div style='margin:8px 0;font-size:0.9em;color:#6b7280;'>"
+        f"<strong>{total}</strong> total &middot; "
+        f"<span class='pill pill-green'>{fresh} {_escape(L['fresh'])}</span> "
+        f"<span class='pill pill-red'>{stale} {_escape(L['stale'])}</span>"
+        f"</div>",
+    ]
+
+    for m in manifests:
+        if not isinstance(m, dict):
+            continue
+        mh = _escape(str(m.get("manifest_hash", ""))[:16])
+        purpose = _escape(str(m.get("purpose", ""))[:80])
+        created = _escape(str(m.get("created_at", ""))[:19])
+        status = str(m.get("status", "unknown")).lower()
+        pill_cls, pill_label = status_styles.get(status, ("pill-neutral", "Unknown"))
+        profile_id = _escape(str(m.get("domain_profile_id", ""))[:30])
+        audience = _escape(str(m.get("policy_audience", ""))[:20])
+        obj_count = _safe_count(m.get("object_dependency_count", 0))
+        neg_count = _safe_count(m.get("negative_dependency_count", 0))
+
+        border_color = "#16a34a" if status == "fresh" else "#dc2626" if status == "stale" else "#d97706"
+
+        parts.append(
+            f"<div style='padding:10px 14px;margin:6px 0;background:#f8fafc;"
+            f"border-left:4px solid {border_color};border-radius:4px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+            f"<strong style='font-family:monospace;font-size:0.9em;'>{mh}…</strong>"
+            f"<span class='pill {pill_cls}'>{_escape(pill_label)}</span></div>"
+        )
+
+        if purpose:
+            parts.append(
+                f"<div style='font-size:0.85em;color:#4b5563;margin-top:4px;'>{purpose}</div>"
+            )
+
+        parts.append(
+            f"<div style='display:flex;gap:16px;margin-top:6px;font-size:0.82em;color:#6b7280;'>"
+            f"<span>{_escape(L['objects'])}: <strong>{obj_count}</strong></span>"
+            f"<span>{_escape(L['negative'])}: <strong>{neg_count}</strong></span>"
+            f"<span>{_escape(L['profile'])}: {profile_id}</span>"
+            f"<span>{_escape(L['audience'])}: {audience}</span>"
+            f"</div>"
+        )
+
+        if created:
+            parts.append(
+                f"<div style='font-size:0.78em;color:#9ca3af;margin-top:2px;'>{created}</div>"
+            )
+
+        obj_by_kind = m.get("consumed_objects_by_kind", {})
+        if isinstance(obj_by_kind, dict) and obj_by_kind:
+            kind_parts = []
+            for kind, cnt in list(obj_by_kind.items())[:8]:
+                kind_parts.append(f"{_escape(str(kind))}: {_safe_count(cnt)}")
+            parts.append(
+                f"<div style='font-size:0.8em;color:#6b7280;margin-top:4px;'>"
+                f"By kind: {', '.join(kind_parts)}</div>"
+            )
+
+        stale_ns = m.get("stale_namespaces", [])
+        if isinstance(stale_ns, list) and stale_ns:
+            parts.append(
+                f"<div style='margin-top:6px;font-size:0.8em;color:#dc2626;'>"
+                f"<strong>Stale namespaces:</strong></div>"
+            )
+            for ns in stale_ns[:5]:
+                if not isinstance(ns, dict):
+                    continue
+                reason = _escape(str(ns.get("reason", ""))[:200])
+                parts.append(
+                    f"<div style='padding-left:12px;font-size:0.78em;color:#b91c1c;margin:2px 0;'>"
+                    f"&bull; {reason}</div>"
+                )
+
+        stale_reasons = m.get("stale_reasons", [])
+        if isinstance(stale_reasons, list) and stale_reasons and status != "fresh":
+            non_ns_reasons = [r for r in stale_reasons if isinstance(r, str) and "namespace" not in r]
+            for r in non_ns_reasons[:3]:
+                parts.append(
+                    f"<div style='font-size:0.78em;color:#b91c1c;padding-left:12px;'>"
+                    f"⚠ {_escape(r[:200])}</div>"
+                )
+
+        parts.append("</div>")
+
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
 def _fmt_quant_panel(
     payment_recon: dict,
     invoice_chain: list,
@@ -11071,6 +11270,19 @@ class AppState:
             logger.warning("Alternative theories load failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_manifest_inspector(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_dependency_manifest_inspector(matter_id))
+            if not isinstance(data, dict):
+                logger.warning("load_manifest_inspector: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_manifest_inspector(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Manifest inspector load failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def create_scenario_branch_ui(self, matter_id: str, name: str, assumptions_text: str, notes: str = "") -> str:
         if not matter_id or matter_id == "—":
             return "No matter loaded."
@@ -13618,6 +13830,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "Refresh Theories", variant="secondary", size="sm",
             )
 
+        with gr.Accordion("Dependency Manifests — exact evidence and freshness behind each output", open=False):
+            gr.Markdown(
+                "Every analysis output is backed by a dependency manifest that tracks "
+                "exactly which objects were consumed, which namespaces are stale, "
+                "and whether taint or policy constraints apply."
+            )
+            manifest_inspector_html = gr.HTML(
+                "<div class='viz-empty'>Dependency manifests will appear here after an investigation.</div>"
+            )
+            refresh_manifest_btn = gr.Button(
+                "Refresh Manifests", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Answer Audit — freshness, sources, and policy for every answer", open=False):
             gr.Markdown(
                 "Every answer Irys produces is backed by a dependency manifest that tracks "
@@ -14275,6 +14500,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[alt_theories_html],
+            ).then(
+                fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[manifest_inspector_html],
             )
         else:
             submit_btn.click(
@@ -14391,6 +14620,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[alt_theories_html],
+            ).then(
+                fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[manifest_inspector_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -14516,6 +14749,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[alt_theories_html],
+        ).then(
+            fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[manifest_inspector_html],
         )
 
         export_report_btn.click(
@@ -14868,6 +15105,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[alt_theories_html],
+        )
+        refresh_manifest_btn.click(
+            fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[manifest_inspector_html],
         )
         refresh_answer_audit_btn.click(
             fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
@@ -15347,6 +15589,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_alternative_theories(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[alt_theories_html],
+        ).then(
+            fn=lambda mid: state.load_manifest_inspector(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[manifest_inspector_html],
         )
 
         clarification_dropdown.change(

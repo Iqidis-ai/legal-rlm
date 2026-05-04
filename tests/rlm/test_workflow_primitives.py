@@ -6889,3 +6889,162 @@ def test_alt_theory_backend_interface_balance():
     assert hasattr(UIBackend, "get_alternative_theory_portfolio")
     assert hasattr(InProcessBackend, "get_alternative_theory_portfolio")
     assert hasattr(HttpBackend, "get_alternative_theory_portfolio")
+
+
+# ── Dependency Manifest Inspector ─────────────────────────────────────
+
+def test_manifest_inspector_empty():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_dependency_manifest_inspector()
+    assert isinstance(result, dict)
+    assert result["matter_id"] == model.matter_id
+    assert result["total_count"] == 0
+    assert result["fresh_count"] == 0
+    assert result["stale_count"] == 0
+    assert result["manifests"] == []
+
+
+def test_manifest_inspector_limit_clamp():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_dependency_manifest_inspector(limit=0)
+    assert isinstance(result, dict)
+    result2 = model.get_dependency_manifest_inspector(limit=999)
+    assert isinstance(result2, dict)
+
+
+def test_manifest_inspector_policy_filter():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_dependency_manifest_inspector(policy_audience="attorney")
+    assert isinstance(result, dict)
+    assert result["manifests"] == []
+
+
+def test_manifest_inspector_domain_profile():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_dependency_manifest_inspector()
+    assert "domain" in result
+    assert isinstance(result["domain"], str)
+
+
+def test_manifest_formatter_empty():
+    from irys.ui.app import _fmt_manifest_inspector
+    html = _fmt_manifest_inspector({}, domain="legal")
+    assert "viz-empty" in html
+
+
+def test_manifest_formatter_no_manifests():
+    from irys.ui.app import _fmt_manifest_inspector
+    html = _fmt_manifest_inspector({"manifests": []}, domain="legal")
+    assert "viz-empty" in html
+
+
+def test_manifest_formatter_renders():
+    from irys.ui.app import _fmt_manifest_inspector
+    data = {
+        "total_count": 2,
+        "fresh_count": 1,
+        "stale_count": 1,
+        "manifests": [
+            {
+                "manifest_hash": "abc123def456",
+                "purpose": "Investigation run 1",
+                "created_at": "2026-05-04T10:00:00Z",
+                "domain_profile_id": "legal",
+                "policy_audience": "clean",
+                "taint_class": "clean",
+                "broker_version": "v15",
+                "object_dependency_count": 10,
+                "negative_dependency_count": 2,
+                "status": "fresh",
+                "valid": True,
+                "stale_reasons": [],
+                "stale_namespaces": [],
+                "consumed_objects_by_kind": {"assertion": 5, "gap": 3},
+                "current_revisions": {},
+            },
+            {
+                "manifest_hash": "xyz789stale",
+                "purpose": "Investigation run 2",
+                "created_at": "2026-05-04T09:00:00Z",
+                "status": "stale",
+                "valid": False,
+                "stale_reasons": ["namespace assertions:*:* expected 5, current 8"],
+                "stale_namespaces": [{"reason": "namespace assertions:*:* expected 5, current 8"}],
+                "object_dependency_count": 7,
+                "negative_dependency_count": 1,
+                "consumed_objects_by_kind": {"assertion": 4},
+                "current_revisions": {},
+            },
+        ],
+    }
+    html = _fmt_manifest_inspector(data, domain="legal")
+    assert "viz-shell" in html
+    assert "abc123def456" in html
+    assert "pill-green" in html
+    assert "Stale namespaces" in html
+
+
+def test_manifest_formatter_xss():
+    from irys.ui.app import _fmt_manifest_inspector
+    data = {
+        "total_count": 1,
+        "fresh_count": 0,
+        "stale_count": 1,
+        "manifests": [{
+            "manifest_hash": "<script>alert(1)</script>",
+            "purpose": "<img onerror=alert(1)>",
+            "created_at": "2026-01-01",
+            "status": "stale",
+            "valid": False,
+            "stale_reasons": ["<b onmouseover=alert(1)>xss</b>"],
+            "stale_namespaces": [{"reason": "<script>xss</script>"}],
+            "object_dependency_count": 0,
+            "negative_dependency_count": 0,
+            "consumed_objects_by_kind": {},
+            "current_revisions": {},
+        }],
+    }
+    html = _fmt_manifest_inspector(data, domain="legal")
+    assert "<script>" not in html
+    assert "<img " not in html
+    assert "<b " not in html
+
+
+def test_manifest_formatter_non_dict_guards():
+    from irys.ui.app import _fmt_manifest_inspector
+    data = {
+        "total_count": 1,
+        "fresh_count": 0,
+        "stale_count": 0,
+        "manifests": ["not-a-dict", None, 42, {
+            "manifest_hash": "valid",
+            "purpose": "test",
+            "status": "fresh",
+            "valid": True,
+        }],
+    }
+    html = _fmt_manifest_inspector(data, domain="legal")
+    assert "viz-shell" in html
+    assert "valid" in html
+
+
+def test_manifest_labels_all_five_domains():
+    from irys.ui.app import _MANIFEST_INSPECTOR_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _MANIFEST_INSPECTOR_LABELS[domain]
+        for key in ("title", "subtitle", "empty", "fresh", "stale",
+                     "taint_blocked", "objects", "negative", "profile", "audience"):
+            assert key in labels, f"{domain} missing key {key}"
+
+
+def test_manifest_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    assert hasattr(UIBackend, "get_dependency_manifest_inspector")
+    assert hasattr(InProcessBackend, "get_dependency_manifest_inspector")
+    assert hasattr(HttpBackend, "get_dependency_manifest_inspector")

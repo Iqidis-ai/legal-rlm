@@ -341,6 +341,13 @@ class HttpBackend(UIBackend):
             return {}
         return result
 
+    async def get_dependency_manifest_inspector(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/dependency-manifests")
+        if not isinstance(result, dict):
+            _log.warning("get_dependency_manifest_inspector: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/objective-coverage")
         if not isinstance(result, dict):

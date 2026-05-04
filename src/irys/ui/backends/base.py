@@ -233,6 +233,10 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_dependency_manifest_inspector(self, matter_id: str) -> dict:
+        ...
+
+    @abstractmethod
     async def get_objective_coverage(self, matter_id: str) -> dict:
         """Objective coverage workbench: per-objective criteria, support, gaps (SO-4)."""
         ...

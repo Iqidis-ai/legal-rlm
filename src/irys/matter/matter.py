@@ -3560,7 +3560,7 @@ class MatterModel:
         _, _, primary_profile = self._read_matter_domain_composition()
         domain = primary_profile or "legal"
 
-        manifests = self.broker.list_recent_manifests(limit=50)
+        manifests = self.memory_broker.list_recent_manifests(limit=50)
         if not manifests:
             return {
                 "matter_id": self.matter_id,
@@ -3588,7 +3588,7 @@ class MatterModel:
                 continue
             mh = m.get("manifest_hash", "")
             try:
-                validation = self.broker.validate_dependency_manifest(mh)
+                validation = self.memory_broker.validate_dependency_manifest(mh)
                 validation_dict = validation.to_canonical_dict() if validation else {}
             except Exception as exc:
                 _log.warning("validate_dependency_manifest failed for %s: %s", mh, exc)
@@ -3598,7 +3598,7 @@ class MatterModel:
             obj_groups: dict[str, list[dict]] = {}
             neg_deps: list[dict] = []
             try:
-                full_manifest = self.broker.get_dependency_manifest(mh)
+                full_manifest = self.memory_broker.get_dependency_manifest(mh)
                 if full_manifest:
                     for od in full_manifest.object_dependencies:
                         kind = od.target_kind or "unknown"
@@ -3652,6 +3652,139 @@ class MatterModel:
             "domain": domain,
             "audits": audits,
             "total_manifests": len(manifests),
+        }
+
+    # ------------------------------------------------------------------
+    # Dependency Manifest Inspector (SO-1, SO-2, SO-5)
+    # ------------------------------------------------------------------
+
+    def get_dependency_manifest_inspector(
+        self,
+        *,
+        manifest_hash: str | None = None,
+        run_id: str | None = None,
+        limit: int = 25,
+        policy_audience: str = "clean",
+    ) -> dict:
+        """Inspect dependency manifests with namespace-level staleness drilldown."""
+        _, _, primary = self._read_matter_domain_composition()
+        domain = primary or "legal"
+        limit = max(1, min(limit, 100))
+
+        all_manifests = self.memory_broker.list_recent_manifests(limit=200)
+        if not all_manifests:
+            return {
+                "matter_id": self.matter_id,
+                "domain": domain,
+                "manifests": [],
+                "total_count": 0,
+                "fresh_count": 0,
+                "stale_count": 0,
+            }
+
+        targets = all_manifests
+        if manifest_hash:
+            targets = [m for m in targets if isinstance(m, dict) and m.get("manifest_hash") == manifest_hash]
+        if run_id:
+            run_linked = set()
+            try:
+                rows = self.db.execute(
+                    "SELECT DISTINCT dependency_manifest_hash FROM reasoning_cache "
+                    "WHERE matter_id=? AND run_id=?",
+                    (self.matter_id, run_id),
+                ).fetchall()
+                for r in rows:
+                    h = r["dependency_manifest_hash"] if isinstance(r, dict) else (r[0] if r else None)
+                    if h:
+                        run_linked.add(h)
+            except Exception as exc:
+                _log.warning("manifest_inspector: run_id filter failed: %s", exc)
+            if run_linked:
+                targets = [m for m in targets if isinstance(m, dict) and m.get("manifest_hash") in run_linked]
+
+        if policy_audience and policy_audience != "all":
+            targets = [m for m in targets if isinstance(m, dict) and m.get("policy_audience", "") == policy_audience]
+
+        targets = targets[:limit]
+
+        manifests_out: list[dict] = []
+        fresh_count = 0
+        stale_count = 0
+
+        for m in targets:
+            if not isinstance(m, dict):
+                continue
+            mh = m.get("manifest_hash", "")
+            try:
+                validation = self.memory_broker.validate_dependency_manifest(mh)
+                v_dict = validation.to_canonical_dict() if validation else {}
+            except Exception as exc:
+                _log.warning("manifest_inspector: validate failed for %s: %s", mh, exc)
+                v_dict = {"valid": False, "status": "error", "stale_reasons": [str(exc)]}
+
+            valid = v_dict.get("valid", False)
+            stale_reasons = v_dict.get("stale_reasons", [])
+            current_revisions = v_dict.get("current_revisions", {})
+
+            if valid:
+                status = "fresh"
+                fresh_count += 1
+            elif "not_found" in v_dict.get("status", ""):
+                status = "unknown"
+                stale_count += 1
+            elif any(isinstance(r, str) and "taint" in r.lower() for r in stale_reasons):
+                status = "taint_blocked"
+                stale_count += 1
+            elif any(isinstance(r, str) and "policy" in r.lower() for r in stale_reasons):
+                status = "policy_limited"
+                stale_count += 1
+            else:
+                status = "stale"
+                stale_count += 1
+
+            stale_namespaces: list[dict] = []
+            for reason in stale_reasons:
+                if not isinstance(reason, str):
+                    continue
+                if "namespace" in reason and "expected" in reason and "current" in reason:
+                    stale_namespaces.append({"reason": reason[:300]})
+
+            full_manifest = None
+            obj_counts: dict[str, int] = {}
+            try:
+                full_manifest = self.memory_broker.get_dependency_manifest(mh)
+                if full_manifest:
+                    for od in full_manifest.object_dependencies:
+                        kind = od.target_kind or "unknown"
+                        obj_counts[kind] = obj_counts.get(kind, 0) + 1
+            except Exception as exc:
+                _log.warning("manifest_inspector: get_manifest failed for %s: %s", mh, exc)
+
+            manifests_out.append({
+                "manifest_hash": mh,
+                "purpose": m.get("purpose", ""),
+                "created_at": m.get("created_at", ""),
+                "domain_profile_id": m.get("domain_profile_id", ""),
+                "policy_audience": m.get("policy_audience", ""),
+                "taint_class": m.get("taint_class", ""),
+                "broker_version": m.get("broker_version", ""),
+                "object_dependency_count": int(m.get("object_dependency_count", 0) or 0),
+                "negative_dependency_count": int(m.get("negative_dependency_count", 0) or 0),
+                "status": status,
+                "valid": valid,
+                "stale_reasons": stale_reasons[:10],
+                "stale_namespaces": stale_namespaces[:10],
+                "consumed_objects_by_kind": obj_counts,
+                "current_revisions": {k: v for k, v in list(current_revisions.items())[:20]},
+            })
+
+        return {
+            "matter_id": self.matter_id,
+            "domain": domain,
+            "manifests": manifests_out,
+            "total_count": len(all_manifests),
+            "fresh_count": fresh_count,
+            "stale_count": stale_count,
         }
 
     # ------------------------------------------------------------------
@@ -4419,14 +4552,14 @@ class MatterModel:
         manifest_count = 0
         stale_count = 0
         try:
-            manifests = self.broker.list_recent_manifests(limit=10)
+            manifests = self.memory_broker.list_recent_manifests(limit=10)
             manifest_count = len(manifests)
             for m in manifests:
                 if not isinstance(m, dict):
                     continue
                 mh = m.get("manifest_hash", "")
                 try:
-                    validation = self.broker.validate_dependency_manifest(mh)
+                    validation = self.memory_broker.validate_dependency_manifest(mh)
                     if validation and getattr(validation, "valid", False):
                         manifest_fresh = True
                     else:

@@ -2926,6 +2926,28 @@ async def get_alternative_theories(
     )
 
 
+@app.get(
+    "/matter/{matter_id}/dependency-manifests",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_dependency_manifests(
+    matter_id: str,
+    manifest_hash: str | None = None,
+    run_id: str | None = None,
+    limit: int = Query(default=25, ge=1, le=100),
+    policy_audience: str = "clean",
+):
+    """Inspect dependency manifests with namespace staleness drilldown (SO-1, SO-2, SO-5)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_dependency_manifest_inspector(
+        manifest_hash=manifest_hash,
+        run_id=run_id,
+        limit=limit,
+        policy_audience=policy_audience,
+    )
+
+
 _PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
 
 
