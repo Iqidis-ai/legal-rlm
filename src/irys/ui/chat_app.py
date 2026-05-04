@@ -258,6 +258,56 @@ class ChatApp:
                 shutil.rmtree(temp_dir)
                 logger.info(f"Cleaned up temp directory: {temp_dir}")
 
+    @staticmethod
+    def _is_hash_filename(name: str) -> bool:
+        base = Path(name).stem
+        return len(base) >= 32 and all(c in '0123456789abcdef' for c in base.lower())
+
+    @staticmethod
+    def _sanitize_relpath(path: str) -> str:
+        """Drop empty / `.` / `..` / absolute segments from a relpath."""
+        parts: list[str] = []
+        for raw in path.replace('\\', '/').split('/'):
+            part = raw.strip()
+            if not part or part in ('.', '..'):
+                continue
+            parts.append(part)
+        return '/'.join(parts)
+
+    def _get_display_relpath(self, file_obj) -> Optional[str]:
+        """Return the sanitized display relpath for a Gradio upload object.
+
+        Preserves any subdirectory structure Gradio supplies in ``orig_name``
+        (the case under ``file_count='directory'``). Returns ``None`` when
+        we can't derive a usable filename — callers should fall back to a
+        generated name (e.g. ``document_{idx}.{ext}``).
+        """
+        if isinstance(file_obj, str):
+            actual_name = Path(file_obj).name
+            if '.' in actual_name and not self._is_hash_filename(actual_name):
+                return actual_name
+            return None
+
+        orig = getattr(file_obj, 'orig_name', None)
+        if orig:
+            relpath = self._sanitize_relpath(str(orig))
+            leaf = Path(relpath).name if relpath else ''
+            if leaf and not self._is_hash_filename(leaf):
+                return relpath or leaf
+
+        if hasattr(file_obj, 'path') and file_obj.path:
+            path_name = Path(file_obj.path).name
+            if '.' in path_name and not self._is_hash_filename(path_name):
+                return path_name
+
+        actual_name = (
+            Path(file_obj.name).name if hasattr(file_obj, 'name') else str(file_obj)
+        )
+        if '.' in actual_name and not self._is_hash_filename(actual_name):
+            return actual_name
+
+        return None
+
     def _extract_files_from_upload(
         self,
         uploaded_files: list,
@@ -281,20 +331,6 @@ class ChatApp:
         if not uploaded_files:
             return [], None
 
-        def _is_hash_filename(name: str) -> bool:
-            base = Path(name).stem
-            return len(base) >= 32 and all(c in '0123456789abcdef' for c in base.lower())
-
-        def _sanitize_relpath(path: str) -> str:
-            """Drop empty / `.` / `..` / absolute segments from a relpath."""
-            parts: list[str] = []
-            for raw in path.replace('\\', '/').split('/'):
-                part = raw.strip()
-                if not part or part in ('.', '..'):
-                    continue
-                parts.append(part)
-            return '/'.join(parts)
-
         def _detect_extension_from_path(path: Path) -> str:
             """Sniff the first KB of the file to guess an extension."""
             try:
@@ -316,49 +352,20 @@ class ChatApp:
             except UnicodeDecodeError:
                 return ''
 
-        def get_original_relpath(file_obj) -> tuple[Optional[str], str]:
-            """Return (orig_relpath_or_None, actual_disk_name).
-
-            orig_relpath preserves any subdirectory structure Gradio supplies
-            in `orig_name` (which is the case under `file_count='directory'`).
-            """
-            if isinstance(file_obj, str):
-                actual_name = Path(file_obj).name
-                if '.' in actual_name and not _is_hash_filename(actual_name):
-                    return actual_name, actual_name
-                return None, actual_name
-
-            actual_name = (
-                Path(file_obj.name).name if hasattr(file_obj, 'name') else str(file_obj)
-            )
-
-            orig = getattr(file_obj, 'orig_name', None)
-            if orig:
-                relpath = _sanitize_relpath(str(orig))
-                leaf = Path(relpath).name if relpath else ''
-                if leaf and not _is_hash_filename(leaf):
-                    return relpath or leaf, actual_name
-                logger.debug(
-                    f"orig_name '{orig}' resolved to hash leaf, falling through"
-                )
-
-            if hasattr(file_obj, 'path') and file_obj.path:
-                path_name = Path(file_obj.path).name
-                if '.' in path_name and not _is_hash_filename(path_name):
-                    return path_name, actual_name
-
-            if '.' in actual_name and not _is_hash_filename(actual_name):
-                return actual_name, actual_name
-
-            return None, actual_name
-
         files: list[tuple[str, str, str]] = []
         for idx, f in enumerate(uploaded_files):
             try:
                 source_path = (
                     Path(f.name) if hasattr(f, 'name') else Path(str(f))
                 )
-                orig_relpath, actual_name = get_original_relpath(f)
+                if isinstance(f, str):
+                    actual_name = Path(f).name
+                else:
+                    actual_name = (
+                        Path(f.name).name if hasattr(f, 'name') else str(f)
+                    )
+
+                orig_relpath = self._get_display_relpath(f)
 
                 if orig_relpath:
                     display_relpath = orig_relpath
