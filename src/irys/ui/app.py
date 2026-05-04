@@ -111,7 +111,8 @@ def _list_s3_matter_names() -> list[str]:
                 if seg:
                     names.append(seg.replace("_", " "))
         return sorted(names)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to list S3 matter names: %s", exc)
         return []
 
 
@@ -132,7 +133,8 @@ def _s3_matter_doc_count(matter_name: str) -> str:
             if any(obj["Key"].lower().endswith(ext) for ext in (".pdf", ".docx", ".doc", ".txt", ".md"))
         )
         return f"{count} document{'s' if count != 1 else ''}"
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to count S3 matter docs for %r: %s", matter_name, exc)
         return "? documents"
 
 
@@ -280,7 +282,8 @@ def _list_s3_matter_files(matter_name: str) -> list[str]:
                 if filename and "/" not in filename:
                     files.append(filename)
         return sorted(files)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to list S3 matter files for %r: %s", matter_name, exc)
         return []
 
 
@@ -414,7 +417,8 @@ def _fmt_thinking_steps_fallback(state: Any) -> str:
             # Attorney-facing — skip the developer prefixes like [T].
             lines.append(f"{idx}. {content}")
         return "\n".join(lines)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to format thinking steps: %s", exc)
         return ""
 
 
@@ -440,7 +444,8 @@ def _fmt_route_chip(state: Any) -> str | None:
             cls_label = _ROUTE_LABELS.get(classifier, classifier.title())
             return f"via {cls_label} → {term_label}"
         return f"via {term_label}"
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to format route chip: %s", exc)
         return None
 
 
@@ -5798,7 +5803,8 @@ class AppState:
         previous_repo_path = self.current_repo_path
         try:
             resolved_repo_path = str(pathlib.Path(repo_path).resolve()) if repo_path else None
-        except Exception:
+        except Exception as exc:
+            logger.warning("Path resolution failed for %r: %s", repo_path, exc)
             resolved_repo_path = repo_path
         user_query = query.strip()
         if previous_repo_path and resolved_repo_path and previous_repo_path != resolved_repo_path:
@@ -6019,7 +6025,8 @@ class AppState:
         previous_repo_path = self.current_repo_path
         try:
             resolved_repo_path = str(pathlib.Path(repo_path).resolve()) if repo_path else None
-        except Exception:
+        except Exception as exc:
+            logger.warning("Path resolution failed for %r: %s", repo_path, exc)
             resolved_repo_path = repo_path
 
         user_query = query.strip()
@@ -6464,7 +6471,8 @@ class AppState:
             return ""
         try:
             counts = _run_async(self.backend().count_review_queue(matter_id))
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to load review queue count for %s: %s", matter_id, exc)
             return ""
         total = int(counts.get("total", 0) or 0)
         bucket_counts = {
@@ -6957,7 +6965,8 @@ class AppState:
             ov = _run_async(self.backend().get_overview(matter_id))
             dc = ov.get("domain_composition", {}) if isinstance(ov, dict) else {}
             return dc.get("primary_domain_profile_id", "legal") if isinstance(dc, dict) else "legal"
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to detect domain for %s: %s", matter_id, exc)
             return "legal"
 
     def load_proof_state(self, matter_id: str, domain: str = "legal") -> str:
@@ -7130,7 +7139,8 @@ class AppState:
                 for c in items
                 if isinstance(c, dict) and c.get("status") == "pending"
             ]
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to load clarification choices for %s: %s", matter_id, exc)
             return []
 
     def get_domain_dropdown_updates(self, matter_id: str) -> tuple:
@@ -7218,7 +7228,8 @@ class AppState:
             rows = _run_async(
                 self.backend().list_reviewable_documents(matter_id)
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to load reviewable documents for %s: %s", matter_id, exc)
             return []
         choices = []
         for row in rows:
@@ -8701,7 +8712,8 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 if folder:
                     return folder, _check_folder(folder)
                 return gr.update(), gr.update()
-            except Exception:
+            except Exception as exc:
+                logger.warning("Folder picker failed: %s", exc)
                 return gr.update(), "Folder picker unavailable — paste a path instead"
 
         if _s3_mode:
