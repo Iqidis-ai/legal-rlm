@@ -601,6 +601,20 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_document_console(document_ref)
 
+    async def get_quant_ontology(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_quant_ontology_workbench()
+
+    async def approve_metric_alias(
+        self, matter_id: str, raw_label: str, canonical_metric: str, unit: str | None = None,
+    ) -> bool:
+        model = self._get_matter_model(matter_id)
+        return model.approve_metric_alias(
+            raw_label=raw_label,
+            canonical_metric=canonical_metric,
+            unit=unit,
+        )
+
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         """Document picker feed for the bulk-verify dropdown — every
         doc in the matter with pending/verified counts so reviewers

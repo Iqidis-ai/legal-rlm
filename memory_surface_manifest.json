@@ -1596,6 +1596,30 @@
       "taint_behavior": "legacy_unknown_until_brokered",
       "profile_behavior": "legacy_unknown_until_profile_bound",
       "surface": "VerificationStateStore.verify"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "metric_aliases"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "domain_profile_scoped",
+      "surface": "MetricAliasStore.upsert"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "metric_aliases"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "domain_profile_scoped",
+      "surface": "MetricAliasStore.approve"
     }
   ],
   "write_surface_groups": [],

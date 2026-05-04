@@ -4708,6 +4708,156 @@ _QUANT_PANEL_LABELS: dict[str, dict[str, str]] = {
 }
 
 
+_QUANT_ONTOLOGY_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Metric Ontology Workbench",
+        "approved": "Approved",
+        "pending": "Pending classification",
+        "empty": "No quantitative facts extracted yet. Run an investigation to populate metrics.",
+        "coverage": "Ontology coverage",
+        "classify": "Classify",
+        "metric_type": "Raw metric type",
+        "canonical": "Canonical metric",
+    },
+    "finance": {
+        "title": "Financial Metric Ontology",
+        "approved": "Approved",
+        "pending": "Pending classification",
+        "empty": "No financial metrics extracted yet.",
+        "coverage": "Metric ontology coverage",
+        "classify": "Classify",
+        "metric_type": "Raw metric type",
+        "canonical": "Canonical metric",
+    },
+    "coding": {
+        "title": "Engineering Metric Ontology",
+        "approved": "Approved",
+        "pending": "Pending classification",
+        "empty": "No engineering metrics extracted yet.",
+        "coverage": "Metric ontology coverage",
+        "classify": "Classify",
+        "metric_type": "Raw metric type",
+        "canonical": "Canonical metric",
+    },
+    "academic_research": {
+        "title": "Research Metric Ontology",
+        "approved": "Approved",
+        "pending": "Pending classification",
+        "empty": "No research metrics extracted yet.",
+        "coverage": "Metric ontology coverage",
+        "classify": "Classify",
+        "metric_type": "Raw metric type",
+        "canonical": "Canonical metric",
+    },
+    "biomedical": {
+        "title": "Clinical Metric Ontology",
+        "approved": "Approved",
+        "pending": "Pending classification",
+        "empty": "No clinical metrics extracted yet.",
+        "coverage": "Metric ontology coverage",
+        "classify": "Classify",
+        "metric_type": "Raw metric type",
+        "canonical": "Canonical metric",
+    },
+}
+
+
+def _fmt_quant_ontology(data: dict, domain: str = "legal") -> str:
+    labels = _QUANT_ONTOLOGY_LABELS.get(domain, _QUANT_ONTOLOGY_LABELS["legal"])
+    if not data or not data.get("metric_groups"):
+        return f"<p style='color:#888;'>{_escape(labels['empty'])}</p>"
+
+    groups = data["metric_groups"]
+    approved_count = data.get("approved_count", 0)
+    total = data.get("total_metric_types", 0)
+    coverage_frac = data.get("coverage_fraction", 0)
+
+    pct = int(coverage_frac * 100)
+    bar_color = "#22c55e" if pct >= 70 else "#f59e0b" if pct >= 30 else "#dc2626"
+
+    parts = [
+        f"<h3 style='margin:0 0 8px;'>{_escape(labels['title'])}</h3>",
+        f"<div style='display:flex;gap:24px;margin-bottom:12px;'>",
+        f"<div><b>{_escape(labels['coverage'])}:</b> {approved_count}/{total} ({pct}%)</div>",
+        f"</div>",
+        f"<div style='background:#e5e7eb;border-radius:4px;height:8px;margin-bottom:16px;'>",
+        f"<div style='background:{bar_color};height:8px;border-radius:4px;width:{pct}%;'></div>",
+        f"</div>",
+    ]
+
+    for g in groups:
+        if not isinstance(g, dict):
+            continue
+        mt = _escape(str(g.get("metric_type", "")))
+        cm = g.get("canonical_metric")
+        approved = g.get("approved", False)
+        fc = g.get("fact_count", 0)
+        tv = g.get("total_value", 0)
+
+        badge_color = "#22c55e" if approved else "#f59e0b"
+        badge_text = _escape(labels["approved"]) if approved else _escape(labels["pending"])
+        canonical_display = _escape(str(cm)) if cm else "<i>unclassified</i>"
+
+        parts.append(
+            f"<div style='border:1px solid #e5e7eb;border-radius:6px;padding:10px;margin-bottom:8px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+            f"<div><b>{mt}</b> → {canonical_display}</div>"
+            f"<span style='background:{badge_color};color:white;padding:2px 8px;border-radius:10px;"
+            f"font-size:0.8em;'>{badge_text}</span>"
+            f"</div>"
+            f"<div style='color:#6b7280;font-size:0.85em;margin-top:4px;'>"
+            f"{fc} facts"
+        )
+        if tv:
+            parts.append(f" · Total value: {tv:,.2f}")
+        parts.append("</div>")
+
+        sample_facts = g.get("sample_facts", [])
+        if sample_facts:
+            parts.append("<div style='margin-top:6px;font-size:0.82em;color:#4b5563;'>")
+            for sf in sample_facts[:3]:
+                if not isinstance(sf, dict):
+                    continue
+                raw = _escape(str(sf.get("raw_text", ""))[:80])
+                parts.append(f"<div>· {raw}</div>")
+            parts.append("</div>")
+
+        parts.append("</div>")
+
+    return "\n".join(parts)
+
+
+_CANONICAL_METRICS: dict[str, list[str]] = {
+    "legal": [
+        "accounts_receivable", "accounts_payable", "invoice_amount",
+        "payment_amount", "outstanding_balance", "damages_claimed",
+        "settlement_amount", "interest_rate", "deadline_date", "contract_term",
+    ],
+    "finance": [
+        "revenue", "gross_margin", "operating_income", "net_income", "eps",
+        "free_cash_flow", "arr", "deferred_revenue", "rpo", "capex",
+        "cash_and_equivalents",
+    ],
+    "coding": [
+        "latency", "error_rate", "throughput", "memory_usage", "cpu_usage",
+        "test_coverage", "build_time", "defect_count",
+    ],
+    "academic_research": [
+        "sample_size", "effect_size", "p_value", "confidence_interval",
+        "accuracy", "precision", "recall", "f1_score", "auc",
+    ],
+    "biomedical": [
+        "hazard_ratio", "odds_ratio", "relative_risk", "confidence_interval",
+        "p_value", "sample_size", "dosage", "adverse_event_rate",
+        "overall_survival", "progression_free_survival",
+    ],
+}
+
+
+def _canonical_metric_choices(domain: str = "legal") -> list[str]:
+    return _CANONICAL_METRICS.get(domain, _CANONICAL_METRICS["legal"])
+
+
 def _fmt_quant_panel(
     payment_recon: dict,
     invoice_chain: list,
@@ -9206,6 +9356,47 @@ class AppState:
         except Exception as exc:
             return f"Error: {_escape(str(exc))}", ""
 
+    def load_quant_ontology(self, matter_id: str, domain: str = "legal") -> tuple[str, Any]:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>", gr.update(choices=[])
+        try:
+            data = _run_async(self.backend().get_quant_ontology(matter_id))
+            html = _fmt_quant_ontology(data if isinstance(data, dict) else {}, domain=domain)
+            raw_choices: list[str] = []
+            for g in (data.get("metric_groups", []) if isinstance(data, dict) else []):
+                if not isinstance(g, dict):
+                    continue
+                mt = g.get("metric_type", "")
+                if mt and not g.get("approved"):
+                    raw_choices.append(str(mt))
+            return html, gr.update(choices=raw_choices)
+        except Exception as exc:
+            logger.warning("load_quant_ontology failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>", gr.update(choices=[])
+
+    def approve_quant_alias(
+        self, matter_id: str, raw_label: str, canonical_metric: str, unit: str = "",
+    ) -> tuple[str, str, Any]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", "", gr.update(choices=[])
+        if not raw_label or not canonical_metric:
+            return "Select a raw metric and enter a canonical metric name.", "", gr.update(choices=[])
+        try:
+            _run_async(self.backend().approve_metric_alias(
+                matter_id, raw_label.strip(), canonical_metric.strip(),
+                unit=unit.strip() or None,
+            ))
+            domain = self._detect_domain(matter_id)
+            refreshed_html, dropdown_update = self.load_quant_ontology(matter_id, domain=domain)
+            return (
+                f"Approved: **{_escape(raw_label)}** → **{_escape(canonical_metric)}**",
+                refreshed_html,
+                dropdown_update,
+            )
+        except Exception as exc:
+            logger.warning("approve_quant_alias failed: %s", exc)
+            return f"Error: {_escape(str(exc))}", "", gr.update(choices=[])
+
     def load_timeline(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -11136,6 +11327,25 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 refresh_quant_btn = gr.Button("Refresh Financials", variant="secondary", size="sm")
                 detect_conflicts_btn = gr.Button("Detect Amount Conflicts", variant="primary", size="sm")
             detect_conflicts_result = gr.Markdown("")
+            with gr.Accordion("Metric Ontology — classify extracted numeric facts", open=False):
+                quant_ontology_html = gr.HTML(
+                    "<div class='viz-empty'>Metric ontology will appear after an investigation.</div>"
+                )
+                refresh_quant_ontology_btn = gr.Button("Refresh Metric Ontology", variant="secondary", size="sm")
+                with gr.Row():
+                    quant_alias_raw_dropdown = gr.Dropdown(
+                        label="Raw metric", choices=[], interactive=True, scale=2,
+                    )
+                    quant_alias_canonical_dropdown = gr.Dropdown(
+                        label="Canonical metric",
+                        choices=_canonical_metric_choices("legal"),
+                        allow_custom_value=True, interactive=True, scale=2,
+                    )
+                    quant_alias_unit_input = gr.Textbox(
+                        label="Unit (optional)", placeholder="e.g. USD, days, %", scale=1,
+                    )
+                    approve_quant_alias_btn = gr.Button("Approve", variant="primary", size="sm", scale=1)
+                quant_alias_result = gr.Markdown("")
 
         with gr.Accordion("Timeline — dated events across the matter", open=False):
             gr.Markdown(
@@ -12100,6 +12310,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_domain_composition(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[domain_composition_html],
+        ).then(
+            fn=lambda mid: state.load_quant_ontology(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[quant_ontology_html, quant_alias_raw_dropdown],
         )
 
         export_report_btn.click(
@@ -12213,6 +12427,16 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.do_detect_quant_conflicts(mid),
             inputs=[matter_id_box],
             outputs=[detect_conflicts_result, quant_md],
+        )
+        refresh_quant_ontology_btn.click(
+            fn=lambda mid: state.load_quant_ontology(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[quant_ontology_html, quant_alias_raw_dropdown],
+        )
+        approve_quant_alias_btn.click(
+            fn=lambda mid, raw, canonical, unit: state.approve_quant_alias(mid, raw, canonical, unit),
+            inputs=[matter_id_box, quant_alias_raw_dropdown, quant_alias_canonical_dropdown, quant_alias_unit_input],
+            outputs=[quant_alias_result, quant_ontology_html, quant_alias_raw_dropdown],
         )
         refresh_timeline_btn.click(
             fn=lambda mid: state.load_timeline(mid, domain=state._detect_domain(mid)),

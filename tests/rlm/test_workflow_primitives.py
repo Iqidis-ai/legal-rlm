@@ -4729,3 +4729,133 @@ def test_authority_extraction_gated_to_legal():
         assert "claim" not in ctx["issue_types"].split("|"), (
             f"{domain} should not use legal issue type 'claim'"
         )
+
+
+# --- Quant Ontology Workbench tests ---
+
+
+def test_fmt_quant_ontology_empty_returns_placeholder():
+    from irys.ui.app import _fmt_quant_ontology
+    html = _fmt_quant_ontology({}, domain="legal")
+    assert "No quantitative facts" in html
+
+
+def test_fmt_quant_ontology_renders_metric_groups():
+    from irys.ui.app import _fmt_quant_ontology
+    data = {
+        "metric_groups": [
+            {
+                "metric_type": "invoice_amount",
+                "canonical_metric": "accounts_receivable",
+                "approved": True,
+                "fact_count": 5,
+                "total_value": 1234.56,
+                "sample_facts": [{"raw_text": "Invoice #42: $500"}],
+            },
+            {
+                "metric_type": "penalty_rate",
+                "canonical_metric": None,
+                "approved": False,
+                "fact_count": 2,
+                "total_value": 0,
+                "sample_facts": [],
+            },
+        ],
+        "approved_count": 1,
+        "total_metric_types": 2,
+        "coverage_fraction": 0.5,
+    }
+    html = _fmt_quant_ontology(data, domain="legal")
+    assert "invoice_amount" in html
+    assert "accounts_receivable" in html
+    assert "Approved" in html
+    assert "Pending" in html
+    assert "1/2" in html
+    assert "Invoice #42" in html
+
+
+def test_fmt_quant_ontology_xss_escapes_metric_type():
+    from irys.ui.app import _fmt_quant_ontology
+    data = {
+        "metric_groups": [
+            {
+                "metric_type": "<script>alert(1)</script>",
+                "canonical_metric": "<img onerror=alert(1)>",
+                "approved": True,
+                "fact_count": 1,
+                "total_value": 0,
+                "sample_facts": [{"raw_text": "<b>xss</b>"}],
+            },
+        ],
+        "approved_count": 1,
+        "total_metric_types": 1,
+        "coverage_fraction": 1.0,
+    }
+    html = _fmt_quant_ontology(data, domain="legal")
+    assert "<script>" not in html
+    assert "<img onerror" not in html
+    assert "<b>xss</b>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_fmt_quant_ontology_non_dict_guard():
+    from irys.ui.app import _fmt_quant_ontology
+    data = {
+        "metric_groups": [
+            "not_a_dict",
+            None,
+            {"metric_type": "valid", "approved": False, "fact_count": 1},
+        ],
+        "approved_count": 0,
+        "total_metric_types": 1,
+        "coverage_fraction": 0.0,
+    }
+    html = _fmt_quant_ontology(data, domain="legal")
+    assert "valid" in html
+
+
+def test_canonical_metrics_all_five_domains():
+    from irys.ui.app import _CANONICAL_METRICS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        assert domain in _CANONICAL_METRICS, f"Missing canonical metrics for {domain}"
+        assert len(_CANONICAL_METRICS[domain]) >= 5, f"Too few metrics for {domain}"
+
+
+def test_canonical_metric_choices_returns_domain_specific():
+    from irys.ui.app import _canonical_metric_choices
+    legal = _canonical_metric_choices("legal")
+    assert "accounts_receivable" in legal
+    finance = _canonical_metric_choices("finance")
+    assert "revenue" in finance
+    unknown = _canonical_metric_choices("unknown_domain")
+    assert unknown == _canonical_metric_choices("legal")
+
+
+def test_quant_ontology_labels_all_five_domains():
+    from irys.ui.app import _QUANT_ONTOLOGY_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        assert domain in _QUANT_ONTOLOGY_LABELS
+        labels = _QUANT_ONTOLOGY_LABELS[domain]
+        for key in ("title", "approved", "pending", "empty", "coverage"):
+            assert key in labels, f"Missing key {key} for {domain}"
+
+
+def test_fmt_quant_ontology_sample_facts_non_dict_guard():
+    from irys.ui.app import _fmt_quant_ontology
+    data = {
+        "metric_groups": [
+            {
+                "metric_type": "test_metric",
+                "canonical_metric": "canonical",
+                "approved": True,
+                "fact_count": 3,
+                "total_value": 0,
+                "sample_facts": ["not_dict", None, {"raw_text": "valid fact"}],
+            },
+        ],
+        "approved_count": 1,
+        "total_metric_types": 1,
+        "coverage_fraction": 1.0,
+    }
+    html = _fmt_quant_ontology(data, domain="legal")
+    assert "valid fact" in html

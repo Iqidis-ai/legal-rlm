@@ -849,6 +849,19 @@ class HttpBackend(UIBackend):
         )
         return result if isinstance(result, dict) else {}
 
+    async def get_quant_ontology(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/quant-ontology")
+        return result if isinstance(result, dict) else {}
+
+    async def approve_metric_alias(
+        self, matter_id: str, raw_label: str, canonical_metric: str, unit: str | None = None,
+    ) -> bool:
+        params = {"raw_label": raw_label, "canonical_metric": canonical_metric}
+        if unit:
+            params["unit"] = unit
+        result = await self._post(f"/matter/{matter_id}/quant-ontology/approve", params=params)
+        return isinstance(result, dict) and result.get("success", False)
+
     async def list_reviewable_documents(self, matter_id: str) -> list[dict]:
         result = await self._get(
             f"/matter/{matter_id}/review-queue/documents",

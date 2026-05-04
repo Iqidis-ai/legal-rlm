@@ -3425,6 +3425,38 @@ async def get_quant_thresholds(
 
 
 @app.get(
+    "/matter/{matter_id}/quant-ontology",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_quant_ontology(matter_id: str):
+    """Quantitative ontology workbench: metric groups with domain classification status."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_quant_ontology_workbench()
+
+
+@app.post(
+    "/matter/{matter_id}/quant-ontology/approve",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def approve_quant_metric(
+    matter_id: str,
+    raw_label: str = Query(...),
+    canonical_metric: str = Query(...),
+    unit: str = Query(default=None),
+):
+    """Approve a metric alias classification for the quantitative ontology."""
+    model = await _get_matter_model_or_404(matter_id)
+    ok = model.approve_metric_alias(
+        raw_label=raw_label,
+        canonical_metric=canonical_metric,
+        unit=unit,
+    )
+    return {"success": ok}
+
+
+@app.get(
     "/matter/{matter_id}/system-health",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

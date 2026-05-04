@@ -202,4 +202,14 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
         writers=("irys.matter.graph:MemoryBrokerStore.record_unknown_domain_candidate",),
         readers=("irys.matter.graph:MemoryBrokerStore.record_unknown_domain_candidate",),
     ),
+    "metric_alias": TableCoverageSpec(
+        writers=(
+            "irys.matter.graph:MetricAliasStore.upsert",
+            "irys.matter.graph:MetricAliasStore.approve",
+        ),
+        readers=(
+            "irys.matter.graph:MetricAliasStore.get_all",
+            "irys.matter.graph:MetricAliasStore.count_approved",
+        ),
+    ),
 }

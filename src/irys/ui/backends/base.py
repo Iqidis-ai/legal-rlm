@@ -624,6 +624,18 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_quant_ontology(self, matter_id: str) -> dict:
+        """Quantitative ontology workbench: metric groups with domain classification (SO-6)."""
+        ...
+
+    @abstractmethod
+    async def approve_metric_alias(
+        self, matter_id: str, raw_label: str, canonical_metric: str, unit: str | None = None,
+    ) -> bool:
+        """Approve a metric alias in the quantitative ontology (SO-6)."""
+        ...
+
+    @abstractmethod
     async def get_verification_events(
         self, matter_id: str, target_kind: Optional[str] = None,
         target_id: Optional[str] = None, limit: int = 50,

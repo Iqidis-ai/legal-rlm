@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 63
+SCHEMA_VERSION = 64
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -26,6 +26,7 @@ _MIGRATION_NAMES: dict[int, str] = {
     61: "object_taint_profile_scoped_uniqueness",
     62: "broker_dependency_manifest_and_packet",
     63: "domain_composition_substrate",
+    64: "metric_alias_ontology",
 }
 
 
@@ -3131,6 +3132,30 @@ def _migration_v63(conn) -> None:
     conn.commit()
 
 
+def _migration_v64(conn) -> None:
+    """Add metric_alias table for quantitative ontology workbench (SO-6)."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS metric_alias (
+            id                      TEXT PRIMARY KEY,
+            matter_id               TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+            domain_profile_id       TEXT NOT NULL,
+            raw_label               TEXT NOT NULL,
+            canonical_metric        TEXT NOT NULL,
+            unit                    TEXT,
+            approved_by_user        INTEGER NOT NULL DEFAULT 0,
+            quant_fact_id           TEXT REFERENCES quant_fact(id),
+            created_at              TEXT NOT NULL,
+            updated_at              TEXT NOT NULL,
+            UNIQUE(matter_id, domain_profile_id, raw_label)
+        ) STRICT"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_metric_alias_lookup"
+        " ON metric_alias(matter_id, domain_profile_id, canonical_metric)"
+    )
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -3198,6 +3223,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (61, _migration_v61),
     (62, _migration_v62),
     (63, _migration_v63),
+    (64, _migration_v64),
 ]
 
 

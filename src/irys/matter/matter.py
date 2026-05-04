@@ -21,7 +21,7 @@ _log = logging.getLogger(__name__)
 from ..core.models import LLMCallRecord, PRICING_SOURCE_URL, PRICING_VERIFIED_AT
 from .db import SQLiteMatterDB
 from .graph import (
-    AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore,
+    AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore, MetricAliasStore,
     DocumentInventoryStore, DocumentCardStore, SpanStore, DocumentActorRoleStore,
     ReasoningCacheStore, TrustOverrideStore, DocumentAnnotationStore,
     DecisionContextStore, AuthorityStore, ProofStateStore, AssumptionStore,
@@ -99,6 +99,7 @@ class MatterModel:
         self.issues = IssueStore(db, matter_id)
         self.clarifications = ClarificationStore(db, matter_id)
         self.quant = QuantStore(db, matter_id)
+        self.metric_aliases = MetricAliasStore(db, matter_id)
         self.ledger = ReasoningLedgerStore(db, matter_id)
         self.belief = BeliefRevisionEngine(db, self.assertions, self.ledger)
         self.inventory = DocumentInventoryStore(db, matter_id)
@@ -3291,6 +3292,73 @@ class MatterModel:
             self.gaps, currency=currency,
             exposure_high=exposure_high, disputed_fraction_min=disputed_fraction_min,
         )
+
+    # ------------------------------------------------------------------
+    # Quantitative ontology workbench (SO-6, SO-1, SO-3)
+    # ------------------------------------------------------------------
+
+    def get_quant_ontology_workbench(self) -> dict:
+        _, _, primary_profile = self._read_matter_domain_composition()
+        domain = primary_profile or "legal"
+
+        quant_rows = self.quant.list_all(limit=200)
+        by_metric: dict[str, list[dict]] = {}
+        for qf in quant_rows:
+            if not isinstance(qf, dict):
+                continue
+            st = qf.get("subject_type") or "other"
+            by_metric.setdefault(st, []).append(qf)
+
+        aliases = self.metric_aliases.get_all(domain_profile_id=domain)
+        alias_map = {a["raw_label"]: a for a in aliases if isinstance(a, dict)}
+
+        metric_groups: list[dict] = []
+        for metric_type, facts in sorted(by_metric.items()):
+            alias = alias_map.get(metric_type)
+            metric_groups.append({
+                "metric_type": metric_type,
+                "canonical_metric": alias["canonical_metric"] if alias else None,
+                "approved": bool(alias["approved_by_user"]) if alias else False,
+                "unit": alias.get("unit") if alias else None,
+                "fact_count": len(facts),
+                "sample_facts": facts[:5],
+                "total_value": sum(
+                    float(f.get("amount_value") or 0) for f in facts
+                    if f.get("amount_value") is not None
+                ),
+            })
+
+        approved_count = self.metric_aliases.count_approved()
+        total_types = len(by_metric)
+
+        return {
+            "matter_id": self.matter_id,
+            "domain": domain,
+            "metric_groups": metric_groups,
+            "approved_count": approved_count,
+            "total_metric_types": total_types,
+            "coverage_fraction": approved_count / total_types if total_types > 0 else 0,
+            "aliases": aliases,
+        }
+
+    def approve_metric_alias(
+        self,
+        raw_label: str,
+        canonical_metric: str,
+        domain_profile_id: str | None = None,
+        unit: str | None = None,
+    ) -> bool:
+        if domain_profile_id is None:
+            _, _, primary = self._read_matter_domain_composition()
+            domain_profile_id = primary or "legal"
+        self.metric_aliases.upsert(
+            domain_profile_id=domain_profile_id,
+            raw_label=raw_label,
+            canonical_metric=canonical_metric,
+            unit=unit,
+            approved_by_user=True,
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Assertion trace with impact (SO-2, SO-3, SO-5)

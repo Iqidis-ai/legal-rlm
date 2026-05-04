@@ -3424,6 +3424,15 @@ class QuantStore:
         ).fetchone()
         return row[0]
 
+    def list_all(self, limit: int = 200) -> list[dict]:
+        rows = self.db.execute(
+            """SELECT * FROM quant_fact
+               WHERE matter_id=?
+               ORDER BY created_at DESC LIMIT ?""",
+            (self.matter_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_conflicts(self) -> list[dict]:
         """Return amount fact groups that have conflicting values for the same entity.
 
@@ -3813,6 +3822,84 @@ class QuantStore:
                                 "description": desc, "amount": None})
 
         return violations
+
+
+class MetricAliasStore:
+    """Stores domain-aware metric classifications for the quant ontology (SO-6)."""
+
+    def __init__(self, db: SQLiteMatterDB, matter_id: str):
+        self.db = db
+        self.matter_id = matter_id
+
+    def upsert(
+        self,
+        domain_profile_id: str,
+        raw_label: str,
+        canonical_metric: str,
+        unit: str | None = None,
+        approved_by_user: bool = False,
+        quant_fact_id: str | None = None,
+    ) -> str:
+        alias_id = _id()
+        now = _now()
+        with self.db.transaction():
+            existing = self.db.execute(
+                """SELECT id FROM metric_alias
+                   WHERE matter_id=? AND domain_profile_id=? AND raw_label=?""",
+                (self.matter_id, domain_profile_id, raw_label),
+            ).fetchone()
+            if existing:
+                self.db.execute(
+                    """UPDATE metric_alias
+                       SET canonical_metric=?, unit=?, approved_by_user=?, updated_at=?
+                       WHERE id=?""",
+                    (canonical_metric, unit, int(approved_by_user), now, existing["id"]),
+                )
+                return existing["id"]
+            self.db.execute(
+                """INSERT INTO metric_alias
+                   (id, matter_id, domain_profile_id, raw_label, canonical_metric,
+                    unit, approved_by_user, quant_fact_id, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (alias_id, self.matter_id, domain_profile_id, raw_label,
+                 canonical_metric, unit, int(approved_by_user), quant_fact_id, now, now),
+            )
+            return alias_id
+
+    def approve(self, raw_label: str, canonical_metric: str, domain_profile_id: str) -> bool:
+        now = _now()
+        cur = self.db.execute(
+            """UPDATE metric_alias
+               SET canonical_metric=?, approved_by_user=1, updated_at=?
+               WHERE matter_id=? AND domain_profile_id=? AND raw_label=?""",
+            (canonical_metric, now, self.matter_id, domain_profile_id, raw_label),
+        )
+        self.db.conn.commit()
+        return cur.rowcount > 0
+
+    def get_all(self, domain_profile_id: str | None = None) -> list[dict]:
+        if domain_profile_id:
+            rows = self.db.execute(
+                """SELECT * FROM metric_alias
+                   WHERE matter_id=? AND domain_profile_id=?
+                   ORDER BY canonical_metric, raw_label""",
+                (self.matter_id, domain_profile_id),
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                """SELECT * FROM metric_alias
+                   WHERE matter_id=?
+                   ORDER BY canonical_metric, raw_label""",
+                (self.matter_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_approved(self) -> int:
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM metric_alias WHERE matter_id=? AND approved_by_user=1",
+            (self.matter_id,),
+        ).fetchone()
+        return row[0]
 
 
 class DocumentInventoryStore:
