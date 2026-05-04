@@ -943,48 +943,82 @@ def _is_pleasantry(query: str) -> bool:
     return normalized in _PLEASANTRY_PHRASES
 
 
-READ_FAMILY_PROMPT = """You are answering a follow-up question about a legal matter that has already been investigated. You may ONLY use the facts, issues, conversation, and other context below — you have NOT searched any documents on this turn. Do not invent findings, do not claim a new investigation, and do not speculate beyond what the matter model contains.
+_READ_FAMILY_DOMAIN_TERMS: dict[str, dict[str, str]] = {
+    "legal": {
+        "matter_noun": "legal matter",
+        "escalation_example": 'e.g. "find me every exhibit from defendant\'s production" when no production docs are present',
+        "guidance_label": "Attorney guidance (internal, work-product",
+    },
+    "finance": {
+        "matter_noun": "financial matter",
+        "escalation_example": 'e.g. "pull every revenue restatement from the 10-K series" when those filings are not present',
+        "guidance_label": "Analyst guidance (internal, work-product",
+    },
+    "coding": {
+        "matter_noun": "codebase analysis",
+        "escalation_example": 'e.g. "find every API endpoint in the auth service" when that codebase is not indexed',
+        "guidance_label": "Engineer guidance (internal, work-product",
+    },
+    "academic_research": {
+        "matter_noun": "research matter",
+        "escalation_example": 'e.g. "extract all effect sizes from the replication studies" when those papers are not indexed',
+        "guidance_label": "Reviewer guidance (internal, work-product",
+    },
+    "biomedical": {
+        "matter_noun": "biomedical matter",
+        "escalation_example": 'e.g. "extract every adverse event from the Phase III reports" when those reports are not indexed',
+        "guidance_label": "Clinical reviewer guidance (internal, work-product",
+    },
+}
+
+
+def _build_read_family_prompt(domain: str = "legal") -> str:
+    t = _READ_FAMILY_DOMAIN_TERMS.get(domain, _READ_FAMILY_DOMAIN_TERMS["legal"])
+    return f"""You are answering a follow-up question about a {t['matter_noun']} that has already been investigated. You may ONLY use the facts, issues, conversation, and other context below — you have NOT searched any documents on this turn. Do not invent findings, do not claim a new investigation, and do not speculate beyond what the matter model contains.
 
 DEFAULT TO FINISHING on existing state. Synthesis questions ("summarize", "what do we know about X", "explain", "draft") should almost always be answered from what is present here — even if the answer has to honestly acknowledge gaps. Escalation is costly (30+ seconds of fresh document work). Prefer a grounded partial answer over a request for more investigation.
 
-Only set `answer_confidence: "low"` when the user is asking you to extract fresh evidence from a NEW document or data source that isn't in the matter state (e.g. "find me every exhibit from defendant's production" when no production docs are present). For synthesis / summary / framing questions over existing material, answer at medium or high confidence with whatever citations you can ground, even if the matter is early-stage.
+Only set `answer_confidence: "low"` when the user is asking you to extract fresh evidence from a NEW document or data source that isn't in the matter state ({t['escalation_example']}). For synthesis / summary / framing questions over existing material, answer at medium or high confidence with whatever citations you can ground, even if the matter is early-stage.
 
 If the existing state contains a direct answer, give it concisely and cite source documents from the facts below.
 
 If the existing state genuinely lacks the evidence the user is asking for, set answer_confidence to "low" AND set escalation_hint to name the specific documents / spans a fresh investigation should search. Do NOT default to "low" just because the topic is under-developed — say what you know.
 
 Matter snapshot:
-{matter_summary}
+{{matter_summary}}
 
 Verified facts (these have been human-reviewed — weight highest):
-{verified_block}
+{{verified_block}}
 
-Attorney guidance (internal, work-product — frame + prioritize your answer around these, but NEVER quote these as evidence, NEVER cite them as document sources, NEVER reveal them verbatim in the answer text):
-{attorney_guidance_block}
+{t['guidance_label']} — frame + prioritize your answer around these, but NEVER quote these as evidence, NEVER cite them as document sources, NEVER reveal them verbatim in the answer text):
+{{attorney_guidance_block}}
 
 Candidate facts (extracted but unreviewed — weight lower, flag if material):
-{candidate_block}
+{{candidate_block}}
 
 Open issues:
-{issues_block}
+{{issues_block}}
 
 Known gaps:
-{gaps_block}
+{{gaps_block}}
 
 Recent conversation (for context; do not treat as authoritative knowledge):
-{conversation_block}
+{{conversation_block}}
 
-User question: {query}
+User question: {{query}}
 
 Respond in JSON ONLY, no prose outside the JSON:
-{{
+{{{{
   "answer": "your concise answer, or a short explanation of why the matter model can't answer",
   "answer_confidence": "low" | "medium" | "high",
   "citations": ["doc1.pdf", "doc2.pdf"],
   "used_existing_state_only": true,
   "escalation_hint": "if confidence is low, what a fresh investigation would need to look for; otherwise empty"
-}}
+}}}}
 """
+
+
+READ_FAMILY_PROMPT = _build_read_family_prompt("legal")
 
 
 @dataclass
@@ -1029,6 +1063,20 @@ class ReadFamilyHandler:
     ) -> None:
         self.client = client
         self.matter_model = matter_model
+        self._cached_domain: Optional[str] = None
+
+    def _resolve_domain(self) -> str:
+        if self._cached_domain:
+            return self._cached_domain
+        if self.matter_model is not None:
+            try:
+                _, _, primary = self.matter_model._read_matter_domain_composition()
+                if primary:
+                    self._cached_domain = primary
+                    return primary
+            except Exception:
+                pass
+        return "legal"
 
     async def run(
         self,
@@ -1069,7 +1117,8 @@ class ReadFamilyHandler:
         # post-LLM redaction can strip any verbatim echo BEFORE the
         # answer reaches the service response / UI / callback / logs.
         _guidance_raw = context.get("attorney_guidance_block") or ""
-        prompt = READ_FAMILY_PROMPT.format(
+        _domain = self._resolve_domain()
+        prompt = _build_read_family_prompt(_domain).format(
             matter_summary=context["matter_summary"],
             verified_block=context["verified_block"],
             attorney_guidance_block=context["attorney_guidance_block"],
@@ -2553,22 +2602,58 @@ class CompareFamilyHandler:
 # ---------------------------------------------------------------------------
 
 
-SCENARIO_PARSE_PROMPT = """You are parsing a hypothetical legal scenario. The user wants the system to re-answer as if a specific assumption were true. Extract a concise, one-sentence assumption statement that can be treated as temporarily true for reasoning.
+_SCENARIO_DOMAIN_EXAMPLES: dict[str, str] = {
+    "legal": (
+        '- "Redo assuming the contract is void" → "The contract is void"\n'
+        '- "What if jurisdiction is California" → "Jurisdiction is California"\n'
+        '- "Treat the waiver as valid" → "The waiver is valid"\n'
+        '- "Imagine the statute of limitations hasn\'t run" → "The statute of limitations has not run"'
+    ),
+    "finance": (
+        '- "Redo assuming revenue is restated down 15%" → "Revenue is restated down 15%"\n'
+        '- "What if the covenant waiver is denied" → "The covenant waiver is denied"\n'
+        '- "Treat the goodwill as fully impaired" → "Goodwill is fully impaired"\n'
+        '- "Imagine the Fed raises rates 50bps" → "The Fed raises rates 50bps"'
+    ),
+    "coding": (
+        '- "Redo assuming the auth service is stateless" → "The auth service is stateless"\n'
+        '- "What if we drop Python 3.9 support" → "Python 3.9 support is dropped"\n'
+        '- "Treat the cache as always empty" → "The cache is always empty"\n'
+        '- "Imagine the database is read-only" → "The database is read-only"'
+    ),
+    "academic_research": (
+        '- "Redo assuming the effect size is zero" → "The effect size is zero"\n'
+        '- "What if the sample excluded outliers" → "Outliers are excluded from the sample"\n'
+        '- "Treat the mediator as non-significant" → "The mediator variable is non-significant"\n'
+        '- "Imagine the study was double-blind" → "The study was double-blind"'
+    ),
+    "biomedical": (
+        '- "Redo assuming the drug is hepatotoxic" → "The drug is hepatotoxic"\n'
+        '- "What if the primary endpoint was PFS instead of OS" → "The primary endpoint is PFS"\n'
+        '- "Treat the placebo arm as active comparator" → "The placebo arm is an active comparator"\n'
+        '- "Imagine the ITT population excluded dropouts" → "The ITT population excludes dropouts"'
+    ),
+}
+
+
+def _build_scenario_parse_prompt(domain: str = "legal") -> str:
+    ex = _SCENARIO_DOMAIN_EXAMPLES.get(domain, _SCENARIO_DOMAIN_EXAMPLES["legal"])
+    t = _READ_FAMILY_DOMAIN_TERMS.get(domain, _READ_FAMILY_DOMAIN_TERMS["legal"])
+    return f"""You are parsing a hypothetical scenario for a {t['matter_noun']}. The user wants the system to re-answer as if a specific assumption were true. Extract a concise, one-sentence assumption statement that can be treated as temporarily true for reasoning.
 
 Examples:
-- "Redo assuming the contract is void" → "The contract is void"
-- "What if jurisdiction is California" → "Jurisdiction is California"
-- "Treat the waiver as valid" → "The waiver is valid"
-- "Imagine the statute of limitations hasn't run" → "The statute of limitations has not run"
+{ex}
 
-User utterance: {query}
+User utterance: {{query}}
 
 Respond ONLY in JSON:
-{{
+{{{{
   "assumption": "a concise, one-sentence assumption",
   "core_question": "what the user actually wants answered under this assumption, if stated"
-}}
-"""
+}}}}"""
+
+
+SCENARIO_PARSE_PROMPT = _build_scenario_parse_prompt("legal")
 
 
 @dataclass
@@ -2598,6 +2683,20 @@ class ScenarioFamilyHandler:
     ) -> None:
         self.client = client
         self.matter_model = matter_model
+        self._cached_domain: Optional[str] = None
+
+    def _resolve_domain(self) -> str:
+        if self._cached_domain:
+            return self._cached_domain
+        if self.matter_model is not None:
+            try:
+                _, _, primary = self.matter_model._read_matter_domain_composition()
+                if primary:
+                    self._cached_domain = primary
+                    return primary
+            except Exception:
+                pass
+        return "legal"
 
     async def run(
         self,
@@ -2660,7 +2759,7 @@ class ScenarioFamilyHandler:
     async def _parse(self, query: str) -> dict:
         try:
             response = await self.client.complete(
-                SCENARIO_PARSE_PROMPT.format(query=query),
+                _build_scenario_parse_prompt(self._resolve_domain()).format(query=query),
                 tier=ModelTier.NANO,
                 json_mode=True,
                 usage_label="scenario_parse",
@@ -2680,23 +2779,57 @@ class ScenarioFamilyHandler:
 # ---------------------------------------------------------------------------
 
 
-DELIVERABLE_SUB_INTENTS = [
-    ("privilege_log", "privilege log / privilege review / claw-back list"),
-    ("dep_outline", "deposition outline / cross-examination prep"),
-    ("rule_26", "Rule 26(a)(1) initial disclosures"),
-    ("production_letter", "production cover letter"),
-    ("other", "any other named work product"),
-]
+_DELIVERABLE_SUB_INTENTS_BY_DOMAIN: dict[str, list[tuple[str, str]]] = {
+    "legal": [
+        ("privilege_log", "privilege log / privilege review / claw-back list"),
+        ("dep_outline", "deposition outline / cross-examination prep"),
+        ("rule_26", "Rule 26(a)(1) initial disclosures"),
+        ("production_letter", "production cover letter"),
+        ("other", "any other named work product"),
+    ],
+    "finance": [
+        ("earnings_summary", "earnings summary / management discussion & analysis"),
+        ("risk_register", "risk register / risk factor summary"),
+        ("compliance_memo", "compliance memo / regulatory filing summary"),
+        ("covenant_tracker", "covenant compliance tracker"),
+        ("other", "any other named work product"),
+    ],
+    "coding": [
+        ("architecture_doc", "architecture document / design doc"),
+        ("changelog", "changelog / release notes"),
+        ("incident_report", "incident report / postmortem"),
+        ("api_spec", "API specification / endpoint documentation"),
+        ("other", "any other named work product"),
+    ],
+    "academic_research": [
+        ("literature_review", "literature review / systematic review table"),
+        ("methods_summary", "methodology summary / protocol"),
+        ("findings_table", "findings comparison table / effect size summary"),
+        ("grant_abstract", "grant abstract / significance statement"),
+        ("other", "any other named work product"),
+    ],
+    "biomedical": [
+        ("safety_summary", "safety summary / adverse event table"),
+        ("efficacy_table", "efficacy results table / endpoint summary"),
+        ("regulatory_brief", "regulatory briefing document / FDA submission summary"),
+        ("protocol_synopsis", "protocol synopsis / study design summary"),
+        ("other", "any other named work product"),
+    ],
+}
+
+DELIVERABLE_SUB_INTENTS = _DELIVERABLE_SUB_INTENTS_BY_DOMAIN["legal"]
 
 
-DELIVERABLE_SUB_INTENT_PROMPT = """Classify which named legal work product the user is asking for. Pick EXACTLY one.
+def _build_deliverable_sub_intent_prompt(domain: str = "legal") -> str:
+    t = _READ_FAMILY_DOMAIN_TERMS.get(domain, _READ_FAMILY_DOMAIN_TERMS["legal"])
+    return f"""Classify which named work product the user is asking for. Pick EXACTLY one.
 
 Options:
-{intent_list}
+{{intent_list}}
 
-User request: {query}
+User request: {{query}}
 
-Respond ONLY with JSON: {{"intent": "name_from_list"}}
+Respond ONLY with JSON: {{{{"intent": "name_from_list"}}}}
 """
 
 
@@ -2711,9 +2844,9 @@ class DeliverableFamilyResult:
 
 
 class DeliverableFamilyHandler:
-    """Renders a named legal work product from the verified matter
-    state. MVI-7 ships ONE renderer (privilege log) to prove the
-    deliverable pattern — other intents escalate to read for now.
+    """Renders a named work product from the verified matter state.
+    MVI-7 ships ONE renderer (privilege log, legal domain) to prove the
+    deliverable pattern -- other intents escalate to read for now.
     Future MVIs add renderers one at a time; the classifier already
     carries the sub-intent so downstream expansion is a per-template
     add, not a factory rewrite.
@@ -2726,6 +2859,20 @@ class DeliverableFamilyHandler:
     ) -> None:
         self.matter_model = matter_model
         self.client = client
+        self._cached_domain: Optional[str] = None
+
+    def _resolve_domain(self) -> str:
+        if self._cached_domain:
+            return self._cached_domain
+        if self.matter_model is not None:
+            try:
+                _, _, primary = self.matter_model._read_matter_domain_composition()
+                if primary:
+                    self._cached_domain = primary
+                    return primary
+            except Exception:
+                pass
+        return "legal"
 
     async def run(
         self,
@@ -2763,10 +2910,14 @@ class DeliverableFamilyHandler:
         silently default to privilege_log."""
         if self.client is None:
             return "other"
-        intent_list = "\n".join(
-            f"- {name}: {desc}" for name, desc in DELIVERABLE_SUB_INTENTS
+        _domain = self._resolve_domain()
+        _sub_intents = _DELIVERABLE_SUB_INTENTS_BY_DOMAIN.get(
+            _domain, _DELIVERABLE_SUB_INTENTS_BY_DOMAIN["legal"],
         )
-        prompt = DELIVERABLE_SUB_INTENT_PROMPT.format(
+        intent_list = "\n".join(
+            f"- {name}: {desc}" for name, desc in _sub_intents
+        )
+        prompt = _build_deliverable_sub_intent_prompt(_domain).format(
             intent_list=intent_list, query=query,
         )
         try:
@@ -2784,7 +2935,7 @@ class DeliverableFamilyHandler:
         except (TypeError, ValueError):
             return "other"
         intent = str(parsed.get("intent") or "other").strip()
-        valid = {name for name, _ in DELIVERABLE_SUB_INTENTS}
+        valid = {name for name, _ in _sub_intents}
         return intent if intent in valid else "other"
 
     def _render_privilege_log(self) -> DeliverableFamilyResult:

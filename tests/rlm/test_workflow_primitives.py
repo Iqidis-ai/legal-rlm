@@ -10615,3 +10615,70 @@ def test_cascade_governor_resolve_domain_caches():
     gov = CascadeGovernor(client=_StubClient())
     gov._cached_domain = "finance"
     assert gov._resolve_domain() == "finance"
+
+
+def test_read_family_prompt_builds_for_all_domains():
+    """_build_read_family_prompt produces a valid template for every domain."""
+    from irys.rlm.governance import _build_read_family_prompt
+    for domain in _ALL_DOMAINS:
+        prompt = _build_read_family_prompt(domain)
+        formatted = prompt.format(
+            matter_summary="S", verified_block="V",
+            attorney_guidance_block="G", candidate_block="C",
+            issues_block="I", gaps_block="GG",
+            conversation_block="CONV", query="test",
+        )
+        assert "test" in formatted
+        assert "{query}" not in formatted
+        assert "{matter_summary}" not in formatted
+
+
+def test_read_family_prompt_domain_specific_terms():
+    """Each domain's read prompt uses domain-specific matter noun."""
+    from irys.rlm.governance import _build_read_family_prompt
+    assert "legal matter" in _build_read_family_prompt("legal")
+    assert "financial matter" in _build_read_family_prompt("finance")
+    assert "codebase analysis" in _build_read_family_prompt("coding")
+    assert "research matter" in _build_read_family_prompt("academic_research")
+    assert "biomedical matter" in _build_read_family_prompt("biomedical")
+
+
+def test_scenario_parse_prompt_builds_for_all_domains():
+    """_build_scenario_parse_prompt produces a valid template for every domain."""
+    from irys.rlm.governance import _build_scenario_parse_prompt
+    for domain in _ALL_DOMAINS:
+        prompt = _build_scenario_parse_prompt(domain)
+        formatted = prompt.format(query="what if X")
+        assert "what if X" in formatted
+        assert "{query}" not in formatted
+
+
+def test_scenario_parse_prompt_domain_examples():
+    """Each domain's scenario prompt contains domain-relevant examples."""
+    from irys.rlm.governance import _build_scenario_parse_prompt
+    assert "contract is void" in _build_scenario_parse_prompt("legal")
+    assert "revenue is restated" in _build_scenario_parse_prompt("finance")
+    assert "auth service is stateless" in _build_scenario_parse_prompt("coding")
+    assert "effect size is zero" in _build_scenario_parse_prompt("academic_research")
+    assert "drug is hepatotoxic" in _build_scenario_parse_prompt("biomedical")
+
+
+def test_deliverable_sub_intents_per_domain():
+    """Every domain has at least 3 deliverable sub-intents including 'other'."""
+    from irys.rlm.governance import _DELIVERABLE_SUB_INTENTS_BY_DOMAIN
+    for domain in _ALL_DOMAINS:
+        intents = _DELIVERABLE_SUB_INTENTS_BY_DOMAIN[domain]
+        assert len(intents) >= 3, f"{domain} has too few intents"
+        names = {n for n, _ in intents}
+        assert "other" in names, f"{domain} missing 'other' fallback intent"
+
+
+def test_deliverable_sub_intent_prompt_builds_for_all_domains():
+    """_build_deliverable_sub_intent_prompt produces a valid template for every domain."""
+    from irys.rlm.governance import _build_deliverable_sub_intent_prompt
+    for domain in _ALL_DOMAINS:
+        prompt = _build_deliverable_sub_intent_prompt(domain)
+        formatted = prompt.format(intent_list="- a: b", query="test")
+        assert "test" in formatted
+        assert "{intent_list}" not in formatted
+        assert "{query}" not in formatted
