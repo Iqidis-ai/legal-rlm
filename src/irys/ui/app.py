@@ -1892,6 +1892,14 @@ def _fmt_source_calibration(data: dict, domain: str = "legal") -> str:
     issues = _safe_list(matrix.get("issues"))
     sources = _safe_list(matrix.get("sources"))
 
+    doc_type_map: dict[str, str] = {}
+    for d in docs:
+        if isinstance(d, dict):
+            path = str(d.get("path", ""))
+            dtype = str(d.get("doc_type", "unknown"))
+            if path:
+                doc_type_map[path] = dtype
+
     parts: list[str] = []
     parts.append("<div style='margin-bottom:16px;'>")
     parts.append(
@@ -1902,12 +1910,14 @@ def _fmt_source_calibration(data: dict, domain: str = "legal") -> str:
     # Calibration Summary
     known_roles = len([r for r in source_roles if not isinstance(r, dict)])
     total_sources = len(sources)
+    unique_doc_types = len(set(doc_type_map.values())) if doc_type_map else 0
     parts.append(
         "<div style='margin-bottom:12px;padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;'>"
         "<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>Calibration Summary</div>"
         f"<div style='font-size:12px;'>Profile: <strong>{_escape(str(profile_id))}</strong> "
         f"| Known source roles: <strong>{known_roles}</strong> "
         f"| Source documents: <strong>{total_sources}</strong> "
+        f"| Distinct source types: <strong>{unique_doc_types}</strong> "
         f"| Issues covered: <strong>{len(issues)}</strong></div>"
     )
     if trust_weights:
@@ -1949,12 +1959,16 @@ def _fmt_source_calibration(data: dict, domain: str = "legal") -> str:
             if not isinstance(issue_cells, dict):
                 issue_cells = {}
             unique_sources = len(issue_cells)
+            issue_doc_types = {doc_type_map.get(src, "unknown") for src in issue_cells}
+            type_diversity = len(issue_doc_types)
 
             warnings = []
             if unique_sources <= 1 and sup > 0:
                 warnings.append(L["single_source"])
             if atk == 0 and sup > 0:
                 warnings.append(L["no_attack_tested"])
+            if type_diversity <= 1 and unique_sources > 1:
+                warnings.append("single type")
 
             warn_html = ""
             if warnings:
@@ -1968,7 +1982,7 @@ def _fmt_source_calibration(data: dict, domain: str = "legal") -> str:
                 f"<tr><td title='{_escape(str(iid)[:40])}'>{title}</td>"
                 f"<td style='text-align:center;'>{sup}</td>"
                 f"<td style='text-align:center;'>{atk}</td>"
-                f"<td style='text-align:center;'>{unique_sources}</td>"
+                f"<td style='text-align:center;'>{unique_sources} ({type_diversity} types)</td>"
                 f"<td>{warn_html}</td></tr>"
             )
         if len(issues) > 30:
@@ -1976,7 +1990,7 @@ def _fmt_source_calibration(data: dict, domain: str = "legal") -> str:
         parts.append("</tbody></table></div></div>")
 
     # Missing Source Obligations from gap workbench
-    gaps = _safe_list(gap_wb.get("gaps"))
+    gaps = _safe_list(gap_wb.get("items"))
     source_gaps = [g for g in gaps if isinstance(g, dict) and str(g.get("gap_type", "")).startswith("MISSING_")]
     if source_gaps:
         parts.append(

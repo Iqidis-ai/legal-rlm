@@ -9049,9 +9049,12 @@ def test_source_calibration_formatter_renders():
             "composed_trust_weights": {"official_record": 0.95, "advocacy": 0.6},
         },
         "gap_workbench": {
-            "gaps": [{"gap_type": "MISSING_AUTHORITY", "description": "Need court filing", "materiality_score": 0.8, "issue_title": "Breach"}]
+            "items": [{"gap_type": "MISSING_AUTHORITY", "description": "Need court filing", "materiality_score": 0.8, "issue_title": "Breach"}]
         },
-        "reviewable_documents": [],
+        "reviewable_documents": [
+            {"path": "doc_a.pdf", "doc_type": "advocacy"},
+            {"path": "doc_b.pdf", "doc_type": "operative"},
+        ],
     }
     html = _fmt_source_calibration(data)
     assert "Calibration Summary" in html
@@ -9062,6 +9065,7 @@ def test_source_calibration_formatter_renders():
     assert "Missing Source Obligations" in html
     assert "Authority" in html
     assert "0.80" in html
+    assert "Distinct source types" in html
 
 
 def test_source_calibration_formatter_xss():
@@ -9081,7 +9085,7 @@ def test_source_calibration_formatter_xss():
             "composed_trust_weights": {"<b>evil</b>": 0.5},
         },
         "gap_workbench": {
-            "gaps": [{"gap_type": "MISSING_DOC", "description": "<script>xss</script>", "materiality_score": 0.5, "issue_title": "<b>bad</b>"}]
+            "items": [{"gap_type": "MISSING_DOC", "description": "<script>xss</script>", "materiality_score": 0.5, "issue_title": "<b>bad</b>"}]
         },
         "reviewable_documents": [],
     }
@@ -9098,7 +9102,7 @@ def test_source_calibration_formatter_domain_labels():
         "evidence_matrix": {"issues": [], "sources": [], "cells": {}, "issue_totals": {}, "source_totals": {}},
         "coverage_report": [],
         "domain_profile": {"profile_id": "test", "source_roles": [], "composed_trust_weights": {}},
-        "gap_workbench": {"gaps": []},
+        "gap_workbench": {"items": []},
         "reviewable_documents": [],
     }
     legal_html = _fmt_source_calibration(data, domain="legal")
@@ -9111,6 +9115,75 @@ def test_source_calibration_formatter_domain_labels():
     assert "Citation Source Assessment" in research_html
     bio_html = _fmt_source_calibration(data, domain="biomedical")
     assert "Clinical Evidence Assessment" in bio_html
+
+
+def test_source_calibration_type_diversity():
+    from irys.ui.app import _fmt_source_calibration
+    data = {
+        "evidence_matrix": {
+            "issues": [{"id": "i1", "title": "Claim A"}],
+            "sources": ["d1.pdf", "d2.pdf", "d3.pdf"],
+            "cells": {"i1": {"d1.pdf": {"supporting": 1, "attacking": 0}, "d2.pdf": {"supporting": 1, "attacking": 0}, "d3.pdf": {"supporting": 1, "attacking": 0}}},
+            "issue_totals": {"i1": {"supporting": 3, "attacking": 0}},
+            "source_totals": {},
+        },
+        "coverage_report": [],
+        "domain_profile": {"profile_id": "legal", "source_roles": [], "composed_trust_weights": {}},
+        "gap_workbench": {"items": []},
+        "reviewable_documents": [
+            {"path": "d1.pdf", "doc_type": "advocacy"},
+            {"path": "d2.pdf", "doc_type": "advocacy"},
+            {"path": "d3.pdf", "doc_type": "operative"},
+        ],
+    }
+    html = _fmt_source_calibration(data)
+    assert "2 types" in html
+    assert "single type" not in html
+
+
+def test_source_calibration_single_type_warning():
+    from irys.ui.app import _fmt_source_calibration
+    data = {
+        "evidence_matrix": {
+            "issues": [{"id": "i1", "title": "Claim A"}],
+            "sources": ["d1.pdf", "d2.pdf"],
+            "cells": {"i1": {"d1.pdf": {"supporting": 1, "attacking": 0}, "d2.pdf": {"supporting": 1, "attacking": 1}}},
+            "issue_totals": {"i1": {"supporting": 2, "attacking": 1}},
+            "source_totals": {},
+        },
+        "coverage_report": [],
+        "domain_profile": {"profile_id": "legal", "source_roles": [], "composed_trust_weights": {}},
+        "gap_workbench": {"items": []},
+        "reviewable_documents": [
+            {"path": "d1.pdf", "doc_type": "advocacy"},
+            {"path": "d2.pdf", "doc_type": "advocacy"},
+        ],
+    }
+    html = _fmt_source_calibration(data)
+    assert "single type" in html
+
+
+def test_source_calibration_items_key_matches_model():
+    """Verify formatter reads 'items' key matching MatterModel.get_gap_workbench() shape."""
+    from irys.ui.app import _fmt_source_calibration
+    model_shape = {
+        "evidence_matrix": {"issues": [], "sources": [], "cells": {}, "issue_totals": {}, "source_totals": {}},
+        "coverage_report": [],
+        "domain_profile": {"profile_id": "legal", "source_roles": [], "composed_trust_weights": {}},
+        "gap_workbench": {"matter_id": "m1", "items": [
+            {"gap_type": "MISSING_EXPERT", "description": "Need expert witness", "materiality_score": 0.9, "issue_title": "Liability"}
+        ]},
+        "reviewable_documents": [],
+    }
+    html = _fmt_source_calibration(model_shape)
+    assert "Missing Source Obligations" in html
+    assert "Expert" in html
+    old_shape = dict(model_shape)
+    old_shape["gap_workbench"] = {"gaps": [
+        {"gap_type": "MISSING_EXPERT", "description": "Need expert witness", "materiality_score": 0.9, "issue_title": "Liability"}
+    ]}
+    html_old = _fmt_source_calibration(old_shape)
+    assert "Missing Source Obligations" not in html_old
 
 
 def test_source_calibration_formatter_non_dict_guards():
