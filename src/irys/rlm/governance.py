@@ -1725,16 +1725,60 @@ class QueryFamilyHandler:
 
     # Fast-path keyword pre-filter. If a query unambiguously matches
     # exactly one intent, skip NANO. Otherwise NANO decides.
-    _KEYWORD_HINTS: list[tuple[str, set[str]]] = [
-        ("list_quants", {"quant", "dollar", "money"}),
-        ("list_actors", {"actor", "counsel", "witness", "opposing"}),
-        ("list_documents", {"document", "files", "pdfs"}),
-        ("list_gaps", {"gap", "missing"}),
-        ("list_issues", {"issues", "claims"}),
-        ("list_contradictions", {"contradict", "conflict", "dispute"}),
-        ("list_recent_facts", {"fact list", "all facts"}),
-        ("list_authorities", {"citation", "case law", "statute"}),
-    ]
+    _KEYWORD_HINTS_BY_DOMAIN: dict[str, list[tuple[str, set[str]]]] = {
+        "legal": [
+            ("list_quants", {"quant", "dollar", "money", "damages", "payment"}),
+            ("list_actors", {"actor", "counsel", "witness", "opposing", "party"}),
+            ("list_documents", {"document", "files", "pdfs", "pleading", "exhibit"}),
+            ("list_gaps", {"gap", "missing"}),
+            ("list_issues", {"issues", "claims", "defense"}),
+            ("list_contradictions", {"contradict", "conflict", "dispute"}),
+            ("list_recent_facts", {"fact list", "all facts"}),
+            ("list_authorities", {"citation", "case law", "statute", "authority"}),
+        ],
+        "finance": [
+            ("list_quants", {"quant", "dollar", "money", "revenue", "margin", "ratio"}),
+            ("list_actors", {"actor", "company", "analyst", "auditor", "executive"}),
+            ("list_documents", {"document", "files", "filing", "10-k", "transcript"}),
+            ("list_gaps", {"gap", "missing"}),
+            ("list_issues", {"issues", "risk", "compliance", "covenant"}),
+            ("list_contradictions", {"contradict", "conflict", "restatement"}),
+            ("list_recent_facts", {"fact list", "all facts"}),
+            ("list_authorities", {"citation", "standard", "regulation", "guideline"}),
+        ],
+        "coding": [
+            ("list_quants", {"quant", "latency", "coverage", "error rate", "metric"}),
+            ("list_actors", {"actor", "service", "component", "developer", "team"}),
+            ("list_documents", {"document", "files", "source", "pr", "design doc"}),
+            ("list_gaps", {"gap", "missing", "untested"}),
+            ("list_issues", {"issues", "bug", "tech debt", "feature"}),
+            ("list_contradictions", {"contradict", "conflict", "mismatch"}),
+            ("list_recent_facts", {"fact list", "all facts"}),
+            ("list_authorities", {"citation", "spec", "standard", "documentation"}),
+        ],
+        "academic_research": [
+            ("list_quants", {"quant", "effect size", "p-value", "sample", "statistic"}),
+            ("list_actors", {"actor", "researcher", "institution", "cohort", "author"}),
+            ("list_documents", {"document", "files", "paper", "study", "dataset"}),
+            ("list_gaps", {"gap", "missing", "unreplicated"}),
+            ("list_issues", {"issues", "question", "methodology", "finding"}),
+            ("list_contradictions", {"contradict", "conflict", "replication failure"}),
+            ("list_recent_facts", {"fact list", "all facts"}),
+            ("list_authorities", {"citation", "journal", "meta-analysis", "review"}),
+        ],
+        "biomedical": [
+            ("list_quants", {"quant", "hazard ratio", "odds ratio", "survival", "dosage"}),
+            ("list_actors", {"actor", "sponsor", "investigator", "cohort", "regulator"}),
+            ("list_documents", {"document", "files", "trial", "protocol", "fda"}),
+            ("list_gaps", {"gap", "missing", "unreported"}),
+            ("list_issues", {"issues", "safety", "efficacy", "endpoint"}),
+            ("list_contradictions", {"contradict", "conflict", "discrepant"}),
+            ("list_recent_facts", {"fact list", "all facts"}),
+            ("list_authorities", {"citation", "guideline", "phase iii", "systematic review"}),
+        ],
+    }
+
+    _KEYWORD_HINTS = _KEYWORD_HINTS_BY_DOMAIN["legal"]
 
     def __init__(
         self,
@@ -1803,8 +1847,11 @@ class QueryFamilyHandler:
     async def _resolve_intent(self, query: str) -> Optional[str]:
         # Fast path: unambiguous keyword match skips NANO.
         q = query.lower()
+        _hints = self._KEYWORD_HINTS_BY_DOMAIN.get(
+            self._resolve_domain(), self._KEYWORD_HINTS_BY_DOMAIN["legal"],
+        )
         matches = {
-            intent for intent, keywords in self._KEYWORD_HINTS
+            intent for intent, keywords in _hints
             if any(k in q for k in keywords)
         }
         if len(matches) == 1:
