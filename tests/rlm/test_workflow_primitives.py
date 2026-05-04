@@ -2812,6 +2812,81 @@ def test_review_queue_xss():
     assert "&lt;script&gt;" in result
 
 
+def test_review_queue_source_document_display():
+    from irys.ui.app import _fmt_review_queue
+    queue = [
+        {
+            "priority_bucket": 0,
+            "priority_score": 1.0,
+            "target_kind": "assertion",
+            "proposition_text": "Damages exceed threshold",
+            "source_doc_label": "contract_2024.pdf",
+            "source_section_label": "Section 4.2",
+            "source_span_id": "span-001",
+            "source_doc_id": "doc-abc",
+        },
+    ]
+    result = _fmt_review_queue(queue)
+    assert "contract_2024.pdf" in result
+    assert "Section 4.2" in result
+    assert "Damages exceed threshold" in result
+
+
+def test_review_queue_source_document_missing():
+    from irys.ui.app import _fmt_review_queue
+    queue = [
+        {
+            "priority_bucket": 2,
+            "priority_score": 0.5,
+            "target_kind": "assertion",
+            "proposition_text": "Some finding",
+        },
+    ]
+    result = _fmt_review_queue(queue)
+    assert "Some finding" in result
+    assert "&#128196;" not in result
+
+
+def test_review_queue_source_document_xss():
+    from irys.ui.app import _fmt_review_queue
+    queue = [
+        {
+            "priority_bucket": 0,
+            "priority_score": 1.0,
+            "target_kind": "assertion",
+            "proposition_text": "test",
+            "source_doc_label": "<img onerror=alert(1)>",
+            "source_section_label": "<script>bad</script>",
+        },
+    ]
+    result = _fmt_review_queue(queue)
+    assert "<img onerror" not in result
+    assert "<script>" not in result
+    assert "&lt;" in result
+
+
+def test_review_queue_choices_with_source_doc():
+    from irys.ui.app import _review_queue_choices
+    queue = [
+        {
+            "target_kind": "assertion",
+            "target_id": "a1",
+            "proposition_text": "Contract was breached",
+            "source_doc_label": "exhibit_a.pdf",
+        },
+        {
+            "target_kind": "assertion",
+            "target_id": "a2",
+            "proposition_text": "Payment was made",
+        },
+    ]
+    choices = _review_queue_choices(queue)
+    assert len(choices) == 2
+    assert "exhibit_a.pdf" in choices[0][0]
+    assert choices[0][1] == "assertion:a1"
+    assert "exhibit_a.pdf" not in choices[1][0]
+
+
 # ------------------------------------------------------------------ #
 # Utility formatter tests                                              #
 # ------------------------------------------------------------------ #

@@ -7661,6 +7661,28 @@ class VerificationStateStore:
                    JOIN issue i ON i.id=ip.issue_id
                    WHERE i.matter_id=? AND i.status='open'
                      AND ip.status='open'
+               ),
+               assertion_source AS (
+                   SELECT * FROM (
+                       SELECT
+                           ao.assertion_id AS target_id,
+                           ao.document_inventory_id AS source_doc_id,
+                           COALESCE(di.relative_path, ao.doc_basename, ao.document_id) AS source_doc_label,
+                           ao.span_id AS source_span_id,
+                           COALESCE(NULLIF(s.section_ref, ''), NULLIF(s.clause_ref, ''), ao.span_id) AS source_section_label,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ao.assertion_id
+                               ORDER BY
+                                   CASE WHEN ao.document_inventory_id IS NOT NULL THEN 0 ELSE 1 END,
+                                   CASE WHEN ao.span_id IS NOT NULL THEN 0 ELSE 1 END,
+                                   ao.created_at DESC
+                           ) AS rn
+                       FROM assertion_occurrence ao
+                       JOIN assertion a2 ON a2.id = ao.assertion_id
+                       LEFT JOIN document_inventory di ON di.id = ao.document_inventory_id
+                       LEFT JOIN span s ON s.id = ao.span_id
+                       WHERE a2.matter_id = ?
+                   ) WHERE rn = 1
                )
                SELECT vs.id AS verification_id, vs.status, vs.target_kind, vs.target_id,
                       vs.ai_confidence, vs.created_at, vs.updated_at,
@@ -7685,7 +7707,11 @@ class VerificationStateStore:
                       a.proposition_text  AS proposition_text,
                       q.raw_text          AS quant_raw_text,
                       au.citation         AS authority_citation,
-                      ipd.description     AS predicate_description
+                      ipd.description     AS predicate_description,
+                      src.source_doc_id   AS source_doc_id,
+                      src.source_doc_label AS source_doc_label,
+                      src.source_span_id  AS source_span_id,
+                      src.source_section_label AS source_section_label
                FROM verification_state vs
                LEFT JOIN assertion_issue ai ON ai.target_id = vs.target_id
                                             AND vs.target_kind='assertion'
@@ -7703,6 +7729,8 @@ class VerificationStateStore:
                                            AND au.id = vs.target_id
                LEFT JOIN issue_predicate ipd ON vs.target_kind='issue_predicate'
                                              AND ipd.id = vs.target_id
+               LEFT JOIN assertion_source src ON src.target_id = vs.target_id
+                                              AND vs.target_kind='assertion'
                WHERE vs.matter_id=? AND vs.status='candidate'
                  {kind_filter_sql}
                ORDER BY priority_bucket ASC, priority_score DESC, vs.created_at DESC
@@ -7711,6 +7739,7 @@ class VerificationStateStore:
                 self.matter_id, self.matter_id,  # assertion_issue, edge_issue
                 self.matter_id,                   # contradicted
                 self.matter_id,                   # predicate_issue
+                self.matter_id,                   # assertion_source
                 *params, int(limit), int(offset),
             ),
         ).fetchall()
@@ -7720,12 +7749,10 @@ class VerificationStateStore:
         """Lightweight count for the badge and for verify/reject toast
         sizing. Returns {'total': int, 'by_bucket': {bucket: count}}.
 
-        The full `review_queue` runs ~4 correlated subqueries per row for
-        display text (proposition_text, quant_raw_text, etc.). The badge
-        and the pre/post verify snapshots only need integers, so this
-        variant drops the display subqueries and the ORDER BY, keeping
-        only the CTEs that drive the priority_bucket CASE. One query,
-        no per-row work — a ~10× cut on 500-row queues.
+        The full `review_queue` uses indexed LEFT JOINs for display text
+        and a ROW_NUMBER CTE for source docs. This variant drops those
+        joins and the ORDER BY, keeping only the CTEs that drive the
+        priority_bucket CASE.
         """
         rows = self.db.execute(
             """WITH assertion_issue AS (

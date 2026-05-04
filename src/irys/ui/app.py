@@ -6017,6 +6017,20 @@ def _fmt_review_queue(queue: list[dict], domain: str = "legal") -> str:
         )
         kind_pretty = kind_labels.get(kind, kind.replace("_", " ").title())
         truncated = _truncate(text, 180)
+        source_doc = row.get("source_doc_label")
+        source_section = row.get("source_section_label") or row.get("source_span_id")
+        source_html = ""
+        if source_doc:
+            section_part = (
+                f" &middot; {_escape(_truncate(str(source_section), 48))}"
+                if source_section
+                else ""
+            )
+            source_html = (
+                f"<div style='margin-top:4px;font-size:12px;color:#6b7280;'>"
+                f"&#128196; {_escape(_truncate(str(source_doc), 110))}{section_part}"
+                f"</div>"
+            )
         rows_html.append(
             f"<div style='padding:10px 12px;border-left:3px solid #e5e7eb;"
             f"margin-bottom:8px;background:#f9fafb;border-radius:0 6px 6px 0;'>"
@@ -6026,6 +6040,7 @@ def _fmt_review_queue(queue: list[dict], domain: str = "legal") -> str:
             f"text-transform:uppercase;letter-spacing:0.03em;'>{kind_pretty}</span>"
             f"</div>"
             f"<div style='color:#1f2937;line-height:1.45;'>{_escape(truncated)}</div>"
+            f"{source_html}"
             f"</div>"
         )
     return (
@@ -6205,7 +6220,9 @@ def _review_queue_choices(queue: list[dict]) -> list[tuple[str, str]]:
             "document_card": "Document classification",
             "assertion_occurrence": "Quoted utterance",
         }.get(kind, kind.replace("_", " ").title())
-        label = f"{kind_pretty}: {_truncate(text, 90)}"
+        doc = row.get("source_doc_label")
+        doc_part = f" [{_truncate(str(doc), 36)}]" if doc else ""
+        label = f"{kind_pretty}: {_truncate(text, 90)}{doc_part}"
         choices.append((label, f"{kind}:{tid}"))
     return choices
 
