@@ -3105,3 +3105,46 @@ def test_fmt_steering_non_dict_guard():
     from irys.ui.app import _fmt_steering
     result = _fmt_steering(["not-a-dict", 42, None], domain="legal")
     assert "Recommended Next Steps" in result
+
+
+def test_fmt_authority_panel_domain_labels():
+    from irys.ui.app import _fmt_authority_panel
+    data = {
+        "authorities": [
+            {"id": "A1", "citation": "Smith v. Jones", "name": "Smith", "authority_type": "case",
+             "weight": "binding", "jurisdiction": "9th Cir.", "holdings": [], "key_rules": []},
+        ],
+        "issue_links": {"A1": [{"issue_id": "I1", "issue_title": "Breach", "relevance": "supporting"}]},
+    }
+    legal = _fmt_authority_panel(data, domain="legal")
+    assert "Authority" in legal
+    assert "Linked Issues" in legal
+
+    finance = _fmt_authority_panel(data, domain="finance")
+    assert "Reference" in finance
+    assert "Linked Theses" in finance
+
+    coding = _fmt_authority_panel(data, domain="coding")
+    assert "Specification" in coding
+    assert "Linked Requirements" in coding
+
+
+def test_fmt_authority_panel_empty():
+    from irys.ui.app import _fmt_authority_panel
+    result = _fmt_authority_panel({"authorities": [], "issue_links": {}}, domain="biomedical")
+    assert "viz-empty" in result
+    assert "clinical guidelines" in result.lower()
+
+
+def test_authority_backend_interface_methods():
+    """Verify backend interface declares all authority curation methods."""
+    from irys.ui.backends.base import UIBackend
+    import inspect
+    assert hasattr(UIBackend, "upsert_authority")
+    assert hasattr(UIBackend, "link_authority_to_issue")
+    assert hasattr(UIBackend, "unlink_authority_from_issue")
+    assert hasattr(UIBackend, "search_authorities")
+    sig = inspect.signature(UIBackend.upsert_authority)
+    assert "citation" in sig.parameters
+    assert "authority_type" in sig.parameters
+    assert "weight" in sig.parameters

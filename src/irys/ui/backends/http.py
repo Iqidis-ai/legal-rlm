@@ -562,6 +562,55 @@ class HttpBackend(UIBackend):
             return result
         return {"authorities": [], "issue_links": {}}
 
+    async def upsert_authority(
+        self,
+        matter_id: str,
+        citation: str,
+        *,
+        authority_type: str = "case",
+        name: str | None = None,
+        jurisdiction: str | None = None,
+        weight: str = "persuasive",
+    ) -> dict:
+        body: dict = {"citation": citation, "authority_type": authority_type, "weight": weight}
+        if name:
+            body["name"] = name
+        if jurisdiction:
+            body["jurisdiction"] = jurisdiction
+        result = await self._post(f"/matter/{matter_id}/authorities", body)
+        return result if isinstance(result, dict) else {}
+
+    async def link_authority_to_issue(
+        self,
+        matter_id: str,
+        authority_id: str,
+        issue_id: str,
+        relevance: str = "supporting",
+    ) -> dict:
+        result = await self._post(
+            f"/matter/{matter_id}/authorities/{authority_id}/issues/{issue_id}",
+            {"relevance": relevance},
+        )
+        return result if isinstance(result, dict) else {"status": "linked"}
+
+    async def unlink_authority_from_issue(
+        self, matter_id: str, authority_id: str, issue_id: str
+    ) -> dict:
+        r = await self._client.delete(
+            f"/matter/{matter_id}/authorities/{authority_id}/issues/{issue_id}"
+        )
+        r.raise_for_status()
+        return {"status": "unlinked"}
+
+    async def search_authorities(
+        self, matter_id: str, query: str, limit: int = 20
+    ) -> list[dict]:
+        result = await self._get(
+            f"/matter/{matter_id}/authorities",
+            {"search": query, "limit": limit},
+        )
+        return result if isinstance(result, list) else []
+
     # ------------------------------------------------------------------ #
     # Cost analytics                                                       #
     # ------------------------------------------------------------------ #

@@ -570,6 +570,50 @@ class InProcessBackend(UIBackend):
         }
         return model.authority.get_network(issue_titles=issue_titles)
 
+    async def upsert_authority(
+        self,
+        matter_id: str,
+        citation: str,
+        *,
+        authority_type: str = "case",
+        name: str | None = None,
+        jurisdiction: str | None = None,
+        weight: str = "persuasive",
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        aid, is_new = model.authority.upsert(
+            citation=citation,
+            authority_type=authority_type,
+            name=name,
+            jurisdiction=jurisdiction,
+            weight=weight,
+        )
+        return {"authority_id": aid, "is_new": is_new}
+
+    async def link_authority_to_issue(
+        self,
+        matter_id: str,
+        authority_id: str,
+        issue_id: str,
+        relevance: str = "supporting",
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        model.authority.link_to_issue(authority_id, issue_id, relevance=relevance)
+        return {"status": "linked"}
+
+    async def unlink_authority_from_issue(
+        self, matter_id: str, authority_id: str, issue_id: str
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        model.authority.unlink_from_issue(authority_id, issue_id)
+        return {"status": "unlinked"}
+
+    async def search_authorities(
+        self, matter_id: str, query: str, limit: int = 20
+    ) -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.authority.search(query, limit=limit)
+
     async def get_document_intelligence(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         cards = model.document_cards.list_candidates(limit=200)

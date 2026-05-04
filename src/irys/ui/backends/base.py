@@ -177,6 +177,45 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def upsert_authority(
+        self,
+        matter_id: str,
+        citation: str,
+        *,
+        authority_type: str = "case",
+        name: Optional[str] = None,
+        jurisdiction: Optional[str] = None,
+        weight: str = "persuasive",
+    ) -> dict:
+        """Create or update an authority. Returns {authority_id, is_new}."""
+        ...
+
+    @abstractmethod
+    async def link_authority_to_issue(
+        self,
+        matter_id: str,
+        authority_id: str,
+        issue_id: str,
+        relevance: str = "supporting",
+    ) -> dict:
+        """Link an authority to an issue. Returns {status}."""
+        ...
+
+    @abstractmethod
+    async def unlink_authority_from_issue(
+        self, matter_id: str, authority_id: str, issue_id: str
+    ) -> dict:
+        """Unlink an authority from an issue. Returns {status}."""
+        ...
+
+    @abstractmethod
+    async def search_authorities(
+        self, matter_id: str, query: str, limit: int = 20
+    ) -> list[dict]:
+        """Search authorities by citation/name."""
+        ...
+
+    @abstractmethod
     async def get_document_intelligence(self, matter_id: str) -> dict:
         """Return document cards with inventory metadata for the document panel."""
         ...

@@ -7323,6 +7323,74 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading authorities: {_escape(exc)}</div>"
 
+    def do_upsert_authority(
+        self, matter_id: str, citation: str, authority_type: str,
+        name: str, jurisdiction: str, weight: str,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "No matter loaded.", ""
+        citation = (citation or "").strip()
+        if not citation:
+            return "Citation is required.", ""
+        try:
+            result = _run_async(self.backend().upsert_authority(
+                matter_id, citation,
+                authority_type=authority_type or "case",
+                name=name or None,
+                jurisdiction=jurisdiction or None,
+                weight=weight or "persuasive",
+            ))
+            is_new = result.get("is_new", True)
+            aid = result.get("authority_id", "?")
+            verb = "Added" if is_new else "Updated"
+            domain = self._detect_domain(matter_id)
+            html = self.load_authority_network(matter_id, domain)
+            return f"{verb} authority {aid[:12]}", html
+        except Exception as exc:
+            logger.warning("upsert_authority failed for %s: %s", matter_id, exc)
+            return f"Error: {exc}", ""
+
+    def do_link_authority_issue(
+        self, matter_id: str, authority_id: str, issue_id: str, relevance: str,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "No matter loaded.", ""
+        authority_id = (authority_id or "").strip()
+        issue_id = (issue_id or "").strip()
+        if not authority_id or not issue_id:
+            return "Both authority ID and issue ID are required.", ""
+        try:
+            _run_async(self.backend().link_authority_to_issue(
+                matter_id, authority_id, issue_id,
+                relevance=relevance or "supporting",
+            ))
+            domain = self._detect_domain(matter_id)
+            html = self.load_authority_network(matter_id, domain)
+            return f"Linked {authority_id[:12]} → {issue_id[:12]} ({relevance})", html
+        except Exception as exc:
+            logger.warning("link_authority_to_issue failed: %s", exc)
+            return f"Error: {exc}", ""
+
+    def do_unlink_authority_issue(
+        self, matter_id: str, authority_id: str, issue_id: str,
+    ) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "No matter loaded.", ""
+        authority_id = (authority_id or "").strip()
+        issue_id = (issue_id or "").strip()
+        if not authority_id or not issue_id:
+            return "Both authority ID and issue ID are required.", ""
+        try:
+            _run_async(self.backend().unlink_authority_from_issue(
+                matter_id, authority_id, issue_id,
+            ))
+            domain = self._detect_domain(matter_id)
+            html = self.load_authority_network(matter_id, domain)
+            return f"Unlinked {authority_id[:12]} from {issue_id[:12]}", html
+        except Exception as exc:
+            logger.warning("unlink_authority_from_issue failed: %s", exc)
+            return f"Error: {exc}", ""
+
     def load_document_intelligence(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -8765,6 +8833,49 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             authority_html = gr.HTML("<div class='viz-empty'>Authority data will appear here after an investigation.</div>")
             refresh_authority_btn = gr.Button("Refresh Authorities", variant="secondary", size="sm")
 
+            with gr.Accordion("Add or update an authority", open=False):
+                with gr.Row():
+                    auth_citation = gr.Textbox(label="Citation", placeholder="e.g. Smith v. Jones, 123 F.3d 456", scale=3)
+                    auth_name = gr.Textbox(label="Short name (optional)", placeholder="e.g. Smith v. Jones", scale=2)
+                with gr.Row():
+                    auth_type = gr.Dropdown(
+                        label="Type",
+                        choices=[
+                            ("Case law", "case"), ("Statute", "statute"),
+                            ("Regulation", "regulation"), ("Rule", "rule"),
+                            ("Secondary source", "secondary"),
+                        ],
+                        value="case", scale=1,
+                    )
+                    auth_weight = gr.Dropdown(
+                        label="Weight",
+                        choices=[
+                            ("Binding", "binding"), ("Persuasive", "persuasive"),
+                            ("Neutral", "neutral"),
+                        ],
+                        value="persuasive", scale=1,
+                    )
+                    auth_jurisdiction = gr.Textbox(label="Jurisdiction (optional)", placeholder="e.g. 9th Cir.", scale=1)
+                upsert_authority_btn = gr.Button("Add / Update Authority", variant="primary", size="sm")
+                upsert_authority_result = gr.Markdown("")
+
+            with gr.Accordion("Link / unlink authority ↔ issue", open=False):
+                with gr.Row():
+                    link_auth_id = gr.Textbox(label="Authority ID", placeholder="Copy from table above", scale=2)
+                    link_issue_id = gr.Textbox(label="Issue ID", placeholder="Issue to link", scale=2)
+                    link_relevance = gr.Dropdown(
+                        label="Relevance",
+                        choices=[
+                            ("Supporting", "supporting"), ("Attacking", "attacking"),
+                            ("Neutral", "neutral"),
+                        ],
+                        value="supporting", scale=1,
+                    )
+                with gr.Row():
+                    link_authority_btn = gr.Button("Link", variant="primary", size="sm")
+                    unlink_authority_btn = gr.Button("Unlink", variant="stop", size="sm")
+                link_authority_result = gr.Markdown("")
+
         with gr.Accordion("Document Intelligence — what the system knows about each source", open=False):
             gr.Markdown(
                 "Per-document profile cards: type classification, source side, author, "
@@ -9666,6 +9777,21 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_authority_network(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[authority_html],
+        )
+        upsert_authority_btn.click(
+            fn=lambda mid, cit, atype, name, jur, wt: state.do_upsert_authority(mid, cit, atype, name, jur, wt),
+            inputs=[matter_id_box, auth_citation, auth_type, auth_name, auth_jurisdiction, auth_weight],
+            outputs=[upsert_authority_result, authority_html],
+        )
+        link_authority_btn.click(
+            fn=lambda mid, aid, iid, rel: state.do_link_authority_issue(mid, aid, iid, rel),
+            inputs=[matter_id_box, link_auth_id, link_issue_id, link_relevance],
+            outputs=[link_authority_result, authority_html],
+        )
+        unlink_authority_btn.click(
+            fn=lambda mid, aid, iid: state.do_unlink_authority_issue(mid, aid, iid),
+            inputs=[matter_id_box, link_auth_id, link_issue_id],
+            outputs=[link_authority_result, authority_html],
         )
         refresh_doc_intel_btn.click(
             fn=lambda mid: state.load_document_intelligence(mid, domain=state._detect_domain(mid)),
