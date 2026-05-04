@@ -291,6 +291,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_damages_waterfall(self, matter_id: str, currency: str = "USD") -> list[dict]:
+        """Return structured damages breakdown by category with conflict detection (SO-6)."""
+        ...
+
+    @abstractmethod
     async def get_system_health(self, matter_id: str) -> dict:
         """Return system health diagnostics."""
         ...

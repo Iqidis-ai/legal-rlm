@@ -689,6 +689,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.reconcile_invoice_chain(currency)
 
+    async def get_damages_waterfall(self, matter_id: str, currency: str = "USD") -> list[dict]:
+        model = self._get_matter_model(matter_id)
+        return model.get_damages_waterfall(currency=currency)
+
     async def get_system_health(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_system_health()

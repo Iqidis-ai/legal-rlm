@@ -345,6 +345,10 @@ class HttpBackend(UIBackend):
             return []
         return result
 
+    async def get_damages_waterfall(self, matter_id: str, currency: str = "USD") -> list[dict]:
+        result = await self._get(f"/matter/{matter_id}/damages-waterfall", {"currency": currency})
+        return result if isinstance(result, list) else []
+
     async def get_system_health(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/system-health")
         return result if isinstance(result, dict) else {}
