@@ -212,6 +212,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_deliverable_workbench(self, matter_id: str) -> dict:
+        """Deliverable preparation: verified issues, cited assertions, reliance gate."""
+        ...
+
+    @abstractmethod
     async def get_objective_coverage(self, matter_id: str) -> dict:
         """Objective coverage workbench: per-objective criteria, support, gaps (SO-4)."""
         ...

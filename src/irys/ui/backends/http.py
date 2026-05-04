@@ -305,6 +305,13 @@ class HttpBackend(UIBackend):
             return {}
         return result
 
+    async def get_deliverable_workbench(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/deliverable-workbench")
+        if not isinstance(result, dict):
+            _log.warning("get_deliverable_workbench: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         result = await self._get(f"/matter/{matter_id}/objective-coverage")
         if not isinstance(result, dict):

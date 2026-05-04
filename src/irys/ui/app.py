@@ -5927,6 +5927,171 @@ def _fmt_output_quality(data: dict, domain: str = "legal") -> str:
     return "\n".join(parts)
 
 
+_DELIVERABLE_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Deliverable Builder",
+        "subtitle": "Assemble a memo, letter, or outline from verified evidence",
+        "empty": "No issues available. Run an investigation first.",
+        "gate_ready": "Reliance gate passed — deliverable can be produced",
+        "gate_blocked": "Reliance gate blocked — resolve blockers before producing deliverables",
+        "gate_caution": "Reliance gate: caution — review blockers before proceeding",
+        "issues_header": "Issues in Scope",
+        "verified": "verified facts",
+        "sources": "source documents",
+    },
+    "finance": {
+        "title": "Report Builder",
+        "subtitle": "Assemble a report or briefing from verified analysis",
+        "empty": "No theses available. Run an analysis first.",
+        "gate_ready": "Reliance gate passed — report can be produced",
+        "gate_blocked": "Reliance gate blocked — resolve blockers first",
+        "gate_caution": "Reliance gate: caution — review blockers before proceeding",
+        "issues_header": "Theses in Scope",
+        "verified": "verified data points",
+        "sources": "source documents",
+    },
+    "coding": {
+        "title": "Assessment Builder",
+        "subtitle": "Assemble an assessment from verified findings",
+        "empty": "No tasks available. Run an assessment first.",
+        "gate_ready": "Quality gate passed — assessment can be produced",
+        "gate_blocked": "Quality gate blocked — resolve issues first",
+        "gate_caution": "Quality gate: caution — review issues before proceeding",
+        "issues_header": "Tasks in Scope",
+        "verified": "verified findings",
+        "sources": "source files",
+    },
+    "academic_research": {
+        "title": "Manuscript Builder",
+        "subtitle": "Assemble a literature review from verified claims",
+        "empty": "No questions available. Run a review first.",
+        "gate_ready": "Citation gate passed — manuscript can be produced",
+        "gate_blocked": "Citation gate blocked — resolve gaps first",
+        "gate_caution": "Citation gate: caution — review gaps before proceeding",
+        "issues_header": "Questions in Scope",
+        "verified": "verified claims",
+        "sources": "source papers",
+    },
+    "biomedical": {
+        "title": "Clinical Summary Builder",
+        "subtitle": "Assemble a clinical summary from verified findings",
+        "empty": "No hypotheses available. Run a clinical analysis first.",
+        "gate_ready": "Clinical gate passed — summary can be produced",
+        "gate_blocked": "Clinical gate blocked — resolve blockers first",
+        "gate_caution": "Clinical gate: caution — review blockers before proceeding",
+        "issues_header": "Hypotheses in Scope",
+        "verified": "verified findings",
+        "sources": "source records",
+    },
+}
+
+
+def _fmt_deliverable_workbench(data: dict, domain: str = "legal") -> str:
+    labels = _DELIVERABLE_LABELS.get(domain, _DELIVERABLE_LABELS["legal"])
+    if not isinstance(data, dict):
+        return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+
+    issues = data.get("issues", [])
+    gate = data.get("reliance_gate", "unknown")
+    blocker_count = data.get("blocker_count", 0)
+    total_verified = data.get("total_verified_assertions", 0)
+    total_sources = data.get("total_source_documents", 0)
+
+    if not issues:
+        return f"<div class='viz-empty'>{_escape(labels['empty'])}</div>"
+
+    gate_configs = {
+        "ready": ("#16a34a", labels["gate_ready"], "&#x2705;"),
+        "caution": ("#d97706", labels["gate_caution"], "&#x26A0;&#xFE0F;"),
+        "blocked": ("#dc2626", labels["gate_blocked"], "&#x274C;"),
+    }
+    g_color, g_label, g_icon = gate_configs.get(gate, ("#6b7280", gate, "&#x2753;"))
+
+    parts = [
+        "<div class='viz-shell'>",
+        f"<div class='viz-header'><strong>{_escape(labels['title'])}</strong>"
+        f" &mdash; {_escape(labels['subtitle'])}</div>",
+        f"<div style='padding:10px 16px;background:{g_color}11;"
+        f"border-left:4px solid {g_color};margin:8px 0;border-radius:4px;'>"
+        f"<span style='color:{g_color};font-weight:700;'>{g_icon} {_escape(g_label)}</span>",
+    ]
+    if blocker_count:
+        parts.append(
+            f" <span style='color:#6b7280;font-size:0.9em;'>"
+            f"({blocker_count} blocker{'s' if blocker_count != 1 else ''})</span>"
+        )
+    parts.append("</div>")
+
+    parts.append(
+        f"<div style='margin:8px 0;font-size:0.9em;color:#6b7280;'>"
+        f"<strong>{len(issues)}</strong> issue(s) in scope &middot; "
+        f"<strong>{total_verified}</strong> {_escape(labels['verified'])} &middot; "
+        f"<strong>{total_sources}</strong> {_escape(labels['sources'])}</div>"
+    )
+
+    parts.append(
+        f"<h4 style='margin:12px 0 6px 0;font-size:0.95em;'>"
+        f"{_escape(labels['issues_header'])}</h4>"
+    )
+
+    for iss in issues:
+        if not isinstance(iss, dict):
+            continue
+        title = _escape((iss.get("title") or "")[:120])
+        iid = _escape((iss.get("issue_id") or "")[:40])
+        v_count = iss.get("verified_assertion_count", 0)
+        sources = iss.get("source_documents", [])
+        mat = iss.get("materiality", 0)
+        if isinstance(mat, (int, float)) and math.isfinite(mat):
+            mat_pct = int(mat * 100)
+        else:
+            mat_pct = 0
+
+        has_evidence = v_count > 0
+        border_color = "#16a34a" if has_evidence else "#d97706"
+        bg = "#f0fdf4" if has_evidence else "#fffbeb"
+
+        parts.append(
+            f"<div style='padding:8px 14px;margin:4px 0;background:{bg};"
+            f"border-left:3px solid {border_color};border-radius:4px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+            f"<strong>{title}</strong>"
+            f"<span style='font-size:0.8em;color:#6b7280;'>materiality: {mat_pct}%</span>"
+            f"</div>"
+            f"<div style='margin-top:4px;font-size:0.85em;color:#4b5563;'>"
+            f"{'&#x2705;' if has_evidence else '&#x26A0;&#xFE0F;'} "
+            f"{v_count} {_escape(labels['verified'])}"
+        )
+        if sources:
+            src_list = ", ".join(_escape(s[:30]) for s in sources[:5])
+            parts.append(f" &middot; Sources: {src_list}")
+        parts.append("</div>")
+
+        assertions = iss.get("verified_assertions", [])
+        if assertions:
+            parts.append("<div style='margin-top:4px;padding-left:12px;'>")
+            for va in assertions[:5]:
+                if not isinstance(va, dict):
+                    continue
+                prop = _escape((va.get("proposition") or "")[:120])
+                bs = _escape(va.get("belief_state", ""))
+                parts.append(
+                    f"<div style='font-size:0.82em;color:#6b7280;margin:2px 0;'>"
+                    f"&bull; {prop} <span style='color:#2563eb;'>({bs})</span></div>"
+                )
+            if len(assertions) > 5:
+                parts.append(
+                    f"<div style='font-size:0.8em;color:#9ca3af;'>"
+                    f"… and {len(assertions) - 5} more</div>"
+                )
+            parts.append("</div>")
+
+        parts.append("</div>")
+
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
 def _fmt_quant_panel(
     payment_recon: dict,
     invoice_chain: list,
@@ -10534,6 +10699,19 @@ class AppState:
             logger.warning("Output quality workbench load failed: %s", exc)
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
+    def load_deliverable_workbench(self, matter_id: str, domain: str = "legal") -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_deliverable_workbench(matter_id))
+            if not isinstance(data, dict):
+                logger.warning("load_deliverable_workbench: expected dict, got %s", type(data).__name__)
+                data = {}
+            return _fmt_deliverable_workbench(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Deliverable workbench load failed: %s", exc)
+            return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
+
     def load_quant_ontology(self, matter_id: str, domain: str = "legal") -> tuple[str, Any]:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>", gr.update(choices=[])
@@ -13003,6 +13181,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 "Refresh Quality Contract", variant="secondary", size="sm",
             )
 
+        with gr.Accordion("Deliverable Builder — assemble work product from verified evidence", open=False):
+            gr.Markdown(
+                "Preview what a professional deliverable would contain: verified assertions "
+                "for each issue, cited source documents, and the current reliance gate status. "
+                "Issues with no verified evidence are flagged so you know what to resolve first."
+            )
+            deliverable_workbench_html = gr.HTML(
+                "<div class='viz-empty'>Deliverable preview will appear after an investigation.</div>"
+            )
+            refresh_deliverable_btn = gr.Button(
+                "Refresh Deliverable Preview", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Answer Audit — freshness, sources, and policy for every answer", open=False):
             gr.Markdown(
                 "Every answer Irys produces is backed by a dependency manifest that tracks "
@@ -13648,6 +13839,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_output_quality(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[output_quality_html],
+            ).then(
+                fn=lambda mid: state.load_deliverable_workbench(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[deliverable_workbench_html],
             )
         else:
             submit_btn.click(
@@ -13752,6 +13947,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_output_quality(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[output_quality_html],
+            ).then(
+                fn=lambda mid: state.load_deliverable_workbench(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[deliverable_workbench_html],
             )
         stop_btn.click(fn=state.stop_investigation, inputs=[], outputs=[])
 
@@ -13865,6 +14064,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_output_quality(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[output_quality_html],
+        ).then(
+            fn=lambda mid: state.load_deliverable_workbench(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[deliverable_workbench_html],
         )
 
         export_report_btn.click(
@@ -14193,6 +14396,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_output_quality(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[output_quality_html],
+        )
+        refresh_deliverable_btn.click(
+            fn=lambda mid: state.load_deliverable_workbench(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[deliverable_workbench_html],
         )
         refresh_answer_audit_btn.click(
             fn=lambda mid: state.load_answer_audits(mid, domain=state._detect_domain(mid)),
@@ -14660,6 +14868,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_output_quality(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[output_quality_html],
+        ).then(
+            fn=lambda mid: state.load_deliverable_workbench(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[deliverable_workbench_html],
         )
 
         clarification_dropdown.change(

@@ -6221,3 +6221,173 @@ def test_output_quality_formatter_nan_reuse_rate():
     html = _fmt_output_quality(data, domain="legal")
     assert "nan" not in html.lower()
     assert "inf" not in html.lower()
+
+
+# ── Deliverable Builder Workbench ────────────────────────────────────
+
+def test_deliverable_workbench_empty():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_deliverable_workbench()
+    assert isinstance(result, dict)
+    assert result["matter_id"] == model.matter_id
+    assert result["reliance_gate"] in ("ready", "caution", "blocked")
+    assert isinstance(result["issues"], list)
+    assert isinstance(result["total_verified_assertions"], int)
+    assert isinstance(result["total_source_documents"], int)
+
+
+def test_deliverable_workbench_with_issue():
+    from irys.matter.matter import MatterModel
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue("Was the contract valid?", IssueType.CLAIM, materiality=0.9)
+    result = model.get_deliverable_workbench()
+    assert len(result["issues"]) >= 1
+    iss = next((i for i in result["issues"] if i["issue_id"] == iid), None)
+    assert iss is not None
+    assert "Was the contract valid?" in iss["title"]
+
+
+def test_deliverable_workbench_scoped_issues():
+    from irys.matter.matter import MatterModel
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid1, _ = model.issues.upsert_issue("Issue A", IssueType.CLAIM, materiality=0.8)
+    iid2, _ = model.issues.upsert_issue("Issue B", IssueType.CLAIM, materiality=0.5)
+    result = model.get_deliverable_workbench(issue_ids=[iid1])
+    assert len(result["issues"]) == 1
+    assert result["issues"][0]["issue_id"] == iid1
+
+
+def test_deliverable_formatter_empty():
+    from irys.ui.app import _fmt_deliverable_workbench
+    html = _fmt_deliverable_workbench({}, domain="legal")
+    assert "viz-empty" in html
+
+
+def test_deliverable_formatter_renders():
+    from irys.ui.app import _fmt_deliverable_workbench
+    data = {
+        "reliance_gate": "ready",
+        "blocker_count": 0,
+        "issue_count": 1,
+        "issues": [
+            {
+                "issue_id": "iss-1",
+                "title": "Contract validity",
+                "materiality": 0.85,
+                "verified_assertion_count": 3,
+                "verified_assertions": [
+                    {"assertion_id": "a1", "proposition": "Signed on Jan 1", "belief_state": "operative"},
+                ],
+                "source_documents": ["contract.pdf", "addendum.pdf"],
+            },
+        ],
+        "total_verified_assertions": 3,
+        "total_source_documents": 2,
+    }
+    html = _fmt_deliverable_workbench(data, domain="legal")
+    assert "Deliverable Builder" in html
+    assert "Contract validity" in html
+    assert "contract.pdf" in html
+    assert "Signed on Jan 1" in html
+    assert "operative" in html
+    assert "3 verified facts" in html
+
+
+def test_deliverable_formatter_xss():
+    from irys.ui.app import _fmt_deliverable_workbench
+    data = {
+        "reliance_gate": "ready",
+        "blocker_count": 0,
+        "issue_count": 1,
+        "issues": [
+            {
+                "issue_id": "iss-1",
+                "title": "<script>alert(1)</script>",
+                "materiality": 0.5,
+                "verified_assertion_count": 1,
+                "verified_assertions": [
+                    {"assertion_id": "a1", "proposition": "<img onerror=x>", "belief_state": "alleged"},
+                ],
+                "source_documents": ["<b>bad.pdf</b>"],
+            },
+        ],
+        "total_verified_assertions": 1,
+        "total_source_documents": 1,
+    }
+    html = _fmt_deliverable_workbench(data, domain="legal")
+    assert "<script>" not in html
+    assert "<img " not in html
+    assert "<b>" not in html
+
+
+def test_deliverable_formatter_non_dict_guards():
+    from irys.ui.app import _fmt_deliverable_workbench
+    data = {
+        "reliance_gate": "blocked",
+        "blocker_count": 1,
+        "issue_count": 2,
+        "issues": [
+            "not-a-dict",
+            {
+                "issue_id": "iss-1",
+                "title": "Valid issue",
+                "materiality": 0.7,
+                "verified_assertion_count": 0,
+                "verified_assertions": ["not-a-dict"],
+                "source_documents": [],
+            },
+        ],
+        "total_verified_assertions": 0,
+        "total_source_documents": 0,
+    }
+    html = _fmt_deliverable_workbench(data, domain="legal")
+    assert "Valid issue" in html
+
+
+def test_deliverable_labels_all_five_domains():
+    from irys.ui.app import _DELIVERABLE_LABELS
+    required_keys = {
+        "title", "subtitle", "empty", "gate_ready", "gate_blocked",
+        "gate_caution", "issues_header", "verified", "sources",
+    }
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        assert domain in _DELIVERABLE_LABELS, f"Missing domain: {domain}"
+        for key in required_keys:
+            assert key in _DELIVERABLE_LABELS[domain], f"Missing key {key} in {domain}"
+
+
+def test_backend_interface_balance_deliverable():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("get_deliverable_workbench",):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+def test_deliverable_formatter_nan_materiality():
+    import math
+    from irys.ui.app import _fmt_deliverable_workbench
+    data = {
+        "reliance_gate": "ready",
+        "blocker_count": 0,
+        "issue_count": 1,
+        "issues": [
+            {
+                "issue_id": "iss-1",
+                "title": "Test",
+                "materiality": float("nan"),
+                "verified_assertion_count": 0,
+                "verified_assertions": [],
+                "source_documents": [],
+            },
+        ],
+        "total_verified_assertions": 0,
+        "total_source_documents": 0,
+    }
+    html = _fmt_deliverable_workbench(data, domain="legal")
+    assert "nan" not in html.lower()

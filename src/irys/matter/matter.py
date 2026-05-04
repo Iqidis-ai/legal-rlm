@@ -4479,6 +4479,107 @@ class MatterModel:
         }
 
     # ------------------------------------------------------------------
+    # SO-3/SO-4: deliverable preparation workbench
+    # ------------------------------------------------------------------
+
+    def get_deliverable_workbench(self, issue_ids: list[str] | None = None) -> dict:
+        """Assemble inputs for a professional deliverable: verified issues,
+        supporting assertions, source citations, and a reliance gate.
+
+        Returns the building blocks a UI needs to let a domain professional
+        preview, scope, and export a memo/letter/outline from the matter model.
+        """
+        readiness = self.get_investigation_readiness()
+        ready = readiness.get("readiness", "unknown")
+        blockers = readiness.get("blockers", [])
+
+        all_issues = self.issues.get_open_issues(min_materiality=0.0)
+        if issue_ids:
+            scope_set = set(issue_ids)
+            scoped = [i for i in all_issues if isinstance(i, dict) and i.get("id") in scope_set]
+        else:
+            scoped = [i for i in all_issues if isinstance(i, dict)]
+
+        issue_sections: list[dict] = []
+        for iss in scoped:
+            if not isinstance(iss, dict):
+                continue
+            iid = iss.get("id", "")
+            title = (iss.get("title") or "")[:120]
+            materiality = iss.get("materiality", 0.0)
+
+            verified_assertions: list[dict] = []
+            try:
+                edges = self.evidence.list_edges_for_target("issue", iid)
+                for edge in edges:
+                    if not isinstance(edge, dict):
+                        continue
+                    aid = edge.get("source_id", "")
+                    if not aid:
+                        continue
+                    arow = self.db.execute(
+                        "SELECT proposition_text, belief_state FROM assertion WHERE id=?",
+                        (aid,),
+                    ).fetchone()
+                    if not arow:
+                        continue
+                    vrow = self.db.execute(
+                        "SELECT status FROM verification_state WHERE target_id=? AND target_kind='assertion' ORDER BY updated_at DESC LIMIT 1",
+                        (aid,),
+                    ).fetchone()
+                    v_status = vrow["status"] if vrow else "candidate"
+                    if v_status != "verified":
+                        continue
+                    verified_assertions.append({
+                        "assertion_id": aid,
+                        "proposition": (arow["proposition_text"] or "")[:200],
+                        "belief_state": arow["belief_state"],
+                    })
+            except Exception as exc:
+                _log.warning("deliverable: evidence lookup failed for issue %s: %s", iid, exc)
+
+            source_docs: list[str] = []
+            try:
+                for va in verified_assertions[:20]:
+                    occs = self.db.execute(
+                        "SELECT DISTINCT d.relative_path FROM assertion_occurrence ao "
+                        "JOIN document_inventory d ON d.id = ao.document_id "
+                        "WHERE ao.assertion_id=? LIMIT 5",
+                        (va["assertion_id"],),
+                    ).fetchall()
+                    for occ in occs:
+                        path = occ["relative_path"]
+                        if path and path not in source_docs:
+                            source_docs.append(path)
+            except Exception as exc:
+                _log.warning("deliverable: source doc lookup failed for issue %s: %s", iid, exc)
+
+            issue_sections.append({
+                "issue_id": iid,
+                "title": title,
+                "materiality": materiality,
+                "verified_assertion_count": len(verified_assertions),
+                "verified_assertions": verified_assertions[:10],
+                "source_documents": source_docs[:10],
+            })
+
+        total_verified = sum(s.get("verified_assertion_count", 0) for s in issue_sections)
+        total_sources = len({
+            doc for s in issue_sections for doc in s.get("source_documents", [])
+        })
+
+        return {
+            "matter_id": self.matter_id,
+            "reliance_gate": ready,
+            "blocker_count": len(blockers),
+            "blockers": blockers[:5],
+            "issue_count": len(issue_sections),
+            "issues": issue_sections,
+            "total_verified_assertions": total_verified,
+            "total_source_documents": total_sources,
+        }
+
+    # ------------------------------------------------------------------
 
     def _card_provenance(
         self,

@@ -589,6 +589,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_output_quality_workbench(run_id=run_id)
 
+    async def get_deliverable_workbench(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_deliverable_workbench()
+
     async def get_objective_coverage(self, matter_id: str) -> dict:
         model = self._get_matter_model(matter_id)
         return model.get_objective_coverage_workbench()

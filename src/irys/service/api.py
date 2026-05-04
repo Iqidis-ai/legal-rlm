@@ -2840,6 +2840,18 @@ async def get_output_quality(matter_id: str, run_id: str | None = None):
     return model.get_output_quality_workbench(run_id=run_id)
 
 
+@app.get(
+    "/matter/{matter_id}/deliverable-workbench",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_deliverable_workbench(matter_id: str):
+    """Deliverable preparation: verified issues, cited assertions, source docs,
+    and reliance gate for assembling professional work product (SO-3, SO-4)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_deliverable_workbench()
+
+
 _PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
 
 
