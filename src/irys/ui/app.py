@@ -289,7 +289,8 @@ def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Pa
 
     Existing document files are replaced with the current S3 contents; the
     .irys/ subdirectory (matter DB) is left untouched so warm cache carries
-    over between runs on the same matter.
+    over between runs on the same matter. Subdirectory structure is recreated
+    locally so files uploaded under nested folders remain reachable.
     """
     import tempfile
     bucket = _s3_bucket()
@@ -310,16 +311,17 @@ def _download_s3_matter_to_temp(matter_name: str, session_id: str) -> pathlib.Pa
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
-            filename = key[len(prefix):]
-            if not filename or "/" in filename:
-                continue  # skip sub-prefixes
-            dest = temp_dir / filename
+            relpath = key[len(prefix):]
+            if not relpath or relpath.endswith("/"):
+                continue
+            dest = temp_dir / relpath
+            dest.parent.mkdir(parents=True, exist_ok=True)
             s3.download_file(bucket, key, str(dest))
     return temp_dir
 
 
 def _list_s3_matter_files(matter_name: str) -> list[str]:
-    """List document filenames in an S3 matter (flat, no sub-prefixes)."""
+    """List document relative paths in an S3 matter, including nested folders."""
     bucket = _s3_bucket()
     if not bucket or not matter_name:
         return []
@@ -331,9 +333,9 @@ def _list_s3_matter_files(matter_name: str) -> list[str]:
         files: list[str] = []
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
             for obj in page.get("Contents", []):
-                filename = obj["Key"][len(prefix):]
-                if filename and "/" not in filename:
-                    files.append(filename)
+                relpath = obj["Key"][len(prefix):]
+                if relpath and not relpath.endswith("/"):
+                    files.append(relpath)
         return sorted(files)
     except Exception:
         return []
