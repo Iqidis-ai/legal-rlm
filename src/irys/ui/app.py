@@ -9728,6 +9728,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.get_domain_dropdown_updates(mid),
                 inputs=[matter_id_box],
                 outputs=[dc_maker_type, dc_objective],
+            ).then(
+                fn=lambda mid: state.load_domain_composition(mid, domain=state._detect_domain(mid)),
+                inputs=[matter_id_box],
+                outputs=[domain_composition_html],
             )
         else:
             submit_btn.click(
@@ -9861,6 +9865,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.get_domain_dropdown_updates(mid),
             inputs=[matter_id_box],
             outputs=[dc_maker_type, dc_objective],
+        ).then(
+            fn=lambda mid: state.load_domain_composition(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[domain_composition_html],
         )
 
         export_report_btn.click(
@@ -10400,6 +10408,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.get_domain_dropdown_updates(mid),
             inputs=[matter_id_box],
             outputs=[dc_maker_type, dc_objective],
+        ).then(
+            fn=lambda mid: state.load_domain_composition(mid, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box],
+            outputs=[domain_composition_html],
         )
 
         answer_clarification_btn.click(
