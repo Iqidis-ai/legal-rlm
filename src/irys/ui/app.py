@@ -2548,6 +2548,69 @@ def _fmt_document_versions_panel(families: list[dict], domain: str = "legal") ->
     return f"<div class='viz-shell'>{header}<div class='table-wrap'>{families_html}</div></div>"
 
 
+_OPERATIVE_VERSION_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Operative Version Lookup",
+        "operative": "Operative (current)",
+        "superseded": "Superseded by",
+        "same": "This document is already the operative version.",
+        "empty": "Enter a document ID to check its operative version.",
+    },
+    "finance": {
+        "title": "Current Filing Lookup",
+        "operative": "Current filing",
+        "superseded": "Superseded by",
+        "same": "This filing is already the current version.",
+        "empty": "Enter a filing ID to check its current version.",
+    },
+    "coding": {
+        "title": "Current Artifact Lookup",
+        "operative": "Current artifact",
+        "superseded": "Superseded by",
+        "same": "This artifact is already the current version.",
+        "empty": "Enter an artifact ID to check its current version.",
+    },
+    "academic_research": {
+        "title": "Current Manuscript Lookup",
+        "operative": "Current version",
+        "superseded": "Superseded by",
+        "same": "This manuscript is already the current version.",
+        "empty": "Enter a document ID to check its current version.",
+    },
+    "biomedical": {
+        "title": "Active Protocol Lookup",
+        "operative": "Active protocol",
+        "superseded": "Superseded by",
+        "same": "This protocol is already the active version.",
+        "empty": "Enter a protocol ID to check its active version.",
+    },
+}
+
+
+def _fmt_operative_version_result(data: dict, domain: str = "legal") -> str:
+    L = _OPERATIVE_VERSION_LABELS.get(domain, _OPERATIVE_VERSION_LABELS["legal"])
+    if not data or not isinstance(data, dict):
+        return f"<div class='viz-empty'>{L['empty']}</div>"
+
+    if "error" in data:
+        return f"<div class='viz-empty'>Error: {_escape(str(data['error']))}</div>"
+
+    doc_id = _escape(str(data.get("doc_id", "")))
+    operative_id = _escape(str(data.get("operative_doc_id", "")))
+    is_operative = data.get("is_operative", True)
+
+    if is_operative:
+        return (
+            f"<div style='padding:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;'>"
+            f"<strong>{doc_id}</strong> — {_escape(L['same'])}</div>"
+        )
+    return (
+        f"<div style='padding:8px;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;'>"
+        f"<strong>{doc_id}</strong> {_escape(L['superseded'])}: "
+        f"<strong style='color:#059669;'>{operative_id}</strong> ({_escape(L['operative'])})</div>"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Quantitative Threshold Violations panel (SO-6)
 # ---------------------------------------------------------------------------
@@ -12875,6 +12938,21 @@ class AppState:
         except Exception as exc:
             return f"<div class='viz-empty'>Error detecting version chains: {_escape(exc)}</div>"
 
+    def lookup_operative_version(
+        self, matter_id: str, doc_id: str, domain: str = "legal",
+    ) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        if not doc_id or not doc_id.strip():
+            return "<div class='viz-empty'>Please enter a document ID.</div>"
+        try:
+            data = _run_async(self.backend().get_operative_document_version(
+                matter_id, doc_id.strip(),
+            ))
+            return _fmt_operative_version_result(data, domain)
+        except Exception as exc:
+            return f"<div class='viz-empty'>Error looking up operative version: {_escape(str(exc))}</div>"
+
     def load_quant_thresholds(
         self, matter_id: str, domain: str = "legal",
         exposure_high: float = 10_000.0, disputed_fraction_min: float = 0.10,
@@ -14906,6 +14984,17 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             with gr.Row():
                 refresh_doc_versions_btn = gr.Button("Refresh Document Versions", variant="secondary", size="sm")
                 detect_versions_btn = gr.Button("Detect Version Chains", variant="primary", size="sm")
+            with gr.Accordion("Look up operative version for a document", open=False):
+                with gr.Row():
+                    operative_doc_id_input = gr.Textbox(
+                        label="Document ID", placeholder="Enter a document ID...", scale=3,
+                    )
+                    operative_lookup_btn = gr.Button(
+                        "Find Operative Version", variant="secondary", size="sm", scale=1,
+                    )
+                operative_version_html = gr.HTML(
+                    "<div class='viz-empty'>Enter a document ID to find its operative version.</div>"
+                )
 
         with gr.Accordion("Document Triage — documents awaiting profiling", open=False):
             gr.Markdown(
@@ -16419,6 +16508,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.detect_and_load_document_versions(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[doc_versions_html],
+        )
+        operative_lookup_btn.click(
+            fn=lambda mid, did: state.lookup_operative_version(mid, did, domain=state._detect_domain(mid)),
+            inputs=[matter_id_box, operative_doc_id_input],
+            outputs=[operative_version_html],
         )
         refresh_quant_thresholds_btn.click(
             fn=lambda mid, eh, df: state.load_quant_thresholds(

@@ -407,6 +407,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_operative_document_version(self, matter_id: str, doc_id: str) -> dict:
+        """Return the operative (latest HEAD) version for a document (SO-5)."""
+        ...
+
+    @abstractmethod
     async def mine_contradictions(self, matter_id: str) -> list[dict]:
         """Trigger on-demand contradiction mining pass."""
         ...

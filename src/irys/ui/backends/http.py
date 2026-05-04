@@ -513,6 +513,15 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/document-versions")
         return result if isinstance(result, list) else []
 
+    async def get_operative_document_version(self, matter_id: str, doc_id: str) -> dict:
+        result = await self._get(
+            f"/matter/{matter_id}/documents/{doc_id}/operative-version",
+        )
+        if not isinstance(result, dict):
+            _log.warning("get_operative_document_version: expected dict, got %s", type(result).__name__)
+            return {"doc_id": doc_id, "operative_doc_id": doc_id, "is_operative": True}
+        return result
+
     async def mine_contradictions(self, matter_id: str) -> list[dict]:
         result = await self._post(f"/matter/{matter_id}/mine-contradictions")
         return result if isinstance(result, list) else []

@@ -3642,6 +3642,26 @@ async def refresh_document_families(matter_id: str):
     return model.refresh_document_families()
 
 
+@app.get(
+    "/matter/{matter_id}/documents/{doc_id}/operative-version",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_operative_document_version(matter_id: str, doc_id: str):
+    """Return the operative (latest HEAD) version in a document's version chain (SO-5).
+
+    If doc_id is already the operative version or has no chain, returns
+    doc_id itself with is_operative=true.
+    """
+    model = await _get_matter_model_or_404(matter_id)
+    operative_id = model.get_operative_document_version(doc_id)
+    return {
+        "doc_id": doc_id,
+        "operative_doc_id": operative_id,
+        "is_operative": doc_id == operative_id,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Provenance Trail (SO-5 sourcing transparency)
 # ---------------------------------------------------------------------------

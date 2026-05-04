@@ -8547,3 +8547,99 @@ def test_snapshot_history_backend_interface_balance():
         assert hasattr(UIBackend, method), f"UIBackend missing {method}"
         assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
         assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"
+
+
+# --- Operative Document Version Lookup (SO-5, SO-7) ---
+
+
+def test_operative_version_labels_all_five_domains():
+    from irys.ui.app import _OPERATIVE_VERSION_LABELS
+    for domain in ("legal", "finance", "coding", "academic_research", "biomedical"):
+        labels = _OPERATIVE_VERSION_LABELS[domain]
+        assert "title" in labels
+        assert "operative" in labels
+        assert "superseded" in labels
+        assert "same" in labels
+        assert "empty" in labels
+
+
+def test_operative_version_formatter_empty():
+    from irys.ui.app import _fmt_operative_version_result
+    html = _fmt_operative_version_result({})
+    assert "viz-empty" in html
+
+
+def test_operative_version_formatter_is_operative():
+    from irys.ui.app import _fmt_operative_version_result
+    html = _fmt_operative_version_result({
+        "doc_id": "doc-1", "operative_doc_id": "doc-1", "is_operative": True,
+    })
+    assert "doc-1" in html
+    assert "already the operative" in html
+
+
+def test_operative_version_formatter_superseded():
+    from irys.ui.app import _fmt_operative_version_result
+    html = _fmt_operative_version_result({
+        "doc_id": "doc-v1", "operative_doc_id": "doc-v2", "is_operative": False,
+    })
+    assert "doc-v1" in html
+    assert "doc-v2" in html
+    assert "Superseded by" in html
+
+
+def test_operative_version_formatter_xss():
+    from irys.ui.app import _fmt_operative_version_result
+    html = _fmt_operative_version_result({
+        "doc_id": "<script>xss</script>",
+        "operative_doc_id": "<img onerror=alert(1)>",
+        "is_operative": False,
+    })
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_operative_version_formatter_error():
+    from irys.ui.app import _fmt_operative_version_result
+    html = _fmt_operative_version_result({"error": "not found"})
+    assert "not found" in html
+    assert "viz-empty" in html
+
+
+def test_operative_version_formatter_non_dict():
+    from irys.ui.app import _fmt_operative_version_result
+    html = _fmt_operative_version_result("bad")
+    assert "viz-empty" in html
+    html2 = _fmt_operative_version_result(None)
+    assert "viz-empty" in html2
+
+
+def test_operative_version_formatter_domain_labels():
+    from irys.ui.app import _fmt_operative_version_result
+    html_fin = _fmt_operative_version_result(
+        {"doc_id": "d1", "operative_doc_id": "d1", "is_operative": True},
+        domain="finance",
+    )
+    assert "current version" in html_fin or "current filing" in html_fin.lower()
+    html_bio = _fmt_operative_version_result(
+        {"doc_id": "d1", "operative_doc_id": "d2", "is_operative": False},
+        domain="biomedical",
+    )
+    assert "Superseded by" in html_bio
+
+
+def test_operative_version_model_returns_self():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.get_operative_document_version("nonexistent")
+    assert result == "nonexistent"
+
+
+def test_operative_version_backend_interface_balance():
+    from irys.ui.backends.base import UIBackend
+    from irys.ui.backends.in_process import InProcessBackend
+    from irys.ui.backends.http import HttpBackend
+    for method in ("get_operative_document_version",):
+        assert hasattr(UIBackend, method), f"UIBackend missing {method}"
+        assert hasattr(InProcessBackend, method), f"InProcessBackend missing {method}"
+        assert hasattr(HttpBackend, method), f"HttpBackend missing {method}"

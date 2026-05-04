@@ -879,6 +879,15 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.list_version_families()
 
+    async def get_operative_document_version(self, matter_id: str, doc_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        operative_id = model.get_operative_document_version(doc_id)
+        return {
+            "doc_id": doc_id,
+            "operative_doc_id": operative_id,
+            "is_operative": doc_id == operative_id,
+        }
+
     async def mine_contradictions(self, matter_id: str) -> list[dict]:
         model = self._get_matter_model(matter_id)
         return model.mine_contradictions()
