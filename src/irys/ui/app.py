@@ -3522,12 +3522,14 @@ def _fmt_annotations_panel(annotations: list[dict], domain: str = "legal") -> st
         ann_type = str(a.get("annotation_type", "strategic"))
         label, cls = _ANNOTATION_TYPE_PILLS.get(ann_type, ("Note", "pill-neutral"))
         created = _escape(str(a.get("created_at", "—"))[:19])
+        ann_id = _escape(str(a.get("annotation_id") or a.get("id") or "—")[:12])
         rows += (
             f"<tr>"
             f"<td>{doc}</td>"
             f"<td><span class='pill {cls}'>{label}</span></td>"
             f"<td>{text}</td>"
             f"<td style='font-size:11px;color:#6b7280'>{created}</td>"
+            f"<td style='font-size:10px;color:#9ca3af;font-family:monospace'>{ann_id}</td>"
             f"</tr>"
         )
     if not rows:
@@ -3536,7 +3538,7 @@ def _fmt_annotations_panel(annotations: list[dict], domain: str = "legal") -> st
     header = f"<div class='viz-header'><strong>{L['title']}</strong> — {count} note{'s' if count != 1 else ''}</div>"
     table = (
         "<div class='table-wrap'><table class='viz-table'>"
-        f"<thead><tr><th>{L['col_doc']}</th><th>{L['col_type']}</th><th>{L['col_note']}</th><th>{L['col_added']}</th></tr></thead>"
+        f"<thead><tr><th>{L['col_doc']}</th><th>{L['col_type']}</th><th>{L['col_note']}</th><th>{L['col_added']}</th><th>ID</th></tr></thead>"
         "<tbody>" + rows + "</tbody></table></div>"
     )
     return f"<div class='viz-shell'>{header}{table}</div>"
@@ -7531,6 +7533,22 @@ class AppState:
         except Exception as exc:
             return f"Error: {exc}"
 
+    def do_delete_trust_override(self, matter_id: str, document_pattern: str) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        if not document_pattern or not document_pattern.strip():
+            return "Enter the document pattern to remove.", ""
+        try:
+            deleted = _run_async(self.backend().delete_trust_override(
+                matter_id, document_pattern.strip()
+            ))
+            if deleted:
+                refreshed = self.load_trust_overrides(matter_id, domain=self._detect_domain(matter_id))
+                return "Trust override removed.", refreshed
+            return "Override not found — check the document pattern.", ""
+        except Exception as exc:
+            return f"Error: {_escape(str(exc))}", ""
+
     def set_policy_audience(self, label: str) -> str:
         """Called when the sidebar privilege-mode toggle flips. Returns
         a visible banner HTML so the reviewer always knows which mode
@@ -7681,6 +7699,20 @@ class AppState:
             ))
             refreshed = self.load_annotations(matter_id, domain=self._detect_domain(matter_id))
             return "Note added.", refreshed
+        except Exception as exc:
+            return f"Error: {_escape(str(exc))}", ""
+
+    def do_delete_annotation(self, matter_id: str, annotation_id: str) -> tuple[str, str]:
+        if not matter_id or matter_id == "—":
+            return "Load a matter first.", ""
+        if not annotation_id or not annotation_id.strip():
+            return "Enter the annotation ID to delete.", ""
+        try:
+            deleted = _run_async(self.backend().delete_annotation(matter_id, annotation_id.strip()))
+            if deleted:
+                refreshed = self.load_annotations(matter_id, domain=self._detect_domain(matter_id))
+                return "Note deleted.", refreshed
+            return "Annotation not found — check the ID.", ""
         except Exception as exc:
             return f"Error: {_escape(str(exc))}", ""
 
@@ -8760,6 +8792,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 annotation_text = gr.Textbox(label="Your note", placeholder="e.g. This report overstates damages — focus on §4 corrections", lines=2)
                 add_annotation_btn = gr.Button("Add Note", variant="primary", size="sm")
                 annotation_result = gr.Markdown("")
+                gr.Markdown("#### Remove a note")
+                with gr.Row():
+                    delete_annotation_id = gr.Textbox(label="Annotation ID", placeholder="Copy from ID column above", scale=3)
+                    delete_annotation_btn = gr.Button("Delete Note", variant="stop", size="sm", scale=1)
 
         with gr.Accordion("Belief Revisions — how the system's understanding has changed over time", open=False):
             gr.Markdown(
@@ -8962,6 +8998,14 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 set_trust_btn = gr.Button("Set Trust Override", variant="primary", size="sm")
                 refresh_trust_btn = gr.Button("Refresh Overrides", variant="secondary", size="sm")
             trust_override_result = gr.Textbox(label="Result", interactive=False)
+            gr.Markdown("#### Remove a trust override")
+            with gr.Row():
+                delete_trust_pattern = gr.Textbox(
+                    label="Document pattern to remove",
+                    placeholder="e.g. contract.pdf (must match exactly)",
+                    scale=3,
+                )
+                delete_trust_btn = gr.Button("Delete Override", variant="stop", size="sm", scale=1)
             gr.Markdown("---")
             gr.Markdown("#### Decision Context — who is the decision-maker and what are they trying to do?")
             gr.Markdown(
@@ -9526,6 +9570,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box, annotation_doc, annotation_text, annotation_type],
             outputs=[annotation_result, annotations_html],
         )
+        delete_annotation_btn.click(
+            fn=lambda mid, ann_id: state.do_delete_annotation(mid, ann_id),
+            inputs=[matter_id_box, delete_annotation_id],
+            outputs=[annotation_result, annotations_html],
+        )
         refresh_dc_btn.click(
             fn=lambda mid: state.load_decision_context(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -10053,6 +10102,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_trust_overrides(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[trust_overrides_html],
+        )
+        delete_trust_btn.click(
+            fn=lambda mid, pat: state.do_delete_trust_override(mid, pat),
+            inputs=[matter_id_box, delete_trust_pattern],
+            outputs=[trust_override_result, trust_overrides_html],
         )
 
         # Inject JS: clicking an assertions row fills the Fact ID textbox
