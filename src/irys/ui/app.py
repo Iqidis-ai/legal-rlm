@@ -13324,7 +13324,7 @@ class AppState:
             return "All fields (target kind, target ID, operation) are required.", ""
         try:
             result = _run_async(
-                self.backend().apply_scenario_delta(matter_id, bid, tkind, tid, op)
+                self.backend().apply_scenario_delta(matter_id, bid, tkind, tid, op, {})
             )
             if not isinstance(result, dict):
                 logger.warning("apply_scenario_delta_ui: expected dict, got %s", type(result).__name__)
@@ -13358,7 +13358,7 @@ class AppState:
                 return f"Error: {_escape(str(result['error']))}", ""
             dc = result.get("delta_count", 0)
             warns = result.get("warnings", [])
-            warn_text = f" Warnings: {', '.join(str(w) for w in warns)}" if warns else ""
+            warn_text = f" Warnings: {', '.join(_escape(str(w)) for w in warns)}" if warns else ""
             domain = self._detect_domain(matter_id)
             refreshed = self.load_scenario_snapshot_history(matter_id, bid, domain=domain)
             return f"Snapshot computed ({dc} deltas evaluated).{warn_text}", refreshed
@@ -13379,14 +13379,15 @@ class AppState:
                 self.backend().archive_scenario_branch(matter_id, bid)
             )
             if isinstance(result, bool):
-                if result:
-                    status = "Branch archived."
+                status = "Branch archived." if result else "Branch not found or already archived."
+            elif isinstance(result, dict):
+                if result.get("error"):
+                    status = f"Error: {_escape(str(result['error']))}"
                 else:
-                    status = "Branch not found or already archived."
-            elif isinstance(result, dict) and result.get("error"):
-                status = f"Error: {_escape(str(result['error']))}"
+                    status = "Archived."
             else:
-                status = "Archived."
+                logger.warning("archive_scenario_branch_ui: unexpected type %s", type(result).__name__)
+                status = "Unexpected response type."
             domain = self._detect_domain(matter_id)
             refreshed = self.load_scenario_workbench(matter_id, domain=domain)
             return status, refreshed
