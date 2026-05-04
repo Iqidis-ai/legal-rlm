@@ -566,6 +566,45 @@ class S3Repository:
         logger.info(f"Uploaded {count} files to s3://{self.bucket}/{upload_prefix}/")
         return upload_prefix
 
+    async def upload_files_from_paths(
+        self,
+        job_id: str,
+        files: list[tuple[str, Path]],
+        prefix: str = "uploads",
+    ) -> str:
+        """Upload files from local paths to S3 without buffering bytes in memory.
+
+        Streaming variant of `upload_files`: each file is read from disk by
+        boto3's `upload_file`, which uses a managed multipart transfer that
+        streams 8 MiB chunks. This bounds peak memory at O(workers * chunk
+        size) regardless of how many files are uploaded — important for
+        folder uploads of hundreds of PDFs.
+
+        Args:
+            job_id: Unique job identifier
+            files: List of (filename, source_path) tuples
+            prefix: S3 prefix for uploads (default: "uploads")
+
+        Returns:
+            S3 prefix where files were uploaded
+        """
+        upload_prefix = f"{prefix}/{job_id}"
+
+        def _upload():
+            uploaded = 0
+            for filename, source_path in files:
+                key = f"{upload_prefix}/{filename}"
+                self._s3.upload_file(str(source_path), self.bucket, key)
+                uploaded += 1
+                logger.debug(f"Uploaded {filename} to s3://{self.bucket}/{key}")
+            return uploaded
+
+        count = await asyncio.to_thread(_upload)
+        logger.info(
+            f"Uploaded {count} files (streaming) to s3://{self.bucket}/{upload_prefix}/"
+        )
+        return upload_prefix
+
     async def restore_matter_db(
         self,
         corpus_key: str,

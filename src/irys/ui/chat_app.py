@@ -12,6 +12,8 @@ import gradio as gr
 import asyncio
 import threading
 import queue
+import shutil
+import tempfile
 import time
 import uuid
 import logging
@@ -121,16 +123,18 @@ class ChatApp:
 
     async def _upload_files_to_s3(
         self,
-        files: list[tuple[str, bytes, str]],
+        files: list[tuple[str, str, str]],
         session_id: str,
     ) -> str:
-        """Upload files to S3 and return the S3 prefix.
+        """Upload files to S3 (streamed from disk) and return the S3 prefix.
 
-        Files are uploaded with their DISPLAY names (original filenames) directly.
-        This ensures files can be read without any mapping.
+        Files are uploaded with their DISPLAY names (original filenames, with
+        any folder structure preserved). boto3's managed transfer streams each
+        file from disk in 8 MiB chunks, so peak RAM stays bounded regardless
+        of the batch size — important for 400-file folder uploads.
 
         Args:
-            files: List of (display_name, content, actual_filename) tuples
+            files: List of (display_name, source_path, actual_filename) tuples
             session_id: Unique session identifier
 
         Returns:
@@ -143,22 +147,38 @@ class ChatApp:
             config=self.config,
         )
 
-        # Upload files with their DISPLAY names (original filenames)
-        upload_files = []
-        for display_name, content, actual_filename in files:
-            upload_files.append((display_name, content))
+        upload_paths: list[tuple[str, Path]] = [
+            (display_name, Path(source_path))
+            for display_name, source_path, _ in files
+        ]
 
-        # Upload filename mapping as safety net for hash-named files
-        mapping = {}
-        for display_name, content, actual_filename in files:
-            if actual_filename != display_name:
-                mapping[actual_filename] = {"display_name": display_name}
+        # Upload filename mapping as safety net for hash-named files. Write to
+        # a temp file so it can ride the same path-based streaming upload.
+        mapping = {
+            actual: {"display_name": disp}
+            for disp, _, actual in files
+            if actual != disp
+        }
+        mapping_tmp: Optional[Path] = None
         if mapping:
-            mapping_content = json.dumps(mapping, indent=2).encode("utf-8")
-            upload_files.append(("_filename_mapping.json", mapping_content))
-            logger.info(f"Including filename mapping with {len(mapping)} entries in S3 upload")
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, encoding="utf-8"
+            )
+            try:
+                json.dump(mapping, tmp, indent=2)
+            finally:
+                tmp.close()
+            mapping_tmp = Path(tmp.name)
+            upload_paths.append(("_filename_mapping.json", mapping_tmp))
+            logger.info(
+                f"Including filename mapping with {len(mapping)} entries in S3 upload"
+            )
 
-        prefix = await s3_repo.upload_files(session_id, upload_files)
+        try:
+            prefix = await s3_repo.upload_files_from_paths(session_id, upload_paths)
+        finally:
+            if mapping_tmp is not None:
+                mapping_tmp.unlink(missing_ok=True)
         logger.info(f"Uploaded {len(files)} files to S3: {prefix}")
         return prefix
 
@@ -187,16 +207,18 @@ class ChatApp:
 
     def _save_files_to_temp(
         self,
-        files: list[tuple[str, bytes, str]],
+        files: list[tuple[str, str, str]],
         session_id: str,
     ) -> Path:
-        """Save uploaded files to local temp directory.
+        """Save uploaded files to local temp directory by streaming from disk.
 
-        Files are saved with their DISPLAY names (original filenames) directly.
-        This eliminates the need for filename mapping in most cases.
+        Each file is copied via shutil.copyfile (16 KiB buffer) instead of
+        being read fully into memory, so peak RAM does not scale with batch
+        size or per-file size. Display names may include subdirectories; we
+        recreate the parent tree under the session's temp dir.
 
         Args:
-            files: List of (display_name, content, actual_filename) tuples
+            files: List of (display_name, source_path, actual_filename) tuples
             session_id: Unique session identifier
 
         Returns:
@@ -205,19 +227,18 @@ class ChatApp:
         temp_dir = Path(self.config.temp_dir) / session_id
         temp_dir.mkdir(parents=True, exist_ok=True)
 
-        for display_name, content, actual_filename in files:
-            # Save with DISPLAY name (original filename), not hash name
-            # This makes files directly readable without any mapping
+        for display_name, source_path, actual_filename in files:
             file_path = temp_dir / display_name
             file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_bytes(content)
+            shutil.copyfile(source_path, file_path)
             logger.debug(f"Saved file: {file_path}")
 
         # Write filename mapping as safety net for hash-named files
-        mapping = {}
-        for display_name, content, actual_filename in files:
-            if actual_filename != display_name:
-                mapping[actual_filename] = {"display_name": display_name}
+        mapping = {
+            actual: {"display_name": disp}
+            for disp, _, actual in files
+            if actual != disp
+        }
         if mapping:
             mapping_path = temp_dir / "_filename_mapping.json"
             with open(mapping_path, "w") as f:
@@ -240,179 +261,127 @@ class ChatApp:
     def _extract_files_from_upload(
         self,
         uploaded_files: list,
-    ) -> tuple[list[tuple[str, bytes, str]], str | None]:
-        """Extract files from Gradio upload, preserving folder structure.
+    ) -> tuple[list[tuple[str, str, str]], str | None]:
+        """Extract files from a Gradio upload, preserving folder structure.
+
+        Returns paths (not bytes) so downstream consumers can stream from
+        disk. The original `orig_name` from Gradio is treated as a possibly
+        nested relative path (e.g. `subfolder/file.pdf`); we sanitize it to
+        drop traversal segments but otherwise preserve subdirectory layout.
 
         Args:
-            uploaded_files: List of Gradio file objects (can be files or folder contents)
+            uploaded_files: List of Gradio file objects (files or folder contents)
 
         Returns:
-            Tuple of (list of (display_name, content, actual_filename) tuples, error message or None)
-            - display_name: The original filename to show to users/LLM
-            - content: File bytes
-            - actual_filename: The filename to use on disk (may be hash-based)
+            Tuple of (list of (display_name, source_path, actual_filename), error or None)
+            - display_name: original filename, possibly with subdirectories
+            - source_path: temp path on disk to stream from
+            - actual_filename: leaf-only on-disk name (may be hash-based)
         """
         if not uploaded_files:
             return [], None
 
-        files: list[tuple[str, bytes, str]] = []
+        def _is_hash_filename(name: str) -> bool:
+            base = Path(name).stem
+            return len(base) >= 32 and all(c in '0123456789abcdef' for c in base.lower())
 
-        def get_original_filename(file_obj) -> tuple[str | None, str]:
-            """Extract original filename from Gradio file object.
+        def _sanitize_relpath(path: str) -> str:
+            """Drop empty / `.` / `..` / absolute segments from a relpath."""
+            parts: list[str] = []
+            for raw in path.replace('\\', '/').split('/'):
+                part = raw.strip()
+                if not part or part in ('.', '..'):
+                    continue
+                parts.append(part)
+            return '/'.join(parts)
 
-            Returns:
-                Tuple of (original_name or None, actual_disk_name)
+        def _detect_extension_from_path(path: Path) -> str:
+            """Sniff the first KB of the file to guess an extension."""
+            try:
+                with open(path, 'rb') as fh:
+                    head = fh.read(1024)
+            except Exception:
+                return ''
+            if head.startswith(b'%PDF'):
+                return '.pdf'
+            if head.startswith(b'PK\x03\x04'):
+                return '.docx'
+            if head.startswith(b'\xd0\xcf\x11\xe0'):
+                return '.doc'
+            if head.startswith(b'{\\rtf'):
+                return '.rtf'
+            try:
+                head.decode('utf-8')
+                return '.txt'
+            except UnicodeDecodeError:
+                return ''
+
+        def get_original_relpath(file_obj) -> tuple[Optional[str], str]:
+            """Return (orig_relpath_or_None, actual_disk_name).
+
+            orig_relpath preserves any subdirectory structure Gradio supplies
+            in `orig_name` (which is the case under `file_count='directory'`).
             """
-            # Debug: log file object type and attributes
-            logger.debug(f"File object type: {type(file_obj)}")
-            logger.debug(f"File object value: {file_obj}")
-
-            # Handle string path (type="filepath" returns strings in some Gradio versions)
             if isinstance(file_obj, str):
                 actual_name = Path(file_obj).name
-                logger.debug(f"String path, actual_name: {actual_name}")
-                # For string paths, the filename is just the path name
                 if '.' in actual_name and not _is_hash_filename(actual_name):
                     return actual_name, actual_name
                 return None, actual_name
 
-            # Handle file-like objects
-            if hasattr(file_obj, 'name'):
-                actual_name = Path(file_obj.name).name
-            else:
-                actual_name = str(file_obj)
+            actual_name = (
+                Path(file_obj.name).name if hasattr(file_obj, 'name') else str(file_obj)
+            )
 
-            logger.debug(f"actual_name: {actual_name}")
+            orig = getattr(file_obj, 'orig_name', None)
+            if orig:
+                relpath = _sanitize_relpath(str(orig))
+                leaf = Path(relpath).name if relpath else ''
+                if leaf and not _is_hash_filename(leaf):
+                    return relpath or leaf, actual_name
+                logger.debug(
+                    f"orig_name '{orig}' resolved to hash leaf, falling through"
+                )
 
-            # Method 1: Try orig_name (Gradio 4.x+)
-            if hasattr(file_obj, 'orig_name') and file_obj.orig_name:
-                orig = file_obj.orig_name
-                logger.debug(f"Found orig_name: {orig}")
-                orig_str = Path(orig).name if (os.path.sep in str(orig) or '/' in str(orig)) else str(orig)
-                # Validate it's not a hash name (Gradio may return hash as orig_name at scale)
-                if not _is_hash_filename(orig_str):
-                    return orig_str, actual_name
-                # Fall through to other methods if orig_name is a hash
-                logger.debug(f"orig_name '{orig_str}' looks like a hash, trying other methods")
-
-            # Method 2: Try path attribute (some Gradio versions)
             if hasattr(file_obj, 'path') and file_obj.path:
                 path_name = Path(file_obj.path).name
-                logger.debug(f"Found path attribute: {path_name}")
-                # Check if it looks like a real filename (has extension)
                 if '.' in path_name and not _is_hash_filename(path_name):
                     return path_name, actual_name
 
-            # Method 3: Check if actual_name looks like a real filename
             if '.' in actual_name and not _is_hash_filename(actual_name):
-                logger.debug(f"Using actual_name as original: {actual_name}")
                 return actual_name, actual_name
 
-            # No original name found
-            logger.warning(f"Could not extract original filename from {file_obj}, using {actual_name}")
             return None, actual_name
 
-        def _is_hash_filename(name: str) -> bool:
-            """Check if filename looks like a content hash."""
-            # Hash filenames are typically 32+ hex chars without extension
-            base = Path(name).stem
-            if len(base) >= 32 and all(c in '0123456789abcdef' for c in base.lower()):
-                return True
-            return False
-
-        def _detect_extension(content: bytes) -> str:
-            """Detect file extension from content magic bytes."""
-            if content.startswith(b'%PDF'):
-                return '.pdf'
-            if content.startswith(b'PK\x03\x04'):
-                return '.docx'  # ZIP-based (could be docx, xlsx, etc.)
-            if content.startswith(b'\xd0\xcf\x11\xe0'):
-                return '.doc'  # OLE compound document
-            if content.startswith(b'{\\rtf'):
-                return '.rtf'
-            # Try to detect text
-            try:
-                content[:1000].decode('utf-8')
-                return '.txt'
-            except UnicodeDecodeError:
-                pass
-            return ''
-
-        # Build mapping of temp paths to original names for folder structure detection
-        file_info = []
+        files: list[tuple[str, str, str]] = []
         for idx, f in enumerate(uploaded_files):
-            temp_path = Path(f.name)
-            orig_name, actual_name = get_original_filename(f)
-            file_info.append((f, temp_path, orig_name, actual_name, idx))
-
-        # Check if this looks like a folder upload (paths have common parent structure)
-        # NOTE: We need to be careful with Gradio's temp structure where each file
-        # is in its own hash-named directory: /tmp/gradio/<hash>/original_filename.docx
-        # We should NOT preserve these hash directories as folder structure.
-        all_paths = [info[1] for info in file_info]
-        common_prefix = None
-        is_gradio_temp = False
-
-        if len(all_paths) > 1:
             try:
-                common_prefix = Path(os.path.commonpath([str(p) for p in all_paths]))
-                # Check if this is Gradio's temp directory structure
-                # Each file has its own unique parent dir (hash-named)
-                unique_parents = set(p.parent for p in all_paths)
-                if len(unique_parents) == len(all_paths):
-                    # Each file has a unique parent - this is Gradio's structure, not user folders
-                    is_gradio_temp = True
-                    logger.debug("Detected Gradio temp structure - ignoring hash directories")
-            except ValueError:
-                common_prefix = None
+                source_path = (
+                    Path(f.name) if hasattr(f, 'name') else Path(str(f))
+                )
+                orig_relpath, actual_name = get_original_relpath(f)
 
-        for file, file_path, orig_name, actual_name, idx in file_info:
-            try:
-                with open(file.name, "rb") as f:
-                    content = f.read()
-
-                # Determine the display name (what users/LLM see)
-                if orig_name:
-                    display_name = orig_name
+                if orig_relpath:
+                    display_relpath = orig_relpath
                 else:
-                    # Generate a display name from hash + detected extension
-                    ext = _detect_extension(content)
-                    if ext:
-                        display_name = f"document_{idx + 1}{ext}"
-                    else:
-                        display_name = f"document_{idx + 1}"
+                    ext = _detect_extension_from_path(source_path)
+                    display_relpath = f"document_{idx + 1}{ext}" if ext else f"document_{idx + 1}"
                     logger.warning(
                         f"Could not get original filename for {actual_name}, "
-                        f"using generated name: {display_name}"
+                        f"using generated name: {display_relpath}"
                     )
 
-                # Determine relative path for folder structure
-                # If it's Gradio's temp structure, don't preserve the hash directories
-                if is_gradio_temp:
-                    relative_display = display_name
-                    relative_actual = actual_name
-                elif common_prefix and common_prefix != file_path:
-                    rel_dir = file_path.parent.relative_to(common_prefix)
-                    relative_display = str(rel_dir / display_name)
-                    relative_actual = str(rel_dir / actual_name)
-                else:
-                    relative_display = display_name
-                    relative_actual = actual_name
-
-                # Skip hidden files
-                if any(part.startswith('.') for part in Path(relative_display).parts):
-                    logger.debug(f"Skipping hidden file: {relative_display}")
+                if any(part.startswith('.') for part in Path(display_relpath).parts):
+                    logger.debug(f"Skipping hidden file: {display_relpath}")
                     continue
 
-                files.append((relative_display, content, relative_actual))
+                files.append((display_relpath, str(source_path), actual_name))
                 logger.debug(
-                    f"Extracted file: display={relative_display}, "
-                    f"actual={relative_actual}"
+                    f"Extracted file: display={display_relpath}, actual={actual_name}"
                 )
 
             except Exception as e:
-                logger.error(f"Error reading file {file.name}: {e}")
-                return [], f"Error reading file {file.name}: {e}"
+                logger.error(f"Error reading file {f}: {e}")
+                return [], f"Error reading file {f}: {e}"
 
         return files, None
 
@@ -473,7 +442,7 @@ class ChatApp:
     def run_investigation_with_upload_async(
         self,
         query: str,
-        files: list[tuple[str, bytes]],
+        files: list[tuple[str, str, str]],
         session_id: str,
         use_context: bool = True,
     ):
