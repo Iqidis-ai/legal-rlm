@@ -3417,6 +3417,123 @@ class MatterModel:
             "readiness": readiness,
         }
 
+    def get_investigation_readiness(self, run_id: Optional[str] = None) -> dict:
+        """Matter-wide readiness assessment: what blocks confident reliance
+        on this investigation (SO-3, SO-7).
+
+        Aggregates: coverage report, proof state, open gaps, unresolved
+        contradictions, pending clarifications, and review queue depth into
+        a single readiness surface with explicit blocker list."""
+        coverage_rows = self.get_issue_coverage_report()
+        proof_summary = self.proof_state.get_summary()
+
+        high_mat_low_coverage: list[dict] = []
+        candidate_only_critical: list[dict] = []
+        proof_gap_issues: list[dict] = []
+        for row in coverage_rows:
+            if not isinstance(row, dict):
+                continue
+            mat = float(row.get("materiality", 0))
+            cov = float(row.get("coverage_fraction", 0))
+            if mat >= 0.5 and cov < 0.5:
+                high_mat_low_coverage.append({
+                    "issue_id": row.get("id", ""),
+                    "title": row.get("title", ""),
+                    "materiality": mat,
+                    "coverage_fraction": cov,
+                })
+            if row.get("has_proof_gap"):
+                proof_gap_issues.append({
+                    "issue_id": row.get("id", ""),
+                    "title": row.get("title", ""),
+                    "gap_id": row.get("gap_id"),
+                })
+            verified = int(row.get("verified_count", 0))
+            pending = int(row.get("candidate_count", row.get("supporting_count", 0)))
+            if mat >= 0.7 and verified == 0 and pending > 0:
+                candidate_only_critical.append({
+                    "issue_id": row.get("id", ""),
+                    "title": row.get("title", ""),
+                    "pending_count": pending,
+                })
+
+        open_gap_count = self.gaps.count_open()
+        high_mat_gaps = self.gaps.open_gaps(min_materiality=0.7, limit=20)
+
+        contradiction_count = len(self.assertions.find_contradictions(limit=500))
+        pending_clarifications = self.clarifications.count_pending()
+
+        review_counts = self.count_review_queue()
+        pending_review = review_counts.get("total", 0) if isinstance(review_counts, dict) else 0
+
+        blockers: list[dict] = []
+        if high_mat_low_coverage:
+            blockers.append({
+                "type": "low_coverage",
+                "severity": "high",
+                "label": f"{len(high_mat_low_coverage)} high-materiality issue(s) below 50% coverage",
+                "items": high_mat_low_coverage,
+            })
+        if proof_gap_issues:
+            blockers.append({
+                "type": "proof_gap",
+                "severity": "high",
+                "label": f"{len(proof_gap_issues)} issue(s) with missing element of proof",
+                "items": proof_gap_issues,
+            })
+        if candidate_only_critical:
+            blockers.append({
+                "type": "unverified_critical",
+                "severity": "medium",
+                "label": f"{len(candidate_only_critical)} critical issue(s) with no verified facts",
+                "items": candidate_only_critical,
+            })
+        if contradiction_count > 0:
+            blockers.append({
+                "type": "contradictions",
+                "severity": "medium" if contradiction_count <= 3 else "high",
+                "label": f"{contradiction_count} unresolved contradiction(s)",
+                "items": [],
+            })
+        if pending_clarifications > 0:
+            blockers.append({
+                "type": "pending_clarifications",
+                "severity": "low",
+                "label": f"{pending_clarifications} pending clarification(s)",
+                "items": [],
+            })
+        if len(high_mat_gaps) > 0:
+            blockers.append({
+                "type": "high_materiality_gaps",
+                "severity": "high",
+                "label": f"{len(high_mat_gaps)} high-materiality gap(s) remain open",
+                "items": [{"gap_id": g["id"], "description": g.get("description", "")}
+                          for g in high_mat_gaps if isinstance(g, dict)],
+            })
+
+        readiness = "ready" if not blockers else "blocked"
+        if readiness == "blocked" and all(b["severity"] == "low" for b in blockers):
+            readiness = "caution"
+
+        return {
+            "matter_id": self.matter_id,
+            "readiness": readiness,
+            "blocker_count": len(blockers),
+            "blockers": blockers,
+            "summary": {
+                "issue_count": len(coverage_rows),
+                "avg_coverage": round(
+                    sum(float(r.get("coverage_fraction", 0)) for r in coverage_rows if isinstance(r, dict))
+                    / max(len(coverage_rows), 1), 3
+                ),
+                "proof_summary": proof_summary,
+                "open_gap_count": open_gap_count,
+                "contradiction_count": contradiction_count,
+                "pending_clarifications": pending_clarifications,
+                "pending_review": pending_review,
+            },
+        }
+
     # ------------------------------------------------------------------
 
     def _card_provenance(

@@ -173,6 +173,10 @@ class HttpBackend(UIBackend):
         result = await self._get(f"/matter/{matter_id}/gap-workbench", params)
         return result if isinstance(result, dict) else {"items": []}
 
+    async def get_investigation_readiness(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/readiness")
+        return result if isinstance(result, dict) else {"readiness": "unknown", "blockers": []}
+
     async def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str = "") -> bool:
         result = await self._post(f"/matter/{matter_id}/gaps/{gap_id}/resolve", {"resolution_note": resolution_note})
         return bool(result.get("resolved")) if isinstance(result, dict) else False

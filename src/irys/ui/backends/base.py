@@ -110,6 +110,11 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_investigation_readiness(self, matter_id: str) -> dict:
+        """Matter-wide investigation readiness assessment (SO-3, SO-7)."""
+        ...
+
+    @abstractmethod
     async def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str = "") -> bool:
         """Mark a gap as resolved with an optional note (SO-7)."""
         ...

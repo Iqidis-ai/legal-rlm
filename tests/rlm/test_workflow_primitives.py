@@ -4205,3 +4205,180 @@ def test_fmt_assumptions_linked_targets():
     assert "issue" in result
     assert "No prior litigation" in result
     assert "Linked to 0" not in result
+
+
+# ------------------------------------------------------------------
+# Investigation Readiness panel tests (SO-3, SO-7)
+# ------------------------------------------------------------------
+
+def test_readiness_panel_ready():
+    from irys.ui.app import _fmt_readiness_panel
+    data = {
+        "readiness": "ready",
+        "blocker_count": 0,
+        "blockers": [],
+        "summary": {
+            "issue_count": 5,
+            "avg_coverage": 0.82,
+            "proof_summary": {"total_issues_tracked": 5, "avg_sufficiency": 0.75, "gap_count": 0},
+            "open_gap_count": 0,
+            "contradiction_count": 0,
+            "pending_clarifications": 0,
+            "pending_review": 0,
+        },
+    }
+    result = _fmt_readiness_panel(data, domain="legal")
+    assert "Ready for reliance" in result
+    assert "#059669" in result
+    assert "No blockers detected" in result
+    assert "82%" in result
+
+
+def test_readiness_panel_blocked():
+    from irys.ui.app import _fmt_readiness_panel
+    data = {
+        "readiness": "blocked",
+        "blocker_count": 2,
+        "blockers": [
+            {
+                "type": "low_coverage",
+                "severity": "high",
+                "label": "2 high-materiality issue(s) below 50% coverage",
+                "items": [
+                    {"issue_id": "i1", "title": "Breach of contract", "materiality": 0.9, "coverage_fraction": 0.2},
+                ],
+            },
+            {
+                "type": "contradictions",
+                "severity": "medium",
+                "label": "3 unresolved contradiction(s)",
+                "items": [],
+            },
+        ],
+        "summary": {
+            "issue_count": 3,
+            "avg_coverage": 0.35,
+            "open_gap_count": 4,
+            "contradiction_count": 3,
+            "pending_clarifications": 1,
+            "pending_review": 7,
+        },
+    }
+    result = _fmt_readiness_panel(data, domain="legal")
+    assert "Not ready" in result
+    assert "#dc2626" in result
+    assert "Breach of contract" in result
+    assert "contradiction" in result.lower()
+    assert "Blockers (2)" in result
+
+
+def test_readiness_panel_caution():
+    from irys.ui.app import _fmt_readiness_panel
+    data = {
+        "readiness": "caution",
+        "blocker_count": 1,
+        "blockers": [
+            {
+                "type": "pending_clarifications",
+                "severity": "low",
+                "label": "2 pending clarification(s)",
+                "items": [],
+            },
+        ],
+        "summary": {
+            "issue_count": 2,
+            "avg_coverage": 0.65,
+            "open_gap_count": 0,
+            "contradiction_count": 0,
+            "pending_clarifications": 2,
+            "pending_review": 0,
+        },
+    }
+    result = _fmt_readiness_panel(data, domain="legal")
+    assert "Proceed with caution" in result
+    assert "#f59e0b" in result
+
+
+def test_readiness_panel_empty():
+    from irys.ui.app import _fmt_readiness_panel
+    result = _fmt_readiness_panel({}, domain="legal")
+    assert "viz-empty" in result
+
+
+def test_readiness_panel_xss():
+    from irys.ui.app import _fmt_readiness_panel
+    data = {
+        "readiness": "blocked",
+        "blockers": [
+            {
+                "type": "low_coverage",
+                "severity": "high",
+                "label": "<script>alert(1)</script>",
+                "items": [{"issue_id": "x", "title": "<img onerror=alert(1)>"}],
+            },
+        ],
+        "summary": {"issue_count": 1, "avg_coverage": 0.1},
+    }
+    result = _fmt_readiness_panel(data, domain="legal")
+    assert "<script>" not in result
+    assert "<img onerror" not in result
+    assert "&lt;" in result
+
+
+def test_readiness_panel_domain_labels():
+    from irys.ui.app import _fmt_readiness_panel
+    data = {
+        "readiness": "ready",
+        "blockers": [],
+        "summary": {"issue_count": 3, "avg_coverage": 0.9},
+    }
+    for domain, expected in [
+        ("finance", "Analysis Readiness"),
+        ("coding", "Analysis Readiness"),
+        ("academic_research", "Research Readiness"),
+        ("biomedical", "Assessment Readiness"),
+    ]:
+        result = _fmt_readiness_panel(data, domain=domain)
+        assert expected in result, f"Domain {domain}: expected '{expected}' in output"
+
+
+def test_readiness_panel_high_mat_gaps():
+    from irys.ui.app import _fmt_readiness_panel
+    data = {
+        "readiness": "blocked",
+        "blockers": [
+            {
+                "type": "high_materiality_gaps",
+                "severity": "high",
+                "label": "2 high-materiality gap(s) remain open",
+                "items": [
+                    {"gap_id": "g1", "description": "Missing employment contract"},
+                    {"gap_id": "g2", "description": "Missing financial statement"},
+                ],
+            },
+        ],
+        "summary": {"issue_count": 2, "avg_coverage": 0.6, "open_gap_count": 2},
+    }
+    result = _fmt_readiness_panel(data, domain="legal")
+    assert "Missing employment contract" in result
+    assert "Missing financial statement" in result
+    assert "HIGH" in result.upper()
+
+
+def test_readiness_panel_non_dict_guard():
+    from irys.ui.app import _fmt_readiness_panel
+    data = {
+        "readiness": "blocked",
+        "blockers": [
+            "not a dict",
+            {
+                "type": "contradictions",
+                "severity": "medium",
+                "label": "1 contradiction",
+                "items": [],
+            },
+        ],
+        "summary": {"issue_count": 1, "avg_coverage": 0.5},
+    }
+    result = _fmt_readiness_panel(data, domain="legal")
+    assert "1 contradiction" in result

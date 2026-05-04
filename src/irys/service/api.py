@@ -2614,6 +2614,18 @@ async def get_gap_workbench(
 
 
 @app.get(
+    "/matter/{matter_id}/readiness",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_investigation_readiness(matter_id: str):
+    """Matter-wide investigation readiness: what blocks confident reliance
+    on this investigation (SO-3, SO-7)."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_investigation_readiness()
+
+
+@app.get(
     "/matter/{matter_id}/gaps",
     tags=["Matter Model"],
     responses={404: {"model": ErrorResponse}},

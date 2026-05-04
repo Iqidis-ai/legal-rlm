@@ -436,6 +436,10 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.get_gap_workbench(limit=limit, min_materiality=min_materiality)
 
+    async def get_investigation_readiness(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_investigation_readiness()
+
     async def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str = "") -> bool:
         model = self._get_matter_model(matter_id)
         return model.gaps.resolve_gap(gap_id, resolution_note)

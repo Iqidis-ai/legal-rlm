@@ -6039,6 +6039,232 @@ def _fmt_gap_workbench(payload: dict, domain: str = "legal") -> str:
     )
 
 
+_READINESS_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Investigation Readiness",
+        "ready": "Ready for reliance",
+        "caution": "Proceed with caution",
+        "blocked": "Not ready — action required",
+        "issues": "Issues tracked",
+        "avg_coverage": "Average coverage",
+        "gaps": "Open gaps",
+        "contradictions": "Contradictions",
+        "clarifications": "Pending clarifications",
+        "review": "Pending review",
+        "low_coverage": "Insufficient evidence coverage",
+        "proof_gap": "Missing element of proof",
+        "unverified_critical": "Critical issues lack verified facts",
+        "contradictions_blocker": "Unresolved contradictions",
+        "pending_clarifications_blocker": "Pending clarifications",
+        "high_materiality_gaps": "High-materiality gaps",
+    },
+    "finance": {
+        "title": "Analysis Readiness",
+        "ready": "Ready for reliance",
+        "caution": "Proceed with caution",
+        "blocked": "Not ready — action required",
+        "issues": "Positions tracked",
+        "avg_coverage": "Average coverage",
+        "gaps": "Open gaps",
+        "contradictions": "Contradictions",
+        "clarifications": "Pending clarifications",
+        "review": "Pending review",
+        "low_coverage": "Insufficient data coverage",
+        "proof_gap": "Missing element of proof",
+        "unverified_critical": "Critical positions lack verified data",
+        "contradictions_blocker": "Unresolved contradictions",
+        "pending_clarifications_blocker": "Pending clarifications",
+        "high_materiality_gaps": "High-materiality gaps",
+    },
+    "coding": {
+        "title": "Analysis Readiness",
+        "ready": "Ready for reliance",
+        "caution": "Proceed with caution",
+        "blocked": "Not ready — action required",
+        "issues": "Requirements tracked",
+        "avg_coverage": "Average coverage",
+        "gaps": "Open gaps",
+        "contradictions": "Contradictions",
+        "clarifications": "Pending clarifications",
+        "review": "Pending review",
+        "low_coverage": "Insufficient evidence coverage",
+        "proof_gap": "Missing element of proof",
+        "unverified_critical": "Critical requirements lack verified findings",
+        "contradictions_blocker": "Unresolved contradictions",
+        "pending_clarifications_blocker": "Pending clarifications",
+        "high_materiality_gaps": "High-materiality gaps",
+    },
+    "academic_research": {
+        "title": "Research Readiness",
+        "ready": "Ready for reliance",
+        "caution": "Proceed with caution",
+        "blocked": "Not ready — action required",
+        "issues": "Claims tracked",
+        "avg_coverage": "Average coverage",
+        "gaps": "Open gaps",
+        "contradictions": "Contradictions",
+        "clarifications": "Pending clarifications",
+        "review": "Pending review",
+        "low_coverage": "Insufficient citation coverage",
+        "proof_gap": "Missing element of proof",
+        "unverified_critical": "Critical claims lack verified citations",
+        "contradictions_blocker": "Unresolved contradictions",
+        "pending_clarifications_blocker": "Pending clarifications",
+        "high_materiality_gaps": "High-materiality gaps",
+    },
+    "biomedical": {
+        "title": "Assessment Readiness",
+        "ready": "Ready for reliance",
+        "caution": "Proceed with caution",
+        "blocked": "Not ready — action required",
+        "issues": "Findings tracked",
+        "avg_coverage": "Average coverage",
+        "gaps": "Open gaps",
+        "contradictions": "Contradictions",
+        "clarifications": "Pending clarifications",
+        "review": "Pending review",
+        "low_coverage": "Insufficient evidence coverage",
+        "proof_gap": "Missing element of proof",
+        "unverified_critical": "Critical findings lack verified records",
+        "contradictions_blocker": "Unresolved contradictions",
+        "pending_clarifications_blocker": "Pending clarifications",
+        "high_materiality_gaps": "High-materiality gaps",
+    },
+}
+
+_READINESS_SEVERITY_COLORS: dict[str, str] = {
+    "high": "#dc2626",
+    "medium": "#f59e0b",
+    "low": "#6b7280",
+}
+
+
+def _fmt_readiness_panel(data: dict, domain: str = "legal") -> str:
+    if not data or not isinstance(data, dict):
+        return "<div class='viz-empty'>No readiness data available.</div>"
+
+    L = _READINESS_LABELS.get(domain, _READINESS_LABELS["legal"])
+    readiness = data.get("readiness", "blocked")
+    blockers = data.get("blockers", [])
+    summary = data.get("summary", {})
+    if not isinstance(summary, dict):
+        summary = {}
+
+    ready_colors = {"ready": "#059669", "caution": "#f59e0b", "blocked": "#dc2626"}
+    ready_color = ready_colors.get(readiness, "#dc2626")
+    ready_label = L.get(readiness, readiness)
+
+    issue_count = int(summary.get("issue_count", 0))
+    avg_cov = _safe_float(summary.get("avg_coverage", 0))
+    avg_cov_pct = min(avg_cov * 100, 100)
+    cov_color = "#059669" if avg_cov >= 0.7 else "#f59e0b" if avg_cov >= 0.4 else "#dc2626"
+    gap_count = int(summary.get("open_gap_count", 0))
+    contradiction_count = int(summary.get("contradiction_count", 0))
+    pending_clar = int(summary.get("pending_clarifications", 0))
+    pending_rev = int(summary.get("pending_review", 0))
+
+    parts = [
+        f"<div style='margin-bottom:16px;'>",
+        f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;'>",
+        f"<h3 style='margin:0;'>{_escape(L['title'])}</h3>",
+        f"<span style='display:inline-block;padding:4px 14px;border-radius:12px;"
+        f"background:{ready_color};color:white;font-weight:700;font-size:13px;'>"
+        f"{_escape(ready_label)}</span>",
+        f"</div>",
+    ]
+
+    # Summary metrics grid
+    parts.append(
+        f"<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;'>"
+    )
+    metric_items = [
+        (L["issues"], str(issue_count), "#1f2937"),
+        (L["avg_coverage"], f"{avg_cov_pct:.0f}%", cov_color),
+        (L["gaps"], str(gap_count), "#dc2626" if gap_count > 0 else "#059669"),
+        (L["contradictions"], str(contradiction_count), "#dc2626" if contradiction_count > 0 else "#059669"),
+        (L["clarifications"], str(pending_clar), "#f59e0b" if pending_clar > 0 else "#059669"),
+        (L["review"], str(pending_rev), "#f59e0b" if pending_rev > 0 else "#059669"),
+    ]
+    for label, val, color in metric_items:
+        parts.append(
+            f"<div style='text-align:center;padding:10px;background:#f9fafb;border-radius:8px;'>"
+            f"<div style='font-size:22px;font-weight:700;color:{color};'>{_escape(val)}</div>"
+            f"<div style='font-size:11px;color:#6b7280;font-weight:600;margin-top:2px;'>"
+            f"{_escape(label)}</div></div>"
+        )
+    parts.append("</div>")
+
+    # Coverage bar
+    parts.append(
+        f"<div style='margin-bottom:16px;'>"
+        f"<div style='font-size:12px;color:#6b7280;margin-bottom:4px;font-weight:600;'>"
+        f"{_escape(L['avg_coverage'])}</div>"
+        f"<div style='width:100%;height:12px;background:#e5e7eb;border-radius:6px;'>"
+        f"<div style='width:{avg_cov_pct:.0f}%;height:100%;background:{cov_color};"
+        f"border-radius:6px;transition:width 0.3s;'></div></div></div>"
+    )
+
+    # Blockers section
+    if blockers:
+        parts.append(
+            f"<div style='margin-bottom:8px;'>"
+            f"<div style='font-size:13px;font-weight:700;color:#1f2937;margin-bottom:8px;'>"
+            f"Blockers ({len(blockers)})</div>"
+        )
+        for b in blockers:
+            if not isinstance(b, dict):
+                continue
+            severity = b.get("severity", "medium")
+            sev_color = _READINESS_SEVERITY_COLORS.get(severity, "#6b7280")
+            label = _escape(str(b.get("label", "")))
+            btype = b.get("type", "")
+            items = b.get("items", [])
+
+            parts.append(
+                f"<div style='border-left:3px solid {sev_color};padding:8px 12px;"
+                f"margin-bottom:8px;background:#fefefe;border-radius:0 6px 6px 0;'>"
+                f"<div style='display:flex;gap:8px;align-items:center;'>"
+                f"<span style='display:inline-block;padding:1px 8px;border-radius:8px;"
+                f"background:{sev_color};color:white;font-size:10px;font-weight:700;"
+                f"text-transform:uppercase;'>{_escape(severity)}</span>"
+                f"<span style='font-size:13px;color:#1f2937;'>{label}</span>"
+                f"</div>"
+            )
+
+            if items and btype in ("low_coverage", "proof_gap", "unverified_critical"):
+                parts.append("<ul style='margin:4px 0 0;padding-left:18px;font-size:12px;color:#374151;'>")
+                for it in items[:5]:
+                    if not isinstance(it, dict):
+                        continue
+                    t = _escape(str(it.get("title", it.get("issue_id", "")[:8])))
+                    parts.append(f"<li style='margin:2px 0;'>{t}</li>")
+                if len(items) > 5:
+                    parts.append(f"<li style='margin:2px 0;color:#9ca3af;'>+{len(items)-5} more</li>")
+                parts.append("</ul>")
+            elif items and btype == "high_materiality_gaps":
+                parts.append("<ul style='margin:4px 0 0;padding-left:18px;font-size:12px;color:#374151;'>")
+                for it in items[:5]:
+                    if not isinstance(it, dict):
+                        continue
+                    desc = _escape(str(it.get("description", "")))[:80]
+                    parts.append(f"<li style='margin:2px 0;'>{desc}</li>")
+                if len(items) > 5:
+                    parts.append(f"<li style='margin:2px 0;color:#9ca3af;'>+{len(items)-5} more</li>")
+                parts.append("</ul>")
+
+            parts.append("</div>")
+        parts.append("</div>")
+    else:
+        parts.append(
+            "<div style='text-align:center;padding:16px;color:#059669;font-weight:600;'>"
+            "No blockers detected — investigation is ready for reliance."
+            "</div>"
+        )
+
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def _fmt_gaps(gaps: list, clarifications: list, domain: str = "legal", issue_titles: dict | None = None) -> str:
     labels = _GAP_LABELS.get(domain, _GAP_LABELS["legal"])
     _titles = issue_titles or {}
@@ -8420,6 +8646,17 @@ class AppState:
             logger.warning("Gap workbench load failed: %s", exc)
             return f"<div class='viz-empty'>Error loading gap workbench: {_escape(str(exc))}</div>"
 
+    def load_investigation_readiness(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            domain = self._detect_domain(matter_id)
+            data = _run_async(self.backend().get_investigation_readiness(matter_id))
+            return _fmt_readiness_panel(data, domain=domain)
+        except Exception as exc:
+            logger.warning("Readiness panel load failed: %s", exc)
+            return f"<div class='viz-empty'>Error loading readiness: {_escape(str(exc))}</div>"
+
     def resolve_gap(self, matter_id: str, gap_id: str, resolution_note: str) -> tuple[str, str]:
         if not matter_id or matter_id == "—":
             return "Load a matter first.", ""
@@ -10288,6 +10525,19 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             )
             batch_review_result = gr.Markdown("", visible=False)
 
+        with gr.Accordion("Investigation Readiness — should you rely on this analysis?", open=True):
+            gr.Markdown(
+                "Overall readiness assessment: open blockers, coverage gaps, unresolved "
+                "contradictions, pending clarifications, and unverified critical facts. "
+                "Green means ready for reliance; red means action is required first."
+            )
+            readiness_html = gr.HTML(
+                "<div class='viz-empty'>Readiness will appear after investigation.</div>"
+            )
+            refresh_readiness_btn = gr.Button(
+                "Refresh Readiness", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("Gap-to-Action Workbench — consolidated gap review", open=True):
             gr.Markdown(
                 "Consolidated view of every open gap with affected issues, missing sources, "
@@ -11149,6 +11399,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 inputs=[matter_id_box],
                 outputs=[gap_workbench_html],
             ).then(
+                fn=lambda mid: state.load_investigation_readiness(mid),
+                inputs=[matter_id_box],
+                outputs=[readiness_html],
+            ).then(
                 fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_profile_html],
@@ -11222,6 +11476,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_gap_workbench(mid),
                 inputs=[matter_id_box],
                 outputs=[gap_workbench_html],
+            ).then(
+                fn=lambda mid: state.load_investigation_readiness(mid),
+                inputs=[matter_id_box],
+                outputs=[readiness_html],
             ).then(
                 fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
@@ -11297,6 +11555,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_gap_workbench(mid),
             inputs=[matter_id_box],
             outputs=[gap_workbench_html],
+        ).then(
+            fn=lambda mid: state.load_investigation_readiness(mid),
+            inputs=[matter_id_box],
+            outputs=[readiness_html],
         ).then(
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -11374,6 +11636,11 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid, q: state.search_assertions(mid, q),
             inputs=[matter_id_box, assertion_search_box],
             outputs=[assertions_md],
+        )
+        refresh_readiness_btn.click(
+            fn=lambda mid: state.load_investigation_readiness(mid),
+            inputs=[matter_id_box],
+            outputs=[readiness_html],
         )
         refresh_gap_workbench_btn.click(
             fn=lambda mid: state.load_gap_workbench(mid),
@@ -11937,6 +12204,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_gap_workbench(mid),
             inputs=[matter_id_box],
             outputs=[gap_workbench_html],
+        ).then(
+            fn=lambda mid: state.load_investigation_readiness(mid),
+            inputs=[matter_id_box],
+            outputs=[readiness_html],
         ).then(
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
