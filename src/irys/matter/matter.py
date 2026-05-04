@@ -266,6 +266,26 @@ class MatterModel:
     _DOMAIN_PRESET_FILENAME = "_irys_domain_preset.json"
     _VALID_PRESET_DOMAINS = frozenset({"legal", "finance", "coding", "academic_research", "biomedical"})
 
+    def get_domain_preset(self) -> Optional[dict]:
+        """Read and validate the domain preset file, if present."""
+        import json as _json
+        repo_root = self.db.execute(
+            "SELECT repository_root FROM matter WHERE id=?", (self.matter_id,)
+        ).fetchone()
+        if not repo_root:
+            return None
+        preset_path = Path(repo_root["repository_root"]) / self._DOMAIN_PRESET_FILENAME
+        if not preset_path.is_file():
+            return None
+        try:
+            data = _json.loads(preset_path.read_text(encoding="utf-8"))
+            domain = data.get("domain")
+            if domain and domain in self._VALID_PRESET_DOMAINS:
+                return data
+        except Exception:
+            pass
+        return None
+
     def _apply_domain_preset(self, repository_path: str | Path) -> None:
         """Seed workspace domain facet from a preset file if present."""
         import json as _json

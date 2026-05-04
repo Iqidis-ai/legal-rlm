@@ -367,8 +367,13 @@ def _persist_domain_preset(matter_display_name: str, domain: str) -> None:
         return
     safe = _sanitize_matter_name(matter_display_name)
     key = f"{_s3_matters_base_prefix()}/{safe}/{_DOMAIN_PRESET_FILENAME}"
-    import json as _json, io as _io
-    body = _json.dumps({"domain": domain, "version": 1}).encode("utf-8")
+    preset_data = _DOMAIN_CREATE_PRESETS.get(domain, _DOMAIN_CREATE_PRESETS["legal"])
+    import json as _json
+    body = _json.dumps({
+        "domain": domain,
+        "version": 1,
+        "taint_default": preset_data.get("taint_default", "public_clean"),
+    }).encode("utf-8")
     try:
         _get_s3_client().put_object(Bucket=bucket, Key=key, Body=body)
     except Exception as exc:

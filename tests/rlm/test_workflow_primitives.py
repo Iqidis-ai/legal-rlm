@@ -10960,3 +10960,42 @@ def test_open_auto_applies_preset(tmp_path):
     facets2 = mm2.memory_broker.get_object_domain_facets("workspace", mm2.matter_id, status="active")
     coding_facets2 = [f for f in facets2 if f["domain_profile_id"] == "coding"]
     assert len(coding_facets2) == 1  # still just one, not doubled
+
+
+def test_get_domain_preset_returns_data(tmp_path):
+    """get_domain_preset returns parsed preset when file is present."""
+    import json
+    from irys.matter.matter import MatterModel
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text(json.dumps({
+        "domain": "biomedical",
+        "version": 1,
+        "taint_default": "patient_deidentified",
+    }), encoding="utf-8")
+
+    mm = MatterModel.open(tmp_path)
+    preset = mm.get_domain_preset()
+    assert preset is not None
+    assert preset["domain"] == "biomedical"
+    assert preset["taint_default"] == "patient_deidentified"
+
+
+def test_get_domain_preset_returns_none_without_file(tmp_path):
+    """get_domain_preset returns None when no preset file exists."""
+    from irys.matter.matter import MatterModel
+
+    mm = MatterModel.open(tmp_path)
+    assert mm.get_domain_preset() is None
+
+
+def test_get_domain_preset_rejects_invalid_domain(tmp_path):
+    """get_domain_preset returns None for invalid domain."""
+    import json
+    from irys.matter.matter import MatterModel
+
+    preset_path = tmp_path / MatterModel._DOMAIN_PRESET_FILENAME
+    preset_path.write_text(json.dumps({"domain": "astrology", "version": 1}), encoding="utf-8")
+
+    mm = MatterModel.open(tmp_path)
+    assert mm.get_domain_preset() is None
