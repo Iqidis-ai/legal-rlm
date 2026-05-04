@@ -10927,6 +10927,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 inputs=[matter_id_box],
                 outputs=[gaps_detail_html],
             ).then(
+                fn=lambda mid: state.load_gap_workbench(mid),
+                inputs=[matter_id_box],
+                outputs=[gap_workbench_html],
+            ).then(
                 fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[domain_profile_html],
@@ -10996,6 +11000,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
                 outputs=[gaps_detail_html],
+            ).then(
+                fn=lambda mid: state.load_gap_workbench(mid),
+                inputs=[matter_id_box],
+                outputs=[gap_workbench_html],
             ).then(
                 fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
                 inputs=[matter_id_box],
@@ -11067,6 +11075,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[gaps_detail_html],
+        ).then(
+            fn=lambda mid: state.load_gap_workbench(mid),
+            inputs=[matter_id_box],
+            outputs=[gap_workbench_html],
         ).then(
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
@@ -11699,6 +11711,10 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_gaps_detail(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[gaps_detail_html],
+        ).then(
+            fn=lambda mid: state.load_gap_workbench(mid),
+            inputs=[matter_id_box],
+            outputs=[gap_workbench_html],
         ).then(
             fn=lambda mid: state.load_domain_profile(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
