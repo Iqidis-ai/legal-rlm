@@ -9602,15 +9602,18 @@ class AppState:
         if not action:
             return "Select an action.", ""
         try:
-            updated = _run_async(self.backend().update_assumption_status(
+            result = _run_async(self.backend().review_assumption(
                 matter_id, aid, action, reason.strip()
             ))
-            if not updated:
-                return f"Assumption {_escape(aid[:16])} not found.", ""
-            label = {"confirmed": "Confirmed", "invalidated": "Invalidated", "provisional": "Reset to provisional"}.get(action, action)
+            if not isinstance(result, dict):
+                return "Unexpected response.", ""
+            if result.get("error"):
+                return f"Error: {_escape(str(result['error']))}", ""
+            actions = result.get("actions", [])
+            msg = " · ".join(str(a) for a in actions if isinstance(a, str))
             domain = self._detect_domain(matter_id)
             html = self.load_assumptions(matter_id, domain)
-            return f"{label} assumption {_escape(aid[:16])}.", html
+            return f"Reviewed: {_escape(msg)}", html
         except ValueError as ve:
             return f"Invalid: {_escape(str(ve))}", ""
         except Exception as exc:

@@ -577,6 +577,18 @@ class InProcessBackend(UIBackend):
         model = self._get_matter_model(matter_id)
         return model.assumptions.set_status(assumption_id, status, reason or None)
 
+    async def get_assumption_review(self, matter_id: str) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.get_assumption_review_workbench()
+
+    async def review_assumption(
+        self, matter_id: str, assumption_id: str, decision: str, reason: str = "",
+    ) -> dict:
+        model = self._get_matter_model(matter_id)
+        return model.review_assumption(
+            assumption_id=assumption_id, decision=decision, reason=reason or None,
+        )
+
     _PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
 
     async def set_issue_priority(self, matter_id: str, issue_id: str, priority: str) -> bool:

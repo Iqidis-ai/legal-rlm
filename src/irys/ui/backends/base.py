@@ -197,6 +197,18 @@ class UIBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_assumption_review(self, matter_id: str) -> dict:
+        """Assumption review workbench: lifecycle groups with impact data (SO-3, SO-7)."""
+        ...
+
+    @abstractmethod
+    async def review_assumption(
+        self, matter_id: str, assumption_id: str, decision: str, reason: str = "",
+    ) -> dict:
+        """Review an assumption: confirm, invalidate, or revert (SO-3, SO-7)."""
+        ...
+
+    @abstractmethod
     async def set_issue_priority(self, matter_id: str, issue_id: str, priority: str) -> bool:
         """Set issue priority: critical, high, medium, low (SO-3)."""
         ...

@@ -2725,6 +2725,37 @@ async def update_assumption_status(matter_id: str, assumption_id: str, status: s
     return {"updated": True, "assumption_id": assumption_id, "status": status}
 
 
+@app.get(
+    "/matter/{matter_id}/assumption-review",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_assumption_review(matter_id: str):
+    """Return assumption review workbench: grouped by lifecycle status with impact data."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.get_assumption_review_workbench()
+
+
+@app.post(
+    "/matter/{matter_id}/assumption-review",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def review_assumption(
+    matter_id: str,
+    assumption_id: str = Query(...),
+    decision: str = Query(...),
+    reason: str = Query(default=""),
+):
+    """Review an assumption: confirm, invalidate, or revert. Invalidation auto-blocks linked predicates."""
+    model = await _get_matter_model_or_404(matter_id)
+    return model.review_assumption(
+        assumption_id=assumption_id,
+        decision=decision,
+        reason=reason or None,
+    )
+
+
 _PRIORITY_MAP = {"critical": 0.95, "high": 0.8, "medium": 0.5, "low": 0.2}
 
 

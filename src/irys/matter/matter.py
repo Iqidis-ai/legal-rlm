@@ -3621,6 +3621,103 @@ class MatterModel:
         return {"success": True, "seed_id": seed_id, "seed_kind": seed_kind}
 
     # ------------------------------------------------------------------
+    # Assumption lifecycle review (SO-3, SO-7)
+    # ------------------------------------------------------------------
+
+    def get_assumption_review_workbench(self) -> dict:
+        """Dashboard data for assumption lifecycle review: active, confirmed,
+        invalidated assumptions with linked target counts."""
+        all_assumptions = self.assumptions.get_all()
+        provisional = []
+        confirmed = []
+        invalidated = []
+        for a in all_assumptions:
+            if not isinstance(a, dict):
+                continue
+            targets = self.assumptions.get_linked_targets(a["id"])
+            a["linked_target_count"] = len(targets)
+            a["linked_targets"] = targets[:5]
+            status = a.get("status", "provisional")
+            if status == "provisional":
+                provisional.append(a)
+            elif status == "confirmed":
+                confirmed.append(a)
+            elif status == "invalidated":
+                invalidated.append(a)
+        return {
+            "total": len(all_assumptions),
+            "provisional": provisional,
+            "confirmed": confirmed,
+            "invalidated": invalidated,
+            "counts": {
+                "provisional": len(provisional),
+                "confirmed": len(confirmed),
+                "invalidated": len(invalidated),
+            },
+        }
+
+    def review_assumption(
+        self,
+        assumption_id: str,
+        decision: str,
+        reason: str | None = None,
+    ) -> dict:
+        """Review an assumption: confirm, invalidate, or revert to provisional.
+
+        When invalidated, linked predicates are blocked and a gap is recorded.
+        """
+        valid = ("provisional", "confirmed", "invalidated")
+        if decision not in valid:
+            return {"error": f"Invalid decision. Must be one of: {', '.join(valid)}"}
+        assumption = None
+        for a in self.assumptions.get_all():
+            if isinstance(a, dict) and a.get("id") == assumption_id:
+                assumption = a
+                break
+        if not assumption:
+            return {"error": f"Assumption {assumption_id} not found"}
+
+        ok = self.assumptions.set_status(assumption_id, decision, reason)
+        if not ok:
+            return {"error": "Failed to update assumption"}
+
+        actions: list[str] = [f"Status → {decision}"]
+
+        if decision == "invalidated":
+            targets = self.assumptions.get_linked_targets(assumption_id)
+            blocked_count = 0
+            for t in targets:
+                if not isinstance(t, dict):
+                    continue
+                if t.get("target_type") == "predicate":
+                    try:
+                        self.issues.set_predicate_status(
+                            t["target_id"], "blocked",
+                            reason=f"Assumption invalidated: {reason or 'no reason'}",
+                        )
+                        blocked_count += 1
+                    except Exception:
+                        pass
+            if blocked_count:
+                actions.append(f"Blocked {blocked_count} predicate(s)")
+            stmt = assumption.get("statement", "")[:120]
+            self.gaps.record(
+                gap_type=GapType.MISSING_DOCUMENT,
+                description=f"Assumption invalidated: '{stmt}' — {reason or 'no reason'}",
+                materiality=0.7,
+                affected_type="assumption",
+                affected_id=assumption_id,
+            )
+            actions.append("Recorded gap for invalidated assumption")
+
+        return {
+            "success": True,
+            "assumption_id": assumption_id,
+            "decision": decision,
+            "actions": actions,
+        }
+
+    # ------------------------------------------------------------------
     # Assertion trace with impact (SO-2, SO-3, SO-5)
     # ------------------------------------------------------------------
 

@@ -283,6 +283,23 @@ class HttpBackend(UIBackend):
         )
         return bool(result.get("updated")) if isinstance(result, dict) else False
 
+    async def get_assumption_review(self, matter_id: str) -> dict:
+        result = await self._get(f"/matter/{matter_id}/assumption-review")
+        if not isinstance(result, dict):
+            _log.warning("get_assumption_review: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
+    async def review_assumption(
+        self, matter_id: str, assumption_id: str, decision: str, reason: str = "",
+    ) -> dict:
+        params = {"assumption_id": assumption_id, "decision": decision, "reason": reason}
+        result = await self._post(f"/matter/{matter_id}/assumption-review", params=params)
+        if not isinstance(result, dict):
+            _log.warning("review_assumption: expected dict, got %s", type(result).__name__)
+            return {}
+        return result
+
     async def set_issue_priority(self, matter_id: str, issue_id: str, priority: str) -> bool:
         result = await self._post(
             f"/matter/{matter_id}/issues/{issue_id}/priority",

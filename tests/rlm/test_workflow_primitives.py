@@ -5171,3 +5171,76 @@ def test_promote_knowledge_seed_facade():
     assert result["seed_id"]
     seeds = model.knowledge_seeds.list_all()
     assert len(seeds) == 1
+
+
+# --- Assumption Lifecycle Review tests ---
+
+
+def test_assumption_review_invalid_decision():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.review_assumption("a1", "bad_status")
+    assert result.get("error")
+    assert "Invalid decision" in result["error"]
+
+
+def test_assumption_review_not_found():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    result = model.review_assumption("nonexistent", "confirmed")
+    assert result.get("error")
+    assert "not found" in result["error"]
+
+
+def test_assumption_review_confirm():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    aid = model.assumptions.upsert("Test assumption", rationale="test reason")
+    result = model.review_assumption(aid, "confirmed", reason="Verified by expert")
+    assert result["success"]
+    assert result["decision"] == "confirmed"
+    assumption_list = model.assumptions.get_all()
+    match = [a for a in assumption_list if a["id"] == aid]
+    assert match[0]["status"] == "confirmed"
+
+
+def test_assumption_review_invalidate_records_gap():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    aid = model.assumptions.upsert("Revenue is linear", rationale="Assumed from Q1 data")
+    initial_gaps = model.gaps.count_open()
+    result = model.review_assumption(aid, "invalidated", reason="Q2 data shows non-linear")
+    assert result["success"]
+    assert "Recorded gap" in " ".join(result.get("actions", []))
+    assert model.gaps.count_open() > initial_gaps
+
+
+def test_assumption_review_workbench():
+    from irys.matter.matter import MatterModel
+    model = MatterModel.open_in_memory()
+    model.assumptions.upsert("Assumption A")
+    model.assumptions.upsert("Assumption B")
+    aid = model.assumptions.upsert("Assumption C")
+    model.assumptions.set_status(aid, "confirmed")
+    wb = model.get_assumption_review_workbench()
+    assert wb["total"] == 3
+    assert wb["counts"]["provisional"] == 2
+    assert wb["counts"]["confirmed"] == 1
+    assert wb["counts"]["invalidated"] == 0
+
+
+def test_assumption_review_invalidate_blocks_predicates():
+    from irys.matter.matter import MatterModel
+    from irys.matter.enums import IssueType
+    model = MatterModel.open_in_memory()
+    iid, _ = model.issues.upsert_issue(
+        title="Test issue",
+        issue_type=IssueType.CLAIM,
+        materiality=0.8,
+    )
+    pid = model.issues.add_predicate(iid, "Test predicate", "plaintiff")
+    aid = model.assumptions.upsert("Key assumption", invalidation_condition="if data changes")
+    model.assumptions.link(aid, "predicate", pid)
+    result = model.review_assumption(aid, "invalidated", reason="Data changed")
+    assert result["success"]
+    assert any("Blocked" in a for a in result.get("actions", []))
