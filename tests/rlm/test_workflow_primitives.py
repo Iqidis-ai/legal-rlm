@@ -2868,3 +2868,128 @@ def test_fmt_issues_non_dict_guard():
     result = _fmt_issues(issues)
     assert "Real issue" in result
     assert "stale-string" not in result
+
+
+# ------------------------------------------------------------------
+# Domain-aware formatter tests: trust overrides, annotations,
+# communication map, source drawer, export overview/issues
+# ------------------------------------------------------------------
+
+def test_fmt_trust_overrides_domain_labels():
+    from irys.ui.app import _fmt_trust_overrides
+    overrides = [
+        {"document_pattern": "contract.pdf", "trust_level": "high", "note": "key doc", "created_at": "2025-01-01"},
+    ]
+    legal = _fmt_trust_overrides(overrides, domain="legal")
+    assert "Document Trust Overrides" in legal
+    assert "Document" in legal
+
+    finance = _fmt_trust_overrides(overrides, domain="finance")
+    assert "Source Trust Overrides" in finance
+    assert "Source" in finance
+
+    coding = _fmt_trust_overrides(overrides, domain="coding")
+    assert "Artifact Trust Overrides" in coding
+    assert "Artifact" in coding
+
+
+def test_fmt_trust_overrides_empty():
+    from irys.ui.app import _fmt_trust_overrides
+    result = _fmt_trust_overrides([], domain="finance")
+    assert "No trust overrides set." in result
+
+
+def test_fmt_annotations_panel_domain_labels():
+    from irys.ui.app import _fmt_annotations_panel
+    annotations = [
+        {"document_pattern": "memo.pdf", "annotation_text": "Important", "annotation_type": "strategic", "created_at": "2025-01-01"},
+    ]
+    legal = _fmt_annotations_panel(annotations, domain="legal")
+    assert "Document Notes" in legal
+
+    finance = _fmt_annotations_panel(annotations, domain="finance")
+    assert "Source Notes" in finance
+
+    coding = _fmt_annotations_panel(annotations, domain="coding")
+    assert "Artifact Notes" in coding
+
+
+def test_fmt_annotations_panel_empty():
+    from irys.ui.app import _fmt_annotations_panel
+    result = _fmt_annotations_panel([], domain="coding")
+    assert "artifact" in result.lower()
+
+
+def test_fmt_communication_map_panel_domain_labels():
+    from irys.ui.app import _fmt_communication_map_panel
+    graph = {
+        "actors": [{"id": "a1", "name": "Alice"}],
+        "documents": [{"id": "d1"}],
+        "actor_document_edges": [{"actor_id": "a1", "document_id": "d1", "occurrence_count": 3}],
+        "actor_actor_edges": [],
+    }
+    legal = _fmt_communication_map_panel(graph, domain="legal")
+    assert "Actor/document communication map" in legal
+    assert "Actors" in legal
+
+    finance = _fmt_communication_map_panel(graph, domain="finance")
+    assert "Entity/source communication map" in finance
+    assert "Entities" in finance
+
+
+def test_fmt_communication_map_panel_empty():
+    from irys.ui.app import _fmt_communication_map_panel
+    result = _fmt_communication_map_panel({}, domain="coding")
+    assert "viz-empty" in result
+
+
+def test_fmt_source_drawer_domain_labels():
+    from irys.ui.app import _fmt_source_drawer
+    events = [
+        {"new_status": "verified", "reviewed_by_kind": "attorney", "created_at": "2025-01-01T10:00:00"},
+    ]
+    legal = _fmt_source_drawer("assertion", "a1", [], events, domain="legal")
+    assert "Attorney" in legal
+
+    finance = _fmt_source_drawer("assertion", "a1", [], events, domain="finance")
+    assert "Analyst" in finance
+
+    coding = _fmt_source_drawer("assertion", "a1", [], events, domain="coding")
+    assert "Engineer" in coding
+
+    research = _fmt_source_drawer("assertion", "a1", [], events, domain="academic_research")
+    assert "Reviewer" in research
+
+    biomed = _fmt_source_drawer("assertion", "a1", [], events, domain="biomedical")
+    assert "Clinician" in biomed
+
+
+def test_fmt_export_overview_domain_labels():
+    from irys.ui.app import _fmt_overview
+    data = {
+        "stats": {"assertion_count": 10, "open_issue_count": 3, "open_gap_count": 2, "actor_count": 5},
+        "so_metrics": {},
+    }
+    legal = _fmt_overview(data, domain="legal")
+    assert "Matter Overview" in legal
+    assert "Assertions" in legal
+
+    finance = _fmt_overview(data, domain="finance")
+    assert "Analysis Overview" in finance
+    assert "Claims" in finance
+
+    coding = _fmt_overview(data, domain="coding")
+    assert "Investigation Overview" in coding
+    assert "Findings" in coding
+
+
+def test_fmt_export_issues_domain_empty():
+    from irys.ui.app import _fmt_issues
+    legal = _fmt_issues([], domain="legal")
+    assert "No open issues." in legal
+
+    finance = _fmt_issues([], domain="finance")
+    assert "No open theses." in finance
+
+    coding = _fmt_issues([], domain="coding")
+    assert "No open hypotheses." in coding

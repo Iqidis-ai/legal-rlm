@@ -3232,9 +3232,39 @@ _TRUST_LEVEL_PILLS = {
 }
 
 
-def _fmt_trust_overrides(overrides: list[dict]) -> str:
+_TRUST_OVERRIDES_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "empty": "No trust overrides set.",
+        "title": "Document Trust Overrides",
+        "col_doc": "Document", "col_trust": "Trust", "col_reason": "Reason", "col_set": "Set",
+    },
+    "finance": {
+        "empty": "No trust overrides set.",
+        "title": "Source Trust Overrides",
+        "col_doc": "Source", "col_trust": "Trust", "col_reason": "Reason", "col_set": "Set",
+    },
+    "coding": {
+        "empty": "No trust overrides set.",
+        "title": "Artifact Trust Overrides",
+        "col_doc": "Artifact", "col_trust": "Trust", "col_reason": "Reason", "col_set": "Set",
+    },
+    "academic_research": {
+        "empty": "No trust overrides set.",
+        "title": "Source Trust Overrides",
+        "col_doc": "Source", "col_trust": "Trust", "col_reason": "Reason", "col_set": "Set",
+    },
+    "biomedical": {
+        "empty": "No trust overrides set.",
+        "title": "Source Trust Overrides",
+        "col_doc": "Source", "col_trust": "Trust", "col_reason": "Reason", "col_set": "Set",
+    },
+}
+
+
+def _fmt_trust_overrides(overrides: list[dict], domain: str = "legal") -> str:
+    L = _TRUST_OVERRIDES_LABELS.get(domain, _TRUST_OVERRIDES_LABELS["legal"])
     if not overrides:
-        return "<div class='viz-empty'>No trust overrides set.</div>"
+        return f"<div class='viz-empty'>{L['empty']}</div>"
     rows = ""
     for ov in overrides:
         if not isinstance(ov, dict):
@@ -3253,12 +3283,12 @@ def _fmt_trust_overrides(overrides: list[dict]) -> str:
             f"</tr>"
         )
     if not rows:
-        return "<div class='viz-empty'>No trust overrides set.</div>"
+        return f"<div class='viz-empty'>{L['empty']}</div>"
     count = rows.count("<tr>")
-    header = f"<div class='viz-header'><strong>Document Trust Overrides</strong> — {count} active</div>"
+    header = f"<div class='viz-header'><strong>{L['title']}</strong> — {count} active</div>"
     table = (
         "<div class='table-wrap'><table class='viz-table'>"
-        "<thead><tr><th>Document</th><th>Trust</th><th>Reason</th><th>Set</th></tr></thead>"
+        f"<thead><tr><th>{L['col_doc']}</th><th>{L['col_trust']}</th><th>{L['col_reason']}</th><th>{L['col_set']}</th></tr></thead>"
         "<tbody>" + rows + "</tbody></table></div>"
     )
     return f"<div class='viz-shell'>{header}{table}</div>"
@@ -3397,9 +3427,44 @@ _ANNOTATION_TYPE_PILLS = {
 }
 
 
-def _fmt_annotations_panel(annotations: list[dict]) -> str:
+_ANNOTATIONS_PANEL_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "empty_cta": "No document notes yet. Add one below to guide the investigation.",
+        "empty": "No document notes yet.",
+        "title": "Document Notes",
+        "col_doc": "Document", "col_type": "Type", "col_note": "Note", "col_added": "Added",
+    },
+    "finance": {
+        "empty_cta": "No source notes yet. Add one below to guide the analysis.",
+        "empty": "No source notes yet.",
+        "title": "Source Notes",
+        "col_doc": "Source", "col_type": "Type", "col_note": "Note", "col_added": "Added",
+    },
+    "coding": {
+        "empty_cta": "No artifact notes yet. Add one below to guide the investigation.",
+        "empty": "No artifact notes yet.",
+        "title": "Artifact Notes",
+        "col_doc": "Artifact", "col_type": "Type", "col_note": "Note", "col_added": "Added",
+    },
+    "academic_research": {
+        "empty_cta": "No source notes yet. Add one below to guide the review.",
+        "empty": "No source notes yet.",
+        "title": "Source Notes",
+        "col_doc": "Source", "col_type": "Type", "col_note": "Note", "col_added": "Added",
+    },
+    "biomedical": {
+        "empty_cta": "No source notes yet. Add one below to guide the investigation.",
+        "empty": "No source notes yet.",
+        "title": "Source Notes",
+        "col_doc": "Source", "col_type": "Type", "col_note": "Note", "col_added": "Added",
+    },
+}
+
+
+def _fmt_annotations_panel(annotations: list[dict], domain: str = "legal") -> str:
+    L = _ANNOTATIONS_PANEL_LABELS.get(domain, _ANNOTATIONS_PANEL_LABELS["legal"])
     if not annotations:
-        return "<div class='viz-empty'>No document notes yet. Add one below to guide the investigation.</div>"
+        return f"<div class='viz-empty'>{L['empty_cta']}</div>"
     rows = ""
     for a in annotations:
         if not isinstance(a, dict):
@@ -3418,12 +3483,12 @@ def _fmt_annotations_panel(annotations: list[dict]) -> str:
             f"</tr>"
         )
     if not rows:
-        return "<div class='viz-empty'>No document notes yet.</div>"
+        return f"<div class='viz-empty'>{L['empty']}</div>"
     count = rows.count("<tr>")
-    header = f"<div class='viz-header'><strong>Document Notes</strong> — {count} note{'s' if count != 1 else ''}</div>"
+    header = f"<div class='viz-header'><strong>{L['title']}</strong> — {count} note{'s' if count != 1 else ''}</div>"
     table = (
         "<div class='table-wrap'><table class='viz-table'>"
-        "<thead><tr><th>Document</th><th>Type</th><th>Note</th><th>Added</th></tr></thead>"
+        f"<thead><tr><th>{L['col_doc']}</th><th>{L['col_type']}</th><th>{L['col_note']}</th><th>{L['col_added']}</th></tr></thead>"
         "<tbody>" + rows + "</tbody></table></div>"
     )
     return f"<div class='viz-shell'>{header}{table}</div>"
@@ -3473,13 +3538,88 @@ def _fmt_duplicate_actors_panel(pairs: list[dict], domain: str = "legal") -> str
     )
 
 
-def _fmt_communication_map_panel(graph: dict) -> str:
+_COMMUNICATION_MAP_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "empty": "No communication graph available yet.",
+        "sparse": "Communication graph has no dense connections to render.",
+        "title": "Actor/document communication map",
+        "subtitle": "Actors on the left, documents on the right, edge width = co-occurrence count.",
+        "footnote_slice": "The SVG highlights the densest actor/document slice. Full actor, document, and edge detail is listed below.",
+        "actors": "Actors", "documents": "Documents",
+        "pairs": "Strongest actor pairs",
+        "edge_detail": "Actor/document edge detail",
+        "col_actor": "Actor", "col_document": "Document", "col_mentions": "Mentions",
+        "no_edges": "No actor/document links yet.",
+        "no_pairs": "No repeated actor co-appearance detected yet.",
+        "linked_docs": "linked docs", "mentions": "mentions", "links": "links", "actors_word": "actors",
+    },
+    "finance": {
+        "empty": "No communication graph available yet.",
+        "sparse": "Communication graph has no dense connections to render.",
+        "title": "Entity/source communication map",
+        "subtitle": "Entities on the left, sources on the right, edge width = co-occurrence count.",
+        "footnote_slice": "The SVG highlights the densest entity/source slice. Full entity, source, and edge detail is listed below.",
+        "actors": "Entities", "documents": "Sources",
+        "pairs": "Strongest entity pairs",
+        "edge_detail": "Entity/source edge detail",
+        "col_actor": "Entity", "col_document": "Source", "col_mentions": "Mentions",
+        "no_edges": "No entity/source links yet.",
+        "no_pairs": "No repeated entity co-appearance detected yet.",
+        "linked_docs": "linked sources", "mentions": "mentions", "links": "links", "actors_word": "entities",
+    },
+    "coding": {
+        "empty": "No communication graph available yet.",
+        "sparse": "Communication graph has no dense connections to render.",
+        "title": "Component/artifact communication map",
+        "subtitle": "Components on the left, artifacts on the right, edge width = co-occurrence count.",
+        "footnote_slice": "The SVG highlights the densest component/artifact slice. Full detail is listed below.",
+        "actors": "Components", "documents": "Artifacts",
+        "pairs": "Strongest component pairs",
+        "edge_detail": "Component/artifact edge detail",
+        "col_actor": "Component", "col_document": "Artifact", "col_mentions": "Mentions",
+        "no_edges": "No component/artifact links yet.",
+        "no_pairs": "No repeated component co-appearance detected yet.",
+        "linked_docs": "linked artifacts", "mentions": "mentions", "links": "links", "actors_word": "components",
+    },
+    "academic_research": {
+        "empty": "No communication graph available yet.",
+        "sparse": "Communication graph has no dense connections to render.",
+        "title": "Author/source communication map",
+        "subtitle": "Authors on the left, sources on the right, edge width = co-occurrence count.",
+        "footnote_slice": "The SVG highlights the densest author/source slice. Full detail is listed below.",
+        "actors": "Authors", "documents": "Sources",
+        "pairs": "Strongest author pairs",
+        "edge_detail": "Author/source edge detail",
+        "col_actor": "Author", "col_document": "Source", "col_mentions": "Mentions",
+        "no_edges": "No author/source links yet.",
+        "no_pairs": "No repeated author co-appearance detected yet.",
+        "linked_docs": "linked sources", "mentions": "mentions", "links": "links", "actors_word": "authors",
+    },
+    "biomedical": {
+        "empty": "No communication graph available yet.",
+        "sparse": "Communication graph has no dense connections to render.",
+        "title": "Entity/source communication map",
+        "subtitle": "Entities on the left, sources on the right, edge width = co-occurrence count.",
+        "footnote_slice": "The SVG highlights the densest entity/source slice. Full detail is listed below.",
+        "actors": "Entities", "documents": "Sources",
+        "pairs": "Strongest entity pairs",
+        "edge_detail": "Entity/source edge detail",
+        "col_actor": "Entity", "col_document": "Source", "col_mentions": "Mentions",
+        "no_edges": "No entity/source links yet.",
+        "no_pairs": "No repeated entity co-appearance detected yet.",
+        "linked_docs": "linked sources", "mentions": "mentions", "links": "links", "actors_word": "entities",
+    },
+}
+
+
+def _fmt_communication_map_panel(graph: dict, domain: str = "legal") -> str:
+    L = _COMMUNICATION_MAP_LABELS.get(domain, _COMMUNICATION_MAP_LABELS["legal"])
     actors = list(graph.get("actors", []) or [])
     documents = list(graph.get("documents", []) or [])
     edges = list(graph.get("actor_document_edges", []) or [])
     actor_actor_edges = list(graph.get("actor_actor_edges", []) or [])
     if not actors or not documents or not edges:
-        return "<div class='viz-empty'>No communication graph available yet.</div>"
+        return f"<div class='viz-empty'>{L['empty']}</div>"
 
     actor_weights: dict[str, int] = defaultdict(int)
     document_weights: dict[str, int] = defaultdict(int)
@@ -3505,7 +3645,7 @@ def _fmt_communication_map_panel(graph: dict) -> str:
         if isinstance(edge, dict) and edge.get("actor_id") in actor_index and edge.get("document_id") in doc_index
     ]
     if not filtered_edges:
-        return "<div class='viz-empty'>Communication graph has no dense connections to render.</div>"
+        return f"<div class='viz-empty'>{L['sparse']}</div>"
 
     width = 920
     height = max(320, 80 + max(len(actor_ids), len(doc_ids)) * 44)
@@ -3567,14 +3707,14 @@ def _fmt_communication_map_panel(graph: dict) -> str:
     actor_rows = "".join(
         "<div class='viz-list-row'>"
         f"<span>{_escape(actor_lookup.get(actor_id, {}).get('name') or actor_id)}</span>"
-        f"<strong>{actor_weights[actor_id]} mentions | {actor_doc_counts.get(actor_id, 0)} linked docs</strong>"
+        f"<strong>{actor_weights[actor_id]} {L['mentions']} | {actor_doc_counts.get(actor_id, 0)} {L['linked_docs']}</strong>"
         "</div>"
         for actor_id in sorted(actor_weights, key=lambda key: actor_weights[key], reverse=True)
     )
     doc_rows = "".join(
         "<div class='viz-list-row'>"
         f"<span>{_escape(doc_id)}</span>"
-        f"<strong>{document_weights[doc_id]} links | {len(document_actor_counts.get(doc_id, set()))} actors</strong>"
+        f"<strong>{document_weights[doc_id]} {L['links']} | {len(document_actor_counts.get(doc_id, set()))} {L['actors_word']}</strong>"
         "</div>"
         for doc_id in sorted(document_weights, key=lambda key: document_weights[key], reverse=True)
     )
@@ -3593,7 +3733,7 @@ def _fmt_communication_map_panel(graph: dict) -> str:
             key=lambda item: _safe_int(item.get("shared_documents", 0)),
             reverse=True,
         )
-    ) or "<div class='viz-empty'>No repeated actor co-appearance detected yet.</div>"
+    ) or f"<div class='viz-empty'>{L['no_pairs']}</div>"
     edge_rows = "".join(
         "<tr>"
         f"<td>{_escape(actor_lookup.get(edge.get('actor_id'), {}).get('name') or edge.get('actor_id') or '?')}</td>"
@@ -3608,36 +3748,33 @@ def _fmt_communication_map_panel(graph: dict) -> str:
     )
     visual_note = ""
     if len(actor_weights) > len(actor_ids) or len(document_weights) > len(doc_ids):
-        visual_note = (
-            "<div class='viz-footnote'>The SVG highlights the densest actor/document slice. "
-            "Full actor, document, and edge detail is listed below.</div>"
-        )
+        visual_note = f"<div class='viz-footnote'>{L['footnote_slice']}</div>"
 
     return (
         "<div class='viz-shell'>"
-        "<div class='viz-panel-title'>Actor/document communication map</div>"
-        "<div class='viz-footnote'>Actors on the left, documents on the right, edge width = co-occurrence count.</div>"
+        f"<div class='viz-panel-title'>{L['title']}</div>"
+        f"<div class='viz-footnote'>{L['subtitle']}</div>"
         f"<svg class='comm-graph' viewBox='0 0 {width} {height}' role='img'>"
         + "".join(svg_lines)
         + "".join(svg_nodes)
         + "</svg>"
         + visual_note
         + "<div class='viz-two-col'>"
-        + "<div class='viz-panel'><div class='viz-subtitle'>Actors</div>"
+        + f"<div class='viz-panel'><div class='viz-subtitle'>{L['actors']}</div>"
         + actor_rows
         + "</div>"
-        + "<div class='viz-panel'><div class='viz-subtitle'>Documents</div>"
+        + f"<div class='viz-panel'><div class='viz-subtitle'>{L['documents']}</div>"
         + doc_rows
         + "</div></div>"
         + "<div class='viz-panel'>"
-        + "<div class='viz-subtitle'>Strongest actor pairs</div>"
+        + f"<div class='viz-subtitle'>{L['pairs']}</div>"
         + pair_rows
         + "</div>"
-        + "<div class='viz-panel'><div class='viz-subtitle'>Actor/document edge detail</div>"
+        + f"<div class='viz-panel'><div class='viz-subtitle'>{L['edge_detail']}</div>"
         + "<div class='matrix-wrap'><table class='analytics-table'><thead><tr>"
-        + "<th>Actor</th><th>Document</th><th>Mentions</th>"
+        + f"<th>{L['col_actor']}</th><th>{L['col_document']}</th><th>{L['col_mentions']}</th>"
         + "</tr></thead><tbody>"
-        + (edge_rows or "<tr><td colspan='3'>No actor/document links yet.</td></tr>")
+        + (edge_rows or f"<tr><td colspan='3'>{L['no_edges']}</td></tr>")
         + "</tbody></table></div></div></div>"
     )
 
@@ -4133,19 +4270,54 @@ def _fmt_quant_panel(
     )
 
 
-def _fmt_overview(data: dict) -> str:
+_EXPORT_OVERVIEW_LABELS: dict[str, dict[str, str]] = {
+    "legal": {
+        "title": "Matter Overview",
+        "assertions": "Assertions", "issues": "Issues", "gaps": "Gaps", "actors": "Actors",
+        "weakest": "Weakest Issues (proof gaps)", "open_gaps": "Open Gaps",
+        "clarifications": "Pending Clarifications",
+    },
+    "finance": {
+        "title": "Analysis Overview",
+        "assertions": "Claims", "issues": "Theses", "gaps": "Evidence gaps", "actors": "Entities",
+        "weakest": "Weakest Theses (evidence gaps)", "open_gaps": "Open Evidence Gaps",
+        "clarifications": "Pending Clarifications",
+    },
+    "coding": {
+        "title": "Investigation Overview",
+        "assertions": "Findings", "issues": "Hypotheses", "gaps": "Verification gaps", "actors": "Components",
+        "weakest": "Weakest Hypotheses (verification gaps)", "open_gaps": "Open Verification Gaps",
+        "clarifications": "Pending Clarifications",
+    },
+    "academic_research": {
+        "title": "Research Overview",
+        "assertions": "Claims", "issues": "Questions", "gaps": "Gaps", "actors": "Authors",
+        "weakest": "Weakest Claims (evidence gaps)", "open_gaps": "Open Gaps",
+        "clarifications": "Pending Clarifications",
+    },
+    "biomedical": {
+        "title": "Investigation Overview",
+        "assertions": "Findings", "issues": "Questions", "gaps": "Gaps", "actors": "Entities",
+        "weakest": "Weakest Findings (evidence gaps)", "open_gaps": "Open Gaps",
+        "clarifications": "Pending Clarifications",
+    },
+}
+
+
+def _fmt_overview(data: dict, domain: str = "legal") -> str:
     if not data:
         return "No matter loaded."
+    L = _EXPORT_OVERVIEW_LABELS.get(domain, _EXPORT_OVERVIEW_LABELS["legal"])
     stats = data.get("stats", {})
     so = data.get("so_metrics", {})
     llm = stats.get("llm", {}) if isinstance(stats.get("llm"), dict) else {}
     llm_totals = llm.get("totals", {}) if isinstance(llm, dict) else {}
     lines = [
-        "## Matter Overview",
-        f"**Assertions:** {stats.get('assertion_count', 0)}  |  "
-        f"**Issues:** {stats.get('open_issue_count', 0)}  |  "
-        f"**Gaps:** {stats.get('open_gap_count', 0)}",
-        f"**Actors:** {stats.get('actor_count', 0)}  |  "
+        f"## {L['title']}",
+        f"**{L['assertions']}:** {stats.get('assertion_count', 0)}  |  "
+        f"**{L['issues']}:** {stats.get('open_issue_count', 0)}  |  "
+        f"**{L['gaps']}:** {stats.get('open_gap_count', 0)}",
+        f"**{L['actors']}:** {stats.get('actor_count', 0)}  |  "
         f"**Quant facts:** {stats.get('quant_fact_count', 0)}  |  "
         f"**Contradictions:** {data.get('contradiction_count', 0)}  |  "
         f"**Pending clarifications:** {stats.get('pending_clarifications', 0)}",
@@ -4188,7 +4360,7 @@ def _fmt_overview(data: dict) -> str:
     # Weakest issues
     weakest = data.get("weakest_issues", [])
     if weakest:
-        lines.append("\n### Weakest Issues (proof gaps)")
+        lines.append(f"\n### {L['weakest']}")
         for issue in weakest[:5]:
             if not isinstance(issue, dict):
                 continue
@@ -4200,7 +4372,7 @@ def _fmt_overview(data: dict) -> str:
     # Top gaps
     top_gaps = data.get("top_gaps", [])
     if top_gaps:
-        lines.append("\n### Open Gaps")
+        lines.append(f"\n### {L['open_gaps']}")
         for gap in top_gaps[:5]:
             if not isinstance(gap, dict):
                 continue
@@ -4210,7 +4382,7 @@ def _fmt_overview(data: dict) -> str:
     # Pending clarifications
     clarifications = data.get("pending_clarifications", [])
     if clarifications:
-        lines.append("\n### Pending Clarifications")
+        lines.append(f"\n### {L['clarifications']}")
         for c in clarifications[:5]:
             if not isinstance(c, dict):
                 continue
@@ -4220,9 +4392,10 @@ def _fmt_overview(data: dict) -> str:
     return "\n".join(lines)
 
 
-def _fmt_issues(issues: list) -> str:
+def _fmt_issues(issues: list, domain: str = "legal") -> str:
+    L = _ISSUES_PANEL_LABELS.get(domain, _ISSUES_PANEL_LABELS["legal"])
     if not issues:
-        return "No open issues."
+        return L["empty"]
 
     # Build lookup for tree rendering
     by_id = {i["id"]: i for i in issues if isinstance(i, dict) and "id" in i}
@@ -5074,13 +5247,23 @@ def _fmt_review_queue(queue: list[dict], domain: str = "legal") -> str:
     )
 
 
+_SOURCE_DRAWER_REVIEWER_LABELS: dict[str, dict[str, str]] = {
+    "legal": {"user": "You", "attorney": "Attorney", "system": "Irys", "import": "Bulk import"},
+    "finance": {"user": "You", "attorney": "Analyst", "system": "Irys", "import": "Bulk import"},
+    "coding": {"user": "You", "attorney": "Engineer", "system": "Irys", "import": "Bulk import"},
+    "academic_research": {"user": "You", "attorney": "Reviewer", "system": "Irys", "import": "Bulk import"},
+    "biomedical": {"user": "You", "attorney": "Clinician", "system": "Irys", "import": "Bulk import"},
+}
+
+
 def _fmt_source_drawer(
     target_kind: str,
     target_id: str,
     provenance_rows: list[dict],
     verification_events: list[dict],
+    domain: str = "legal",
 ) -> str:
-    """Attorney-readable "where did this come from + what's been done
+    """Professional-readable "where did this come from + what's been done
     to it" drawer. Combines P0.1 provenance (AI write trail) with
     P0.3 verification events (human review history)."""
     if not provenance_rows and not verification_events:
@@ -5090,13 +5273,9 @@ def _fmt_source_drawer(
         )
     sections: list[str] = []
 
-    # Attorney-readable labels for reviewers and status transitions.
-    reviewer_labels = {
-        "user": "You",
-        "attorney": "Attorney",
-        "system": "Irys",
-        "import": "Bulk import",
-    }
+    reviewer_labels = _SOURCE_DRAWER_REVIEWER_LABELS.get(
+        domain, _SOURCE_DRAWER_REVIEWER_LABELS["legal"]
+    )
     status_labels = {
         "verified": "verified",
         "rejected": "rejected",
@@ -6563,6 +6742,12 @@ class AppState:
             }
             badge_html = _fmt_review_count_badge(total, bucket_counts, domain=domain)
 
+        _ov_domain = "legal"
+        if not isinstance(overview, BaseException) and isinstance(overview, dict):
+            _dc = overview.get("domain_composition", {})
+            if isinstance(_dc, dict):
+                _ov_domain = _dc.get("primary_domain_profile_id", "legal")
+
         if kind_tid is not None:
             kind, tid = kind_tid
             prov, events = results[5], results[6]
@@ -6572,19 +6757,13 @@ class AppState:
                     prov if isinstance(prov, BaseException) else events,
                 )
             else:
-                drawer_html = _fmt_source_drawer(kind, tid, prov, events)
+                drawer_html = _fmt_source_drawer(kind, tid, prov, events, domain=_ov_domain)
         else:
             drawer_html = (
                 "<div class='viz-empty'>Pick a finding and click "
                 "<em>Show source &amp; history</em> to see where it "
                 "came from and every review action on it.</div>"
             )
-
-        _ov_domain = "legal"
-        if not isinstance(overview, BaseException) and isinstance(overview, dict):
-            _dc = overview.get("domain_composition", {})
-            if isinstance(_dc, dict):
-                _ov_domain = _dc.get("primary_domain_profile_id", "legal")
 
         assertions_html = (
             _err_html("assertions", assertions)
@@ -6613,7 +6792,7 @@ class AppState:
         }
 
     def load_source_drawer(
-        self, matter_id: str, target_handle: str,
+        self, matter_id: str, target_handle: str, domain: str = "legal",
     ) -> str:
         """Load provenance + verification history for the selected
         review-queue target."""
@@ -6638,7 +6817,7 @@ class AppState:
         except Exception as exc:
             logger.debug("Verification events fetch failed: %s", exc)
             events = []
-        return _fmt_source_drawer(kind, tid, prov, events)
+        return _fmt_source_drawer(kind, tid, prov, events, domain=domain)
 
     def do_bulk_verify_by_document(
         self,
@@ -7182,12 +7361,12 @@ class AppState:
         except Exception as exc:
             return f"Error: {exc}"
 
-    def load_trust_overrides(self, matter_id: str) -> str:
+    def load_trust_overrides(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             data = _run_async(self.backend().list_trust_overrides(matter_id))
-            return _fmt_trust_overrides(data)
+            return _fmt_trust_overrides(data, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading trust overrides: {_escape(exc)}</div>"
 
@@ -7247,12 +7426,12 @@ class AppState:
             choices.append((label, path))
         return choices
 
-    def load_communication_map(self, matter_id: str) -> str:
+    def load_communication_map(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             graph = _run_async(self.backend().get_communication_map(matter_id))
-            return _fmt_communication_map_panel(graph)
+            return _fmt_communication_map_panel(graph, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error loading communication map: {_escape(exc)}</div>"
 
@@ -7338,12 +7517,12 @@ class AppState:
         except Exception as exc:
             return f"Error: {_escape(str(exc))}", ""
 
-    def load_annotations(self, matter_id: str) -> str:
+    def load_annotations(self, matter_id: str, domain: str = "legal") -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
         try:
             annotations = _run_async(self.backend().list_annotations(matter_id))
-            return _fmt_annotations_panel(annotations)
+            return _fmt_annotations_panel(annotations, domain=domain)
         except Exception as exc:
             return f"<div class='viz-empty'>Error: {_escape(str(exc))}</div>"
 
@@ -7358,7 +7537,7 @@ class AppState:
             _run_async(self.backend().add_annotation(
                 matter_id, doc.strip(), text.strip(), ann_type or "strategic",
             ))
-            refreshed = self.load_annotations(matter_id)
+            refreshed = self.load_annotations(matter_id, domain=self._detect_domain(matter_id))
             return "Note added.", refreshed
         except Exception as exc:
             return f"Error: {_escape(str(exc))}", ""
@@ -8917,7 +9096,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 f_quant = pool.submit(state.load_quant, mid)
                 f_timeline = pool.submit(state.load_timeline, mid)
                 f_evidence = pool.submit(state.load_evidence_matrix, mid, domain=domain)
-                f_communication = pool.submit(state.load_communication_map, mid)
+                f_communication = pool.submit(state.load_communication_map, mid, domain)
                 f_llm = pool.submit(state.load_llm_analytics, mid)
                 f_proof = pool.submit(state.load_proof_state, mid, domain=domain)
                 f_authority = pool.submit(state.load_authority_network, mid, domain=domain)
@@ -9196,7 +9375,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[export_report_file],
         )
         refresh_annotations_btn.click(
-            fn=lambda mid: state.load_annotations(mid),
+            fn=lambda mid: state.load_annotations(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[annotations_html],
         )
@@ -9374,7 +9553,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             outputs=[content_policy_html],
         )
         refresh_comm_btn.click(
-            fn=lambda mid: state.load_communication_map(mid),
+            fn=lambda mid: state.load_communication_map(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[communication_html],
         )
@@ -9481,7 +9660,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             domain = state._detect_domain(mid)
             queue_html, dropdown_update = state.load_review_queue(mid, domain=domain)
             new_value = dropdown_update.get("value") if isinstance(dropdown_update, dict) else None
-            drawer = state.load_source_drawer(mid, new_value or "")
+            drawer = state.load_source_drawer(mid, new_value or "", domain=domain)
             badge = state.load_review_count_badge(mid, domain=domain)
             return queue_html, dropdown_update, drawer, badge
 
@@ -9499,7 +9678,7 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         # real user input, which would overwrite the "show the review
         # event I just wrote" state right after verify/reject.
         show_source_btn.click(
-            fn=state.load_source_drawer,
+            fn=lambda mid, tgt: state.load_source_drawer(mid, tgt, domain=state._detect_domain(mid)),
             inputs=[matter_id_box, review_target],
             outputs=[source_drawer_html],
         )
@@ -9724,12 +9903,12 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             inputs=[matter_id_box, trust_doc_pattern, trust_level_dropdown, trust_note],
             outputs=[trust_override_result],
         ).then(
-            fn=lambda mid: state.load_trust_overrides(mid),
+            fn=lambda mid: state.load_trust_overrides(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[trust_overrides_html],
         )
         refresh_trust_btn.click(
-            fn=lambda mid: state.load_trust_overrides(mid),
+            fn=lambda mid: state.load_trust_overrides(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[trust_overrides_html],
         )
