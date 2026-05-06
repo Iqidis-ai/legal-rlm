@@ -458,7 +458,7 @@ def _delete_s3_matter(matter_name: str) -> tuple[list[str], str]:
 # ---------------------------------------------------------------------------
 
 
-def _clear_matter(path: str) -> tuple[str, str]:
+def _clear_matter(path: str, close_handles: Optional[Any] = None) -> tuple[str, str]:
     """Delete the .irys/ model data for a matter folder (keeps documents).
     Returns (folder_name, status_message)."""
     if not path or not path.strip():
@@ -466,8 +466,35 @@ def _clear_matter(path: str) -> tuple[str, str]:
     folder = pathlib.Path(path.strip())
     irys_dir = folder / ".irys"
     if irys_dir.exists():
-        shutil.rmtree(str(irys_dir))
-        return folder.name, f"Cleared analysis for '{folder.name}'. Documents kept. Next run starts fresh."
+        closed = 0
+        if close_handles is not None:
+            try:
+                closed = int(close_handles(folder) or 0)
+            except Exception as exc:
+                logger.warning("Failed to close matter handles for %s: %s", folder, exc)
+        last_error: Optional[Exception] = None
+        for _attempt in range(5):
+            try:
+                shutil.rmtree(str(irys_dir))
+                suffix = f" Closed {closed} active handle(s)." if closed else ""
+                return (
+                    folder.name,
+                    f"Cleared analysis for '{folder.name}'. Documents kept. "
+                    f"Next run starts fresh.{suffix}",
+                )
+            except PermissionError as exc:
+                last_error = exc
+                if close_handles is not None:
+                    try:
+                        closed += int(close_handles(folder) or 0)
+                    except Exception:
+                        pass
+                time.sleep(0.2)
+        return (
+            folder.name,
+            "Reset failed because the matter database is still open in another "
+            f"process or running analysis: {last_error}",
+        )
     return folder.name, f"No analysis data found in '{folder.name}'."
 
 
@@ -12238,6 +12265,45 @@ class AppState:
             self._backend = InProcessBackend(api_key=self.api_key)
         return self._backend
 
+    def close_matter_handles_for_path(self, repo_path: str | pathlib.Path) -> int:
+        """Close cached matter DB handles for a local repository path."""
+        folder = pathlib.Path(repo_path).resolve()
+        closed = 0
+        candidates = []
+        if self._backend is not None and self._backend._irys is not None:
+            candidates.append(self._backend._irys)
+        if self._irys_ref is not None and self._irys_ref not in candidates:
+            candidates.append(self._irys_ref)
+
+        for irys in candidates:
+            close_one = getattr(irys, "close_matter_model", None)
+            if callable(close_one):
+                try:
+                    if close_one(folder):
+                        closed += 1
+                    continue
+                except Exception as exc:
+                    logger.warning("close_matter_model failed for %s: %s", folder, exc)
+
+            models = getattr(irys, "_matter_models", {}) or {}
+            for key, model in list(models.items()):
+                try:
+                    if pathlib.Path(key).resolve() != folder:
+                        continue
+                    models.pop(key, None)
+                    engine = getattr(irys, "_engine", None)
+                    if engine is not None and getattr(engine, "_matter_model", None) is model:
+                        engine._matter_model = None
+                    close = getattr(model, "close", None)
+                    if callable(close):
+                        close()
+                    else:
+                        model.db.close()
+                    closed += 1
+                except Exception as exc:
+                    logger.warning("Failed to close model for %s: %s", key, exc)
+        return closed
+
     def _make_on_step(self, update_q: queue.Queue, thinking: list):
         """Return a thinking-step callback that also captures run_id early."""
         def _callback(step):
@@ -17746,7 +17812,9 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
         def _clear_and_report(path: str) -> tuple[str, str]:
             if not path or not path.strip():
                 return "", "No folder selected"
-            result = _clear_matter(path)
+            if state.is_running:
+                return _check_folder(path), "Stop the running analysis before resetting this matter."
+            result = _clear_matter(path, close_handles=state.close_matter_handles_for_path)
             return _check_folder(path), result[1]
 
         if not _s3_mode:

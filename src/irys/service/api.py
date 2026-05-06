@@ -153,11 +153,14 @@ async def _cleanup_loop(config: ServiceConfig):
                     if (job.matter_id not in _live_job_matter_ids
                             and job.matter_id not in _sync_running_matter_ids
                             and _last < _idle_cutoff):
-                        _active_matter_models.pop(job.matter_id, None)
+                        _model = _active_matter_models.pop(job.matter_id, None)
+                        if _model is not None:
+                            _close = getattr(_model, "close", None)
+                            if callable(_close):
+                                _close()
+                            else:
+                                _model.db.close()
                         _matter_model_last_used.pop(job.matter_id, None)
-                        # Note: SQLiteMatterDB uses threading.local so db.close() from
-                        # this thread only closes this thread's handle. Background-flush
-                        # threads hold their own per-thread connections released on thread exit.
                 del _jobs[job_id]
                 logger.debug(f"Cleaned up job {job_id}")
             # Evict matter models not backed by any active job (rehydrated models).
@@ -169,7 +172,13 @@ async def _cleanup_loop(config: ServiceConfig):
             for _mid in list(_active_matter_models.keys()):
                 if _mid not in _live_matter_ids:
                     if _matter_model_last_used.get(_mid, datetime.min) < _idle_cutoff:
-                        _active_matter_models.pop(_mid, None)
+                        _model = _active_matter_models.pop(_mid, None)
+                        if _model is not None:
+                            _close = getattr(_model, "close", None)
+                            if callable(_close):
+                                _close()
+                            else:
+                                _model.db.close()
                         _matter_model_last_used.pop(_mid, None)
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
@@ -364,6 +373,7 @@ def _try_rehydrate_matter_model(matter_id: str, config: ServiceConfig) -> Option
             db_path = corpus_dir / ".irys" / "matter.sqlite3"
             if not db_path.exists():
                 continue
+            db = None
             try:
                 db = SQLiteMatterDB(db_path)
                 row = db.execute(
@@ -371,7 +381,13 @@ def _try_rehydrate_matter_model(matter_id: str, config: ServiceConfig) -> Option
                 ).fetchone()
                 if row is not None:
                     return MatterModel(db, matter_id)
+                db.close_all()
             except Exception as exc:
+                if db is not None:
+                    try:
+                        db.close_all()
+                    except Exception:
+                        pass
                 logger.debug("Skipping corpus dir %s during rehydration: %s", corpus_dir, exc)
                 continue
     except Exception as e:

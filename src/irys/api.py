@@ -126,6 +126,37 @@ class Irys:
         if self._engine:
             self._engine.on_step = callback
 
+    def close_matter_model(self, repository: str | Path) -> bool:
+        """Evict and close the cached matter model for a repository path."""
+        repo_key = str(Path(repository).resolve())
+        model = self._matter_models.pop(repo_key, None)
+        if model is None:
+            return False
+        if self._engine is not None and self._engine._matter_model is model:
+            self._engine._matter_model = None
+        close = getattr(model, "close", None)
+        if callable(close):
+            close()
+        else:
+            model.db.close()
+        return True
+
+    def close_all_matter_models(self) -> int:
+        """Evict and close every cached matter model."""
+        models = list(self._matter_models.values())
+        self._matter_models.clear()
+        if self._engine is not None:
+            self._engine._matter_model = None
+        closed = 0
+        for model in models:
+            close = getattr(model, "close", None)
+            if callable(close):
+                close()
+            else:
+                model.db.close()
+            closed += 1
+        return closed
+
     def _attach_usage_summary(
         self,
         state: InvestigationState,

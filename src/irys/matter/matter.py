@@ -157,6 +157,14 @@ class MatterModel:
         # This ensures partial BFS propagation survives process restarts with no replay loss.
         self._load_pending_propagation()
 
+    def close(self) -> None:
+        """Close all SQLite handles owned by this matter model."""
+        close_all = getattr(self.db, "close_all", None)
+        if callable(close_all):
+            close_all()
+        else:
+            self.db.close()
+
     def _load_pending_propagation(self) -> None:
         """Populate in-memory pending queues from the durable DB table on open.
 

@@ -26,6 +26,9 @@ class SQLiteMatterDB:
         self._is_memory = str(db_path) == ":memory:"
         self._shared_conn: Optional[sqlite3.Connection] = None
         self._local = threading.local()
+        self._connections: set[sqlite3.Connection] = set()
+        self._connections_lock = threading.Lock()
+        self._generation = 0
 
         if self._is_memory:
             # Single shared connection for in-memory — all threads share it
@@ -36,6 +39,7 @@ class SQLiteMatterDB:
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA temp_store=MEMORY")
             self._shared_conn = conn
+            self._register_connection(conn)
             try:
                 apply_schema(conn)
             except Exception:
@@ -66,7 +70,9 @@ class SQLiteMatterDB:
         """Get the active connection (shared for in-memory, thread-local for file)."""
         if self._is_memory:
             return self._shared_conn  # type: ignore[return-value]
-        if not hasattr(self._local, "conn") or self._local.conn is None:
+        local_conn = getattr(self._local, "conn", None)
+        local_generation = getattr(self._local, "generation", None)
+        if local_conn is None or local_generation != self._generation:
             conn = sqlite3.connect(
                 str(self.db_path),
                 check_same_thread=False,
@@ -84,8 +90,18 @@ class SQLiteMatterDB:
             # 5000 ms covers typical BFS write-transaction durations at current scale.
             # (Tier 2 r3 HIGH #2 fix)
             conn.execute("PRAGMA busy_timeout=5000")
+            self._register_connection(conn)
             self._local.conn = conn
+            self._local.generation = self._generation
         return self._local.conn
+
+    def _register_connection(self, conn: sqlite3.Connection) -> None:
+        with self._connections_lock:
+            self._connections.add(conn)
+
+    def _unregister_connection(self, conn: sqlite3.Connection) -> None:
+        with self._connections_lock:
+            self._connections.discard(conn)
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -121,11 +137,39 @@ class SQLiteMatterDB:
     def close(self):
         if self._is_memory:
             if self._shared_conn:
-                self._shared_conn.close()
+                conn = self._shared_conn
                 self._shared_conn = None
+                self._unregister_connection(conn)
+                conn.close()
         elif hasattr(self._local, "conn") and self._local.conn:
-            self._local.conn.close()
+            conn = self._local.conn
             self._local.conn = None
+            self._local.generation = self._generation
+            self._unregister_connection(conn)
+            conn.close()
+
+    def close_all(self):
+        """Close every connection opened by this DB wrapper.
+
+        File-backed DBs use one connection per thread. On Windows, deleting or
+        replacing matter.sqlite3 fails while any thread-local connection remains
+        open, so reset/cleanup paths need a process-wide close, not just the
+        current thread's handle.
+        """
+        if self._is_memory:
+            self.close()
+            return
+        with self._connections_lock:
+            connections = list(self._connections)
+            self._connections.clear()
+            self._generation += 1
+        self._local.conn = None
+        self._local.generation = self._generation
+        for conn in connections:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     @classmethod
     def for_repository(cls, repository_path: str | Path) -> "SQLiteMatterDB":
