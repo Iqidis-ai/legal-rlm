@@ -628,7 +628,11 @@ class GeminiClient:
                     prompt_hash=_prompt_hash,
                 )
             )
-            logger.error(f"API call to {mc.model_id} timed out after {request_timeout}s")
+            label = f" ({usage_label})" if usage_label else ""
+            logger.error(
+                f"API call to {mc.model_id}{label} timed out after "
+                f"{request_timeout}s with {len(prompt)} prompt chars"
+            )
             raise TimeoutError(f"API call timed out after {request_timeout}s")
         except Exception as exc:
             latency_ms = int((time.perf_counter() - started_at) * 1000)

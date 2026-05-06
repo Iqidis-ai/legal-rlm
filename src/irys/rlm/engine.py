@@ -243,6 +243,8 @@ class RLMConfig:
     depth_citation_threshold: int = 15  # Stop early if enough citations
     max_iterations: int = 20  # Maximum investigation loop iterations
     enable_matter_model: bool = True  # When True, persist facts to SQLite matter model
+    synthesis_pro_timeout: float = 120.0  # Final synthesis PRO call timeout.
+    synthesis_fallback_timeout: float = 90.0  # FLASH fallback timeout after PRO timeout.
     # MVP.6: prompt-budget guardrails. Immutable so tests that swap it
     # via dataclasses.replace get fresh caps without side effects.
     packet_budget: PacketBudget = field(default_factory=PacketBudget)
@@ -2874,7 +2876,8 @@ class RLMEngine:
             state.llm_calls_required += 1
             repaired = await self.client.complete(
                 prompt,
-                tier=ModelTier.PRO,
+                tier=ModelTier.FLASH,
+                timeout=self.config.synthesis_fallback_timeout,
                 usage_label=f"{emitter}_workflow_repair",
                 conversation_history=state.conversation_history,
             )
@@ -2897,6 +2900,56 @@ class RLMEngine:
         if repaired_issue_count <= original_issue_count:
             return repaired
         return output_text
+
+    async def _complete_synthesis_with_fallback(
+        self,
+        state: InvestigationState,
+        prompt: str,
+    ) -> str:
+        """Run final synthesis on PRO, falling back to FLASH on timeout.
+
+        A PRO timeout should degrade answer polish, not discard the entire
+        investigation. The fallback keeps the same source packet but asks for a
+        concise answer so the cheaper model can finish inside an interactive
+        request window.
+        """
+        try:
+            return await self.client.complete(
+                prompt,
+                tier=ModelTier.PRO,
+                timeout=self.config.synthesis_pro_timeout,
+                usage_label="synthesis",
+                conversation_history=state.conversation_history,
+            )
+        except TimeoutError as exc:
+            timeout_note = (
+                f"PRO synthesis timed out after {self.config.synthesis_pro_timeout}s; "
+                "retrying with FLASH fallback."
+            )
+            state.findings["synthesis_timeout_fallback"] = {
+                "model_tier": ModelTier.PRO.value,
+                "fallback_tier": ModelTier.FLASH.value,
+                "timeout_seconds": self.config.synthesis_pro_timeout,
+                "error": str(exc),
+            }
+            self._emit_step(state, StepType.SYNTHESIS, timeout_note)
+            logger.warning(timeout_note)
+
+            fallback_prompt = (
+                prompt
+                + "\n\nFALLBACK SYNTHESIS INSTRUCTION:\n"
+                + "The PRO synthesis call timed out. Produce the best concise "
+                + "source-grounded answer from the provided context. Do not add "
+                + "new investigation claims; preserve any uncertainty and gaps."
+            )
+            state.llm_calls_required += 1
+            return await self.client.complete(
+                fallback_prompt,
+                tier=ModelTier.FLASH,
+                timeout=self.config.synthesis_fallback_timeout,
+                usage_label="synthesis_timeout_fallback",
+                conversation_history=state.conversation_history,
+            )
 
     async def investigate(
         self,
@@ -6522,14 +6575,9 @@ Return:
             response = _cached_response
             state.llm_calls_avoided += 1
         else:
-            # Use PRO for final synthesis
+            # Use PRO for final synthesis, with FLASH fallback on timeout.
             state.llm_calls_required += 1
-            response = await self.client.complete(
-                prompt,
-                tier=ModelTier.PRO,
-                usage_label="synthesis",
-                conversation_history=state.conversation_history,
-            )
+            response = await self._complete_synthesis_with_fallback(state, prompt)
             if self._matter_model is not None:
                 try:
                     _mh = context_build.dependency_manifest_hash or state.cache_manifest_hash

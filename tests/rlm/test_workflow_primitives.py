@@ -37,6 +37,18 @@ class _RepairClient:
         return self.response
 
 
+class _TimeoutThenFallbackClient:
+    def __init__(self, fallback_response: str = "Fallback answer."):
+        self.fallback_response = fallback_response
+        self.calls = []
+
+    async def complete(self, prompt, **kwargs):
+        self.calls.append((prompt, kwargs))
+        if kwargs.get("tier") == ModelTier.PRO:
+            raise TimeoutError("API call timed out after 120.0s")
+        return self.fallback_response
+
+
 def test_workflow_primitives_survive_checkpoint_roundtrip():
     state = InvestigationState.create(
         "draft a motion outline",
@@ -354,8 +366,32 @@ def test_repair_output_runs_once_for_fixable_workflow_failure():
     prompt, kwargs = client.calls[0]
     assert "temporary assumptions were not explicitly labeled" in prompt
     assert "Do not invent citations" in prompt
-    assert kwargs["tier"] == ModelTier.PRO
+    assert kwargs["tier"] == ModelTier.FLASH
     assert kwargs["usage_label"] == "synthesis_workflow_repair"
+
+
+def test_final_synthesis_falls_back_to_flash_after_pro_timeout():
+    client = _TimeoutThenFallbackClient("Fallback synthesis.")
+    state = InvestigationState.create("Summarize the key issue.", ".")
+    engine = RLMEngine(
+        gemini_client=client,
+        config=RLMConfig(synthesis_pro_timeout=0.1, synthesis_fallback_timeout=0.2),
+    )
+
+    response = asyncio.run(
+        engine._complete_synthesis_with_fallback(state, "SYNTHESIS PROMPT")
+    )
+
+    assert response == "Fallback synthesis."
+    assert [kwargs["tier"] for _, kwargs in client.calls] == [
+        ModelTier.PRO,
+        ModelTier.FLASH,
+    ]
+    assert client.calls[0][1]["usage_label"] == "synthesis"
+    assert client.calls[0][1]["timeout"] == 0.1
+    assert client.calls[1][1]["usage_label"] == "synthesis_timeout_fallback"
+    assert client.calls[1][1]["timeout"] == 0.2
+    assert state.findings["synthesis_timeout_fallback"]["model_tier"] == "pro"
 
 
 def test_repair_output_skips_nonfixable_citation_floor_failure():
