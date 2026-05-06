@@ -10880,7 +10880,7 @@ def _fmt_query_context(data: dict, domain: str = "legal") -> str:
     )
 
     # KPI row
-    kpi_style = "display:inline-block;padding:6px 14px;margin:0 6px 6px 0;border-radius:8px;background:#f3f4f6;font-size:13px;"
+    kpi_style = "display:inline-block;padding:6px 14px;margin:0 6px 6px 0;border-radius:8px;background:#f3f4f6;color:#1f2937;font-size:13px;"
     parts.append("<div style='margin-bottom:12px;'>")
     parts.append(f"<span style='{kpi_style}'><strong>{assertions}</strong> assertions</span>")
     parts.append(f"<span style='{kpi_style}'><strong>{actors}</strong> actors</span>")
@@ -10891,7 +10891,7 @@ def _fmt_query_context(data: dict, domain: str = "legal") -> str:
 
     # Next Run Focus
     parts.append(
-        "<div style='margin-bottom:12px;padding:10px;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;'>"
+        "<div style='margin-bottom:12px;padding:10px;background:#fef3c7;color:#78350f;border:1px solid #fde68a;border-radius:6px;'>"
         "<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>Next Run Focus</div>"
     )
     if weakest_id:
@@ -10912,7 +10912,7 @@ def _fmt_query_context(data: dict, domain: str = "legal") -> str:
 
     # Reuse Inputs
     parts.append(
-        "<div style='margin-bottom:12px;padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;'>"
+        "<div style='margin-bottom:12px;padding:10px;background:#f0fdf4;color:#14532d;border:1px solid #bbf7d0;border-radius:6px;'>"
         "<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>Reuse Inputs</div>"
     )
     parts.append(f"<div style='font-size:12px;'>Known documents: <strong>{len(known_docs)}</strong></div>")
@@ -10932,7 +10932,7 @@ def _fmt_query_context(data: dict, domain: str = "legal") -> str:
     str_predicates = [p for p in predicates if not isinstance(p, dict)]
     if str_predicates:
         parts.append(
-            "<div style='margin-bottom:12px;padding:10px;background:#ede9fe;border:1px solid #c4b5fd;border-radius:6px;'>"
+            "<div style='margin-bottom:12px;padding:10px;background:#ede9fe;color:#4c1d95;border:1px solid #c4b5fd;border-radius:6px;'>"
             f"<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>{_escape(L['predicates'])}</div>"
         )
         parts.append("<div style='display:flex;flex-wrap:wrap;gap:4px;'>")
@@ -10947,7 +10947,7 @@ def _fmt_query_context(data: dict, domain: str = "legal") -> str:
 
     # Domain Calibration
     parts.append(
-        "<div style='padding:10px;background:#e0f2fe;border:1px solid #7dd3fc;border-radius:6px;'>"
+        "<div style='padding:10px;background:#e0f2fe;color:#075985;border:1px solid #7dd3fc;border-radius:6px;'>"
         "<div style='font-weight:700;font-size:13px;margin-bottom:6px;'>Domain Calibration</div>"
         f"<div style='font-size:12px;'>Primary profile: <strong>{_escape(str(profile_id))}</strong></div>"
     )
