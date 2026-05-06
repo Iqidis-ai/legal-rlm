@@ -5169,6 +5169,8 @@ class RLMEngine:
             if isinstance(lead_data, dict):
                 desc = lead_data.get("description") or lead_data.get("desc")
                 if desc:
+                    if self._should_skip_follow_on_lead(desc, state):
+                        continue
                     _validated_fid = _follow_on_issue_id
                     if _follow_on_issue_id and _anchor_tokens:
                         _desc_toks = {_w for _w in desc.lower().split() if len(_w) > 3}
@@ -5187,6 +5189,8 @@ class RLMEngine:
         for _ns in analysis.get("next_searches", [])[:2]:
             if isinstance(_ns, str) and _ns.strip():
                 _ns_clean = _ns.strip()
+                if self._should_skip_follow_on_lead(_ns_clean, state):
+                    continue
                 _validated_fid_ns = _follow_on_issue_id
                 if _follow_on_issue_id and _anchor_tokens:
                     _ns_toks = {_w for _w in _ns_clean.lower().split() if len(_w) > 3}
@@ -5285,6 +5289,146 @@ class RLMEngine:
         return {term for term in raw_terms if len(term) > 3 and term not in stop}
 
     @staticmethod
+    def _is_simple_factual_lookup(query: str) -> bool:
+        """Return True for short lookup questions that should finish on exact evidence."""
+        q = " ".join(str(query or "").lower().split())
+        if not q:
+            return False
+        starters = (
+            "when did", "when was", "when is", "who did", "who was",
+            "who is", "what is", "what was", "where is", "where was",
+            "did ", "is ", "was ",
+        )
+        if not q.startswith(starters):
+            return False
+        words = q.split()
+        if len(words) > 18:
+            return False
+        complex_terms = (
+            "all ", "every ", "complete ", "compare", "comparison",
+            "across", "analyze", "analysis", "validate", "draft",
+            "memo", "risk", "risks", "issue list", "inventory",
+            "explain in detail", "walk through", "summarize",
+        )
+        return not any(term in q for term in complex_terms)
+
+    @staticmethod
+    def _simple_lookup_anchor_terms(query: str) -> set[str]:
+        """Extract rare-ish anchor terms for simple lookups.
+
+        These are the terms that should dominate filename scoring and
+        determine whether gathered evidence actually touched the target.
+        """
+        tokens = [
+            t for t in _re_engine.findall(r"[a-z0-9][a-z0-9'-]{2,}", str(query or "").lower())
+        ]
+        stop = {
+            "about", "after", "again", "against", "answer", "asked",
+            "company", "confirm", "data", "date", "details", "did",
+            "dog", "does", "employee", "employer", "event", "file",
+            "files", "find", "from", "have", "into", "join", "joined",
+            "joins", "joining", "list", "mention", "mentioned",
+            "name", "person", "record", "records", "say", "says",
+            "source", "sources", "speaker", "talk", "tell", "that",
+            "their", "there", "this", "what", "when", "where", "which",
+            "with", "work", "worked", "working",
+        }
+        anchors = {t.strip("-'") for t in tokens if len(t.strip("-'")) > 3 and t not in stop}
+        return anchors
+
+    @staticmethod
+    def _evidence_has_date_signal(text: str) -> bool:
+        if not text:
+            return False
+        if _re_engine.search(r"\b\d{4}-\d{2}-\d{2}\b", text):
+            return True
+        if _re_engine.search(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", text):
+            return True
+        month = (
+            "january|february|march|april|may|june|july|august|"
+            "september|october|november|december|jan\\.?|feb\\.?|"
+            "mar\\.?|apr\\.?|jun\\.?|jul\\.?|aug\\.?|sep\\.?|"
+            "sept\\.?|oct\\.?|nov\\.?|dec\\.?"
+        )
+        return bool(_re_engine.search(rf"\b({month})\s+\d{{1,2}},?\s+\d{{4}}\b", text, _re_engine.I))
+
+    def _simple_lookup_answer_satisfied(
+        self,
+        state: InvestigationState,
+    ) -> tuple[bool, str]:
+        if not self._is_simple_factual_lookup(state.query):
+            return False, ""
+        anchors = self._simple_lookup_anchor_terms(state.query)
+        if not anchors:
+            return False, ""
+
+        evidence_units: list[str] = []
+        for fact in state.findings.get("accumulated_facts") or []:
+            if isinstance(fact, dict):
+                evidence_units.append(json.dumps(fact, sort_keys=True))
+            else:
+                evidence_units.append(str(fact))
+        for citation in state.citations or []:
+            evidence_units.append(
+                " ".join(
+                    str(part or "")
+                    for part in (
+                        getattr(citation, "document", ""),
+                        getattr(citation, "text", ""),
+                        getattr(citation, "context", ""),
+                        getattr(citation, "relevance", ""),
+                    )
+                )
+            )
+        if not evidence_units:
+            return False, ""
+
+        matching_units = [
+            unit for unit in evidence_units
+            if any(anchor in unit.lower() for anchor in anchors)
+        ]
+        if not matching_units:
+            return False, ""
+
+        asks_when = " ".join(str(state.query or "").lower().split()).startswith("when ")
+        if asks_when:
+            # The exact-name source can arrive as a citation while the date sits
+            # in an extracted fact from the same batch. Requiring both signals
+            # prevents bare name hits from stopping date lookups too early.
+            combined = "\n".join(evidence_units)
+            if not self._evidence_has_date_signal(combined):
+                return False, ""
+
+        return True, (
+            "Simple factual lookup satisfied by exact evidence for "
+            f"{', '.join(sorted(anchors)[:3])}"
+        )
+
+    def _should_skip_follow_on_lead(
+        self,
+        candidate: str,
+        state: InvestigationState,
+    ) -> bool:
+        """Drop low-value negative leads from irrelevant docs on simple lookups."""
+        if not self._is_simple_factual_lookup(state.query):
+            return False
+        text = " ".join(str(candidate or "").lower().split())
+        if not text:
+            return True
+        negative_irrelevance = (
+            "cannot be answered from the provided document",
+            "cannot be answered from this document",
+            "cannot be answered by this document",
+            "does not contain any information",
+            "does not mention",
+            "not mentioned",
+            "no individual by that name",
+            "query asks about",
+            "provided document pages",
+        )
+        return any(phrase in text for phrase in negative_irrelevance)
+
+    @staticmethod
     def _path_has_any(path_lower: str, needles: tuple[str, ...]) -> bool:
         return any(needle in path_lower for needle in needles)
 
@@ -5294,6 +5438,7 @@ class RLMEngine:
         file_info: Any,
         *,
         query_terms: set[str],
+        simple_lookup_terms: set[str],
         plan_doc_types: list[str],
         plan_folders: list[str],
         target_documents: set[str],
@@ -5312,6 +5457,12 @@ class RLMEngine:
         if path_lower in target_documents or name_lower in target_documents:
             score += 100.0
             reasons.append("orientation target document")
+
+        for term in sorted(simple_lookup_terms):
+            if term in path_lower or term in name_lower:
+                score += 150.0
+                reasons.append(f"simple lookup exact path match '{term}'")
+                break
 
         for term in sorted(query_terms):
             if term in path_lower or term in name_lower:
@@ -5426,6 +5577,11 @@ class RLMEngine:
             if isinstance(item, str) and item.strip()
         }
         query_terms = self._query_path_terms(state.query)
+        simple_lookup_terms = (
+            self._simple_lookup_anchor_terms(state.query)
+            if self._is_simple_factual_lookup(state.query)
+            else set()
+        )
         finance_focused = self._query_is_finance_focused(state.query)
 
         scored: list[tuple[float, str, Any, list[str]]] = []
@@ -5434,6 +5590,7 @@ class RLMEngine:
                 state,
                 file_info,
                 query_terms=query_terms,
+                simple_lookup_terms=simple_lookup_terms,
                 plan_doc_types=plan_doc_types,
                 plan_folders=plan_folders,
                 target_documents=target_documents,
@@ -5452,6 +5609,7 @@ class RLMEngine:
             "total_new_files": len(files),
             "cap": cap,
             "finance_focused": finance_focused,
+            "simple_lookup_terms": sorted(simple_lookup_terms),
             "selected_paths": [
                 str(getattr(item[2], "relative_path", "") or "") for item in selected
             ],
@@ -6228,6 +6386,8 @@ Return:
             # Add leads for mentioned entities/connections
             for concern in analysis.get("concerns", [])[:2]:
                 if isinstance(concern, str):
+                    if self._should_skip_follow_on_lead(concern, state):
+                        continue
                     state.add_lead(
                         description=f"Investigate concern: {concern}",
                         source=doc.filename,
@@ -9003,6 +9163,15 @@ Return:
             # opens the door for early termination the moment the
             # target is answerable.
             min_depth = max(0, int(getattr(contract, "min_iter", min_depth)))
+        simple_lookup_ok, simple_lookup_detail = self._simple_lookup_answer_satisfied(state)
+        if simple_lookup_ok:
+            state.findings["simple_lookup_satisfied"] = {
+                "detail": simple_lookup_detail,
+                "anchors": sorted(self._simple_lookup_anchor_terms(state.query)),
+                "citations": len(state.citations),
+                "facts": len(state.findings.get("accumulated_facts") or []),
+            }
+            return False, simple_lookup_detail
         if state.max_depth_reached < min_depth:
             return True, "Building minimum evidence base"
 

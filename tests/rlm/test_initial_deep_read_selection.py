@@ -80,6 +80,29 @@ def test_initial_deep_read_selection_keeps_orientation_targets():
     assert len(selected_paths) == 2
 
 
+def test_simple_lookup_path_match_outranks_bad_orientation_target():
+    engine = RLMEngine(
+        gemini_client=_StubClient(),
+        config=RLMConfig(max_initial_deep_read_documents=1),
+    )
+    state = InvestigationState.create("when did Kumail join data dog?", ".")
+    state.findings["initial_plan"] = {
+        "target_documents": ["filings/ir/landing/corporate-governance_governance-overview.pdf"],
+    }
+    files = [
+        _file("filings/ir/landing/corporate-governance_governance-overview.pdf"),
+        _file("news/kumail-nanjiani-join-datadogs-dash-conference-featured-speaker.pdf"),
+    ]
+
+    selected = engine._select_initial_deep_read_files(state, files)
+
+    assert [item.relative_path for item in selected] == [
+        "news/kumail-nanjiani-join-datadogs-dash-conference-featured-speaker.pdf",
+    ]
+    selection = state.findings["initial_deep_read_selection"]
+    assert selection["simple_lookup_terms"] == ["kumail"]
+
+
 def test_initial_deep_read_selection_reads_all_small_repos():
     engine = RLMEngine(
         gemini_client=_StubClient(),

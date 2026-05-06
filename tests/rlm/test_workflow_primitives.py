@@ -394,6 +394,67 @@ def test_final_synthesis_falls_back_to_flash_after_pro_timeout():
     assert state.findings["synthesis_timeout_fallback"]["model_tier"] == "pro"
 
 
+def test_simple_factual_lookup_stops_after_exact_dated_evidence():
+    state = InvestigationState.create("when did Kumail join Datadog?", ".")
+    state.research_mode = "simple"
+    state.add_fact(
+        "[REPORT] Kumail Nanjiani was announced as a featured speaker on April 17, 2024."
+    )
+    state.add_citation(
+        document="kumail-nanjiani-join-datadogs-dash-conference-featured-speaker.pdf",
+        page=1,
+        text="Kumail Nanjiani to Join Datadog's DASH Conference as Featured Speaker",
+        context="",
+        relevance="Found via search: Kumail",
+    )
+    engine = RLMEngine(gemini_client=_StubClient(), config=RLMConfig())
+
+    should_continue, reason = engine._should_continue_investigation(state)
+
+    assert should_continue is False
+    assert "Simple factual lookup satisfied" in reason
+    assert "kumail" in state.findings["simple_lookup_satisfied"]["anchors"]
+
+
+def test_simple_when_lookup_does_not_stop_on_bare_name_hit():
+    state = InvestigationState.create("when did Kumail join Datadog?", ".")
+    state.add_fact("[REPORT] Kumail Nanjiani was a featured speaker.")
+    state.add_citation(
+        document="kumail-nanjiani-join-datadogs-dash-conference-featured-speaker.pdf",
+        page=1,
+        text="Kumail Nanjiani",
+        context="",
+        relevance="Found via search: Kumail",
+    )
+    engine = RLMEngine(gemini_client=_StubClient(), config=RLMConfig())
+
+    satisfied, _ = engine._simple_lookup_answer_satisfied(state)
+
+    assert satisfied is False
+
+
+def test_simple_lookup_skips_irrelevant_negative_follow_on_leads():
+    state = InvestigationState.create("when did Kumail join Datadog?", ".")
+    engine = RLMEngine(gemini_client=_StubClient(), config=RLMConfig())
+
+    assert engine._should_skip_follow_on_lead(
+        (
+            "The query asks about Kumail, but this document does not mention "
+            "any individual named Kumail."
+        ),
+        state,
+    ) is True
+
+    complex_state = InvestigationState.create(
+        "Compare every executive appointment across the filings.",
+        ".",
+    )
+    assert engine._should_skip_follow_on_lead(
+        "This document does not mention any individual named Kumail.",
+        complex_state,
+    ) is False
+
+
 def test_repair_output_skips_nonfixable_citation_floor_failure():
     client = _RepairClient("unused")
     state = InvestigationState.create("analyze exposure", ".")

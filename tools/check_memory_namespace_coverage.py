@@ -11,6 +11,7 @@ import re
 import sys
 import json
 import ast
+import functools
 from pathlib import Path
 
 
@@ -261,6 +262,7 @@ def missing_legacy_metadata(manifest: dict) -> list[str]:
     return missing
 
 
+@functools.lru_cache(maxsize=None)
 def _parse_ast(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
@@ -590,12 +592,17 @@ def missing_discovered_surfaces(manifest: dict) -> tuple[list[str], list[str]]:
     )
 
 
-def writer_surface_tables(surface: str) -> set[str]:
+def writer_surface_tables(
+    surface: str,
+    *,
+    method_index: dict[str, dict[str, ast.FunctionDef | ast.AsyncFunctionDef]] | None = None,
+    attr_index: dict[str, dict[str, str]] | None = None,
+) -> set[str]:
     parts = surface.split(".")
     if len(parts) != 2:
         return set()
-    method_index = writer_method_index()
-    attr_index = writer_attribute_type_index()
+    method_index = method_index or writer_method_index()
+    attr_index = attr_index or writer_attribute_type_index()
     return method_written_tables(
         parts[0],
         parts[1],
@@ -607,8 +614,15 @@ def writer_surface_tables(surface: str) -> set[str]:
 def writer_surface_namespaces(
     surface: str,
     table_namespaces: dict[str, set[str]],
+    *,
+    method_index: dict[str, dict[str, ast.FunctionDef | ast.AsyncFunctionDef]] | None = None,
+    attr_index: dict[str, dict[str, str]] | None = None,
 ) -> tuple[set[str], set[str]]:
-    tables = writer_surface_tables(surface)
+    tables = writer_surface_tables(
+        surface,
+        method_index=method_index,
+        attr_index=attr_index,
+    )
     namespaces: set[str] = set()
     unmapped_tables: set[str] = set()
     for table in tables:
@@ -622,12 +636,19 @@ def writer_surface_namespaces(
 
 def writer_namespace_mismatches(manifest: dict, protocol_text: str) -> list[str]:
     table_namespaces = matrix_table_namespace_map(protocol_text)
+    method_index = writer_method_index()
+    attr_index = writer_attribute_type_index()
     issues: list[str] = []
     for surface in iter_surface_entries(manifest, "write_surfaces", "write_surface_groups"):
         name = str(surface.get("surface") or "")
         if not name:
             continue
-        expected, unmapped_tables = writer_surface_namespaces(name, table_namespaces)
+        expected, unmapped_tables = writer_surface_namespaces(
+            name,
+            table_namespaces,
+            method_index=method_index,
+            attr_index=attr_index,
+        )
         declared = set(surface.get("writes", []))
         if unmapped_tables:
             issues.append(f"{name}:unmapped_tables:{','.join(sorted(unmapped_tables))}")
