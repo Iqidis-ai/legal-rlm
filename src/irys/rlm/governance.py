@@ -99,6 +99,333 @@ class ExecutionContract:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class TaskSpec:
+    """Ontology-level description of the user's requested work.
+
+    Routes are implementation choices. A task spec captures the semantic
+    obligation first: what evidence object would make the answer valid, and
+    whether a cheap state read is even eligible.
+    """
+    task_type: str
+    operation: str
+    required_evidence: tuple[str, ...] = ()
+    fresh_extraction_required: bool = False
+    cached_state_allowed: bool = True
+    external_tool_required: bool = False
+    answer_shape: str = "narrative_answer"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_type": self.task_type,
+            "operation": self.operation,
+            "required_evidence": list(self.required_evidence),
+            "fresh_extraction_required": self.fresh_extraction_required,
+            "cached_state_allowed": self.cached_state_allowed,
+            "external_tool_required": self.external_tool_required,
+            "answer_shape": self.answer_shape,
+        }
+
+
+def infer_task_spec(query: str, domain: str = "legal") -> TaskSpec:
+    """Infer a conservative task ontology record from the query text.
+
+    This is deliberately deterministic and domain-light. The NANO classifier can
+    still choose among implementation routes, but these rules protect expensive
+    evidence obligations from being collapsed into canned state listings.
+    """
+    q = (query or "").strip().lower()
+    tokens = set(q.replace("/", " ").replace("-", " ").split())
+
+    asks_compare = any(w in tokens for w in {"compare", "comparison", "differences"})
+    asks_run_delta = (
+        "what changed" in q
+        or "what's changed" in q
+        or "since last run" in q
+        or "since the last run" in q
+        or "baseline" in q
+        or "assertion delta" in q
+    )
+    docish = any(
+        phrase in q
+        for phrase in (
+            "agreement", "agreements", "contract", "contracts", "document",
+            "documents", "pdf", "pdfs", "article", "section", "schedule",
+            "exhibit", "pleading", "order", "deposition", "filing",
+        )
+    )
+    exhaustive = any(
+        phrase in q
+        for phrase in (
+            "every ", "complete inventory", "full inventory",
+            "find every", "list every", "extract all", "identify each",
+        )
+    )
+    followup_cache_ok = any(
+        phrase in q
+        for phrase in (
+            "earlier i asked", "based on those same facts", "same facts",
+            "from the prior answer", "from that summary",
+        )
+    )
+    multi_doc_synthesis = (
+        docish
+        and not followup_cache_ok
+        and any(
+            phrase in q
+            for phrase in (
+                "all three agreements", "across all three", "across the three",
+                "across three agreements", "all agreements",
+            )
+        )
+        and any(
+            phrase in q
+            for phrase in (
+                "summary", "status memo", "key risks", "deal structure",
+                "structure and key risks", "one-page deal",
+            )
+        )
+    )
+    definition = "defined term" in q or "defined terms" in q
+    signatory = any(w in q for w in ("signator", "signed by", "signature block"))
+    cross_ref = any(
+        phrase in q
+        for phrase in (
+            "reference to", "references to", "cross-reference",
+            "cross reference", "where is", "where are",
+        )
+    )
+    authority = any(
+        phrase in q
+        for phrase in (
+            "case law", "validate this citation", "validate these citations",
+            "controlling authority", "delaware chancery", "texas supreme court",
+            "statute", "authority",
+        )
+    ) or (
+        "validate" in tokens
+        and any(w in tokens for w in {"case", "cases", "citation", "citations"})
+    )
+    quantitative = any(
+        phrase in q
+        for phrase in (
+            "how much money", "money is at stake", "damages", "exposure",
+            "payment reconciliation", "reconcile", "paid amount",
+            "outstanding balance", "amounts at issue", "financial analysis",
+        )
+    )
+    subject_identity = any(
+        phrase in q
+        for phrase in (
+            "property at issue", "confirm the address", "legal description",
+            "identify the property", "what is the property", "address inconsistency",
+        )
+    )
+    redaction = "[***]" in q or any(
+        phrase in q
+        for phrase in (
+            "redaction", "redactions", "redacted information",
+            "confidential treatment", "confidentiality redaction",
+        )
+    )
+    deposition_extract = "deposition" in q and any(
+        phrase in q
+        for phrase in (
+            "admission", "admissions", "testimony", "depo", "cross-reference",
+            "cross reference", "used in", "msj", "summary judgment",
+        )
+    )
+    procedural_history = any(
+        phrase in q
+        for phrase in (
+            "procedural history", "continuance history", "case timeline",
+            "litigation timeline", "orders and posture", "procedural posture",
+            "sequence of filings",
+        )
+    )
+    false_premise = any(
+        phrase in q
+        for phrase in (
+            "does section", "pull the language of section", "if it exists",
+            "fabrication", "out of matter", "not in the deal",
+        )
+    )
+    out_of_matter_probe = (
+        "interacts with" in q
+        and any(phrase in q for phrase in ("deal", "matter", "supply structure"))
+    ) or any(
+        phrase in q
+        for phrase in (
+            "not part of the matter",
+            "outside the matter",
+            "out-of-matter",
+        )
+    )
+
+    raw_state_listing = (
+        not docish
+        and any(phrase in q for phrase in (
+            "show me all the actors", "list actors", "list all actors",
+            "list documents", "show documents", "what gaps are open",
+            "list gaps", "list issues", "list contradictions", "list quants",
+        ))
+    )
+
+    if asks_compare and not asks_run_delta and docish:
+        return TaskSpec(
+            task_type="document_comparison",
+            operation="compare",
+            required_evidence=("document_span", "per_document_finding"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="side_by_side_comparison",
+        )
+    if asks_run_delta:
+        return TaskSpec(
+            task_type="run_delta",
+            operation="compare",
+            required_evidence=("run_session", "assertion_delta"),
+            fresh_extraction_required=False,
+            cached_state_allowed=True,
+            answer_shape="run_delta",
+        )
+    if definition and exhaustive:
+        return TaskSpec(
+            task_type="defined_term_inventory",
+            operation="extract",
+            required_evidence=("defined_term", "definition_span", "section_ref"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="inventory_table",
+        )
+    if signatory:
+        return TaskSpec(
+            task_type="signatory_extraction",
+            operation="extract",
+            required_evidence=("signature_block_span", "actor_role", "entity"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="signatory_table",
+        )
+    if cross_ref and exhaustive:
+        return TaskSpec(
+            task_type="cross_document_reference_search",
+            operation="extract",
+            required_evidence=("reference_span", "document_ref"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="reference_inventory",
+        )
+    if authority:
+        return TaskSpec(
+            task_type="authority_validation",
+            operation="validate",
+            required_evidence=("authority_lookup", "citation_status"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            external_tool_required=True,
+            answer_shape="validation_matrix",
+        )
+    if multi_doc_synthesis:
+        return TaskSpec(
+            task_type="multi_document_synthesis",
+            operation="synthesize",
+            required_evidence=("document_span", "per_document_finding", "source_summary"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="multi_document_memo",
+        )
+    if quantitative:
+        return TaskSpec(
+            task_type="quantitative_reconciliation",
+            operation="reconcile",
+            required_evidence=("quant_fact", "reconciliation_scope", "source_span"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="scoped_quant_table",
+        )
+    if subject_identity:
+        return TaskSpec(
+            task_type="matter_subject_identification",
+            operation="identify",
+            required_evidence=("subject_reference", "conflict_check", "source_span"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="identity_with_conflicts",
+        )
+    if redaction:
+        return TaskSpec(
+            task_type="redaction_categorization",
+            operation="classify",
+            required_evidence=("redaction_marker", "source_span", "category_rationale"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="redaction_category_table",
+        )
+    if deposition_extract:
+        return TaskSpec(
+            task_type="deposition_extraction",
+            operation="extract",
+            required_evidence=("testimony_span", "admission", "cross_reference"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="testimony_matrix",
+        )
+    if procedural_history:
+        return TaskSpec(
+            task_type="procedural_history",
+            operation="extract",
+            required_evidence=("timeline_event", "order_or_filing", "source_span"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="procedural_timeline",
+        )
+    if false_premise:
+        return TaskSpec(
+            task_type="premise_check",
+            operation="verify_absence",
+            required_evidence=("search_coverage", "absence_status"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="premise_status",
+        )
+    if out_of_matter_probe:
+        return TaskSpec(
+            task_type="out_of_matter_check",
+            operation="verify_absence",
+            required_evidence=("matter_entity_search", "absence_status"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="matter_membership_status",
+        )
+    if exhaustive and docish:
+        return TaskSpec(
+            task_type="document_grounded_enumeration",
+            operation="extract",
+            required_evidence=("document_span", "enumerated_item"),
+            fresh_extraction_required=True,
+            cached_state_allowed=False,
+            answer_shape="grounded_inventory",
+        )
+    if raw_state_listing:
+        return TaskSpec(
+            task_type="state_listing",
+            operation="lookup",
+            required_evidence=("matter_model_row",),
+            fresh_extraction_required=False,
+            cached_state_allowed=True,
+            answer_shape="state_listing",
+        )
+    return TaskSpec(
+        task_type=f"{domain}_analysis" if domain else "analysis",
+        operation="synthesize",
+        required_evidence=("assertion",),
+        fresh_extraction_required=False,
+        cached_state_allowed=True,
+        answer_shape="narrative_answer",
+    )
+
+
 @dataclass
 class AnswerabilitySnapshot:
     """Compact state signal fed to the classifier.
@@ -191,7 +518,7 @@ class CascadeDecision:
 
 # Bump whenever the prompt or schema changes — included in the
 # classifier_version so old cached decisions miss cleanly.
-CLASSIFIER_SCHEMA_VERSION = "mvi7.0"
+CLASSIFIER_SCHEMA_VERSION = "mvi8.0"
 
 
 VALID_FAMILIES = {
@@ -372,6 +699,8 @@ class CascadeGovernor:
         queries don't thundering-herd into the full AR loop.
         """
         snapshot = self._build_snapshot(conversation_history)
+        domain = self._resolve_domain()
+        task_spec = infer_task_spec(query, domain)
 
         # Cold-start shortcut: if there are literally no facts in the
         # matter, `read` is impossible by definition. Skip the NANO
@@ -382,7 +711,23 @@ class CascadeGovernor:
                 family="investigate",
                 confidence=1.0,
                 rationale="cold-start: matter has no facts yet",
-                contract=self._contract_for("investigate"),
+                contract=self._contract_for_task("investigate", task_spec),
+                classifier_version=CLASSIFIER_SCHEMA_VERSION,
+                snapshot=snapshot,
+            )
+
+        # Ontology guard: extraction, validation, absence checks, and
+        # document-to-document comparisons need evidence objects, not cheap
+        # matter-state summaries or canned DB listings.
+        if task_spec.fresh_extraction_required and not task_spec.cached_state_allowed:
+            return CascadeDecision(
+                family="investigate",
+                confidence=1.0,
+                rationale=(
+                    f"task ontology requires fresh evidence extraction "
+                    f"for {task_spec.task_type}"
+                ),
+                contract=self._contract_for_task("investigate", task_spec),
                 classifier_version=CLASSIFIER_SCHEMA_VERSION,
                 snapshot=snapshot,
             )
@@ -396,7 +741,7 @@ class CascadeGovernor:
                 family=cached["family"],
                 confidence=float(cached.get("confidence", 0.0)),
                 rationale=cached.get("rationale", "cache hit"),
-                contract=self._contract_for(cached["family"]),
+                contract=self._contract_for_task(cached["family"], task_spec),
                 classifier_version=CLASSIFIER_SCHEMA_VERSION,
                 snapshot=snapshot,
                 escalation_reason="cache_hit",
@@ -437,7 +782,7 @@ class CascadeGovernor:
                         f"classifier unavailable — "
                         f"reused stale cached route ({rationale})"
                     ),
-                    contract=self._contract_for(stale["family"]),
+                    contract=self._contract_for_task(stale["family"], task_spec),
                     classifier_version="_stale_cache_fallback",
                     snapshot=snapshot,
                     escalation_reason="stale_cache_fallback",
@@ -447,10 +792,17 @@ class CascadeGovernor:
             family=family,
             confidence=confidence,
             rationale=rationale,
-            contract=self._contract_for(family),
+            contract=self._contract_for_task(family, task_spec),
             classifier_version=CLASSIFIER_SCHEMA_VERSION,
             snapshot=snapshot,
         )
+
+    @staticmethod
+    def _contract_for_task(family: str, task_spec: TaskSpec) -> ExecutionContract:
+        contract = CascadeGovernor._contract_for(family)
+        contract.output_contract = dict(contract.output_contract or {})
+        contract.output_contract["task_spec"] = task_spec.to_dict()
+        return contract
 
     def _cache_get(self, cache_key: str) -> Optional[dict]:
         """Read a cached routing decision from reasoning_cache. Silent
@@ -522,7 +874,7 @@ class CascadeGovernor:
             # cache table. Add new entries here when the schema bumps.
             # The list is intentionally explicit, not a wildcard —
             # we never match "any" route regardless of query.
-            for past_ver in ("mvi6.0", "mvi4.0", "mvi2.0", "mvi1.0"):
+            for past_ver in ("mvi7.0", "mvi6.0", "mvi4.0", "mvi2.0", "mvi1.0"):
                 if past_ver != CLASSIFIER_SCHEMA_VERSION:
                     candidate_versions.append(past_ver)
             # The real reasoning_cache key is trust-prefixed by the
@@ -1130,6 +1482,30 @@ class ReadFamilyHandler:
                 escalation_needed=True,
                 escalation_reason="no matter model available",
                 raw_response="",
+            )
+
+        task_spec = infer_task_spec(query, self._resolve_domain())
+        scenario_quant_override = (
+            contract.family == "scenario"
+            and task_spec.task_type == "quantitative_reconciliation"
+        )
+        if (
+            task_spec.fresh_extraction_required
+            and not task_spec.cached_state_allowed
+            and not scenario_quant_override
+        ):
+            return ReadFamilyResult(
+                answer="",
+                confidence_label="low",
+                confidence_score=0.0,
+                citations=[],
+                escalation_needed=contract.escalation_allowed,
+                escalation_reason=(
+                    f"task '{task_spec.task_type}' requires source-grounded "
+                    "extraction or validation"
+                ),
+                raw_response="",
+                failure_kind="state_insufficient",
             )
 
         context = self._assemble_read_context(
@@ -1829,6 +2205,18 @@ class QueryFamilyHandler:
                 rendered_answer="",
                 escalation_needed=True,
                 escalation_reason="no matter model available",
+            )
+        task_spec = infer_task_spec(query, self._resolve_domain())
+        if task_spec.fresh_extraction_required and not task_spec.cached_state_allowed:
+            return QueryFamilyResult(
+                intent="",
+                rows=[],
+                rendered_answer="",
+                escalation_needed=contract.escalation_allowed,
+                escalation_reason=(
+                    f"task '{task_spec.task_type}' requires document-grounded "
+                    "extraction or validation, not a state table lookup"
+                ),
             )
         intent = await self._resolve_intent(query)
         if intent is None:
@@ -2614,6 +3002,21 @@ class CompareFamilyHandler:
                 rendered_answer="",
                 escalation_needed=True,
                 escalation_reason="no matter model available",
+            )
+        task_spec = infer_task_spec(query, resolve_matter_domain(self.matter_model))
+        if task_spec.task_type != "run_delta":
+            return CompareFamilyResult(
+                baseline_run_id=None,
+                current_assertion_count=0,
+                baseline_assertion_count=0,
+                new_documents_read=0,
+                coverage_delta=0.0,
+                open_gap_delta=0,
+                rendered_answer="",
+                escalation_needed=contract.escalation_allowed,
+                escalation_reason=(
+                    f"task '{task_spec.task_type}' is not a run/matter-state delta"
+                ),
             )
         try:
             # Baseline = the run BEFORE the most recent one. If only

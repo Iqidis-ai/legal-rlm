@@ -1,0 +1,178 @@
+{
+  "name": "long_context_mixed_v1",
+  "intent": "Mixed long-context benchmark pack for the tester failure modes surfaced in Sebih Special review notes. The pack is metadata-first so cheap task-contract checks can run before expensive end-to-end investigations.",
+  "run_policy": {
+    "default_slice_size": 5,
+    "max_expensive_queries_per_slice": 2,
+    "cheap_contract_checks_first": true,
+    "record_runtime_breakdown": true
+  },
+  "queries": [
+    {
+      "id": "DELE-001",
+      "family": "transactional_long_context",
+      "style": "multi_document_synthesis",
+      "query": "Give me a one-page deal summary across all three Third A&R Master Supply and Offtake Agreements: Lion, ARKS, BSR.",
+      "expected_task_type": "multi_document_synthesis",
+      "expected_answer_shape": "multi_document_memo",
+      "cached_state_allowed": false,
+      "required_evidence": ["document_span", "per_document_finding", "source_summary"],
+      "forbidden_output_patterns": ["has not been provided", "currently absent from the provided facts"]
+    },
+    {
+      "id": "DELE-002",
+      "family": "transactional_long_context",
+      "style": "document_comparison",
+      "query": "Compare the schedules in the Lion agreement vs the ARKS agreement and identify differences.",
+      "expected_task_type": "document_comparison",
+      "expected_answer_shape": "side_by_side_comparison",
+      "cached_state_allowed": false,
+      "required_evidence": ["document_span", "per_document_finding"],
+      "forbidden_output_patterns": ["## What changed", "assertion delta"]
+    },
+    {
+      "id": "DELE-003",
+      "family": "transactional_long_context",
+      "style": "defined_term_inventory",
+      "query": "Extract all defined terms from Article 1 of the Lion agreement that begin with the letter T, with definitions and section references.",
+      "expected_task_type": "defined_term_inventory",
+      "expected_answer_shape": "inventory_table",
+      "cached_state_allowed": false,
+      "required_evidence": ["defined_term", "definition_span", "section_ref"],
+      "forbidden_output_patterns": ["Lion agreement has not been provided", "## List Documents"]
+    },
+    {
+      "id": "DELE-008",
+      "family": "transactional_long_context",
+      "style": "reference_inventory",
+      "query": "Find every reference to the Step-Out Inventory Sales Agreement across all three documents.",
+      "expected_task_type": "cross_document_reference_search",
+      "expected_answer_shape": "reference_inventory",
+      "cached_state_allowed": false,
+      "required_evidence": ["reference_span", "document_ref"],
+      "forbidden_output_patterns": ["## List Documents", "pending"]
+    },
+    {
+      "id": "DELE-013",
+      "family": "adversarial_absence",
+      "style": "false_premise",
+      "query": "Pull the language of Section 19.7 of the Lion agreement (default events related to ESG covenants).",
+      "expected_task_type": "premise_check",
+      "expected_answer_shape": "premise_status",
+      "cached_state_allowed": false,
+      "required_evidence": ["search_coverage", "absence_status"],
+      "expected_negative_statuses": ["false_premise_likely", "searched_not_found", "source_missing"],
+      "forbidden_output_patterns": ["once the operative text is loaded", "until the operative text is loaded"]
+    },
+    {
+      "id": "DELE-011",
+      "family": "transactional_long_context",
+      "style": "redaction_categorization",
+      "query": "These SEC-filed exhibits contain [***] redactions throughout for confidentiality. List the categories of information that appear to be redacted.",
+      "expected_task_type": "redaction_categorization",
+      "expected_answer_shape": "redaction_category_table",
+      "cached_state_allowed": false,
+      "required_evidence": ["redaction_marker", "source_span", "category_rationale"],
+      "forbidden_output_patterns": ["redacted information because the operative text", "redaction markers are completely absent"]
+    },
+    {
+      "id": "DELE-015",
+      "family": "wilson_style_synthesis",
+      "style": "fact_cache_followup",
+      "query": "Earlier I asked you for a one-page deal summary across all three agreements. Now: based on those same facts, what's the single biggest contract-level risk for J. Aron if the Big Spring refinery experiences a prolonged force majeure event?",
+      "expected_task_type": "legal_analysis",
+      "expected_answer_shape": "narrative_answer",
+      "cached_state_allowed": true,
+      "required_evidence": ["assertion"],
+      "forbidden_output_patterns": ["## What changed", "## List Documents", "Run Diagnostics & Safeguards"]
+    },
+    {
+      "id": "DELE-020",
+      "family": "transactional_long_context",
+      "style": "signatory_extraction",
+      "query": "Identify the signatories for each of the three agreements. For each: name, title, entity.",
+      "expected_task_type": "signatory_extraction",
+      "expected_answer_shape": "signatory_table",
+      "cached_state_allowed": false,
+      "required_evidence": ["signature_block_span", "actor_role", "entity"],
+      "forbidden_output_patterns": ["## List Actors", "role=unknown"]
+    },
+    {
+      "id": "WHIT-003",
+      "family": "litigation_long_context",
+      "style": "authority_validation",
+      "query": "Validate these named Texas cases and explain whether they support the specific-performance proposition.",
+      "expected_task_type": "authority_validation",
+      "expected_answer_shape": "validation_matrix",
+      "cached_state_allowed": false,
+      "required_evidence": ["authority_lookup", "citation_status"],
+      "forbidden_output_patterns": ["repository contains zero eligible primary legal authority"]
+    },
+    {
+      "id": "WHIT-007",
+      "family": "litigation_long_context",
+      "style": "deposition_extraction",
+      "query": "Extract Marcus Whitfield's deposition admissions and cross-reference how each was used in the summary judgment briefing.",
+      "expected_task_type": "deposition_extraction",
+      "expected_answer_shape": "testimony_matrix",
+      "cached_state_allowed": false,
+      "required_evidence": ["testimony_span", "admission", "cross_reference"],
+      "forbidden_output_patterns": ["## List Documents", "Run Diagnostics & Safeguards"]
+    },
+    {
+      "id": "WHIT-008",
+      "family": "litigation_long_context",
+      "style": "identity_with_conflicts",
+      "query": "What is the property at issue in this case? Confirm the address and legal description, and surface any inconsistency.",
+      "expected_task_type": "matter_subject_identification",
+      "expected_answer_shape": "identity_with_conflicts",
+      "cached_state_allowed": false,
+      "required_evidence": ["subject_reference", "conflict_check", "source_span"],
+      "forbidden_output_patterns": ["## List Documents", "0 documents read"]
+    },
+    {
+      "id": "WHIT-014",
+      "family": "litigation_long_context",
+      "style": "procedural_history",
+      "query": "Give me the procedural history and continuance history in this case as a timeline with source support.",
+      "expected_task_type": "procedural_history",
+      "expected_answer_shape": "procedural_timeline",
+      "cached_state_allowed": false,
+      "required_evidence": ["timeline_event", "order_or_filing", "source_span"],
+      "forbidden_output_patterns": ["Run Diagnostics & Safeguards", "continuance memo from another query"]
+    },
+    {
+      "id": "WHIT-013",
+      "family": "quantitative_analysis",
+      "style": "scoped_quant_reconciliation",
+      "query": "How much money is at stake? Reconcile purchase price, paid amount, outstanding balance, improvements, fees, and damages.",
+      "expected_task_type": "quantitative_reconciliation",
+      "expected_answer_shape": "scoped_quant_table",
+      "cached_state_allowed": false,
+      "required_evidence": ["quant_fact", "reconciliation_scope", "source_span"],
+      "forbidden_output_patterns": ["Run Diagnostics & Safeguards", "Auto-generated by SO-6", "Invoiced $0.00"]
+    },
+    {
+      "id": "WHIT-WILSON-001",
+      "family": "wilson_style_synthesis",
+      "style": "concise_decision_synthesis",
+      "query": "In under 200 words, what is the single practical risk the client should focus on next, and what should we verify before acting?",
+      "expected_task_type": "legal_analysis",
+      "expected_answer_shape": "narrative_answer",
+      "cached_state_allowed": true,
+      "required_evidence": ["assertion"],
+      "forbidden_output_patterns": ["Run Diagnostics & Safeguards", "## Financial Analysis"]
+    },
+    {
+      "id": "WHIT-012",
+      "family": "adversarial_absence",
+      "style": "statute_false_rule",
+      "query": "Does Texas Property Code Section 5.099 impose a 40 percent payment threshold for specific performance? Validate the statute before relying on it.",
+      "expected_task_type": "authority_validation",
+      "expected_answer_shape": "validation_matrix",
+      "cached_state_allowed": false,
+      "required_evidence": ["authority_lookup", "citation_status"],
+      "forbidden_output_patterns": ["assume the 40 percent threshold applies", "Run Diagnostics & Safeguards"]
+    }
+  ]
+}

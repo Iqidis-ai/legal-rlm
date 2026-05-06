@@ -20,7 +20,7 @@ from irys.rlm.state import (
     WorkingSet,
 )
 from irys.rlm.engine import RLMConfig, RLMEngine
-from irys.rlm.governance import CascadeGovernor
+from irys.rlm.governance import CascadeGovernor, infer_task_spec
 
 
 class _StubClient:
@@ -184,6 +184,153 @@ def test_workflow_quality_section_surfaces_contract_for_synthesis():
     assert "[human_review_required]" in section
     assert "dependency manifest hash: dep123" in section
     assert "Do not claim a draft is ready" in section
+
+
+def test_workflow_quality_section_surfaces_task_ontology_contract():
+    state = InvestigationState.create(
+        "Pull the language of Section 19.7 of the Lion agreement.",
+        ".",
+    )
+    task_spec = infer_task_spec(state.query, "legal")
+    state.execution_contract = CascadeGovernor._contract_for_task(
+        "investigate",
+        task_spec,
+    )
+    engine = RLMEngine(gemini_client=_StubClient(), config=RLMConfig())
+    engine._initialize_workflow_state(state)
+
+    section = engine._build_workflow_quality_section(state)
+
+    assert "Task ontology" in section
+    assert "task_type: premise_check" in section
+    assert "operation: verify_absence" in section
+    assert "required_evidence: search_coverage, absence_status" in section
+    assert "absence vocabulary" in section
+    assert "[task_evidence_contract]" in section
+    assert "[absence_status]" in section
+    assert "distinguish source_missing" in section
+
+
+def test_task_ontology_validators_block_missing_absence_status():
+    state = InvestigationState.create(
+        "Pull the language of Section 19.7 of the Lion agreement.",
+        ".",
+    )
+    task_spec = infer_task_spec(state.query, "legal")
+    state.execution_contract = CascadeGovernor._contract_for_task(
+        "investigate",
+        task_spec,
+    )
+    engine = RLMEngine(gemini_client=_StubClient(), config=RLMConfig())
+    engine._initialize_workflow_state(state)
+
+    envelope = engine._emit_output(
+        state,
+        "I cannot answer until the operative text is loaded.",
+        emitter="test",
+    )
+
+    failures = {
+        result.validator
+        for result in envelope.validation_results
+        if not result.passed
+    }
+    assert "task_evidence_contract" in failures
+    assert "absence_status" in failures
+
+
+def test_task_ontology_validators_accept_typed_negative_status():
+    state = InvestigationState.create(
+        "Pull the language of Section 19.7 of the Lion agreement.",
+        ".",
+    )
+    task_spec = infer_task_spec(state.query, "legal")
+    state.execution_contract = CascadeGovernor._contract_for_task(
+        "investigate",
+        task_spec,
+    )
+    engine = RLMEngine(gemini_client=_StubClient(), config=RLMConfig())
+    engine._initialize_workflow_state(state)
+
+    envelope = engine._emit_output(
+        state,
+        (
+            "Status: false_premise_likely. Searched the operative agreements "
+            "for Section 19.7 and ESG covenant language; no matching provision "
+            "was found."
+        ),
+        emitter="test",
+    )
+
+    by_validator = {
+        result.validator: result
+        for result in envelope.validation_results
+    }
+    assert by_validator["task_evidence_contract"].passed is True
+    assert by_validator["required_evidence_objects"].passed is True
+    assert by_validator["absence_status"].passed is True
+
+
+def test_trace_output_alignment_blocks_found_evidence_denial():
+    state = InvestigationState.create(
+        "Extract all defined terms from Article 1 of the Lion agreement that begin with T.",
+        ".",
+    )
+    task_spec = infer_task_spec(state.query, "legal")
+    state.execution_contract = CascadeGovernor._contract_for_task(
+        "investigate",
+        task_spec,
+    )
+    state.findings["task_evidence_manifest"] = {
+        "found_targets": ["Lion agreement", "Third Party Supplier"],
+    }
+    engine = RLMEngine(gemini_client=_StubClient(), config=RLMConfig())
+    engine._initialize_workflow_state(state)
+
+    envelope = engine._emit_output(
+        state,
+        "The Lion agreement has not been provided, so I cannot extract T terms.",
+        emitter="test",
+    )
+
+    failures = {
+        result.validator
+        for result in envelope.validation_results
+        if not result.passed
+    }
+    assert "trace_output_alignment" in failures
+
+
+def test_trace_output_alignment_passes_without_denial():
+    state = InvestigationState.create(
+        "Extract all defined terms from Article 1 of the Lion agreement that begin with T.",
+        ".",
+    )
+    task_spec = infer_task_spec(state.query, "legal")
+    state.execution_contract = CascadeGovernor._contract_for_task(
+        "investigate",
+        task_spec,
+    )
+    state.findings["task_evidence_manifest"] = {
+        "found_targets": ["Lion agreement", "Third Party Supplier"],
+    }
+    engine = RLMEngine(gemini_client=_StubClient(), config=RLMConfig())
+    engine._initialize_workflow_state(state)
+
+    envelope = engine._emit_output(
+        state,
+        (
+            "Source: Lion agreement. Defined term: Third Party Supplier. "
+            "Section: 5.3(b)."
+        ),
+        emitter="test",
+    )
+
+    by_validator = {
+        result.validator: result
+        for result in envelope.validation_results
+    }
+    assert by_validator["trace_output_alignment"].passed is True
 
 
 def test_repair_output_runs_once_for_fixable_workflow_failure():

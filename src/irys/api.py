@@ -304,34 +304,48 @@ class Irys:
             compare_result = CompareFamilyHandler(matter_model).run(
                 query=query, contract=active_contract,
             )
-            self._persist_route_decision(
-                matter_model=matter_model,
-                query=query,
-                decision=decision,
-                research_mode=research_mode,
-                terminal_family="compare",
-            )
-            state = self._make_simple_state(
-                query=query,
-                repository=repository,
-                research_mode=research_mode,
-                conversation_history=conversation_history,
-                output=compare_result.rendered_answer,
-                decision=decision,
-                extra={
-                    "compare_baseline_run_id": compare_result.baseline_run_id,
-                    "compare_assertion_delta": (
-                        compare_result.current_assertion_count
-                        - compare_result.baseline_assertion_count
-                    ),
-                },
-                terminal_family="compare",
-            )
-            return InvestigationResult(
-                state=state,
-                output=compare_result.rendered_answer,
-                format=self.config.output_format,
-            )
+            if compare_result.escalation_needed:
+                decision.escalation_reason = compare_result.escalation_reason
+                active_family = "investigate"
+                active_contract = CascadeGovernor._contract_for("investigate")
+                _task_spec = (
+                    (getattr(decision.contract, "output_contract", {}) or {})
+                    .get("task_spec")
+                )
+                if _task_spec:
+                    active_contract.output_contract = dict(
+                        active_contract.output_contract or {}
+                    )
+                    active_contract.output_contract["task_spec"] = _task_spec
+            else:
+                self._persist_route_decision(
+                    matter_model=matter_model,
+                    query=query,
+                    decision=decision,
+                    research_mode=research_mode,
+                    terminal_family="compare",
+                )
+                state = self._make_simple_state(
+                    query=query,
+                    repository=repository,
+                    research_mode=research_mode,
+                    conversation_history=conversation_history,
+                    output=compare_result.rendered_answer,
+                    decision=decision,
+                    extra={
+                        "compare_baseline_run_id": compare_result.baseline_run_id,
+                        "compare_assertion_delta": (
+                            compare_result.current_assertion_count
+                            - compare_result.baseline_assertion_count
+                        ),
+                    },
+                    terminal_family="compare",
+                )
+                return InvestigationResult(
+                    state=state,
+                    output=compare_result.rendered_answer,
+                    format=self.config.output_format,
+                )
 
         if active_family == "scenario":
             # MVI-6: NANO-parsed assumption, then read-family answer

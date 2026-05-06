@@ -121,6 +121,24 @@ class GapType(str, Enum):
     EXPECTED_ABSENT_NOTICE = "expected_absent_notice"
 
 
+class AbsenceStatus(str, Enum):
+    """Typed result for searches whose answer may be negative.
+
+    This is intentionally distinct from GapType. A gap says the model lacks
+    support for an issue; an absence status says what kind of negative or
+    missingness result a search produced.
+    """
+
+    NOT_SEARCHED = "not_searched"
+    SEARCHED_NOT_FOUND = "searched_not_found"
+    FOUND_UNVERIFIED = "found_unverified"
+    FOUND_VERIFIED = "found_verified"
+    CONFLICTING_EVIDENCE = "conflicting_evidence"
+    OUT_OF_MATTER = "out_of_matter"
+    FALSE_PREMISE_LIKELY = "false_premise_likely"
+    SOURCE_MISSING = "source_missing"
+
+
 class IssueType(str, Enum):
     """The type of an issue node."""
     CLAIM = "claim"
@@ -204,6 +222,12 @@ class VerificationTargetKind(str, Enum):
     AUTHORITY_TREATMENT = "authority_treatment"
     ACTOR_RELATIONSHIP = "actor_relationship"
     DEFINED_TERM = "defined_term"
+    SIGNATURE_BLOCK = "signature_block"
+    CROSS_REFERENCE = "cross_reference"
+    SECTION_REF = "section_ref"
+    SCHEDULE_ENTRY = "schedule_entry"
+    REDACTION_MARKER = "redaction_marker"
+    ABSENCE_STATUS = "absence_status"
     CAUSATION_EDGE = "causation_edge"
     THEORY = "theory"
     ARTIFACT = "artifact"

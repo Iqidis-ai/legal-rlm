@@ -90,6 +90,13 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
         writers=("irys.matter.graph:ProofStateStore.compute_and_store",),
         readers=("irys.matter.graph:ProofStateStore.get",),
     ),
+    "typed_evidence_record": TableCoverageSpec(
+        writers=("irys.matter.graph:TypedEvidenceStore.upsert",),
+        readers=(
+            "irys.matter.graph:TypedEvidenceStore.get",
+            "irys.matter.graph:TypedEvidenceStore.list_by_kind",
+        ),
+    ),
     "document_actor_role": TableCoverageSpec(
         writers=("irys.matter.graph:DocumentActorRoleStore.upsert",),
         readers=("irys.matter.graph:DocumentActorRoleStore.list_by_document",),

@@ -764,6 +764,23 @@ def test_read_handler_malformed_json_escalates(warm_matter):
     assert result.confidence_label == "low"
 
 
+def test_read_handler_escalates_document_grounded_inventory(warm_matter):
+    """Read is a synthesis path; source-grounded inventories require investigate."""
+    client = _FakeClient({})
+    handler = ReadFamilyHandler(client=client, matter_model=warm_matter)
+    result = asyncio.run(handler.run(
+        query=(
+            "Generate a complete inventory of every defined term across all "
+            "three agreements."
+        ),
+        contract=CascadeGovernor._contract_for("read"),
+    ))
+    assert result.escalation_needed is True
+    assert result.failure_kind == "state_insufficient"
+    assert "defined_term_inventory" in (result.escalation_reason or "")
+    assert client.calls == []
+
+
 # ---------------------------------------------------------------------------
 # QueryFamilyHandler
 # ---------------------------------------------------------------------------
@@ -808,6 +825,36 @@ def test_query_handler_nano_says_none_escalates(warm_matter):
     ))
     assert result.intent == ""
     assert result.escalation_needed is True
+
+
+def test_query_handler_escalates_cross_document_reference_search(warm_matter):
+    """Direct lookup must not collapse document extraction into List Documents."""
+    handler = QueryFamilyHandler(matter_model=warm_matter, client=_FakeClient({}))
+    result = asyncio.run(handler.run(
+        query=(
+            "Find every reference to the Step-Out Inventory Sales Agreement "
+            "across all three documents."
+        ),
+        contract=CascadeGovernor._contract_for("query"),
+    ))
+    assert result.intent == ""
+    assert result.escalation_needed is True
+    assert "cross_document_reference_search" in (result.escalation_reason or "")
+
+
+def test_query_handler_escalates_signatory_extraction(warm_matter):
+    """Actor-table lookup is not enough for names/titles in signature blocks."""
+    handler = QueryFamilyHandler(matter_model=warm_matter, client=_FakeClient({}))
+    result = asyncio.run(handler.run(
+        query=(
+            "Identify the signatories for each of the three agreements. "
+            "For each: name, title, entity."
+        ),
+        contract=CascadeGovernor._contract_for("query"),
+    ))
+    assert result.intent == ""
+    assert result.escalation_needed is True
+    assert "signatory_extraction" in (result.escalation_reason or "")
 
 
 # ---------------------------------------------------------------------------
@@ -919,6 +966,87 @@ def test_compare_handler_reports_delta(warm_matter):
     )
     assert result.current_assertion_count >= 3
     assert "What changed" in result.rendered_answer
+
+
+def test_compare_handler_escalates_document_comparison(warm_matter):
+    """Compare-family is only for run deltas, not contract-to-contract work."""
+    handler = CompareFamilyHandler(matter_model=warm_matter)
+    result = handler.run(
+        query="Compare the schedules in the Lion agreement vs the ARKS agreement.",
+        contract=CascadeGovernor._contract_for("compare"),
+    )
+    assert result.escalation_needed is True
+    assert result.rendered_answer == ""
+    assert "document_comparison" in (result.escalation_reason or "")
+
+
+def test_governor_task_guard_forces_investigate_before_classifier(warm_matter):
+    """Task ontology guards source-grounded comparisons before route cache/NANO."""
+    client = _FakeClient({
+        "intent_classifier": (
+            '{"family": "compare", "confidence": 0.99, '
+            '"rationale": "comparison wording"}'
+        ),
+    })
+    gov = CascadeGovernor(client=client, matter_model=warm_matter)
+    decision = asyncio.run(gov.decide(
+        query="Compare Article 2 conditions precedent in all three agreements."
+    ))
+    assert decision.family == "investigate"
+    assert "document_comparison" in decision.rationale
+    assert decision.contract.output_contract["task_spec"]["task_type"] == (
+        "document_comparison"
+    )
+    assert client.calls == []
+
+
+def test_governor_task_guard_forces_premise_check_to_investigate(warm_matter):
+    """False-premise probes need absence verification, not a generic read memo."""
+    client = _FakeClient({
+        "intent_classifier": (
+            '{"family": "read", "confidence": 0.99, '
+            '"rationale": "warm matter"}'
+        ),
+    })
+    gov = CascadeGovernor(client=client, matter_model=warm_matter)
+    decision = asyncio.run(gov.decide(
+        query=(
+            "Pull the language of Section 19.7 of the Lion agreement "
+            "for ESG covenants."
+        )
+    ))
+    assert decision.family == "investigate"
+    assert "premise_check" in decision.rationale
+    assert decision.contract.output_contract["task_spec"]["task_type"] == (
+        "premise_check"
+    )
+    assert client.calls == []
+
+
+def test_governor_task_guard_forces_out_of_matter_check_to_investigate(warm_matter):
+    """Out-of-matter probes need membership search, not missing-doc framing."""
+    client = _FakeClient({
+        "intent_classifier": (
+            '{"family": "read", "confidence": 0.99, '
+            '"rationale": "warm matter"}'
+        ),
+    })
+    gov = CascadeGovernor(client=client, matter_model=warm_matter)
+    decision = asyncio.run(gov.decide(
+        query=(
+            "Tell me everything I should know about Alon Refining North Dakota, "
+            "LP and how it interacts with the J. Aron supply structure."
+        )
+    ))
+    task_spec = decision.contract.output_contract["task_spec"]
+    assert decision.family == "investigate"
+    assert "out_of_matter_check" in decision.rationale
+    assert task_spec["task_type"] == "out_of_matter_check"
+    assert task_spec["required_evidence"] == [
+        "matter_entity_search",
+        "absence_status",
+    ]
+    assert client.calls == []
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,9 @@ import hashlib
 import json as _json_mod
 import logging
 import uuid
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Iterable, Optional
 
 _log = logging.getLogger(__name__)
@@ -33,6 +35,18 @@ def _now() -> str:
 
 def _id() -> str:
     return uuid.uuid4().hex
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    if is_dataclass(value):
+        return _jsonable(asdict(value))
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    return value
 
 
 def _initial_belief_state(speech_act: SpeechAct) -> tuple[BeliefState, float]:
@@ -7291,6 +7305,229 @@ class DecisionContextStore:
             "DELETE FROM decision_context WHERE matter_id=?",
             (self.matter_id,),
         )
+
+
+class TypedEvidenceStore:
+    """Generic task-object store for ontology-level extraction outputs.
+
+    This is intentionally domain-neutral. Legal records like defined terms and
+    signature blocks use it, but the same table can hold non-legal typed
+    evidence as long as callers supply a stable kind/key and a JSON payload.
+    """
+
+    KIND_TO_VERIFICATION_TARGET: dict[str, VerificationTargetKind] = {
+        "defined_term": VerificationTargetKind.DEFINED_TERM,
+        "signature_block": VerificationTargetKind.SIGNATURE_BLOCK,
+        "cross_reference": VerificationTargetKind.CROSS_REFERENCE,
+        "section_ref": VerificationTargetKind.SECTION_REF,
+        "schedule_entry": VerificationTargetKind.SCHEDULE_ENTRY,
+        "redaction_marker": VerificationTargetKind.REDACTION_MARKER,
+        "absence_status": VerificationTargetKind.ABSENCE_STATUS,
+        "quant_fact": VerificationTargetKind.QUANT_FACT,
+    }
+
+    def __init__(self, db: "SQLiteMatterDB", matter_id: str) -> None:
+        self.db = db
+        self.matter_id = matter_id
+
+    def upsert(
+        self,
+        record_kind: "VerificationTargetKind | str",
+        record_key: str,
+        payload: Optional[dict | object] = None,
+        *,
+        label: Optional[str] = None,
+        document_id: Optional[str] = None,
+        span_id: Optional[str] = None,
+        confidence: Optional[float] = None,
+        provenance: "Optional[ProvenanceContext]" = None,
+    ) -> tuple[str, bool]:
+        kind = self._normalize_kind(record_kind)
+        key = str(record_key or "").strip()
+        if not kind:
+            raise ValueError("record_kind must not be blank")
+        if not key:
+            raise ValueError("record_key must not be blank")
+
+        safe_payload = _jsonable(payload or {})
+        payload_json = _json_mod.dumps(
+            safe_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        conf = 0.0 if confidence is None else max(0.0, min(float(confidence), 1.0))
+        now = _now()
+
+        with self.db.transaction():
+            existing = self.db.execute(
+                """SELECT id FROM typed_evidence_record
+                   WHERE matter_id=? AND record_kind=? AND record_key=?""",
+                (self.matter_id, kind, key),
+            ).fetchone()
+            record_id = existing["id"] if existing else _id()
+            self.db.execute(
+                """INSERT INTO typed_evidence_record
+                   (id, matter_id, record_kind, record_key, label, document_id,
+                    span_id, payload_json, confidence, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(matter_id, record_kind, record_key) DO UPDATE SET
+                     label = COALESCE(excluded.label, typed_evidence_record.label),
+                     document_id = COALESCE(excluded.document_id, typed_evidence_record.document_id),
+                     span_id = COALESCE(excluded.span_id, typed_evidence_record.span_id),
+                     payload_json = excluded.payload_json,
+                     confidence = excluded.confidence,
+                     updated_at = excluded.updated_at""",
+                (
+                    record_id, self.matter_id, kind, key, label, document_id,
+                    span_id, payload_json, conf, now, now,
+                ),
+            )
+            actual = self.db.execute(
+                """SELECT id FROM typed_evidence_record
+                   WHERE matter_id=? AND record_kind=? AND record_key=?""",
+                (self.matter_id, kind, key),
+            ).fetchone()
+            actual_id = actual["id"] if actual else record_id
+            target_kind = self.KIND_TO_VERIFICATION_TARGET.get(
+                kind,
+                VerificationTargetKind.ARTIFACT,
+            )
+            VerificationStateStore(self.db, self.matter_id).touch_ai_target(
+                target_kind,
+                actual_id,
+                ai_confidence=conf,
+                cause=f"typed_evidence_{kind}_upsert",
+            )
+            if provenance is not None:
+                ProvenanceStore(self.db, self.matter_id).record(
+                    target_kind=target_kind.value,
+                    target_id=actual_id,
+                    context=provenance,
+                )
+        return actual_id, existing is None
+
+    def upsert_record(
+        self,
+        record: object,
+        *,
+        record_kind: "VerificationTargetKind | str | None" = None,
+        record_key: Optional[str] = None,
+        label: Optional[str] = None,
+        provenance: "Optional[ProvenanceContext]" = None,
+    ) -> tuple[str, bool]:
+        inferred_kind = record_kind or getattr(record, "target_kind", None)
+        if inferred_kind is None:
+            raise ValueError("record_kind is required when record has no target_kind")
+        if record_key is None:
+            identity_fn = getattr(record, "identity_key", None)
+            if not callable(identity_fn):
+                raise ValueError("record_key is required when record has no identity_key()")
+            record_key = str(identity_fn())
+        document_id = getattr(record, "document_id", None) or getattr(
+            record, "source_document_id", None
+        )
+        span_id = None
+        source_span = getattr(record, "source_span", None)
+        if source_span is not None:
+            span_id = getattr(source_span, "span_id", None)
+        return self.upsert(
+            inferred_kind,
+            record_key,
+            record,
+            label=label or self._infer_label(record),
+            document_id=document_id,
+            span_id=span_id,
+            confidence=getattr(record, "confidence", 0.0),
+            provenance=provenance,
+        )
+
+    def get(self, record_kind: "VerificationTargetKind | str", record_key: str) -> Optional[dict]:
+        row = self.db.execute(
+            """SELECT * FROM typed_evidence_record
+               WHERE matter_id=? AND record_kind=? AND record_key=?""",
+            (self.matter_id, self._normalize_kind(record_kind), str(record_key)),
+        ).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def get_by_id(self, record_id: str) -> Optional[dict]:
+        row = self.db.execute(
+            "SELECT * FROM typed_evidence_record WHERE matter_id=? AND id=?",
+            (self.matter_id, record_id),
+        ).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def list_by_kind(
+        self,
+        record_kind: "VerificationTargetKind | str",
+        *,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict]:
+        rows = self.db.execute(
+            """SELECT * FROM typed_evidence_record
+               WHERE matter_id=? AND record_kind=?
+               ORDER BY label IS NULL, label ASC, updated_at DESC
+               LIMIT ? OFFSET ?""",
+            (self.matter_id, self._normalize_kind(record_kind), int(limit), int(offset)),
+        ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    def list_by_document(
+        self,
+        document_id: str,
+        *,
+        record_kind: "VerificationTargetKind | str | None" = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        params: list[Any] = [self.matter_id, document_id]
+        kind_filter = ""
+        if record_kind is not None:
+            kind_filter = " AND record_kind=?"
+            params.append(self._normalize_kind(record_kind))
+        params.append(int(limit))
+        rows = self.db.execute(
+            f"""SELECT * FROM typed_evidence_record
+                WHERE matter_id=? AND document_id=?{kind_filter}
+                ORDER BY record_kind ASC, label IS NULL, label ASC, updated_at DESC
+                LIMIT ?""",
+            params,
+        ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    def count_by_kind(self, record_kind: "VerificationTargetKind | str") -> int:
+        row = self.db.execute(
+            """SELECT COUNT(*) FROM typed_evidence_record
+               WHERE matter_id=? AND record_kind=?""",
+            (self.matter_id, self._normalize_kind(record_kind)),
+        ).fetchone()
+        return int(row[0] or 0)
+
+    @staticmethod
+    def _normalize_kind(record_kind: "VerificationTargetKind | str") -> str:
+        raw = record_kind.value if isinstance(record_kind, VerificationTargetKind) else str(record_kind)
+        return raw.strip().lower()
+
+    @staticmethod
+    def _infer_label(record: object) -> Optional[str]:
+        entity = getattr(record, "entity_name", None)
+        signer = getattr(record, "signatory_name", None)
+        if entity and signer:
+            return f"{entity} / {signer}"
+        for attr in ("term", "target_label", "target", "metric_key", "document_id"):
+            value = getattr(record, attr, None)
+            if value:
+                return str(value)
+        return None
+
+    @staticmethod
+    def _row_to_dict(row) -> dict:
+        d = dict(row)
+        try:
+            d["payload"] = _json_mod.loads(d.get("payload_json") or "{}")
+        except (TypeError, ValueError):
+            d["payload"] = {}
+        return d
 
 
 class AuthorityStore:

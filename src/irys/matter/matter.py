@@ -26,7 +26,7 @@ from .graph import (
     AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore, MetricAliasStore, KnowledgeSeedStore,
     DocumentInventoryStore, DocumentCardStore, SpanStore, DocumentActorRoleStore,
     ReasoningCacheStore, TrustOverrideStore, DocumentAnnotationStore,
-    DecisionContextStore, AuthorityStore, ProofStateStore, AssumptionStore,
+    DecisionContextStore, TypedEvidenceStore, AuthorityStore, ProofStateStore, AssumptionStore,
     VerificationStateStore, EvidenceStore, PrivilegeGate, ProvenanceStore,
     ContentPolicyGuard, MemoryBrokerStore,
     MemoryBrokerPolicyError,
@@ -113,6 +113,7 @@ class MatterModel:
         self.trust_overrides = TrustOverrideStore(db, matter_id)
         self.annotations = DocumentAnnotationStore(db, matter_id)
         self.decision_context = DecisionContextStore(db, matter_id)
+        self.typed_evidence = TypedEvidenceStore(db, matter_id)
         self.authority = AuthorityStore(db, matter_id)
         self.proof_state = ProofStateStore(db, matter_id)
         self.assumptions = AssumptionStore(db, matter_id)

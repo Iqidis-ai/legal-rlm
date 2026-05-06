@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 68
+SCHEMA_VERSION = 69
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -28,6 +28,7 @@ _MIGRATION_NAMES: dict[int, str] = {
     63: "domain_composition_substrate",
     64: "metric_alias_ontology",
     65: "knowledge_seed_promotion",
+    69: "typed_evidence_records",
 }
 
 
@@ -947,6 +948,30 @@ CREATE TABLE IF NOT EXISTS pending_propagation (
 
 CREATE INDEX IF NOT EXISTS ix_pending_propagation_matter
     ON pending_propagation(matter_id, queue);
+"""
+
+_DDL_TYPED_EVIDENCE_RECORD = """
+CREATE TABLE IF NOT EXISTS typed_evidence_record (
+    id              TEXT PRIMARY KEY,
+    matter_id       TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    record_kind     TEXT NOT NULL,
+    record_key      TEXT NOT NULL,
+    label           TEXT,
+    document_id     TEXT,
+    span_id         TEXT,
+    payload_json    TEXT NOT NULL DEFAULT '{}',
+    confidence      REAL NOT NULL DEFAULT 0.0
+        CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    UNIQUE(matter_id, record_kind, record_key)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_typed_evidence_kind
+    ON typed_evidence_record(matter_id, record_kind, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS ix_typed_evidence_doc
+    ON typed_evidence_record(matter_id, document_id, span_id);
 """
 
 # Full DDL in apply order
@@ -3325,6 +3350,167 @@ def _migration_v68(conn) -> None:
     conn.commit()
 
 
+def _rebuild_verification_event_fk(conn) -> None:
+    """Repair verification_event FK after verification_state table rebuilds."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='verification_event'"
+    ).fetchone()
+    if row is None:
+        return
+    conn.execute("DROP INDEX IF EXISTS ix_verification_event_target")
+    conn.execute("ALTER TABLE verification_event RENAME TO verification_event_old")
+    try:
+        conn.execute(
+            """
+            CREATE TABLE verification_event (
+                id               TEXT PRIMARY KEY,
+                matter_id        TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+                verification_id  TEXT REFERENCES verification_state(id) ON DELETE SET NULL,
+                target_kind      TEXT NOT NULL,
+                target_id        TEXT NOT NULL,
+                old_status       TEXT,
+                new_status       TEXT NOT NULL CHECK (new_status IN ('candidate','verified','rejected','stale')),
+                reviewed_by_kind TEXT NOT NULL CHECK (reviewed_by_kind IN ('user','attorney','system','import')),
+                reviewed_by_id   TEXT,
+                review_scope     TEXT NOT NULL,
+                rejection_reason TEXT,
+                run_id           TEXT REFERENCES run_session(id),
+                cause            TEXT NOT NULL,
+                note             TEXT,
+                old_version      INTEGER,
+                new_version      INTEGER,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            ) STRICT
+            """
+        )
+        conn.execute(
+            """INSERT INTO verification_event (
+                   id, matter_id, verification_id, target_kind, target_id,
+                   old_status, new_status, reviewed_by_kind, reviewed_by_id,
+                   review_scope, rejection_reason, run_id, cause, note,
+                   old_version, new_version, created_at
+               )
+               SELECT
+                   id,
+                   matter_id,
+                   CASE
+                       WHEN verification_id IS NULL THEN NULL
+                       WHEN EXISTS (
+                           SELECT 1 FROM verification_state
+                           WHERE verification_state.id = verification_event_old.verification_id
+                       ) THEN verification_id
+                       ELSE NULL
+                   END,
+                   target_kind, target_id,
+                   old_status, new_status, reviewed_by_kind, reviewed_by_id,
+                   review_scope, rejection_reason, run_id, cause, note,
+                   old_version, new_version, created_at
+               FROM verification_event_old"""
+        )
+        conn.execute("DROP TABLE verification_event_old")
+    except Exception:
+        conn.execute("DROP TABLE IF EXISTS verification_event")
+        conn.execute("ALTER TABLE verification_event_old RENAME TO verification_event")
+        raise
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_verification_event_target"
+        " ON verification_event(matter_id, target_kind, target_id, created_at DESC)"
+    )
+
+
+def _migration_v69(conn) -> None:
+    """Add typed evidence records and widen verification targets for task objects."""
+    for stmt in _DDL_TYPED_EVIDENCE_RECORD.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            conn.execute(stmt)
+
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='verification_state'"
+    ).fetchone()
+    table_sql = row[0] or "" if row else ""
+    required_targets = (
+        "signature_block",
+        "cross_reference",
+        "section_ref",
+        "schedule_entry",
+        "redaction_marker",
+        "absence_status",
+    )
+    needs_target_rebuild = not (row and all(target in table_sql for target in required_targets))
+    if needs_target_rebuild:
+        conn.execute("DROP INDEX IF EXISTS ix_verification_status")
+        conn.execute("DROP INDEX IF EXISTS ix_verification_target")
+        conn.execute("ALTER TABLE verification_state RENAME TO verification_state_old")
+        try:
+            conn.execute(
+                """CREATE TABLE verification_state (
+                id                TEXT PRIMARY KEY,
+                matter_id         TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+                target_kind       TEXT NOT NULL CHECK (target_kind IN (
+                    'assertion','assertion_occurrence','issue_predicate','evidence_edge',
+                    'quant_fact','authority','document_card','privilege_classification',
+                    'gap','dispute','dispute_position','timeline_event','deadline',
+                    'authority_treatment','actor_relationship','defined_term',
+                    'signature_block','cross_reference','section_ref','schedule_entry',
+                    'redaction_marker','absence_status',
+                    'causation_edge','theory','artifact','artifact_manifest_item'
+                )),
+                target_id         TEXT NOT NULL,
+                status            TEXT NOT NULL DEFAULT 'candidate'
+                    CHECK (status IN ('candidate','verified','rejected','stale')),
+                ai_confidence     REAL CHECK (ai_confidence IS NULL OR (ai_confidence >= 0.0 AND ai_confidence <= 1.0)),
+                reviewed_by_kind  TEXT CHECK (reviewed_by_kind IS NULL OR reviewed_by_kind IN ('user','attorney','system','import')),
+                reviewed_by_id    TEXT,
+                reviewed_at       TEXT,
+                review_scope      TEXT NOT NULL DEFAULT 'extraction_correct'
+                    CHECK (review_scope IN (
+                        'extraction_correct','record_truth','inference','legal_conclusion',
+                        'truth_override','internal_privileged','clean_output',
+                        'privilege_classification','dispute_resolution','artifact_policy',
+                        'document_card_classification'
+                    )),
+                review_scope_json TEXT,
+                review_note       TEXT,
+                rejection_reason  TEXT,
+                stale_reason      TEXT,
+                version           INTEGER NOT NULL DEFAULT 1,
+                created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(matter_id, target_kind, target_id)
+            ) STRICT"""
+            )
+            conn.execute(
+                """INSERT INTO verification_state (
+                   id, matter_id, target_kind, target_id, status, ai_confidence,
+                   reviewed_by_kind, reviewed_by_id, reviewed_at, review_scope,
+                   review_scope_json, review_note, rejection_reason, stale_reason,
+                   version, created_at, updated_at
+               )
+               SELECT
+                   id, matter_id, target_kind, target_id, status, ai_confidence,
+                   reviewed_by_kind, reviewed_by_id, reviewed_at, review_scope,
+                   review_scope_json, review_note, rejection_reason, stale_reason,
+                   version, created_at, updated_at
+               FROM verification_state_old"""
+            )
+            conn.execute("DROP TABLE verification_state_old")
+        except Exception:
+            conn.execute("DROP TABLE IF EXISTS verification_state")
+            conn.execute("ALTER TABLE verification_state_old RENAME TO verification_state")
+            raise
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_verification_status"
+            " ON verification_state(matter_id, status, target_kind, updated_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_verification_target"
+            " ON verification_state(target_kind, target_id)"
+        )
+    _rebuild_verification_event_fk(conn)
+    conn.commit()
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -3397,6 +3583,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (66, _migration_v66),
     (67, _migration_v67),
     (68, _migration_v68),
+    (69, _migration_v69),
 ]
 
 

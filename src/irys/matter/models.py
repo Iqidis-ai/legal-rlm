@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from .enums import (
     SpeechAct, SourceRole, BeliefState, ModelLayer,
     AssertionKind, AssertionLinkType, RevisionCause,
-    GapType, OriginKind, LedgerEventType,
+    GapType, OriginKind, LedgerEventType, AbsenceStatus,
+    VerificationTargetKind,
 )
 
 
@@ -55,6 +56,307 @@ class ProvenanceContext:
     source_span_id: Optional[str] = None
     source_span_status: str = "unknown"
     note: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class AbsenceStatusRecord:
+    """Structured negative/absence result for a searched target.
+
+    Use this for false-premise, out-of-matter, and searched-not-found cases so
+    synthesis does not collapse every absence into "missing documents."
+    """
+
+    target: str
+    status: AbsenceStatus
+    searched_documents: int = 0
+    searched_terms: tuple[str, ...] = ()
+    confidence: float = 0.0
+    rationale: str = ""
+    source_scope: str = "matter"
+
+    @property
+    def is_negative_answer(self) -> bool:
+        return self.status in {
+            AbsenceStatus.SEARCHED_NOT_FOUND,
+            AbsenceStatus.OUT_OF_MATTER,
+            AbsenceStatus.FALSE_PREMISE_LIKELY,
+        }
+
+    @property
+    def requires_more_source(self) -> bool:
+        return self.status in {
+            AbsenceStatus.NOT_SEARCHED,
+            AbsenceStatus.SOURCE_MISSING,
+        }
+
+    def to_prompt_line(self) -> str:
+        parts = [
+            f"target={self.target}",
+            f"status={self.status.value}",
+            f"searched_documents={self.searched_documents}",
+        ]
+        if self.searched_terms:
+            parts.append("searched_terms=" + ", ".join(self.searched_terms[:8]))
+        if self.confidence:
+            parts.append(f"confidence={self.confidence:.2f}")
+        if self.rationale:
+            parts.append(f"rationale={self.rationale}")
+        return "; ".join(parts)
+
+
+@dataclass(frozen=True)
+class EvidenceSpanRef:
+    """Location of a task-specific evidence object in source material."""
+
+    document_id: str
+    span_id: Optional[str] = None
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
+    section_ref: Optional[str] = None
+    clause_ref: Optional[str] = None
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
+    excerpt: str = ""
+
+    @property
+    def is_located(self) -> bool:
+        return bool(
+            self.document_id
+            and (
+                self.span_id
+                or self.section_ref
+                or self.clause_ref
+                or self.page_start is not None
+                or self.excerpt
+            )
+        )
+
+    def label(self) -> str:
+        parts = [self.document_id]
+        if self.section_ref:
+            parts.append(self.section_ref)
+        elif self.clause_ref:
+            parts.append(self.clause_ref)
+        elif self.page_start is not None:
+            if self.page_end is not None and self.page_end != self.page_start:
+                parts.append(f"pp. {self.page_start}-{self.page_end}")
+            else:
+                parts.append(f"p. {self.page_start}")
+        elif self.span_id:
+            parts.append(f"span {self.span_id}")
+        return " | ".join(parts)
+
+    def to_prompt_line(self) -> str:
+        parts = [f"source={self.label()}"]
+        if self.span_id:
+            parts.append(f"span_id={self.span_id}")
+        if self.excerpt:
+            parts.append(f"excerpt={self.excerpt[:240]}")
+        return "; ".join(parts)
+
+
+@dataclass(frozen=True)
+class DefinedTermRecord:
+    """Typed extraction result for a defined term."""
+
+    document_id: str
+    term: str
+    definition_text: str
+    first_defined_in: str = ""
+    source_span: Optional[EvidenceSpanRef] = None
+    aliases: tuple[str, ...] = ()
+    confidence: float = 0.0
+
+    target_kind: VerificationTargetKind = VerificationTargetKind.DEFINED_TERM
+
+    @property
+    def has_required_fields(self) -> bool:
+        return bool(self.document_id and self.term and self.definition_text and self.first_defined_in)
+
+    def identity_key(self) -> str:
+        return _hash_text(
+            "|".join(
+                (
+                    _normalize_text(self.document_id),
+                    _normalize_text(self.term),
+                    _normalize_text(self.first_defined_in),
+                )
+            ),
+            length=32,
+        )
+
+    def to_prompt_line(self) -> str:
+        parts = [
+            f"defined_term={self.term}",
+            f"document={self.document_id}",
+            f"first_defined_in={self.first_defined_in or 'unknown'}",
+            f"definition={self.definition_text[:240]}",
+        ]
+        if self.source_span:
+            parts.append(self.source_span.to_prompt_line())
+        if self.confidence:
+            parts.append(f"confidence={self.confidence:.2f}")
+        return "; ".join(parts)
+
+
+@dataclass(frozen=True)
+class SignatureBlockRecord:
+    """Typed extraction result for an executed signature block."""
+
+    document_id: str
+    entity_name: str
+    signatory_name: str
+    title: str = ""
+    capacity: str = ""
+    execution_date: str = ""
+    source_span: Optional[EvidenceSpanRef] = None
+    confidence: float = 0.0
+
+    target_kind: VerificationTargetKind = VerificationTargetKind.SIGNATURE_BLOCK
+
+    @property
+    def has_name_title_entity(self) -> bool:
+        return bool(self.entity_name and self.signatory_name and (self.title or self.capacity))
+
+    def identity_key(self) -> str:
+        return _hash_text(
+            "|".join(
+                (
+                    _normalize_text(self.document_id),
+                    _normalize_text(self.entity_name),
+                    _normalize_text(self.signatory_name),
+                    _normalize_text(self.title or self.capacity),
+                )
+            ),
+            length=32,
+        )
+
+    def to_prompt_row(self) -> dict[str, str]:
+        return {
+            "document": self.document_id,
+            "entity": self.entity_name,
+            "name": self.signatory_name,
+            "title": self.title,
+            "capacity": self.capacity,
+            "execution_date": self.execution_date,
+            "source": self.source_span.label() if self.source_span else "",
+        }
+
+
+@dataclass(frozen=True)
+class CrossReferenceRecord:
+    """Typed extraction result for an in-document reference to another object."""
+
+    source_document_id: str
+    target_label: str
+    reference_text: str
+    source_span: Optional[EvidenceSpanRef] = None
+    normalized_target: str = ""
+    reference_kind: str = "document"
+    confidence: float = 0.0
+
+    target_kind: VerificationTargetKind = VerificationTargetKind.CROSS_REFERENCE
+
+    @property
+    def has_reference_span(self) -> bool:
+        return bool(
+            self.source_document_id
+            and self.target_label
+            and self.reference_text
+            and self.source_span
+            and self.source_span.is_located
+        )
+
+    def identity_key(self) -> str:
+        return _hash_text(
+            "|".join(
+                (
+                    _normalize_text(self.source_document_id),
+                    _normalize_text(self.normalized_target or self.target_label),
+                    _normalize_text(self.reference_text[:160]),
+                )
+            ),
+            length=32,
+        )
+
+    def to_prompt_line(self) -> str:
+        parts = [
+            f"reference_target={self.target_label}",
+            f"source_document={self.source_document_id}",
+            f"reference_kind={self.reference_kind}",
+            f"text={self.reference_text[:240]}",
+        ]
+        if self.normalized_target:
+            parts.append(f"normalized_target={self.normalized_target}")
+        if self.source_span:
+            parts.append(self.source_span.to_prompt_line())
+        if self.confidence:
+            parts.append(f"confidence={self.confidence:.2f}")
+        return "; ".join(parts)
+
+
+@dataclass(frozen=True)
+class QuantFactRecord:
+    """Scoped quantitative fact used for reconciliation-safe analysis."""
+
+    subject_key: str
+    metric_key: str
+    value: float
+    unit: str = ""
+    currency: str = ""
+    period_start: str = ""
+    period_end: str = ""
+    role: str = "observed"
+    document_id: str = ""
+    source_span: Optional[EvidenceSpanRef] = None
+    confidence: float = 0.0
+
+    target_kind: VerificationTargetKind = VerificationTargetKind.QUANT_FACT
+
+    @property
+    def reconciliation_scope(self) -> str:
+        return "|".join(
+            (
+                _normalize_text(self.subject_key),
+                _normalize_text(self.metric_key),
+                _normalize_text(self.unit or self.currency),
+                _normalize_text(self.period_start),
+                _normalize_text(self.period_end),
+            )
+        )
+
+    def comparable_to(self, other: "QuantFactRecord") -> bool:
+        return self.reconciliation_scope == other.reconciliation_scope
+
+    def identity_key(self) -> str:
+        return _hash_text(
+            "|".join(
+                (
+                    self.reconciliation_scope,
+                    str(self.value),
+                    _normalize_text(self.document_id),
+                    _normalize_text(self.role),
+                )
+            ),
+            length=32,
+        )
+
+    def to_prompt_line(self) -> str:
+        parts = [
+            f"subject={self.subject_key}",
+            f"metric={self.metric_key}",
+            f"value={self.value:g}",
+        ]
+        if self.currency:
+            parts.append(f"currency={self.currency}")
+        elif self.unit:
+            parts.append(f"unit={self.unit}")
+        if self.period_start or self.period_end:
+            parts.append(f"period={self.period_start or '?'}..{self.period_end or '?'}")
+        parts.append(f"role={self.role}")
+        if self.source_span:
+            parts.append(self.source_span.to_prompt_line())
+        return "; ".join(parts)
 
 
 def _normalize_text(value: Optional[str]) -> str:

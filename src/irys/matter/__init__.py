@@ -14,13 +14,19 @@ from .db import SQLiteMatterDB
 from .enums import (
     SpeechAct, SourceRole, BeliefState, ModelLayer,
     AssertionKind, AssertionLinkType, RevisionCause,
-    GapType, IssueType, OriginKind, RunStatus, LedgerEventType,
+    GapType, AbsenceStatus, IssueType, OriginKind, RunStatus, LedgerEventType,
 )
 from .models import (
+    AbsenceStatusRecord, EvidenceSpanRef, DefinedTermRecord,
+    SignatureBlockRecord, CrossReferenceRecord, QuantFactRecord,
     AssertionCandidate, AssertionRecord, RevisionResult,
     QueryMatterContext, RunSessionRecord,
 )
-from .graph import AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore, QuantStore, DecisionContextStore, AuthorityStore, ProofStateStore
+from .graph import (
+    AssertionStore, GapStore, ActorStore, IssueStore, ClarificationStore,
+    QuantStore, DecisionContextStore, TypedEvidenceStore, AuthorityStore,
+    ProofStateStore,
+)
 from .reasoning import ReasoningLedgerStore
 from .belief_revision import BeliefRevisionEngine
 from .runtime import MatterRuntimeAdapter, NullMatterAdapter, infer_source_role
@@ -44,13 +50,16 @@ __all__ = [
     # Enums
     "SpeechAct", "SourceRole", "BeliefState", "ModelLayer",
     "AssertionKind", "AssertionLinkType", "RevisionCause",
-    "GapType", "IssueType", "OriginKind", "RunStatus", "LedgerEventType",
+    "GapType", "AbsenceStatus", "IssueType", "OriginKind", "RunStatus", "LedgerEventType",
     # Models
+    "AbsenceStatusRecord", "EvidenceSpanRef", "DefinedTermRecord",
+    "SignatureBlockRecord", "CrossReferenceRecord", "QuantFactRecord",
     "AssertionCandidate", "AssertionRecord", "RevisionResult",
     "QueryMatterContext", "RunSessionRecord",
     # Stores
     "AssertionStore", "GapStore", "ActorStore", "IssueStore", "ClarificationStore",
-    "QuantStore", "ReasoningLedgerStore", "DecisionContextStore", "AuthorityStore", "ProofStateStore",
+    "QuantStore", "ReasoningLedgerStore", "DecisionContextStore",
+    "TypedEvidenceStore", "AuthorityStore", "ProofStateStore",
     "BeliefRevisionEngine",
     # Runtime
     "MatterRuntimeAdapter", "NullMatterAdapter", "infer_source_role",

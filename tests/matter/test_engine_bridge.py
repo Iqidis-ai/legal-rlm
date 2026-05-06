@@ -4004,9 +4004,10 @@ def _seed_high_exposure(model):
     )
 
 
-def test_enforce_gate_appends_section_when_missing():
-    """Gate must append Financial Analysis when HIGH violation and section is absent."""
+def test_enforce_gate_records_diagnostics_when_missing():
+    """SO-6 diagnostics must not mutate the final answer body."""
     from irys.rlm.engine import RLMEngine
+    from irys.rlm.state import InvestigationState
     model = MatterModel.open_in_memory()
     _seed_high_exposure(model)
 
@@ -4014,22 +4015,25 @@ def test_enforce_gate_appends_section_when_missing():
     engine._matter_model = model
 
     output = "## Executive Summary\nPlaintiff claims breach of contract."
-    result = engine._enforce_quant_threshold_gate(output)
+    state = InvestigationState.create("damages?", "/repo")
+    result = engine._enforce_quant_threshold_gate(output, state=state)
 
-    assert result is not None, "Gate must return augmented output when section is missing"
-    assert "## Financial Analysis" in result, "Gate must append Financial Analysis section"
-    assert "80,000" in result or "80000" in result or "Exposure" in result, (
-        "Appended section must include exposure figures"
+    assert result is None
+    diagnostics = state.findings.get("quant_threshold_diagnostics", "")
+    assert "## Financial Analysis" in diagnostics
+    assert "80,000" in diagnostics or "80000" in diagnostics or "Exposure" in diagnostics, (
+        "Diagnostics must include exposure figures"
     )
 
 
-def test_enforce_gate_fires_when_heading_present_but_figures_absent():
-    """Gate fires even when a heading is present if violation figures are absent.
+def test_enforce_gate_records_diagnostics_when_heading_present_but_figures_absent():
+    """A heading alone does not satisfy the diagnostic side-channel.
 
     A structural heading without the specific violation figures is not compliance —
     the gate must still inject the actual quantitative risk data.
     """
     from irys.rlm.engine import RLMEngine
+    from irys.rlm.state import InvestigationState
     model = MatterModel.open_in_memory()
     _seed_high_exposure(model)
 
@@ -4038,12 +4042,11 @@ def test_enforce_gate_fires_when_heading_present_but_figures_absent():
 
     # Output has a heading but NOT the specific violation description text.
     output = "## Executive Summary\nBrief.\n\n## Financial Analysis\n$80k exposure.\n"
-    result = engine._enforce_quant_threshold_gate(output)
-    assert result is not None, (
-        "Gate must fire when heading exists but specific violation figures are absent"
-    )
-    assert "Claimed financial exposure" in result, (
-        "Gate must inject specific violation description even when heading present"
+    state = InvestigationState.create("damages?", "/repo")
+    result = engine._enforce_quant_threshold_gate(output, state=state)
+    assert result is None
+    assert "Claimed financial exposure" in state.findings.get(
+        "quant_threshold_diagnostics", ""
     )
 
 

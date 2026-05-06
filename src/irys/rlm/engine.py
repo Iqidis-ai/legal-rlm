@@ -2126,7 +2126,28 @@ class RLMEngine:
     @staticmethod
     def _workflow_success_criteria(contract: Any) -> list[str]:
         output_contract = dict(getattr(contract, "output_contract", {}) or {})
+        task_spec = dict(output_contract.get("task_spec") or {})
         criteria: list[str] = []
+        if task_spec:
+            task_type = str(task_spec.get("task_type") or "typed_task")
+            answer_shape = str(task_spec.get("answer_shape") or "answer")
+            criteria.append(f"satisfy task '{task_type}' as {answer_shape}")
+            required = task_spec.get("required_evidence") or []
+            if required:
+                criteria.append(
+                    "ground the answer in required evidence objects: "
+                    + ", ".join(str(item) for item in required[:8])
+                )
+            if task_spec.get("fresh_extraction_required"):
+                criteria.append(
+                    "do not rely on cached summaries alone when source-grounded "
+                    "extraction or validation is required"
+                )
+            if task_spec.get("operation") == "verify_absence":
+                criteria.append(
+                    "distinguish searched-not-found, false-premise-likely, "
+                    "out-of-matter, and source-missing statuses"
+                )
         if output_contract.get("must_ground_in_existing_state"):
             criteria.append("use only policy-eligible existing matter state")
         if output_contract.get("fresh_extraction_allowed"):
@@ -2149,6 +2170,7 @@ class RLMEngine:
     @staticmethod
     def _workflow_obligations(contract: Any) -> list[Obligation]:
         output_contract = dict(getattr(contract, "output_contract", {}) or {})
+        task_spec = dict(output_contract.get("task_spec") or {})
         obligations: list[Obligation] = []
 
         def add(
@@ -2164,6 +2186,33 @@ class RLMEngine:
                 )
             )
 
+        if task_spec:
+            task_type = str(task_spec.get("task_type") or "typed_task")
+            add(
+                f"Answer must satisfy the typed task contract: {task_type}.",
+                "task_contract",
+                "task_evidence_contract",
+            )
+            add(
+                "Final answer must not contradict the task evidence manifest.",
+                "synthesis_alignment",
+                "trace_output_alignment",
+            )
+            required = task_spec.get("required_evidence") or []
+            if required:
+                add(
+                    "Answer must use or disclose absence of required evidence "
+                    f"objects: {', '.join(str(item) for item in required[:8])}.",
+                    "evidence_contract",
+                    "required_evidence_objects",
+                )
+            if task_spec.get("operation") == "verify_absence":
+                add(
+                    "Absence checks must label the result as searched-not-found, "
+                    "false-premise-likely, out-of-matter, or source-missing.",
+                    "missingness",
+                    "absence_status",
+                )
         if output_contract.get("must_ground_in_existing_state"):
             add(
                 "Output must not claim fresh document work occurred on this turn.",
@@ -2227,6 +2276,31 @@ class RLMEngine:
             f"- Audience: {objective.audience}",
             f"- Policy audience: {objective.policy_audience}",
         ]
+        output_contract = dict(
+            getattr(getattr(state, "execution_contract", None), "output_contract", {})
+            or {}
+        )
+        task_spec = dict(output_contract.get("task_spec") or {})
+        if task_spec:
+            lines.append("- Task ontology:")
+            lines.append(f"  - task_type: {task_spec.get('task_type')}")
+            lines.append(f"  - operation: {task_spec.get('operation')}")
+            lines.append(f"  - answer_shape: {task_spec.get('answer_shape')}")
+            required = task_spec.get("required_evidence") or []
+            if required:
+                lines.append(
+                    "  - required_evidence: "
+                    + ", ".join(str(item) for item in required[:10])
+                )
+            if task_spec.get("fresh_extraction_required"):
+                lines.append(
+                    "  - cached matter summaries are not sufficient by themselves"
+                )
+            if task_spec.get("operation") == "verify_absence":
+                lines.append(
+                    "  - absence vocabulary: searched_not_found, "
+                    "false_premise_likely, out_of_matter, source_missing"
+                )
         if objective.success_criteria:
             lines.append("- Success criteria:")
             for criterion in objective.success_criteria[:8]:
@@ -2317,6 +2391,29 @@ class RLMEngine:
             directives.append(
                 "Answer only from existing eligible matter state unless the "
                 "contract permits fresh extraction."
+            )
+        if "task_evidence_contract" in validators:
+            directives.append(
+                "Do the typed task requested; do not substitute a run delta, "
+                "state table, generic memo, or unrelated diagnostic for the "
+                "required answer shape."
+            )
+        if "required_evidence_objects" in validators:
+            directives.append(
+                "For each required evidence object, either use source-grounded "
+                "support or explicitly label the object as not found after "
+                "search; do not call all absent evidence missing documents."
+            )
+        if "absence_status" in validators:
+            directives.append(
+                "For premise checks, distinguish source_missing from "
+                "searched_not_found, false_premise_likely, and out_of_matter."
+            )
+        if "trace_output_alignment" in validators:
+            directives.append(
+                "If required evidence was found during the run, do not claim "
+                "the relevant document or object was unavailable in the final "
+                "answer."
             )
         return directives
 
@@ -2503,6 +2600,164 @@ class RLMEngine:
                 ],
                 obligation_status={
                     oid: mentions_assumption for oid in matching_obligation_ids
+                },
+            )
+
+        if validator == "task_evidence_contract":
+            output_contract = dict(
+                getattr(getattr(state, "execution_contract", None), "output_contract", {})
+                or {}
+            )
+            task_spec = dict(output_contract.get("task_spec") or {})
+            task_type = str(task_spec.get("task_type") or "")
+            lowered = output_text.lower()
+            forbidden_markers = []
+            if task_type == "document_comparison":
+                forbidden_markers.extend(("## what changed", "assertion delta"))
+            if task_type in {
+                "defined_term_inventory",
+                "cross_document_reference_search",
+                "signatory_extraction",
+                "matter_subject_identification",
+                "redaction_categorization",
+                "deposition_extraction",
+                "procedural_history",
+            }:
+                forbidden_markers.extend(("## list documents", "## list actors"))
+            if task_type == "redaction_categorization":
+                forbidden_markers.extend((
+                    "redacted information because the operative text",
+                    "redaction markers are completely absent",
+                    "once the operative text is loaded",
+                ))
+            if task_type == "quantitative_reconciliation":
+                forbidden_markers.extend((
+                    "run diagnostics & safeguards",
+                    "auto-generated by so-6",
+                    "payment reconciliation (usd): invoiced $0.00",
+                ))
+            if task_type == "multi_document_synthesis":
+                forbidden_markers.extend((
+                    "has not been provided",
+                    "currently absent from the provided facts",
+                    "zero verified or candidate text",
+                ))
+            if task_type in {"premise_check", "out_of_matter_check"}:
+                forbidden_markers.extend((
+                    "once the operative text is loaded",
+                    "until the operative text is loaded",
+                ))
+            violated = [m for m in forbidden_markers if m in lowered]
+            passed = bool(output_text.strip()) and not violated
+            return ValidationResult(
+                validator=validator,
+                passed=passed,
+                score=1.0 if passed else 0.0,
+                blocking_issues=[] if passed else [
+                    "output appears to substitute the wrong task artifact: "
+                    + ", ".join(violated or ["empty output"])
+                ],
+                obligation_status={
+                    oid: passed for oid in matching_obligation_ids
+                },
+            )
+
+        if validator == "required_evidence_objects":
+            lowered = output_text.lower()
+            has_source_or_status = bool(state.citations) or any(
+                marker in lowered
+                for marker in (
+                    "not found",
+                    "searched_not_found",
+                    "false_premise_likely",
+                    "out_of_matter",
+                    "source_missing",
+                    "unverified",
+                    "verified",
+                    "citation",
+                    "section",
+                    "source",
+                )
+            )
+            return ValidationResult(
+                validator=validator,
+                passed=bool(output_text.strip()) and has_source_or_status,
+                score=1.0 if output_text.strip() and has_source_or_status else 0.0,
+                blocking_issues=[] if has_source_or_status else [
+                    "required evidence objects were neither used nor given an "
+                    "explicit absence/status label"
+                ],
+                obligation_status={
+                    oid: bool(output_text.strip()) and has_source_or_status
+                    for oid in matching_obligation_ids
+                },
+            )
+
+        if validator == "absence_status":
+            lowered = output_text.lower().replace("-", "_")
+            statuses = (
+                "not_searched",
+                "searched_not_found",
+                "found_unverified",
+                "found_verified",
+                "conflicting_evidence",
+                "out_of_matter",
+                "false_premise_likely",
+                "source_missing",
+            )
+            has_status = any(status in lowered for status in statuses)
+            return ValidationResult(
+                validator=validator,
+                passed=has_status,
+                score=1.0 if has_status else 0.0,
+                blocking_issues=[] if has_status else [
+                    "absence check did not label the result with a typed "
+                    "absence status"
+                ],
+                obligation_status={
+                    oid: has_status for oid in matching_obligation_ids
+                },
+            )
+
+        if validator == "trace_output_alignment":
+            manifest = state.findings.get("task_evidence_manifest") or {}
+            found_targets = []
+            if isinstance(manifest, dict):
+                found_targets = [
+                    str(item).strip().lower()
+                    for item in (
+                        manifest.get("found_targets")
+                        or manifest.get("found_objects")
+                        or ()
+                    )
+                    if str(item).strip()
+                ]
+            lowered = output_text.lower()
+            denial_markers = (
+                "has not been provided",
+                "not provided",
+                "not available",
+                "currently absent",
+                "zero verified or candidate text",
+                "cannot see",
+                "cannot access",
+            )
+            has_denial = any(marker in lowered for marker in denial_markers)
+            contradicted_targets = [
+                target for target in found_targets
+                if target in lowered and has_denial
+            ]
+            passed = not contradicted_targets
+            return ValidationResult(
+                validator=validator,
+                passed=passed,
+                score=1.0 if passed else 0.0,
+                blocking_issues=[] if passed else [
+                    "final answer contradicts evidence manifest for: "
+                    + ", ".join(contradicted_targets[:5])
+                ],
+                obligation_status={
+                    oid: passed for oid in matching_obligation_ids
                 },
             )
 
@@ -6303,15 +6558,13 @@ Return:
                     "uncalibrated advocacy-source claims: %s", exc,
                 )
 
-        # SO-6: Post-synthesis quantitative threshold gate.
-        # If HIGH violations exist and the LLM skipped the Financial Analysis section,
-        # force-append the structured numbers so the output always addresses critical
-        # exposure. This is the hard behavioral gate (not just prompt advisory text).
+        # SO-6: Post-synthesis quantitative threshold diagnostics.
+        # Preserve high quantitative violations as side-channel findings, but do
+        # not mutate the user-facing answer body. The answer must stay shaped by
+        # the user's task contract; diagnostics belong in validator/UI surfaces.
         if self._matter_model is not None:
             try:
-                _enforced = self._enforce_quant_threshold_gate(response)
-                if _enforced is not None:
-                    response = _enforced
+                self._enforce_quant_threshold_gate(response, state=state)
             except Exception as exc:
                 logger.error(
                     "HARD GATE FAILURE: quant threshold gate failed — output may miss "
@@ -6534,15 +6787,15 @@ Return:
         lines.append("")
         return synthesis_output + "\n".join(lines)
 
-    def _enforce_quant_threshold_gate(self, synthesis_output: str) -> Optional[str]:
-        """Behavioral gate: force-append financial data when HIGH violations exist (SO-6).
+    def _enforce_quant_threshold_gate(
+        self,
+        synthesis_output: str,
+        state: "Optional[InvestigationState]" = None,
+    ) -> Optional[str]:
+        """Record SO-6 financial diagnostics without mutating the answer body.
 
-        Called after LLM synthesis. If there are HIGH quantitative threshold violations
-        AND the synthesis output does not contain a Financial Analysis section, appends
-        a structured block with the exact violation figures.
-
-        Returns the (possibly augmented) output string, or None if no action was taken
-        (caller keeps the original). This is a hard behavioral branch, not prompt text.
+        Diagnostics remain available for UI/validator surfaces through
+        state.findings, but the final answer stays shaped by the user's task.
         """
         if self._matter_model is None:
             return None
@@ -6571,9 +6824,8 @@ Return:
         if _has_violation_content:
             return None  # violation figures are present — gate is satisfied
 
-        # Force-append the financial analysis block.
+        # Build the financial diagnostics block for side-panel / validator use.
         lines = [
-            "",
             "## Financial Analysis",
             "*(Auto-generated by SO-6 threshold gate — LLM synthesis omitted this section.)*",
             "",
@@ -6599,7 +6851,14 @@ Return:
         except Exception:
             pass
 
-        return synthesis_output + "\n".join(lines)
+        diagnostics = "\n".join(lines)
+        if state is not None:
+            try:
+                state.findings["quant_threshold_diagnostics"] = diagnostics
+                state.findings["quant_threshold_high_count"] = len(high_violations)
+            except Exception:
+                pass
+        return None
 
     def _extract_and_store_authorities(
         self,

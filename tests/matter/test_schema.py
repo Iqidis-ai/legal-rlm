@@ -37,6 +37,8 @@ def test_in_memory_db_creates_schema():
         # v63: domain composition substrate
         "domain_detection_event", "object_domain_facet",
         "domain_composition", "unknown_domain_candidate",
+        # v69: ontology task-object substrate
+        "typed_evidence_record",
     ]:
         assert required in tables, f"Missing table: {required}"
 
@@ -48,6 +50,33 @@ def test_schema_version_recorded():
     ).fetchone()
     assert row is not None
     assert row[0] == SCHEMA_VERSION
+
+
+def test_verification_schema_accepts_typed_evidence_targets():
+    db = SQLiteMatterDB.in_memory()
+    sql = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='verification_state'"
+    ).fetchone()[0]
+
+    for target in [
+        "signature_block",
+        "cross_reference",
+        "section_ref",
+        "schedule_entry",
+        "redaction_marker",
+        "absence_status",
+    ]:
+        assert target in sql
+
+
+def test_verification_event_fk_targets_live_verification_state_table():
+    db = SQLiteMatterDB.in_memory()
+    sql = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='verification_event'"
+    ).fetchone()[0]
+
+    assert "verification_state_old" not in sql
+    assert "REFERENCES verification_state(id)" in sql
 
 
 def test_memory_broker_substrate_tables_exist():
