@@ -257,6 +257,14 @@ class RLMEngine:
 
         self._external_research = {"case_law": [], "web": [], "analysis": {}}  # Reset with proper structure
 
+        # DEBUG TRACING — create per-investigation folder for LLM call logs
+        trace_root = Path("llm_traces")
+        trace_dir = trace_root / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        self.client._trace_dir = trace_dir
+        self.client._trace_counter = 0
+        logger.info(f"LLM trace dir: {trace_dir}")
+
         self._context = context  # Store context for use in decision functions
         state = InvestigationState.create(query, str(repository_path))
 

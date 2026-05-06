@@ -51,7 +51,7 @@ def get_output_file_path() -> tuple[Path, Path]:
 async def test_streaming_with_urls():
     """Test the streaming endpoint with S3 URLs."""
     base_url = "http://localhost:8000/"
-    base_url = "https://rlm.iryslegal.com/"
+    # base_url = "https://rlm.iryslegal.com/"
     endpoint = "investigate/urls/stream"
     url = base_url + endpoint
 
@@ -60,7 +60,8 @@ async def test_streaming_with_urls():
         # "query": "2 questiosn -> Summarize the provided documents - and do websearch and caselaw research on 'permissibility of lowest pricing claims for a texas rv'",
         # "query": "2 questiosn -> Do legal research on 'permissibility of lowest pricing claims for a texas rv'",
         # "query": "Do legal research on 'Can a state limit working hours for bakers?'",
-        "query": "Summarize the attachments",
+        "query": "Compare the schedules in the Lion agreement vs the ARKS agreement. List every schedule by letter and description; identify which schedules are present in one but not the other, and any schedules where the description differs.",
+        # "query": "Summarize the attachments",
         # "query": '''
         #     Can you find and validate the Texas state cases? Trevino v. State
         #     Formosa Plastics Corp. USA v. Presidio Engineers & Contractors, Inc.
@@ -101,10 +102,25 @@ async def test_streaming_with_urls():
             #     "name": "epa_sample_letter_sent_to_commissioners_dated_february_29_2015.pdf",
             #     "mime": "application/pdf",
             # },
+            # {
+            #     "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/9e/50/46f28fce4054d8902a99988487926f1760774d1ac6de05bfa7aaebc28365",
+            #     "name": "sample.doc",
+            #     "mime": "application/msword",
+            # },
             {
-                "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/9e/50/46f28fce4054d8902a99988487926f1760774d1ac6de05bfa7aaebc28365",
-                "name": "sample.doc",
-                "mime": "application/msword",
+                "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/4e/71/2d0b038854a0a1fc1649b7450cd2f3c55225800de7879943891e8f3d3f6f",
+                "name": "Delek ARKS Amended Restated Master Supply & Offtake Agreement.pdf",
+                "mime": "application/pdf",
+            },
+            {
+                "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/90/f5/d524f4a65b5c82c11621888fb3f6a2f441f28c49eabff58c7b97dd47ace6",
+                "name": "Delek BSR Amended Restated Master Supply & Offtake Agreement.pdf",
+                "mime": "application/pdf",
+            },
+            {
+                "url": "https://iqidis-artifact.s3.us-east-1.amazonaws.com/default/preview/83/02/18143d02a8391af18fb9b1cdc992020f96aea14f6ac399b617c8e614f71a",
+                "name": "Delek Amended Restated Master Supply & Offtake Agreement.pdf",
+                "mime": "application/pdf",
             },
         ]
     }

@@ -1,6 +1,9 @@
 # Irys RLM - Git Ignore File
 # Prevents sensitive data and temporary files from being committed
 
+# Debug LLM traces (temporary)
+llm_traces/
+
 # Python
 __pycache__/
 *.py[cod]

@@ -9,6 +9,8 @@ Tier Strategy:
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional, Callable, Any
+from pathlib import Path
+from datetime import datetime
 import asyncio
 import os
 import logging
@@ -452,6 +454,35 @@ class GeminiClient:
         self._cache = cache
         self._usage: dict[ModelTier, UsageStats] = {t: UsageStats() for t in ModelTier}
         self._rate_limiter = RateLimiter(requests_per_minute, burst_size)
+        # DEBUG TRACING — set _trace_dir externally to enable per-investigation LLM call logging
+        self._trace_dir: Optional[Path] = None
+        self._trace_counter: int = 0
+
+    def _trace_call(self, tier: "ModelTier", prompt: str, response: str, caller: str = "complete"):
+        """DEBUG: Dump LLM input/output to a JSON file in _trace_dir. Remove later."""
+        if not self._trace_dir:
+            return
+        try:
+            self._trace_counter += 1
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            mc = MODEL_CONFIGS[tier]
+            fname = f"{self._trace_counter:03d}_{tier.value}_{caller}_{ts}.json"
+            payload = {
+                "call_number": self._trace_counter,
+                "timestamp": ts,
+                "caller": caller,
+                "tier": tier.value,
+                "model": mc.model_id,
+                "prompt_chars": len(prompt),
+                "response_chars": len(response),
+                "prompt": prompt,
+                "response": response,
+            }
+            (self._trace_dir / fname).write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+        except Exception:
+            pass  # tracing must never break the investigation
 
     @classmethod
     def _get_vertex_client(cls) -> Optional[genai.Client]:
@@ -724,6 +755,9 @@ class GeminiClient:
 
         response_text = response.text or ""
 
+        # DEBUG TRACING
+        self._trace_call(tier, prompt, response_text, caller="complete")
+
         # Store in cache
         if cache_enabled and response_text:
             self._cache.set(cache_key_prompt, mc.model_id, response_text)
@@ -789,7 +823,13 @@ class GeminiClient:
             raise TimeoutError(f"API call timed out after {self.timeout}s")
 
         self._usage[tier].requests += 1
-        return response.text
+        result = response.text or ""
+
+        # DEBUG TRACING
+        trace_prompt = "\n---\n".join(f"[{m['role']}] {m['content']}" for m in messages)
+        self._trace_call(tier, trace_prompt, result, caller="complete_with_history")
+
+        return result
 
     async def batch_complete(
         self,
