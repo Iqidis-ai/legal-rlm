@@ -778,7 +778,7 @@ _DOMAIN_DEEP_READ_EXAMPLES: dict[str, dict[str, str]] = {
             '   - object examples: "50000 USD by March 2023", "the services agreement"'
         ),
         "numeric_subjects": '"invoice" | "payment" | "fee" | "damages" | "balance" | "rate" | "deposit" | "penalty" | "revenue" | "ttm_revenue" | "credit_drawn" | "facility_commitment" | "coverage_limit" | "rsu_count" | "share_price" | "ebitda" | "buyout_multiple" | "termination_fee" | "purchase_commitment" | "other"',
-        "numeric_subject_id_example": '"Invoice #1042", "Payment #3", "Northland TTM revenue", "Revolving Loans outstanding", "Hesse unvested RSUs"',
+        "numeric_subject_id_example": '"Invoice #1042", "Payment #3", "Counterparty A TTM revenue", "Revolving Loans outstanding", "Executive unvested RSUs"',
     },
     "finance": {
         "deep_read_examples": (
@@ -2704,19 +2704,29 @@ class RLMEngine:
                 )
 
         # 2. Detect revenue concentration calculations
+        # Company TTM must come from a line mentioning total/company/consolidated/
+        # estimated revenue — NOT from counterparty-specific or minimum-commitment lines.
         company_ttm = RLMEngine._first_amount_millions_near(
-            c, ("revenue",), preferred_terms=("ttm", "trailing", "total", "denominator")
+            c, ("revenue",),
+            preferred_terms=("total", "company", "consolidated", "estimated", "reported", "borrower"),
+            excluded_terms=(
+                "attributable", "minimum", "commitment", "counterparty",
+                "historical range", "exposure", "operand",
+            ),
         )
-        if company_ttm:
-            # Find counterparty-specific revenues
+        if company_ttm and company_ttm > 50:
+            # Find counterparty-specific revenues ONLY from schedule disclosures
+            # or "attributable" patterns — these are actual TTM, not minimums.
             counterparty_revenues: list[tuple[str, float]] = []
             for line in RLMEngine._split_fact_lines(c):
                 ll = line.lower()
-                if "revenue" in ll and ("attributable" in ll or "counterparty" in ll or "operand" in ll):
+                has_schedule = "schedule" in ll or "attributable" in ll
+                has_revenue = "revenue" in ll or "sales" in ll
+                if has_revenue and has_schedule and "ttm" in ll or "trailing" in ll:
                     amt = RLMEngine._first_amount_millions_near(
-                        line, ("revenue",), preferred_terms=("attributable", "operand")
+                        line, ("revenue",), preferred_terms=("attributable", "trailing", "ttm")
                     )
-                    if amt and amt != company_ttm and amt < company_ttm:
+                    if amt and amt != company_ttm and 0.5 < amt < company_ttm:
                         counterparty_revenues.append((line[:80], amt))
             for label, amt in counterparty_revenues[:5]:
                 pct = amt / company_ttm * 100.0
@@ -3166,7 +3176,12 @@ class RLMEngine:
                 for qf in self._matter_model.quant.get_amounts(min_value=100.0):
                     raw = (qf.get("raw_text") or "").lower()
                     subj = (qf.get("subject_type") or "").lower()
-                    if ("total" in raw or "company" in raw or "consolidated" in raw) and "revenue" in raw:
+                    # Exclude counterparty-specific revenue (has "attributable",
+                    # entity names, "minimum", etc.) to avoid false company_ttm
+                    if "attributable" in raw or "minimum" in raw or "commitment" in raw:
+                        continue
+                    if ("total" in raw or "company" in raw or "consolidated" in raw
+                            or "estimated" in raw or "reported" in raw or "borrower" in raw) and "revenue" in raw:
                         val = qf.get("amount_value") or 0
                         val_m = val / 1_000_000.0 if val > 1000 else val
                         if val_m > 50:
@@ -3177,9 +3192,10 @@ class RLMEngine:
         # Facts-text fallback for company TTM
         if company_ttm is None and facts:
             _co_ttm_pattern = _re_engine.compile(
-                r"(?:company|total|consolidated|aggregate)\s+(?:ttm|trailing|annual)?\s*"
+                r"(?:company|total|consolidated|aggregate|estimated|reported|borrower)\s+"
+                r"(?:ttm|trailing|annual)?\s*"
                 r"(?:twelve[- ]month\s+)?revenue.*?"
-                r"\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*"
+                r"\$?\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*"
                 r"(billion|bn|million|mm|m)?",
                 _re_engine.IGNORECASE,
             )
@@ -3187,7 +3203,13 @@ class RLMEngine:
                 fl = fact.lower()
                 if "revenue" not in fl:
                     continue
-                if not any(k in fl for k in ("total", "company", "consolidated", "aggregate")):
+                # Skip counterparty-specific lines
+                if "attributable" in fl or "minimum" in fl or "commitment" in fl:
+                    continue
+                if not any(k in fl for k in (
+                    "total", "company", "consolidated", "aggregate",
+                    "estimated", "reported", "borrower",
+                )):
                     continue
                 m = _co_ttm_pattern.search(fact)
                 if m:
@@ -9689,14 +9711,36 @@ Return:
         # M&A diligence uses narrow operands that can be buried under larger
         # headline figures. Surface those operands before broad category totals.
         try:
-            mna_keywords = (
+            mna_keywords = [
                 "revenue", "ttm", "outstanding", "drawn", "revolving",
                 "prepayment", "rsu", "restricted stock", "share",
                 "exchange ratio", "coverage", "aggregate limit", "run-off",
                 "ebitda", "buy-out", "buyout", "termination fee",
-                "northland", "pacwest", "flowlogic", "ax-7000",
-                "hendricks", "credit", "required consents",
-            )
+                "credit", "required consents",
+            ]
+            # Derive entity keywords from extracted contract cards instead
+            # of hardcoding benchmark-specific names.
+            try:
+                te_cards = self._matter_model.typed_evidence.list_by_kind(
+                    "contract_card", limit=20
+                )
+                for _cc_row in te_cards:
+                    _cc_p = _cc_row.get("payload_json")
+                    if isinstance(_cc_p, str):
+                        import json as _json_mod
+                        try:
+                            _cc_p = _json_mod.loads(_cc_p)
+                        except Exception:
+                            continue
+                    if isinstance(_cc_p, dict):
+                        for _field in ("counterparty", "contract_name"):
+                            _val = (_cc_p.get(_field) or "").strip()
+                            if _val and len(_val) > 2:
+                                for _word in _val.lower().split():
+                                    if len(_word) > 3 and _word not in mna_keywords:
+                                        mna_keywords.append(_word)
+            except Exception:
+                pass
             quant_rows = self._matter_model.quant.list_all(limit=200)
             mna_rows: list[dict] = []
             seen_quant_rows: set[str] = set()
