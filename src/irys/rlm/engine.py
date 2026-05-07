@@ -8768,6 +8768,20 @@ class RLMEngine:
             "compare attached",
             "supporting workbook",
             "due diligence",
+            "all provided document",
+            "analyze the following",
+            "analyze all",
+            "cross-reference",
+            "cross reference",
+            "compliance certificate",
+            "credit agreement markup",
+            "term sheet markup",
+            "counterparty markup",
+            "borrower disclosure",
+            "quality of earnings",
+            "restructuring condition",
+            "disclosure schedule",
+            "summary memo",
         )
         return any(phrase in q for phrase in full_review_phrases)
 
