@@ -748,6 +748,12 @@ Respond in JSON (be thorough — include ALL relevant provisions, section number
           "value": "exact data point (number, percentage, or quote)",
           "source_detail": "page/slide/section reference",
           "significance": "brief note on why this matters"}}
+    ],
+    "extraction_completeness": [
+        {{"group": "name of the table/list/schedule (e.g. 'MSA market shares', 'covenant grid')",
+          "items_in_source": "integer: how many items are in the source table/list",
+          "items_extracted": "integer: how many you actually extracted",
+          "complete": true}}
     ]
 }}
 """
@@ -8631,16 +8637,12 @@ Return:
             state.documents_read += 1
             state.llm_calls_required += 1  # SO-1 telemetry: cold-path doc read
 
-            # Critical documents (contracts, judgments, complaints, agreements) get
-            # the FULL text — Gemini LITE has 1M token context, so we can afford to
-            # send entire contracts (typically 30K-80K chars = 8K-20K tokens).
-            # Non-critical docs still get the base excerpt window.
-            from ..core.search import get_document_priority
-            _doc_priority = get_document_priority(doc.filename)
-            if _doc_priority >= 1.3:
-                _excerpt_chars = len(doc.full_text)
-            else:
-                _excerpt_chars = self.config.excerpt_chars
+            # Deep reads always use full document text — Gemini models have 1M+
+            # token contexts. Truncating non-priority docs caused tables at the end
+            # to be lost (e.g., HHI data in market analysis memos, covenant grids
+            # in credit committee presentations). Cap at 200K chars (~50K tokens)
+            # to keep well within context limits while ensuring complete extraction.
+            _excerpt_chars = min(len(doc.full_text), 200_000)
             content = doc.get_excerpt(_excerpt_chars)
 
             _domain = self._resolve_active_domain(state)
@@ -8947,6 +8949,24 @@ Return:
                             label=f"{_cat}: {_entity} = {_rdval}",
                             document_id=doc.filename,
                             confidence=0.9,
+                        )
+
+            # Extraction completeness verification: if the LLM reports incomplete
+            # extraction for any table/list, log a warning so we can track coverage.
+            _ec = analysis.get("extraction_completeness")
+            if isinstance(_ec, list):
+                for _ecg in _ec:
+                    if not isinstance(_ecg, dict):
+                        continue
+                    _grp = _ecg.get("group", "")
+                    _src_n = _ecg.get("items_in_source")
+                    _ext_n = _ecg.get("items_extracted")
+                    _complete = _ecg.get("complete", True)
+                    if _src_n and _ext_n and not _complete:
+                        self._emit_step(
+                            state, StepType.REPLAN,
+                            f"Incomplete extraction: '{_grp}' has {_src_n} items "
+                            f"in source but only {_ext_n} extracted (doc: '{doc.filename[:50]}')",
                         )
 
             # SO-2 validation: if any facts lack SPO triples, retry to recover them.
