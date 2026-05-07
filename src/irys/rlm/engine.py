@@ -243,8 +243,8 @@ class RLMConfig:
     depth_citation_threshold: int = 15  # Stop early if enough citations
     max_iterations: int = 20  # Maximum investigation loop iterations
     enable_matter_model: bool = True  # When True, persist facts to SQLite matter model
-    synthesis_pro_timeout: float = 180.0  # Final synthesis PRO call timeout.
-    synthesis_fallback_timeout: float = 120.0  # FLASH fallback timeout after PRO timeout.
+    synthesis_pro_timeout: float = 300.0  # Final synthesis PRO call timeout.
+    synthesis_fallback_timeout: float = 240.0  # FLASH fallback timeout after PRO timeout.
     # MVP.6: prompt-budget guardrails. Immutable so tests that swap it
     # via dataclasses.replace get fresh caps without side effects.
     packet_budget: PacketBudget = field(default_factory=PacketBudget)
@@ -5933,9 +5933,10 @@ class RLMEngine:
             fallback_prompt = (
                 prompt
                 + "\n\nFALLBACK SYNTHESIS INSTRUCTION:\n"
-                + "The PRO synthesis call timed out. Produce the best concise "
-                + "source-grounded answer from the provided context. Do not add "
-                + "new investigation claims; preserve any uncertainty and gaps."
+                + "The initial synthesis call timed out. Produce a comprehensive "
+                + "source-grounded answer from the provided context addressing "
+                + "EVERY finding. Do not add new investigation claims. "
+                + "Maintain the ZERO COMPRESSION POLICY — list all findings individually."
             )
             state.llm_calls_required += 1
             return await self.client.complete(
