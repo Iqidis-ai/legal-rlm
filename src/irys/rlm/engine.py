@@ -2416,6 +2416,50 @@ class RLMEngine:
                 "review",
                 "human_review_required",
             )
+        # --- Obligation ledger MVP validators (Codex round 2) ---
+        # These fire based on task_spec to catch common benchmark failures:
+        # missing issue coverage, missing risk ratings, thin comparisons.
+        task_type = str(task_spec.get("task_type") or "") if task_spec else ""
+        if task_type == "document_comparison":
+            add(
+                "Document comparison must identify at least 10 specific deviations "
+                "with original vs. changed values.",
+                "comparison_coverage",
+                "comparison_min_deviations",
+            )
+        if task_type in {
+            "document_comparison", "multi_document_synthesis",
+            "quantitative_reconciliation", "portfolio_review",
+        }:
+            add(
+                "Every material issue must have a Red/Yellow/Green risk rating.",
+                "risk_rating",
+                "risk_rating_per_issue",
+            )
+        if task_spec and task_spec.get("required_evidence"):
+            add(
+                "Every planned issue or provision category must have a cited finding "
+                "or explicit missingness label.",
+                "issue_coverage",
+                "issue_coverage_matrix",
+            )
+        if task_type == "quantitative_reconciliation":
+            add(
+                "Every required numeric operand must have value, source, and "
+                "calculation status.",
+                "numeric_coverage",
+                "numeric_operand_coverage",
+            )
+        # Target document coverage: always check if orientation produced target docs
+        target_docs = list(output_contract.get("target_documents") or [])
+        if target_docs:
+            add(
+                f"Every target document must be addressed: "
+                f"{', '.join(str(d) for d in target_docs[:6])}.",
+                "target_document_coverage",
+                "target_document_coverage",
+            )
+
         if not obligations:
             add(
                 "Output must satisfy the active route contract.",
@@ -4330,6 +4374,128 @@ class RLMEngine:
                 },
             )
 
+        if validator == "comparison_min_deviations":
+            import re
+            lowered = output_text.lower()
+            table_rows = len(re.findall(r"^\s*\|.*\|.*\|", output_text, re.MULTILINE))
+            bullet_deviations = len(re.findall(
+                r"(?:original|changed|current|proposed|deviation|difference)",
+                lowered,
+            ))
+            deviation_count = max(table_rows, bullet_deviations // 2)
+            passed = deviation_count >= 10
+            return ValidationResult(
+                validator=validator,
+                passed=passed,
+                score=min(1.0, deviation_count / 10.0),
+                blocking_issues=[] if passed else [
+                    f"document comparison found only ~{deviation_count} deviations "
+                    f"(minimum 10 required)"
+                ],
+                obligation_status={
+                    oid: passed for oid in matching_obligation_ids
+                },
+            )
+
+        if validator == "risk_rating_per_issue":
+            import re
+            lowered = output_text.lower()
+            ratings_found = len(re.findall(
+                r"\b(red|yellow|green|high\s*risk|medium\s*risk|low\s*risk)\b",
+                lowered,
+            ))
+            issues_mentioned = len(re.findall(r"^#{1,3}\s+", output_text, re.MULTILINE))
+            passed = ratings_found >= max(1, issues_mentioned // 2)
+            return ValidationResult(
+                validator=validator,
+                passed=passed,
+                score=min(1.0, ratings_found / max(1, issues_mentioned)) if issues_mentioned else 0.5,
+                blocking_issues=[] if passed else [
+                    f"found {ratings_found} risk ratings for ~{issues_mentioned} "
+                    f"issue sections"
+                ],
+                obligation_status={
+                    oid: passed for oid in matching_obligation_ids
+                },
+            )
+
+        if validator == "issue_coverage_matrix":
+            contract = getattr(state, "execution_contract", None)
+            output_contract = dict(getattr(contract, "output_contract", {}) or {})
+            task_spec = dict(output_contract.get("task_spec") or {})
+            required = task_spec.get("required_evidence") or []
+            lowered = output_text.lower()
+            covered = sum(
+                1 for item in required
+                if str(item).lower().strip() in lowered
+                or any(word in lowered for word in str(item).lower().split()[:3])
+            )
+            total = max(1, len(required))
+            passed = covered >= total * 0.7
+            return ValidationResult(
+                validator=validator,
+                passed=passed,
+                score=covered / total,
+                blocking_issues=[] if passed else [
+                    f"issue coverage: {covered}/{total} required evidence items addressed"
+                ],
+                obligation_status={
+                    oid: passed for oid in matching_obligation_ids
+                },
+            )
+
+        if validator == "numeric_operand_coverage":
+            import re
+            numbers = re.findall(r"\$[\d,]+(?:\.\d+)?|\d+(?:\.\d+)?%|\d{1,3}(?:,\d{3})+", output_text)
+            calculations = len(re.findall(
+                r"(?:=|equals|total|sum|difference|ratio|margin|spread|basis points|bps)",
+                output_text.lower(),
+            ))
+            passed = len(numbers) >= 3 and calculations >= 1
+            return ValidationResult(
+                validator=validator,
+                passed=passed,
+                score=min(1.0, (len(numbers) + calculations) / 10.0),
+                blocking_issues=[] if passed else [
+                    f"quantitative task has {len(numbers)} numbers and "
+                    f"{calculations} calculation markers (need more)"
+                ],
+                obligation_status={
+                    oid: passed for oid in matching_obligation_ids
+                },
+            )
+
+        if validator == "target_document_coverage":
+            contract = getattr(state, "execution_contract", None)
+            output_contract = dict(getattr(contract, "output_contract", {}) or {})
+            target_docs = list(output_contract.get("target_documents") or [])
+            lowered = output_text.lower()
+            covered = 0
+            missing = []
+            for doc in target_docs:
+                doc_lower = str(doc).lower().strip()
+                name_parts = doc_lower.replace("_", " ").replace("-", " ").split()
+                if doc_lower in lowered or any(
+                    part in lowered for part in name_parts if len(part) > 4
+                ):
+                    covered += 1
+                else:
+                    missing.append(str(doc))
+            total = max(1, len(target_docs))
+            passed = covered >= total * 0.8
+            return ValidationResult(
+                validator=validator,
+                passed=passed,
+                score=covered / total,
+                blocking_issues=[] if passed else [
+                    f"target document coverage: {covered}/{total} addressed, "
+                    f"missing: {', '.join(missing[:5])}"
+                ],
+                obligation_status={
+                    oid: passed for oid in matching_obligation_ids
+                },
+            )
+
         return ValidationResult(
             validator=validator,
             passed=bool(output_text.strip()),
@@ -4376,6 +4542,8 @@ class RLMEngine:
             "gap_disclosure",
             "draft_template",
             "assumption_labeling",
+            "comparison_min_deviations",
+            "risk_rating_per_issue",
         }
         return [
             result
@@ -5337,6 +5505,19 @@ class RLMEngine:
             f"Hypothesis: {state.hypothesis}",
             details=plan,
         )
+
+        # Inject orientation target documents into output_contract for validators
+        _orient_target_docs = plan.get("target_documents") or []
+        if _orient_target_docs:
+            _ec = getattr(state, "execution_contract", None)
+            if _ec is not None:
+                _oc = getattr(_ec, "output_contract", None) or {}
+                if isinstance(_oc, dict) and "target_documents" not in _oc:
+                    _oc["target_documents"] = [
+                        str(d).strip() for d in _orient_target_docs
+                        if isinstance(d, str) and d.strip()
+                    ][:10]
+                    _ec.output_contract = _oc
 
         # Log orientation summary to reasoning ledger (SO-3 user visibility)
         adapter = getattr(state, "_matter_adapter", None)
