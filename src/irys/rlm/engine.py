@@ -233,7 +233,7 @@ class RLMConfig:
     max_leads_per_level: int = 12
     max_documents_per_search: int = 10
     min_lead_priority: float = 0.3
-    excerpt_chars: int = 8000
+    excerpt_chars: int = 32000
     parallel_reads: int = 5
     max_initial_deep_read_documents: int = 20
     checkpoint_dir: Optional[str] = None  # Directory for checkpoints
