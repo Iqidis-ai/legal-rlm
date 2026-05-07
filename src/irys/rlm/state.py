@@ -1380,9 +1380,9 @@ class InvestigationState:
         return "\n".join(lines) if lines else "No entities extracted"
 
     def get_pending_leads(self) -> list[Lead]:
-        """Get uninvestigated leads sorted by priority."""
+        """Get uninvestigated leads sorted by priority with deterministic tie-breaking."""
         pending = [l for l in self.leads if not l.investigated]
-        return sorted(pending, key=lambda l: l.priority, reverse=True)
+        return sorted(pending, key=lambda l: (-l.priority, l.search_term or "", l.id))
 
     def reprioritize_leads(self):
         """Reprioritize leads based on current investigation context."""
