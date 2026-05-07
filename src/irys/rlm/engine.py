@@ -1818,7 +1818,11 @@ Your analysis MUST include ALL of the following sections when applicable to the 
 
 6. **Next Steps** — Prioritized action items with suggested sequence.
 
-COMPLETENESS REQUIREMENT: For document comparison tasks, you must identify EVERY specific deviation — aim for 20-30+ distinct provisions. If a PROVISION COMPARISON DATA table is provided in the evidence, you MUST address EVERY row in that table as a separate deviation finding. Do NOT summarize or group multiple provisions — each gets its own section with original value, changed value, risk rating, dollar impact, and recommendation. If you have identified fewer than 15 deviations, systematically re-examine EVERY major section of both documents: pricing, fees, margin grids, commitment fees, financial covenants (each separately), EBITDA add-backs, synergy caps, acquisition baskets, restricted payments, ECF sweep, events of default, change of control, assignment, MFN/anti-layering, prepayment, reinvestment, MAE, reporting, representations, conditions precedent, negative covenants, and cure rights.
+COMPLETENESS REQUIREMENT — ZERO COMPRESSION POLICY: Your output must address EVERY SINGLE finding in the evidence. Do NOT group, summarize, or compress multiple findings into one entry. Each distinct fact, discrepancy, deviation, entity, contract, or issue gets its own numbered entry with full detail.
+- For document comparison tasks: identify EVERY specific deviation — aim for 20-30+ distinct provisions. If a PROVISION COMPARISON DATA table is provided, address EVERY row.
+- For discrepancy memoranda / disclosure comparison tasks: identify EVERY discrepancy between what was disclosed and what was found — aim for 15-40+ distinct findings. Include: undisclosed subsidiaries, undisclosed litigation, undisclosed liens, expired insurance/certifications, tax issues, employee/labor issues, contract compliance gaps, financial misstatements, regulatory gaps, intercompany transactions, and environmental issues. Each gets its own row in the discrepancy table.
+- For extraction/review tasks: extract EVERY relevant provision from EVERY document — aim for comprehensive coverage.
+- SELF-CHECK: Before finalizing, count your findings. If you have fewer than 10 distinct items, you are almost certainly under-reporting. Go back through ALL the evidence and look for items you missed. Each bullet point in the evidence is a potential separate finding.
 
 ANALYTICAL FRAMEWORK COMPLETENESS: When producing a risk assessment, strategy memo, or analytical memorandum, you MUST address ALL standard analytical frameworks applicable to the subject matter. This means:
 - Identify and apply the governing legal framework (statute, regulation, or guideline) by name and citation
@@ -1875,6 +1879,8 @@ Before finalizing, check:
 - Did you format the output as the SPECIFIC deliverable type requested (e.g., formal commitments proposal, gap memorandum, board memo) rather than defaulting to an analysis memo?
 - Did you include EVERY specific name, number, facility, team size, and count from the evidence — not generalizations?
 - If the task requires tables/spreadsheets/workbooks, did you include properly formatted markdown tables with complete data?
+- COUNT YOUR FINDINGS: How many distinct issues/deviations/discrepancies did you report? If fewer than 10, you are almost certainly under-reporting — go back through the evidence systematically.
+- For EACH bullet point or fact in the evidence context below, did you address it in the output? If not, add it now.
 
 Original Query: {query}
 
