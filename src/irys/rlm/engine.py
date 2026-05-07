@@ -2631,7 +2631,8 @@ class RLMEngine:
             "redline", "deviation", "counterparty", "review",
             "assess", "assessment", "evaluate", "draft",
             "hsr", "antitrust", "merger", "acquisition",
-            "credit facility", "term sheet", "loan agreement",
+            "credit facility", "credit agreement", "term sheet",
+            "loan agreement", "commitment letter",
             "risk", "strategy", "compliance", "regulatory",
         )
         return sum(1 for s in extraction_signals if s in q) >= 1
@@ -2648,7 +2649,8 @@ class RLMEngine:
             "analyze", "analyse", "compare", "comparison", "markup",
             "redline", "deviation", "counterparty", "assess", "evaluate",
             "draft", "strategy", "review", "antitrust", "hsr", "merger",
-            "credit facility", "term sheet",
+            "credit facility", "credit agreement", "term sheet",
+            "loan agreement", "commitment letter",
         )
         is_extraction = any(signal in q for signal in extraction_signals)
         is_analysis = any(signal in q for signal in analysis_signals)
