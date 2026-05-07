@@ -2877,6 +2877,410 @@ class RLMEngine:
             return []
         return [f"[DERIVED] {line}" for line in self._build_operand_lock_lines(corpus)]
 
+    # ------------------------------------------------------------------
+    # Structural cross-document linking (graph-backed operand resolution)
+    # ------------------------------------------------------------------
+
+    _OPERAND_ROLE_PATTERNS: "list[tuple[str, tuple[str, ...]]]" = [
+        # Company-level TTM revenue (denominator) — must match BEFORE counterparty
+        ("company_total_ttm_revenue", ("total", "ttm", "revenue")),
+        ("company_total_ttm_revenue", ("company", "ttm", "revenue")),
+        ("company_total_ttm_revenue", ("company", "trailing", "revenue")),
+        ("company_total_ttm_revenue", ("consolidated", "revenue")),
+        ("company_total_ttm_revenue", ("total", "trailing", "revenue")),
+        # Counterparty-specific TTM revenue (numerator)
+        ("actual_counterparty_ttm_revenue", ("ttm", "attributable")),
+        ("actual_counterparty_ttm_revenue", ("trailing", "revenue", "attributable")),
+        ("actual_counterparty_ttm_revenue", ("revenue", "attributable")),
+        ("actual_counterparty_ttm_revenue", ("ttm revenue",)),
+        # Minimum purchase (the wrong numerator for revenue exposure)
+        ("minimum_purchase_commitment", ("minimum", "purchase")),
+        ("minimum_purchase_commitment", ("minimum", "commitment")),
+        ("minimum_purchase_commitment", ("annual", "commitment")),
+        # Credit facility operands
+        ("drawn_outstanding", ("drawn",)),
+        ("drawn_outstanding", ("outstanding",)),
+        ("facility_commitment", ("facility", "commitment")),
+        ("facility_commitment", ("aggregate", "commitment")),
+        ("facility_commitment", ("revolving", "commitment")),
+        # Equity
+        ("unvested_rsu_count", ("unvested", "rsu")),
+        ("unvested_rsu_count", ("unvested", "restricted")),
+        ("per_share_price", ("per-share",)),
+        ("per_share_price", ("per share", "price")),
+        ("per_share_price", ("share price",)),
+        # Buy-out
+        ("buyout_multiple", ("ebitda", "multiple")),
+        ("buyout_multiple", ("buy-out", "multiple")),
+        # Thresholds and limits
+        ("threshold_amount", ("threshold",)),
+        ("coverage_limit", ("coverage", "limit")),
+        ("coverage_limit", ("aggregate limit",)),
+    ]
+
+    @staticmethod
+    def _classify_operand_role(text: str) -> str:
+        """Classify a financial operand string into a semantic role."""
+        t = (text or "").lower()
+        for role, keywords in RLMEngine._OPERAND_ROLE_PATTERNS:
+            if all(k in t for k in keywords):
+                return role
+        return "unclassified"
+
+    @staticmethod
+    def _extract_operand_value_millions(text: str) -> "Optional[float]":
+        """Extract the primary numeric value from an operand string (in millions)."""
+        amounts = RLMEngine._money_amounts_in_millions(text)
+        return amounts[0] if amounts else None
+
+    @staticmethod
+    def _extract_operand_subject(text: str, source_filename: str) -> str:
+        """Extract the subject entity/contract label from an operand string."""
+        t = text or ""
+        for marker in ("attributable to ", "for ", "from "):
+            idx = t.lower().find(marker)
+            if idx >= 0:
+                after = t[idx + len(marker):]
+                label = after.split(":")[0].split(",")[0].split("(")[0].strip()
+                if label and len(label) > 2:
+                    return label
+        return source_filename
+
+    def _persist_contract_evidence(self, card: dict, filename: str) -> None:
+        """Persist contract_card and its operands as typed evidence records.
+
+        Materializes the contract_card into the graph so downstream
+        deterministic passes can resolve cross-document operand links
+        without relying on prompt text alone.
+        """
+        if self._matter_model is None:
+            return
+        te = self._matter_model.typed_evidence
+
+        contract_name = card.get("contract_name") or filename
+        counterparty = card.get("counterparty") or ""
+        card_key = f"card:{filename}"
+        te.upsert(
+            "contract_card", card_key,
+            payload={
+                "contract_name": contract_name,
+                "counterparty": counterparty,
+                "filename": filename,
+                "risk_rating": card.get("risk_rating_candidate") or "",
+            },
+            label=contract_name,
+            document_id=filename,
+            confidence=0.9,
+        )
+
+        fin_operands = card.get("financial_operands") or []
+        if isinstance(fin_operands, list):
+            for i, op_text in enumerate(fin_operands):
+                if not isinstance(op_text, str) or not op_text.strip():
+                    continue
+                role = self._classify_operand_role(op_text)
+                value = self._extract_operand_value_millions(op_text)
+                subject = self._extract_operand_subject(op_text, filename)
+                op_key = f"op:{filename}:{i}"
+                te.upsert(
+                    "calculation_operand", op_key,
+                    payload={
+                        "operand_role": role,
+                        "value_millions": value,
+                        "subject_label": subject,
+                        "raw_text": op_text[:500],
+                        "source_document": filename,
+                        "source_priority": "body_stated",
+                    },
+                    label=f"{role}:{subject}",
+                    document_id=filename,
+                    confidence=0.85,
+                )
+
+        carve_outs = card.get("carve_outs") or []
+        if isinstance(carve_outs, list):
+            for i, co_text in enumerate(carve_outs):
+                if not isinstance(co_text, str) or not co_text.strip():
+                    continue
+                co_key = f"prov:carve_out:{filename}:{i}"
+                te.upsert(
+                    "contract_provision", co_key,
+                    payload={
+                        "provision_kind": "carve_out",
+                        "raw_text": co_text[:500],
+                        "contract_name": contract_name,
+                        "source_document": filename,
+                    },
+                    label=f"carve_out:{contract_name}",
+                    document_id=filename,
+                    confidence=0.85,
+                )
+
+    def _resolve_operand_graph_calculations(
+        self, facts: "Optional[list[str]]" = None,
+    ) -> "list[str]":
+        """Deterministic cross-document calculation pass using graph-stored operands.
+
+        Queries the typed evidence store for contract_cards and
+        calculation_operands, resolves schedule-disclosed operands to
+        contracts, and computes revenue exposure / credit exposure
+        without relying on the LLM to pick the correct operands.
+
+        Also scans accumulated facts text for schedule-disclosed revenue
+        patterns as a fallback when structured operands are incomplete.
+        """
+        if self._matter_model is None:
+            return []
+        te = self._matter_model.typed_evidence
+        results: list[str] = []
+
+        # Load all contract cards and operands from the graph
+        contract_cards = te.list_by_kind("contract_card", limit=50)
+        all_operands = te.list_by_kind("calculation_operand", limit=200)
+
+        if not contract_cards:
+            return []
+
+        # Build contract registry: name/counterparty → card
+        contract_registry: "dict[str, dict]" = {}
+        for cc in contract_cards:
+            payload = cc.get("payload_json")
+            if isinstance(payload, str):
+                import json as _json_mod
+                try:
+                    payload = _json_mod.loads(payload)
+                except Exception:
+                    continue
+            if not isinstance(payload, dict):
+                continue
+            cname = (payload.get("contract_name") or "").lower().strip()
+            cparty = (payload.get("counterparty") or "").lower().strip()
+            fname = (payload.get("filename") or "").lower().strip()
+            entry = {"payload": payload, "record": cc}
+            if cname:
+                contract_registry[cname] = entry
+            if cparty:
+                contract_registry[cparty] = entry
+            if fname:
+                contract_registry[fname] = entry
+
+        # Parse all operands
+        parsed_operands: "list[dict]" = []
+        for op in all_operands:
+            payload = op.get("payload_json")
+            if isinstance(payload, str):
+                import json as _json_mod
+                try:
+                    payload = _json_mod.loads(payload)
+                except Exception:
+                    continue
+            if not isinstance(payload, dict):
+                continue
+            parsed_operands.append(payload)
+
+        # Also check the quant store for schedule-disclosed revenue operands
+        # that might not be in financial_operands but were in numeric_facts
+        try:
+            amount_quants = self._matter_model.quant.get_amounts(min_value=1.0)
+            for qf in amount_quants:
+                raw = (qf.get("raw_text") or "").lower()
+                subj_id = qf.get("subject_id") or ""
+                subj_type = (qf.get("subject_type") or "").lower()
+                if ("ttm" in raw or "trailing" in raw or "attributable" in raw) and "revenue" in raw:
+                    value_m = (qf.get("amount_value") or 0) / 1_000_000.0 if (qf.get("amount_value") or 0) > 1000 else qf.get("amount_value")
+                    if value_m and value_m > 0.5:
+                        parsed_operands.append({
+                            "operand_role": "actual_counterparty_ttm_revenue",
+                            "value_millions": value_m,
+                            "subject_label": subj_id or self._extract_operand_subject(qf.get("raw_text", ""), ""),
+                            "raw_text": qf.get("raw_text", "")[:200],
+                            "source_document": "",
+                            "source_priority": "schedule_disclosed",
+                        })
+                # Also catch revenue quants with entity-specific subject_id
+                elif subj_type == "revenue" and subj_id and subj_id.lower() not in ("company", "total", "consolidated", ""):
+                    amt = qf.get("amount_value") or 0
+                    val_m = amt / 1_000_000.0 if amt > 1000 else amt
+                    if val_m > 0.5:
+                        parsed_operands.append({
+                            "operand_role": "actual_counterparty_ttm_revenue",
+                            "value_millions": val_m,
+                            "subject_label": subj_id,
+                            "raw_text": qf.get("raw_text", "")[:200],
+                            "source_document": "",
+                            "source_priority": "body_stated",
+                        })
+        except Exception:
+            pass
+
+        # Fallback: scan accumulated facts text for schedule-disclosed revenue
+        # patterns. The LLM's numeric_fact metadata is unreliable, but the
+        # fact text itself usually contains recognizable patterns.
+        if facts:
+            _rev_pattern = _re_engine.compile(
+                r"(?:schedule|disclosure|attributable|ttm|trailing)"
+                r".*?(?:revenue|sales).*?"
+                r"\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*"
+                r"(billion|bn|million|mm|m|thousand|k)?",
+                _re_engine.IGNORECASE,
+            )
+            _subj_pattern = _re_engine.compile(
+                r"(?:attributable to|for|from)\s+(?:the\s+)?([A-Z][A-Za-z\s]+?)(?:\s+(?:MSA|agreement|supply|contract|msa|Agreement)|\s*[,;:\(]|\s*$)",
+            )
+            for fact in facts:
+                fl = fact.lower()
+                if not ("schedule" in fl or "attributable" in fl or "ttm" in fl or "trailing" in fl):
+                    continue
+                if "revenue" not in fl and "sales" not in fl:
+                    continue
+                amounts = self._money_amounts_in_millions(fact)
+                if not amounts:
+                    continue
+                subj_match = _subj_pattern.search(fact)
+                subj_label = subj_match.group(1).strip() if subj_match else ""
+                if not subj_label or subj_label.lower() in ("company", "total", "consolidated", "the"):
+                    continue
+                for amt in amounts[:1]:
+                    if amt > 0.5:
+                        parsed_operands.append({
+                            "operand_role": "actual_counterparty_ttm_revenue",
+                            "value_millions": amt,
+                            "subject_label": subj_label.lower(),
+                            "raw_text": fact[:200],
+                            "source_document": "",
+                            "source_priority": "schedule_disclosed",
+                        })
+
+        # Find company total TTM revenue (denominator)
+        company_ttm: "Optional[float]" = None
+        for op in parsed_operands:
+            if op.get("operand_role") == "company_total_ttm_revenue":
+                v = op.get("value_millions")
+                if v and v > 0:
+                    company_ttm = v
+                    break
+
+        # If not found in operands, try quant store
+        if company_ttm is None:
+            try:
+                for qf in self._matter_model.quant.get_amounts(min_value=100.0):
+                    raw = (qf.get("raw_text") or "").lower()
+                    subj = (qf.get("subject_type") or "").lower()
+                    if ("total" in raw or "company" in raw or "consolidated" in raw) and "revenue" in raw:
+                        val = qf.get("amount_value") or 0
+                        val_m = val / 1_000_000.0 if val > 1000 else val
+                        if val_m > 50:
+                            company_ttm = val_m
+                            break
+            except Exception:
+                pass
+        # Facts-text fallback for company TTM
+        if company_ttm is None and facts:
+            _co_ttm_pattern = _re_engine.compile(
+                r"(?:company|total|consolidated|aggregate)\s+(?:ttm|trailing|annual)?\s*"
+                r"(?:twelve[- ]month\s+)?revenue.*?"
+                r"\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*"
+                r"(billion|bn|million|mm|m)?",
+                _re_engine.IGNORECASE,
+            )
+            for fact in facts:
+                fl = fact.lower()
+                if "revenue" not in fl:
+                    continue
+                if not any(k in fl for k in ("total", "company", "consolidated", "aggregate")):
+                    continue
+                m = _co_ttm_pattern.search(fact)
+                if m:
+                    amounts = self._money_amounts_in_millions(fact)
+                    if amounts and amounts[0] > 50:
+                        company_ttm = amounts[0]
+                        break
+
+        # Compute revenue exposure for each counterparty
+        # Group operands by subject_label and pick preferred operand per subject.
+        # ONLY emit a calculation when we have actual_counterparty_ttm_revenue —
+        # minimum_purchase_commitment alone is insufficient for accurate revenue
+        # exposure and would produce wrong results (the LLM does better without
+        # a wrong deterministic answer competing with correct free-form analysis).
+        subject_operands: "dict[str, list[dict]]" = {}
+        for op in parsed_operands:
+            role = op.get("operand_role", "")
+            if role in ("actual_counterparty_ttm_revenue", "minimum_purchase_commitment"):
+                subject = (op.get("subject_label") or "").lower().strip()
+                if subject and subject not in ("", "null", "company", "total"):
+                    subject_operands.setdefault(subject, []).append(op)
+
+        for subject, ops in subject_operands.items():
+            if not company_ttm:
+                break
+            # Only proceed if we have a high-confidence actual TTM operand
+            ttm_ops = [o for o in ops if o.get("operand_role") == "actual_counterparty_ttm_revenue"]
+            if not ttm_ops:
+                continue
+            best = ttm_ops[0]
+            value = best.get("value_millions")
+            if not value or value <= 0 or company_ttm <= 0:
+                continue
+            # Sanity: numerator must be < denominator for revenue exposure
+            if value >= company_ttm:
+                continue
+            pct = value / company_ttm * 100.0
+            # Check if a minimum_commitment also exists for comparison
+            min_ops = [o for o in ops if o.get("operand_role") == "minimum_purchase_commitment"]
+            rejected_note = ""
+            if min_ops and min_ops[0].get("value_millions"):
+                rej_val = min_ops[0].get("value_millions")
+                rejected_note = (
+                    f" (used actual TTM {self._format_millions(value)}, "
+                    f"NOT minimum commitment {self._format_millions(rej_val)})"
+                )
+            matched_contract = ""
+            for reg_key, reg_entry in contract_registry.items():
+                if subject in reg_key or reg_key in subject:
+                    matched_contract = reg_entry["payload"].get("contract_name", "")
+                    break
+            contract_label = matched_contract or subject.title()
+            results.append(
+                f"[GRAPH-CALC] Revenue exposure for {contract_label}: "
+                f"{self._format_millions(value)} / {self._format_millions(company_ttm)} "
+                f"= {pct:.1f}%{rejected_note}"
+            )
+            try:
+                calc_key = f"calc:revenue_exposure:{subject}"
+                te.upsert(
+                    "calculation_result", calc_key,
+                    payload={
+                        "calculation_type": "revenue_exposure_percent",
+                        "result_value": round(pct, 2),
+                        "numerator_value": value,
+                        "denominator_value": company_ttm,
+                        "numerator_role": best.get("operand_role"),
+                        "subject_label": subject,
+                        "contract_name": contract_label,
+                    },
+                    label=f"revenue_exposure:{subject}",
+                    confidence=0.95,
+                )
+            except Exception:
+                pass
+
+        # Compute credit exposure (drawn vs commitment)
+        drawn_ops = [o for o in parsed_operands if o.get("operand_role") == "drawn_outstanding"]
+        commit_ops = [o for o in parsed_operands if o.get("operand_role") == "facility_commitment"]
+        if drawn_ops and commit_ops:
+            drawn_val = drawn_ops[0].get("value_millions")
+            commit_val = commit_ops[0].get("value_millions")
+            if drawn_val and commit_val and drawn_val != commit_val:
+                results.append(
+                    f"[GRAPH-CALC] Credit facility exposure: drawn/outstanding "
+                    f"{self._format_millions(drawn_val)} on "
+                    f"{self._format_millions(commit_val)} commitment. "
+                    f"Mandatory prepayment exposure is {self._format_millions(drawn_val)}, "
+                    f"not the {self._format_millions(commit_val)} facility maximum."
+                )
+
+        return results
+
     def _build_material_contract_coverage_section(
         self, state: "InvestigationState",
     ) -> str:
@@ -6876,6 +7280,8 @@ Return:
                     )
                     for _r_line in _reinforce_lines:
                         facts_to_add.append((_r_line, "supports", None, None))
+                    # Persist contract card + operands to graph for structural linking
+                    self._persist_contract_evidence(_cc, doc.filename)
 
                 # SO-2 validation: if any facts lack SPO triples, retry to recover them.
                 # Threshold >= 1: fire even for single facts; FLASH retry is cheap.
@@ -7040,6 +7446,61 @@ Return:
                         _adp.record_quants_batch(
                             _quant_specs, document_id=doc.filename
                         )
+                    # Create calculation_operand typed evidence for revenue-related
+                    # numeric facts so the graph resolver can link them to contracts.
+                    if self._matter_model is not None and self._is_extraction_task(state.query):
+                        _te = self._matter_model.typed_evidence
+                        for _qi, _qs in enumerate(_quant_specs):
+                            _q_raw = (_qs.get("raw_text") or "").lower()
+                            _q_val = _qs.get("amount_value")
+                            _q_subj_type = (_qs.get("subject_type") or "").lower()
+                            _q_subj_id = _qs.get("subject_id") or ""
+                            if not _q_val or _q_val <= 0:
+                                continue
+                            # Classify via keyword patterns first
+                            _op_role = self._classify_operand_role(_q_raw)
+                            # Metadata-aware fallback: if subject_type is revenue
+                            # with a specific entity subject_id, classify by context
+                            if _op_role == "unclassified" and _q_subj_type == "revenue":
+                                _id_lower = _q_subj_id.lower()
+                                if _id_lower and _id_lower not in ("company", "total", "consolidated", ""):
+                                    _op_role = "actual_counterparty_ttm_revenue"
+                                elif _id_lower in ("company", "total", "consolidated"):
+                                    _op_role = "company_total_ttm_revenue"
+                            # Also classify schedule-sourced revenue figures
+                            if _op_role == "unclassified" and "revenue" in _q_raw:
+                                if "schedule" in _q_raw or "disclosure" in _q_raw:
+                                    if _q_subj_id and _q_subj_id.lower() not in ("company", "total", ""):
+                                        _op_role = "actual_counterparty_ttm_revenue"
+                            if _op_role in ("actual_counterparty_ttm_revenue",
+                                            "company_total_ttm_revenue",
+                                            "drawn_outstanding"):
+                                _val_m = _q_val / 1_000_000.0 if _q_val > 1000 else _q_val
+                                if _val_m > 0.5:
+                                    _subj_label = _q_subj_id or self._extract_operand_subject(_q_raw, doc.filename)
+                                    _src_priority = (
+                                        "schedule_disclosed"
+                                        if "schedule" in _q_raw or "attributable" in _q_raw or "disclosure" in _q_raw
+                                        else "body_stated"
+                                    )
+                                    try:
+                                        _te.upsert(
+                                            "calculation_operand",
+                                            f"op:nf:{doc.filename}:{_qi}",
+                                            payload={
+                                                "operand_role": _op_role,
+                                                "value_millions": _val_m,
+                                                "subject_label": _subj_label,
+                                                "raw_text": (_qs.get("raw_text") or "")[:300],
+                                                "source_document": doc.filename,
+                                                "source_priority": _src_priority,
+                                            },
+                                            label=f"{_op_role}:{_subj_label}",
+                                            document_id=doc.filename,
+                                            confidence=0.85,
+                                        )
+                                    except Exception:
+                                        pass
 
             # Extract and store entities
             if analysis.get("entities"):
@@ -7377,6 +7838,12 @@ Return:
         # Cross-document analysis pass: for extraction tasks, derive calculations,
         # flag inconsistencies, and identify missing provisions BEFORE synthesis.
         if self._is_extraction_task(state.query) and len(facts) > 20:
+            # Graph-derived calculations: deterministic operand resolution
+            # runs BEFORE the LLM pass so correct operands are already chosen.
+            graph_calcs = self._resolve_operand_graph_calculations(facts=facts)
+            if graph_calcs:
+                facts.extend(graph_calcs)
+
             _quant_ctx = self._build_quant_summary() if self._matter_model else ""
             derived_facts = await self._cross_document_analysis(state.query, facts, _quant_ctx)
             if derived_facts:

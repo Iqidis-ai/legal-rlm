@@ -5138,3 +5138,228 @@ def test_build_output_dependency_manifest_records_and_returns_hash():
     full = model.memory_broker.get_dependency_manifest(mh)
     assert full is not None
     assert full.purpose == "test_synthesis"
+
+
+# ---------------------------------------------------------------------------
+# Structural cross-document linking tests
+# ---------------------------------------------------------------------------
+
+def test_classify_operand_role_identifies_ttm_revenue():
+    """Operand role classifier should distinguish TTM revenue from minimum commitments."""
+    assert RLMEngine._classify_operand_role(
+        "TTM revenue attributable to Northland: approximately $36.2 million"
+    ) == "actual_counterparty_ttm_revenue"
+    assert RLMEngine._classify_operand_role(
+        "trailing twelve month revenue attributable to this agreement: $21.9M"
+    ) == "actual_counterparty_ttm_revenue"
+    assert RLMEngine._classify_operand_role(
+        "Minimum annual purchase commitment: $30 million"
+    ) == "minimum_purchase_commitment"
+    assert RLMEngine._classify_operand_role(
+        "Company total TTM revenue: $341.6 million"
+    ) == "company_total_ttm_revenue"
+    assert RLMEngine._classify_operand_role(
+        "$85M drawn on revolving facility"
+    ) == "drawn_outstanding"
+    assert RLMEngine._classify_operand_role(
+        "Aggregate revolving commitment: $150 million"
+    ) == "facility_commitment"
+
+
+def test_extract_operand_value_millions():
+    """Should extract numeric values normalized to millions."""
+    assert RLMEngine._extract_operand_value_millions(
+        "approximately $36.2 million TTM revenue"
+    ) == pytest.approx(36.2, rel=0.01)
+    assert RLMEngine._extract_operand_value_millions(
+        "$150 million commitment"
+    ) == pytest.approx(150.0, rel=0.01)
+    assert RLMEngine._extract_operand_value_millions(
+        "$42,500,000 outstanding"
+    ) == pytest.approx(42.5, rel=0.01)
+
+
+def test_extract_operand_subject():
+    """Should extract the subject entity from operand text."""
+    subj = RLMEngine._extract_operand_subject(
+        "TTM revenue attributable to Northland MSA: $36.2M", "credit-agreement.docx"
+    )
+    assert "northland" in subj.lower()
+
+    subj2 = RLMEngine._extract_operand_subject(
+        "Revenue from PacWest supply: $21.9M", "credit-agreement.docx"
+    )
+    assert "pacwest" in subj2.lower()
+
+
+def test_persist_contract_evidence_writes_typed_records(model):
+    """Contract card persistence should create typed evidence records in graph."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    card = {
+        "contract_name": "Northland Master Services Agreement",
+        "counterparty": "Northland LLC",
+        "financial_operands": [
+            "Minimum annual purchase commitment: $30 million",
+            "TTM revenue attributable to this agreement: approximately $36.2 million",
+        ],
+        "carve_outs": [
+            "Carve-out: acquirer fluid control revenue exceeds $500M threshold"
+        ],
+    }
+    engine._persist_contract_evidence(card, "northland-msa.docx")
+
+    # Verify contract_card record
+    cards = model.typed_evidence.list_by_kind("contract_card")
+    assert len(cards) == 1
+    assert cards[0]["label"] == "Northland Master Services Agreement"
+
+    # Verify calculation_operand records
+    operands = model.typed_evidence.list_by_kind("calculation_operand")
+    assert len(operands) == 2
+    import json
+    roles = set()
+    for op in operands:
+        payload = json.loads(op["payload_json"]) if isinstance(op["payload_json"], str) else op["payload_json"]
+        roles.add(payload["operand_role"])
+    assert "minimum_purchase_commitment" in roles
+    assert "actual_counterparty_ttm_revenue" in roles
+
+    # Verify contract_provision record
+    provs = model.typed_evidence.list_by_kind("contract_provision")
+    assert len(provs) == 1
+
+
+def test_resolve_operand_graph_computes_revenue_exposure(model):
+    """Graph-based resolver should compute revenue exposure using preferred operands."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    te = model.typed_evidence
+
+    # Write contract card
+    te.upsert("contract_card", "card:northland-msa.docx", payload={
+        "contract_name": "Northland MSA",
+        "counterparty": "Northland LLC",
+        "filename": "northland-msa.docx",
+    }, label="Northland MSA", document_id="northland-msa.docx")
+
+    # Write operands: schedule-disclosed TTM and body minimum
+    te.upsert("calculation_operand", "op:credit-agreement.docx:schedule:0", payload={
+        "operand_role": "actual_counterparty_ttm_revenue",
+        "value_millions": 36.2,
+        "subject_label": "northland",
+        "raw_text": "TTM revenue attributable to Northland: $36.2M",
+        "source_document": "credit-agreement.docx",
+        "source_priority": "schedule_disclosed",
+    }, label="actual_counterparty_ttm_revenue:northland", document_id="credit-agreement.docx")
+
+    te.upsert("calculation_operand", "op:northland-msa.docx:0", payload={
+        "operand_role": "minimum_purchase_commitment",
+        "value_millions": 30.0,
+        "subject_label": "northland",
+        "raw_text": "Minimum annual purchase commitment: $30M",
+        "source_document": "northland-msa.docx",
+        "source_priority": "body_stated",
+    }, label="minimum_purchase_commitment:northland", document_id="northland-msa.docx")
+
+    # Write company total TTM
+    te.upsert("calculation_operand", "op:credit-agreement.docx:company_ttm", payload={
+        "operand_role": "company_total_ttm_revenue",
+        "value_millions": 341.6,
+        "subject_label": "company",
+        "raw_text": "Company consolidated TTM revenue: $341.6M",
+        "source_document": "credit-agreement.docx",
+        "source_priority": "body_stated",
+    }, label="company_total_ttm_revenue:company", document_id="credit-agreement.docx")
+
+    results = engine._resolve_operand_graph_calculations()
+
+    assert len(results) >= 1
+    # Should use $36.2M (actual TTM), not $30M (minimum commitment)
+    revenue_calc = [r for r in results if "Revenue exposure" in r and "Northland" in r]
+    assert len(revenue_calc) == 1
+    assert "$36.2M" in revenue_calc[0] or "36.2" in revenue_calc[0]
+    assert "10.6%" in revenue_calc[0] or "10.5%" in revenue_calc[0]
+    # Should note that it rejected the minimum commitment
+    assert "minimum" in revenue_calc[0].lower() or "NOT" in revenue_calc[0]
+
+
+def test_resolve_operand_graph_credit_exposure(model):
+    """Graph resolver should distinguish drawn amount from facility commitment."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    te = model.typed_evidence
+
+    te.upsert("contract_card", "card:credit-agreement.docx", payload={
+        "contract_name": "Revolving Credit Agreement",
+        "counterparty": "BigBank NA",
+        "filename": "credit-agreement.docx",
+    }, label="Credit Agreement", document_id="credit-agreement.docx")
+
+    te.upsert("calculation_operand", "op:credit.docx:drawn", payload={
+        "operand_role": "drawn_outstanding",
+        "value_millions": 85.0,
+        "subject_label": "credit facility",
+        "raw_text": "$85M outstanding on revolving facility",
+        "source_document": "credit-agreement.docx",
+        "source_priority": "body_stated",
+    }, label="drawn_outstanding:credit", document_id="credit-agreement.docx")
+
+    te.upsert("calculation_operand", "op:credit.docx:commit", payload={
+        "operand_role": "facility_commitment",
+        "value_millions": 150.0,
+        "subject_label": "credit facility",
+        "raw_text": "$150M aggregate revolving commitment",
+        "source_document": "credit-agreement.docx",
+        "source_priority": "body_stated",
+    }, label="facility_commitment:credit", document_id="credit-agreement.docx")
+
+    results = engine._resolve_operand_graph_calculations()
+
+    credit_calc = [r for r in results if "Credit facility" in r or "credit" in r.lower()]
+    assert len(credit_calc) == 1
+    assert "$85" in credit_calc[0]
+    assert "$150" in credit_calc[0]
+    assert "prepayment" in credit_calc[0].lower() or "drawn" in credit_calc[0].lower()
+
+
+def test_resolve_operand_graph_skips_minimum_only_revenue(model):
+    """When only minimum_purchase_commitment exists (no actual TTM), skip revenue calc.
+
+    Wrong deterministic answers are worse than letting the LLM derive the answer
+    from the full fact set.
+    """
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    te = model.typed_evidence
+
+    te.upsert("contract_card", "card:supply.docx", payload={
+        "contract_name": "Supply Agreement",
+        "counterparty": "SupplierCo",
+        "filename": "supply.docx",
+    }, label="Supply Agreement", document_id="supply.docx")
+
+    # Only minimum commitment, no actual TTM
+    te.upsert("calculation_operand", "op:supply.docx:0", payload={
+        "operand_role": "minimum_purchase_commitment",
+        "value_millions": 30.0,
+        "subject_label": "supplierco",
+        "raw_text": "Minimum annual purchase commitment: $30M",
+        "source_document": "supply.docx",
+        "source_priority": "body_stated",
+    }, label="minimum_purchase_commitment:supplierco", document_id="supply.docx")
+
+    te.upsert("calculation_operand", "op:credit.docx:company_ttm", payload={
+        "operand_role": "company_total_ttm_revenue",
+        "value_millions": 341.6,
+        "subject_label": "company",
+        "raw_text": "Company TTM revenue: $341.6M",
+        "source_document": "credit.docx",
+        "source_priority": "body_stated",
+    }, label="company_total_ttm_revenue:company", document_id="credit.docx")
+
+    results = engine._resolve_operand_graph_calculations()
+
+    # Should NOT produce revenue exposure — minimum commitment is the wrong operand
+    revenue_calcs = [r for r in results if "Revenue exposure" in r]
+    assert len(revenue_calcs) == 0

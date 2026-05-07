@@ -7324,6 +7324,10 @@ class TypedEvidenceStore:
         "redaction_marker": VerificationTargetKind.REDACTION_MARKER,
         "absence_status": VerificationTargetKind.ABSENCE_STATUS,
         "quant_fact": VerificationTargetKind.QUANT_FACT,
+        "contract_card": VerificationTargetKind.ARTIFACT,
+        "contract_provision": VerificationTargetKind.ARTIFACT,
+        "calculation_operand": VerificationTargetKind.QUANT_FACT,
+        "calculation_result": VerificationTargetKind.QUANT_FACT,
     }
 
     def __init__(self, db: "SQLiteMatterDB", matter_id: str) -> None:
