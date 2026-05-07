@@ -243,8 +243,8 @@ class RLMConfig:
     depth_citation_threshold: int = 15  # Stop early if enough citations
     max_iterations: int = 20  # Maximum investigation loop iterations
     enable_matter_model: bool = True  # When True, persist facts to SQLite matter model
-    synthesis_pro_timeout: float = 120.0  # Final synthesis PRO call timeout.
-    synthesis_fallback_timeout: float = 90.0  # FLASH fallback timeout after PRO timeout.
+    synthesis_pro_timeout: float = 180.0  # Final synthesis PRO call timeout.
+    synthesis_fallback_timeout: float = 120.0  # FLASH fallback timeout after PRO timeout.
     # MVP.6: prompt-budget guardrails. Immutable so tests that swap it
     # via dataclasses.replace get fresh caps without side effects.
     packet_budget: PacketBudget = field(default_factory=PacketBudget)
@@ -2320,7 +2320,7 @@ class RLMEngine:
             "review all", "each contract", "every contract",
             "change of control", "change-of-control",
         )
-        return sum(1 for s in extraction_signals if s in q) >= 2
+        return sum(1 for s in extraction_signals if s in q) >= 1
 
     def _build_extraction_instructions(self, query: str) -> str:
         """Generate extraction-task-specific synthesis instructions when query demands comprehensive extraction."""
@@ -6371,7 +6371,8 @@ Return:
                 if isinstance(_cc, dict):
                     _cc_lines = self._flatten_contract_card(_cc, doc.filename)
                     for _cc_line in _cc_lines:
-                        facts_to_add.append((_cc_line, "supports", None, None))
+                        _cc_rel = "neutral" if "ABSENT" in _cc_line or "missing" in _cc_line.lower() else "supports"
+                        facts_to_add.append((_cc_line, _cc_rel, None, None))
 
                 # SO-2 validation: if any facts lack SPO triples, retry to recover them.
                 # Threshold >= 1: fire even for single facts; FLASH retry is cheap.

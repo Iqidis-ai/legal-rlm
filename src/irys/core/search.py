@@ -52,18 +52,25 @@ DOCUMENT_PRIORITY = {
 }
 
 
+_DOC_PRIORITY_PATTERNS = {
+    doc_type: re.compile(r'(?<![a-z])' + re.escape(doc_type) + r'(?![a-z])')
+    for doc_type in DOCUMENT_PRIORITY
+}
+
+
 def get_document_priority(filename: str) -> float:
     """Get priority weight for a document based on its name/type.
 
     Additive: a filename matching multiple keywords (e.g. "Amendment to
     Employment Agreement") accumulates boosts from all matches rather
-    than returning only the first hit.
+    than returning only the first hit. Uses word-boundary matching to
+    avoid false positives (e.g. "release" matching "lease").
     """
     filename_lower = filename.lower()
     bonus = 0.0
     for doc_type, priority in DOCUMENT_PRIORITY.items():
-        if doc_type in filename_lower:
-            bonus += (priority - 1.0)  # accumulate the boost portion
+        if _DOC_PRIORITY_PATTERNS[doc_type].search(filename_lower):
+            bonus += (priority - 1.0)
 
     return 1.0 + bonus if bonus > 0.0 else 1.0
 
