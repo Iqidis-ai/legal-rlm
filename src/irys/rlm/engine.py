@@ -11371,8 +11371,8 @@ Return:
     # P0.7 coverage-driven lead planner — per-iteration and per-run
     # caps. Planner output never exceeds these; reactive leads
     # (follow-ons, user, clarification answers) have their own budget.
-    _PLANNER_LEADS_PER_ITER = 2
-    _PLANNER_LEADS_PER_RUN = 6
+    _PLANNER_LEADS_PER_ITER = 4
+    _PLANNER_LEADS_PER_RUN = 20
 
     def _coverage_planner(
         self,
@@ -11410,14 +11410,15 @@ Return:
             return 0
         # Per-iteration cap.
         iter_cap = min(self._PLANNER_LEADS_PER_ITER, run_remaining)
-        # Issue-targeted lane deficit — planner only fills when the
-        # issue quota has capacity among pending (non-investigated)
-        # leads. Matches the Leak-6 quota logic in _investigate_loop.
+        # Issue-targeted lane deficit — planner fills when the issue
+        # quota has capacity OR when uncovered issues exist. Always
+        # allow at least 1 planner lead per iteration to ensure
+        # exhaustive coverage across all orientation issues.
         pending = [l for l in state.get_pending_leads()]
         issue_pending = [l for l in pending if l.focus_issue_id]
         issue_quota = max(1, (self.config.max_leads_per_level + 1) // 2)
         deficit = issue_quota - len(issue_pending)
-        capacity = min(iter_cap, max(0, deficit))
+        capacity = min(iter_cap, max(1, deficit))
         if capacity <= 0:
             return 0
         # Signal pass: canonical coverage report + material open gaps.
@@ -11485,7 +11486,7 @@ Return:
             frac, has_gap, _supp = coverage_map.get(iid, (1.0, False, 0))
             has_any_gap = bool(has_gap) or iid in gapped_issue_ids
             # Already-strong, no-gap issues — skip.
-            if frac >= 0.6 and not has_any_gap:
+            if frac >= 0.85 and not has_any_gap:
                 continue
             try:
                 preds = self._matter_model.issues.get_predicates(iid, limit=1)
