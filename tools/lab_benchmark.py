@@ -368,6 +368,23 @@ async def run_task(
                     f"actual numbers from the source documents.\n"
                 )
 
+    # Inject criteria as quality requirements so the engine knows what
+    # evaluators expect. Each criterion title becomes a coverage target.
+    criteria = task.get("criteria", [])
+    if criteria:
+        criteria_lines = []
+        for c in criteria:
+            title = c.get("title", "")
+            if title:
+                criteria_lines.append(f"- {title}")
+        if criteria_lines:
+            instructions += (
+                "\n\nQUALITY REQUIREMENTS — your output will be evaluated on "
+                f"these {len(criteria_lines)} criteria. Ensure your analysis "
+                "explicitly addresses EACH one:\n"
+                + "\n".join(criteria_lines)
+            )
+
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_id = f"{task_id}/irys-rlm-{research_mode}/{ts}"
 
