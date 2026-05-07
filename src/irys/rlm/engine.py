@@ -3732,7 +3732,7 @@ class RLMEngine:
         if not rows:
             return []
 
-        by_provision: dict[str, dict[str, dict]] = {}
+        by_provision: dict[str, dict[str, list[dict]]] = {}
         for row in rows:
             payload = row.get("payload_json")
             if isinstance(payload, str):
@@ -3748,7 +3748,7 @@ class RLMEngine:
                 continue
             if prov not in by_provision:
                 by_provision[prov] = {}
-            by_provision[prov][role] = payload
+            by_provision[prov].setdefault(role, []).append(payload)
 
         results: list[str] = []
 
@@ -3806,62 +3806,65 @@ class RLMEngine:
             pass
 
         for prov, roles in by_provision.items():
-            orig_data = roles.get("original", {})
-            markup_data = roles.get("markup", {})
-            if not orig_data or not markup_data:
+            orig_list = roles.get("original", [])
+            markup_list = roles.get("markup", [])
+            if not orig_list or not markup_list:
                 continue
-            orig_val_str = orig_data.get("value", "")
-            markup_val_str = markup_data.get("value", "")
-            orig_num = _extract_number(orig_val_str)
-            markup_num = _extract_number(markup_val_str)
-            if orig_num is None or markup_num is None:
-                continue
+            for _oi, orig_data in enumerate(orig_list):
+                markup_data = markup_list[_oi] if _oi < len(markup_list) else markup_list[-1]
+                orig_val_str = orig_data.get("value", "")
+                markup_val_str = markup_data.get("value", "")
+                orig_num = _extract_number(orig_val_str)
+                markup_num = _extract_number(markup_val_str)
+                if orig_num is None or markup_num is None:
+                    continue
 
-            delta = markup_num - orig_num
-            if abs(delta) < 0.001:
-                continue
+                delta = markup_num - orig_num
+                if abs(delta) < 0.001:
+                    continue
 
-            direction = "tightened" if delta > 0 else "loosened"
-            if _is_percentage(orig_val_str):
-                results.append(
-                    f"[CALCULATED] {prov}: changed from {orig_val_str} to {markup_val_str} "
-                    f"(delta: {'+' if delta > 0 else ''}{delta:.2f}%, {direction})"
-                )
-                if _facility_size and abs(delta) < 10:
-                    annual_impact = _facility_size * abs(delta) / 100.0
+                _prov_label = prov if len(orig_list) == 1 else f"{prov} (tier {_oi + 1})"
+                direction = "tightened" if delta > 0 else "loosened"
+                if _is_percentage(orig_val_str):
                     results.append(
-                        f"[CALCULATED] {prov} dollar impact (facility): "
-                        f"${_facility_size:,.0f} × {abs(delta):.2f}% = "
-                        f"${annual_impact:,.0f}/year"
+                        f"[CALCULATED] {_prov_label}: changed from {orig_val_str} to {markup_val_str} "
+                        f"(delta: {'+' if delta > 0 else ''}{delta:.2f}%, {direction})"
                     )
-                if _ebitda and abs(delta) < 50:
-                    ebitda_impact = _ebitda * abs(delta) / 100.0
+                    if _facility_size and abs(delta) < 10:
+                        annual_impact = _facility_size * abs(delta) / 100.0
+                        results.append(
+                            f"[CALCULATED] {_prov_label} dollar impact (facility): "
+                            f"${_facility_size:,.0f} × {abs(delta):.2f}% = "
+                            f"${annual_impact:,.0f}/year"
+                        )
+                    if _ebitda and abs(delta) < 50:
+                        ebitda_impact = _ebitda * abs(delta) / 100.0
+                        results.append(
+                            f"[CALCULATED] {_prov_label} dollar impact (EBITDA): "
+                            f"${_ebitda:,.0f} × {abs(delta):.2f}% = "
+                            f"${ebitda_impact:,.0f}"
+                        )
+                elif _is_ratio(orig_val_str):
                     results.append(
-                        f"[CALCULATED] {prov} dollar impact (EBITDA): "
-                        f"${_ebitda:,.0f} × {abs(delta):.2f}% = "
-                        f"${ebitda_impact:,.0f}"
+                        f"[CALCULATED] {_prov_label}: changed from {orig_val_str} to {markup_val_str} "
+                        f"(delta: {'+' if delta > 0 else ''}{delta:.2f}x, {direction})"
                     )
-            elif _is_ratio(orig_val_str):
-                results.append(
-                    f"[CALCULATED] {prov}: changed from {orig_val_str} to {markup_val_str} "
-                    f"(delta: {'+' if delta > 0 else ''}{delta:.2f}x, {direction})"
-                )
-                if _ebitda and _facility_size:
-                    headroom_orig = orig_num * _ebitda - _facility_size
-                    headroom_new = markup_num * _ebitda - _facility_size
+                    if _ebitda and _facility_size:
+                        headroom_orig = orig_num * _ebitda - _facility_size
+                        headroom_new = markup_num * _ebitda - _facility_size
+                        results.append(
+                            f"[CALCULATED] {_prov_label} headroom: "
+                            f"original {orig_num:.2f}x × ${_ebitda:,.0f} EBITDA = ${orig_num * _ebitda:,.0f} capacity "
+                            f"(${headroom_orig:,.0f} headroom); "
+                            f"markup {markup_num:.2f}x × ${_ebitda:,.0f} = ${markup_num * _ebitda:,.0f} capacity "
+                            f"(${headroom_new:,.0f} headroom, "
+                            f"delta +${headroom_new - headroom_orig:,.0f})"
+                        )
+                else:
                     results.append(
-                        f"[CALCULATED] {prov} headroom: "
-                        f"original {orig_num:.2f}x × ${_ebitda:,.0f} EBITDA = ${orig_num * _ebitda:,.0f} capacity "
-                        f"(${headroom_orig:,.0f} headroom); "
-                        f"markup {markup_num:.2f}x × ${_ebitda:,.0f} = ${markup_num * _ebitda:,.0f} capacity "
-                        f"(${headroom_new:,.0f} headroom, "
-                        f"delta +${headroom_new - headroom_orig:,.0f})"
+                        f"[CALCULATED] {_prov_label}: changed from {orig_val_str} to {markup_val_str} "
+                        f"(delta: {'+' if delta > 0 else ''}{delta:,.0f})"
                     )
-            else:
-                results.append(
-                    f"[CALCULATED] {prov}: changed from {orig_val_str} to {markup_val_str} "
-                    f"(delta: {'+' if delta > 0 else ''}{delta:,.0f})"
-                )
 
         return results
 
@@ -3972,14 +3975,56 @@ class RLMEngine:
         except Exception:
             pass
 
+        _buyer_name = ""
+        _target_name = ""
+        try:
+            _txn_rows = self._matter_model.typed_evidence.list_by_kind(
+                "transaction_context", limit=5,
+            )
+            for _txr in _txn_rows:
+                _txp = _txr.get("payload_json")
+                if isinstance(_txp, str):
+                    try:
+                        _txp = json.loads(_txp)
+                    except Exception:
+                        continue
+                if isinstance(_txp, dict):
+                    _buyer_name = (_txp.get("acquirer") or "").lower()
+                    _target_name = (_txp.get("target") or "").lower()
+                    if _buyer_name or _target_name:
+                        break
+        except Exception:
+            pass
+
         for market, shares in market_shares.items():
             if len(shares) >= 2:
-                total_hhi = sum(s ** 2 for _, s in shares)
-                results.append(
-                    f"[CALCULATED] HHI for {market}: {total_hhi:,.0f} "
-                    f"(from {len(shares)} competitors: "
-                    + ", ".join(f"{e} {s:.1f}%" for e, s in shares) + ")"
-                )
+                pre_hhi = sum(s ** 2 for _, s in shares)
+                buyer_share = 0.0
+                target_share = 0.0
+                for ename, spct in shares:
+                    el = ename.lower()
+                    if _buyer_name and _buyer_name in el:
+                        buyer_share = max(buyer_share, spct)
+                    elif _target_name and _target_name in el:
+                        target_share = max(target_share, spct)
+                share_detail = ", ".join(f"{e} {s:.1f}%" for e, s in shares)
+                if buyer_share > 0 and target_share > 0:
+                    delta_hhi = 2 * buyer_share * target_share
+                    post_hhi = pre_hhi + delta_hhi
+                    presumption = " — STRUCTURAL PRESUMPTION TRIGGERED" if (
+                        post_hhi > 1800 and delta_hhi > 100
+                    ) else ""
+                    results.append(
+                        f"[CALCULATED] HHI for {market}: "
+                        f"pre-merger {pre_hhi:,.0f}, post-merger {post_hhi:,.0f}, "
+                        f"delta {delta_hhi:,.0f}{presumption} "
+                        f"({share_detail})"
+                    )
+                else:
+                    results.append(
+                        f"[CALCULATED] HHI for {market}: {pre_hhi:,.0f} "
+                        f"(from {len(shares)} competitors: {share_detail})"
+                    )
 
         if divestiture_cap:
             total_divest_revenue = 0.0
@@ -4492,7 +4537,7 @@ class RLMEngine:
             return ""
         try:
             rows = self._matter_model.typed_evidence.list_by_kind(
-                "provision_comparison", limit=200,
+                "provision_comparison", limit=500,
             )
         except Exception:
             return ""
@@ -4532,9 +4577,12 @@ class RLMEngine:
             header,
             sep,
         ]
+        def _esc(s: str) -> str:
+            return s.replace("|", "∣").replace("\n", " ")[:200]
+
         for prov, roles in sorted(by_provision.items()):
-            cols = " | ".join("; ".join(roles.get(r, ["—"])) for r in all_roles)
-            lines.append(f"| {prov} | {cols} |")
+            cols = " | ".join(_esc("; ".join(roles.get(r, ["—"]))) for r in all_roles)
+            lines.append(f"| {_esc(prov)} | {cols} |")
         lines.append("")
         lines.append(
             "Use this table as the BASIS for your deviation analysis. "
@@ -8871,10 +8919,63 @@ Return:
 
             # Inject tracked change manifest for comparison tasks
             _tc_manifest = ""
+            _tc_facts_pending: list[str] = []
             if _is_comparison_dr and hasattr(doc, "tracked_changes") and doc.tracked_changes:
                 _tc_manifest = doc.get_tracked_change_manifest()
                 if _tc_manifest:
                     content = _tc_manifest + "\n\n" + content
+
+                # Deterministic injection: write each tracked change directly
+                # as provision_comparison typed evidence, bypassing LLM extraction.
+                import hashlib as _hashlib
+                _mm_tc = self._matter_model
+                if _mm_tc is not None:
+                    for _tc_idx, _tc in enumerate(doc.tracked_changes):
+                        _tc_label = (_tc.context or f"Change #{_tc_idx + 1}")[:100].strip()
+                        if not _tc_label:
+                            _tc_label = f"Change #{_tc_idx + 1}"
+                        if _tc.deleted_text:
+                            _del_hash = _hashlib.md5(_tc.deleted_text[:200].encode()).hexdigest()[:8]
+                            _mm_tc.typed_evidence.upsert(
+                                "provision_comparison",
+                                f"prov:{_tc_label}:{doc.filename}:original:{_del_hash}",
+                                payload={
+                                    "provision": _tc_label,
+                                    "value": _tc.deleted_text[:500],
+                                    "section_ref": "",
+                                    "source_role": "original",
+                                    "value_type": "tracked_change",
+                                    "source_document": doc.filename,
+                                },
+                                label=f"{_tc_label}: {_tc.deleted_text[:80]}",
+                                document_id=doc.filename,
+                                confidence=0.95,
+                            )
+                        if _tc.added_text:
+                            _add_hash = _hashlib.md5(_tc.added_text[:200].encode()).hexdigest()[:8]
+                            _mm_tc.typed_evidence.upsert(
+                                "provision_comparison",
+                                f"prov:{_tc_label}:{doc.filename}:markup:{_add_hash}",
+                                payload={
+                                    "provision": _tc_label,
+                                    "value": _tc.added_text[:500],
+                                    "section_ref": "",
+                                    "source_role": "markup",
+                                    "value_type": "tracked_change",
+                                    "source_document": doc.filename,
+                                },
+                                label=f"{_tc_label}: {_tc.added_text[:80]}",
+                                document_id=doc.filename,
+                                confidence=0.95,
+                            )
+                        _tc_fact = f"[PROVISION] {_tc_label}"
+                        if _tc.deleted_text and _tc.added_text:
+                            _tc_fact += f": changed from \"{_tc.deleted_text[:120]}\" to \"{_tc.added_text[:120]}\""
+                        elif _tc.deleted_text:
+                            _tc_fact += f": DELETED \"{_tc.deleted_text[:150]}\""
+                        elif _tc.added_text:
+                            _tc_fact += f": ADDED \"{_tc.added_text[:150]}\""
+                        _tc_facts_pending.append(_tc_fact)
 
             # Build enhanced focus for comparison/regulatory tasks
             _base_focus = state.hypothesis or state.query
@@ -8972,6 +9073,9 @@ Return:
             # facts_to_add: (text, issue_relation, effective_date, spo_dict|None)
             # spo_dict carries subject_ref_type/id, predicate_key, object_json for SO-2
             facts_to_add: list[tuple] = []
+            if _is_comparison_dr and _tc_facts_pending:
+                for _tcf in _tc_facts_pending:
+                    facts_to_add.append((_tcf, "supports", None, None))
             _recorded_ids: list[str] = []
             if analysis.get("key_facts"):
                 for fact_item in analysis["key_facts"]:

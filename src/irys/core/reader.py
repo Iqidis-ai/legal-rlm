@@ -77,11 +77,11 @@ class DocumentContent:
         for i, tc in enumerate(self.tracked_changes, 1):
             lines.append(f"Change #{i}:")
             if tc.deleted_text:
-                lines.append(f"  DELETED: \"{tc.deleted_text[:300]}\"")
+                lines.append(f"  DELETED: \"{tc.deleted_text[:500]}\"")
             if tc.added_text:
-                lines.append(f"  ADDED:   \"{tc.added_text[:300]}\"")
+                lines.append(f"  ADDED:   \"{tc.added_text[:500]}\"")
             if tc.context:
-                lines.append(f"  CONTEXT: ...{tc.context[:150]}...")
+                lines.append(f"  CONTEXT: ...{tc.context[:250]}...")
             lines.append("")
         return "\n".join(lines)
 
@@ -149,8 +149,13 @@ class DocumentReader:
         for table in doc.tables:
             table_text = []
             for row in table.rows:
-                row_text = " | ".join(cell.text.strip() for cell in row.cells)
-                table_text.append(row_text)
+                cell_texts = []
+                for cell in row.cells:
+                    cell_parts = []
+                    for p in cell.paragraphs:
+                        cell_parts.append(self._extract_paragraph_with_revisions(p))
+                    cell_texts.append(" ".join(cell_parts).strip())
+                table_text.append(" | ".join(cell_texts))
             text += "\n\n[TABLE]\n" + "\n".join(table_text) + "\n[/TABLE]\n"
 
         pages = [PageContent(page_num=1, text=text)]
@@ -198,47 +203,83 @@ class DocumentReader:
 
     @staticmethod
     def _extract_tracked_changes(doc: "Document") -> list[TrackedChange]:
-        """Walk DOCX XML to extract every tracked change as structured data."""
+        """Walk DOCX XML to extract every tracked change as structured data.
+
+        Walks ALL <w:p> elements in the document body (including table cells,
+        headers, footers, footnotes, endnotes) — not just doc.paragraphs which
+        only covers top-level body paragraphs.
+
+        Each <w:del>/<w:ins> revision group within a paragraph becomes its own
+        TrackedChange entry (atomic, not merged per paragraph).
+        """
         from lxml import etree
         W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         changes: list[TrackedChange] = []
 
-        for para in doc.paragraphs:
-            elem = para._element
-            del_runs = elem.findall(f".//{{{W}}}del")
-            ins_runs = elem.findall(f".//{{{W}}}ins")
+        body = doc.element.body
+        if body is None:
+            return changes
+
+        for para_elem in body.iter(f"{{{W}}}p"):
+            del_runs = para_elem.findall(f".//{{{W}}}del")
+            ins_runs = para_elem.findall(f".//{{{W}}}ins")
             if not del_runs and not ins_runs:
                 continue
-            deleted_parts: list[str] = []
-            for d in del_runs:
-                for dt in d.findall(f".//{{{W}}}delText"):
-                    if dt.text:
-                        deleted_parts.append(dt.text)
-            added_parts: list[str] = []
-            for i in ins_runs:
-                for t in i.findall(f".//{{{W}}}t"):
-                    if t.text:
-                        added_parts.append(t.text)
-            deleted = "".join(deleted_parts).strip()
-            added = "".join(added_parts).strip()
-            if not deleted and not added:
-                continue
+
             plain_parts: list[str] = []
-            for t in elem.findall(f".//{{{W}}}t"):
+            for t in para_elem.findall(f".//{{{W}}}t"):
                 parent = t.getparent()
                 gp = parent.getparent() if parent is not None else None
-                p_tag = etree.QName(parent.tag).localname if parent is not None and isinstance(parent.tag, str) else ""
                 gp_tag = etree.QName(gp.tag).localname if gp is not None and isinstance(gp.tag, str) else ""
-                if gp_tag == "ins" or gp_tag == "del":
+                if gp_tag in ("ins", "del"):
                     continue
                 if t.text:
                     plain_parts.append(t.text)
             context = "".join(plain_parts).strip()[:200]
-            changes.append(TrackedChange(
-                deleted_text=deleted,
-                added_text=added,
-                context=context,
-            ))
+
+            rev_groups: list[tuple[str, str]] = []
+            for d in del_runs:
+                parts: list[str] = []
+                for dt in d.findall(f".//{{{W}}}delText"):
+                    if dt.text:
+                        parts.append(dt.text)
+                text = "".join(parts).strip()
+                if text:
+                    rev_groups.append(("del", text))
+            for ins in ins_runs:
+                parts = []
+                for t in ins.findall(f".//{{{W}}}t"):
+                    if t.text:
+                        parts.append(t.text)
+                text = "".join(parts).strip()
+                if text:
+                    rev_groups.append(("ins", text))
+
+            if not rev_groups:
+                continue
+
+            del_texts = [t for kind, t in rev_groups if kind == "del"]
+            ins_texts = [t for kind, t in rev_groups if kind == "ins"]
+
+            if len(del_texts) <= 1 and len(ins_texts) <= 1:
+                deleted = del_texts[0] if del_texts else ""
+                added = ins_texts[0] if ins_texts else ""
+                changes.append(TrackedChange(
+                    deleted_text=deleted,
+                    added_text=added,
+                    context=context,
+                ))
+            else:
+                max_pairs = max(len(del_texts), len(ins_texts))
+                for idx in range(max_pairs):
+                    deleted = del_texts[idx] if idx < len(del_texts) else ""
+                    added = ins_texts[idx] if idx < len(ins_texts) else ""
+                    if deleted or added:
+                        changes.append(TrackedChange(
+                            deleted_text=deleted,
+                            added_text=added,
+                            context=context,
+                        ))
 
         return changes
 
