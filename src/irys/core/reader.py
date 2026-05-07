@@ -75,13 +75,21 @@ class DocumentContent:
             "",
         ]
         for i, tc in enumerate(self.tracked_changes, 1):
-            lines.append(f"Change #{i}:")
+            section = ""
+            if tc.context and tc.context.startswith("["):
+                bracket_end = tc.context.find("]")
+                if bracket_end > 0:
+                    section = tc.context[1:bracket_end]
+            header = f"Change #{i}"
+            if section:
+                header += f" ({section})"
+            lines.append(f"{header}:")
             if tc.deleted_text:
-                lines.append(f"  DELETED: \"{tc.deleted_text[:500]}\"")
+                lines.append(f"  DELETED: \"{tc.deleted_text[:800]}\"")
             if tc.added_text:
-                lines.append(f"  ADDED:   \"{tc.added_text[:500]}\"")
+                lines.append(f"  ADDED:   \"{tc.added_text[:800]}\"")
             if tc.context:
-                lines.append(f"  CONTEXT: ...{tc.context[:250]}...")
+                lines.append(f"  CONTEXT: ...{tc.context[:400]}...")
             lines.append("")
         return "\n".join(lines)
 
@@ -220,7 +228,24 @@ class DocumentReader:
         if body is None:
             return changes
 
+        _section_pat = re.compile(
+            r'^(?:ARTICLE\s+[IVXLCDM\d]+|Section\s+\d+[\.\d]*(?:\([a-z]\))?|'
+            r'\d+\.\d+[\.\d]*(?:\([a-z]\))?)\b',
+            re.IGNORECASE,
+        )
+        _current_section = ""
+
         for para_elem in body.iter(f"{{{W}}}p"):
+            all_text_parts: list[str] = []
+            for t in para_elem.findall(f".//{{{W}}}t"):
+                if t.text:
+                    all_text_parts.append(t.text)
+            _full_para = "".join(all_text_parts).strip()
+
+            _sec_match = _section_pat.match(_full_para)
+            if _sec_match:
+                _current_section = _sec_match.group(0).strip()
+
             del_runs = para_elem.findall(f".//{{{W}}}del")
             ins_runs = para_elem.findall(f".//{{{W}}}ins")
             if not del_runs and not ins_runs:
@@ -235,7 +260,9 @@ class DocumentReader:
                     continue
                 if t.text:
                     plain_parts.append(t.text)
-            context = "".join(plain_parts).strip()[:200]
+            raw_context = "".join(plain_parts).strip()[:400]
+            context = (f"[{_current_section}] {raw_context}" if _current_section
+                       else raw_context)
 
             rev_groups: list[tuple[str, str]] = []
             for d in del_runs:

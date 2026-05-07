@@ -4817,7 +4817,7 @@ class RLMEngine:
             sep,
         ]
         def _esc(s: str) -> str:
-            return s.replace("|", "∣").replace("\n", " ")[:200]
+            return s.replace("|", "∣").replace("\n", " ")[:400]
 
         for prov, roles in sorted(by_provision.items()):
             cols = " | ".join(_esc("; ".join(roles.get(r, ["—"]))) for r in all_roles)
@@ -9208,7 +9208,16 @@ Return:
                 _mm_tc = self._matter_model
                 if _mm_tc is not None:
                     for _tc_idx, _tc in enumerate(doc.tracked_changes):
-                        _tc_label = (_tc.context or f"Change #{_tc_idx + 1}")[:100].strip()
+                        _tc_ctx = _tc.context or ""
+                        _tc_section_ref = ""
+                        if _tc_ctx.startswith("["):
+                            _br_end = _tc_ctx.find("]")
+                            if _br_end > 0:
+                                _tc_section_ref = _tc_ctx[1:_br_end]
+                                _tc_ctx = _tc_ctx[_br_end + 1:].strip()
+                        _tc_label = _tc_ctx[:120].strip() if _tc_ctx else f"Change #{_tc_idx + 1}"
+                        if _tc_section_ref:
+                            _tc_label = f"{_tc_section_ref}: {_tc_label}"
                         if not _tc_label:
                             _tc_label = f"Change #{_tc_idx + 1}"
                         if _tc.deleted_text:
@@ -9218,8 +9227,8 @@ Return:
                                 f"prov:{_tc_label}:{doc.filename}:original:{_del_hash}",
                                 payload={
                                     "provision": _tc_label,
-                                    "value": _tc.deleted_text[:500],
-                                    "section_ref": "",
+                                    "value": _tc.deleted_text[:800],
+                                    "section_ref": _tc_section_ref,
                                     "source_role": "original",
                                     "value_type": "tracked_change",
                                     "source_document": doc.filename,
@@ -9235,8 +9244,8 @@ Return:
                                 f"prov:{_tc_label}:{doc.filename}:markup:{_add_hash}",
                                 payload={
                                     "provision": _tc_label,
-                                    "value": _tc.added_text[:500],
-                                    "section_ref": "",
+                                    "value": _tc.added_text[:800],
+                                    "section_ref": _tc_section_ref,
                                     "source_role": "markup",
                                     "value_type": "tracked_change",
                                     "source_document": doc.filename,
@@ -9247,11 +9256,11 @@ Return:
                             )
                         _tc_fact = f"[PROVISION] {_tc_label}"
                         if _tc.deleted_text and _tc.added_text:
-                            _tc_fact += f": changed from \"{_tc.deleted_text[:120]}\" to \"{_tc.added_text[:120]}\""
+                            _tc_fact += f": changed from \"{_tc.deleted_text[:200]}\" to \"{_tc.added_text[:200]}\""
                         elif _tc.deleted_text:
-                            _tc_fact += f": DELETED \"{_tc.deleted_text[:150]}\""
+                            _tc_fact += f": DELETED \"{_tc.deleted_text[:250]}\""
                         elif _tc.added_text:
-                            _tc_fact += f": ADDED \"{_tc.added_text[:150]}\""
+                            _tc_fact += f": ADDED \"{_tc.added_text[:250]}\""
                         _tc_facts_pending.append(_tc_fact)
 
             # Build enhanced focus for comparison/regulatory tasks
