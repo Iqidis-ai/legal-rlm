@@ -759,6 +759,79 @@ When reviewing acquisition, merger, change-of-control, assignment, or material-c
 - When the document reveals the transaction structure (target, acquirer, merger subsidiary, parent), populate transaction_context. Extract actor names only from transaction/disclosure language, not from generic contract role labels.
 """
 
+_COMPARISON_DEEP_READ_SECTION = """
+COMPARISON/MARKUP ANALYSIS — PROVISION-LEVEL EXTRACTION:
+This is a document comparison task. For EVERY provision below, extract the EXACT
+values from THIS document. Do not paraphrase or approximate — use the exact numbers,
+percentages, thresholds, and defined terms as written.
+
+CRITICAL PROVISIONS TO EXTRACT (with expected value types):
+1. Interest Rate Floor: exact basis points (e.g. 0.00%, 0.75%)
+2. Applicable Margin / Spread: each leverage-tier rate (e.g. ≤2.50x→200bps, >3.25x→300bps)
+3. Commitment Fee: flat rate OR each tier with leverage breakpoints
+4. Financial Covenants — FCCR: exact minimum ratio (e.g. 1.25x, 1.35x)
+5. Financial Covenants — Leverage Ratio: each step-down date and threshold
+6. EBITDA Add-backs: non-recurring cap ($/year AND $/lifetime), synergy cap (% AND months)
+7. Permitted Acquisitions: individual basket ($), aggregate basket ($), pro forma cushion (x)
+8. Restricted Payments: hard dollar cap ($), ECF percentage, pro forma leverage test threshold
+9. ECF Sweep: percentage at EACH leverage tier (step-downs vs flat)
+10. Cross-Default Threshold: exact dollar amount
+11. Change of Control: exact ownership percentage trigger
+12. MAE/MAC Definition: presence of "taken as a whole", "material" qualifiers in sub-clauses
+13. Extension Options: number of extensions, duration, fee, notice period
+14. Anti-Layering Covenant: present/absent, specific restrictions
+15. MFN (Most Favored Nation): present/absent, scope, margin adjustment trigger
+16. Reinvestment Period: exact number of days for asset sale reinvestment
+17. Reporting Requirements: financial statement delivery deadlines
+
+For EACH provision found, create a key_fact with:
+- The EXACT value (not "changed" or "modified" — the actual number)
+- The section/clause reference
+- Whether this is an original/baseline value or a markup/proposed value
+
+If this document is a NEGOTIATION PLAYBOOK, extract for each provision:
+- Preferred position (ideal value)
+- Acceptable fallback (compromise value)
+- Hard no threshold (walk-away value)
+
+Include a "provision_comparisons" array in your JSON response with structured rows:
+"provision_comparisons": [
+    {"provision": "name", "value": "exact value from this document", "section_ref": "Section X.Y",
+     "source_role": "original|markup|playbook", "value_type": "threshold|cap|rate|period|presence"}
+]
+"""
+
+_REGULATORY_DEEP_READ_SECTION = """
+REGULATORY/ANTITRUST ANALYSIS — DATA EXTRACTION:
+This is a regulatory analysis task. Extract ALL quantitative and factual data needed
+for competitive effects analysis, HHI calculations, and enforcement assessment.
+
+CRITICAL DATA CATEGORIES:
+1. Market Shares: company name, share percentage, source, date, methodology
+2. Market Definition: product market boundaries, geographic market (MSA/region), substitutes
+3. HHI Components: pre-merger shares for EACH competitor in each market
+4. Hot Documents: exact quotes showing competitive harm awareness (pricing, market power, elimination)
+5. Maverick/Disruptive Competitor Evidence: specific pricing, entry timing, customer diversion
+6. Barriers to Entry: type (regulatory, capital, IP, network), height, timeframe for new entry
+7. Customer Overlap: customer name, share of purchases from each merging party, diversion ratio
+8. Divestiture/Remedy Data: asset name, buyer qualification, estimated cost, capacity
+9. Efficiency Claims: type, magnitude, verifiability, merger-specificity
+10. Deal Timeline: HSR filing date, waiting period, second request, consent decree deadlines
+11. Internal Strategy Documents: quotes about competitive strategy, pricing, market positioning
+
+For EACH data point, create a key_fact with:
+- The EXACT number, percentage, or quote (not summaries)
+- The specific page, slide, or section reference
+- The speaker/author if identifiable
+
+Include a "regulatory_data" array in your JSON response:
+"regulatory_data": [
+    {"category": "market_share|hhi|hot_doc|barrier|remedy|timeline",
+     "entity": "company or market name", "value": "exact data point",
+     "source_detail": "page/slide/section", "significance": "brief note"}
+]
+"""
+
 _DOMAIN_DEEP_READ_VOCABULARY = {
     "legal": (
         "DOMAIN CONTEXT: Legal matter analysis.\n"
@@ -3481,6 +3554,126 @@ class RLMEngine:
                     confidence=0.85,
                 )
 
+    def _derive_provision_comparison_calculations(self) -> "list[str]":
+        """Deterministic arithmetic on provision comparison data (Codex #3).
+
+        Reads provision_comparison typed evidence and computes:
+        - Rate/spread deltas × principal for dollar impact
+        - Ratio threshold deltas (old - new covenant headroom)
+        - Dollar cap reductions
+        Emits [CALCULATED] facts that don't rely on LLM arithmetic.
+        """
+        if self._matter_model is None:
+            return []
+        try:
+            rows = self._matter_model.typed_evidence.list_by_kind(
+                "provision_comparison", limit=60,
+            )
+        except Exception:
+            return []
+        if not rows:
+            return []
+
+        by_provision: dict[str, dict[str, dict]] = {}
+        for row in rows:
+            payload = row.get("payload_json")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    continue
+            if not isinstance(payload, dict):
+                continue
+            prov = payload.get("provision", "")
+            role = payload.get("source_role", "unknown")
+            if not prov:
+                continue
+            if prov not in by_provision:
+                by_provision[prov] = {}
+            by_provision[prov][role] = payload
+
+        results: list[str] = []
+
+        def _extract_number(val_str: str) -> "Optional[float]":
+            """Extract a numeric value from a provision value string."""
+            if not val_str:
+                return None
+            import re
+            val_str = val_str.replace(",", "").replace("$", "").strip()
+            m = re.search(r'([\d.]+)\s*[%x]', val_str)
+            if m:
+                return float(m.group(1))
+            m = re.search(r'([\d.]+)\s*(M|million|mm)', val_str, re.IGNORECASE)
+            if m:
+                return float(m.group(1)) * 1_000_000
+            m = re.search(r'([\d.]+)', val_str)
+            if m:
+                return float(m.group(1))
+            return None
+
+        def _is_percentage(val_str: str) -> bool:
+            return "%" in val_str or "bps" in val_str.lower() or "basis" in val_str.lower()
+
+        def _is_ratio(val_str: str) -> bool:
+            return "x" in val_str.lower() and "%" not in val_str
+
+        # Find facility size from facts for dollar impact calculations
+        _facility_size: "Optional[float]" = None
+        try:
+            quant_rows = self._matter_model.quant.list_all(limit=100)
+            for qr in quant_rows:
+                ctx = (qr.get("context") or "").lower()
+                raw = (qr.get("raw_text") or "").lower()
+                if any(w in ctx + raw for w in ("facility", "commitment", "revolving", "term loan")):
+                    val = qr.get("amount_value")
+                    if val and val > 10_000_000:
+                        _facility_size = float(val)
+                        break
+        except Exception:
+            pass
+
+        for prov, roles in by_provision.items():
+            orig_data = roles.get("original", {})
+            markup_data = roles.get("markup", {})
+            if not orig_data or not markup_data:
+                continue
+            orig_val_str = orig_data.get("value", "")
+            markup_val_str = markup_data.get("value", "")
+            orig_num = _extract_number(orig_val_str)
+            markup_num = _extract_number(markup_val_str)
+            if orig_num is None or markup_num is None:
+                continue
+
+            delta = markup_num - orig_num
+            if abs(delta) < 0.001:
+                continue
+
+            direction = "tightened" if delta > 0 else "loosened"
+            if _is_percentage(orig_val_str):
+                results.append(
+                    f"[CALCULATED] {prov}: changed from {orig_val_str} to {markup_val_str} "
+                    f"(delta: {'+' if delta > 0 else ''}{delta:.2f}%, {direction})"
+                )
+                if _facility_size and abs(delta) < 10:
+                    annual_impact = _facility_size * abs(delta) / 100.0
+                    results.append(
+                        f"[CALCULATED] {prov} dollar impact: "
+                        f"${_facility_size:,.0f} × {abs(delta):.2f}% = "
+                        f"${annual_impact:,.0f}/year"
+                    )
+            elif _is_ratio(orig_val_str):
+                results.append(
+                    f"[CALCULATED] {prov}: changed from {orig_val_str} to {markup_val_str} "
+                    f"(delta: {'+' if delta > 0 else ''}{delta:.2f}x, {direction})"
+                )
+            else:
+                results.append(
+                    f"[CALCULATED] {prov}: changed from {orig_val_str} to {markup_val_str} "
+                    f"(delta: {'+' if delta > 0 else ''}{delta:,.0f})"
+                )
+
+        return results
+
     def _resolve_operand_graph_calculations(
         self, facts: "Optional[list[str]]" = None,
     ) -> "list[str]":
@@ -3949,6 +4142,71 @@ class RLMEngine:
             pass
 
         return results
+
+    def _build_provision_comparison_summary(
+        self, state: "InvestigationState",
+    ) -> str:
+        """Build a structured provision comparison table for comparison tasks.
+
+        Aggregates provision_comparison typed evidence into a before/after
+        table that synthesis can use directly for the deviation analysis.
+        """
+        _ql = (getattr(state, "query", "") or "").lower()
+        _is_comp = any(w in _ql for w in (
+            "markup", "redline", "compare", "comparison", "deviation",
+            "counterparty", "credit facility", "term sheet",
+        ))
+        if not _is_comp or self._matter_model is None:
+            return ""
+        try:
+            rows = self._matter_model.typed_evidence.list_by_kind(
+                "provision_comparison", limit=60,
+            )
+        except Exception:
+            return ""
+        if not rows:
+            return ""
+        by_provision: dict[str, dict[str, str]] = {}
+        for row in rows:
+            payload = row.get("payload_json")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    continue
+            if not isinstance(payload, dict):
+                continue
+            prov = payload.get("provision", "")
+            role = payload.get("source_role", "unknown")
+            val = payload.get("value", "")
+            sec = payload.get("section_ref", "")
+            if not prov or not val:
+                continue
+            if prov not in by_provision:
+                by_provision[prov] = {}
+            entry = val
+            if sec:
+                entry += f" ({sec})"
+            by_provision[prov][role] = entry
+        if not by_provision:
+            return ""
+        lines = [
+            "PROVISION COMPARISON DATA (extracted from documents — use for deviation table):",
+            "| Provision | Original | Markup | Playbook |",
+            "|-----------|----------|--------|----------|",
+        ]
+        for prov, roles in sorted(by_provision.items()):
+            orig = roles.get("original", "—")
+            markup = roles.get("markup", "—")
+            playbook = roles.get("playbook", "—")
+            lines.append(f"| {prov} | {orig} | {markup} | {playbook} |")
+        lines.append("")
+        lines.append(
+            "Use this table as the BASIS for your deviation analysis. "
+            "For each row where Original ≠ Markup, produce a deviation finding "
+            "with exact values, risk rating, dollar impact calculation, and recommendation."
+        )
+        return "\n".join(lines)
 
     def _build_material_contract_coverage_section(
         self, state: "InvestigationState",
@@ -6382,6 +6640,46 @@ class RLMEngine:
             scored.sort(key=lambda x: x[0], reverse=True)
             top_files = [fp for _, fp in scored]
 
+        # Pairwise document lanes for comparison tasks (Codex #4):
+        # Ensure at least one document from each role bucket is selected.
+        _ql_dt = (state.query or "").lower()
+        _is_comp_dt = any(w in _ql_dt for w in (
+            "markup", "redline", "compare", "comparison", "deviation",
+            "counterparty", "credit facility", "term sheet",
+        ))
+        if _is_comp_dt and len(top_files) > 1:
+            _role_buckets: dict[str, list[str]] = {
+                "original": [], "markup": [], "playbook": [], "projections": [], "other": [],
+            }
+            _role_keywords = {
+                "original": ("original", "base", "initial", "agreed", "executed"),
+                "markup": ("markup", "marked", "redline", "red-line", "counterparty", "lender", "revised"),
+                "playbook": ("playbook", "negotiation", "instruction", "guideline", "partner"),
+                "projections": ("projection", "financial", "model", "forecast", "budget", "pro forma"),
+            }
+            for fp in top_files:
+                _fn = fp.lower()
+                _assigned = False
+                for role, kws in _role_keywords.items():
+                    if any(k in _fn for k in kws):
+                        _role_buckets[role].append(fp)
+                        _assigned = True
+                        break
+                if not _assigned:
+                    _role_buckets["other"].append(fp)
+
+            _lane_selected: list[str] = []
+            _seen = set()
+            for role in ("original", "markup", "playbook", "projections"):
+                if _role_buckets[role] and _role_buckets[role][0] not in _seen:
+                    _lane_selected.append(_role_buckets[role][0])
+                    _seen.add(_role_buckets[role][0])
+            for fp in top_files:
+                if fp not in _seen:
+                    _lane_selected.append(fp)
+                    _seen.add(fp)
+            top_files = _lane_selected
+
         return top_files[:self.config.max_leads_per_level]
 
     async def _investigate_lead(
@@ -8065,26 +8363,70 @@ Return:
                 '        "source_section": "Section or recital where transaction structure is described, or null"\n'
                 '    }},\n    '
             ) if _is_mna else ""
+
+            # Issue-specific deep read sections (Codex #2)
+            _ql_dr = (state.query or "").lower()
+            _is_comparison_dr = any(w in _ql_dr for w in (
+                "markup", "redline", "compare", "comparison", "deviation",
+                "counterparty", "credit facility", "term sheet", "loan agreement",
+            ))
+            _is_regulatory_dr = any(w in _ql_dr for w in (
+                "antitrust", "hsr", "merger review", "regulatory", "compliance",
+                "market share", "hhi", "competitive effects",
+            ))
+            _task_section = ""
+            if _is_comparison_dr:
+                _task_section = _COMPARISON_DEEP_READ_SECTION
+            elif _is_regulatory_dr:
+                _task_section = _REGULATORY_DEEP_READ_SECTION
+
             _cross_ref_ctx = ""
             _existing_facts = state.findings.get("accumulated_facts", [])
             if _existing_facts and len(_existing_facts) >= 3:
-                _recent = _existing_facts[-80:]
+                _recent = _existing_facts[-60:]
+                _cross_ref_text = "\n".join(f"- {f[:200]}" for f in _recent)
+                if len(_cross_ref_text) > 15000:
+                    _cross_ref_text = _cross_ref_text[:15000] + "\n... (truncated)"
                 _cross_ref_ctx = (
                     "\n\nCROSS-REFERENCE CONTEXT (facts already extracted from other documents):\n"
                     "Use these to identify CONNECTIONS, CONTRADICTIONS, and MISSING details.\n"
                     "When this document references the same terms, amounts, or provisions as below,\n"
                     "extract the EXACT values from THIS document for comparison.\n"
-                    + "\n".join(f"- {f}" for f in _recent)
+                    + _cross_ref_text
                     + "\n"
                 )
+
+            # Build enhanced focus for comparison/regulatory tasks
+            _base_focus = state.hypothesis or state.query
+            if _is_comparison_dr:
+                _base_focus = (
+                    f"{_base_focus}\n\n"
+                    "EXTRACTION PRIORITY: For every provision in this document, extract the EXACT "
+                    "numeric value (not 'changed' or 'modified' — the actual number/percentage/threshold). "
+                    "If this document contains BOTH original and proposed values, extract BOTH. "
+                    "Pay special attention to: tier breakpoints in grids, step-down schedules with dates, "
+                    "dollar caps on baskets, exact ratio thresholds, add-back caps with both annual and "
+                    "lifetime limits, and any provisions that were ADDED or DELETED entirely."
+                )
+            elif _is_regulatory_dr:
+                _base_focus = (
+                    f"{_base_focus}\n\n"
+                    "EXTRACTION PRIORITY: Extract ALL quantitative data needed for competitive analysis. "
+                    "For market shares: exact percentages per company per geographic market. "
+                    "For pricing: exact quotes about competitive pricing, undercutting, or market disruption. "
+                    "For HHI: all company shares needed to compute HHI (share² × 10000 summed). "
+                    "For hot documents: exact quotes with speaker attribution and slide/page references. "
+                    "For remedies: specific divestiture assets, costs, and buyer qualifications."
+                )
+
             prompt = DEEP_READ_PROMPT.format(
                 filename=doc.filename,
                 page_range=f"1-{doc.page_count}",
                 content=content,
                 query=state.query,
-                focus=state.hypothesis or state.query,
+                focus=_base_focus,
                 domain_vocabulary=_vocab,
-                mna_section=_mna_section + _cross_ref_ctx,
+                mna_section=_mna_section + _task_section + _cross_ref_ctx,
                 transaction_context_schema=_txn_ctx,
                 domain_deep_read_examples=_dr_ex["deep_read_examples"],
                 domain_numeric_subjects=_dr_ex["numeric_subjects"],
@@ -8212,6 +8554,88 @@ Return:
                             + (f", Structure: {_structure}" if _structure else ""),
                             "neutral", None, None
                         ))
+
+            # Provision comparisons (from comparison-task deep reads)
+            _prov_comps = analysis.get("provision_comparisons")
+            if isinstance(_prov_comps, list) and _prov_comps:
+                _mm_pc = self._matter_model
+                for _pc in _prov_comps[:30]:
+                    if not isinstance(_pc, dict):
+                        continue
+                    _prov = _pc.get("provision", "")
+                    _val = _pc.get("value", "")
+                    _sec = _pc.get("section_ref", "")
+                    _role = _pc.get("source_role", "")
+                    _vtype = _pc.get("value_type", "")
+                    if not _prov or not _val:
+                        continue
+                    _pc_fact = f"[PROVISION] {_prov}: {_val}"
+                    if _sec:
+                        _pc_fact += f" ({_sec})"
+                    if _role:
+                        _pc_fact += f" [{_role}]"
+                    facts_to_add.append((_pc_fact, "supports", None, {
+                        "subject_ref_type": "free_text",
+                        "subject_ref_id": _prov,
+                        "predicate_key": f"has_{_vtype or 'value'}",
+                        "object_json": json.dumps({"value": _val, "section": _sec, "source_role": _role}),
+                    }))
+                    if _mm_pc is not None:
+                        _mm_pc.typed_evidence.upsert(
+                            "provision_comparison",
+                            f"prov:{_prov}:{doc.filename}:{_role}",
+                            payload={
+                                "provision": _prov,
+                                "value": _val,
+                                "section_ref": _sec,
+                                "source_role": _role,
+                                "value_type": _vtype,
+                                "source_document": doc.filename,
+                            },
+                            label=f"{_prov}: {_val}",
+                            document_id=doc.filename,
+                            confidence=0.9,
+                        )
+
+            # Regulatory data (from regulatory-task deep reads)
+            _reg_data = analysis.get("regulatory_data")
+            if isinstance(_reg_data, list) and _reg_data:
+                _mm_rd = self._matter_model
+                for _rd in _reg_data[:30]:
+                    if not isinstance(_rd, dict):
+                        continue
+                    _cat = _rd.get("category", "")
+                    _entity = _rd.get("entity", "")
+                    _rdval = _rd.get("value", "")
+                    _src_detail = _rd.get("source_detail", "")
+                    _sig = _rd.get("significance", "")
+                    if not _rdval:
+                        continue
+                    _rd_fact = f"[REGULATORY:{_cat.upper()}] {_entity}: {_rdval}"
+                    if _src_detail:
+                        _rd_fact += f" ({_src_detail})"
+                    facts_to_add.append((_rd_fact, "supports", None, {
+                        "subject_ref_type": "free_text",
+                        "subject_ref_id": _entity or _cat,
+                        "predicate_key": f"has_{_cat or 'data'}",
+                        "object_json": json.dumps({"value": _rdval, "source": _src_detail}),
+                    }))
+                    if _mm_rd is not None:
+                        _mm_rd.typed_evidence.upsert(
+                            "regulatory_data",
+                            f"reg:{_cat}:{_entity}:{doc.filename}",
+                            payload={
+                                "category": _cat,
+                                "entity": _entity,
+                                "value": _rdval,
+                                "source_detail": _src_detail,
+                                "significance": _sig,
+                                "source_document": doc.filename,
+                            },
+                            label=f"{_cat}: {_entity} = {_rdval}",
+                            document_id=doc.filename,
+                            confidence=0.9,
+                        )
 
             # SO-2 validation: if any facts lack SPO triples, retry to recover them.
             # Threshold >= 1: fire even for single facts; FLASH retry is cheap.
@@ -8771,6 +9195,11 @@ Return:
             graph_calcs = self._resolve_operand_graph_calculations(facts=facts)
             if graph_calcs:
                 facts.extend(graph_calcs)
+
+            # Deterministic provision comparison calculations (Codex #3)
+            prov_calcs = self._derive_provision_comparison_calculations()
+            if prov_calcs:
+                facts.extend(prov_calcs)
 
             if len(facts) > 2:
                 _quant_ctx = self._build_quant_summary() if self._matter_model else ""
@@ -10310,6 +10739,11 @@ Return:
 
         if quant and _quant_is_mandatory:
             ordered.append(("quantitative", "Quantitative Summary:\n" + quant, True))
+
+        # Provision comparison summary for comparison tasks
+        _prov_summary = self._build_provision_comparison_summary(state)
+        if _prov_summary:
+            ordered.append(("provision_comparisons", _prov_summary, True))
 
         contract_coverage = self._build_material_contract_coverage_section(state)
         if contract_coverage:
