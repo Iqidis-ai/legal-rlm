@@ -968,8 +968,12 @@ Include a "regulatory_data" array in your JSON response:
 "regulatory_data": [
     {"category": "market_share|hhi|hot_doc|barrier|remedy|timeline|jurisdiction|overlap|synergy|accretion|valuation|framework|defense",
      "entity": "company or market name", "value": "exact data point",
-     "source_detail": "page/slide/section", "significance": "brief note"}
+     "source_detail": "GEOGRAPHY - company name (for market_share category, use 'MSA_Name - CompanyName' format)",
+     "significance": "brief note"}
 ]
+IMPORTANT for market_share entries: Set source_detail to "GeographicMarket - CompanyName" format.
+Example: {"category": "market_share", "entity": "Greenville-Spartanburg", "value": "42.3%",
+          "source_detail": "Greenville-Spartanburg - Meridian", "significance": "largest share"}
 """
 
 _DOMAIN_DEEP_READ_VOCABULARY = {
@@ -3931,15 +3935,14 @@ class RLMEngine:
             if cat == "market_share":
                 pct = _parse_pct(value)
                 if pct is not None and pct > 0:
-                    market_key = entity
-                    for geo in ("Atlanta", "Savannah", "Charleston", "Greenville",
-                                "Houston", "Jacksonville", "Tampa", "Birmingham",
-                                "Charlotte", "Raleigh", "Nashville", "Memphis",
-                                "New Orleans", "Baton Rouge", "Mobile"):
-                        if geo.lower() in entity.lower():
-                            market_key = geo
-                            break
-                    market_shares.setdefault(market_key, []).append((entity, pct))
+                    _src_detail = (payload.get("source_detail") or "").strip()
+                    _geo = _src_detail or entity
+                    _geo_parts = _re_reg.split(r'\s*[-–—:]\s*', _geo)
+                    market_key = _geo_parts[0].strip() if _geo_parts else entity
+                    company_name = entity
+                    if len(_geo_parts) > 1:
+                        company_name = _geo_parts[-1].strip() or entity
+                    market_shares.setdefault(market_key, []).append((company_name, pct))
 
             elif cat == "remedy":
                 dollar = _parse_dollar(value)
