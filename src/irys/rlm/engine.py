@@ -578,6 +578,12 @@ Current Investigation Focus: {focus}
 {mna_section}
 CONDUCT A THOROUGH ANALYSIS. Extract ALL relevant information — do not truncate or omit details.
 
+EXHAUSTIVE EXTRACTION RULE: When a document contains a table, list, schedule, or enumeration
+with N items (e.g., 9 geographic markets, 11 facilities, 15 contracts, 8 provisions), you
+MUST extract data for ALL N items — not just the top 3-5. Extracting only the most prominent
+examples while skipping the rest is a critical failure. Count the items and verify your
+extraction is complete.
+
 1. KEY FACTS (extract ALL relevant facts — no artificial limit): Extract facts that are:
    - Directly relevant to the query/focus
    - Specific (include EXACT section numbers, clause references, dollar amounts, percentages, thresholds, defined terms, time periods)
@@ -760,10 +766,15 @@ When reviewing acquisition, merger, change-of-control, assignment, or material-c
 """
 
 _COMPARISON_DEEP_READ_SECTION = """
-COMPARISON/MARKUP ANALYSIS — PROVISION-LEVEL EXTRACTION:
+COMPARISON/MARKUP ANALYSIS — EXHAUSTIVE PROVISION-LEVEL EXTRACTION:
 This is a document comparison task. For EVERY provision below, extract the EXACT
 values from THIS document. Do not paraphrase or approximate — use the exact numbers,
 percentages, thresholds, and defined terms as written.
+
+CRITICAL: Extract EVERY provision that differs between documents, not just the ones
+listed below. The list below is a minimum — if you find additional provisions with
+specific values, extract those too. If a provision has a GRID or TIER structure,
+extract EVERY tier/step-down with its exact breakpoint and value.
 
 CRITICAL PROVISIONS TO EXTRACT (with expected value types):
 1. Interest Rate Floor: exact basis points (e.g. 0.00%, 0.75%)
@@ -802,31 +813,50 @@ Include a "provision_comparisons" array in your JSON response with structured ro
 """
 
 _REGULATORY_DEEP_READ_SECTION = """
-REGULATORY/ANTITRUST ANALYSIS — DATA EXTRACTION:
+REGULATORY/ANTITRUST ANALYSIS — EXHAUSTIVE DATA EXTRACTION:
 This is a regulatory analysis task. Extract ALL quantitative and factual data needed
 for competitive effects analysis, HHI calculations, and enforcement assessment.
 
+CRITICAL: You must extract data for EVERY geographic market, EVERY product market, and
+EVERY entity mentioned in the document — not just the most prominent examples. If the
+document discusses 9 MSAs, extract data for all 9. If it mentions 4 product markets,
+extract data for all 4. Partial extraction is a critical failure.
+
 CRITICAL DATA CATEGORIES:
-1. Market Shares: company name, share percentage, source, date, methodology
-2. Market Definition: product market boundaries, geographic market (MSA/region), substitutes
-3. HHI Components: pre-merger shares for EACH competitor in each market
-4. Hot Documents: exact quotes showing competitive harm awareness (pricing, market power, elimination)
-5. Maverick/Disruptive Competitor Evidence: specific pricing, entry timing, customer diversion
-6. Barriers to Entry: type (regulatory, capital, IP, network), height, timeframe for new entry
-7. Customer Overlap: customer name, share of purchases from each merging party, diversion ratio
-8. Divestiture/Remedy Data: asset name, buyer qualification, estimated cost, capacity
-9. Efficiency Claims: type, magnitude, verifiability, merger-specificity
-10. Deal Timeline: HSR filing date, waiting period, second request, consent decree deadlines
-11. Internal Strategy Documents: quotes about competitive strategy, pricing, market positioning
+1. Market Shares: company name, share percentage, geographic market (MSA), product market, source, date
+   → Extract for EVERY geographic market mentioned, even if data is less detailed for some
+2. Market Definition: EVERY product market boundary (bulk gases, packaged gases, specialty, CO2, etc.),
+   EVERY geographic market (each MSA/region), substitutability analysis
+3. HHI Components: pre-merger and post-merger HHI, delta, shares for EACH competitor in EACH market
+   → If the document has HHI data for multiple markets, extract ALL of them
+4. Hot Documents: EVERY internal quote showing competitive harm awareness, anticompetitive intent,
+   pricing power, market elimination, or customer conversion plans. Include:
+   - Exact quote text (verbatim, not paraphrased)
+   - Speaker/author name
+   - Document section or slide number
+   - WHY this language is problematic (e.g., "suggests anticompetitive motive")
+5. Maverick/Disruptive Competitor Evidence: specific pricing, entry timing, customer diversion,
+   margin compression (with exact basis points or dollar amounts)
+6. Barriers to Entry: type, height, timeframe, and the parties' own admissions about barriers
+7. Customer Overlap: customer name, share of purchases, diversion ratio, CRM data about alternatives
+8. Divestiture/Remedy Data: EVERY candidate asset/facility by name, location, revenue, buyer qualifications
+9. Efficiency Claims: type, magnitude, whether merger-specific, and whether verifiable
+   → Flag "synergies" that are actually price increases (e.g., "pricing optimization" = eliminating competition)
+10. Deal Timeline: EVERY date (signing, HSR filing, waiting period, outside date, extensions, fund terms)
+11. Internal Strategy Documents: EVERY quote about competitive strategy, pricing, market positioning,
+    customer conversion, or facility consolidation — each with section reference and speaker
+12. Contractual Provisions: divestiture caps, ASU/asset exclusions, breakup fees, termination triggers,
+    hell-or-high-water obligations — with exact dollar amounts and conditions
 
 For EACH data point, create a key_fact with:
 - The EXACT number, percentage, or quote (not summaries)
 - The specific page, slide, or section reference
 - The speaker/author if identifiable
+- Tag: [REGULATORY:CATEGORY] prefix (e.g., [REGULATORY:MARKET_SHARE], [REGULATORY:HOT_DOC])
 
 Include a "regulatory_data" array in your JSON response:
 "regulatory_data": [
-    {"category": "market_share|hhi|hot_doc|barrier|remedy|timeline",
+    {"category": "market_share|hhi|hot_doc|barrier|remedy|timeline|jurisdiction|overlap|synergy|accretion|valuation",
      "entity": "company or market name", "value": "exact data point",
      "source_detail": "page/slide/section", "significance": "brief note"}
 ]
@@ -1676,6 +1706,17 @@ Your analysis MUST include ALL of the following sections when applicable to the 
 
 COMPLETENESS REQUIREMENT: For document comparison tasks, you must identify a MINIMUM of 10 specific deviations. If you found fewer, systematically re-examine each major section of both documents for provisions you may have missed: pricing, fees, covenants, baskets, events of default, change of control, assignment, prepayment, representations, conditions precedent, negative covenants, and reporting.
 
+ANALYTICAL FRAMEWORK COMPLETENESS: When producing a risk assessment, strategy memo, or analytical memorandum, you MUST address ALL standard analytical frameworks applicable to the subject matter. This means:
+- Identify and apply the governing legal framework (statute, regulation, or guideline) by name and citation
+- Address EVERY standard defense or counterargument (even if to dismiss it as unavailable on the facts)
+- For EVERY geographic market, jurisdiction, or product category mentioned in the evidence, provide separate analysis with specific data (do not analyze only the most prominent example)
+- Address procedural mechanics with specific dates, deadlines, and timeline computations
+- When the evidence contains quantitative data for N items (e.g., N markets, N contracts, N provisions), analyze ALL N items — not just a representative subset
+- Include specific party names, dollar amounts, document section references, and page citations for every substantive point
+- Compare strategic alternatives (e.g., fix-it-first vs. consent decree, litigation vs. settlement) with pros/cons
+- Recommend retaining outside experts or consultants where the complexity warrants it
+- Flag internal documents whose language could be used adversarially, with exact quotes and speaker attribution
+
 Omit a section ONLY if the user's query clearly does not call for it (e.g., a pure extraction task needs no recommendations).
 
 Final Check Before Responding
@@ -1693,6 +1734,11 @@ Before finalizing, check:
 - Did you provide specific recommendations with primary AND fallback positions?
 - Did you assess the practical impact with specific dollar amounts where possible?
 - For document comparisons: did you identify at least 10 specific deviations with original vs. changed values?
+- Did you address ALL standard analytical frameworks applicable to this subject matter?
+- Did you analyze EVERY geographic market, product category, or item in the evidence (not just the top examples)?
+- Did you flag ALL internal documents with adversarially problematic language, with exact quotes?
+- Did you address standard defenses and counterarguments (even if to dismiss them)?
+- Did you compare strategic alternatives with specific pros and cons?
 
 Original Query: {query}
 
@@ -8640,12 +8686,22 @@ Return:
             elif _is_regulatory_dr:
                 _base_focus = (
                     f"{_base_focus}\n\n"
-                    "EXTRACTION PRIORITY: Extract ALL quantitative data needed for competitive analysis. "
-                    "For market shares: exact percentages per company per geographic market. "
-                    "For pricing: exact quotes about competitive pricing, undercutting, or market disruption. "
-                    "For HHI: all company shares needed to compute HHI (share² × 10000 summed). "
-                    "For hot documents: exact quotes with speaker attribution and slide/page references. "
-                    "For remedies: specific divestiture assets, costs, and buyer qualifications."
+                    "EXTRACTION PRIORITY: Extract ALL quantitative data for competitive analysis — "
+                    "EVERY market, EVERY entity, EVERY data point. Partial extraction is failure.\n"
+                    "For market shares: exact percentages per company per geographic market (MSA). "
+                    "If there are 9 MSAs, extract data for all 9.\n"
+                    "For pricing: EVERY quote about competitive pricing, undercutting, margin impact, "
+                    "or market disruption — with exact quote text, speaker name, and section reference.\n"
+                    "For HHI: post-merger HHI AND delta for EVERY geographic market. "
+                    "All company shares needed to compute HHI (share² × 10000 summed).\n"
+                    "For hot documents: EVERY internal quote that could be used adversarially — "
+                    "board presentations, strategy memos, emails — with speaker, section, slide number.\n"
+                    "For remedies: EVERY divestiture candidate facility by name, location, and revenue. "
+                    "Potential buyers by name. Contractual caps, exclusions, and limitations.\n"
+                    "For deal timeline: EVERY date — signing, filing, waiting period, outside date, "
+                    "extensions, fund term expirations, integration milestones.\n"
+                    "For contractual provisions: exact dollar amounts for breakup fees, divestiture caps, "
+                    "and any exclusions (e.g., ASU exclusion from divestitures)."
                 )
 
             prompt = DEEP_READ_PROMPT.format(
