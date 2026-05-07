@@ -4074,18 +4074,31 @@ class RLMEngine:
                 return None
             import re
             val_str_clean = val_str.replace(",", "").replace("$", "").strip()
-            m = re.search(r'([\d.]+)\s*(?:bps|basis\s*point)', val_str_clean, re.IGNORECASE)
+            _NUM = r'(\d+\.?\d*|\.\d+)'
+            m = re.search(_NUM + r'\s*(?:bps|basis\s*point)', val_str_clean, re.IGNORECASE)
             if m:
-                return float(m.group(1)) / 100.0
-            m = re.search(r'([\d.]+)\s*[%x]', val_str_clean)
+                try:
+                    return float(m.group(1)) / 100.0
+                except ValueError:
+                    pass
+            m = re.search(_NUM + r'\s*[%x]', val_str_clean)
             if m:
-                return float(m.group(1))
-            m = re.search(r'([\d.]+)\s*(M|million|mm)', val_str_clean, re.IGNORECASE)
+                try:
+                    return float(m.group(1))
+                except ValueError:
+                    pass
+            m = re.search(_NUM + r'\s*(M|million|mm)', val_str_clean, re.IGNORECASE)
             if m:
-                return float(m.group(1)) * 1_000_000
-            m = re.search(r'(\d+\.?\d*|\.\d+)', val_str_clean)
+                try:
+                    return float(m.group(1)) * 1_000_000
+                except ValueError:
+                    pass
+            m = re.search(_NUM, val_str_clean)
             if m:
-                return float(m.group(1))
+                try:
+                    return float(m.group(1))
+                except ValueError:
+                    pass
             return None
 
         def _is_percentage(val_str: str) -> bool:
@@ -4270,20 +4283,35 @@ class RLMEngine:
 
         def _parse_pct(s: str) -> "Optional[float]":
             s = s.replace(",", "").strip()
-            m = _re_reg.search(r'([\d.]+)\s*%', s)
-            return float(m.group(1)) if m else None
+            m = _re_reg.search(r'(\d+\.?\d*|\.\d+)\s*%', s)
+            try:
+                return float(m.group(1)) if m else None
+            except (ValueError, AttributeError):
+                return None
 
         def _parse_dollar(s: str) -> "Optional[float]":
             s = s.replace(",", "").replace("$", "").strip()
-            m = _re_reg.search(r'([\d.]+)\s*(B|billion)', s, _re_reg.IGNORECASE)
+            _NUM = r'(\d+\.?\d*|\.\d+)'
+            m = _re_reg.search(_NUM + r'\s*(B|billion)', s, _re_reg.IGNORECASE)
             if m:
-                return float(m.group(1)) * 1_000_000_000
-            m = _re_reg.search(r'([\d.]+)\s*(M|million|mm)', s, _re_reg.IGNORECASE)
+                try:
+                    return float(m.group(1)) * 1_000_000_000
+                except ValueError:
+                    pass
+            m = _re_reg.search(_NUM + r'\s*(M|million|mm)', s, _re_reg.IGNORECASE)
             if m:
-                return float(m.group(1)) * 1_000_000
-            m = _re_reg.search(r'(\d+\.?\d*|\.\d+)', s)
-            if m and float(m.group(1)) > 1000:
-                return float(m.group(1))
+                try:
+                    return float(m.group(1)) * 1_000_000
+                except ValueError:
+                    pass
+            m = _re_reg.search(_NUM, s)
+            if m:
+                try:
+                    v = float(m.group(1))
+                    if v > 1000:
+                        return v
+                except ValueError:
+                    pass
             return None
 
         for row in rows:
