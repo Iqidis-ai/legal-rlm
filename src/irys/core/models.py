@@ -63,6 +63,7 @@ class ModelConfig:
     large_context_threshold: Optional[int] = None
     cost_per_1m_input_large: Optional[float] = None
     cost_per_1m_output_large: Optional[float] = None
+    fallback_model_id: Optional[str] = None
 
     def pricing_for_prompt_tokens(self, total_prompt_tokens: int) -> tuple[float, float, float]:
         """Return (input_rate, cache_read_rate, output_rate) for a request size.
@@ -111,6 +112,7 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
         max_output_tokens=16384,
         cost_per_1m_input=0.25,
         cost_per_1m_output=1.50,
+        fallback_model_id="gemini-2.5-flash-lite",
     ),
     ModelTier.PRO: ModelConfig(
         model_id="gemini-3.1-flash-lite-preview",
@@ -118,6 +120,7 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
         max_output_tokens=65536,
         cost_per_1m_input=0.25,
         cost_per_1m_output=1.50,
+        fallback_model_id="gemini-2.5-flash-lite",
     ),
 }
 
@@ -671,6 +674,63 @@ class GeminiClient:
                     await asyncio.sleep(_wait)
                     await self._rate_limiter.acquire()
                     continue
+                # Model-level fallback: if primary exhausted retries on
+                # 503/429 and a fallback model is configured, try it.
+                if (_is_rate_limit or _is_overloaded) and mc.fallback_model_id:
+                    _fb_model = mc.fallback_model_id
+                    logger.warning(
+                        f"Primary model {mc.model_id} exhausted {self.MAX_RATE_LIMIT_RETRIES} "
+                        f"retries, falling back to {_fb_model}"
+                    )
+                    _fb_config = self._get_config(tier, json_mode=json_mode)
+                    if temperature is not None:
+                        _fb_config.temperature = temperature
+                    if tools:
+                        _fb_config.tools = tools
+                    if cached_content:
+                        _fb_config.cached_content = cached_content
+                    if system_prompt:
+                        _fb_config.system_instruction = system_prompt
+                    try:
+                        await self._rate_limiter.acquire()
+                        if conversation_history:
+                            history = self._build_chat_history(conversation_history)
+                            chat = self.client.chats.create(
+                                model=_fb_model,
+                                config=_fb_config,
+                                history=history,
+                            )
+                            response = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    chat.send_message,
+                                    request_text,
+                                ),
+                                timeout=request_timeout,
+                            )
+                        else:
+                            contents = [
+                                types.Content(
+                                    role="user",
+                                    parts=[types.Part(text=request_text)],
+                                )
+                            ]
+                            response = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    self.client.models.generate_content,
+                                    model=_fb_model,
+                                    contents=contents,
+                                    config=_fb_config,
+                                ),
+                                timeout=request_timeout,
+                            )
+                        logger.info(
+                            f"Fallback to {_fb_model} succeeded for {usage_label}"
+                        )
+                        break
+                    except Exception as fb_exc:
+                        logger.error(
+                            f"Fallback model {_fb_model} also failed: {fb_exc}"
+                        )
                 latency_ms = int((time.perf_counter() - started_at) * 1000)
                 self._record_call(
                     LLMCallRecord(
