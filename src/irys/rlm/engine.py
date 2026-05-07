@@ -563,7 +563,8 @@ M&A MATERIAL-CONTRACT MUST-CAPTURE DETAILS:
 When reviewing acquisition, merger, change-of-control, assignment, or material-contract diligence documents:
 - Preserve legally operative phrases verbatim when short, especially "whether by operation of law or otherwise", "direct or indirect", and "ultimate ownership or control".
 - Treat schedules, exhibits, tables, side letters, declarations pages, and pricing/revenue schedules as first-class evidence; do not stop at the main body of the agreement.
-- Separate actual counterparty/product TTM revenue from minimum purchase commitments, facility commitments, sample calculations, and limits.
+- CRITICAL: When a schedule lists counterparty-specific revenue (e.g., "approximately $X million in trailing twelve-month revenue attributable to this agreement"), extract that as the ACTUAL revenue operand — it takes precedence over minimum purchase commitments stated in the agreement body.
+- Separate actual counterparty/product TTM revenue from minimum purchase commitments, facility commitments, sample calculations, and limits. The schedule/disclosure figure is the real revenue; the body's minimum commitment is a floor, not actual revenue.
 - For credit agreements, extract both facility/commitment size and current outstanding/drawn amount; label which amount is the mandatory prepayment exposure.
 - For default provisions, state whether a Change of Control is an Event of Default and extract acceleration, termination of commitments, and prepayment consequences.
 - For consent/termination mechanics, preserve conditional timing chains (e.g. consent not obtained within X days after closing -> termination on Y days' notice).
@@ -8214,13 +8215,18 @@ Return:
             "require comparing across documents or performing calculations.\n\n"
             "Produce findings in these categories:\n"
             "1. MANDATORY CALCULATIONS (perform ALL that the data supports):\n"
-            "   - revenue exposure percent = contract exposure / company TTM revenue × 100\n"
+            "   - revenue exposure percent = counterparty TTM revenue / company TTM revenue × 100\n"
+            "     (compute for EVERY counterparty where both figures are available)\n"
             "   - RSU acceleration cost = unvested RSU count × per-share transaction price\n"
             "   - buy-out price = EBITDA × contract multiple (e.g., 4.5x)\n"
+            "     (if a buy-out multiple is ≤5.0x EBITDA, flag potential below-market pricing/value leakage)\n"
             "   - lease termination fee = annual base rent ÷ 12 × termination notice months\n"
             "   - drawn credit exposure = actual drawn amount on facility\n"
-            "   - If a buy-out multiple is ≤5.0x EBITDA, flag potential below-market pricing\n"
+            "   - carve-out threshold test: compare acquirer's relevant revenue to the stated threshold\n"
+            "     and conclude whether the carve-out applies or does not apply\n"
             "   Do NOT state that operands are unavailable if they appear in EXTRACTED FACTS or QUANTITATIVE DATA.\n"
+            "   CRITICAL: Use schedule-disclosed TTM revenue (not minimum purchase commitments from the contract body)\n"
+            "   as the numerator for revenue exposure. If both appear in the facts, state both and use TTM for the %.\n"
             "2. INCONSISTENCIES: Flag where different contracts define the same "
             "concept differently (e.g., different CoC thresholds, different "
             "trigger definitions).\n"
@@ -8231,7 +8237,7 @@ Return:
             "no explicit CoC definition, no consent standard.\n"
             "5. STRUCTURAL ANALYSIS:\n"
             "   - Identify the transaction structure (e.g., reverse triangular merger).\n"
-            "   - In a reverse triangular merger, the TARGET (Apex) survives as a wholly-owned subsidiary.\n"
+            "   - In a reverse triangular merger, the TARGET survives as a wholly-owned subsidiary.\n"
             "     Entity survival means anti-assignment clauses may NOT be triggered because no 'assignment'\n"
             "     occurs — but this is JURISDICTION-DEPENDENT and must be flagged as uncertain.\n"
             "   - For EACH contract with 'assignment by operation of law' language, separately analyze\n"
@@ -8241,12 +8247,17 @@ Return:
             "   could re-trigger the provision. Name the specific contract and section.\n"
             "7. LEGAL FRAMEWORK: For EACH supply agreement or MSA with an anti-assignment clause,\n"
             "   apply UCC § 2-210 SPECIFICALLY to that contract — distinguish assignment of rights\n"
-            "   from delegation of duties. Do not emit generic UCC analysis.\n\n"
+            "   from delegation of duties. Do not emit generic UCC analysis.\n"
+            "8. OWNERSHIP STAKES: Report exact ownership percentages from JV/partnership/subsidiary\n"
+            "   agreements. Distinguish ownership stakes from voting-equity CoC thresholds.\n\n"
             "OPERAND DISCIPLINE FOR CALCULATIONS:\n"
             "   - RSU acceleration: use the EXACT unvested RSU count from the employment agreement.\n"
             "     Use per-share transaction price or implied share price — do NOT use JV buy-out EBITDA multiples.\n"
             "   - Credit facility: use the DRAWN/OUTSTANDING amount, not the commitment/facility maximum.\n"
-            "   - Revenue exposure: pair counterparty-specific revenue with company TTM revenue.\n"
+            "   - Revenue exposure: pair counterparty-specific TTM revenue (from schedules/disclosures)\n"
+            "     with company total TTM revenue. Do NOT use minimum purchase commitments as the numerator.\n"
+            "   - Carve-outs: compare the acquirer's product-specific or segment revenue to the threshold;\n"
+            "     state whether it exceeds the threshold or falls short, and the consequence.\n"
             "   - If a contract card says 'ABSENT' for a provision, note that explicitly.\n\n"
             f"QUERY CONTEXT: {query}\n\n"
             f"EXTRACTED FACTS:\n{facts_text}\n"
