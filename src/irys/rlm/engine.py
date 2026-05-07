@@ -2703,6 +2703,32 @@ class RLMEngine:
                 "Conversion Date; separate go-forward coverage is needed."
             )
 
+        if "fifty-five percent (55%) membership interest" in lower and "apex" in lower:
+            add(
+                "[DETERMINISTIC_OPERAND] apex-kenji-jv-agreement.docx | "
+                "Apex holds a 55% Membership Interest in the JV; Kenji holds 45%."
+            )
+        if (
+            "fluid control products" in lower
+            and "$500,000,000" in lower
+            and "successor entity" in lower
+        ):
+            add(
+                "[DETERMINISTIC_PROVISION] apex-kenji-jv-agreement.docx | "
+                "Section 12.3(b)(ii) carve-out requires the Successor Entity's "
+                "consolidated annual revenue derived from FLUID CONTROL PRODUCTS "
+                "(valves, actuators, flow meters, and related automation systems) "
+                "to exceed $500M — not general revenue."
+            )
+        if "$410,000,000" in lower and "voltan" in lower and "flow control" in lower:
+            add(
+                "[DETERMINISTIC_OPERAND] apex-kenji-jv-agreement.docx | "
+                "Voltan's flow control division generates ~$410M consolidated annual "
+                "revenue. This falls SHORT of the $500M fluid control products threshold "
+                "in Section 12.3(b)(ii), so the carve-out DOES NOT APPLY to Voltan as "
+                "Successor Entity — the Buy-Out Option remains exercisable."
+            )
+
         if "crestline erp platform" in lower and "crestline software solutions" in lower:
             add(
                 "[DETERMINISTIC_ENTITY_GAP] Crestline ERP Platform v.8.2 is "
@@ -2812,6 +2838,18 @@ class RLMEngine:
                 "JV agreement: preserve each carve-out condition and test it, including "
                 "management-continuity timing and the successor fluid-control-products "
                 "revenue threshold; compare any acquirer revenue evidence to the threshold."
+            )
+        if jv and has("55%", "fifty-five percent"):
+            lines.append(
+                "JV agreement: explicitly state that Apex holds a 55% Membership Interest "
+                "in the JV (and Kenji 45%). This is the stake at risk in the buy-out."
+            )
+        if jv and has("410,000,000", "$410m", "$410 million", "four hundred ten million") and has("fluid control", "flow control"):
+            lines.append(
+                "JV agreement: Voltan's flow control division revenue (~$410M) falls SHORT "
+                "of the $500M fluid control products threshold in Section 12.3(b)(ii). "
+                "Conclude that the Successor Entity carve-out DOES NOT APPLY to Voltan, "
+                "so the Buy-Out Option remains exercisable by Kenji."
             )
 
         if hendricks and ax7000_ttm is not None:
