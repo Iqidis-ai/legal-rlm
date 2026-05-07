@@ -4201,7 +4201,8 @@ class RLMEngine:
             _pk = _rv.get("provision_key", "")
             _pt = _rv.get("provision_title") or _pk
             _rl = _rv.get("row_label") or ""
-            _dedup_key = f"{_pk}:{_rl}"
+            _src_doc = _rv.get("source_document", "")
+            _dedup_key = f"{_pk}:{_rl}:{_src_doc}:{_rv.get('row_index', '')}"
             if _dedup_key in _rev_seen:
                 continue
             _rev_seen.add(_dedup_key)
@@ -5168,7 +5169,12 @@ class RLMEngine:
             entries.append(payload)
         if not entries:
             return ""
-        entries.sort(key=lambda e: (e.get("provision_key", ""), e.get("row_index", 0)))
+        def _safe_row_idx(e):
+            try:
+                return int(e.get("row_index", 0))
+            except (TypeError, ValueError):
+                return 0
+        entries.sort(key=lambda e: (e.get("provision_key", ""), _safe_row_idx(e)))
         lines = [
             f"PROVISION REVISION DATA — {len(entries)} atomic rows extracted from documents:",
             "| # | Provision | Row/Tier | Baseline | Proposed | Change | Impact | Section |",
@@ -9895,6 +9901,8 @@ Return:
                 "concerns": [],
             })
 
+            import hashlib as _hashlib
+
             # Add quotes as citations
             for quote in analysis.get("quotes", [])[:25]:
                 if isinstance(quote, dict) and "text" in quote:
@@ -9907,6 +9915,90 @@ Return:
                     )
                     if self.on_citation:
                         self.on_citation(citation)
+
+            # Extraction completeness: repair pass BEFORE persistence so
+            # repaired items get flattened into facts_to_add and typed evidence.
+            _ec = analysis.get("extraction_completeness")
+            _needs_repair = False
+            _missing_report_parts: list[str] = []
+            if isinstance(_ec, list):
+                for _ecg in _ec:
+                    if not isinstance(_ecg, dict):
+                        continue
+                    _grp = _ecg.get("group", "")
+                    _src_n = _ecg.get("items_in_source")
+                    _ext_n = _ecg.get("items_extracted")
+                    _complete = _ecg.get("complete", True)
+                    if isinstance(_complete, str):
+                        _complete = _complete.lower() not in ("false", "0", "no")
+                    try:
+                        _src_int = int(_src_n or 0)
+                        _ext_int = int(_ext_n or 0)
+                    except (TypeError, ValueError):
+                        _src_int, _ext_int = 0, 0
+                    if _src_int > _ext_int and not _complete:
+                        _gap = _src_int - _ext_int
+                        _needs_repair = True
+                        _missing_report_parts.append(
+                            f"- '{_grp}': {_src_int} items in source, only {_ext_int} extracted ({_gap} missing)"
+                        )
+                        self._emit_step(
+                            state, StepType.REPLAN,
+                            f"Incomplete extraction: '{_grp}' has {_src_int} items "
+                            f"in source but only {_ext_int} extracted (doc: '{doc.filename[:50]}')",
+                        )
+
+            if _needs_repair and (_is_comparison_dr or _is_regulatory_dr or _is_cross_doc_comparison):
+                _repair_report = "\n".join(_missing_report_parts)
+                _existing_json_str = json.dumps(analysis, default=str)
+                if len(_existing_json_str) > 40000:
+                    _existing_json_str = _existing_json_str[:40000] + "..."
+                _repair_prompt = (
+                    f"Your prior extraction of '{doc.filename}' was INCOMPLETE.\n\n"
+                    f"MISSING ITEMS:\n{_repair_report}\n\n"
+                    f"PRIOR EXTRACTION (for reference — do NOT repeat existing items):\n"
+                    f"{_existing_json_str[:30000]}\n\n"
+                    f"DOCUMENT CONTENT:\n{content[:80000]}\n\n"
+                    f"Return ONLY a JSON object with additional items for the incomplete groups. "
+                    f"Use the same schema as the original extraction. Include:\n"
+                    f"- key_facts: additional facts not yet extracted\n"
+                    f"- provision_comparisons: additional provision rows\n"
+                    f"- provision_revisions: additional atomic revision rows (one per tier/period/basket)\n"
+                    f"- regulatory_data: additional regulatory entries\n"
+                    f"- numeric_facts: additional numeric facts\n"
+                    f"- adverse_evidence: additional adverse quotes\n"
+                    f"Extract EVERY remaining table row, schedule row, tier, period, "
+                    f"tracked-change marker, market/company/share data point, and projection metric."
+                )
+                self._emit_step(
+                    state, StepType.REPLAN,
+                    f"Running extraction repair for {doc.filename[:50]} ({len(_missing_report_parts)} incomplete groups)",
+                )
+                state.llm_calls_required += 1
+                try:
+                    _repair_response = await self.client.complete(
+                        _repair_prompt,
+                        tier=ModelTier.FLASH,
+                        json_mode=True,
+                        usage_label="extraction_repair",
+                        temperature=0.0,
+                    )
+                    _repair_data = self._parse_json_safe(_repair_response, {})
+                    for _rk in ("key_facts", "provision_comparisons", "provision_revisions", "regulatory_data",
+                                "numeric_facts", "adverse_evidence", "quotes"):
+                        _repair_items = _repair_data.get(_rk)
+                        if isinstance(_repair_items, list) and _repair_items:
+                            _existing = analysis.get(_rk, [])
+                            if isinstance(_existing, list):
+                                analysis[_rk] = _existing + _repair_items
+                            else:
+                                analysis[_rk] = _repair_items
+                    self._emit_step(
+                        state, StepType.REPLAN,
+                        f"Extraction repair added items for {doc.filename[:50]}",
+                    )
+                except Exception as _repair_err:
+                    logger.warning("Extraction repair failed for %s: %s", doc.filename, _repair_err)
 
             # Store findings with deduplication
             # key_facts can be strings or dicts with "fact" key
@@ -10196,86 +10288,6 @@ Return:
                             document_id=doc.filename,
                             confidence=0.85,
                         )
-
-            # Extraction completeness: repair pass when items are missing.
-            _ec = analysis.get("extraction_completeness")
-            _needs_repair = False
-            _missing_report_parts: list[str] = []
-            if isinstance(_ec, list):
-                for _ecg in _ec:
-                    if not isinstance(_ecg, dict):
-                        continue
-                    _grp = _ecg.get("group", "")
-                    _src_n = _ecg.get("items_in_source")
-                    _ext_n = _ecg.get("items_extracted")
-                    _complete = _ecg.get("complete", True)
-                    if _src_n and _ext_n and not _complete:
-                        try:
-                            _gap = int(_src_n) - int(_ext_n)
-                        except (TypeError, ValueError):
-                            _gap = 0
-                        if _gap >= 2:
-                            _needs_repair = True
-                            _missing_report_parts.append(
-                                f"- '{_grp}': {_src_n} items in source, only {_ext_n} extracted ({_gap} missing)"
-                            )
-                        self._emit_step(
-                            state, StepType.REPLAN,
-                            f"Incomplete extraction: '{_grp}' has {_src_n} items "
-                            f"in source but only {_ext_n} extracted (doc: '{doc.filename[:50]}')",
-                        )
-
-            if _needs_repair and (_is_comparison_dr or _is_regulatory_dr or _is_cross_doc_comparison):
-                _repair_report = "\n".join(_missing_report_parts)
-                _existing_json_str = json.dumps(analysis, default=str)
-                if len(_existing_json_str) > 40000:
-                    _existing_json_str = _existing_json_str[:40000] + "..."
-                _repair_prompt = (
-                    f"Your prior extraction of '{doc.filename}' was INCOMPLETE.\n\n"
-                    f"MISSING ITEMS:\n{_repair_report}\n\n"
-                    f"PRIOR EXTRACTION (for reference — do NOT repeat existing items):\n"
-                    f"{_existing_json_str[:30000]}\n\n"
-                    f"DOCUMENT CONTENT:\n{content[:80000]}\n\n"
-                    f"Return ONLY a JSON object with additional items for the incomplete groups. "
-                    f"Use the same schema as the original extraction. Include:\n"
-                    f"- key_facts: additional facts not yet extracted\n"
-                    f"- provision_comparisons: additional provision rows\n"
-                    f"- provision_revisions: additional atomic revision rows (one per tier/period/basket)\n"
-                    f"- regulatory_data: additional regulatory entries\n"
-                    f"- numeric_facts: additional numeric facts\n"
-                    f"- hot_documents: additional adverse quotes\n"
-                    f"Extract EVERY remaining table row, schedule row, tier, period, "
-                    f"tracked-change marker, market/company/share data point, and projection metric."
-                )
-                self._emit_step(
-                    state, StepType.REPLAN,
-                    f"Running extraction repair for {doc.filename[:50]} ({len(_missing_report_parts)} incomplete groups)",
-                )
-                state.llm_calls_required += 1
-                try:
-                    _repair_response = await self.client.complete(
-                        _repair_prompt,
-                        tier=ModelTier.FLASH,
-                        json_mode=True,
-                        usage_label="extraction_repair",
-                        temperature=0.0,
-                    )
-                    _repair_data = self._parse_json_safe(_repair_response, {})
-                    for _rk in ("key_facts", "provision_comparisons", "provision_revisions", "regulatory_data",
-                                "numeric_facts", "hot_documents", "quotes"):
-                        _repair_items = _repair_data.get(_rk)
-                        if isinstance(_repair_items, list) and _repair_items:
-                            _existing = analysis.get(_rk, [])
-                            if isinstance(_existing, list):
-                                analysis[_rk] = _existing + _repair_items
-                            else:
-                                analysis[_rk] = _repair_items
-                    self._emit_step(
-                        state, StepType.REPLAN,
-                        f"Extraction repair added items for {doc.filename[:50]}",
-                    )
-                except Exception as _repair_err:
-                    logger.warning("Extraction repair failed for %s: %s", doc.filename, _repair_err)
 
             # SO-2 validation: if any facts lack SPO triples, retry to recover them.
             # Threshold >= 1: fire even for single facts; FLASH retry is cheap.
