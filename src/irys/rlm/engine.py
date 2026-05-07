@@ -9284,6 +9284,17 @@ Return:
                     "EVERY financial figure used in calculations, EVERY exception or qualification.\n\n"
                     "For due diligence: extract EVERY risk finding, EVERY dollar amount at risk, "
                     "EVERY deadline, EVERY material contract reference.\n\n"
+                    "For DISCLOSURE SCHEDULES: extract EVERY representation the borrower makes — "
+                    "EVERY entity listed (and NOT listed), EVERY dollar amount, EVERY stated condition "
+                    "(e.g., 'no environmental issues', 'no pending litigation above $X'), EVERY insurance "
+                    "policy number and coverage amount, EVERY indebtedness figure.\n\n"
+                    "For DUE DILIGENCE documents: extract EVERY finding that could contradict a disclosure — "
+                    "newly discovered entities, higher litigation exposure than disclosed, environmental "
+                    "contamination not mentioned, UCC filings/tax liens not listed, expired insurance, "
+                    "revenue/financial discrepancies. Tag each with [DD-FINDING] prefix.\n\n"
+                    "For OFFICER'S CERTIFICATES: extract EVERY certification statement verbatim — "
+                    "'all insurance in full force and effect', 'no material adverse change', 'all "
+                    "representations true and correct'. Each becomes a testable assertion.\n\n"
                     "Be EXHAUSTIVE. Extract 50-100+ individual data points. Each one becomes a "
                     "comparison row. Missing a single data point means missing a criterion."
                 )
@@ -11021,10 +11032,21 @@ Return:
         _ql = query.lower()
         _is_comparison = any(w in _ql for w in ("markup", "redline", "compare", "comparison", "deviation", "counterparty"))
         _is_regulatory = any(w in _ql for w in ("antitrust", "hsr", "merger review", "regulatory", "compliance"))
+        _is_disclosure_dd = any(w in _ql for w in (
+            "disclosure", "due diligence", "borrower disclos", "dd finding",
+            "schedules against", "discrepanc",
+        ))
         if is_mna:
             persona = (
                 "You are a senior M&A attorney performing cross-document analysis on "
                 "extracted contract provisions."
+            )
+        elif _is_disclosure_dd:
+            persona = (
+                "You are a senior banking/finance attorney performing disclosure verification — "
+                "comparing what the borrower represented in disclosure schedules against what "
+                "due diligence actually found. Your job is to find EVERY discrepancy, omission, "
+                "misstatement, or understated exposure."
             )
         elif _is_comparison:
             persona = (
@@ -11099,6 +11121,39 @@ Return:
                 "9. MISSING PROVISIONS: Identify provisions in the original that were deleted in the markup,\n"
                 "   and provisions added by the lender that weren't in the original.\n\n"
             )
+        disclosure_categories = ""
+        if _is_disclosure_dd:
+            disclosure_categories = (
+                "5. DISCLOSURE vs. DUE DILIGENCE DISCREPANCY TABLE (MANDATORY):\n"
+                "   Systematically compare EVERY fact disclosed by the borrower in schedules/certificates\n"
+                "   against what due diligence documents actually show. For EACH discrepancy produce:\n"
+                "   '[DISCREPANCY] Topic: <topic>; Disclosed: <what borrower stated>; DD Found: <what DD found>; "
+                "Impact: <why it matters>'\n"
+                "   Common discrepancy types to check:\n"
+                "   a. UNDISCLOSED ENTITIES: Subsidiaries, affiliates, or related parties found in DD\n"
+                "      that don't appear in the organizational disclosure schedule.\n"
+                "   b. UNDERSTATED LIABILITIES: Litigation exposure, debt amounts, or contingent\n"
+                "      liabilities where DD found higher figures than disclosed.\n"
+                "   c. ENVIRONMENTAL ISSUES: Contamination, USTs, remediation obligations, or\n"
+                "      compliance gaps not disclosed or understated in environmental schedules.\n"
+                "   d. LIEN/ENCUMBRANCE CONFLICTS: UCC filings, tax liens, or judgments found in\n"
+                "      DD that weren't disclosed or whose amounts differ.\n"
+                "   e. REVENUE/FINANCIAL MISSTATEMENTS: Customer concentration, revenue recognition,\n"
+                "      or financial figures that differ between schedules and DD findings.\n"
+                "   f. INSURANCE GAPS: Expired policies, insufficient coverage, or certificates that\n"
+                "      contradict representations of 'in full force and effect'.\n"
+                "   g. CONTRACT COMPLIANCE: Material contracts with conditions violated or unfavorable\n"
+                "      terms not disclosed.\n"
+                "6. OMISSION ANALYSIS:\n"
+                "   For each DD finding that has NO corresponding disclosure, produce:\n"
+                "   '[OMISSION] <finding> — not disclosed in Schedule <X> where it should appear'\n"
+                "7. OFFICER'S CERTIFICATE CONTRADICTIONS:\n"
+                "   For each representation in an Officer's Certificate, check whether DD findings\n"
+                "   contradict the certification. E.g., 'all insurance in full force' vs expired policies.\n"
+                "8. DOLLAR IMPACT: For each discrepancy, compute the dollar exposure where possible.\n"
+                "   Understated litigation = potential additional exposure. Missing lien = priority conflict.\n\n"
+            )
+            comparison_categories = ""
         if _is_regulatory:
             regulatory_categories = (
                 "5. MARKET CONCENTRATION ANALYSIS (MANDATORY when market share data exists):\n"
@@ -11153,6 +11208,7 @@ Return:
             f"{mna_categories}"
             f"{mna_operand_discipline}"
             f"{comparison_categories}"
+            f"{disclosure_categories}"
             f"{regulatory_categories}"
             f"QUERY CONTEXT: {query}\n\n"
             f"EXTRACTED FACTS:\n{facts_text}\n"
