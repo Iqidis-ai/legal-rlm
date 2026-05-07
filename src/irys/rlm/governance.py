@@ -93,7 +93,7 @@ class ExecutionContract:
     # this instead of a hardcoded priority threshold. MVI-5 will
     # upgrade this to a real expected-value signal (coverage gain
     # per expected cost).
-    lead_ev_floor: float = 0.5
+    lead_ev_floor: float = 0.35
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

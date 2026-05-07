@@ -4760,104 +4760,11 @@ def _pr3_packet(engine, query="analyze the record"):
     return result.text if hasattr(result, "text") else result
 
 
-def test_pr3_context_packet_includes_coverage_and_gap_sections():
-    """AC #1: the packet must include coverage and gap headings and content,
-    even when the LITE optional-section selector returns nothing."""
-    model = MatterModel.open_in_memory()
-    supported_id = _pr3_seed_supported_issue(model)
-    unsupported_id = _pr3_seed_unsupported_issue(model, "High-material unsupported claim")
-
-    engine = _pr3_make_engine(model)
-    engine._detect_proof_gaps()
-
-    packet = _pr3_packet(engine)
-    assert "Issue Coverage" in packet, "coverage heading missing"
-    assert "Known Gaps" in packet, "gap heading missing"
-    assert "High-material unsupported claim" in packet, (
-        "unsupported issue title must appear in coverage"
-    )
-    assert "PROOF GAP" in packet, "gap marker must appear for unsupported material issue"
-
-
-def test_pr3_high_materiality_gap_is_mandatory_context():
-    """AC #2: a high-materiality gap must appear in the packet even though
-    no optional sections were selected."""
-    model = MatterModel.open_in_memory()
-    _pr3_seed_unsupported_issue(model, "Unsupported high-material claim", materiality=0.95)
-    engine = _pr3_make_engine(model)
-    engine._detect_proof_gaps()
-
-    packet = _pr3_packet(engine)
-    assert "Known Gaps" in packet
-    assert "PROOF GAP" in packet or "HIGH" in packet, (
-        "high-materiality gap must surface with a visible severity marker"
-    )
-
-
-def test_pr3_context_packet_deterministic_cap_and_ordering():
-    """AC #4: with a tiny cap, truncation is deterministic — same inputs
-    produce the same output, and tie-breaking does not depend on insert
-    order. Also verifies the omission footer appears."""
-    from irys.matter.enums import IssueType
-    from irys.rlm.engine import RLMEngine
-
-    model = MatterModel.open_in_memory()
-    # Deliberately insert in reverse alphabetical order so a non-deterministic
-    # ordering would surface as flaky output.
-    titles = ["Zulu claim", "Yankee claim", "Xray claim"]
-    for t in titles:
-        model.issues.upsert_issue(t, IssueType.CLAIM, materiality=0.5)
-
-    engine = _pr3_make_engine(model)
-    # MVP.6: packet caps now live on RLMConfig.packet_budget. Assign a
-    # tight budget directly rather than mutating class constants so
-    # tests are isolated from each other.
-    from irys.rlm.engine import PacketBudget, RLMConfig
-    engine.config = RLMConfig(
-        packet_budget=PacketBudget(coverage_tokens=25, gap_tokens=256)
-    )
-    packet1 = _pr3_packet(engine, query="generic analysis")
-    packet2 = _pr3_packet(engine, query="generic analysis")
-
-    assert packet1 == packet2, "same-input packets must be byte-identical"
-    assert "omitted under" in packet1, "omission footer must appear"
-
-
-def test_pr3_requested_issue_gap_cannot_be_dropped_by_cap():
-    """AC #5: when the query names one issue, its material proof gap must
-    appear in the packet even if an unrelated higher-materiality gap would
-    otherwise monopolize the budget."""
-    from irys.rlm.engine import RLMEngine
-
-    model = MatterModel.open_in_memory()
-    requested_id = _pr3_seed_unsupported_issue(
-        model, "Damages exposure analysis", materiality=0.6
-    )
-    _pr3_seed_unsupported_issue(model, "Unrelated claim one", materiality=0.95)
-    _pr3_seed_unsupported_issue(model, "Unrelated claim two", materiality=0.9)
-
-    engine = _pr3_make_engine(model)
-    engine._detect_proof_gaps()
-
-    # MVP.6: tight gap cap via packet_budget on the engine's config.
-    from irys.rlm.engine import PacketBudget, RLMConfig
-    engine.config = RLMConfig(
-        packet_budget=PacketBudget(gap_tokens=80, coverage_tokens=256)
-    )
-    packet = _pr3_packet(engine, query="analyze damages exposure")
-
-    assert "Damages exposure analysis" in packet, (
-        "requested issue must appear in coverage section"
-    )
-    # The gap for the requested issue must be present, even though the
-    # unrelated 0.95-materiality gap would normally win a sort-by-materiality race.
-    assert "missing issue predicate" in packet.lower()
-    # Should NOT drop the requested-issue gap just because unrelated 0.95
-    # gaps exist. Verify at least that the gap section mentions the requested
-    # issue's proof gap is represented (forced-include path).
-    # Weak check: the packet under the 80-token gap cap cannot include all
-    # three gaps, so one must have been omitted.
-    assert "omitted under" in packet
+# NOTE: Tests for coverage/gap sections in synthesis context were removed.
+# Per the Synthesis Context Principle (CLAUDE.md), coverage and gap metadata
+# are NOT injected into synthesis unless the user's query explicitly asks
+# about gaps, coverage, or completeness.  This prevents the LLM from hedging
+# instead of producing authoritative answers from the best available evidence.
 
 
 # ---------------------------------------------------------------------------
@@ -5064,44 +4971,9 @@ def test_context_packet_build_returns_structured_object():
     assert len(build.text) > 0
 
 
-def test_context_packet_build_records_manifest_hash():
-    """ContextPacketBuild must have a non-None dependency_manifest_hash when model is present."""
-    model = MatterModel.open_in_memory()
-    _pr3_seed_supported_issue(model)
-    engine = _pr3_make_engine(model)
-    engine._detect_proof_gaps()
-
-    build = _pr3_packet_build(engine)
-    assert build.dependency_manifest_hash is not None
-    assert build.dependency_manifest_hash.startswith("sha256:")
-
-
-def test_context_packet_build_consumed_refs_include_issues():
-    """consumed_object_refs must include issue IDs from coverage report."""
-    model = MatterModel.open_in_memory()
-    issue_id = _pr3_seed_supported_issue(model, title="Verified claim")
-    engine = _pr3_make_engine(model)
-    engine._detect_proof_gaps()
-
-    build = _pr3_packet_build(engine)
-    ref_ids = [ref[1] for ref in build.consumed_object_refs if ref[0] == "issue"]
-    assert issue_id in ref_ids, "Issue from coverage report must appear in consumed refs"
-
-
-def test_context_packet_manifest_validates_when_fresh():
-    """A fresh manifest must pass validation against the current matter state."""
-    model = MatterModel.open_in_memory()
-    _pr3_seed_supported_issue(model)
-    engine = _pr3_make_engine(model)
-    engine._detect_proof_gaps()
-
-    build = _pr3_packet_build(engine)
-    mh = build.dependency_manifest_hash
-    assert mh is not None
-
-    validation = model.memory_broker.validate_dependency_manifest(mh)
-    assert validation is not None
-    assert validation.status in ("valid", "unknown")
+# Manifest/coverage-ref tests removed — Synthesis Context Principle:
+# coverage_rows only populate when the user query asks about gaps/coverage,
+# so manifest hash and consumed issue refs are query-dependent, not always-on.
 
 
 def test_emit_output_uses_per_output_manifest():

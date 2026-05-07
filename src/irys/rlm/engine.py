@@ -6460,7 +6460,7 @@ class RLMEngine:
         identifies specific missed facts and asks the LLM to produce additional
         analysis sections covering them.
         """
-        if not ledger_items or len(ledger_items) < 10:
+        if not ledger_items or len(ledger_items) < 5:
             return response
         response_lower = response.lower()
         missed_indices: list[int] = []
@@ -6479,7 +6479,7 @@ class RLMEngine:
         coverage_pct = 1.0 - len(missed_indices) / len(ledger_items) if ledger_items else 1.0
         state.findings["synthesis_coverage_pct"] = round(coverage_pct * 100, 1)
         state.findings["synthesis_missed_ledger_count"] = len(missed_indices)
-        if coverage_pct >= 0.5 or len(missed_indices) < 8:
+        if coverage_pct >= 0.7 or len(missed_indices) < 5:
             return response
         logger.info(
             "Synthesis coverage %.0f%% (%d/%d items missing) — running repair pass",
@@ -9083,7 +9083,16 @@ class RLMEngine:
         cap = max(1, int(self.config.max_initial_deep_read_documents or 1))
         mode = normalize_research_mode(getattr(state, "research_mode", None))
         if mode == ResearchMode.SIMPLE.value:
-            cap = min(cap, 8)
+            q = (getattr(state, "query", "") or "").lower()
+            _needs_all_docs = any(w in q for w in (
+                "compare", "cross-reference", "discrepancy", "conditions precedent",
+                "closing document", "markup", "reconcil", "disclosure", "deviation",
+                "against", "compliance certificate", "term sheet",
+            ))
+            if _needs_all_docs:
+                cap = min(cap, 20)
+            else:
+                cap = min(cap, 8)
         elif mode == ResearchMode.SEBIH_SPECIAL.value:
             cap = max(cap, 30)
         return min(total_files, cap)
@@ -11235,12 +11244,22 @@ Return:
         for _fi, _f in enumerate(facts):
             _dollar = _re_ledger.findall(r'\$[\d,.]+[MBKmkb]?\b', _f)
             _pct = _re_ledger.findall(r'[\d.]+%', _f)
-            _section = _re_ledger.findall(r'Section\s+[\d.]+\([a-z]\)', _f)
+            _section = _re_ledger.findall(r'Section\s+[\d.]+(?:\([a-z]\))?', _f)
             _ratio = _re_ledger.findall(r'\d+\.\d+x\b', _f)
             _bps = _re_ledger.findall(r'\d+\s*(?:bps|basis points)', _f)
-            _all_vals = _dollar + _pct + _section + _ratio + _bps
+            _entities = _re_ledger.findall(
+                r'(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s+(?:LLC|Inc\.|Corp\.|LP|LLP|Ltd\.?|Co\.|Group|Partners)',
+                _f,
+            )
+            _properties = _re_ledger.findall(
+                r'Property\s+[A-E]|(?:Phase\s+[IV]+|Building\s+\d+)',
+                _f,
+            )
+            _schedules = _re_ledger.findall(r'Schedule\s+[\d.]+', _f)
+            _articles = _re_ledger.findall(r'Article\s+[IVXLCDM\d]+', _f)
+            _all_vals = _dollar + _pct + _section + _ratio + _bps + _entities + _properties + _schedules + _articles
             if _all_vals:
-                _detail = "; ".join(_all_vals)
+                _detail = "; ".join(_all_vals[:10])
                 _ledger_items.append(f"[{_fi+1}] {_detail}")
             elif _f.startswith("[PROVISION]") or _f.startswith("[DEVIATION]"):
                 _ledger_items.append(f"[{_fi+1}] {_f[:120]}")
@@ -11265,7 +11284,7 @@ Return:
         _issues_checklist = ""
         _pre_analyzed_issues = ""
         _is_extraction = self._is_extraction_task(state.query)
-        if _is_extraction and len(facts) > 30:
+        if _is_extraction and len(facts) > 12:
             _raw_issues = await self._enumerate_issues_for_synthesis(state.query, facts)
             if _raw_issues:
                 _pre_analyzed_issues = await self._synthesize_per_issue_batches(
@@ -12922,21 +12941,32 @@ Return:
         if abstention.strip():
             ordered.append(("trust_abstention_gate", abstention.rstrip(), True))
 
-        coverage_section = self._build_capped_issue_coverage_section(query)
-        if coverage_section:
-            ordered.append(("issue_coverage", coverage_section, True))
+        # Synthesis Context Principle: coverage/gap metadata goes into
+        # synthesis ONLY when the user's query explicitly asks about gaps,
+        # coverage, or contradictions.  Otherwise it causes the LLM to
+        # hedge instead of producing a clean, authoritative answer.
+        _q_lower = (query or "").lower()
+        _user_asks_meta = any(w in _q_lower for w in (
+            "gap", "coverage", "contradiction", "what is missing",
+            "what's missing", "completeness", "proof state",
+        ))
         requested_id: "Optional[str]" = None
-        try:
-            coverage_rows = (
-                self._matter_model.get_issue_coverage_report()
-                if self._matter_model else []
-            )
-            requested_id = self._resolve_requested_issue_id(query, coverage_rows)
-        except Exception:
-            requested_id = None
-        gap_section = self._build_capped_gap_section(query, requested_id)
-        if gap_section:
-            ordered.append(("high_materiality_gaps", gap_section, True))
+        coverage_rows: list = []
+        if _user_asks_meta:
+            coverage_section = self._build_capped_issue_coverage_section(query)
+            if coverage_section:
+                ordered.append(("issue_coverage", coverage_section, True))
+            try:
+                coverage_rows = (
+                    self._matter_model.get_issue_coverage_report()
+                    if self._matter_model else []
+                )
+                requested_id = self._resolve_requested_issue_id(query, coverage_rows)
+            except Exception:
+                requested_id = None
+            gap_section = self._build_capped_gap_section(query, requested_id)
+            if gap_section:
+                ordered.append(("high_materiality_gaps", gap_section, True))
 
         # Evidence is mandatory and comes after mandatory proof framing.
         # Clean-mode findings scrub runs first.
