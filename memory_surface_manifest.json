@@ -1814,6 +1814,7 @@
     "scenario_parse",
     "deliverable_sub_intent",
     "cross_document_analysis",
-    "evidence_relevance_filter"
+    "evidence_relevance_filter",
+    "extraction_repair"
   ]
 }
