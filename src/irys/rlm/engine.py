@@ -5467,8 +5467,9 @@ class RLMEngine:
                     continue
                 seen_record_ids.add(record_id)
                 try:
-                    rec = self._matter_model.typed_evidence.get(record_id)
-                except Exception:
+                    rec = self._matter_model.typed_evidence.get_by_id(record_id)
+                except Exception as exc:
+                    logger.debug("typed_evidence.get_by_id failed for %s: %s", record_id, exc)
                     rec = None
                 if not rec:
                     continue
@@ -9798,11 +9799,13 @@ class RLMEngine:
     # Dataset-shape profiling (PR wedge: collection_item / market_row)
     # ------------------------------------------------------------------
 
+    # Must stay aligned with _is_regulatory_dr in _deep_read_document.
+    # Plain "merger" is intentionally excluded — too broad; would trigger
+    # profiling for non-regulatory M&A queries that never request market_rows.
     _SLOT_REGULATORY_QUERY_TERMS = (
-        "antitrust", "hsr", "merger review", "merger", "market share",
-        "market shares", "hhi", "competitive effects", "regulatory",
-        "msa", "geographic market", "structural presumption",
-        "divestiture", "remedy", "ftc", "doj",
+        "antitrust", "hsr", "merger review", "merger remed",
+        "market share", "market shares", "hhi", "competitive effects",
+        "regulatory", "leniency",
     )
 
     _SLOT_PATH_CUES = (
@@ -10007,9 +10010,22 @@ class RLMEngine:
 
     @staticmethod
     def _normalize_market_name(name: str) -> str:
-        """Normalize an MSA/market display name into a stable slot key suffix."""
+        """Normalize an MSA/market display name into a stable slot key suffix.
+
+        Strips trailing 'MSA' / 'metropolitan statistical area' / 'metro area'
+        so that the same market is keyed identically whether profiling sees
+        'Greenville-Spartanburg' or deep-read sees 'Greenville-Spartanburg MSA'.
+        """
         import re as _re
-        s = (name or "").strip().lower()
+        s = (name or "").strip()
+        # Strip trailing market-type qualifiers (case-insensitive)
+        s = _re.sub(
+            r"\s+(?:msa|metropolitan\s+statistical\s+area|metro\s+area|market)$",
+            "",
+            s,
+            flags=_re.IGNORECASE,
+        )
+        s = s.lower()
         s = _re.sub(r"[^\w\s\-]", " ", s)
         s = _re.sub(r"\s+", "-", s)
         s = _re.sub(r"-+", "-", s).strip("-")
@@ -11084,10 +11100,16 @@ Return:
                             None,
                         )
                         if _matched is None:
+                            # Fallback only matches when slot_key's MSA
+                            # token equals row's normalized name exactly
+                            # (prevents "birmingham" from filling
+                            # "birmingham-hoover").
                             for s in _open:
                                 _sk = s.get("slot_key") or ""
-                                if (s.get("schema_ref") == "legal.market_row.v1"
-                                    and _mr_norm and _mr_norm in _sk):
+                                if s.get("schema_ref") != "legal.market_row.v1":
+                                    continue
+                                _slot_msa = _sk.rsplit(":msa:", 1)[-1] if ":msa:" in _sk else _sk
+                                if _slot_msa == _mr_norm:
                                     _matched = s
                                     break
                         if _matched is not None:

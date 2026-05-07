@@ -7696,7 +7696,9 @@ class ExtractionSlotStore:
           - expected_count is None or 1: state -> filled after first ref
           - expected_count > 1: state -> partial until refs reach expected_count,
             then -> filled.
-        Evidence refs are deduplicated.
+        Evidence refs are deduplicated. Slots already in `not_observable` are
+        left untouched (an explicit absence finding is sticky until rolled
+        back deliberately).
         """
         sid = str(slot_id or "").strip()
         ref = str(evidence_ref or "").strip()
@@ -7710,6 +7712,11 @@ class ExtractionSlotStore:
                 (self.matter_id, sid),
             ).fetchone()
             if row is None:
+                return
+            if row["coverage_state"] == "not_observable":
+                # Sticky: an explicit absence finding is not flipped by a
+                # late-arriving evidence ref; the caller should reset state
+                # explicitly if it wants to revive this slot.
                 return
             try:
                 refs = _json_mod.loads(row["evidence_refs_json"] or "[]")

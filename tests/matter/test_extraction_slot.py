@@ -154,6 +154,19 @@ def test_mark_not_observable_only_for_open(model, store):
     assert row["coverage_state"] == "filled"
 
 
+def test_mark_filled_does_not_revive_not_observable(model, store):
+    """An explicit absence finding must not be flipped by late evidence."""
+    sid, _ = store.register(model.matter_id, "collection_item", "k", 1)
+    store.mark_not_observable(sid)
+    store.mark_filled(sid, "ev_late")
+    row = model.db.execute(
+        "SELECT coverage_state, evidence_refs_json FROM extraction_slot WHERE id=?",
+        (sid,),
+    ).fetchone()
+    assert row["coverage_state"] == "not_observable"
+    assert "ev_late" not in row["evidence_refs_json"]
+
+
 def test_get_open_slots_ordering_and_filters(model, store):
     store.register(model.matter_id, "collection_item", "low", 1, expected_count_confidence=0.4)
     store.register(model.matter_id, "collection_item", "med", 1, expected_count_confidence=0.6)
@@ -208,6 +221,31 @@ def test_typed_evidence_survives_v70_migration(model):
         "SELECT id FROM typed_evidence_record WHERE id=?", (rec_id,),
     ).fetchall()
     assert rows
+
+
+def test_normalize_market_name_strips_msa_suffix():
+    """Profile and deep-read must produce the same key for the same market.
+
+    Profile sees 'Greenville-Spartanburg' (no MSA token in heading-only context),
+    deep-read sees 'Greenville-Spartanburg MSA'. They must normalize equally.
+    """
+    from irys.rlm.engine import RLMEngine
+    short = RLMEngine._normalize_market_name("Greenville-Spartanburg")
+    long_form = RLMEngine._normalize_market_name("Greenville-Spartanburg MSA")
+    metro = RLMEngine._normalize_market_name("Greenville-Spartanburg Metropolitan Statistical Area")
+    assert short == long_form == metro
+    # And the slot key built from this should match the engine's substring match
+    assert short == "greenville-spartanburg"
+
+
+def test_normalize_market_name_distinct_markets_stay_distinct():
+    """Birmingham must not collide with Birmingham-Hoover."""
+    from irys.rlm.engine import RLMEngine
+    a = RLMEngine._normalize_market_name("Birmingham")
+    b = RLMEngine._normalize_market_name("Birmingham-Hoover")
+    bh_msa = RLMEngine._normalize_market_name("Birmingham-Hoover MSA")
+    assert a != b
+    assert b == bh_msa  # MSA suffix strip applies
 
 
 def test_open_slots_excludes_other_matter(store, model):
