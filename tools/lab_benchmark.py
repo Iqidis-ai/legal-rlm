@@ -50,16 +50,41 @@ def _markdown_to_docx(md_text: str, output_path: Path):
     """Convert markdown text to a .docx file using python-docx."""
     from docx import Document
     from docx.shared import Pt, Inches
+    import re
 
     doc = Document()
     style = doc.styles["Normal"]
     style.font.size = Pt(11)
     style.font.name = "Calibri"
 
-    for line in md_text.split("\n"):
-        stripped = line.strip()
+    lines = md_text.split("\n")
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
         if not stripped:
             doc.add_paragraph("")
+            i += 1
+            continue
+        # Detect markdown table (line with | separators)
+        if "|" in stripped and stripped.startswith("|"):
+            table_lines = []
+            while i < len(lines) and "|" in lines[i].strip() and lines[i].strip().startswith("|"):
+                row_text = lines[i].strip()
+                # Skip separator rows (|---|---|)
+                if re.match(r'^\|[\s\-:|]+\|$', row_text):
+                    i += 1
+                    continue
+                cells = [c.strip() for c in row_text.split("|")[1:-1]]
+                table_lines.append(cells)
+                i += 1
+            if table_lines:
+                n_cols = max(len(r) for r in table_lines)
+                table = doc.add_table(rows=len(table_lines), cols=n_cols)
+                table.style = "Table Grid"
+                for ri, row_cells in enumerate(table_lines):
+                    for ci, cell_text in enumerate(row_cells):
+                        if ci < n_cols:
+                            table.rows[ri].cells[ci].text = cell_text
             continue
         if stripped.startswith("# "):
             doc.add_heading(stripped[2:], level=1)
@@ -67,14 +92,22 @@ def _markdown_to_docx(md_text: str, output_path: Path):
             doc.add_heading(stripped[3:], level=2)
         elif stripped.startswith("### "):
             doc.add_heading(stripped[4:], level=3)
+        elif stripped.startswith("#### "):
+            doc.add_heading(stripped[5:], level=4)
         elif stripped.startswith("- "):
             doc.add_paragraph(stripped[2:], style="List Bullet")
+        elif re.match(r'^\d+\.\s', stripped):
+            doc.add_paragraph(re.sub(r'^\d+\.\s', '', stripped), style="List Number")
         elif stripped.startswith("**") and stripped.endswith("**"):
             p = doc.add_paragraph()
             run = p.add_run(stripped.strip("*"))
             run.bold = True
+        elif stripped.startswith("> "):
+            p = doc.add_paragraph(stripped[2:])
+            p.style = doc.styles.get("Quote", doc.styles["Normal"])
         else:
             doc.add_paragraph(stripped)
+        i += 1
 
     doc.save(str(output_path))
 
