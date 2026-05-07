@@ -22,6 +22,7 @@ from ..core.search import SearchResults
 from ..core.external_search import ExternalSearchManager
 from ..core.fact_store import FactStore
 from ..core.telemetry import InvestigationTelemetry, StepOperation
+from ..core.tracing import TracingProvider, TracingContext, NoOpProvider, SpanHandle
 from .state import InvestigationState, StepType, ThinkingStep, Citation, Lead, classify_query
 from . import decisions
 from .research_agent import (
@@ -163,6 +164,7 @@ class RLMEngine:
         on_citation: Optional[Callable[[Citation], None]] = None,
         on_fact: Optional[Callable[[str], None]] = None,
         on_progress: Optional[Callable[[dict], None]] = None,
+        tracing_provider: Optional[TracingProvider] = None,
     ):
         self.client = gemini_client
         self.config = config or RLMConfig()
@@ -170,6 +172,7 @@ class RLMEngine:
         self.on_citation = on_citation
         self.on_fact = on_fact
         self.on_progress = on_progress
+        self._tracing_provider = tracing_provider or NoOpProvider()
         # Initialize external search manager (enabled by default)
         self.external_search = ExternalSearchManager() if self.config.enable_external_search else None
         self._external_research: dict = {}  # Store external research results
@@ -177,6 +180,7 @@ class RLMEngine:
         self.repo: Optional[MatterRepository] = None  # Set during investigate()
         self.fact_store: Optional[FactStore] = None  # Set during investigate()
         self._telemetry: Optional[InvestigationTelemetry] = None  # Set during investigate()
+        self._trace_ctx: Optional[TracingContext] = None  # Set during investigate()
         # Lead lifecycle tracking
         self._lead_start_times: dict[str, float] = {}
 
@@ -263,6 +267,19 @@ class RLMEngine:
         # Initialize per-investigation telemetry
         self._telemetry = InvestigationTelemetry(message_id=message_id, user_id=user_id)
         self._telemetry.setup_duration_ms = setup_duration_ms
+
+        # Initialize tracing (Langfuse or NoOp)
+        trace_handle = self._tracing_provider.start_trace(
+            trace_id=state.id,
+            name=f"investigation:{state.id}",
+            metadata={
+                "query": query,
+                "repository": str(repository_path),
+                "message_id": message_id,
+                "user_id": user_id,
+            },
+        )
+        self._trace_ctx = TracingContext(self._tracing_provider, trace_handle)
 
         # Load fact store for this repository (S3-backed when configured)
         s3_facts_config = None
@@ -466,6 +483,21 @@ class RLMEngine:
                 except ValueError as e:
                     logger.warning("Database not configured - telemetry not persisted: %s", e)
 
+            # Finalize tracing — use end_trace (not end_span) to clean up
+            # root context managers for Langfuse OTEL context
+            if self._trace_ctx:
+                try:
+                    status = "error" if state.status == "failed" else "ok"
+                    self._tracing_provider.end_trace(
+                        self._trace_ctx.span_handle,
+                        metadata={"status": state.status, "answer_length": len(state.answer or "")},
+                        status=status,
+                    )
+                    self._tracing_provider.flush()
+                except Exception as e:
+                    logger.warning("Failed to finalize trace: %s", e)
+                self._trace_ctx = None
+
         return state
 
     async def _direct_answer(self, state: InvestigationState, repo: MatterRepository):
@@ -520,6 +552,7 @@ class RLMEngine:
             cached_facts=cached_facts_str,
             context=self._context,
             active_step=t_step,
+            trace_ctx=self._trace_ctx,
         )
         if t_step:
             self._telemetry.end_step(t_step)
@@ -744,6 +777,7 @@ class RLMEngine:
             external_research_store=self._external_research,
             config=agent_cfg,
             telemetry=self._telemetry,
+            trace_ctx=self._trace_ctx,
         )
         try:
             await agent.run(state, context)
@@ -776,6 +810,7 @@ class RLMEngine:
                 triggers_summary=triggers_summary,
                 client=self.client,
                 active_step=t_gate,
+                trace_ctx=self._trace_ctx,
             )
         except Exception as e:
             logger.warning("should_research_externally failed: %s", e)
@@ -822,6 +857,7 @@ class RLMEngine:
             file_list=file_list_str,
             total_files=stats.total_files,
             client=self.client,
+            trace_ctx=self._trace_ctx,
         )
 
         state.hypothesis = plan.get("success_criteria", "Investigating query")
@@ -859,7 +895,7 @@ class RLMEngine:
 
         # Fallback if no leads
         if not state.leads:
-            terms = await decisions.extract_search_terms(state.query, self.client)
+            terms = await decisions.extract_search_terms(state.query, self.client, trace_ctx=self._trace_ctx)
             for term in terms[:2]:
                 state.add_lead(f"Search for: {term}", source="fallback")
 
@@ -924,6 +960,7 @@ class RLMEngine:
             cached_facts=cached_facts_str,
             context=self._context,
             active_step=t_step,
+            trace_ctx=self._trace_ctx,
         )
         if t_step:
             self._telemetry.end_step(t_step)
@@ -950,7 +987,7 @@ class RLMEngine:
 
         # Fallback if no leads
         if not state.leads:
-            terms = await decisions.extract_search_terms(state.query, self.client)
+            terms = await decisions.extract_search_terms(state.query, self.client, trace_ctx=self._trace_ctx)
             for term in terms[:2]:
                 state.add_lead(f"Search for: {term}", source="fallback")
 
@@ -1195,6 +1232,7 @@ class RLMEngine:
                 web_results=web_text,
                 client=self.client,
                 active_step=t_step_ae,
+                trace_ctx=self._trace_ctx,
             )
             if t_step_ae:
                 self._telemetry.end_step(t_step_ae)
@@ -1308,6 +1346,7 @@ class RLMEngine:
                     client=self.client,
                     cached_facts=cached_facts_str,
                     active_step=t_step_ck,
+                    trace_ctx=self._trace_ctx,
                 )
                 if t_step_ck:
                     self._telemetry.end_step(t_step_ck)
@@ -1421,6 +1460,7 @@ class RLMEngine:
             client=self.client,
             triggers=triggers,
             active_step=t_step_eq,
+            trace_ctx=self._trace_ctx,
         )
         if t_step_eq:
             self._telemetry.end_step(t_step_eq)
@@ -1570,6 +1610,7 @@ class RLMEngine:
             already_read=already_read,
             client=self.client,
             active_step=t_step_as,
+            trace_ctx=self._trace_ctx,
         )
         if t_step_as:
             self._telemetry.end_step(t_step_as)
@@ -1756,6 +1797,7 @@ class RLMEngine:
                 client=self.client,
                 max_content_chars=extraction_limit,
                 active_step=t_step_ef,
+                trace_ctx=self._trace_ctx,
             )
             if t_step_ef:
                 self._telemetry.end_step(t_step_ef)
@@ -1957,6 +1999,7 @@ class RLMEngine:
             tier=synthesis_tier,
             context=self._context,
             active_step=t_step_syn,
+            trace_ctx=self._trace_ctx,
         )
         if t_step_syn:
             self._telemetry.end_step(t_step_syn)
@@ -2030,7 +2073,7 @@ class RLMEngine:
                         docs_loaded += 1
                         logger.info(f"Loaded pinned document: {filename} ({len(excerpt)} chars)")
             except Exception as e:
-                logger.warning(f"Failed to load pinned document {filepath}: {e}")
+                logger.info(f"WARNING: Failed to load pinned document {filepath}: {e}")
 
         if pinned_content_parts:
             total_chars = sum(len(p) for p in pinned_content_parts)
@@ -2235,6 +2278,7 @@ class RLMEngine:
                     filename=doc.filename,
                     content=content,
                     client=self.client,
+                    trace_ctx=self._trace_ctx,
                 )
 
                 summaries.append({
