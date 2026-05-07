@@ -2838,6 +2838,74 @@ class RLMEngine:
                 "- State your arithmetic explicitly (e.g., '$175M × 0.25% = $437,500/year additional cost')\n"
                 "\n"
             )
+        _is_gap_analysis = any(w in q for w in (
+            "conditions precedent", "closing document", "gap memorand",
+            "gap report", "compliance gap", "discrepanc",
+        ))
+        if _is_gap_analysis:
+            base += (
+                "\nGAP MEMORANDUM SPECIFIC INSTRUCTIONS:\n"
+                "This is a conditions-precedent or closing-document gap analysis. You MUST:\n"
+                "1. Use a three-tier severity system: Critical / Significant / Administrative\n"
+                "2. For EACH condition precedent in the credit agreement/reference document:\n"
+                "   a. State the EXACT section reference (e.g., Section 5.01(f))\n"
+                "   b. State the EXACT requirement (e.g., 'title policy in amount not less than allocated loan amount')\n"
+                "   c. State the ACTUAL status from the closing documents (e.g., 'policy issued for $34M vs $37M required')\n"
+                "   d. Compute any shortfall or staleness (e.g., '$3M shortfall', '134 days old vs 90-day max')\n"
+                "   e. Classify severity and provide specific remediation recommendation\n"
+                "3. Check ALL of these categories systematically:\n"
+                "   - Title insurance policies: compare policy amount vs allocated loan amount per property\n"
+                "   - ALTA surveys: check survey date vs staleness requirement (typically 90 days)\n"
+                "   - Appraisals: check appraisal date vs staleness requirement (typically 120 days)\n"
+                "   - Good standing certificates: check date and issuing state vs requirements\n"
+                "   - Secretary's certificates and authorizing resolutions: check signatory authority\n"
+                "   - Insurance certificates: check coverage amounts, named insured, policy dates\n"
+                "   - Solvency certificates: check existence and completeness\n"
+                "   - Compliance certificates: check covenant calculations and certifications\n"
+                "   - Environmental assessments (Phase I): check date and scope\n"
+                "   - UCC filings: check filing status and jurisdiction\n"
+                "   - Legal opinions: check existence, scope, and qualifications\n"
+                "   - Organizational documents: check conformity with representations\n"
+                "4. For EVERY property in the collateral package, verify title, survey, appraisal, and insurance\n"
+                "5. Check for signature block mismatches (signatory title vs authorized capacity)\n"
+                "6. Compute DATE CALCULATIONS explicitly: days between document date and closing date\n"
+                "7. Include a summary table at the top with: Issue, Section Ref, Required, Actual, Gap, Severity\n"
+            )
+        _is_dd_synthesis = any(w in q for w in (
+            "due diligence", "dd summary", "investment committee",
+            "workstream", "diligence report",
+        ))
+        if _is_dd_synthesis:
+            base += (
+                "\nDUE DILIGENCE SYNTHESIS INSTRUCTIONS:\n"
+                "This is a multi-workstream due diligence synthesis. You MUST:\n"
+                "1. Address EVERY workstream report provided (legal, financial, tax, insurance, environmental, IP, etc.)\n"
+                "2. For each workstream: list key findings, material risks, and dollar exposure\n"
+                "3. Cross-reference findings across workstreams (e.g., financial risk confirmed by legal diligence)\n"
+                "4. Include a deal-level risk matrix with risk category, likelihood, impact, and workstream source\n"
+                "5. Flag all closing conditions and required consents/approvals\n"
+                "6. Quantify total identified exposure across all workstreams\n"
+                "7. Identify gaps in diligence coverage — areas not addressed or insufficiently analyzed\n"
+                "8. Provide purchase price adjustment recommendations based on identified risks\n"
+                "9. Organize findings hierarchically: Deal-breakers > Material risks > Significant findings > Minor items\n"
+            )
+        _is_reconciliation = any(w in q for w in (
+            "reconcil", "qoe", "quality of earnings", "ebitda bridge",
+            "working capital", "ppa",
+        ))
+        if _is_reconciliation:
+            base += (
+                "\nRECONCILIATION TASK INSTRUCTIONS:\n"
+                "This is a financial reconciliation task. You MUST:\n"
+                "1. Present ALL reconciliation data in MARKDOWN TABLES (these will be converted to spreadsheets)\n"
+                "2. Show EVERY line item with: Description | Source A Value | Source B Value | Variance | Notes\n"
+                "3. Include subtotals, totals, and check figures (sources should foot to the same total)\n"
+                "4. For EBITDA bridges: show each adjustment (add-back, normalization) as a separate row\n"
+                "5. For working capital: show each current asset and liability line item with target vs actual\n"
+                "6. For PPA: show each intangible asset category with fair value, useful life, and amortization\n"
+                "7. Compute all variances and flag items exceeding materiality thresholds\n"
+                "8. Cross-reference figures across reports (management vs auditor vs QoE provider)\n"
+            )
         return base
 
     @staticmethod
@@ -4015,7 +4083,7 @@ class RLMEngine:
                     delta_hhi = 2 * buyer_share * target_share
                     post_hhi = pre_hhi + delta_hhi
                     presumption = " — STRUCTURAL PRESUMPTION TRIGGERED" if (
-                        post_hhi > 1800 and delta_hhi > 100
+                        post_hhi > 1800 and delta_hhi > 200
                     ) else ""
                     results.append(
                         f"[CALCULATED] HHI for {market}: "
@@ -4677,7 +4745,7 @@ class RLMEngine:
         lines.append(
             "MANDATORY: You MUST analyze EVERY geographic market listed above separately. "
             "For each market: (1) compute or state HHI and delta, (2) state whether "
-            "structural presumption is triggered (HHI>1800 AND delta>100), (3) assign "
+            "structural presumption is triggered (HHI>1800 AND delta>200 per 2023 Merger Guidelines), (3) assign "
             "a separate risk rating. You MUST also: cite EVERY hot document with exact "
             "verbatim quotes, analyze EVERY legal defense and state whether available, "
             "and address ALL procedural timeline dates. Breadth of coverage across all "
@@ -8003,6 +8071,22 @@ class RLMEngine:
             "review all files",
             "summarize every document",
             "summarize all documents",
+            "review the attached",
+            "review attached",
+            "all attached",
+            "synthesize all",
+            "reconcile the attached",
+            "reconcile attached",
+            "all workstream",
+            "workstream report",
+            "closing document",
+            "conditions precedent",
+            "gap memorandum",
+            "gap report",
+            "compare the attached",
+            "compare attached",
+            "supporting workbook",
+            "due diligence",
         )
         return any(phrase in q for phrase in full_review_phrases)
 
@@ -8897,10 +8981,21 @@ Return:
                 "markup", "redline", "compare", "comparison", "deviation",
                 "counterparty", "credit facility", "credit agreement",
                 "term sheet", "loan agreement", "commitment letter",
+                "conditions precedent", "closing document", "gap",
+                "discrepanc", "reconcil", "covenant compliance",
+                "compliance certificate", "borrower disclos",
+                "restructuring condition", "due diligence",
             ))
             _is_regulatory_dr = any(w in _ql_dr for w in (
-                "antitrust", "hsr", "merger review", "regulatory", "compliance",
+                "antitrust", "hsr", "merger review", "regulatory",
                 "market share", "hhi", "competitive effects",
+                "leniency", "merger remed",
+            ))
+            _is_cross_doc_comparison = _is_comparison_dr and any(w in _ql_dr for w in (
+                "conditions precedent", "closing document", "gap",
+                "compliance certificate", "covenant compliance",
+                "borrower disclos", "restructuring", "due diligence",
+                "reconcil",
             ))
             _task_section = ""
             if _is_comparison_dr:
@@ -8991,7 +9086,29 @@ Return:
 
             # Build enhanced focus for comparison/regulatory tasks
             _base_focus = state.hypothesis or state.query
-            if _is_comparison_dr:
+            if _is_cross_doc_comparison:
+                _base_focus = (
+                    f"{_base_focus}\n\n"
+                    "EXTRACTION PRIORITY — CROSS-DOCUMENT COMPARISON:\n"
+                    "This is a comparison task across multiple documents. Extract EVERY specific detail "
+                    "that could be compared against requirements in another document.\n\n"
+                    "For EACH requirement, condition, or obligation in this document, extract:\n"
+                    "1. The EXACT section reference (e.g., Section 5.01(f), Article VII)\n"
+                    "2. The EXACT required value (dollar amounts, dates, percentages, thresholds)\n"
+                    "3. The EXACT entity/party responsible\n"
+                    "4. Any deadline or timing requirement (within X days, no earlier than, etc.)\n"
+                    "5. The status (satisfied, pending, missing, stale, expired)\n\n"
+                    "For closing documents: extract EVERY signature block (name, title, entity), "
+                    "EVERY certificate date, EVERY policy amount, EVERY survey date, EVERY appraisal "
+                    "date, EVERY good standing certificate date and issuing state.\n\n"
+                    "For compliance certificates: extract EVERY covenant ratio (actual vs required), "
+                    "EVERY financial figure used in calculations, EVERY exception or qualification.\n\n"
+                    "For due diligence: extract EVERY risk finding, EVERY dollar amount at risk, "
+                    "EVERY deadline, EVERY material contract reference.\n\n"
+                    "Be EXHAUSTIVE. Extract 50-100+ individual data points. Each one becomes a "
+                    "comparison row. Missing a single data point means missing a criterion."
+                )
+            elif _is_comparison_dr:
                 _base_focus = (
                     f"{_base_focus}\n\n"
                     "EXTRACTION PRIORITY: For every provision in this document, extract the EXACT "

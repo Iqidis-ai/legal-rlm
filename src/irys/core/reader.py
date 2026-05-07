@@ -300,10 +300,21 @@ class DocumentReader:
         )
 
     def _read_xlsx(self, path: Path) -> DocumentContent:
-        """Extract text from Excel workbook, one sheet per page."""
+        """Extract text from Excel workbook, one sheet per page.
+
+        Includes cell references (A1, B2, etc.) for financial data to
+        preserve coordinates for reconciliation tasks.
+        """
         wb = load_workbook(path, read_only=True, data_only=True)
         pages: list[PageContent] = []
         total_chars = 0
+
+        def _col_letter(ci: int) -> str:
+            result = ""
+            while ci >= 0:
+                result = chr(ci % 26 + ord('A')) + result
+                ci = ci // 26 - 1
+            return result
 
         for sheet_idx, sheet_name in enumerate(wb.sheetnames, start=1):
             ws = wb[sheet_name]
@@ -348,17 +359,23 @@ class DocumentReader:
             for r in rows_raw:
                 for ci, val in enumerate(r):
                     col_widths[ci] = max(col_widths[ci], len(val))
-            # Cap column width to avoid absurdly wide output
-            col_widths = [min(w, 60) for w in col_widths]
+            col_widths = [min(w, 120) for w in col_widths]
 
-            # Build text table
+            # Build text table with cell references
             lines: list[str] = [f"[SHEET: {sheet_name}]"]
+            # Column header reference row
+            col_refs = "     " + " | ".join(
+                _col_letter(ci).ljust(col_widths[ci])[:col_widths[ci]]
+                for ci in range(num_cols)
+            )
+            lines.append(col_refs)
+            lines.append("-" * len(col_refs))
             for row_idx, r in enumerate(rows_raw):
+                row_num = row_idx + 1
                 padded = [val.ljust(col_widths[ci])[:col_widths[ci]] for ci, val in enumerate(r)]
-                lines.append(" | ".join(padded))
-                # Add separator after header row
+                lines.append(f"{row_num:4d} " + " | ".join(padded))
                 if row_idx == 0:
-                    lines.append("-+-".join("-" * w for w in col_widths))
+                    lines.append("---- " + "-+-".join("-" * w for w in col_widths))
 
             sheet_text = self._clean_text("\n".join(lines))
             pages.append(PageContent(page_num=sheet_idx, text=sheet_text))

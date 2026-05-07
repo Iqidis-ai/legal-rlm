@@ -104,12 +104,79 @@ def _markdown_to_docx(md_text: str, output_path: Path):
             run.bold = True
         elif stripped.startswith("> "):
             p = doc.add_paragraph(stripped[2:])
-            p.style = doc.styles.get("Quote", doc.styles["Normal"])
+            try:
+                p.style = doc.styles["Quote"]
+            except KeyError:
+                p.style = doc.styles["Normal"]
         else:
             doc.add_paragraph(stripped)
         i += 1
 
     doc.save(str(output_path))
+
+
+def _markdown_to_xlsx(md_text: str, output_path: Path):
+    """Convert markdown tables to an Excel workbook.
+
+    Extracts all markdown tables from the text and writes each as a sheet.
+    Non-table text goes into a 'Summary' sheet.
+    """
+    from openpyxl import Workbook
+    import re
+
+    wb = Workbook()
+    ws_summary = wb.active
+    ws_summary.title = "Summary"
+
+    lines = md_text.split("\n")
+    summary_lines: list[str] = []
+    table_count = 0
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if "|" in stripped and stripped.startswith("|"):
+            table_rows: list[list[str]] = []
+            while i < len(lines) and "|" in lines[i].strip() and lines[i].strip().startswith("|"):
+                row_text = lines[i].strip()
+                if re.match(r'^\|[\s\-:|]+\|$', row_text):
+                    i += 1
+                    continue
+                cells = [c.strip() for c in row_text.split("|")[1:-1]]
+                table_rows.append(cells)
+                i += 1
+            if table_rows:
+                table_count += 1
+                sheet_name = f"Table {table_count}"
+                if table_count == 1:
+                    ws = ws_summary
+                    ws.title = sheet_name
+                else:
+                    ws = wb.create_sheet(title=sheet_name)
+                for ri, row_cells in enumerate(table_rows, 1):
+                    for ci, cell_text in enumerate(row_cells, 1):
+                        cell = ws.cell(row=ri, column=ci, value=cell_text)
+                        try:
+                            num = float(cell_text.replace(",", "").replace("$", "").replace("%", "").strip())
+                            cell.value = num
+                        except (ValueError, AttributeError):
+                            pass
+        else:
+            summary_lines.append(stripped)
+            i += 1
+
+    if not table_count:
+        for ri, line in enumerate(summary_lines, 1):
+            ws_summary.cell(row=ri, column=1, value=line)
+    elif summary_lines:
+        if table_count >= 1:
+            ws_text = wb.create_sheet(title="Summary", index=0)
+        else:
+            ws_text = ws_summary
+        for ri, line in enumerate(summary_lines, 1):
+            ws_text.cell(row=ri, column=1, value=line)
+
+    wb.save(str(output_path))
+
 
 DEFAULT_LAB_ROOT = PROJECT_ROOT.parent / "harvey-labs"
 RESULTS_SUBDIR = "results"
@@ -265,6 +332,9 @@ async def run_task(
                 if ext == ".docx":
                     docx_path = output_dir / filename
                     _markdown_to_docx(output_text, docx_path)
+                elif ext in (".xlsx", ".xls"):
+                    xlsx_path = output_dir / filename
+                    _markdown_to_xlsx(output_text, xlsx_path)
                 else:
                     out_path = output_dir / filename
                     out_path.write_text(output_text, encoding="utf-8")
