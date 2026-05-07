@@ -80,7 +80,10 @@ def _markdown_to_docx(md_text: str, output_path: Path):
             if table_lines:
                 n_cols = max(len(r) for r in table_lines)
                 table = doc.add_table(rows=len(table_lines), cols=n_cols)
-                table.style = "Table Grid"
+                try:
+                    table.style = "Table Grid"
+                except (KeyError, AttributeError):
+                    pass
                 for ri, row_cells in enumerate(table_lines):
                     for ci, cell_text in enumerate(row_cells):
                         if ci < n_cols:

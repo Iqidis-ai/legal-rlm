@@ -3845,7 +3845,7 @@ class RLMEngine:
             m = re.search(r'([\d.]+)\s*(M|million|mm)', val_str_clean, re.IGNORECASE)
             if m:
                 return float(m.group(1)) * 1_000_000
-            m = re.search(r'([\d.]+)', val_str_clean)
+            m = re.search(r'(\d+\.?\d*|\.\d+)', val_str_clean)
             if m:
                 return float(m.group(1))
             return None
@@ -3985,7 +3985,7 @@ class RLMEngine:
             m = _re_reg.search(r'([\d.]+)\s*(M|million|mm)', s, _re_reg.IGNORECASE)
             if m:
                 return float(m.group(1)) * 1_000_000
-            m = _re_reg.search(r'([\d.]+)', s)
+            m = _re_reg.search(r'(\d+\.?\d*|\.\d+)', s)
             if m and float(m.group(1)) > 1000:
                 return float(m.group(1))
             return None
