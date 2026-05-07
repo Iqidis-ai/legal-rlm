@@ -3674,6 +3674,146 @@ class RLMEngine:
 
         return results
 
+    def _derive_regulatory_calculations(self) -> "list[str]":
+        """Deterministic arithmetic on regulatory evidence data (Codex #3 extension).
+
+        Reads regulatory_data typed evidence and computes:
+        - HHI from market share data where available
+        - Divestiture revenue vs cap analysis
+        - Deal value ratios (breakup fee as % of consideration)
+        """
+        if self._matter_model is None:
+            return []
+        try:
+            rows = self._matter_model.typed_evidence.list_by_kind(
+                "regulatory_data", limit=120,
+            )
+        except Exception:
+            return []
+        if not rows:
+            return []
+
+        results: list[str] = []
+
+        market_shares: dict[str, list[tuple[str, float]]] = {}
+        remedy_values: list[dict] = []
+        deal_value: "Optional[float]" = None
+        breakup_fee: "Optional[float]" = None
+        divestiture_cap: "Optional[float]" = None
+
+        import re as _re_reg
+
+        def _parse_pct(s: str) -> "Optional[float]":
+            s = s.replace(",", "").strip()
+            m = _re_reg.search(r'([\d.]+)\s*%', s)
+            return float(m.group(1)) if m else None
+
+        def _parse_dollar(s: str) -> "Optional[float]":
+            s = s.replace(",", "").replace("$", "").strip()
+            m = _re_reg.search(r'([\d.]+)\s*(B|billion)', s, _re_reg.IGNORECASE)
+            if m:
+                return float(m.group(1)) * 1_000_000_000
+            m = _re_reg.search(r'([\d.]+)\s*(M|million|mm)', s, _re_reg.IGNORECASE)
+            if m:
+                return float(m.group(1)) * 1_000_000
+            m = _re_reg.search(r'([\d.]+)', s)
+            if m and float(m.group(1)) > 1000:
+                return float(m.group(1))
+            return None
+
+        for row in rows:
+            payload = row.get("payload_json")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    continue
+            if not isinstance(payload, dict):
+                continue
+            cat = (payload.get("category") or "").lower()
+            entity = payload.get("entity") or ""
+            value = payload.get("value") or ""
+
+            if cat == "market_share":
+                pct = _parse_pct(value)
+                if pct is not None and pct > 0:
+                    market_key = entity
+                    for geo in ("Atlanta", "Savannah", "Charleston", "Greenville",
+                                "Houston", "Jacksonville", "Tampa", "Birmingham",
+                                "Charlotte", "Raleigh", "Nashville", "Memphis",
+                                "New Orleans", "Baton Rouge", "Mobile"):
+                        if geo.lower() in entity.lower():
+                            market_key = geo
+                            break
+                    market_shares.setdefault(market_key, []).append((entity, pct))
+
+            elif cat == "remedy":
+                dollar = _parse_dollar(value)
+                if dollar:
+                    remedy_values.append({"entity": entity, "value": dollar, "raw": value})
+                vl = value.lower()
+                if "cap" in entity.lower() or "cap" in vl or "divestiture" in entity.lower():
+                    d = _parse_dollar(value)
+                    if d and d < 500_000_000:
+                        divestiture_cap = d
+                if "breakup" in entity.lower() or "breakup" in vl or "termination" in entity.lower():
+                    d = _parse_dollar(value)
+                    if d:
+                        breakup_fee = d
+
+        try:
+            quant_rows = self._matter_model.quant.list_all(limit=100)
+            for qr in quant_rows:
+                ctx = (qr.get("context") or "").lower()
+                raw = (qr.get("raw_text") or "").lower()
+                val = qr.get("amount_value")
+                if not val:
+                    continue
+                if any(w in ctx + raw for w in ("consideration", "deal value", "acquisition", "merger")):
+                    if val > 100_000_000:
+                        deal_value = float(val)
+                if any(w in ctx + raw for w in ("breakup", "termination fee", "reverse")):
+                    if val > 1_000_000 and val < 500_000_000:
+                        breakup_fee = float(val)
+                if any(w in ctx + raw for w in ("divestiture cap", "maximum divestiture", "revenue cap")):
+                    if val > 1_000_000:
+                        divestiture_cap = float(val)
+        except Exception:
+            pass
+
+        for market, shares in market_shares.items():
+            if len(shares) >= 2:
+                total_hhi = sum(s ** 2 * 100 for _, s in shares)
+                results.append(
+                    f"[CALCULATED] HHI for {market}: {total_hhi:,.0f} "
+                    f"(from {len(shares)} competitors: "
+                    + ", ".join(f"{e} {s:.1f}%" for e, s in shares) + ")"
+                )
+
+        if divestiture_cap:
+            total_divest_revenue = 0.0
+            for rv in remedy_values:
+                if rv["value"] > divestiture_cap * 0.5 and rv["value"] < divestiture_cap * 3:
+                    el = rv["entity"].lower()
+                    if "candidate" in el or "revenue" in el or "facility" in el:
+                        total_divest_revenue = max(total_divest_revenue, rv["value"])
+            if total_divest_revenue > 0:
+                gap = total_divest_revenue - divestiture_cap
+                results.append(
+                    f"[CALCULATED] Divestiture candidate revenue ${total_divest_revenue:,.0f} "
+                    f"vs cap ${divestiture_cap:,.0f} — "
+                    f"{'EXCEEDS cap by ${:,.0f}'.format(gap) if gap > 0 else 'within cap by ${:,.0f}'.format(-gap)}"
+                )
+
+        if deal_value and breakup_fee:
+            pct = (breakup_fee / deal_value) * 100
+            results.append(
+                f"[CALCULATED] Reverse breakup fee ${breakup_fee:,.0f} = "
+                f"{pct:.1f}% of deal value ${deal_value:,.0f}"
+            )
+
+        return results
+
     def _resolve_operand_graph_calculations(
         self, facts: "Optional[list[str]]" = None,
     ) -> "list[str]":
@@ -4205,6 +4345,87 @@ class RLMEngine:
             "Use this table as the BASIS for your deviation analysis. "
             "For each row where Original ≠ Markup, produce a deviation finding "
             "with exact values, risk rating, dollar impact calculation, and recommendation."
+        )
+        return "\n".join(lines)
+
+    def _build_regulatory_data_summary(
+        self, state: "InvestigationState",
+    ) -> str:
+        """Build a structured regulatory evidence summary for antitrust/regulatory tasks.
+
+        Aggregates regulatory_data typed evidence into organized categories
+        that synthesis can use directly for risk assessment and strategy memos.
+        """
+        _ql = (getattr(state, "query", "") or "").lower()
+        _is_reg = any(w in _ql for w in (
+            "antitrust", "hsr", "merger review", "regulatory", "compliance",
+            "market share", "hhi", "competitive effects",
+        ))
+        if not _is_reg or self._matter_model is None:
+            return ""
+        try:
+            rows = self._matter_model.typed_evidence.list_by_kind(
+                "regulatory_data", limit=120,
+            )
+        except Exception:
+            return ""
+        if not rows:
+            return ""
+
+        by_category: dict[str, list[dict]] = {}
+        for row in rows:
+            payload = row.get("payload_json")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    continue
+            if not isinstance(payload, dict):
+                continue
+            cat = (payload.get("category") or "unknown").lower()
+            by_category.setdefault(cat, []).append(payload)
+
+        if not by_category:
+            return ""
+
+        lines = ["REGULATORY EVIDENCE SUMMARY (extracted from documents):"]
+        cat_order = ["market_share", "hhi", "hot_doc", "barrier",
+                     "remedy", "timeline", "jurisdiction", "overlap",
+                     "synergy", "accretion", "valuation"]
+        seen_cats = set()
+        for cat in cat_order:
+            if cat not in by_category:
+                continue
+            seen_cats.add(cat)
+            items = by_category[cat]
+            lines.append(f"\n### {cat.upper().replace('_', ' ')} ({len(items)} entries)")
+            dedup: set[str] = set()
+            for item in items:
+                entity = item.get("entity", "")
+                value = item.get("value", "")
+                src = item.get("source_detail", "")
+                key = f"{entity}:{value}"
+                if key in dedup:
+                    continue
+                dedup.add(key)
+                entry = f"- {entity}: {value}"
+                if src:
+                    entry += f" [{src}]"
+                lines.append(entry)
+
+        for cat, items in by_category.items():
+            if cat in seen_cats:
+                continue
+            lines.append(f"\n### {cat.upper().replace('_', ' ')} ({len(items)} entries)")
+            for item in items[:10]:
+                entity = item.get("entity", "")
+                value = item.get("value", "")
+                lines.append(f"- {entity}: {value}")
+
+        lines.append("")
+        lines.append(
+            "Use this evidence for your analysis. Cite specific data points "
+            "with source references. Compute HHI where market shares are available."
         )
         return "\n".join(lines)
 
@@ -5993,6 +6214,14 @@ class RLMEngine:
                 or getattr(_contract, "family", None) == "investigate"
             )
             if self._matter_model is not None and _is_investigate:
+                # Mid-run issue discovery (Codex #5): scan accumulated facts
+                # for issues that orientation missed, before coverage planner runs.
+                _disc_count = self._discover_unmodeled_issues(state, iteration)
+                if _disc_count > 0:
+                    self._emit_step(
+                        state, StepType.THINKING,
+                        f"Discovered {_disc_count} new issue(s) from accumulated evidence",
+                    )
                 try:
                     _cov_map = self._get_issue_coverage_map()
                 except Exception as _exc:
@@ -9201,6 +9430,11 @@ Return:
             if prov_calcs:
                 facts.extend(prov_calcs)
 
+            # Deterministic regulatory calculations (Codex #3 extension)
+            reg_calcs = self._derive_regulatory_calculations()
+            if reg_calcs:
+                facts.extend(reg_calcs)
+
             if len(facts) > 2:
                 _quant_ctx = self._build_quant_summary() if self._matter_model else ""
                 derived_facts = await self._cross_document_analysis(state.query, facts, _quant_ctx)
@@ -10745,6 +10979,11 @@ Return:
         if _prov_summary:
             ordered.append(("provision_comparisons", _prov_summary, True))
 
+        # Regulatory data summary for antitrust/regulatory tasks
+        _reg_summary = self._build_regulatory_data_summary(state)
+        if _reg_summary:
+            ordered.append(("regulatory_evidence", _reg_summary, True))
+
         contract_coverage = self._build_material_contract_coverage_section(state)
         if contract_coverage:
             ordered.append(("material_contract_coverage", contract_coverage, True))
@@ -12287,6 +12526,139 @@ Return:
     # (follow-ons, user, clarification answers) have their own budget.
     _PLANNER_LEADS_PER_ITER = 4
     _PLANNER_LEADS_PER_RUN = 20
+
+    _DISCOVERY_INTERVAL = 3
+    _DISCOVERY_MAX_NEW_ISSUES = 5
+
+    def _discover_unmodeled_issues(
+        self,
+        state: "InvestigationState",
+        iteration: int,
+    ) -> int:
+        """Scan accumulated facts for issues that orientation missed (Codex #5).
+
+        Runs every _DISCOVERY_INTERVAL iterations. Looks for:
+        - [PROVISION] facts referencing provisions not covered by any issue
+        - [REGULATORY:*] facts about topics without corresponding issues
+        - Contract terms and numeric thresholds mentioned in facts
+
+        Creates new issues so the coverage planner can generate leads for them.
+        Returns the number of new issues created.
+        """
+        if self._matter_model is None:
+            return 0
+        if iteration < self._DISCOVERY_INTERVAL:
+            return 0
+        if iteration % self._DISCOVERY_INTERVAL != 0:
+            return 0
+
+        facts = state.findings.get("accumulated_facts", [])
+        if len(facts) < 10:
+            return 0
+
+        try:
+            existing_issues = self._matter_model.issues.list_issues(limit=50)
+        except Exception:
+            return 0
+        existing_titles: set[str] = set()
+        for iss in existing_issues:
+            t = (iss.get("title") or "").lower().strip()
+            if t:
+                existing_titles.add(t)
+
+        def _title_covered(candidate: str) -> bool:
+            cl = candidate.lower().strip()
+            for et in existing_titles:
+                if cl in et or et in cl:
+                    return True
+                words_c = set(cl.split())
+                words_e = set(et.split())
+                if len(words_c & words_e) >= min(3, len(words_c)):
+                    return True
+            return False
+
+        import re as _re_disc
+        new_issues: list[tuple[str, list[str]]] = []
+
+        _prov_pattern = _re_disc.compile(r'\[PROVISION\]\s*(.+?):\s*(.+)')
+        _reg_pattern = _re_disc.compile(r'\[REGULATORY:(\w+)\]\s*(.+?):\s*(.+)')
+        _calc_pattern = _re_disc.compile(r'\[CALCULATED\]\s*(.+?):\s*(.+)')
+
+        discovered_provisions: dict[str, list[str]] = {}
+        discovered_reg_topics: dict[str, list[str]] = {}
+
+        for fact in facts:
+            if not isinstance(fact, str):
+                continue
+
+            m = _prov_pattern.match(fact)
+            if m:
+                prov_name = m.group(1).strip()
+                if not _title_covered(prov_name):
+                    discovered_provisions.setdefault(prov_name, []).append(
+                        m.group(2).strip()[:100]
+                    )
+
+            m = _reg_pattern.match(fact)
+            if m:
+                cat = m.group(1).strip()
+                entity = m.group(2).strip()
+                topic = f"{cat}: {entity}"
+                if not _title_covered(topic) and not _title_covered(entity):
+                    discovered_reg_topics.setdefault(topic, []).append(
+                        m.group(3).strip()[:100]
+                    )
+
+        for prov_name, details in sorted(
+            discovered_provisions.items(),
+            key=lambda x: -len(x[1]),
+        ):
+            if len(new_issues) >= self._DISCOVERY_MAX_NEW_ISSUES:
+                break
+            if len(details) < 2:
+                continue
+            title = f"{prov_name} analysis"
+            preds = [
+                f"Extract exact {prov_name} terms from original document",
+                f"Extract exact {prov_name} terms from markup/counterparty document",
+                f"Compare before and after values for {prov_name}",
+            ]
+            new_issues.append((title, preds))
+
+        for topic, details in sorted(
+            discovered_reg_topics.items(),
+            key=lambda x: -len(x[1]),
+        ):
+            if len(new_issues) >= self._DISCOVERY_MAX_NEW_ISSUES:
+                break
+            if len(details) < 2:
+                continue
+            title = f"Regulatory: {topic}"
+            preds = [
+                f"Gather all evidence related to {topic}",
+                f"Assess regulatory risk implications of {topic}",
+            ]
+            new_issues.append((title, preds))
+
+        created = 0
+        for title, preds in new_issues:
+            if _title_covered(title):
+                continue
+            try:
+                iid, _ = self._matter_model.issues.upsert_issue(
+                    title=title,
+                    issue_type=IssueType.DILIGENCE_RED_FLAG,
+                    salience=0.5,
+                )
+                if preds:
+                    self._matter_model.issues.add_predicates_batch(
+                        issue_id=iid, descriptions=preds[:3],
+                    )
+                existing_titles.add(title.lower().strip())
+                created += 1
+            except Exception as exc:
+                logger.warning("discover_unmodeled_issues: upsert failed: %s", exc)
+        return created
 
     def _coverage_planner(
         self,
