@@ -318,6 +318,24 @@ You MUST create a separate issue for EACH of these provision categories (skip on
 For each category, generate a search targeting the SAME provision in BOTH documents (e.g., search for "SOFR" or "interest rate" to find the term in both the original and the markup). This ensures provision-by-provision comparison, not just sampling of the most obvious differences.
 Generate at least 12-15 initial_searches for comparison tasks.
 
+DISCLOSURE vs DUE DILIGENCE COMPARISON (when cross-referencing disclosures against independent findings):
+Create a separate issue and search for EACH of these discrepancy categories:
+- Undisclosed subsidiaries / affiliates (search for "subsidiary", "affiliate", "Schedule 5.04", entity names)
+- Undisclosed or understated litigation (search for "litigation", "claim", "complaint", "lawsuit", "Schedule 5.06")
+- Undisclosed liens / encumbrances (search for "lien", "UCC", "filing", "encumbrance", "Schedule 5.08")
+- Tax issues / IRS liens (search for "tax", "IRS", "lien", "assessment", "Schedule 5.09")
+- Insurance gaps / expired policies (search for "insurance", "policy", "expir", "coverage", "Schedule 5.10")
+- Material contract compliance (search for "material contract", "Schedule 5.14", "consent", "non-renewal")
+- Environmental issues (search for "environmental", "contamination", "remediation", "Phase I", "Phase II")
+- Employee / labor discrepancies (search for "employee", "headcount", "benefit", "ERISA", "Schedule 5.11")
+- Financial misstatements / EBITDA (search for "EBITDA", "adjustment", "add-back", "revenue", "disallowed")
+- Intercompany transactions (search for "intercompany", "related party", "affiliate transaction")
+- Regulatory / compliance gaps (search for "compliance", "permit", "license", "certification", "government")
+- Indebtedness / debt discrepancies (search for "indebtedness", "debt", "loan", "equipment", "finance")
+- Real property / lease issues (search for "lease", "property", "facility", "real estate")
+For each category, search BOTH the disclosure schedules AND the DD report to identify what was disclosed vs what was found.
+Generate at least 15-20 initial_searches for disclosure comparison tasks.
+
 Consider:
 1. READ THE DOCUMENT LISTING CAREFULLY. File names reveal what each document IS (e.g., "Master_Service_Agreement.pdf" is a contract, "Complaint_Filed_2024.pdf" is a pleading, "Invoice_March.xlsx" is financial). Use file names to identify the MOST IMPORTANT documents.
 2. What are ALL the issues that need to be established? List 12-20 issues for document comparison tasks, 8-15 for other tasks.
@@ -380,7 +398,7 @@ Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "12"
+_ORIENTATION_CACHE_VERSION = "13"
 
 
 def _format_matter_context(ctx) -> str:
