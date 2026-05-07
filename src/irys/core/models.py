@@ -645,7 +645,8 @@ class GeminiClient:
             except Exception as exc:
                 _exc_str = str(exc)
                 _is_rate_limit = "429" in _exc_str or "RESOURCE_EXHAUSTED" in _exc_str
-                if _is_rate_limit and _rate_limit_attempt < self.MAX_RATE_LIMIT_RETRIES:
+                _is_overloaded = "503" in _exc_str or "UNAVAILABLE" in _exc_str
+                if (_is_rate_limit or _is_overloaded) and _rate_limit_attempt < self.MAX_RATE_LIMIT_RETRIES:
                     _rate_limit_attempt += 1
                     import re as _re_mod
                     _delay_match = _re_mod.search(r"retryDelay.*?(\d+)", _exc_str)
