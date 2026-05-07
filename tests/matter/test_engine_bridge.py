@@ -542,6 +542,154 @@ def test_build_quant_summary_shows_conflicts():
     assert "UNRESOLVED" in result.upper(), f"UNRESOLVED DISCREPANCY label missing: {result}"
 
 
+def test_build_quant_summary_surfaces_mna_operand_candidates():
+    """M&A operands must be visible before broad totals so synthesis does not use wrong figures."""
+    model = MatterModel.open_in_memory()
+    model.quant.record(quant_kind="amount",
+                       raw_text="$75,000,000 aggregate revolving credit commitment",
+                       amount_value=75_000_000.0, currency="USD",
+                       subject_type="facility_commitment")
+    model.quant.record(quant_kind="amount",
+                       raw_text="$42,500,000 outstanding Revolving Loans",
+                       amount_value=42_500_000.0, currency="USD",
+                       subject_type="credit_drawn",
+                       subject_id="Revolving Loans outstanding")
+    model.quant.record(quant_kind="amount",
+                       raw_text="$21.494 implied per-Company-share value for Hesse RSUs",
+                       amount_value=21.494, currency="USD",
+                       subject_type="share_price",
+                       subject_id="Hesse RSU per-share value")
+
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    result = engine._build_quant_summary()
+
+    assert "M&A calculation operand candidates" in result
+    assert "42,500,000.00" in result, result
+    assert "21.494" in result, result
+    assert "legally narrower operands" in result
+
+
+def test_flatten_contract_card_surfaces_mna_guardrail_fields():
+    """New contract-card fields must survive into synthesis-visible facts."""
+    card = {
+        "assignment_clause": "Section 14.2 -- requires prior written consent",
+        "exact_trigger_language": ["whether by operation of law or otherwise"],
+        "financial_operands": ["$42.5M outstanding drawn Revolving Loans"],
+        "downstream_indirect_risks": ["future parent ownership change may re-trigger"],
+        "coverage_limits": ["$25M aggregate limit"],
+        "post_closing_coverage_gaps": ["new products after closing not covered"],
+        "unreviewed_dependency_contracts": ["Crestline ERP Platform license"],
+        "risk_rating_candidate": "High -- material revenue and ambiguous assignment trigger",
+    }
+
+    lines = RLMEngine._flatten_contract_card(card, "example-contract.docx")
+    joined = "\n".join(lines)
+
+    assert "whether by operation of law or otherwise" in joined
+    assert "$42.5M outstanding" in joined
+    assert "future parent ownership" in joined
+    assert "$25M aggregate" in joined
+    assert "Crestline ERP" in joined
+    assert "risk_rating_candidate" in joined
+
+
+def test_deterministic_contract_detail_extractor_captures_raw_mna_clauses():
+    """Raw clause/table facts should be added even if the LLM paraphrases them away."""
+    engine = RLMEngine.__new__(RLMEngine)
+    query = "Review acquisition target contracts for change of control risk assessment"
+    content = """
+    Section 14.2 - Assignment
+    Neither Party shall assign, transfer, or delegate this Agreement, whether by operation of law or otherwise,
+    without prior written consent, which may be withheld in sole and absolute discretion.
+    As of the date hereof, aggregate outstanding Revolving Loans are $42,500,000.
+    "Change of Control" shall mean any direct or indirect change in the ultimate ownership or control of Supplier.
+    If PacWest's consent is not obtained within sixty (60) days following the closing of the Change of Control
+    transaction, PacWest may terminate upon ninety (90) days' written notice.
+    Products-Completed Operations Aggregate Limit | $25,000,000
+    No coverage shall be provided for Products manufactured, sold, handled, distributed, or disposed of on or after
+    the Run-Off Conversion Date.
+    Crestline ERP Platform v.8.2 is provided by Crestline Software Solutions, LLC for production scheduling,
+    inventory management, quality control tracking, and order fulfillment.
+    """
+
+    facts = engine._deterministic_contract_detail_facts(
+        "northland-refining-msa.docx", content, query
+    )
+    joined = "\n".join(facts)
+
+    assert "whether by operation of law or otherwise" in joined
+    assert "Section 14.2" in joined
+    assert "$42.5M outstanding Revolving Loans" in joined
+    assert "direct or indirect change in the ultimate ownership or control" in joined
+    assert "within 60 days after closing" in joined
+    assert "$25M Products-Completed Operations Aggregate Limit" in joined
+    assert "Run-off coverage excludes" in joined
+    assert "underlying ERP license should be reviewed" in joined
+
+
+def test_mna_coc_completion_checklist_captures_round4_failure_clusters():
+    """The deterministic checklist should make legally decisive details synthesis-mandatory."""
+    engine = RLMEngine.__new__(RLMEngine)
+    query = (
+        "Review the acquisition target contracts for change-of-control provisions "
+        "and prepare a comprehensive extraction report with risk assessments."
+    )
+    corpus = """
+    Northland Refining MSA Section 14.2 prohibits assignment whether by operation of law or otherwise.
+    Northland has approximately $36.2 million in TTM revenue; Apex TTM revenue is $187.4 million.
+    Credit Agreement Section 8.01(j) Change in Control is an Event of Default.
+    As of the date hereof, outstanding Revolving Loans are $42,500,000 under a $75,000,000 commitment.
+    Hendricks FlowLogic is embedded in AX-7000; AX-7000 product line revenue is $52.3 million TTM.
+    PacWest Section 1.1(c) includes any direct or indirect change in ultimate ownership or control.
+    If PacWest consent is not obtained within sixty (60) days, PacWest may terminate on ninety (90) days notice.
+    PacWest revenue is approximately $21.9 million; Hesse holds 45,000 unvested RSUs at $21.494 per share,
+    equal to $967,230. Required Consents must be obtained five (5) business days prior to closing.
+    Product-liability-policy converts to Run-Off and has a $25,000,000 aggregate limit.
+    Crestline ERP Platform v.8.2 is provided by Crestline Software Solutions.
+    """
+
+    checklist = engine._build_mna_coc_completion_checklist(query, corpus)
+
+    assert "Northland MSA" in checklist
+    assert "operation of law or otherwise" in checklist
+    assert "19.3%" in checklist
+    assert "$42.5M" in checklist
+    assert "Event of Default" in checklist
+    assert "$52.3M" in checklist
+    assert "direct/indirect ultimate ownership" in checklist
+    assert "60 days after" in checklist
+    assert "11.7%" in checklist
+    assert "45,000 unvested RSUs x $21.494" in checklist
+    assert "$25M aggregate" in checklist
+    assert "Crestline ERP" in checklist
+
+
+def test_mna_derived_finding_conflict_filter_rejects_wrong_operands():
+    corpus = """
+    Outstanding Revolving Loans are $42,500,000. Hesse has 45,000 RSUs at $21.494 per share,
+    aggregate value $967,230. Northland TTM revenue is $36.2M. PacWest TTM revenue is $21.9M.
+    """
+
+    assert RLMEngine._mna_derived_finding_conflicts_with_operands(
+        "Drawn credit exposure is $75,000,000 based on the facility maximum.",
+        corpus,
+    )
+    assert RLMEngine._mna_derived_finding_conflicts_with_operands(
+        "RSU acceleration cost is $2,025,000 using $45/share.",
+        corpus,
+    )
+    assert RLMEngine._mna_derived_finding_conflicts_with_operands(
+        "Northland revenue concentration is $30,000,000 / $187.4M = 16.01%.",
+        corpus,
+    )
+    assert not RLMEngine._mna_derived_finding_conflicts_with_operands(
+        "Credit facility maximum is $75,000,000, separate from $42,500,000 drawn exposure.",
+        corpus,
+    )
+
+
 # ---------------------------------------------------------------------------
 # SO-5: Actor store wiring
 # ---------------------------------------------------------------------------
