@@ -4354,7 +4354,8 @@ class RLMEngine:
         _ql = (getattr(state, "query", "") or "").lower()
         _is_comp = any(w in _ql for w in (
             "markup", "redline", "compare", "comparison", "deviation",
-            "counterparty", "credit facility", "term sheet",
+            "counterparty", "credit facility", "credit agreement",
+            "term sheet", "loan agreement", "commitment letter",
         ))
         if not _is_comp or self._matter_model is None:
             return ""
@@ -8657,7 +8658,8 @@ Return:
             _ql_dr = (state.query or "").lower()
             _is_comparison_dr = any(w in _ql_dr for w in (
                 "markup", "redline", "compare", "comparison", "deviation",
-                "counterparty", "credit facility", "term sheet", "loan agreement",
+                "counterparty", "credit facility", "credit agreement",
+                "term sheet", "loan agreement", "commitment letter",
             ))
             _is_regulatory_dr = any(w in _ql_dr for w in (
                 "antitrust", "hsr", "merger review", "regulatory", "compliance",
@@ -8672,10 +8674,15 @@ Return:
             _cross_ref_ctx = ""
             _existing_facts = state.findings.get("accumulated_facts", [])
             if _existing_facts and len(_existing_facts) >= 3:
-                _recent = _existing_facts[-60:]
-                _cross_ref_text = "\n".join(f"- {f[:200]}" for f in _recent)
-                if len(_cross_ref_text) > 15000:
-                    _cross_ref_text = _cross_ref_text[:15000] + "\n... (truncated)"
+                if _is_comparison_dr:
+                    _provision_facts = [f for f in _existing_facts if "[PROVISION]" in f]
+                    _other_facts = [f for f in _existing_facts if "[PROVISION]" not in f][-40:]
+                    _recent = _provision_facts + _other_facts
+                else:
+                    _recent = _existing_facts[-60:]
+                _cross_ref_text = "\n".join(f"- {f[:250]}" for f in _recent)
+                if len(_cross_ref_text) > 18000:
+                    _cross_ref_text = _cross_ref_text[:18000] + "\n... (truncated)"
                 _cross_ref_ctx = (
                     "\n\nCROSS-REFERENCE CONTEXT (facts already extracted from other documents):\n"
                     "Use these to identify CONNECTIONS, CONTRADICTIONS, and MISSING details.\n"
