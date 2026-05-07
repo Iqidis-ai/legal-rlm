@@ -6343,6 +6343,50 @@ class RLMEngine:
                 conversation_history=state.conversation_history,
             )
 
+    async def _enumerate_issues_for_synthesis(
+        self, query: str, facts: "list[str]",
+    ) -> str:
+        """Pre-synthesis pass: enumerate ALL distinct issues from the fact set.
+
+        Uses FLASH to produce a compact numbered checklist of every distinct
+        provision change, discrepancy, or issue found. This checklist is
+        injected into the synthesis context so the LLM has an explicit
+        manifest to work through.
+        """
+        facts_sample = facts[:200]
+        facts_text = "\n".join(f"{i+1}. {f}" for i, f in enumerate(facts_sample))
+        prompt = (
+            "You are a legal analyst reviewing extracted evidence. Your task is to "
+            "produce a COMPLETE numbered list of every distinct issue, provision change, "
+            "discrepancy, or finding in the evidence below.\n\n"
+            "For each issue, write ONE line in this format:\n"
+            "N. [TYPE] Provision/Topic: Original → Changed (Section X.X)\n\n"
+            "Where TYPE is one of: DEVIATION, DISCREPANCY, OMISSION, ADDITION, DELETION, RISK\n\n"
+            "RULES:\n"
+            "- List EVERY distinct issue — do not group or summarize\n"
+            "- Include exact values (dollar amounts, percentages, ratios, dates)\n"
+            "- If evidence mentions a provision change, it gets its own line\n"
+            "- If evidence mentions an undisclosed item, it gets its own line\n"
+            "- Aim for 20-60+ items — if you have fewer than 15, you're under-counting\n\n"
+            f"QUERY CONTEXT: {query}\n\n"
+            f"EVIDENCE ({len(facts_sample)} items):\n{facts_text}\n\n"
+            "Produce the numbered list now. Be exhaustive."
+        )
+        try:
+            response = await self.client.complete(
+                prompt=prompt,
+                tier=ModelTier.FLASH,
+                timeout=60.0,
+                usage_label="synthesis_coverage_repair",
+            )
+            if response and len(response.strip()) > 50:
+                lines = [l for l in response.strip().split("\n") if l.strip()]
+                logger.info("Issues enumeration produced %d items for synthesis", len(lines))
+                return response.strip()
+        except Exception as exc:
+            logger.warning("Issues enumeration failed: %s", exc)
+        return ""
+
     async def _repair_synthesis_coverage(
         self,
         state: InvestigationState,
@@ -11013,6 +11057,22 @@ Return:
             )
         state.findings["synthesis_coverage_ledger_count"] = len(_ledger_items)
 
+        # Pre-synthesis issues enumeration: for large fact sets in extraction tasks,
+        # ask FLASH to produce a compact checklist of ALL distinct issues. This gives
+        # synthesis an explicit manifest to check off, preventing issue omission.
+        _issues_checklist = ""
+        if self._is_extraction_task(state.query) and len(facts) > 30:
+            _issues_checklist = await self._enumerate_issues_for_synthesis(state.query, facts)
+            if _issues_checklist:
+                _issues_checklist = (
+                    "\n\nMANDATORY ISSUES CHECKLIST — You MUST address EVERY issue below in your output. "
+                    "Each numbered item is a distinct finding that requires its own entry in the "
+                    "issues table with original value, changed value, risk rating, and recommendation.\n"
+                    + _issues_checklist
+                    + "\n\nCoverage is more important than depth. A brief entry for every issue is "
+                    "better than detailed analysis of only a few.\n"
+                )
+
         # Store citations and entities as structured metadata for UI panels.
         state.findings["metadata_citations"] = state.get_citations_formatted()
         state.findings["metadata_entities"] = state.get_entities_formatted()
@@ -11020,7 +11080,7 @@ Return:
         # Dynamically assemble the context packet — only include sections that
         # have real content. PRO gets exactly what's useful, nothing empty.
         context_build = await self._assemble_context_packet(state, findings_text)
-        context_packet = context_build.text + _coverage_ledger
+        context_packet = context_build.text + _coverage_ledger + _issues_checklist
 
         _synth_domain = self._resolve_active_domain(state)
         _synth_template = _compose_synthesis_prompt(_synth_domain)
