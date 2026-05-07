@@ -801,13 +801,24 @@ This is a document comparison task. For EVERY provision below, extract the EXACT
 values from THIS document. Do not paraphrase or approximate — use the exact numbers,
 percentages, thresholds, and defined terms as written.
 
+TRACKED CHANGES / MARKUP MARKERS:
+This document may contain tracked changes represented as:
+- [DELETED: text] — text that was REMOVED from the original
+- [ADDED: text] — text that was INSERTED as a proposed change
+When you see these markers:
+- The [DELETED: ...] text is the ORIGINAL value → extract with source_role "original"
+- The [ADDED: ...] text is the MARKUP/PROPOSED value → extract with source_role "markup"
+- Text WITHOUT markers is UNCHANGED from the original
+- A provision with ONLY [ADDED: ...] and no [DELETED: ...] is a NEW provision added by the markup
+- A provision with ONLY [DELETED: ...] and no [ADDED: ...] is a provision REMOVED by the markup
+You MUST scan the ENTIRE document for ALL [DELETED:] and [ADDED:] markers. Each one
+represents a change that must be captured as a provision_comparison entry.
+
 DOCUMENT FORMAT GUIDANCE:
-- If this is a REDLINE/MARKUP document, it contains BOTH original text and proposed changes
-  in the same document (strikethroughs = deleted, underline/bold = added).
-  Extract BOTH the original value AND the changed value as separate provision_comparisons
-  entries with source_role "original" and "markup" respectively.
+- If this is a REDLINE/MARKUP document with [DELETED:]/[ADDED:] markers or visual
+  formatting (strikethroughs/underline), extract BOTH the original and changed values.
 - If this is a CLEAN original document, extract all values with source_role "original".
-- If this is a BORROWER'S markup, values in the markup that differ from the original/commitment
+- If this is a BORROWER'S markup, values that differ from the original/commitment
   letter are the PROPOSED changes. Extract both the baseline and the proposal.
 - If this is a COMMITMENT LETTER, its terms are the baseline — extract as "commitment_letter".
 - If this is a CREDIT MEMO, its terms are internal lender analysis — extract as "credit_memo".
@@ -826,24 +837,45 @@ CRITICAL PROVISIONS TO EXTRACT (with expected value types):
 6. Financial Covenants — Revolver Testing Threshold: % of commitment and dollar amount
 7. Financial Covenants — Testing Holiday: number of quarters, conditions
 8. EBITDA Add-backs: non-recurring cap ($/year AND $/lifetime), synergy cap (% AND months),
-   EACH individually named add-back category (business interruption, restructuring, etc.)
-9. Cash Netting Cap: exact dollar amount for leverage calculation AND for ECF sweep
-10. Permitted Acquisitions: individual basket ($), aggregate basket ($), pro forma cushion (x)
-11. Restricted Payments: hard dollar cap ($), ECF percentage, pro forma leverage test threshold
-12. ECF Sweep: percentage at EACH leverage tier (step-downs vs flat)
+   EACH individually named add-back category (business interruption, restructuring,
+   business optimization, purchase accounting, non-recurring losses, etc.)
+9. Cash Netting Cap: exact dollar amount for leverage calculation AND for ECF sweep separately
+10. Permitted Acquisitions: individual basket ($), aggregate basket ($), pro forma cushion (x),
+    pro forma compliance requirement (present/absent, when springing covenant not in effect)
+11. Restricted Payments: hard dollar cap ($), ECF percentage, pro forma leverage test threshold,
+    builder basket leverage test threshold
+12. ECF Sweep: percentage at EACH leverage tier (step-downs vs flat), de minimis threshold ($),
+    ECF definition deductions (list any catch-all deductions added)
 13. Cross-Default Threshold: exact dollar amount
-14. Change of Control: exact ownership percentage trigger
+14. Change of Control: exact ownership percentage trigger, key person triggers
 15. MAE/MAC Definition: presence of "taken as a whole", "material" qualifiers in sub-clauses
 16. Extension Options: number of extensions, duration, fee, notice period
 17. Anti-Layering Covenant: present/absent, specific restrictions
-18. MFN (Most Favored Nation): present/absent, scope, margin adjustment trigger (bps)
+18. MFN (Most Favored Nation): present/absent, scope, margin adjustment trigger (bps), sunset
 19. Reinvestment Period: exact number of days for asset sale reinvestment
 20. Reporting Requirements: financial statement delivery deadlines
 21. Prepayment Provisions: soft call period, prepayment premium %, repricing protection
+22. Equity Cure: methodology (EBITDA addback vs debt reduction), consecutive cure permission,
+    lifetime cap (number of cures), cure period (business days), over-cure limitation
+23. Incremental Facilities: free-and-clear basket ($), ratio-based incurrence test (x),
+    junior lien permission, Disqualified Lender restriction for incremental lenders
+24. Investment/RP Baskets: general investment basket ($), general RP basket ($/%),
+    Available Equity Amount basket (capped/uncapped, leverage test), Similar Business definition
+25. IP/Asset Transfers: transfers to unrestricted subsidiaries or non-Loan Party subsidiaries,
+    fair value requirements, J. Crew-style IP transfer baskets
+26. Voting/Assignment: Serta-style priming provisions, open market purchase provisions,
+    CLO/DQ lender carveouts for eligible assignees
+27. Governing Law: jurisdiction (New York, Delaware, etc.)
 
 MANDATORY: For EACH provision, create TWO entries in provision_comparisons when you can
 identify both the original and the changed value — one with source_role "original" and
 one with source_role "markup". This is critical for generating the deviation analysis.
+
+PROVISION COMPLETENESS CHECK: After extracting all provisions, review the list above
+(items 1-27) and confirm you checked EACH ONE. For provisions that exist in the document
+but have NO change, you may skip them. For provisions where you found a change (including
+additions or deletions), you MUST extract both original and markup values. If you are
+uncertain whether a provision changed, extract it — false positives are better than misses.
 
 For EACH provision found, create a key_fact with:
 - The EXACT value (not "changed" or "modified" — the actual number)
@@ -899,6 +931,33 @@ CRITICAL DATA CATEGORIES:
 12. Contractual Provisions: divestiture caps, ASU/asset exclusions, breakup fees, termination triggers,
     hell-or-high-water obligations — with exact dollar amounts and conditions
 
+13. Legal Framework: governing statute (e.g., Clayton Act Section 7, Sherman Act Section 1),
+    structural presumption thresholds (HHI >1800 AND delta >200 per 2023 Merger Guidelines),
+    reviewing agency (FTC vs DOJ), HSR filing thresholds, size-of-person test amounts
+14. Defenses: efficiency defense (merger-specific, verifiable, cognizable?), failing firm
+    defense (profitable? other buyers?), ease-of-entry defense (strong? weak?),
+    buyer power defense. For each, state whether available on these facts.
+15. Remedy Analysis: fix-it-first vs consent decree tradeoffs, structural vs behavioral,
+    ASU/production asset divestiture vs distribution-only, potential buyers by name,
+    buyer adequacy concerns (scale, financial capacity, operational capability)
+16. Timeline/Procedure: initial 30-day waiting period, Second Request likelihood,
+    compliance timeline estimate, outside date adequacy (specific dates), fund term
+    pressures, integration milestones that conflict with regulatory timeline
+
+HOT DOCUMENT IDENTIFICATION — CRITICAL:
+"Hot documents" are internal communications whose language could be used adversarially
+by regulators to demonstrate anticompetitive intent or harm. Specifically flag:
+- Board presentations mentioning "eliminating" competitors, "pricing optimization",
+  "restoring pricing levels", or "removing independent competitors"
+- Strategy memos about market consolidation, capacity reduction, or customer conversion
+- Emails linking deal timing to specific competitive contracts or bids
+- Internal acknowledgments of high barriers to entry, margin compression from competitors,
+  or characterizations of targets as "maverick" or "disruptive"
+- Integration plans mentioning facility closures or "rationalization" in overlap markets
+- Financial projections labeled as "synergies" that are actually price increases
+Each hot document MUST be extracted as BOTH a key_fact AND a regulatory_data entry with
+category "hot_doc", including the EXACT verbatim quote, speaker/author, and section/slide.
+
 For EACH data point, create a key_fact with:
 - The EXACT number, percentage, or quote (not summaries)
 - The specific page, slide, or section reference
@@ -907,7 +966,7 @@ For EACH data point, create a key_fact with:
 
 Include a "regulatory_data" array in your JSON response:
 "regulatory_data": [
-    {"category": "market_share|hhi|hot_doc|barrier|remedy|timeline|jurisdiction|overlap|synergy|accretion|valuation",
+    {"category": "market_share|hhi|hot_doc|barrier|remedy|timeline|jurisdiction|overlap|synergy|accretion|valuation|framework|defense",
      "entity": "company or market name", "value": "exact data point",
      "source_detail": "page/slide/section", "significance": "brief note"}
 ]
@@ -8797,7 +8856,11 @@ Return:
                     "If this document contains BOTH original and proposed values, extract BOTH. "
                     "Pay special attention to: tier breakpoints in grids, step-down schedules with dates, "
                     "dollar caps on baskets, exact ratio thresholds, add-back caps with both annual and "
-                    "lifetime limits, and any provisions that were ADDED or DELETED entirely."
+                    "lifetime limits, and any provisions that were ADDED or DELETED entirely.\n"
+                    "TRACKED CHANGES: Look for [DELETED: ...] and [ADDED: ...] markers throughout the document. "
+                    "These indicate specific text changes. [DELETED: X] means X was the original text that was "
+                    "removed; [ADDED: Y] means Y is the new text that was inserted. EVERY such marker pair "
+                    "represents a change that must be captured as a provision_comparison entry."
                 )
             elif _is_regulatory_dr:
                 _base_focus = (

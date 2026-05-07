@@ -1,4 +1,4 @@
-"""Document reader for PDF and DOCX files.
+"""Document reader for PDF, DOCX, and Excel files.
 
 Extracts text with page/section preservation for citation tracking.
 """
@@ -9,6 +9,8 @@ import re
 
 import fitz  # PyMuPDF
 from docx import Document
+from openpyxl import load_workbook
+from openpyxl.cell.cell import MergedCell
 
 
 @dataclass
@@ -57,7 +59,7 @@ class DocumentContent:
 class DocumentReader:
     """Read and extract text from PDF and DOCX files."""
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".xlsx", ".xls"}
 
     def read(self, path: Path | str) -> DocumentContent:
         """Read a document and extract text."""
@@ -74,6 +76,8 @@ class DocumentReader:
             return self._read_docx(path)
         elif suffix == ".txt":
             return self._read_txt(path)
+        elif suffix in {".xlsx", ".xls"}:
+            return self._read_xlsx(path)
         else:
             raise ValueError(f"Unsupported file type: {suffix}")
 
@@ -173,6 +177,86 @@ class DocumentReader:
             page_count=1,
             pages=pages,
             total_chars=len(text),
+        )
+
+    def _read_xlsx(self, path: Path) -> DocumentContent:
+        """Extract text from Excel workbook, one sheet per page."""
+        wb = load_workbook(path, read_only=True, data_only=True)
+        pages: list[PageContent] = []
+        total_chars = 0
+
+        for sheet_idx, sheet_name in enumerate(wb.sheetnames, start=1):
+            ws = wb[sheet_name]
+            rows_raw: list[list[str]] = []
+
+            for row in ws.iter_rows():
+                cell_values: list[str] = []
+                for cell in row:
+                    if isinstance(cell, MergedCell):
+                        cell_values.append("")
+                    elif cell.value is None:
+                        cell_values.append("")
+                    else:
+                        cell_values.append(str(cell.value).strip())
+                rows_raw.append(cell_values)
+
+            # Strip trailing empty rows
+            while rows_raw and all(v == "" for v in rows_raw[-1]):
+                rows_raw.pop()
+
+            if not rows_raw:
+                continue
+
+            # Determine max column width per column for alignment
+            num_cols = max(len(r) for r in rows_raw) if rows_raw else 0
+            # Pad short rows
+            for r in rows_raw:
+                while len(r) < num_cols:
+                    r.append("")
+
+            # Strip trailing empty columns
+            while num_cols > 0 and all(r[num_cols - 1] == "" for r in rows_raw):
+                for r in rows_raw:
+                    r.pop()
+                num_cols -= 1
+
+            if num_cols == 0:
+                continue
+
+            # Compute column widths for readable formatting
+            col_widths = [0] * num_cols
+            for r in rows_raw:
+                for ci, val in enumerate(r):
+                    col_widths[ci] = max(col_widths[ci], len(val))
+            # Cap column width to avoid absurdly wide output
+            col_widths = [min(w, 60) for w in col_widths]
+
+            # Build text table
+            lines: list[str] = [f"[SHEET: {sheet_name}]"]
+            for row_idx, r in enumerate(rows_raw):
+                padded = [val.ljust(col_widths[ci])[:col_widths[ci]] for ci, val in enumerate(r)]
+                lines.append(" | ".join(padded))
+                # Add separator after header row
+                if row_idx == 0:
+                    lines.append("-+-".join("-" * w for w in col_widths))
+
+            sheet_text = self._clean_text("\n".join(lines))
+            pages.append(PageContent(page_num=sheet_idx, text=sheet_text))
+            total_chars += len(sheet_text)
+
+        wb.close()
+
+        if not pages:
+            # Workbook was empty — return single empty page
+            pages = [PageContent(page_num=1, text="[Empty workbook]")]
+
+        return DocumentContent(
+            path=str(path),
+            filename=path.name,
+            file_type="xlsx",
+            page_count=len(pages),
+            pages=pages,
+            total_chars=total_chars,
         )
 
     def _clean_text(self, text: str) -> str:
