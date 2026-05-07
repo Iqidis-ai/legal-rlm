@@ -5454,11 +5454,11 @@ class RLMEngine:
         if not self._should_profile_dataset_shape(state):
             return ""
         try:
-            scope_hash = self._slot_scope_query_hash(state.query)
+            # Cross-scope read: any filled market_row slot for this matter is
+            # answer-eligible regardless of which query first registered it.
             filled = self._matter_model.extraction_slots.get_filled_slots(
                 self._matter_model.matter_id,
                 slot_kind="collection_item",
-                scope_query_hash=scope_hash,
             )
         except Exception:
             return ""
@@ -9820,12 +9820,6 @@ class RLMEngine:
         "antitrust", "concentration",
     )
 
-    _SLOT_HEADING_CUES = (
-        "market", "geographic market", "msa", "hhi", "market share",
-        "market shares", "competitive effects", "concentration",
-        "post-merger", "pre-merger", "delta hhi",
-    )
-
     def _slot_scope_query_hash(self, query: str) -> str:
         """16-char hash of normalized query, used to scope slots."""
         import hashlib
@@ -9911,21 +9905,26 @@ class RLMEngine:
         msa_re = _re.compile(
             r"\b([A-Z][A-Za-z\.\-]+(?:[\-\s][A-Z][A-Za-z\.\-]+){0,3})\s+MSA\b"
         )
-        # Heading-only market name capture (1-3 capitalized tokens followed by HHI/share signals)
-        heading_market_re = _re.compile(
-            r"^\s*(?:[#\-\*\d\.\s]*)([A-Z][A-Za-z\.\-]+(?:[\-\s][A-Z][A-Za-z\.\-]+){0,3})\b"
-        )
         hhi_signal_re = _re.compile(r"\bHHI\b|\bdelta\b|market share|post-merger|pre-merger", _re.I)
 
         for score, path, card in top:
+            text = ""
             try:
-                text = repo.read(path) or ""
-            except Exception:
+                # repo.read() returns DocumentContent — use its bounded excerpt
+                # accessor so scout stays cheap even on large PDFs.
+                doc = repo.read(path)
+                if doc is not None:
+                    try:
+                        text = doc.get_excerpt(max_chars=40000)
+                    except AttributeError:
+                        text = getattr(doc, "full_text", "") or ""
+                        if text:
+                            text = text[:40000]
+            except Exception as exc:
+                logger.debug("scout read failed for %s: %s", path, exc)
                 continue
             if not text:
                 continue
-            # Cheap peek — bounded
-            text = text[:40000]
 
             # Detect "<Name> MSA" patterns anywhere
             for m in msa_re.finditer(text):
@@ -10051,12 +10050,10 @@ class RLMEngine:
             return False, ""
         if self._is_simple_factual_lookup(state.query or ""):
             return False, ""
-        scope_hash = self._slot_scope_query_hash(state.query)
         try:
             opens = self._matter_model.extraction_slots.get_open_slots(
                 self._matter_model.matter_id,
                 slot_kind="collection_item",
-                scope_query_hash=scope_hash,
                 min_confidence=0.5,
             )
         except Exception as exc:
@@ -11096,10 +11093,12 @@ Return:
                     # normalized substring match against any open collection_item slot.
                     try:
                         _slot_key = f"collection_item:legal.market_row.v1:msa:{_mr_norm}"
+                        # Match across all scopes for this matter, not just the
+                        # current query phrasing — same MSA can be discovered
+                        # under differently-worded queries and we want reuse.
                         _open = _mm_mr.extraction_slots.get_open_slots(
                             _mm_mr.matter_id,
                             slot_kind="collection_item",
-                            scope_query_hash=_scope_hash,
                         )
                         _matched = next(
                             (s for s in _open if s.get("slot_key") == _slot_key),
