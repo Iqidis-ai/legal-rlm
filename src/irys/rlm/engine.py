@@ -3639,7 +3639,7 @@ class RLMEngine:
             return []
         try:
             rows = self._matter_model.typed_evidence.list_by_kind(
-                "provision_comparison", limit=60,
+                "provision_comparison", limit=200,
             )
         except Exception:
             return []
@@ -3758,7 +3758,7 @@ class RLMEngine:
             return []
         try:
             rows = self._matter_model.typed_evidence.list_by_kind(
-                "regulatory_data", limit=120,
+                "regulatory_data", limit=300,
             )
         except Exception:
             return []
@@ -4373,7 +4373,7 @@ class RLMEngine:
             return ""
         try:
             rows = self._matter_model.typed_evidence.list_by_kind(
-                "provision_comparison", limit=60,
+                "provision_comparison", limit=200,
             )
         except Exception:
             return ""
@@ -4403,20 +4403,23 @@ class RLMEngine:
             by_provision[prov][role] = entry
         if not by_provision:
             return ""
+        all_roles = sorted({r for roles in by_provision.values() for r in roles})
+        if not all_roles:
+            return ""
+        header = "| Provision | " + " | ".join(r.replace("_", " ").title() for r in all_roles) + " |"
+        sep = "|-----------|" + "|".join("-" * max(8, len(r) + 2) for r in all_roles) + "|"
         lines = [
             "PROVISION COMPARISON DATA (extracted from documents — use for deviation table):",
-            "| Provision | Original | Markup | Playbook |",
-            "|-----------|----------|--------|----------|",
+            header,
+            sep,
         ]
         for prov, roles in sorted(by_provision.items()):
-            orig = roles.get("original", "—")
-            markup = roles.get("markup", "—")
-            playbook = roles.get("playbook", "—")
-            lines.append(f"| {prov} | {orig} | {markup} | {playbook} |")
+            cols = " | ".join(roles.get(r, "—") for r in all_roles)
+            lines.append(f"| {prov} | {cols} |")
         lines.append("")
         lines.append(
             "Use this table as the BASIS for your deviation analysis. "
-            "For each row where Original ≠ Markup, produce a deviation finding "
+            "For each row where values differ between columns, produce a deviation finding "
             "with exact values, risk rating, dollar impact calculation, and recommendation."
         )
         return "\n".join(lines)
@@ -4438,7 +4441,7 @@ class RLMEngine:
             return ""
         try:
             rows = self._matter_model.typed_evidence.list_by_kind(
-                "regulatory_data", limit=120,
+                "regulatory_data", limit=300,
             )
         except Exception:
             return ""
