@@ -6718,7 +6718,7 @@ class RLMEngine:
         # Convert next_searches (bare search terms from analysis) into leads.
         # These are lower priority than structured new_leads but still valuable
         # as targeted follow-up searches that maintain issue focus.
-        for _ns in analysis.get("next_searches", [])[:2]:
+        for _ns in analysis.get("next_searches", [])[:6]:
             if isinstance(_ns, str) and _ns.strip():
                 _ns_clean = _ns.strip()
                 if self._should_skip_follow_on_lead(_ns_clean, state):
