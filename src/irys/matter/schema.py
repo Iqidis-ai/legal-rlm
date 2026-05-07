@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 69
+SCHEMA_VERSION = 70
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -29,6 +29,7 @@ _MIGRATION_NAMES: dict[int, str] = {
     64: "metric_alias_ontology",
     65: "knowledge_seed_promotion",
     69: "typed_evidence_records",
+    70: "extraction_slots",
 }
 
 
@@ -972,6 +973,37 @@ CREATE INDEX IF NOT EXISTS ix_typed_evidence_kind
 
 CREATE INDEX IF NOT EXISTS ix_typed_evidence_doc
     ON typed_evidence_record(matter_id, document_id, span_id);
+"""
+
+_DDL_EXTRACTION_SLOT = """
+CREATE TABLE IF NOT EXISTS extraction_slot (
+    id                          TEXT PRIMARY KEY,
+    matter_id                   TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    slot_kind                   TEXT NOT NULL,
+    slot_key                    TEXT NOT NULL,
+    artifact_family_id          TEXT,
+    expected_count              INTEGER
+        CHECK (expected_count IS NULL OR expected_count >= 0),
+    expected_count_confidence   REAL NOT NULL DEFAULT 0.0
+        CHECK (expected_count_confidence >= 0.0 AND expected_count_confidence <= 1.0),
+    scope_query_hash            TEXT,
+    schema_ref                  TEXT NOT NULL,
+    coverage_state              TEXT NOT NULL DEFAULT 'pending'
+        CHECK (coverage_state IN ('pending', 'partial', 'filled', 'not_observable')),
+    evidence_refs_json          TEXT NOT NULL DEFAULT '[]',
+    created_at                  TEXT NOT NULL,
+    updated_at                  TEXT NOT NULL,
+    UNIQUE(matter_id, slot_key)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_extraction_slot_kind_state
+    ON extraction_slot(matter_id, slot_kind, coverage_state, expected_count_confidence DESC);
+
+CREATE INDEX IF NOT EXISTS ix_extraction_slot_scope
+    ON extraction_slot(matter_id, scope_query_hash, slot_kind, coverage_state);
+
+CREATE INDEX IF NOT EXISTS ix_extraction_slot_family
+    ON extraction_slot(matter_id, artifact_family_id, slot_kind);
 """
 
 # Full DDL in apply order
@@ -3511,6 +3543,14 @@ def _migration_v69(conn) -> None:
     conn.commit()
 
 
+def _migration_v70(conn) -> None:
+    """Add extraction slots for dataset-shape coverage accounting."""
+    for stmt in _DDL_EXTRACTION_SLOT.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            conn.execute(stmt)
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -3584,6 +3624,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (67, _migration_v67),
     (68, _migration_v68),
     (69, _migration_v69),
+    (70, _migration_v70),
 ]
 
 

@@ -7534,6 +7534,262 @@ class TypedEvidenceStore:
         return d
 
 
+class ExtractionSlotStore:
+    """Domain-neutral coverage slots for expected extraction units.
+
+    Slots represent things the matter model expects to fill, such as one
+    market row per MSA, one CP requirement per closing condition, or one
+    QoE row per workbook line item. The rows that fill slots live in
+    typed_evidence_record; this store only tracks expected units and
+    coverage transitions.
+    """
+
+    VALID_STATES = frozenset({"pending", "partial", "filled", "not_observable"})
+
+    def __init__(self, db: "SQLiteMatterDB", matter_id: str) -> None:
+        self.db = db
+        self.matter_id = matter_id
+
+    @staticmethod
+    def _row_to_dict(row) -> dict:
+        d = dict(row)
+        try:
+            d["evidence_refs"] = _json_mod.loads(d.get("evidence_refs_json") or "[]")
+        except (TypeError, ValueError):
+            d["evidence_refs"] = []
+        return d
+
+    def register(
+        self,
+        matter_id: str,
+        slot_kind: str,
+        slot_key: str,
+        expected_count: "Optional[int]",
+        *,
+        artifact_family_id: "Optional[str]" = None,
+        expected_count_confidence: float = 0.0,
+        scope_query_hash: "Optional[str]" = None,
+        schema_ref: str = "generic.collection_item.v1",
+    ) -> tuple[str, bool]:
+        """Create or refresh a slot.
+
+        Returns (slot_id, is_new). Confidence is clamped to [0, 1].
+        On conflict (same matter_id, slot_key), preserves filled/not_observable
+        coverage state and updates expected-count metadata + updated_at.
+        """
+        kind = str(slot_kind or "").strip()
+        key = str(slot_key or "").strip()
+        if not kind:
+            raise ValueError("slot_kind must not be blank")
+        if not key:
+            raise ValueError("slot_key must not be blank")
+        ref = str(schema_ref or "").strip() or "generic.collection_item.v1"
+        if expected_count is not None:
+            ec = max(0, int(expected_count))
+        else:
+            ec = None
+        conf = max(0.0, min(float(expected_count_confidence or 0.0), 1.0))
+        now = _now()
+        scope = scope_query_hash if scope_query_hash else None
+        family = artifact_family_id if artifact_family_id else None
+
+        with self.db.transaction():
+            existing = self.db.execute(
+                "SELECT id, coverage_state FROM extraction_slot"
+                " WHERE matter_id=? AND slot_key=?",
+                (self.matter_id, key),
+            ).fetchone()
+            if existing is None:
+                slot_id = _id()
+                self.db.execute(
+                    """INSERT INTO extraction_slot
+                       (id, matter_id, slot_kind, slot_key, artifact_family_id,
+                        expected_count, expected_count_confidence,
+                        scope_query_hash, schema_ref,
+                        coverage_state, evidence_refs_json,
+                        created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        slot_id, self.matter_id, kind, key, family,
+                        ec, conf, scope, ref,
+                        "pending", "[]", now, now,
+                    ),
+                )
+                return slot_id, True
+            slot_id = existing["id"]
+            current_state = existing["coverage_state"]
+            preserved_state = (
+                current_state
+                if current_state in ("filled", "not_observable")
+                else "pending"
+            )
+            self.db.execute(
+                """UPDATE extraction_slot SET
+                     slot_kind=?, artifact_family_id=COALESCE(?, artifact_family_id),
+                     expected_count=COALESCE(?, expected_count),
+                     expected_count_confidence=?,
+                     scope_query_hash=COALESCE(?, scope_query_hash),
+                     schema_ref=?,
+                     coverage_state=?,
+                     updated_at=?
+                   WHERE id=?""",
+                (kind, family, ec, conf, scope, ref, preserved_state, now, slot_id),
+            )
+            return slot_id, False
+
+    def get_open_slots(
+        self,
+        matter_id: str,
+        slot_kind: "Optional[str]" = None,
+        *,
+        scope_query_hash: "Optional[str]" = None,
+        min_confidence: float = 0.0,
+    ) -> list[dict]:
+        """Return pending/partial slots ordered by confidence DESC, slot_key.
+
+        Used by termination guard and deep-read targeting. The matter_id
+        argument is honored against self.matter_id; mismatches return [].
+        """
+        if matter_id and matter_id != self.matter_id:
+            return []
+        sql = ("SELECT * FROM extraction_slot"
+               " WHERE matter_id=? AND coverage_state IN ('pending','partial')"
+               " AND expected_count_confidence >= ?")
+        params: list = [self.matter_id, max(0.0, min(float(min_confidence or 0.0), 1.0))]
+        if slot_kind:
+            sql += " AND slot_kind=?"
+            params.append(slot_kind)
+        if scope_query_hash:
+            sql += " AND scope_query_hash=?"
+            params.append(scope_query_hash)
+        sql += " ORDER BY expected_count_confidence DESC, slot_key ASC"
+        rows = self.db.execute(sql, tuple(params)).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    def get_filled_slots(
+        self,
+        matter_id: str,
+        slot_kind: "Optional[str]" = None,
+        *,
+        scope_query_hash: "Optional[str]" = None,
+    ) -> list[dict]:
+        """Return slots in `filled` state, ordered by slot_key."""
+        if matter_id and matter_id != self.matter_id:
+            return []
+        sql = ("SELECT * FROM extraction_slot"
+               " WHERE matter_id=? AND coverage_state='filled'")
+        params: list = [self.matter_id]
+        if slot_kind:
+            sql += " AND slot_kind=?"
+            params.append(slot_kind)
+        if scope_query_hash:
+            sql += " AND scope_query_hash=?"
+            params.append(scope_query_hash)
+        sql += " ORDER BY slot_key ASC"
+        rows = self.db.execute(sql, tuple(params)).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    def mark_filled(self, slot_id: str, evidence_ref: str) -> None:
+        """Append a typed_evidence_record id to the slot and update state.
+
+        State transitions:
+          - expected_count is None or 1: state -> filled after first ref
+          - expected_count > 1: state -> partial until refs reach expected_count,
+            then -> filled.
+        Evidence refs are deduplicated.
+        """
+        sid = str(slot_id or "").strip()
+        ref = str(evidence_ref or "").strip()
+        if not sid or not ref:
+            return
+        now = _now()
+        with self.db.transaction():
+            row = self.db.execute(
+                "SELECT id, expected_count, evidence_refs_json, coverage_state"
+                " FROM extraction_slot WHERE matter_id=? AND id=?",
+                (self.matter_id, sid),
+            ).fetchone()
+            if row is None:
+                return
+            try:
+                refs = _json_mod.loads(row["evidence_refs_json"] or "[]")
+                if not isinstance(refs, list):
+                    refs = []
+            except (TypeError, ValueError):
+                refs = []
+            if ref not in refs:
+                refs.append(ref)
+            ec = row["expected_count"]
+            if ec is None or int(ec) <= 1:
+                new_state = "filled"
+            else:
+                new_state = "filled" if len(refs) >= int(ec) else "partial"
+            self.db.execute(
+                """UPDATE extraction_slot
+                   SET evidence_refs_json=?, coverage_state=?, updated_at=?
+                   WHERE id=?""",
+                (
+                    _json_mod.dumps(refs, ensure_ascii=True, separators=(",", ":")),
+                    new_state, now, sid,
+                ),
+            )
+
+    def mark_not_observable(self, slot_id: str) -> None:
+        """Mark a slot unfillable from this corpus.
+
+        Use only after targeted reads/searches have exhausted candidate docs;
+        prevents infinite loops without pretending the row was extracted.
+        """
+        sid = str(slot_id or "").strip()
+        if not sid:
+            return
+        now = _now()
+        with self.db.transaction():
+            self.db.execute(
+                """UPDATE extraction_slot
+                   SET coverage_state='not_observable', updated_at=?
+                   WHERE matter_id=? AND id=? AND coverage_state IN ('pending','partial')""",
+                (now, self.matter_id, sid),
+            )
+
+    def coverage_summary(self, matter_id: str) -> dict:
+        """Return coverage counts grouped by slot_kind.
+
+        Shape:
+          {
+            "collection_item": {
+              "pending": 2, "partial": 0, "filled": 7, "not_observable": 0,
+              "expected_count": 9, "high_confidence_open": 2,
+            }
+          }
+        """
+        if matter_id and matter_id != self.matter_id:
+            return {}
+        rows = self.db.execute(
+            """SELECT slot_kind, coverage_state,
+                      COUNT(*) AS n,
+                      COALESCE(SUM(expected_count), 0) AS expected_total,
+                      SUM(CASE WHEN coverage_state IN ('pending','partial')
+                               AND expected_count_confidence > 0.5
+                               THEN 1 ELSE 0 END) AS high_confidence_open
+               FROM extraction_slot
+               WHERE matter_id=?
+               GROUP BY slot_kind, coverage_state""",
+            (self.matter_id,),
+        ).fetchall()
+        out: dict[str, dict] = {}
+        for r in rows:
+            kind = r["slot_kind"]
+            entry = out.setdefault(kind, {
+                "pending": 0, "partial": 0, "filled": 0, "not_observable": 0,
+                "expected_count": 0, "high_confidence_open": 0,
+            })
+            entry[r["coverage_state"]] = int(r["n"])
+            entry["expected_count"] += int(r["expected_total"] or 0)
+            entry["high_confidence_open"] += int(r["high_confidence_open"] or 0)
+        return out
+
+
 class AuthorityStore:
     """Stores legal authorities as structured objects (SO-4 legal research layer).
 

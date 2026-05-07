@@ -97,6 +97,18 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
             "irys.matter.graph:TypedEvidenceStore.list_by_kind",
         ),
     ),
+    "extraction_slot": TableCoverageSpec(
+        writers=(
+            "irys.matter.graph:ExtractionSlotStore.register",
+            "irys.matter.graph:ExtractionSlotStore.mark_filled",
+            "irys.matter.graph:ExtractionSlotStore.mark_not_observable",
+        ),
+        readers=(
+            "irys.matter.graph:ExtractionSlotStore.get_open_slots",
+            "irys.matter.graph:ExtractionSlotStore.get_filled_slots",
+            "irys.matter.graph:ExtractionSlotStore.coverage_summary",
+        ),
+    ),
     "document_actor_role": TableCoverageSpec(
         writers=("irys.matter.graph:DocumentActorRoleStore.upsert",),
         readers=("irys.matter.graph:DocumentActorRoleStore.list_by_document",),

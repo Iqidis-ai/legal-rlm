@@ -351,6 +351,7 @@ Required namespaces:
 - spans
 - quants
 - typed_evidence
+- extraction_slots
 - objective_nodes
 - criteria
 - support_edges
@@ -449,6 +450,7 @@ python tools\check_memory_namespace_coverage.py
 | `evidence_edge` | `support_edges:*`, `support_edges:<target_kind>:<target_id>`, `support_edges:<source_kind>:<source_id>` |
 | `quant_fact` | `quants:*`, `quants:<target_kind>:<target_id>` when target-linked |
 | `typed_evidence_record` | `typed_evidence:*`, `typed_evidence:<record_kind>:<record_key>`, `artifacts:artifact:<document_id>` when document-linked, `spans:artifact:<span_id>` when span-linked |
+| `extraction_slot` | `extraction_slots:*`, `extraction_slots:<slot_kind>:<slot_key>`, `extraction_slots:scope:<scope_query_hash>` when scope-bound |
 | `metric_alias` | `metric_aliases:*`, `metric_aliases:<domain_profile_id>` when domain-scoped |
 | `knowledge_seed` | `knowledge_seeds:*`, `knowledge_seeds:<domain_profile_id>` when domain-scoped |
 | `scenario_branch` | `scenario_branches:*` |
