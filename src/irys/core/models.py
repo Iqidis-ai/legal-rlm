@@ -101,7 +101,7 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
     ModelTier.LITE: ModelConfig(
         model_id="gemini-2.5-flash-lite",
         thinking_level="",
-        max_output_tokens=16384,
+        max_output_tokens=32768,
         cost_per_1m_input=0.10,
         cost_per_1m_output=0.40,
     ),
