@@ -12875,7 +12875,7 @@ Return:
             ordered.append(("provision_revisions", _prov_rev_summary, True))
         _prov_summary = self._build_provision_comparison_summary(state)
         if _prov_summary:
-            ordered.append(("provision_comparisons", _prov_summary, not _prov_rev_summary))
+            ordered.append(("provision_comparisons", _prov_summary, True))
 
         # Regulatory data summary for antitrust/regulatory tasks
         _reg_summary = self._build_regulatory_data_summary(state)
