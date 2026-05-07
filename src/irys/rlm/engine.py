@@ -398,7 +398,7 @@ Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "13"
+_ORIENTATION_CACHE_VERSION = "14"
 
 
 def _format_matter_context(ctx) -> str:
@@ -6632,7 +6632,14 @@ class RLMEngine:
         # and legacy string form for backward compatibility.
         # Use `or []` to handle null from LLM (MEDIUM guard).
         _ps = plan.get("initial_searches")
-        _raw_searches = (_ps if isinstance(_ps, list) else [])[:15]
+        _search_cap = 15
+        _q_lower = state.query.lower()
+        if any(w in _q_lower for w in (
+            "reconcil", "workbook", "spreadsheet", "conditions precedent",
+            "closing document", "disclosure", "checklist", "cross-reference",
+        )):
+            _search_cap = 30
+        _raw_searches = (_ps if isinstance(_ps, list) else [])[:_search_cap]
         _initial_searches: list[tuple[str, int | None]] = []
         for _s in _raw_searches:
             if isinstance(_s, str) and _s.strip():
@@ -10351,6 +10358,27 @@ Return:
             facts = await self._filter_facts_for_relevance(state.query, facts)
         findings_text = "\n".join(f"{i}. {fact}" for i, fact in enumerate(facts, 1))
 
+        # Build synthesis coverage ledger: extract key items that MUST appear in output.
+        _ledger_items: list[str] = []
+        import re as _re_ledger
+        for _fi, _f in enumerate(facts):
+            _dollar = _re_ledger.findall(r'\$[\d,.]+[MBKmkb]?\b', _f)
+            _pct = _re_ledger.findall(r'[\d.]+%', _f)
+            _section = _re_ledger.findall(r'Section\s+[\d.]+\([a-z]\)', _f)
+            if _dollar or _pct or _section:
+                _detail = "; ".join(_dollar + _pct + _section)
+                _ledger_items.append(f"[{_fi+1}] {_detail}")
+        _coverage_ledger = ""
+        if len(_ledger_items) > 5:
+            _coverage_ledger = (
+                "\n\nSYNTHESIS COVERAGE LEDGER — These specific values from the evidence "
+                "MUST appear in your output. Check each off as you write:\n"
+                + "\n".join(_ledger_items[:200])
+                + f"\n\nTotal items to cover: {len(_ledger_items)}. "
+                "If your output omits any of these, add them now.\n"
+            )
+        state.findings["synthesis_coverage_ledger_count"] = len(_ledger_items)
+
         # Store citations and entities as structured metadata for UI panels.
         state.findings["metadata_citations"] = state.get_citations_formatted()
         state.findings["metadata_entities"] = state.get_entities_formatted()
@@ -10358,7 +10386,7 @@ Return:
         # Dynamically assemble the context packet — only include sections that
         # have real content. PRO gets exactly what's useful, nothing empty.
         context_build = await self._assemble_context_packet(state, findings_text)
-        context_packet = context_build.text
+        context_packet = context_build.text + _coverage_ledger
 
         _synth_domain = self._resolve_active_domain(state)
         _synth_template = _compose_synthesis_prompt(_synth_domain)
