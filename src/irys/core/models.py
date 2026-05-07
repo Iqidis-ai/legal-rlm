@@ -331,6 +331,7 @@ class GeminiClient:
     DEFAULT_TIMEOUT = 300.0  # 5 minutes — preview models need headroom
     MAX_RETRIES = 3
     MAX_RATE_LIMIT_RETRIES = 8
+    CIRCUIT_BREAKER_THRESHOLD = 2
     DEFAULT_RPM = 60  # Requests per minute
     DEFAULT_BURST = 10  # Burst size
 
@@ -349,6 +350,7 @@ class GeminiClient:
         self.timeout = timeout
         self._usage: dict[ModelTier, UsageStats] = {t: UsageStats(tier=t) for t in ModelTier}
         self._rate_limiter = RateLimiter(requests_per_minute, burst_size)
+        self._circuit_breaker: dict[str, int] = {}
         self._usage_context: ContextVar[dict[str, Any] | None] = ContextVar(
             "gemini_usage_context",
             default=None,
@@ -582,6 +584,69 @@ class GeminiClient:
         started_at = time.perf_counter()
 
         _rate_limit_attempt = 0
+        _cb_count = self._circuit_breaker.get(mc.model_id, 0)
+        if _cb_count >= self.CIRCUIT_BREAKER_THRESHOLD and mc.fallback_model_id:
+            logger.warning(
+                f"Circuit breaker open for {mc.model_id} "
+                f"({_cb_count} consecutive 503s), using {mc.fallback_model_id} directly"
+            )
+            _fb_config = self._get_config(tier, json_mode=json_mode)
+            if temperature is not None:
+                _fb_config.temperature = temperature
+            if tools:
+                _fb_config.tools = tools
+            if cached_content:
+                _fb_config.cached_content = cached_content
+            if system_prompt:
+                _fb_config.system_instruction = system_prompt
+            await self._rate_limiter.acquire()
+            try:
+                if conversation_history:
+                    history = self._build_chat_history(conversation_history)
+                    chat = self.client.chats.create(
+                        model=mc.fallback_model_id,
+                        config=_fb_config,
+                        history=history,
+                    )
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(chat.send_message, request_text),
+                        timeout=request_timeout,
+                    )
+                else:
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.client.models.generate_content,
+                            model=mc.fallback_model_id,
+                            contents=request_text,
+                            config=_fb_config,
+                        ),
+                        timeout=request_timeout,
+                    )
+                _text = response.text or ""
+                elapsed = time.perf_counter() - started_at
+                _in, _out, _cache, _think, _tool = self._parse_usage_metadata(response, prompt)
+                self._record_call(LLMCallRecord(
+                    model_tier=tier.value,
+                    model_id=mc.fallback_model_id,
+                    usage_label=usage_label,
+                    input_tokens=_in,
+                    cache_read_tokens=_cache,
+                    tool_use_prompt_tokens=_tool,
+                    thinking_tokens=_think,
+                    output_tokens=_out,
+                    total_prompt_tokens=_in + _cache,
+                    estimated_cost_usd=0.0,
+                    latency_ms=int(elapsed * 1000),
+                    success=True,
+                    call_id=_call_id,
+                    prompt_hash=_prompt_hash,
+                ))
+                ACTIVE_LLM_CALL.reset(_active_token)
+                return _text
+            except Exception as fb_exc:
+                ACTIVE_LLM_CALL.reset(_active_token)
+                raise fb_exc
+
         while True:
             try:
                 if conversation_history:
@@ -614,6 +679,7 @@ class GeminiClient:
                         ),
                         timeout=request_timeout,
                     )
+                self._circuit_breaker.pop(mc.model_id, None)
                 break
             except asyncio.TimeoutError:
                 latency_ms = int((time.perf_counter() - started_at) * 1000)
@@ -657,6 +723,8 @@ class GeminiClient:
                 _exc_str = str(exc)
                 _is_rate_limit = "429" in _exc_str or "RESOURCE_EXHAUSTED" in _exc_str
                 _is_overloaded = "503" in _exc_str or "UNAVAILABLE" in _exc_str
+                if _is_rate_limit or _is_overloaded:
+                    self._circuit_breaker[mc.model_id] = self._circuit_breaker.get(mc.model_id, 0) + 1
                 if (_is_rate_limit or _is_overloaded) and _rate_limit_attempt < self.MAX_RATE_LIMIT_RETRIES:
                     _rate_limit_attempt += 1
                     import re as _re_mod
