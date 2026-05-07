@@ -184,6 +184,51 @@ def _markdown_to_xlsx(md_text: str, output_path: Path):
     wb.save(str(output_path))
 
 
+def _split_output_by_deliverable(
+    output_text: str, deliverables: dict[str, str],
+) -> dict[str, str]:
+    """Split a single synthesis output into per-deliverable sections.
+
+    Looks for markdown headings that match deliverable names/keys and splits
+    the output accordingly. Falls back to the full output for any deliverable
+    without a matching section.
+    """
+    import re as _re
+    if len(deliverables) <= 1:
+        return {name: output_text for name in deliverables}
+
+    result: dict[str, str] = {}
+    stem_map: dict[str, str] = {}
+    for name, filename in deliverables.items():
+        stem = Path(filename).stem.lower().replace("-", " ").replace("_", " ")
+        stem_map[name] = stem
+
+    headings = list(_re.finditer(r'^(#{1,3})\s+(.+)$', output_text, _re.MULTILINE))
+    if not headings:
+        return {name: output_text for name in deliverables}
+
+    def _fuzzy_match(heading_text: str, stem: str) -> bool:
+        ht = heading_text.lower().replace("-", " ").replace("_", " ")
+        stem_words = stem.split()
+        return sum(1 for w in stem_words if w in ht) >= max(1, len(stem_words) // 2)
+
+    sections: list[tuple[str, int, int]] = []
+    for i, match in enumerate(headings):
+        start = match.start()
+        end = headings[i + 1].start() if i + 1 < len(headings) else len(output_text)
+        sections.append((match.group(2).strip(), start, end))
+
+    for name, stem in stem_map.items():
+        best_section = None
+        for heading_text, start, end in sections:
+            if _fuzzy_match(heading_text, stem):
+                best_section = output_text[start:end].strip()
+                break
+        result[name] = best_section if best_section else output_text
+
+    return result
+
+
 DEFAULT_LAB_ROOT = PROJECT_ROOT.parent / "harvey-labs"
 RESULTS_SUBDIR = "results"
 
@@ -284,6 +329,17 @@ async def run_task(
     instructions = task["instructions"]
     deliverables = task["deliverables"]
 
+    # Append deliverable metadata so synthesis knows what to produce
+    if deliverables and len(deliverables) > 1:
+        deliverable_desc = ", ".join(
+            f"`{fn}`" for fn in deliverables.values()
+        )
+        instructions += (
+            f"\n\nYou must produce content for {len(deliverables)} separate deliverables: "
+            f"{deliverable_desc}. Structure your output with a clear top-level "
+            f"heading (# or ##) for each deliverable so they can be separated."
+        )
+
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_id = f"{task_id}/irys-rlm-{research_mode}/{ts}"
 
@@ -331,19 +387,22 @@ async def run_task(
         status = result.status
         success = result.success
 
-        # Write output for each expected deliverable in the expected format
+        # Write output for each expected deliverable in the expected format.
+        # For multi-deliverable tasks, try to split the output by section headers.
         if deliverables:
+            per_deliverable = _split_output_by_deliverable(output_text, deliverables)
             for name, filename in deliverables.items():
+                section_text = per_deliverable.get(name, output_text)
                 ext = Path(filename).suffix.lower()
                 if ext == ".docx":
                     docx_path = output_dir / filename
-                    _markdown_to_docx(output_text, docx_path)
+                    _markdown_to_docx(section_text, docx_path)
                 elif ext in (".xlsx", ".xls"):
                     xlsx_path = output_dir / filename
-                    _markdown_to_xlsx(output_text, xlsx_path)
+                    _markdown_to_xlsx(section_text, xlsx_path)
                 else:
                     out_path = output_dir / filename
-                    out_path.write_text(output_text, encoding="utf-8")
+                    out_path.write_text(section_text, encoding="utf-8")
         else:
             (output_dir / "output.md").write_text(output_text, encoding="utf-8")
 
