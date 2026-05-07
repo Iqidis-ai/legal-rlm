@@ -4588,9 +4588,13 @@ class RLMEngine:
             lines.append(f"| {_esc(prov)} | {cols} |")
         lines.append("")
         lines.append(
-            "Use this table as the BASIS for your deviation analysis. "
-            "For each row where values differ between columns, produce a deviation finding "
-            "with exact values, risk rating, dollar impact calculation, and recommendation."
+            f"MANDATORY: This table contains {len(by_provision)} provisions. "
+            "You MUST produce a finding for EVERY row where values differ between columns. "
+            "Do NOT summarize or group — each provision gets its own deviation finding with: "
+            "(1) exact original value, (2) exact markup value, (3) Red/Yellow/Green risk rating, "
+            "(4) dollar impact calculation where numeric, (5) specific recommendation with "
+            "primary position and fallback/compromise. Covering all provisions is more important "
+            "than depth on any single one."
         )
         return "\n".join(lines)
 
