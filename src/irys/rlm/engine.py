@@ -297,12 +297,33 @@ Your task is to create a COMPREHENSIVE and EXHAUSTIVE research plan. Think like 
 CRITICAL INSTRUCTION — EXHAUSTIVE COVERAGE:
 Do NOT produce a high-level summary of 3-5 major themes. You must identify EVERY specific provision, deviation, requirement, risk, obligation, and material detail that the query asks about. If analyzing a contract, list EVERY material term — not just "key financial terms" but each specific one (interest rate, commitment fee, leverage covenants, financial reporting, events of default, change of control, assignment restrictions, etc.). If comparing documents, identify EVERY point of difference, not just the most obvious ones.
 
+DOCUMENT COMPARISON INSTRUCTION (when comparing two or more documents — e.g., markup vs. original, competing proposals, redline analysis):
+You MUST create a separate issue for EACH of these provision categories (skip only if the document type clearly does not contain such provisions):
+- Interest rate / SOFR floor / margin grid / rate mechanics
+- Commitment fees / upfront fees / unused fees
+- EACH financial covenant separately (leverage ratio, FCCR, interest coverage, etc.)
+- EBITDA definition and add-back caps (non-recurring, synergy, pro forma adjustments)
+- Permitted acquisition baskets (individual, aggregate, pro forma compliance)
+- Restricted payments / distributions / dividend restrictions
+- Events of default (cross-default thresholds, payment defaults, covenant defaults)
+- Change of control definition and thresholds
+- Assignment / transfer / participation restrictions
+- Mandatory prepayment / excess cash flow sweep mechanics
+- Negative covenants (anti-layering, most-favored-nation, additional indebtedness)
+- Reinvestment period / asset sale proceeds
+- MAE / MAC definition and qualifiers
+- Reporting requirements and information covenants
+- Representations and warranties scope
+- Extension options / maturity / amortization
+For each category, generate a search targeting the SAME provision in BOTH documents (e.g., search for "SOFR" or "interest rate" to find the term in both the original and the markup). This ensures provision-by-provision comparison, not just sampling of the most obvious differences.
+Generate at least 12-15 initial_searches for comparison tasks.
+
 Consider:
 1. READ THE DOCUMENT LISTING CAREFULLY. File names reveal what each document IS (e.g., "Master_Service_Agreement.pdf" is a contract, "Complaint_Filed_2024.pdf" is a pleading, "Invoice_March.xlsx" is financial). Use file names to identify the MOST IMPORTANT documents.
-2. What are ALL the issues that need to be established? List 8-15 issues minimum, not 3-5.
+2. What are ALL the issues that need to be established? List 12-20 issues for document comparison tasks, 8-15 for other tasks.
 3. For each issue, what SPECIFIC provisions, sections, or data points must be found?
 4. Which specific documents from the listing are MOST LIKELY to contain direct evidence? Name them explicitly in your search terms.
-5. What SPECIFIC search terms will find relevant passages? Generate 8-12 targeted searches covering different aspects of the query. Use party names, document-specific terms, financial terms, defined terms, and key phrases you expect to find IN those documents.
+5. What SPECIFIC search terms will find relevant passages? Generate 12-15 targeted searches covering different aspects of the query. Use party names, document-specific terms, financial terms, defined terms, and key phrases you expect to find IN those documents.
 6. What is your preliminary hypothesis based on the query and the document names?
 
 PRIORITIZE:
@@ -332,7 +353,7 @@ Respond in JSON format:
     "hypothesis": "Your initial hypothesis based on query analysis"
 }}
 
-Generate 8-12 initial_searches minimum. Each search should target a DIFFERENT aspect of the query.
+Generate 12-15 initial_searches minimum. Each search should target a DIFFERENT aspect of the query.
 
 For target_documents: list the EXACT filenames from the Document Listing above that you
 believe are the highest-value retrieval targets. These should be specific files, not types.
@@ -5147,7 +5168,7 @@ class RLMEngine:
         # and legacy string form for backward compatibility.
         # Use `or []` to handle null from LLM (MEDIUM guard).
         _ps = plan.get("initial_searches")
-        _raw_searches = (_ps if isinstance(_ps, list) else [])[:12]
+        _raw_searches = (_ps if isinstance(_ps, list) else [])[:15]
         _initial_searches: list[tuple[str, int | None]] = []
         for _s in _raw_searches:
             if isinstance(_s, str) and _s.strip():
