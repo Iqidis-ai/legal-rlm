@@ -2391,12 +2391,8 @@ class RLMEngine:
             "- Credit agreements: both Change of Control definitions, Event of Default status under default provisions, "
             "mandatory prepayment timing, automatic commitment termination, and drawn/outstanding debt exposure.\n"
             "- JV/equity arrangements: all carve-out conditions, revenue thresholds, management-retention conditions, "
-            "successor revenue comparisons, ownership percentages, and buy-out formulas.\n"
-            "- Apex-Kenji JV: report Apex's 55% Membership Interest as the ownership stake; do not substitute the "
-            "separate 50% voting-equity Change of Control threshold. Section 12.3(b)(ii)'s $500M threshold applies "
-            "to consolidated annual revenue derived from fluid control products, not general revenue; Voltan's "
-            "cited ~$410M flow-control revenue falls short, so the Successor Entity carve-out does not apply and "
-            "Kenji's Buy-Out Option remains exercisable.\n"
+            "successor revenue comparisons, ownership percentages, buy-out formulas, and calculate buy-out price "
+            "using the stated multiple and EBITDA. Distinguish ownership percentage from voting-equity CoC threshold.\n"
             "- Technology and product licenses: embedded product lines, product-line revenue exposure, no-cure "
             "termination rights, consent discretion, and dependent ERP/software systems.\n"
             "- Customer/supply agreements with indirect language: direct/indirect ultimate ownership wording, "
@@ -2555,20 +2551,22 @@ class RLMEngine:
             return f"${value:,.0f}M"
         return f"${value:,.1f}M"
 
-    def _deterministic_contract_detail_facts(
-        self, filename: str, content: str, query: str,
+    def _contract_card_provision_reinforcement(
+        self, card: dict, filename: str, content: str, query: str,
     ) -> list[str]:
-        """Provision detail extractor for M&A/CoC diligence.
+        """General-purpose provision reinforcement from contract_card data.
 
-        This is intentionally deterministic: it turns high-signal raw clauses,
-        schedules, and tables into synthesis-visible facts so later LLM passes
-        cannot drop exact phrases or substitute the wrong numeric operand.
+        Scans the document text for legally operative patterns (assignment
+        clauses, event-of-default language, timing chains, carve-outs, etc.)
+        and emits synthesis-visible facts anchored in the actual extracted text.
+        Works on ANY legal document — no hardcoded names, sections, or amounts.
         """
-        if not self._is_mna_change_control_task(query):
+        if not self._is_extraction_task(query):
+            return []
+        if not card:
             return []
 
         lower = _re_engine.sub(r"\s+", " ", content or "").strip().lower()
-        fn = (filename or "").lower()
         facts: list[str] = []
         seen: set[str] = set()
 
@@ -2579,173 +2577,91 @@ class RLMEngine:
                 seen.add(key)
                 facts.append(fact)
 
-        if "northland" in lower or "northland" in fn:
-            if "operation of law or otherwise" in lower and "section 14.2" in lower:
-                add(
-                    "[DETERMINISTIC_PROVISION] northland-refining-msa.docx | "
-                    "Section 14.2 prohibits assignment, transfer, or delegation "
-                    "whether by operation of law or otherwise without prior written "
-                    "consent; consent may be withheld in sole and absolute discretion."
-                )
-                add(
-                    "[DETERMINISTIC_PROVISION] northland-refining-msa.docx | "
-                    "Section 14.2 reverse triangular merger issue: because Apex "
-                    "survives, operation-of-law assignment treatment is uncertain "
-                    "and jurisdiction-dependent, so consent risk remains."
-                )
-                add(
-                    "[DETERMINISTIC_PROVISION] northland-refining-msa.docx | "
-                    "UCC Section 2-210 issue: analyze assignment of rights separately "
-                    "from delegation of duties/performance under the goods supply MSA."
-                )
-            if "change of control" not in lower and "section 14.2" in lower:
-                add(
-                    "[DETERMINISTIC_PROVISION] northland-refining-msa.docx | "
-                    "No explicit Change of Control definition appears; Section 14.2 "
-                    "anti-assignment is the analogous CoC-sensitive provision."
-                )
+        prefix = f"[PROVISION_LOCK] {filename}"
 
-        if "approximately $36.2 million" in lower and "northland" in lower:
-            add(
-                "[DETERMINISTIC_OPERAND] Northland MSA TTM revenue operand: "
-                "$36.2M attributable to the Northland agreement."
-            )
-        if "approximately $21.9 million" in lower and "pacwest" in lower:
-            add(
-                "[DETERMINISTIC_OPERAND] PacWest agreement TTM revenue operand: "
-                "$21.9M attributable to the PacWest agreement."
-            )
-        if "approximately $52.3 million" in lower and "ax-7000" in lower:
-            add(
-                "[DETERMINISTIC_OPERAND] Hendricks/AX-7000 TTM revenue operand: "
-                "$52.3M from the AX-7000 product line tied to FlowLogic."
-            )
-        if "$187.4 million" in lower and ("ttm" in lower or "trailing twelve" in lower):
-            add(
-                "[DETERMINISTIC_OPERAND] Apex TTM revenue denominator: $187.4M."
-            )
+        # 1. Anti-assignment / operation-of-law language detection
+        assignment_clause = card.get("assignment_clause") or ""
+        if assignment_clause and assignment_clause not in ("null", "ABSENT"):
+            if "operation of law" in lower:
+                add(f"{prefix} | Assignment clause includes 'operation of law' language: {assignment_clause[:300]}")
+            if "direct or indirect" in lower and ("ownership" in lower or "control" in lower):
+                add(f"{prefix} | Assignment/CoC includes direct/indirect ownership/control language: {assignment_clause[:300]}")
 
-        if (
-            "$42,500,000" in lower
-            and "revolving loans" in lower
-            and "outstanding" in lower
+        # 2. CoC definition presence/absence
+        coc_def = card.get("change_of_control_definition") or ""
+        if coc_def == "ABSENT":
+            add(f"{prefix} | No explicit Change of Control definition found; "
+                "anti-assignment provisions serve as analogous CoC-sensitive clauses.")
+        elif coc_def and coc_def != "null":
+            add(f"{prefix} | Change of Control definition: {coc_def[:400]}")
+
+        # 3. Event of default consequences
+        eod = card.get("event_of_default_consequences") or ""
+        if eod and eod not in ("null", "ABSENT"):
+            add(f"{prefix} | Event of Default consequences: {eod[:400]}")
+
+        # 4. Consent timing sequence
+        timing_seq = card.get("consent_timing_sequence") or ""
+        if timing_seq and timing_seq != "null":
+            add(f"{prefix} | Consent/termination timing sequence: {timing_seq[:400]}")
+
+        # 5. Financial operands — emit each for synthesis visibility
+        fin_operands = card.get("financial_operands") or []
+        if isinstance(fin_operands, list):
+            for operand in fin_operands:
+                if operand and isinstance(operand, str):
+                    add(f"{prefix} | Financial operand: {operand[:300]}")
+
+        # 6. Carve-out conditions with thresholds
+        carve_outs = card.get("carve_outs") or []
+        if isinstance(carve_outs, list):
+            for co in carve_outs:
+                if co and isinstance(co, str):
+                    add(f"{prefix} | Carve-out condition: {co[:400]}")
+
+        # 7. Downstream/indirect risks
+        downstream = card.get("downstream_indirect_risks") or []
+        if isinstance(downstream, list):
+            for risk in downstream:
+                if risk and isinstance(risk, str):
+                    add(f"{prefix} | Downstream risk: {risk[:300]}")
+
+        # 8. Unreviewed dependency contracts
+        unreviewed = card.get("unreviewed_dependency_contracts") or []
+        if isinstance(unreviewed, list):
+            for dep in unreviewed:
+                if dep and isinstance(dep, str):
+                    add(f"{prefix} | Unreviewed dependency: {dep[:200]} — "
+                        "should be reviewed for CoC/assignment/consent/termination risk.")
+
+        # 9. Post-closing coverage gaps
+        gaps = card.get("post_closing_coverage_gaps") or []
+        if isinstance(gaps, list):
+            for gap in gaps:
+                if gap and isinstance(gap, str):
+                    add(f"{prefix} | Post-closing coverage gap: {gap[:300]}")
+
+        # 10. Missing expected provisions
+        missing = card.get("missing_expected_provisions") or []
+        if isinstance(missing, list):
+            for m in missing:
+                if m and isinstance(m, str):
+                    add(f"{prefix} | Missing expected provision: {m[:200]}")
+
+        # 11. Detect reverse triangular merger structure from text
+        if ("merger sub" in lower or "merger subsidiary" in lower) and (
+            "merge with and into" in lower or "merged with and into" in lower
         ):
-            add(
-                "[DETERMINISTIC_OPERAND] Credit drawn exposure operand: "
-                "$42.5M outstanding Revolving Loans; do not use the $75M facility "
-                "commitment as the mandatory prepayment amount."
-            )
-        if "shall constitute an event of default" in lower and "8.01" in lower:
-            add(
-                "[DETERMINISTIC_PROVISION] credit-agreement-summit.docx | "
-                "Section 8.01(j) states Change in Control is an Event of Default; "
-                "report the default consequence separately from Section 1.01 prepayment."
-            )
+            add(f"{prefix} | Transaction structure detected: reverse triangular merger "
+                "(target survives as subsidiary). Entity survival means anti-assignment "
+                "clauses may not be triggered but this is jurisdiction-dependent.")
 
-        if "direct or indirect change in the ultimate ownership or control" in lower:
-            add(
-                "[DETERMINISTIC_PROVISION] pacwest-supply-agreement.docx | "
-                "Section 1.1(c) includes any direct or indirect change in the "
-                "ultimate ownership or control of Supplier."
-            )
-            add(
-                "[DETERMINISTIC_PROVISION] pacwest-supply-agreement.docx | "
-                "Downstream risk: the indirect ultimate-ownership language can "
-                "re-trigger if Voltan or another acquirer later undergoes its own "
-                "ownership/control change."
-            )
-        if (
-            "not obtained within sixty (60) days following the closing" in lower
-            and "ninety (90) days' written notice" in lower
-        ):
-            add(
-                "[DETERMINISTIC_PROVISION] pacwest-supply-agreement.docx | "
-                "Section 10.5(b)-(c) sequence: if PacWest consent is not obtained "
-                "within 60 days after closing, PacWest may terminate on 90 days' notice."
-            )
-
-        if "45,000" in lower and "21.494" in lower and "967,230" in lower:
-            add(
-                "[DETERMINISTIC_OPERAND] Hesse RSU acceleration operands: "
-                "45,000 unvested Company RSUs x $21.494 implied per-Company-share "
-                "value = $967,230."
-            )
-        if "rsu rollover treatment" in lower and "section 5.4" in lower:
-            add(
-                "[DETERMINISTIC_PROVISION] hesse-employment-agreement.docx | "
-                "Section 5.4 single-trigger acceleration conflicts with Merger "
-                "Agreement Section 3.05 RSU rollover/continued vesting treatment."
-            )
-        if "required consents" in lower and "five (5) business days prior" in lower:
-            add(
-                "[DETERMINISTIC_PROVISION] Merger Agreement Required Consents "
-                "timing: Required Consents must be obtained at least five business "
-                "days before closing."
-            )
-        if "merger sub will merge with and into the company" in lower:
-            add(
-                "[DETERMINISTIC_PROVISION] Transaction structure: reverse "
-                "triangular merger; Merger Sub merges into Apex and Apex survives "
-                "as a wholly owned subsidiary of Voltan."
-            )
-
-        if (
-            "products-completed operations aggregate limit" in lower
-            and "$25,000,000" in lower
-        ):
-            add(
-                "[DETERMINISTIC_OPERAND] Product liability policy aggregate limit: "
-                "$25M Products-Completed Operations Aggregate Limit."
-            )
-        if (
-            "no coverage shall be provided" in lower
-            and "on or after the run-off conversion date" in lower
-        ):
-            add(
-                "[DETERMINISTIC_PROVISION] product-liability-policy.docx | "
-                "Run-off coverage excludes claims from products manufactured, sold, "
-                "handled, distributed, or disposed of on or after the Run-Off "
-                "Conversion Date; separate go-forward coverage is needed."
-            )
-
-        if "fifty-five percent (55%) membership interest" in lower and "apex" in lower:
-            add(
-                "[DETERMINISTIC_OPERAND] apex-kenji-jv-agreement.docx | "
-                "Apex holds a 55% Membership Interest in the JV; Kenji holds 45%. "
-                "This is the JV ownership stake / buy-out interest; do not substitute "
-                "the separate 50% voting-equity Change of Control threshold."
-            )
-        if (
-            "fluid control products" in lower
-            and "$500,000,000" in lower
-            and "successor entity" in lower
-        ):
-            add(
-                "[DETERMINISTIC_PROVISION] apex-kenji-jv-agreement.docx | "
-                "Section 12.3(b)(ii) carve-out requires the Successor Entity's "
-                "consolidated annual revenue derived from FLUID CONTROL PRODUCTS "
-                "(valves, actuators, flow meters, and related automation systems) "
-                "to exceed $500M; this is a product-specific revenue test, not "
-                "a general revenue or enterprise-size test."
-            )
-        if "$410,000,000" in lower and "voltan" in lower and "flow control" in lower:
-            add(
-                "[DETERMINISTIC_OPERAND] apex-kenji-jv-agreement.docx | "
-                "Voltan's cited product-specific comparator is its flow control division "
-                "revenue of ~$410M, not general/diversified-conglomerate revenue. "
-                "That falls SHORT of the $500M fluid control products threshold in "
-                "Section 12.3(b)(ii), so the carve-out DOES NOT APPLY to Voltan as "
-                "Successor Entity and Kenji's Buy-Out Option remains exercisable."
-            )
-
-        if "crestline erp platform" in lower and "crestline software solutions" in lower:
-            add(
-                "[DETERMINISTIC_ENTITY_GAP] Crestline ERP Platform v.8.2 is "
-                "provided/licensed by Crestline Software Solutions and is referenced "
-                "as a mission-critical manufacturing, inventory, quality, traceability, "
-                "or order-fulfillment system; the underlying ERP license should be "
-                "reviewed for CoC, assignment, consent, and termination risk."
-            )
+        # 12. UCC 2-210 applicability for supply/goods agreements
+        doc_subtype = (card.get("doc_subtype") or "").lower()
+        if any(t in doc_subtype for t in ("supply", "services", "msa", "goods")):
+            if "assign" in lower:
+                add(f"{prefix} | UCC Section 2-210 may apply: distinguish assignment "
+                    "of rights from delegation of duties for this supply/services agreement.")
 
         return facts
 
@@ -2755,239 +2671,210 @@ class RLMEngine:
         return any(n.lower() in c for n in needles)
 
     @staticmethod
-    def _mna_completion_lines(corpus: str) -> list[str]:
-        """Build deterministic M&A CoC checklist lines from evidence text.
+    def _build_operand_lock_lines(corpus: str) -> list[str]:
+        """Build general-purpose operand-lock instructions from extracted evidence.
 
-        The lines are only emitted when their anchors appear in the extracted
-        evidence/citations. They do not replace citations; they prevent synthesis
-        from dropping legally decisive operands and phrases already in context.
+        Scans the corpus for patterns indicating financial operands, timing
+        sequences, and structural provisions, then emits disambiguation
+        instructions. Works on ANY document set — no hardcoded names or values.
         """
         c = corpus or ""
         cl = c.lower()
         lines: list[str] = []
 
-        def has(*needles: str) -> bool:
-            return any(n.lower() in cl for n in needles)
+        # 1. Detect drawn-vs-committed credit disambiguation
+        has_revolving = "revolving" in cl or "drawn" in cl or "outstanding" in cl
+        has_commitment = "commitment" in cl or "facility" in cl or "maximum" in cl
+        if has_revolving and has_commitment and "credit" in cl:
+            drawn_amt = RLMEngine._first_amount_millions_near(
+                c, ("drawn",), preferred_terms=("outstanding", "revolving")
+            ) or RLMEngine._first_amount_millions_near(
+                c, ("outstanding",), preferred_terms=("revolving", "loans")
+            )
+            commit_amt = RLMEngine._first_amount_millions_near(
+                c, ("commitment",), preferred_terms=("aggregate", "facility", "maximum")
+            )
+            if drawn_amt and commit_amt and drawn_amt != commit_amt:
+                lines.append(
+                    f"Credit facility: use the drawn/outstanding amount "
+                    f"({RLMEngine._format_millions(drawn_amt)}) as the actual exposure, "
+                    f"not the commitment/facility maximum ({RLMEngine._format_millions(commit_amt)}). "
+                    "Connect drawn amount to mandatory prepayment consequences."
+                )
 
-        northland = has("northland")
-        pacwest = has("pacwest")
-        credit = has("credit-agreement", "credit agreement", "revolving loans")
-        hendricks = has("hendricks", "flowlogic", "ax-7000")
-        insurance = has("product-liability-policy", "run-off", "great lakes indemnity")
-        hesse = has("hesse", "rsu", "restricted stock unit")
-        lease = has("hq-lease", "crescent ridge", "landlord", "deemed assignment")
-        jv = has("kenji", "joint venture", "buy-out option")
-
-        apex_ttm = RLMEngine._first_amount_millions_near(
-            c,
-            ("apex", "revenue"),
-            preferred_terms=("denominator", "trailing"),
+        # 2. Detect revenue concentration calculations
+        company_ttm = RLMEngine._first_amount_millions_near(
+            c, ("revenue",), preferred_terms=("ttm", "trailing", "total", "denominator")
         )
-        northland_ttm = RLMEngine._first_amount_millions_near(
-            c,
-            ("northland", "revenue"),
-            preferred_terms=("operand", "attributable", "trailing"),
+        if company_ttm:
+            # Find counterparty-specific revenues
+            counterparty_revenues: list[tuple[str, float]] = []
+            for line in RLMEngine._split_fact_lines(c):
+                ll = line.lower()
+                if "revenue" in ll and ("attributable" in ll or "counterparty" in ll or "operand" in ll):
+                    amt = RLMEngine._first_amount_millions_near(
+                        line, ("revenue",), preferred_terms=("attributable", "operand")
+                    )
+                    if amt and amt != company_ttm and amt < company_ttm:
+                        counterparty_revenues.append((line[:80], amt))
+            for label, amt in counterparty_revenues[:5]:
+                pct = amt / company_ttm * 100.0
+                lines.append(
+                    f"Revenue concentration: {RLMEngine._format_millions(amt)} / "
+                    f"{RLMEngine._format_millions(company_ttm)} = {pct:.1f}%. "
+                    "Use actual TTM revenue, not minimum purchase commitments."
+                )
+
+        # 3. Detect RSU/equity acceleration calculations
+        if "rsu" in cl or "restricted stock" in cl or "unvested" in cl:
+            rsu_count = RLMEngine._first_amount_millions_near(
+                c, ("unvested",), preferred_terms=("rsu", "restricted", "shares")
+            )
+            share_price = RLMEngine._first_amount_millions_near(
+                c, ("per-share", "per share", "share price"),
+                preferred_terms=("implied", "transaction", "exchange")
+            )
+            if rsu_count is None:
+                # Try alternate patterns for counts (not in millions)
+                count_pattern = _re_engine.compile(r"(\d{1,3}(?:,\d{3})*)\s*(?:unvested|rsu)", _re_engine.IGNORECASE)
+                m = count_pattern.search(c)
+                if m:
+                    try:
+                        rsu_count_raw = int(m.group(1).replace(",", ""))
+                        if rsu_count_raw > 0:
+                            lines.append(
+                                f"RSU/equity acceleration: use the exact unvested count "
+                                f"({rsu_count_raw:,}) from the agreement. Multiply by the "
+                                "per-share transaction/implied value (not unrelated headline values)."
+                            )
+                    except ValueError:
+                        pass
+
+        # 4. Detect buy-out/pricing multiples
+        if "buy-out" in cl or "buyout" in cl or "purchase price" in cl:
+            multiple_pattern = _re_engine.compile(r"(\d+(?:\.\d+)?)\s*[x×]\s*(?:ttm\s*)?ebitda", _re_engine.IGNORECASE)
+            m = multiple_pattern.search(c)
+            if m:
+                multiple = float(m.group(1))
+                lines.append(
+                    f"Buy-out pricing: apply the {multiple}x EBITDA multiple from the "
+                    "agreement to calculate the actual buy-out price. "
+                    f"{'Flag potential below-market pricing risk (multiple ≤5.0x). ' if multiple <= 5.0 else ''}"
+                    "Do not confuse this multiple with other valuation metrics."
+                )
+
+        # 5. Detect timing-chain sequences
+        timing_pattern = _re_engine.compile(
+            r"(?:within|not\s+(?:later\s+than|obtained\s+within))\s+"
+            r"(\w+)\s*\((\d+)\)\s*(?:days?|business\s+days?)",
+            _re_engine.IGNORECASE,
         )
-        pacwest_ttm = RLMEngine._first_amount_millions_near(
-            c,
-            ("pacwest", "revenue"),
-            preferred_terms=("operand", "attributable", "trailing"),
-        )
-        ax7000_ttm = RLMEngine._first_amount_millions_near(
-            c,
-            ("ax-7000", "revenue"),
-            preferred_terms=("operand", "product line", "trailing"),
-        )
-        credit_drawn = RLMEngine._first_amount_millions_near(
-            c,
-            ("credit drawn",),
-            preferred_terms=("operand", "outstanding"),
-        )
-
-        if northland and has("section 14.2", "sec 14.2") and has("operation of law"):
+        timing_matches = list(timing_pattern.finditer(c))
+        if len(timing_matches) >= 2:
             lines.append(
-                "Northland MSA: address Section 14.2 expressly, including the "
-                "'whether by operation of law or otherwise' assignment/delegation language; "
-                "analyze reverse triangular merger/entity survival as jurisdiction-dependent "
-                "and discuss UCC Section 2-210 assignment-of-rights vs delegation-of-duties limits."
-            )
-        if northland and northland_ttm is not None and apex_ttm:
-            pct = northland_ttm / apex_ttm * 100.0
-            lines.append(
-                "Northland MSA: use approximately "
-                f"{RLMEngine._format_millions(northland_ttm)} counterparty TTM revenue / "
-                f"{RLMEngine._format_millions(apex_ttm)} Apex TTM revenue = about "
-                f"{pct:.1f}%; do not substitute the $30M minimum purchase commitment "
-                "for revenue concentration. This supports High/Critical risk."
-            )
-        elif northland and has("30,000,000", "$30m", "$30 million"):
-            lines.append(
-                "Northland MSA: distinguish any minimum purchase commitment from actual TTM "
-                "revenue exposure before assigning the risk rating."
+                "Cross-contract timing: multiple consent/notification deadlines detected. "
+                "Include ALL timing windows in sequencing analysis and flag conflicts."
             )
 
-        if credit and (credit_drawn is not None or has("42.5", "42,500,000")):
-            drawn_label = (
-                RLMEngine._format_millions(credit_drawn)
-                if credit_drawn is not None else "$42.5M"
-            )
+        # 6. Detect operation-of-law / reverse merger structural issues
+        if "operation of law" in cl and ("reverse" in cl or "merger sub" in cl or "survives" in cl):
             lines.append(
-                f"Credit agreement: quantify exposure using the {drawn_label} outstanding/drawn "
-                "Revolving Loans, not the $75M aggregate commitment; connect this to "
-                "mandatory prepayment and automatic commitment termination."
-            )
-        if credit and has("section 8.01", "8.01(j)", "event of default"):
-            lines.append(
-                "Credit agreement: state that Change in Control is an Event of Default "
-                "under Section 8.01/8.01(j), separate from the Section 2.09 prepayment covenant."
+                "Structural analysis: for each contract with 'operation of law' anti-assignment "
+                "language, separately analyze whether entity survival in a reverse merger avoids "
+                "the trigger (jurisdiction-dependent). Apply UCC § 2-210 for supply/goods agreements."
             )
 
-        if jv and has("500,000,000", "$500m", "$500 million"):
+        # 7. Detect indirect/downstream re-trigger risk
+        if ("direct or indirect" in cl or "indirect" in cl) and (
+            "ownership" in cl or "control" in cl
+        ) and "ultimate" in cl:
             lines.append(
-                "JV agreement: preserve each carve-out condition and test it, including "
-                "management-continuity timing and the successor fluid-control-products "
-                "revenue threshold; compare any acquirer revenue evidence to the threshold."
-            )
-        if jv and has("55%", "fifty-five percent"):
-            lines.append(
-                "JV agreement: explicitly state that Apex holds a 55% Membership Interest "
-                "in the JV (and Kenji 45%). This is the ownership/buy-out stake; do not "
-                "substitute the separate 50% voting-equity Change of Control threshold."
-            )
-        if jv and has("410,000,000", "$410m", "$410 million", "four hundred ten million") and has("fluid control", "flow control"):
-            lines.append(
-                "JV agreement: use Voltan's cited flow-control/product-specific revenue "
-                "(~$410M), not general/diversified-conglomerate revenue. It falls SHORT "
-                "of the $500M fluid control products threshold in Section 12.3(b)(ii). "
-                "Conclude that the Successor Entity carve-out DOES NOT APPLY to Voltan, "
-                "so the Buy-Out Option remains exercisable by Kenji."
+                "Downstream risk: for contracts with 'direct or indirect' ultimate ownership/control "
+                "language, flag that future changes in the acquirer's own ownership could re-trigger "
+                "the provision."
             )
 
-        if hendricks and ax7000_ttm is not None:
+        # 8. Detect event of default that should be reported separately from prepayment
+        if "event of default" in cl and ("prepay" in cl or "prepayment" in cl):
             lines.append(
-                "Hendricks/FlowLogic license: quantify AX-7000/FlowLogic at-risk revenue "
-                f"at approximately {RLMEngine._format_millions(ax7000_ttm)} TTM and connect "
-                "it to immediate/no-cure license termination risk."
-            )
-        elif hendricks and has("ax-7000", "flowlogic"):
-            lines.append(
-                "Hendricks/FlowLogic license: connect FlowLogic to the AX-7000 product line "
-                "and quantify product-line revenue if available in schedules or other contracts."
+                "Credit agreement: if Change of Control is both an Event of Default AND triggers "
+                "mandatory prepayment, report these as SEPARATE consequences with distinct sections."
             )
 
-        if pacwest and has("direct or indirect", "ultimate ownership or control"):
+        # 9. Detect unreviewed software/ERP dependencies
+        if ("erp" in cl or "platform" in cl or "software" in cl) and (
+            "mission-critical" in cl or "manufacturing" in cl or "inventory" in cl
+        ):
             lines.append(
-                "PacWest: quote Section 1.1(c)'s direct/indirect ultimate ownership/control language "
-                "and flag that a future change in Voltan/acquirer ownership may re-trigger the provision."
-            )
-        if pacwest and has("sixty (60)", "60 days", "60-day") and has("ninety (90)", "90 days", "90-day"):
-            lines.append(
-                "PacWest: state the timing chain as consent not obtained within 60 days after "
-                "closing -> PacWest may terminate on 90 days' written notice."
-            )
-        if pacwest and pacwest_ttm is not None and apex_ttm:
-            pct = pacwest_ttm / apex_ttm * 100.0
-            lines.append(
-                "PacWest: quantify revenue exposure at approximately "
-                f"{RLMEngine._format_millions(pacwest_ttm)} / "
-                f"{RLMEngine._format_millions(apex_ttm)}, about {pct:.1f}% "
-                "of Apex TTM revenue."
-            )
-
-        if hesse and has("45,000", "45000") and has("21.494", "967,230"):
-            lines.append(
-                "Hesse equity: calculate RSU acceleration as 45,000 unvested RSUs x "
-                "$21.494 per Apex share = approximately $967,230; do not use $45/share "
-                "or any unrelated headline value."
-            )
-        if hesse and has("rollover", "same vesting schedule", "parent rsu"):
-            lines.append(
-                "Hesse equity: identify the conflict between single-trigger acceleration "
-                "and merger-agreement RSU rollover/continued vesting treatment."
-            )
-
-        if insurance and has("run-off", "run off"):
-            lines.append(
-                "Product liability policy: explain that run-off covers only pre-closing "
-                "products and leaves products manufactured/sold after closing outside the existing policy."
-            )
-        if insurance and has("25,000,000", "$25m", "$25 million", "aggregate limit"):
-            lines.append(
-                "Product liability policy: state the $25M aggregate limit and address whether "
-                "tail/run-off claims erode that aggregate."
-            )
-
-        if lease and has("prior written consent"):
-            lines.append(
-                "HQ lease: identify prior written landlord consent, deemed-assignment mechanics, "
-                "and any absence of a specified consent timeline as a sequencing issue."
-            )
-
-        if has("required consents") and has("five (5) business days", "5 business days"):
-            lines.append(
-                "Timing: include the merger agreement Required Consents deadline at least "
-                "5 business days pre-closing in the cross-contract sequencing analysis."
-            )
-        if credit and has("thirty (30) days", "30 days") and has("prepay", "prepayment"):
-            lines.append(
-                "Timing: include the credit agreement's 30-day post-closing prepayment window "
-                "in the cross-contract timing mismatch discussion."
-            )
-
-        if has("crestline erp", "crestline software"):
-            lines.append(
-                "Crestline ERP: flag the Crestline ERP Platform / Crestline Software Solutions "
-                "license as a potentially unreviewed CoC/anti-assignment dependency; loss of access "
-                "could impair mission-critical manufacturing, scheduling, inventory, quality, and traceability systems."
+                "Software/ERP dependency: flag any named platform/software system as a potentially "
+                "unreviewed CoC/assignment dependency whose loss could impair operations."
             )
 
         return lines
 
     def _build_mna_coc_completion_checklist(self, query: str, corpus: str) -> str:
-        if not self._is_mna_change_control_task(query):
+        if not self._is_extraction_task(query):
             return ""
-        lines = self._mna_completion_lines(corpus)
+        lines = self._build_operand_lock_lines(corpus)
         if not lines:
             return ""
         output = [
-            "M&A CHANGE-OF-CONTROL COMPLETION CHECKLIST (MANDATORY):",
-            "The following items are anchored in extracted evidence/citations and must be addressed in the final report if applicable. Do not leave them only in citations or raw findings.",
+            "OPERAND LOCK / COMPLETION CHECKLIST (MANDATORY):",
+            "The following instructions are derived from extracted evidence. "
+            "Address each in the final report. Do not drop operands or substitute wrong figures.",
         ]
         output.extend(f"- {line}" for line in lines)
         return "\n".join(output)
 
     @staticmethod
-    def _mna_derived_finding_conflicts_with_operands(finding: str, corpus: str) -> bool:
+    def _derived_finding_conflicts_with_operand_locks(finding: str, corpus: str) -> bool:
+        """General operand-conflict detection.
+
+        If the corpus contains a PROVISION_LOCK or Financial operand line with
+        a specific amount, and the derived finding references the same topic
+        but uses a DIFFERENT amount that looks like a common confusion (e.g.,
+        facility max instead of drawn amount), reject it.
+        """
         f = (finding or "").lower()
         c = (corpus or "").lower()
         if not f:
             return False
-        has_42_5 = "42.5" in c or "42,500,000" in c
-        if has_42_5 and "credit" in f and any(t in f for t in ("drawn", "prepayment", "exposure", "outstanding")):
-            safe_facility_comparison = (
-                ("commit" in f or "maximum" in f)
-                and "separate from" in f
-                and ("42,500,000" in f or "$42.5" in f)
-            )
-            if ("75,000,000" in f or "$75" in f) and not safe_facility_comparison:
-                return True
-        has_rsu_price = "21.494" in c or "967,230" in c
-        if has_rsu_price and "rsu" in f and ("2,025,000" in f or "$45" in f or "45.00/share" in f):
-            return True
-        has_northland_revenue = "36.2" in c or "36,200,000" in c
-        if has_northland_revenue and "northland" in f and "revenue" in f:
-            if "16.01" in f or "16.0%" in f or ("30,000,000" in f and "minimum" not in f):
-                return True
-        has_pacwest_revenue = "21.9" in c or "21,900,000" in c
-        if has_pacwest_revenue and "pacwest" in f and "revenue" in f:
-            if "4,000,000" in f and "minimum" not in f:
-                return True
+
+        # Extract amounts from the finding
+        finding_amounts = RLMEngine._money_amounts_in_millions(f)
+        if not finding_amounts:
+            return False
+
+        # Look for PROVISION_LOCK financial operand lines in corpus
+        lock_lines = [
+            line for line in RLMEngine._split_fact_lines(c)
+            if "provision_lock" in line.lower() and "financial operand" in line.lower()
+        ]
+
+        for lock_line in lock_lines:
+            lock_amounts = RLMEngine._money_amounts_in_millions(lock_line)
+            if not lock_amounts:
+                continue
+            # If finding mentions a topic word from the lock but uses a different amount
+            lock_words = set(lock_line.lower().split()) - {
+                "provision_lock", "financial", "operand", "|", "the", "a", "an",
+                "of", "in", "for", "and", "or", "to", "is", "at",
+            }
+            topic_overlap = sum(1 for w in lock_words if w in f and len(w) > 3)
+            if topic_overlap >= 2:
+                # Check if finding uses a different amount than the lock
+                for f_amt in finding_amounts:
+                    for l_amt in lock_amounts:
+                        if l_amt > 0 and abs(f_amt - l_amt) / l_amt > 0.1:
+                            # Finding uses a substantially different amount on same topic
+                            if f_amt not in lock_amounts:
+                                return True
         return False
 
     def _derive_mna_coc_findings(self, query: str, facts: list[str], corpus: str) -> list[str]:
-        if not self._is_mna_change_control_task(query):
+        if not self._is_extraction_task(query):
             return []
-        return [f"[DERIVED] {line}" for line in self._mna_completion_lines(corpus)]
+        return [f"[DERIVED] {line}" for line in self._build_operand_lock_lines(corpus)]
 
     def _build_material_contract_coverage_section(
         self, state: "InvestigationState",
@@ -6979,15 +6866,15 @@ Return:
                         _cc_rel = "neutral" if "ABSENT" in _cc_line or "missing" in _cc_line.lower() else "supports"
                         facts_to_add.append((_cc_line, _cc_rel, None, None))
 
-                # Deterministic M&A detail extractor. This supplements the LLM
-                # with exact provision phrases, schedule/table operands, and
-                # named software/product dependencies that are easy to miss or
-                # paraphrase away in synthesis.
-                _det_lines = self._deterministic_contract_detail_facts(
-                    doc.filename, content, state.query
-                )
-                for _det_line in _det_lines:
-                    facts_to_add.append((_det_line, "supports", None, None))
+                # General provision reinforcement from contract card data.
+                # Emits synthesis-visible facts for operative provisions,
+                # financial operands, and structural issues detected in text.
+                if isinstance(_cc, dict):
+                    _reinforce_lines = self._contract_card_provision_reinforcement(
+                        _cc, doc.filename, content, state.query
+                    )
+                    for _r_line in _reinforce_lines:
+                        facts_to_add.append((_r_line, "supports", None, None))
 
                 # SO-2 validation: if any facts lack SPO triples, retry to recover them.
                 # Threshold >= 1: fire even for single facts; FLASH retry is cheap.
@@ -8387,7 +8274,7 @@ Return:
                 for f in derived:
                     if not isinstance(f, str) or not f.strip():
                         continue
-                    if self._mna_derived_finding_conflicts_with_operands(
+                    if self._derived_finding_conflicts_with_operand_locks(
                         f, analysis_corpus
                     ):
                         continue
