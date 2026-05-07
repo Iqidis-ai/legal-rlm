@@ -483,22 +483,32 @@ class RLMEngine:
                 except ValueError as e:
                     logger.warning("Database not configured - telemetry not persisted: %s", e)
 
-            # Finalize tracing — use end_trace (not end_span) to clean up
-            # root context managers for Langfuse OTEL context
-            if self._trace_ctx:
-                try:
-                    status = "error" if state.status == "failed" else "ok"
-                    self._tracing_provider.end_trace(
-                        self._trace_ctx.span_handle,
-                        metadata={"status": state.status, "answer_length": len(state.answer or "")},
-                        status=status,
-                    )
-                    self._tracing_provider.flush()
-                except Exception as e:
-                    logger.warning("Failed to finalize trace: %s", e)
-                self._trace_ctx = None
-
         return state
+
+    def get_trace_ctx(self) -> Optional[TracingContext]:
+        """Return the current trace context (if any) for external use.
+
+        Called by Irys.investigate() to pass trace_ctx to post-processing
+        steps (e.g. citation injection) before finalize_trace() is called.
+        """
+        return self._trace_ctx
+
+    def finalize_trace(self, state: InvestigationState) -> None:
+        """End the Langfuse trace and flush.  Called by Irys after all
+        post-processing (citation injection etc.) is complete."""
+        if self._trace_ctx:
+            try:
+                status = "error" if state.status == "failed" else "ok"
+                final_output = state.findings.get("final_output", "")
+                self._tracing_provider.end_trace(
+                    self._trace_ctx.span_handle,
+                    metadata={"status": state.status, "answer_length": len(final_output)},
+                    status=status,
+                )
+                self._tracing_provider.flush()
+            except Exception as e:
+                logger.warning("Failed to finalize trace: %s", e)
+            self._trace_ctx = None
 
     async def _direct_answer(self, state: InvestigationState, repo: MatterRepository):
         """

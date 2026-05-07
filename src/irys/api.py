@@ -224,12 +224,16 @@ class Irys:
         output = formatter.format(state)
 
         # Post-processing: inline citation injection (optional)
+        # Grab trace_ctx BEFORE finalize so citation LLM call is in the trace
+        trace_ctx = self._engine.get_trace_ctx() if self._engine else None
+
         if self.config.enable_inline_citations:
             from .service.inline_citation_service import InlineCitationService
             output, reordered_citations, injection_diag = await InlineCitationService.inject(
                 answer=output,
                 citations=state.citations,
                 config=self.config,
+                trace_ctx=trace_ctx,
             )
 
             state.citations[:] = reordered_citations
@@ -237,6 +241,10 @@ class Irys:
             # Attach injection diagnostics to telemetry for DB persistence
             if injection_diag and state.telemetry_summary is not None:
                 state.telemetry_summary["citation_injection"] = injection_diag
+
+        # Finalize the Langfuse trace after all post-processing is done
+        if self._engine:
+            self._engine.finalize_trace(state)
 
         return InvestigationResult(
             state=state,
