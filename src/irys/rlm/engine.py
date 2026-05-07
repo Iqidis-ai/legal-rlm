@@ -6918,10 +6918,30 @@ class RLMEngine:
             ]
             results = await self._gather_with_cancellation(state, _lead_tasks)
 
-            # Log any errors (None = task was cancelled by stop request — not an error)
+            # Log errors. API-failed leads (503/429/timeout) stay in the pending
+            # pool automatically since mark_lead_investigated was never called.
+            # Track retry count to cap re-attempts at 2 retries per lead.
+            _requeue_keywords = ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "timed out")
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    logger.error(f"Lead investigation failed: {leads_to_process[i].description}: {result}")
+                    _err_str = str(result)
+                    _failed_lead = leads_to_process[i]
+                    if any(kw in _err_str for kw in _requeue_keywords):
+                        _retries = getattr(_failed_lead, "_api_retries", 0) + 1
+                        _failed_lead._api_retries = _retries
+                        if _retries <= 2:
+                            logger.warning(
+                                f"Lead will auto-retry (attempt {_retries}/2): "
+                                f"{_failed_lead.description}"
+                            )
+                        else:
+                            state.mark_lead_investigated(
+                                _failed_lead.id,
+                                f"API permanently unavailable after {_retries} retries",
+                            )
+                            logger.error(f"Lead permanently failed after {_retries} API retries: {_failed_lead.description}")
+                    else:
+                        logger.error(f"Lead investigation failed: {_failed_lead.description}: {result}")
 
             # Track facts added this iteration for diminishing returns
             facts_after = len(state.findings.get("accumulated_facts", []))

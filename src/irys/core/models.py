@@ -327,7 +327,7 @@ class GeminiClient:
 
     DEFAULT_TIMEOUT = 120.0  # 2 minutes
     MAX_RETRIES = 3
-    MAX_RATE_LIMIT_RETRIES = 3
+    MAX_RATE_LIMIT_RETRIES = 8
     DEFAULT_RPM = 60  # Requests per minute
     DEFAULT_BURST = 10  # Burst size
 
@@ -646,11 +646,16 @@ class GeminiClient:
                 if (_is_rate_limit or _is_overloaded) and _rate_limit_attempt < self.MAX_RATE_LIMIT_RETRIES:
                     _rate_limit_attempt += 1
                     import re as _re_mod
+                    import random as _rand_mod
                     _delay_match = _re_mod.search(r"retryDelay.*?(\d+)", _exc_str)
-                    _wait = int(_delay_match.group(1)) + 5 if _delay_match else 45
+                    if _delay_match:
+                        _wait = int(_delay_match.group(1)) + 5
+                    else:
+                        _base = min(15 * (2 ** (_rate_limit_attempt - 1)), 120)
+                        _wait = _base + _rand_mod.uniform(0, _base * 0.3)
                     logger.warning(
                         f"Rate limited on {mc.model_id} (attempt {_rate_limit_attempt}/"
-                        f"{self.MAX_RATE_LIMIT_RETRIES}), waiting {_wait}s"
+                        f"{self.MAX_RATE_LIMIT_RETRIES}), waiting {_wait:.0f}s"
                     )
                     await asyncio.sleep(_wait)
                     await self._rate_limiter.acquire()

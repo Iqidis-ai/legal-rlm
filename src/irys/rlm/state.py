@@ -1923,6 +1923,14 @@ class InvestigationState:
                 lead.findings = findings
                 break
 
+    def unmark_lead_investigated(self, lead_id: str):
+        """Re-open a lead so it can be re-investigated (e.g., after API failure)."""
+        for lead in self.leads:
+            if lead.id == lead_id:
+                lead.investigated = False
+                lead.findings = None
+                break
+
     def get_thinking_trace(self) -> str:
         """Get full thinking trace as text."""
         return "\n".join(step.display for step in self.thinking_steps)
