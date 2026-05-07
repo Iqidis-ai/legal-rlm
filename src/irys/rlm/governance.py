@@ -137,7 +137,10 @@ def infer_task_spec(query: str, domain: str = "legal") -> TaskSpec:
     q = (query or "").strip().lower()
     tokens = set(q.replace("/", " ").replace("-", " ").split())
 
-    asks_compare = any(w in tokens for w in {"compare", "comparison", "differences"})
+    asks_compare = any(w in tokens for w in {
+        "compare", "comparison", "differences", "deviation", "deviations",
+        "markup", "redline", "counterparty",
+    }) or "against" in q
     asks_run_delta = (
         "what changed" in q
         or "what's changed" in q
@@ -152,6 +155,8 @@ def infer_task_spec(query: str, domain: str = "legal") -> TaskSpec:
             "agreement", "agreements", "contract", "contracts", "document",
             "documents", "pdf", "pdfs", "article", "section", "schedule",
             "exhibit", "pleading", "order", "deposition", "filing",
+            "markup", "term sheet", "memo", "report", "redline",
+            "credit facility", "indenture", "prospectus",
         )
     )
     exhaustive = any(
