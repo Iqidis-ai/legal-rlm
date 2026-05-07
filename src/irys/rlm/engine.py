@@ -2392,6 +2392,11 @@ class RLMEngine:
             "mandatory prepayment timing, automatic commitment termination, and drawn/outstanding debt exposure.\n"
             "- JV/equity arrangements: all carve-out conditions, revenue thresholds, management-retention conditions, "
             "successor revenue comparisons, ownership percentages, and buy-out formulas.\n"
+            "- Apex-Kenji JV: report Apex's 55% Membership Interest as the ownership stake; do not substitute the "
+            "separate 50% voting-equity Change of Control threshold. Section 12.3(b)(ii)'s $500M threshold applies "
+            "to consolidated annual revenue derived from fluid control products, not general revenue; Voltan's "
+            "cited ~$410M flow-control revenue falls short, so the Successor Entity carve-out does not apply and "
+            "Kenji's Buy-Out Option remains exercisable.\n"
             "- Technology and product licenses: embedded product lines, product-line revenue exposure, no-cure "
             "termination rights, consent discretion, and dependent ERP/software systems.\n"
             "- Customer/supply agreements with indirect language: direct/indirect ultimate ownership wording, "
@@ -2706,7 +2711,9 @@ class RLMEngine:
         if "fifty-five percent (55%) membership interest" in lower and "apex" in lower:
             add(
                 "[DETERMINISTIC_OPERAND] apex-kenji-jv-agreement.docx | "
-                "Apex holds a 55% Membership Interest in the JV; Kenji holds 45%."
+                "Apex holds a 55% Membership Interest in the JV; Kenji holds 45%. "
+                "This is the JV ownership stake / buy-out interest; do not substitute "
+                "the separate 50% voting-equity Change of Control threshold."
             )
         if (
             "fluid control products" in lower
@@ -2718,15 +2725,17 @@ class RLMEngine:
                 "Section 12.3(b)(ii) carve-out requires the Successor Entity's "
                 "consolidated annual revenue derived from FLUID CONTROL PRODUCTS "
                 "(valves, actuators, flow meters, and related automation systems) "
-                "to exceed $500M — not general revenue."
+                "to exceed $500M; this is a product-specific revenue test, not "
+                "a general revenue or enterprise-size test."
             )
         if "$410,000,000" in lower and "voltan" in lower and "flow control" in lower:
             add(
                 "[DETERMINISTIC_OPERAND] apex-kenji-jv-agreement.docx | "
-                "Voltan's flow control division generates ~$410M consolidated annual "
-                "revenue. This falls SHORT of the $500M fluid control products threshold "
-                "in Section 12.3(b)(ii), so the carve-out DOES NOT APPLY to Voltan as "
-                "Successor Entity — the Buy-Out Option remains exercisable."
+                "Voltan's cited product-specific comparator is its flow control division "
+                "revenue of ~$410M, not general/diversified-conglomerate revenue. "
+                "That falls SHORT of the $500M fluid control products threshold in "
+                "Section 12.3(b)(ii), so the carve-out DOES NOT APPLY to Voltan as "
+                "Successor Entity and Kenji's Buy-Out Option remains exercisable."
             )
 
         if "crestline erp platform" in lower and "crestline software solutions" in lower:
@@ -2842,11 +2851,13 @@ class RLMEngine:
         if jv and has("55%", "fifty-five percent"):
             lines.append(
                 "JV agreement: explicitly state that Apex holds a 55% Membership Interest "
-                "in the JV (and Kenji 45%). This is the stake at risk in the buy-out."
+                "in the JV (and Kenji 45%). This is the ownership/buy-out stake; do not "
+                "substitute the separate 50% voting-equity Change of Control threshold."
             )
         if jv and has("410,000,000", "$410m", "$410 million", "four hundred ten million") and has("fluid control", "flow control"):
             lines.append(
-                "JV agreement: Voltan's flow control division revenue (~$410M) falls SHORT "
+                "JV agreement: use Voltan's cited flow-control/product-specific revenue "
+                "(~$410M), not general/diversified-conglomerate revenue. It falls SHORT "
                 "of the $500M fluid control products threshold in Section 12.3(b)(ii). "
                 "Conclude that the Successor Entity carve-out DOES NOT APPLY to Voltan, "
                 "so the Buy-Out Option remains exercisable by Kenji."

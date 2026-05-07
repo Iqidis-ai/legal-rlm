@@ -4867,11 +4867,11 @@ def test_pr3_requested_issue_gap_cannot_be_dropped_by_cap():
 def test_mvp6_packet_budget_defaults_are_stable():
     from irys.rlm.engine import PacketBudget
     b = PacketBudget()
-    assert b.coverage_tokens == 256
-    assert b.gap_tokens == 256
-    assert b.orientation_tokens == 800
-    assert b.per_optional_section_tokens == 384
-    assert b.synthesis_total_tokens == 3000
+    assert b.coverage_tokens == 0
+    assert b.gap_tokens == 0
+    assert b.orientation_tokens == 0
+    assert b.per_optional_section_tokens == 0
+    assert b.synthesis_total_tokens == 0
 
 
 def test_mvp6_cap_text_by_tokens_is_deterministic_line_wise():
@@ -4886,8 +4886,8 @@ def test_mvp6_cap_text_by_tokens_is_deterministic_line_wise():
     assert capped_a == capped_b, "truncation must be deterministic"
     assert "omitted under 50-token cap" in capped_a
     assert capped_a != text, "text must actually be truncated"
-    # No cap should short-circuit
-    assert engine._cap_text_by_tokens(text, 0) == ""
+    # Zero means unlimited.
+    assert engine._cap_text_by_tokens(text, 0) == text
 
 
 def test_mvp6_orientation_cap_applied_to_durable_matter_context():
