@@ -1816,6 +1816,7 @@
     "cross_document_analysis",
     "evidence_relevance_filter",
     "extraction_repair",
-    "synthesis_coverage_repair"
+    "synthesis_coverage_repair",
+    "synthesis_per_issue"
   ]
 }

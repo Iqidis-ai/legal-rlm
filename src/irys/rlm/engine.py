@@ -398,7 +398,7 @@ Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "17"
+_ORIENTATION_CACHE_VERSION = "18"
 
 
 def _format_matter_context(ctx) -> str:
@@ -6461,6 +6461,86 @@ class RLMEngine:
             logger.warning("Synthesis coverage repair failed: %s", exc)
         return response
 
+    async def _synthesize_per_issue_batches(
+        self,
+        state: InvestigationState,
+        issues_text: str,
+        facts: "list[str]",
+        query: str,
+    ) -> str:
+        """Multi-pass synthesis: analyze issues in parallel batches.
+
+        Takes the enumerated issues list and the evidence facts, splits issues
+        into batches of ~8, runs FLASH analysis on each batch in parallel, then
+        returns the concatenated detailed analysis. The caller uses this as
+        pre-computed work for the final synthesis assembly.
+        """
+        import asyncio
+
+        lines = [l.strip() for l in issues_text.strip().split("\n") if l.strip()]
+        issue_lines = [l for l in lines if len(l) > 10 and (l[0].isdigit() or l.startswith("["))]
+        if len(issue_lines) < 5:
+            return ""
+
+        BATCH_SIZE = 8
+        batches = [issue_lines[i:i + BATCH_SIZE] for i in range(0, len(issue_lines), BATCH_SIZE)]
+        facts_text = "\n".join(f"{i + 1}. {f}" for i, f in enumerate(facts[:200]))
+
+        async def _analyze_batch(batch: "list[str]", batch_num: int) -> str:
+            batch_text = "\n".join(batch)
+            prompt = (
+                "You are a senior legal analyst producing detailed per-issue analysis. "
+                "For EACH issue listed below, produce a structured analysis entry.\n\n"
+                f"QUERY: {query}\n\n"
+                f"ISSUES TO ANALYZE (batch {batch_num + 1}):\n{batch_text}\n\n"
+                f"SUPPORTING EVIDENCE (reference by number):\n{facts_text}\n\n"
+                "For EACH issue, produce exactly this format:\n\n"
+                "### [Issue Number]. [Issue Title]\n"
+                "- **Provision**: [Exact section reference, e.g., Section 6.2(a)]\n"
+                "- **Original**: [Exact original value/language from evidence]\n"
+                "- **Changed/Finding**: [Exact changed value or finding from evidence]\n"
+                "- **Risk Rating**: **Red** / **Yellow** / **Green** — [one-line rationale]\n"
+                "- **Quantitative Impact**: [Dollar calculation or numeric comparison]\n"
+                "- **Recommendation**: [Primary position] | Fallback: [compromise position]\n\n"
+                "RULES:\n"
+                "- Include EXACT numbers: dollar amounts, percentages, ratios, dates\n"
+                "- Reference specific evidence items by number (e.g., 'per evidence #42')\n"
+                "- Every issue gets its own entry — do NOT skip or combine any\n"
+                "- If the evidence has specific names, facilities, or entities, include them\n"
+                "- Show math explicitly (e.g., '$175M × 0.25% = $437,500/year')\n"
+            )
+            try:
+                result = await self.client.complete(
+                    prompt=prompt,
+                    tier=ModelTier.FLASH,
+                    timeout=90.0,
+                    usage_label="synthesis_per_issue",
+                )
+                if result and len(result.strip()) > 100:
+                    return result.strip()
+            except Exception as exc:
+                logger.warning("Per-issue batch %d failed: %s", batch_num, exc)
+            return ""
+
+        self._emit_step(
+            state, StepType.SYNTHESIS,
+            f"Multi-pass analysis: {len(issue_lines)} issues in {len(batches)} parallel batches",
+        )
+        results = await asyncio.gather(
+            *[_analyze_batch(b, i) for i, b in enumerate(batches)]
+        )
+        valid = [r for r in results if r]
+        if not valid:
+            return ""
+
+        logger.info(
+            "Multi-pass synthesis: %d/%d batches produced analysis for %d issues",
+            len(valid), len(batches), len(issue_lines),
+        )
+        state.findings["synthesis_multi_pass_batches"] = len(valid)
+        state.findings["synthesis_multi_pass_issues"] = len(issue_lines)
+        return "\n\n".join(valid)
+
     async def investigate(
         self,
         query: str,
@@ -11057,18 +11137,39 @@ Return:
             )
         state.findings["synthesis_coverage_ledger_count"] = len(_ledger_items)
 
-        # Pre-synthesis issues enumeration: for large fact sets in extraction tasks,
-        # ask FLASH to produce a compact checklist of ALL distinct issues. This gives
-        # synthesis an explicit manifest to check off, preventing issue omission.
+        # Multi-pass synthesis for extraction tasks with large evidence sets.
+        # Step 1: enumerate all distinct issues from the fact set.
+        # Step 2: run parallel per-issue batch analysis (FLASH).
+        # Step 3: inject the pre-analyzed issues into synthesis context so the
+        #         synthesis model organizes and formats rather than analyzing raw facts.
         _issues_checklist = ""
-        if self._is_extraction_task(state.query) and len(facts) > 30:
-            _issues_checklist = await self._enumerate_issues_for_synthesis(state.query, facts)
-            if _issues_checklist:
+        _pre_analyzed_issues = ""
+        _is_extraction = self._is_extraction_task(state.query)
+        if _is_extraction and len(facts) > 30:
+            _raw_issues = await self._enumerate_issues_for_synthesis(state.query, facts)
+            if _raw_issues:
+                _pre_analyzed_issues = await self._synthesize_per_issue_batches(
+                    state, _raw_issues, facts, state.query,
+                )
+            if _pre_analyzed_issues:
+                _issues_checklist = (
+                    "\n\nPRE-ANALYZED ISSUES — The following detailed analysis has been "
+                    "prepared for each distinct issue found in the evidence. Your task is "
+                    "to ORGANIZE these into the proper deliverable format with executive "
+                    "summary, risk assessment table, and recommendations. Do NOT drop any "
+                    "issues — every entry below MUST appear in your output.\n\n"
+                    + _pre_analyzed_issues
+                    + "\n\nYou MUST include EVERY issue above. Format them into the "
+                    "proper professional deliverable. Add an executive summary, organize "
+                    "by risk severity, and produce the quantitative analysis and "
+                    "recommendations sections. Coverage of ALL issues is mandatory.\n"
+                )
+            elif _raw_issues:
                 _issues_checklist = (
                     "\n\nMANDATORY ISSUES CHECKLIST — You MUST address EVERY issue below in your output. "
                     "Each numbered item is a distinct finding that requires its own entry in the "
                     "issues table with original value, changed value, risk rating, and recommendation.\n"
-                    + _issues_checklist
+                    + _raw_issues
                     + "\n\nCoverage is more important than depth. A brief entry for every issue is "
                     "better than detailed analysis of only a few.\n"
                 )

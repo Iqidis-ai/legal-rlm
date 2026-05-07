@@ -2843,7 +2843,7 @@ def test_expand_query_splits_boolean_terms_and_keeps_context_terms_separate():
 def test_orientation_cache_version_bumped():
     """_ORIENTATION_CACHE_VERSION must be current after orientation changes."""
     from irys.rlm.engine import _ORIENTATION_CACHE_VERSION
-    assert _ORIENTATION_CACHE_VERSION == "17", (
+    assert _ORIENTATION_CACHE_VERSION == "18", (
         "_ORIENTATION_CACHE_VERSION must be bumped after orientation changes"
     )
 
