@@ -9891,12 +9891,16 @@ class RLMEngine:
                                               "regulatory", "hhi", "overlap")):
                     card_score += 1
             total = path_score + card_score
-            if total > 0:
-                scored.append((total, p, card))
+            # Include all candidates; score is used for ordering, not gating.
+            # Filename/card cues are noisy — the actual MSA mentions often
+            # live in docs with neutral filenames (e.g. board decks, memos).
+            scored.append((total, p, card))
 
         scored.sort(key=lambda t: (-t[0], t[1]))
-        # Bound how many docs we peek into for cheapness
-        top = scored[:8]
+        # Bound how many docs we peek into for cheapness; raise from 8 to 12
+        # to absorb the broader candidate pool now that filename gating
+        # no longer pre-prunes.
+        top = scored[:12]
 
         # Detect MSA/market candidates from cues
         market_candidates: dict[str, dict] = {}
