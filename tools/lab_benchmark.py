@@ -49,13 +49,22 @@ logger = logging.getLogger("lab_benchmark")
 def _markdown_to_docx(md_text: str, output_path: Path):
     """Convert markdown text to a .docx file using python-docx."""
     from docx import Document
-    from docx.shared import Pt, Inches
+    from docx.shared import Pt
     import re
 
     doc = Document()
-    style = doc.styles["Normal"]
-    style.font.size = Pt(11)
-    style.font.name = "Calibri"
+    try:
+        style = doc.styles["Normal"]
+        style.font.size = Pt(11)
+        style.font.name = "Calibri"
+    except (KeyError, AttributeError):
+        pass
+
+    def _add_styled_para(text, style_name=None):
+        try:
+            return doc.add_paragraph(text, style=style_name)
+        except (KeyError, AttributeError):
+            return doc.add_paragraph(text)
 
     lines = md_text.split("\n")
     i = 0
@@ -65,12 +74,10 @@ def _markdown_to_docx(md_text: str, output_path: Path):
             doc.add_paragraph("")
             i += 1
             continue
-        # Detect markdown table (line with | separators)
         if "|" in stripped and stripped.startswith("|"):
             table_lines = []
             while i < len(lines) and "|" in lines[i].strip() and lines[i].strip().startswith("|"):
                 row_text = lines[i].strip()
-                # Skip separator rows (|---|---|)
                 if re.match(r'^\|[\s\-:|]+\|$', row_text):
                     i += 1
                     continue
@@ -98,19 +105,15 @@ def _markdown_to_docx(md_text: str, output_path: Path):
         elif stripped.startswith("#### "):
             doc.add_heading(stripped[5:], level=4)
         elif stripped.startswith("- "):
-            doc.add_paragraph(stripped[2:], style="List Bullet")
+            _add_styled_para(stripped[2:], "List Bullet")
         elif re.match(r'^\d+\.\s', stripped):
-            doc.add_paragraph(re.sub(r'^\d+\.\s', '', stripped), style="List Number")
+            _add_styled_para(re.sub(r'^\d+\.\s', '', stripped), "List Number")
         elif stripped.startswith("**") and stripped.endswith("**"):
             p = doc.add_paragraph()
             run = p.add_run(stripped.strip("*"))
             run.bold = True
         elif stripped.startswith("> "):
-            p = doc.add_paragraph(stripped[2:])
-            try:
-                p.style = doc.styles["Quote"]
-            except KeyError:
-                p.style = doc.styles["Normal"]
+            _add_styled_para(stripped[2:], "Quote")
         else:
             doc.add_paragraph(stripped)
         i += 1
