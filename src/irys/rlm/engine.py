@@ -546,12 +546,25 @@ Query Context: {query}
 Current Investigation Focus: {focus}
 {domain_vocabulary}
 
-CONDUCT A FOCUSED ANALYSIS. IMPORTANT: Keep response under 4000 characters total.
+M&A / CHANGE-OF-CONTROL RELEVANCE EXPANSION:
+If the query involves change of control, merger, acquisition, assignment, or material-contract review, treat these as relevant even when the phrase "change of control" is absent:
+- assignment, transfer, delegation, deemed assignment, assignment by operation of law
+- merger, consolidation, successor, assignee, affiliate transfer
+- direct or indirect ownership/control, ultimate ownership/control
+- consent, prior written consent, approval, not unreasonably withheld
+- termination rights, acceleration, run-off coverage, pricing/buy-out formula, carve-out
+- early termination fee, prepayment, event of default, cure period
 
-1. KEY FACTS (STRICT LIMIT: 15 maximum facts): Extract facts that are:
+For leases, Section-style assignment/transfer clauses are CoC-relevant when tenant ownership/control changes are deemed assignments, landlord consent is required, a consent standard applies, landlord may terminate, or a fee/rent formula applies.
+
+Every matching provision MUST be extracted as a key_fact with exact section number, trigger family, consent requirement, consequence, and any fee/timing formula.
+
+CONDUCT A THOROUGH ANALYSIS. Extract ALL relevant information — do not truncate or omit details.
+
+1. KEY FACTS (extract ALL relevant facts — no artificial limit): Extract facts that are:
    - Directly relevant to the query/focus
-   - Specific (include dates, amounts, names)
-   - Keep each fact under 100 characters
+   - Specific (include EXACT section numbers, clause references, dollar amounts, percentages, thresholds, defined terms, time periods)
+   - Keep each fact under 150 characters — include section numbers and specific values
    - Format each fact as: {{"fact": "...", "page": N, "issue_relation": "supports|attacks|neutral", "effective_date": "YYYY-MM-DD or null", "subject": "entity_name", "predicate": "snake_case_verb", "object": "value_or_target"}}
    - issue_relation: whether the fact SUPPORTS the investigation focus, ATTACKS/undermines it, or is NEUTRAL
    - effective_date: ISO date when this fact became effective/occurred (null if not temporally scoped)
@@ -561,7 +574,7 @@ CONDUCT A FOCUSED ANALYSIS. IMPORTANT: Keep response under 4000 characters total
    - Omit subject/predicate/object ONLY when the fact has no entity relationship (purely procedural)
 {domain_deep_read_examples}
 
-2. CRITICAL QUOTES (STRICT LIMIT: 3 maximum): Identify the most important passages:
+2. CRITICAL QUOTES (extract up to 10 most important passages): Identify the most important passages:
    - Direct admissions or acknowledgments
    - Terms that define obligations or rights
    - Statements of fact that support/contradict claims
@@ -572,6 +585,8 @@ CONDUCT A FOCUSED ANALYSIS. IMPORTANT: Keep response under 4000 characters total
    - Companies: name, relationship to parties
    - Dates: date, what happened, significance
    - Amounts: value, context, what it represents
+   - Products/technology/systems: product lines, algorithms, licensed technology, ERP/software platforms, model names, version numbers
+   - Securities/equity: RSUs, options, share counts, share prices, vesting/acceleration quantities
 
 4. NUMERIC FACTS (SO-6 — extract ALL monetary amounts, dates, rates, counts):
    For each number, provide a structured object:
@@ -628,7 +643,7 @@ CONDUCT A FOCUSED ANALYSIS. IMPORTANT: Keep response under 4000 characters total
    - rhetorical_posture: "neutral", "adversarial", "cooperative", "protective", "informational"
    - unresolved_flags: list of open questions about this document, e.g. ["missing signature page", "references Amendment 3 not in file"]
 
-Respond in COMPACT JSON (STRICT: under 4000 chars total):
+Respond in JSON (be thorough — include ALL relevant provisions, section numbers, and defined terms):
 {{
     "key_facts": [{{"fact": "...", "page": N, "issue_relation": "supports", "effective_date": "2023-03-15", "subject": "Party A", "predicate": "agreed_to_pay", "object": "50000 USD"}}],
     "quotes": [{{"text": "...", "page": N}}],
@@ -649,7 +664,20 @@ Respond in COMPACT JSON (STRICT: under 4000 chars total):
     "operative_status": "operative|superseded|draft|expired|disputed|unknown",
     "purpose": "One-sentence description of what this document does",
     "rhetorical_posture": "neutral|adversarial|cooperative|protective|informational",
-    "unresolved_flags": ["any open questions about this document"]
+    "unresolved_flags": ["any open questions about this document"],
+    "contract_card": {{
+        "contract_name": "Full contract/agreement name",
+        "counterparty": "Other party name",
+        "assignment_clause": "Section X.Y — exact language or null",
+        "change_of_control_definition": "Section X.Y — definition text and thresholds, or 'ABSENT'",
+        "consent_requirements": "Prior written consent / not unreasonably withheld / etc., or null",
+        "timing_windows": ["notification: X days", "cure period: Y days", "termination notice: Z days"],
+        "termination_rights": "Who can terminate, under what conditions, with what notice",
+        "carve_outs": ["carve-out 1 with specific conditions", "carve-out 2"],
+        "product_or_system_dependencies": ["product/technology names dependent on this contract"],
+        "revenue_exposure": "dollar amount and percentage if calculable, or null",
+        "missing_expected_provisions": ["provision type expected but absent"]
+    }}
 }}
 """
 
@@ -660,8 +688,13 @@ _DOMAIN_DEEP_READ_VOCABULARY = {
         "- Source roles: advocacy (briefs, motions), operative (executed agreements, orders), "
         "authoritative (statutes, regulations), procedural (filings, applications)\n"
         "- Key predicates: agreed_to_pay, breached_obligation, executed_contract, filed_motion, "
-        "disputes_claim, owes_damages, failed_to_perform, warranted_condition\n"
-        "- Numeric focus: damages, payment amounts, contract values, deadlines, limitation periods"
+        "disputes_claim, owes_damages, failed_to_perform, warranted_condition, "
+        "deems_assignment, prohibits_assignment, requires_prior_consent, sets_consent_standard, "
+        "grants_termination_right, accelerates_obligation, defines_change_of_control, "
+        "creates_runoff_coverage, excludes_successor_coverage, sets_buyout_formula, "
+        "sets_early_termination_fee, triggers_prepayment, triggers_event_of_default\n"
+        "- Numeric focus: damages, payment amounts, contract values, deadlines, limitation periods, "
+        "RSU/option counts, share prices, revenue figures, EBITDA multiples, termination fees, coverage limits"
     ),
     "finance": (
         "DOMAIN CONTEXT: Financial analysis.\n"
@@ -2061,6 +2094,21 @@ class RLMEngine:
         """Resolve the effective per-run investigation budget."""
         mode = normalize_research_mode(getattr(state, "research_mode", None))
         if mode == ResearchMode.SIMPLE.value:
+            # Auto-upgrade for extraction/inventory tasks that need more depth
+            if self._is_extraction_task(getattr(state, "query", "")):
+                return ResearchBudgetProfile(
+                    mode=mode,
+                    max_depth=min(self.config.max_depth, 3),
+                    min_depth=2,
+                    max_iterations=min(self.config.max_iterations, 12),
+                    depth_citation_threshold=min(self.config.depth_citation_threshold, 15),
+                    confidence_threshold=70,
+                    min_citations=8,
+                    diminishing_returns_fact_threshold=5,
+                    diminishing_returns_min_citations=4,
+                    diminishing_returns_min_confidence=45,
+                    very_low_productivity_max_facts=2,
+                )
             return ResearchBudgetProfile(
                 mode=mode,
                 max_depth=min(self.config.max_depth, 2),
@@ -2261,6 +2309,114 @@ class RLMEngine:
                 "route_contract",
             )
         return obligations
+
+    @staticmethod
+    def _is_extraction_task(query: str) -> bool:
+        """Detect extraction/inventory/diligence tasks that need deeper investigation."""
+        q = query.lower()
+        extraction_signals = (
+            "extract", "extraction", "all provisions", "every provision",
+            "comprehensive", "inventory", "diligence", "identify all",
+            "review all", "each contract", "every contract",
+            "change of control", "change-of-control",
+        )
+        return sum(1 for s in extraction_signals if s in q) >= 2
+
+    def _build_extraction_instructions(self, query: str) -> str:
+        """Generate extraction-task-specific synthesis instructions when query demands comprehensive extraction."""
+        q = query.lower()
+        extraction_signals = (
+            "extract", "extraction", "comprehensive", "all provisions",
+            "identify all", "review all", "every contract", "each contract",
+            "risk assessment", "change of control", "change-of-control",
+        )
+        if not any(signal in q for signal in extraction_signals):
+            return ""
+        return (
+            "EXTRACTION TASK INSTRUCTIONS (MANDATORY):\n"
+            "This is a comprehensive extraction task. Your output MUST:\n"
+            "1. Address EVERY document/contract in the repository — do not omit any\n"
+            "2. For each provision found, cite the EXACT section number (e.g., Section 14.2, Section 8.01(j))\n"
+            "3. Quote key definitional language verbatim where it defines thresholds or triggers\n"
+            "4. Calculate and state dollar exposures and revenue percentages where data permits\n"
+            "5. Assign a risk rating (Critical/High/Moderate/Low) to EVERY contract\n"
+            "6. Flag ABSENCE of expected provisions (e.g., no cure period, no explicit CoC definition)\n"
+            "7. Identify cross-contract inconsistencies (e.g., different threshold definitions)\n"
+            "8. Note timing requirements and deadlines for consent/notification obligations\n"
+            "9. Identify the transaction structure and analyze how it interacts with each provision\n"
+            "10. Include actionable pre-closing recommendations and post-closing obligations\n"
+            "11. For any buy-out or pricing mechanisms, calculate the actual dollar amount\n"
+            "12. Note downstream/indirect risks (e.g., future ownership changes re-triggering provisions)\n"
+            "\n"
+            "Structure: Organize by contract/agreement. For each, provide:\n"
+            "- Contract name and parties\n"
+            "- Relevant provisions with section numbers\n"
+            "- Triggers, thresholds, and definitions (quoted)\n"
+            "- Consequences (termination, acceleration, consent requirements)\n"
+            "- Financial exposure (calculated where possible)\n"
+            "- Risk rating with justification\n"
+            "- Missing/absent provisions that would normally be expected\n"
+            "\n"
+            "End with: Cross-contract analysis, timing/sequencing issues, and prioritized action items.\n"
+        )
+
+    @staticmethod
+    def _flatten_contract_card(card: dict, filename: str) -> list[str]:
+        """Flatten a contract_card dict into fact strings for synthesis."""
+        if not card:
+            return []
+        lines: list[str] = []
+        prefix = f"[CONTRACT_CARD] {filename}"
+        for field in (
+            "assignment_clause", "change_of_control_definition",
+            "consent_requirements", "termination_rights", "revenue_exposure",
+        ):
+            val = card.get(field)
+            if val and val != "null" and val != "ABSENT":
+                lines.append(f"{prefix} | {field}: {val}")
+            elif val == "ABSENT":
+                lines.append(f"{prefix} | {field}: ABSENT (not found in document)")
+        for field in ("timing_windows", "carve_outs", "product_or_system_dependencies", "missing_expected_provisions"):
+            val = card.get(field)
+            if isinstance(val, list):
+                for item in val:
+                    if item and isinstance(item, str):
+                        lines.append(f"{prefix} | {field}: {item}")
+        return lines
+
+    def _build_material_contract_coverage_section(
+        self, state: "InvestigationState",
+    ) -> str:
+        """Build a mandatory checklist of all documents read, requiring synthesis to address each."""
+        if not self._is_extraction_task(getattr(state, "query", "")):
+            return ""
+        doc_names: list[str] = []
+        seen: set[str] = set()
+        for c in getattr(state, "citations", []):
+            name = getattr(c, "document", "") or ""
+            if name and name.lower() not in seen:
+                seen.add(name.lower())
+                doc_names.append(name)
+        if not doc_names:
+            return ""
+        lines = [
+            "MATERIAL CONTRACT COVERAGE CHECKLIST (MANDATORY):",
+            "The following documents were read during investigation.",
+            "Your report MUST include a dedicated section for EACH document below.",
+            "If a document has no relevant provisions, explicitly state that.",
+            "",
+        ]
+        for i, name in enumerate(doc_names, 1):
+            lines.append(
+                f"  {i}. {name} — MUST address: provisions found, section numbers, "
+                "triggers/thresholds, consent requirements, financial exposure, "
+                "risk rating, and missing expected provisions"
+            )
+        lines.append(
+            "\nDo NOT omit any document from the list above. Every document must appear "
+            "as a named section in your report."
+        )
+        return "\n".join(lines)
 
     def _build_workflow_quality_section(self, state: InvestigationState) -> str:
         """Describe the active output contract for synthesis and repair."""
@@ -6112,12 +6268,13 @@ Return:
             state.llm_calls_required += 1  # SO-1 telemetry: cold-path doc read
 
             # Critical documents (contracts, judgments, complaints, agreements) get
-            # 3x the excerpt window so we don't lose key clauses to truncation.
-            # Uses the same DOCUMENT_PRIORITY weights from search scoring.
+            # the FULL text — Gemini LITE has 1M token context, so we can afford to
+            # send entire contracts (typically 30K-80K chars = 8K-20K tokens).
+            # Non-critical docs still get the base excerpt window.
             from ..core.search import get_document_priority
             _doc_priority = get_document_priority(doc.filename)
             if _doc_priority >= 1.3:
-                _excerpt_chars = min(self.config.excerpt_chars * 3, len(doc.full_text))
+                _excerpt_chars = len(doc.full_text)
             else:
                 _excerpt_chars = self.config.excerpt_chars
             content = doc.get_excerpt(_excerpt_chars)
@@ -6138,10 +6295,12 @@ Return:
                 domain_numeric_subject_id_example=_dr_ex["numeric_subject_id_example"],
             )
 
-            # Use LITE for bulk reading; JSON mode forces valid JSON output
+            # Use FLASH for high-priority docs (contracts, agreements) for better
+            # extraction quality; LITE for lower-priority docs to control cost.
+            _read_tier = ModelTier.FLASH if _doc_priority >= 1.3 else ModelTier.LITE
             response = await self.client.complete(
                 prompt,
-                tier=ModelTier.LITE,
+                tier=_read_tier,
                 json_mode=True,
                 usage_label="document_deep_read",
             )
@@ -6157,12 +6316,12 @@ Return:
             })
 
             # Add quotes as citations
-            for quote in analysis.get("quotes", [])[:3]:
+            for quote in analysis.get("quotes", [])[:10]:
                 if isinstance(quote, dict) and "text" in quote:
                     citation = state.add_citation(
                         document=doc.filename,
                         page=quote.get("page"),
-                        text=quote["text"][:300],
+                        text=quote["text"],
                         context="",
                         relevance=quote.get("relevance", "Direct quote"),
                     )
@@ -6207,6 +6366,13 @@ Return:
                                 "object_json": json.dumps(str(_obj)) if _obj else None,
                             }
                         facts_to_add.append((fact_item["fact"], issue_rel, effective_date, spo))
+                # Flatten contract_card into additional facts for synthesis visibility
+                _cc = analysis.get("contract_card")
+                if isinstance(_cc, dict):
+                    _cc_lines = self._flatten_contract_card(_cc, doc.filename)
+                    for _cc_line in _cc_lines:
+                        facts_to_add.append((_cc_line, "supports", None, None))
+
                 # SO-2 validation: if any facts lack SPO triples, retry to recover them.
                 # Threshold >= 1: fire even for single facts; FLASH retry is cheap.
                 if facts_to_add:
@@ -6307,7 +6473,7 @@ Return:
                 _adp = getattr(state, "_matter_adapter", None)
                 if _adp is not None:
                     _quant_specs: list[dict] = []
-                    for nf in analysis["numeric_facts"][:20]:  # limit to avoid noise
+                    for nf in analysis["numeric_facts"]:
                         if not isinstance(nf, dict):
                             continue
                         kind = nf.get("kind", "amount")
@@ -6316,11 +6482,12 @@ Return:
                             continue
                         value = nf.get("value")
                         try:
-                            amount = float(value) if kind == "amount" and value is not None else None
-                            rate = float(value) if kind == "rate" and value is not None else None
+                            numeric_value = float(value) if value is not None else None
                         except (TypeError, ValueError, OverflowError):
-                            amount = None
-                            rate = None
+                            numeric_value = None
+                        amount = numeric_value if kind in ("amount", "balance", "count") else None
+                        rate = numeric_value if kind == "rate" else None
+                        unit = nf.get("unit") or ("count" if kind == "count" else None)
                         # Normalise dates to ISO YYYY-MM-DD with precision tracking (SO-6).
                         date_val: Optional[str] = None
                         date_end_val: Optional[str] = None
@@ -6363,6 +6530,7 @@ Return:
                             "assertion_id": _nf_assertion_id,
                             "span_id": _nf_span_id,
                             "date_precision": _date_precision,
+                            "unit": unit,
                         })
                     if _quant_specs:
                         _adp.record_quants_batch(
@@ -6702,10 +6870,19 @@ Return:
         facts = state.findings.get("accumulated_facts", [])
         facts = self._sort_facts_by_trust(facts)
 
+        # Cross-document analysis pass: for extraction tasks, derive calculations,
+        # flag inconsistencies, and identify missing provisions BEFORE synthesis.
+        if self._is_extraction_task(state.query) and len(facts) > 20:
+            _quant_ctx = self._build_quant_summary() if self._matter_model else ""
+            derived_facts = await self._cross_document_analysis(state.query, facts, _quant_ctx)
+            if derived_facts:
+                facts.extend(derived_facts)
+                state.findings["accumulated_facts"] = facts
+
         # Evidence relevance filter: LITE pass reads the full fact set and drops
         # only clearly irrelevant items. This replaces hard caps — the model decides
         # what matters based on the query, not an arbitrary number.
-        if len(facts) > 50:
+        if len(facts) > 50 and not self._is_extraction_task(state.query):
             facts = await self._filter_facts_for_relevance(state.query, facts)
         findings_text = "\n".join(f"• {fact}" for fact in facts)
 
@@ -7499,6 +7676,95 @@ Return:
 
         return sorted(facts, key=_rank)
 
+    async def _cross_document_analysis(
+        self, query: str, facts: list[str],
+        quantitative_context: str = "",
+    ) -> list[str]:
+        """Derive cross-document insights: calculations, inconsistencies, absences.
+
+        Uses FLASH to analyze the full fact set and produce derived findings
+        that individual document reads cannot generate (cross-references,
+        timing comparisons, dollar calculations, risk assessments).
+        """
+        facts_text = "\n".join(f"- {f}" for f in facts)
+        quant_section = ""
+        if quantitative_context:
+            quant_section = f"\n\nQUANTITATIVE DATA EXTRACTED:\n{quantitative_context}\n"
+        prompt = (
+            "You are a senior M&A attorney performing cross-document analysis on "
+            "extracted contract provisions. Given the facts and numeric data below "
+            "(extracted from multiple contracts), produce DERIVED FINDINGS that "
+            "require comparing across documents or performing calculations.\n\n"
+            "Produce findings in these categories:\n"
+            "1. MANDATORY CALCULATIONS (perform ALL that the data supports):\n"
+            "   - revenue exposure percent = contract exposure / company TTM revenue × 100\n"
+            "   - RSU acceleration cost = unvested RSU count × per-share transaction price\n"
+            "   - buy-out price = EBITDA × contract multiple (e.g., 4.5x)\n"
+            "   - lease termination fee = annual base rent ÷ 12 × termination notice months\n"
+            "   - drawn credit exposure = actual drawn amount on facility\n"
+            "   - If a buy-out multiple is ≤5.0x EBITDA, flag potential below-market pricing\n"
+            "   Do NOT state that operands are unavailable if they appear in EXTRACTED FACTS or QUANTITATIVE DATA.\n"
+            "2. INCONSISTENCIES: Flag where different contracts define the same "
+            "concept differently (e.g., different CoC thresholds, different "
+            "trigger definitions).\n"
+            "3. TIMING CONFLICTS: Identify where consent/notification/prepayment "
+            "deadlines across contracts create sequencing problems.\n"
+            "4. ABSENCES: Note where a contract that SHOULD have a provision "
+            "(based on its type) appears to lack it — e.g., no cure period, "
+            "no explicit CoC definition, no consent standard.\n"
+            "5. STRUCTURAL ANALYSIS:\n"
+            "   - Identify the transaction structure (e.g., reverse triangular merger).\n"
+            "   - In a reverse triangular merger, the TARGET (Apex) survives as a wholly-owned subsidiary.\n"
+            "     Entity survival means anti-assignment clauses may NOT be triggered because no 'assignment'\n"
+            "     occurs — but this is JURISDICTION-DEPENDENT and must be flagged as uncertain.\n"
+            "   - For EACH contract with 'assignment by operation of law' language, separately analyze\n"
+            "     whether entity survival avoids the trigger, citing the specific section.\n"
+            "6. DOWNSTREAM RISKS: For EACH contract with 'indirect' change of control or 'direct or\n"
+            "   indirect' ownership language, flag that a future change of the ACQUIRER's ownership\n"
+            "   could re-trigger the provision. Name the specific contract and section.\n"
+            "7. LEGAL FRAMEWORK: For EACH supply agreement or MSA with an anti-assignment clause,\n"
+            "   apply UCC § 2-210 SPECIFICALLY to that contract — distinguish assignment of rights\n"
+            "   from delegation of duties. Do not emit generic UCC analysis.\n\n"
+            "OPERAND DISCIPLINE FOR CALCULATIONS:\n"
+            "   - RSU acceleration: use the EXACT unvested RSU count from the employment agreement.\n"
+            "     Use per-share transaction price or implied share price — do NOT use JV buy-out EBITDA multiples.\n"
+            "   - Credit facility: use the DRAWN/OUTSTANDING amount, not the commitment/facility maximum.\n"
+            "   - Revenue exposure: pair counterparty-specific revenue with company TTM revenue.\n"
+            "   - If a contract card says 'ABSENT' for a provision, note that explicitly.\n\n"
+            f"QUERY CONTEXT: {query}\n\n"
+            f"EXTRACTED FACTS:\n{facts_text}\n"
+            f"{quant_section}\n"
+            "Return a JSON array of derived finding strings. Each should be a complete, "
+            "self-contained statement with specific numbers and section references where known. "
+            "Format: [\"finding 1\", \"finding 2\", ...]\n"
+            "Return ONLY the JSON array."
+        )
+        try:
+            response = await self.client.complete(
+                prompt=prompt,
+                tier=ModelTier.FLASH,
+                timeout=60.0,
+                usage_label="cross_document_analysis",
+            )
+            import json as _json
+            text = response.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            derived = _json.loads(text)
+            if isinstance(derived, list):
+                findings = [f"[DERIVED] {f}" for f in derived if isinstance(f, str) and f.strip()]
+                if findings:
+                    logger.info(
+                        "Cross-document analysis produced %d derived findings",
+                        len(findings),
+                    )
+                    return findings
+        except Exception as exc:
+            logger.warning(
+                "Cross-document analysis failed (proceeding without): %s", exc,
+            )
+        return []
+
     async def _filter_facts_for_relevance(
         self, query: str, facts: list[str],
     ) -> list[str]:
@@ -8011,6 +8277,18 @@ Return:
         # cannot crowd out mandatory sections.
         ordered: list[tuple[str, str, bool]] = []  # (key, text, mandatory)
 
+        # Extraction-task detection: if the query asks for comprehensive extraction,
+        # inject instructions that ensure exhaustive output with section refs and calculations.
+        extraction_instruction = self._build_extraction_instructions(
+            getattr(state, "query", "") or ""
+        )
+        if extraction_instruction:
+            ordered.append(("extraction_instructions", extraction_instruction, True))
+
+        contract_coverage = self._build_material_contract_coverage_section(state)
+        if contract_coverage:
+            ordered.append(("material_contract_coverage", contract_coverage, True))
+
         workflow_quality = self._build_workflow_quality_section(state)
         if workflow_quality.strip():
             ordered.append(("workflow_quality", workflow_quality.rstrip(), True))
@@ -8484,6 +8762,34 @@ Return:
                 except (TypeError, ValueError, OverflowError):
                     _rate_str = ""
                 lines.append(f"  • {_rate_str} — {_ctx}" if _rate_str else f"  • {_ctx}")
+
+        # SO-6 fix #4: Show individual quant rows so synthesis has exact operands
+        # for cross-document calculations (RSU counts, buyout multiples, lease fees).
+        try:
+            amount_rows = self._matter_model.quant.get_amounts()[:50]
+            count_rows = self._matter_model.quant.get_by_kind("count", limit=30)
+            if amount_rows:
+                lines.append("High-signal extracted numeric facts:")
+                for row in amount_rows:
+                    subject = row.get("subject_id") or row.get("subject_type") or "amount"
+                    raw = row.get("raw_text", "")[:120]
+                    val = row.get("amount_value")
+                    try:
+                        lines.append(f"  - {subject}: ${float(val):,.2f} — {raw}")
+                    except (TypeError, ValueError):
+                        lines.append(f"  - {subject}: {val} — {raw}")
+            if count_rows:
+                for row in count_rows:
+                    subject = row.get("subject_id") or row.get("subject_type") or "count"
+                    raw = row.get("raw_text", "")[:120]
+                    val = row.get("amount_value")
+                    unit = row.get("unit") or ""
+                    try:
+                        lines.append(f"  - {subject}: {float(val):g} {unit} — {raw}")
+                    except (TypeError, ValueError):
+                        lines.append(f"  - {subject}: {val} {unit} — {raw}")
+        except Exception:
+            pass
 
         return "\n".join(lines)
 

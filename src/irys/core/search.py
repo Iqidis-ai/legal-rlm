@@ -27,6 +27,17 @@ DOCUMENT_PRIORITY = {
     "motion": 1.3,
     "order": 1.4,
     "judgment": 1.5,
+    "lease": 1.5,
+    "license": 1.5,
+    "msa": 1.5,
+    "policy": 1.4,
+    "indenture": 1.5,
+    "deed": 1.4,
+    "guarantee": 1.4,
+    "credit": 1.5,
+    "loan": 1.5,
+    "supply": 1.4,
+    "employment": 1.4,
     # Medium priority - supporting documents
     "memo": 1.2,
     "memorandum": 1.2,
@@ -74,6 +85,9 @@ LEGAL_SYNONYMS = {
     "material": ["significant", "substantial", "important"],
     "consent": ["approval", "permission", "authorization"],
     "notice": ["notification", "communication", "written notice"],
+    "change of control": ["assignment", "deemed assignment", "operation of law", "direct or indirect control", "merger"],
+    "change-of-control": ["assignment", "deemed assignment", "operation of law", "direct or indirect control", "merger"],
+    "assignment": ["transfer", "deemed assignment", "operation of law", "successor", "assignee"],
 }
 
 
