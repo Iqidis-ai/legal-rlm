@@ -6500,14 +6500,23 @@ class RLMEngine:
                 "- **Original**: [Exact original value/language from evidence]\n"
                 "- **Changed/Finding**: [Exact changed value or finding from evidence]\n"
                 "- **Risk Rating**: **Red** / **Yellow** / **Green** — [one-line rationale]\n"
-                "- **Quantitative Impact**: [Dollar calculation or numeric comparison]\n"
+                "- **Quantitative Impact**: [Show explicit math: e.g., '$175M × 0.10 = $17.5M']\n"
+                "- **Cascading Effects**: [How does this change interact with or compound other changes?]\n"
+                "- **Market Context**: [Is this market standard? What is the typical range?]\n"
                 "- **Recommendation**: [Primary position] | Fallback: [compromise position]\n\n"
-                "RULES:\n"
+                "ANALYTICAL DEPTH RULES:\n"
                 "- Include EXACT numbers: dollar amounts, percentages, ratios, dates\n"
                 "- Reference specific evidence items by number (e.g., 'per evidence #42')\n"
                 "- Every issue gets its own entry — do NOT skip or combine any\n"
                 "- If the evidence has specific names, facilities, or entities, include them\n"
                 "- Show math explicitly (e.g., '$175M × 0.25% = $437,500/year')\n"
+                "- For EVERY numeric change, compute the dollar or ratio impact using "
+                "the actual deal numbers from the evidence (facility size, EBITDA, etc.)\n"
+                "- Explain cascading/compounding effects: how does this change interact "
+                "with other changes in this document? (e.g., higher leverage cap + weaker "
+                "ECF sweep = less deleveraging)\n"
+                "- Note if this deviates from market standard practice and cite the "
+                "typical market range (e.g., 'market standard MFN is 50-75bps')\n"
             )
             try:
                 result = await self.client.complete(
@@ -6539,7 +6548,59 @@ class RLMEngine:
         )
         state.findings["synthesis_multi_pass_batches"] = len(valid)
         state.findings["synthesis_multi_pass_issues"] = len(issue_lines)
-        return "\n\n".join(valid)
+        combined = "\n\n".join(valid)
+
+        if len(issue_lines) >= 10:
+            cross_issue = await self._cross_issue_analysis(
+                state, issues_text, combined, query,
+            )
+            if cross_issue:
+                combined += "\n\n" + cross_issue
+
+        return combined
+
+    async def _cross_issue_analysis(
+        self,
+        state: InvestigationState,
+        issues_text: str,
+        per_issue_analysis: str,
+        query: str,
+    ) -> str:
+        """Post-batch pass: identify cascading effects and compound risks across issues."""
+        prompt = (
+            "You have completed per-issue analysis. Now identify CROSS-ISSUE INTERACTIONS "
+            "that individual issue analysis cannot capture.\n\n"
+            f"QUERY: {query}\n\n"
+            f"ISSUES LIST:\n{issues_text[:3000]}\n\n"
+            f"PER-ISSUE ANALYSIS (abbreviated):\n{per_issue_analysis[:4000]}\n\n"
+            "Produce a section called '## Cascading and Compound Risk Analysis' containing:\n\n"
+            "1. **Compound Effects**: Groups of 2-3 changes that interact to create risk "
+            "greater than each alone. For each compound effect:\n"
+            "   - Name the specific provisions involved\n"
+            "   - Explain the interaction mechanism\n"
+            "   - Quantify the combined impact if possible\n"
+            "   Example: 'Higher leverage cap (5.75x) + weaker ECF sweep (25% at $10M de "
+            "minimis) + expanded addback cap (35%) together effectively eliminate any "
+            "meaningful deleveraging obligation.'\n\n"
+            "2. **Strategic Assessment**: What is the counterparty's overall strategy? "
+            "Which provisions create existential vs negotiable risk?\n\n"
+            "3. **Priority Negotiation Items**: The 5 most critical issues to address, "
+            "ordered by combined impact, with specific recommended positions.\n\n"
+            "Be specific with section references, dollar amounts, and ratios."
+        )
+        try:
+            result = await self.client.complete(
+                prompt=prompt,
+                tier=ModelTier.FLASH,
+                timeout=90.0,
+                usage_label="synthesis_per_issue",
+            )
+            if result and len(result.strip()) > 200:
+                logger.info("Cross-issue analysis produced %d chars", len(result))
+                return result.strip()
+        except Exception as exc:
+            logger.warning("Cross-issue analysis failed: %s", exc)
+        return ""
 
     async def investigate(
         self,
@@ -10015,11 +10076,11 @@ Return:
                             )
                         _tc_fact = f"[PROVISION] {_tc_label}"
                         if _tc.deleted_text and _tc.added_text:
-                            _tc_fact += f": changed from \"{_tc.deleted_text[:200]}\" to \"{_tc.added_text[:200]}\""
+                            _tc_fact += f": changed from \"{_tc.deleted_text[:500]}\" to \"{_tc.added_text[:500]}\""
                         elif _tc.deleted_text:
-                            _tc_fact += f": DELETED \"{_tc.deleted_text[:250]}\""
+                            _tc_fact += f": DELETED \"{_tc.deleted_text[:600]}\""
                         elif _tc.added_text:
-                            _tc_fact += f": ADDED \"{_tc.added_text[:250]}\""
+                            _tc_fact += f": ADDED \"{_tc.added_text[:600]}\""
                         _tc_facts_pending.append(_tc_fact)
 
             # Build enhanced focus for comparison/regulatory tasks
