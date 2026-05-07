@@ -84,13 +84,16 @@ def load_corpus_benchmark(filename: str) -> tuple[CorpusBenchmarkQuery, ...]:
             continue
         data = json.loads(line)
         try:
+            query_text = data.get("query") or data.get("question") or ""
             rows.append(
                 CorpusBenchmarkQuery(
                     id=data["id"],
-                    query=data["query"],
+                    query=query_text,
                     category=data["category"],
                     difficulty=data["difficulty"],
-                    required_capabilities=_as_tuple(data.get("required_capabilities")),
+                    required_capabilities=_as_tuple(
+                        data.get("required_capabilities") or data.get("expected_documents")
+                    ),
                     min_documents_needed=int(data.get("min_documents_needed", 0)),
                     gold_answer_sketch=data["gold_answer_sketch"],
                     ontology_stress=_as_tuple(data.get("ontology_stress")),

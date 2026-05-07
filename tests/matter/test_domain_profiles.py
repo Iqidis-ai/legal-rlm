@@ -325,6 +325,8 @@ def test_deep_read_prompt_formats_for_all_domains():
             query="Test query",
             focus="Test focus",
             domain_vocabulary=vocab,
+            mna_section="",
+            transaction_context_schema="",
             domain_deep_read_examples=dr_ex["deep_read_examples"],
             domain_numeric_subjects=dr_ex["numeric_subjects"],
             domain_numeric_subject_id_example=dr_ex["numeric_subject_id_example"],
