@@ -6731,7 +6731,7 @@ class RLMEngine:
                     self._emit_step(
                         state, StepType.REPLAN,
                         f"SPO extraction yielded {_spo_count}/{len(facts_to_add)} structured triples "
-                        f"(search: '{search_term[:60]}'). Retrying for missing.",
+                        f"(search: '{results.query[:60]}'). Retrying for missing.",
                     )
                     _retry_texts = [txt for txt, _, _, _, _ in facts_to_add]
                     state.llm_calls_required += 1
