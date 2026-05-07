@@ -3781,18 +3781,27 @@ class RLMEngine:
         def _is_ratio(val_str: str) -> bool:
             return "x" in val_str.lower() and "%" not in val_str
 
-        # Find facility size from facts for dollar impact calculations
         _facility_size: "Optional[float]" = None
+        _ebitda: "Optional[float]" = None
         try:
-            quant_rows = self._matter_model.quant.list_all(limit=100)
+            quant_rows = self._matter_model.quant.list_all(limit=200)
             for qr in quant_rows:
                 ctx = (qr.get("context") or "").lower()
                 raw = (qr.get("raw_text") or "").lower()
-                if any(w in ctx + raw for w in ("facility", "commitment", "revolving", "term loan")):
-                    val = qr.get("amount_value")
-                    if val and val > 10_000_000:
+                combined = ctx + " " + raw
+                val = qr.get("amount_value")
+                if not val or val <= 0:
+                    continue
+                if _facility_size is None and any(
+                    w in combined for w in ("facility", "commitment", "revolving", "term loan", "aggregate")
+                ):
+                    if val > 10_000_000:
                         _facility_size = float(val)
-                        break
+                if _ebitda is None and any(
+                    w in combined for w in ("ebitda", "consolidated ebitda", "ltm ebitda", "adjusted ebitda")
+                ):
+                    if 1_000_000 < val < 10_000_000_000:
+                        _ebitda = float(val)
         except Exception:
             pass
 
@@ -3821,15 +3830,33 @@ class RLMEngine:
                 if _facility_size and abs(delta) < 10:
                     annual_impact = _facility_size * abs(delta) / 100.0
                     results.append(
-                        f"[CALCULATED] {prov} dollar impact: "
+                        f"[CALCULATED] {prov} dollar impact (facility): "
                         f"${_facility_size:,.0f} × {abs(delta):.2f}% = "
                         f"${annual_impact:,.0f}/year"
+                    )
+                if _ebitda and abs(delta) < 50:
+                    ebitda_impact = _ebitda * abs(delta) / 100.0
+                    results.append(
+                        f"[CALCULATED] {prov} dollar impact (EBITDA): "
+                        f"${_ebitda:,.0f} × {abs(delta):.2f}% = "
+                        f"${ebitda_impact:,.0f}"
                     )
             elif _is_ratio(orig_val_str):
                 results.append(
                     f"[CALCULATED] {prov}: changed from {orig_val_str} to {markup_val_str} "
                     f"(delta: {'+' if delta > 0 else ''}{delta:.2f}x, {direction})"
                 )
+                if _ebitda and _facility_size:
+                    headroom_orig = orig_num * _ebitda - _facility_size
+                    headroom_new = markup_num * _ebitda - _facility_size
+                    results.append(
+                        f"[CALCULATED] {prov} headroom: "
+                        f"original {orig_num:.2f}x × ${_ebitda:,.0f} EBITDA = ${orig_num * _ebitda:,.0f} capacity "
+                        f"(${headroom_orig:,.0f} headroom); "
+                        f"markup {markup_num:.2f}x × ${_ebitda:,.0f} = ${markup_num * _ebitda:,.0f} capacity "
+                        f"(${headroom_new:,.0f} headroom, "
+                        f"delta +${headroom_new - headroom_orig:,.0f})"
+                    )
             else:
                 results.append(
                     f"[CALCULATED] {prov}: changed from {orig_val_str} to {markup_val_str} "
