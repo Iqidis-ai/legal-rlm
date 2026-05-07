@@ -5282,13 +5282,14 @@ class RLMEngine:
         )):
             sections.append(
                 "OUTPUT FORMAT — DUE DILIGENCE SUMMARY (MANDATORY):\n"
-                "Your output MUST begin with an EXECUTIVE SUMMARY containing:\n"
+                "Your output MUST include ALL of the following sections:\n\n"
+                "## 1. EXECUTIVE SUMMARY (MANDATORY)\n"
                 "- Transaction parties (acquirer and target by name)\n"
                 "- Enterprise value / deal size (exact dollar figure)\n"
                 "- Transaction structure (stock purchase, asset purchase, merger)\n"
                 "- Overall recommendation (proceed / proceed with conditions / do not proceed)\n"
                 "- Top 3-5 critical findings that most impact the deal\n\n"
-                "Then organize findings BY SEVERITY TIER (not by workstream):\n"
+                "## 2. FINDINGS BY SEVERITY TIER (not by workstream)\n"
                 "1. **Deal-Breaker / Critical** — Issues that could block the transaction\n"
                 "2. **Significant** — Material issues requiring pre-closing resolution\n"
                 "3. **Moderate** — Issues requiring attention but not blocking\n"
@@ -5297,7 +5298,36 @@ class RLMEngine:
                 "- Issue number (ISSUE_001, ISSUE_002, etc.)\n"
                 "- Workstream source (financial, legal, tax, insurance, environmental, IP)\n"
                 "- Specific finding with dollar amounts and section references\n"
-                "- Purchase price impact recommendation where quantifiable\n"
+                "- Cross-reference to other DD workstreams that found related issues\n"
+                "- Purchase price impact recommendation where quantifiable\n\n"
+                "## 3. EV-TO-EQUITY BRIDGE (MANDATORY for M&A)\n"
+                "Show explicit calculation from enterprise value to equity value:\n"
+                "| Item | Amount | Source |\n"
+                "| Enterprise Value | $XXX | [per SPA/CIM] |\n"
+                "| Less: Funded Debt | ($XX) | [per financial DD] |\n"
+                "| Less: Pension Underfunding | ($XX) | [per HR/benefits DD] |\n"
+                "| Less: OPEB Liability | ($XX) | [per benefits DD] |\n"
+                "| Less: Transaction Bonuses | ($XX) | [per employment DD] |\n"
+                "| Less: Environmental Remediation | ($XX) | [per environmental DD] |\n"
+                "| Plus/Less: NWC Adjustment | ($XX) | [per financial DD] |\n"
+                "| Plus/Less: EBITDA Adjustment | ($XX) | [per QoE report] |\n"
+                "| = Adjusted Equity Value | $XXX |\n"
+                "Include EVERY debt-like item identified in DD.\n\n"
+                "## 4. SPA RECOMMENDATIONS (MANDATORY)\n"
+                "For each critical finding, specify the SPA fix:\n"
+                "- Special indemnities (for specific risks outside RWI coverage)\n"
+                "- Representation fixes (knowledge qualifier, MAE definition)\n"
+                "- Interim covenants (pre-closing operational restrictions)\n"
+                "- Closing conditions (consents, waivers, third-party approvals)\n"
+                "- Survival period recommendations calibrated by risk type\n\n"
+                "## 5. PRE-CLOSE REMEDIATION ITEMS (MANDATORY)\n"
+                "Actionable items that must be resolved before closing.\n\n"
+                "## 6. RWI GAP ANALYSIS (MANDATORY if insurance data exists)\n"
+                "- Matters excluded from RWI coverage\n"
+                "- Gaps between deal risks and insurance coverage\n"
+                "- Recommendations for standalone policies (environmental, etc.)\n\n"
+                "## 7. OVERALL RECOMMENDATION (at end of memo)\n"
+                "Restate recommendation with supporting rationale.\n"
             )
 
         if any(w in q for w in (
@@ -5346,6 +5376,35 @@ class RLMEngine:
                 "For EBITDA bridges: line-by-line adjustment items with Management vs Buyer values.\n"
                 "For working capital: each component (AR, AP, inventory, accruals) with amounts.\n"
                 "For PPA: each intangible asset class with fair value and useful life.\n"
+            )
+
+        if any(w in q for w in (
+            "motion to dismiss", "motion to compel", "summary judgment",
+            "preliminary injunction", "temporary restraining",
+        )):
+            sections.append(
+                "OUTPUT FORMAT — LITIGATION MOTION ANALYSIS (MANDATORY):\n"
+                "1. **Procedural Posture**: Court, case caption, filing date, hearing date\n"
+                "2. **Arguments Analysis**: For EACH argument raised:\n"
+                "   - State the legal standard (e.g., Rule 12(b)(6) standard)\n"
+                "   - Summarize movant's argument with specific paragraph citations\n"
+                "   - Assess strength (Strong/Moderate/Weak) with reasoning\n"
+                "   - Identify counterarguments and responses\n"
+                "3. **Recommended Strategy**: For EACH argument, specific response approach\n"
+                "4. **Risk Assessment**: Likelihood of success on each ground\n"
+            )
+
+        if any(w in q for w in (
+            "employment agreement", "executive agreement", "compensation",
+            "severance", "non-compete", "restrictive covenant",
+        )):
+            sections.append(
+                "OUTPUT FORMAT — EMPLOYMENT/EXECUTIVE AGREEMENT ANALYSIS (MANDATORY):\n"
+                "For EACH provision, include:\n"
+                "- Exact compensation figures (base, bonus, equity, severance)\n"
+                "- All trigger events (termination, change of control, good reason)\n"
+                "- Restrictive covenant specifics (duration, geographic scope, activity scope)\n"
+                "- Compare each provision to market standard ranges\n"
             )
 
         return "\n".join(sections) if sections else ""
