@@ -194,14 +194,17 @@ class DocumentReader:
                 if tag == "delText":
                     parts.append(f"[DELETED: {elem.text or ''}]")
                 elif tag == "t":
-                    parent_tag = ""
-                    if elem.getparent() is not None:
-                        parent_tag = etree.QName(elem.getparent().tag).localname if isinstance(elem.getparent().tag, str) else ""
-                    grandparent_tag = ""
-                    if elem.getparent() is not None and elem.getparent().getparent() is not None:
-                        gp = elem.getparent().getparent()
-                        grandparent_tag = etree.QName(gp.tag).localname if isinstance(gp.tag, str) else ""
-                    if grandparent_tag == "ins":
+                    is_ins = False
+                    ancestor = elem.getparent()
+                    while ancestor is not None:
+                        a_tag = etree.QName(ancestor.tag).localname if isinstance(ancestor.tag, str) else ""
+                        if a_tag == "ins":
+                            is_ins = True
+                            break
+                        if a_tag == "p":
+                            break
+                        ancestor = ancestor.getparent()
+                    if is_ins:
                         parts.append(f"[ADDED: {elem.text or ''}]")
                     else:
                         parts.append(elem.text or "")

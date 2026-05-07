@@ -398,7 +398,7 @@ Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "15"
+_ORIENTATION_CACHE_VERSION = "16"
 
 
 def _format_matter_context(ctx) -> str:
@@ -760,6 +760,23 @@ Respond in JSON (be thorough — include ALL relevant provisions, section number
           "source_role": "original|markup|playbook|commitment_letter|credit_memo",
           "value_type": "threshold|cap|rate|period|presence|basket|trigger"}}
     ],
+    "provision_revisions": [
+        {{"provision_key": "stable_snake_case_name",
+          "provision_title": "human-readable title",
+          "section_ref": "Section X.Y",
+          "row_label": "tier/period/basket label or null",
+          "row_index": 0,
+          "baseline_value": "original value or null",
+          "proposed_value": "markup value or null",
+          "change_kind": "added|deleted|modified|unchanged|missing_expected",
+          "value_type": "rate|bps|ratio|min_ratio|max_ratio|dollar_cap|basket|period|definition|presence|trigger|fee|other",
+          "unit": "bps|percent|x|USD|days|quarters|text|presence",
+          "normalized_baseline": null,
+          "normalized_proposed": null,
+          "breakpoint": "leverage tier/date/threshold or null",
+          "impact_direction": "tightens|loosens|increases_cost|decreases_cost|increases_capacity|decreases_capacity|unknown",
+          "source_quote": "short exact quote"}}
+    ],
     "regulatory_data": [
         {{"category": "market_share|hhi|hot_doc|barrier|remedy|timeline|jurisdiction|overlap|synergy|accretion|valuation",
           "entity": "company or market name",
@@ -911,6 +928,34 @@ Include a "provision_comparisons" array in your JSON response with structured ro
      "source_role": "original|markup|playbook|commitment_letter|credit_memo",
      "value_type": "threshold|cap|rate|period|presence|basket|trigger"}
 ]
+
+PROVISION REVISION ROWS (MANDATORY for markup/redline documents):
+The atomic unit is one row, tier, period, basket, threshold, or definition subpart.
+Never combine multiple tiers or periods into one value. If a margin grid has 5 tiers,
+output 5 rows. If a covenant steps down over 4 periods, output 4 rows. If an EBITDA
+definition changes 8 addback categories, output 8 rows.
+
+For every changed or material provision subpart, output one provision_revisions row
+with both sides when available:
+"provision_revisions": [
+    {"provision_key": "stable_snake_case_name (e.g. applicable_margin_tier_1)",
+     "provision_title": "human title (e.g. Applicable Margin — Tier 1)",
+     "section_ref": "section/schedule/clause reference",
+     "row_label": "tier/period/basket/addback/category label, or null",
+     "row_index": 0,
+     "baseline_value": "original/deleted/commitment-letter value, or null if new",
+     "proposed_value": "markup/added value, or null if deleted",
+     "change_kind": "added|deleted|modified|unchanged|missing_expected",
+     "value_type": "rate|bps|ratio|min_ratio|max_ratio|dollar_cap|basket|period|definition|presence|trigger|fee|other",
+     "unit": "bps|percent|x|USD|days|quarters|text|presence",
+     "normalized_baseline": null,
+     "normalized_proposed": null,
+     "breakpoint": "leverage tier, date, threshold, or condition triggering this row",
+     "impact_direction": "tightens|loosens|increases_cost|decreases_cost|increases_capacity|decreases_capacity|unknown",
+     "source_quote": "short exact quote from document"}
+]
+Pair [DELETED: X] and [ADDED: Y] into baseline_value/proposed_value in the same row
+when they modify the same provision subpart.
 """
 
 _REGULATORY_DEEP_READ_SECTION = """
@@ -3963,7 +4008,8 @@ class RLMEngine:
     def _derive_provision_comparison_calculations(self) -> "list[str]":
         """Deterministic arithmetic on provision comparison data (Codex #3).
 
-        Reads provision_comparison typed evidence and computes:
+        Reads provision_revision (preferred) and provision_comparison typed evidence
+        and computes:
         - Rate/spread deltas × principal for dollar impact
         - Ratio threshold deltas (old - new covenant headroom)
         - Dollar cap reductions
@@ -3971,13 +4017,32 @@ class RLMEngine:
         """
         if self._matter_model is None:
             return []
+
+        # Try provision_revisions first (row-atomic, preferred)
+        _rev_rows: list[dict] = []
+        try:
+            _rev_raw = self._matter_model.typed_evidence.list_by_kind(
+                "provision_revision", limit=500,
+            )
+            for _rr in _rev_raw:
+                _rp = _rr.get("payload_json")
+                if isinstance(_rp, str):
+                    try:
+                        _rp = json.loads(_rp)
+                    except Exception:
+                        continue
+                if isinstance(_rp, dict) and _rp.get("provision_key"):
+                    _rev_rows.append(_rp)
+        except Exception:
+            pass
+
         try:
             rows = self._matter_model.typed_evidence.list_by_kind(
                 "provision_comparison", limit=200,
             )
         except Exception:
-            return []
-        if not rows:
+            rows = []
+        if not rows and not _rev_rows:
             return []
 
         by_provision: dict[str, dict[str, list[dict]]] = {}
@@ -4113,6 +4178,63 @@ class RLMEngine:
                         f"[CALCULATED] {_prov_label}: changed from {orig_val_str} to {markup_val_str} "
                         f"(delta: {'+' if delta > 0 else ''}{delta:,.0f})"
                     )
+
+        # Provision revision rows — row-atomic calculations
+        _rev_seen = set()
+        for _rv in _rev_rows:
+            _ck = _rv.get("change_kind", "")
+            if _ck in ("unchanged", "missing_expected"):
+                continue
+            _bv_str = str(_rv.get("baseline_value") or "")
+            _pv_str = str(_rv.get("proposed_value") or "")
+            _bv_num = _rv.get("normalized_baseline")
+            if _bv_num is None:
+                _bv_num = _extract_number(_bv_str)
+            _pv_num = _rv.get("normalized_proposed")
+            if _pv_num is None:
+                _pv_num = _extract_number(_pv_str)
+            if _bv_num is None or _pv_num is None:
+                continue
+            _delta_r = _pv_num - _bv_num
+            if abs(_delta_r) < 0.001:
+                continue
+            _pk = _rv.get("provision_key", "")
+            _pt = _rv.get("provision_title") or _pk
+            _rl = _rv.get("row_label") or ""
+            _dedup_key = f"{_pk}:{_rl}"
+            if _dedup_key in _rev_seen:
+                continue
+            _rev_seen.add(_dedup_key)
+            _label_r = f"{_pt} ({_rl})" if _rl else _pt
+            _unit = _rv.get("unit", "")
+            _imp = _rv.get("impact_direction", "unknown")
+            if _unit in ("bps", "percent", "%"):
+                results.append(
+                    f"[CALCULATED] {_label_r}: {_bv_str} → {_pv_str} "
+                    f"(delta: {'+' if _delta_r > 0 else ''}{_delta_r:.2f}%, {_imp})"
+                )
+                if _facility_size and abs(_delta_r) < 10:
+                    _ann = _facility_size * abs(_delta_r) / 100.0
+                    results.append(
+                        f"[CALCULATED] {_label_r} dollar impact: "
+                        f"${_facility_size:,.0f} × {abs(_delta_r):.2f}% = ${_ann:,.0f}/year"
+                    )
+            elif _unit in ("x",):
+                results.append(
+                    f"[CALCULATED] {_label_r}: {_bv_str} → {_pv_str} "
+                    f"(delta: {'+' if _delta_r > 0 else ''}{_delta_r:.2f}x, {_imp})"
+                )
+                if _ebitda and _facility_size:
+                    _ho = _bv_num * _ebitda - _facility_size
+                    _hn = _pv_num * _ebitda - _facility_size
+                    results.append(
+                        f"[CALCULATED] {_label_r} headroom delta: ${_hn - _ho:,.0f}"
+                    )
+            elif _unit == "USD":
+                results.append(
+                    f"[CALCULATED] {_label_r}: {_bv_str} → {_pv_str} "
+                    f"(delta: {'+' if _delta_r > 0 else ''}${_delta_r:,.0f}, {_imp})"
+                )
 
         return results
 
@@ -5004,6 +5126,78 @@ class RLMEngine:
             "(4) dollar impact calculation where numeric, (5) specific recommendation with "
             "primary position and fallback/compromise. Covering all provisions is more important "
             "than depth on any single one."
+        )
+        return "\n".join(lines)
+
+    def _build_provision_revision_summary(
+        self, state: "InvestigationState",
+    ) -> str:
+        """Build row-atomic provision revision table for synthesis.
+
+        Uses provision_revision typed evidence (richer than provision_comparison).
+        Groups by provision_key and emits one row per tier/period/basket.
+        """
+        _ql = (getattr(state, "query", "") or "").lower()
+        _is_comp = any(w in _ql for w in (
+            "markup", "redline", "compare", "comparison", "deviation",
+            "counterparty", "credit facility", "credit agreement",
+            "term sheet", "loan agreement", "commitment letter",
+        ))
+        if not _is_comp or self._matter_model is None:
+            return ""
+        try:
+            rows = self._matter_model.typed_evidence.list_by_kind(
+                "provision_revision", limit=500,
+            )
+        except Exception:
+            return ""
+        if not rows:
+            return ""
+        entries: list[dict] = []
+        for row in rows:
+            payload = row.get("payload_json")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    continue
+            if not isinstance(payload, dict):
+                continue
+            if not payload.get("provision_key"):
+                continue
+            entries.append(payload)
+        if not entries:
+            return ""
+        entries.sort(key=lambda e: (e.get("provision_key", ""), e.get("row_index", 0)))
+        lines = [
+            f"PROVISION REVISION DATA — {len(entries)} atomic rows extracted from documents:",
+            "| # | Provision | Row/Tier | Baseline | Proposed | Change | Impact | Section |",
+            "|---|-----------|----------|----------|----------|--------|--------|---------|",
+        ]
+        def _esc(s) -> str:
+            if s is None:
+                return "—"
+            return str(s).replace("|", "∣").replace("\n", " ")[:200]
+        for idx, e in enumerate(entries[:300], 1):
+            _title = e.get("provision_title") or e.get("provision_key", "")
+            _rl = e.get("row_label") or ""
+            _bv = e.get("baseline_value")
+            _pv = e.get("proposed_value")
+            _ck = e.get("change_kind", "")
+            _imp = e.get("impact_direction", "")
+            _sec = e.get("section_ref", "")
+            lines.append(
+                f"| {idx} | {_esc(_title)} | {_esc(_rl)} | {_esc(_bv)} | "
+                f"{_esc(_pv)} | {_esc(_ck)} | {_esc(_imp)} | {_esc(_sec)} |"
+            )
+        changed = sum(1 for e in entries if e.get("change_kind") not in ("unchanged", None, ""))
+        lines.append("")
+        lines.append(
+            f"MANDATORY: {changed} of {len(entries)} rows show changes. "
+            "Your deviation table MUST cover EVERY changed row. Each row is one finding. "
+            "Use the baseline_value and proposed_value exactly as shown. "
+            "For multi-tier provisions (margin grids, step-downs), show EACH tier as a "
+            "separate row in your deviation table — do NOT collapse tiers."
         )
         return "\n".join(lines)
 
@@ -9834,6 +10028,78 @@ Return:
                             confidence=0.9,
                         )
 
+            # Provision revisions — row-atomic provision change rows (P0.1)
+            _prov_revs = analysis.get("provision_revisions")
+            if isinstance(_prov_revs, list) and _prov_revs:
+                _mm_pr = self._matter_model
+                for _pr_idx, _pr in enumerate(_prov_revs[:500]):
+                    if not isinstance(_pr, dict):
+                        continue
+                    _pk = _pr.get("provision_key", "")
+                    _pt = _pr.get("provision_title", _pk)
+                    _sec_r = _pr.get("section_ref", "")
+                    _rl = _pr.get("row_label") or ""
+                    _ri = _pr.get("row_index", _pr_idx)
+                    _bv = _pr.get("baseline_value")
+                    _pv = _pr.get("proposed_value")
+                    _ck = _pr.get("change_kind", "modified")
+                    _imp = _pr.get("impact_direction", "unknown")
+                    _unit = _pr.get("unit", "")
+                    _bp = _pr.get("breakpoint") or ""
+                    _sq = _pr.get("source_quote", "")
+                    if not _pk:
+                        continue
+                    _pr_fact = f"[PROVISION] {_pt}"
+                    if _rl:
+                        _pr_fact += f" ({_rl})"
+                    if _bv and _pv:
+                        _pr_fact += f": {_bv} → {_pv}"
+                    elif _bv:
+                        _pr_fact += f": DELETED {_bv}"
+                    elif _pv:
+                        _pr_fact += f": ADDED {_pv}"
+                    if _sec_r:
+                        _pr_fact += f" ({_sec_r})"
+                    if _imp and _imp != "unknown":
+                        _pr_fact += f" [{_imp}]"
+                    facts_to_add.append((_pr_fact, "supports", None, {
+                        "subject_ref_type": "free_text",
+                        "subject_ref_id": _pk,
+                        "predicate_key": f"provision_revision_{_ck}",
+                        "object_json": json.dumps({
+                            "baseline": _bv, "proposed": _pv,
+                            "section": _sec_r, "row_label": _rl,
+                            "impact": _imp, "unit": _unit,
+                        }),
+                    }))
+                    if _mm_pr is not None:
+                        _bp_hash = _hashlib.md5(f"{_rl}:{_bp}:{_ri}".encode()).hexdigest()[:8]
+                        _mm_pr.typed_evidence.upsert(
+                            "provision_revision",
+                            f"provrev:{_pk}:{doc.filename}:{_bp_hash}",
+                            payload={
+                                "provision_key": _pk,
+                                "provision_title": _pt,
+                                "section_ref": _sec_r,
+                                "row_label": _rl,
+                                "row_index": _ri,
+                                "baseline_value": _bv,
+                                "proposed_value": _pv,
+                                "change_kind": _ck,
+                                "value_type": _pr.get("value_type", "other"),
+                                "unit": _unit,
+                                "normalized_baseline": _pr.get("normalized_baseline"),
+                                "normalized_proposed": _pr.get("normalized_proposed"),
+                                "breakpoint": _bp,
+                                "impact_direction": _imp,
+                                "source_quote": _sq,
+                                "source_document": doc.filename,
+                            },
+                            label=f"{_pt}: {_bv or '∅'} → {_pv or '∅'}",
+                            document_id=doc.filename,
+                            confidence=0.92,
+                        )
+
             # Regulatory data (from regulatory-task deep reads)
             _reg_data = analysis.get("regulatory_data")
             if isinstance(_reg_data, list) and _reg_data:
@@ -9917,9 +10183,10 @@ Return:
                             confidence=0.85,
                         )
 
-            # Extraction completeness verification: if the LLM reports incomplete
-            # extraction for any table/list, log a warning so we can track coverage.
+            # Extraction completeness: repair pass when items are missing.
             _ec = analysis.get("extraction_completeness")
+            _needs_repair = False
+            _missing_report_parts: list[str] = []
             if isinstance(_ec, list):
                 for _ecg in _ec:
                     if not isinstance(_ecg, dict):
@@ -9929,11 +10196,72 @@ Return:
                     _ext_n = _ecg.get("items_extracted")
                     _complete = _ecg.get("complete", True)
                     if _src_n and _ext_n and not _complete:
+                        try:
+                            _gap = int(_src_n) - int(_ext_n)
+                        except (TypeError, ValueError):
+                            _gap = 0
+                        if _gap >= 2:
+                            _needs_repair = True
+                            _missing_report_parts.append(
+                                f"- '{_grp}': {_src_n} items in source, only {_ext_n} extracted ({_gap} missing)"
+                            )
                         self._emit_step(
                             state, StepType.REPLAN,
                             f"Incomplete extraction: '{_grp}' has {_src_n} items "
                             f"in source but only {_ext_n} extracted (doc: '{doc.filename[:50]}')",
                         )
+
+            if _needs_repair and (_is_comparison_dr or _is_regulatory_dr or _is_cross_doc_comparison):
+                _repair_report = "\n".join(_missing_report_parts)
+                _existing_json_str = json.dumps(analysis, default=str)
+                if len(_existing_json_str) > 40000:
+                    _existing_json_str = _existing_json_str[:40000] + "..."
+                _repair_prompt = (
+                    f"Your prior extraction of '{doc.filename}' was INCOMPLETE.\n\n"
+                    f"MISSING ITEMS:\n{_repair_report}\n\n"
+                    f"PRIOR EXTRACTION (for reference — do NOT repeat existing items):\n"
+                    f"{_existing_json_str[:30000]}\n\n"
+                    f"DOCUMENT CONTENT:\n{content[:80000]}\n\n"
+                    f"Return ONLY a JSON object with additional items for the incomplete groups. "
+                    f"Use the same schema as the original extraction. Include:\n"
+                    f"- key_facts: additional facts not yet extracted\n"
+                    f"- provision_comparisons: additional provision rows\n"
+                    f"- provision_revisions: additional atomic revision rows (one per tier/period/basket)\n"
+                    f"- regulatory_data: additional regulatory entries\n"
+                    f"- numeric_facts: additional numeric facts\n"
+                    f"- hot_documents: additional adverse quotes\n"
+                    f"Extract EVERY remaining table row, schedule row, tier, period, "
+                    f"tracked-change marker, market/company/share data point, and projection metric."
+                )
+                self._emit_step(
+                    state, StepType.REPLAN,
+                    f"Running extraction repair for {doc.filename[:50]} ({len(_missing_report_parts)} incomplete groups)",
+                )
+                state.llm_calls_required += 1
+                try:
+                    _repair_response = await self.client.complete(
+                        _repair_prompt,
+                        tier=ModelTier.FLASH,
+                        json_mode=True,
+                        usage_label="extraction_repair",
+                        temperature=0.0,
+                    )
+                    _repair_data = self._parse_json_safe(_repair_response, {})
+                    for _rk in ("key_facts", "provision_comparisons", "provision_revisions", "regulatory_data",
+                                "numeric_facts", "hot_documents", "quotes"):
+                        _repair_items = _repair_data.get(_rk)
+                        if isinstance(_repair_items, list) and _repair_items:
+                            _existing = analysis.get(_rk, [])
+                            if isinstance(_existing, list):
+                                analysis[_rk] = _existing + _repair_items
+                            else:
+                                analysis[_rk] = _repair_items
+                    self._emit_step(
+                        state, StepType.REPLAN,
+                        f"Extraction repair added items for {doc.filename[:50]}",
+                    )
+                except Exception as _repair_err:
+                    logger.warning("Extraction repair failed for %s: %s", doc.filename, _repair_err)
 
             # SO-2 validation: if any facts lack SPO triples, retry to recover them.
             # Threshold >= 1: fire even for single facts; FLASH retry is cheap.
@@ -12125,8 +12453,11 @@ Return:
 
         # Provision comparison summary for comparison tasks — inject EARLY
         # so synthesis sees the structured data before extraction instructions.
+        _prov_rev_summary = self._build_provision_revision_summary(state)
+        if _prov_rev_summary:
+            ordered.append(("provision_revisions", _prov_rev_summary, True))
         _prov_summary = self._build_provision_comparison_summary(state)
-        if _prov_summary:
+        if _prov_summary and not _prov_rev_summary:
             ordered.append(("provision_comparisons", _prov_summary, True))
 
         # Regulatory data summary for antitrust/regulatory tasks
