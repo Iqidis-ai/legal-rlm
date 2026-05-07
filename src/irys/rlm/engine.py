@@ -1037,6 +1037,30 @@ Include a "regulatory_data" array in your JSON response:
 IMPORTANT for market_share entries: Set source_detail to "GeographicMarket - CompanyName" format.
 Example: {"category": "market_share", "entity": "Greenville-Spartanburg", "value": "42.3%",
           "source_detail": "Greenville-Spartanburg - Meridian", "significance": "largest share"}
+
+ADDITIONALLY (row-atomic extraction): For each MSA/geographic market that appears in
+this document with HHI or market-share data, emit ONE structured "market_row" entry.
+This is the canonical per-market extraction unit; do NOT skip a market because data is
+partial — emit it with whichever fields are available and leave others null.
+
+"market_rows": [
+    {"market_name": "Greenville-Spartanburg MSA",
+     "product_market": "bulk industrial gas",
+     "geographic_market": "Greenville-Spartanburg MSA",
+     "acquirer_share": "28%",
+     "target_share": "18%",
+     "other_shares": [{"name": "Competitor A", "share": "22%"}],
+     "pre_merger_hhi": 2234,
+     "post_merger_hhi": 3224,
+     "delta_hhi": 990,
+     "structural_presumption": true,
+     "risk_rating": "high",
+     "source_detail": "p.7 / Market Concentration table",
+     "source_quote": "short verbatim quote or table row text"}
+]
+
+CRITICAL: emit one market_row per market mentioned. Missing one MSA when others are
+extracted is a critical failure — it produces incomplete competitive analysis.
 """
 
 _DOMAIN_DEEP_READ_VOCABULARY = {
@@ -5409,6 +5433,105 @@ class RLMEngine:
 
         return "\n".join(sections) if sections else ""
 
+    def _build_extraction_slot_row_summary(
+        self, state: "InvestigationState",
+    ) -> str:
+        """Build answer-ingredient row tables from filled extraction slots.
+
+        Synthesis Context Principle: this is NOT gap metadata. Only filled
+        rows are included. Pending/not_observable slots are intentionally
+        omitted unless the user query asks about coverage/completeness
+        (handled by separate gap section gating).
+        """
+        if self._matter_model is None:
+            return ""
+        if not self._should_profile_dataset_shape(state):
+            return ""
+        try:
+            scope_hash = self._slot_scope_query_hash(state.query)
+            filled = self._matter_model.extraction_slots.get_filled_slots(
+                self._matter_model.matter_id,
+                slot_kind="collection_item",
+                scope_query_hash=scope_hash,
+            )
+        except Exception:
+            return ""
+        if not filled:
+            return ""
+        # Collect typed_evidence row payloads referenced by these slots
+        market_rows: list[dict] = []
+        seen_record_ids: set[str] = set()
+        for slot in filled:
+            for record_id in (slot.get("evidence_refs") or []):
+                if record_id in seen_record_ids:
+                    continue
+                seen_record_ids.add(record_id)
+                try:
+                    rec = self._matter_model.typed_evidence.get(record_id)
+                except Exception:
+                    rec = None
+                if not rec:
+                    continue
+                if rec.get("record_kind") != "market_row":
+                    continue
+                payload = rec.get("payload_json")
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except Exception:
+                        continue
+                if not isinstance(payload, dict):
+                    continue
+                if payload.get("schema_ref") != "legal.market_row.v1":
+                    continue
+                market_rows.append(payload)
+        if not market_rows:
+            return ""
+        # Sort: structural presumption first, then delta_hhi DESC, then post_merger_hhi DESC
+        def _sort_key(p: dict):
+            sp = 1 if p.get("structural_presumption") else 0
+            dh = p.get("delta_hhi") or 0
+            try:
+                dh_val = int(dh)
+            except (TypeError, ValueError):
+                dh_val = 0
+            ph = p.get("post_merger_hhi") or 0
+            try:
+                ph_val = int(ph)
+            except (TypeError, ValueError):
+                ph_val = 0
+            return (-sp, -dh_val, -ph_val, str(p.get("market_name") or ""))
+        market_rows.sort(key=_sort_key)
+        market_rows = market_rows[:50]
+
+        def _fmt(v):
+            if v is None or v == "":
+                return "—"
+            return str(v)
+
+        lines = [
+            "MARKET ROW SUMMARY (structured extracted rows; one row per market):",
+            "",
+            "| Market | Product | Acquirer Share | Target Share | Post-Merger HHI | Delta HHI | Presumption | Risk | Source |",
+            "|---|---|---:|---:|---:|---:|---|---|---|",
+        ]
+        for p in market_rows:
+            presumption = "Yes" if p.get("structural_presumption") else "No"
+            lines.append(
+                "| " + " | ".join([
+                    _fmt(p.get("market_name")),
+                    _fmt(p.get("product_market")),
+                    _fmt(p.get("acquirer_share")),
+                    _fmt(p.get("target_share")),
+                    _fmt(p.get("post_merger_hhi")),
+                    _fmt(p.get("delta_hhi")),
+                    presumption,
+                    _fmt(p.get("risk_rating")),
+                    _fmt(p.get("source_detail")),
+                ]) + " |"
+            )
+        return "\n".join(lines)
+
     def _build_regulatory_data_summary(
         self, state: "InvestigationState",
     ) -> str:
@@ -9601,6 +9724,11 @@ class RLMEngine:
             )
             await self._batch_profile(state, repo, unprofiled)
 
+        try:
+            await self._profile_dataset_shape(state, repo, all_files)
+        except Exception as exc:  # noqa: BLE001 — never crash investigation on scout
+            logger.warning("dataset shape profiling failed: %s", exc)
+
         if not new_files:
             self._emit_step(
                 state, StepType.READING,
@@ -9665,6 +9793,267 @@ class RLMEngine:
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 logger.error(f"Document profile failed: {file_paths[i]}: {result}")
+
+    # ------------------------------------------------------------------
+    # Dataset-shape profiling (PR wedge: collection_item / market_row)
+    # ------------------------------------------------------------------
+
+    _SLOT_REGULATORY_QUERY_TERMS = (
+        "antitrust", "hsr", "merger review", "merger", "market share",
+        "market shares", "hhi", "competitive effects", "regulatory",
+        "msa", "geographic market", "structural presumption",
+        "divestiture", "remedy", "ftc", "doj",
+    )
+
+    _SLOT_PATH_CUES = (
+        "market", "msa", "hhi", "share", "competitive", "competition",
+        "overlap", "divestiture", "remedy", "ftc", "doj", "hsr",
+        "antitrust", "concentration",
+    )
+
+    _SLOT_HEADING_CUES = (
+        "market", "geographic market", "msa", "hhi", "market share",
+        "market shares", "competitive effects", "concentration",
+        "post-merger", "pre-merger", "delta hhi",
+    )
+
+    def _slot_scope_query_hash(self, query: str) -> str:
+        """16-char hash of normalized query, used to scope slots."""
+        import hashlib
+        norm = " ".join(str(query or "").lower().split())
+        return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
+
+    def _should_profile_dataset_shape(self, state: InvestigationState) -> bool:
+        """Return True only for regulatory extraction queries in this first wedge.
+
+        Future PRs widen this gate. For now: gate strictly to regulatory/
+        antitrust queries so non-extraction tasks are unaffected.
+        """
+        if self._matter_model is None:
+            return False
+        q = (getattr(state, "query", "") or "").lower()
+        if not q:
+            return False
+        if self._is_simple_factual_lookup(q):
+            return False
+        return any(term in q for term in self._SLOT_REGULATORY_QUERY_TERMS)
+
+    async def _profile_dataset_shape(
+        self,
+        state: InvestigationState,
+        repo: "MatterRepository",
+        all_files: "list",
+    ) -> dict:
+        """Scout expected extraction units before query-coupled deep read.
+
+        Domain-neutral substrate; in this wedge we register `collection_item`
+        slots for regulatory market rows (one slot per detected MSA/market).
+        Never deep-reads. Uses path/name signals, document cards, light text
+        peeks, and table-like cues. Failures log and return disabled summary;
+        slots are never fabricated.
+        """
+        if not self._should_profile_dataset_shape(state):
+            return {"enabled": False, "reason": "task_not_slot_profiled"}
+        mm = self._matter_model
+        if mm is None:
+            return {"enabled": False, "reason": "no_matter_model"}
+
+        scope_hash = self._slot_scope_query_hash(state.query)
+        candidate_paths = [str(f.relative_path) for f in all_files]
+        candidate_paths_lc = {p: p.lower() for p in candidate_paths}
+
+        # Score each candidate doc by path cues + card cues
+        scored: list[tuple[float, str, "Optional[dict]"]] = []
+        for p in candidate_paths:
+            lc = candidate_paths_lc[p]
+            path_score = sum(1 for cue in self._SLOT_PATH_CUES if cue in lc)
+            card = None
+            try:
+                inv_row = mm.inventory.get_by_path(p)
+                if inv_row:
+                    card = mm.document_cards.get_by_doc_id(inv_row["id"])
+            except Exception:
+                card = None
+            card_score = 0
+            if card:
+                ct = (card.get("doc_type") or "").lower()
+                cs = (card.get("doc_subtype") or "").lower()
+                cp = (card.get("purpose") or "").lower()
+                if ct in {"report", "memo", "presentation", "exhibit", "filing"}:
+                    card_score += 1
+                if any(cue in cs for cue in ("market", "competition", "antitrust",
+                                              "regulatory", "hhi", "overlap")):
+                    card_score += 2
+                if any(cue in cp for cue in ("market", "competition", "antitrust",
+                                              "regulatory", "hhi", "overlap")):
+                    card_score += 1
+            total = path_score + card_score
+            if total > 0:
+                scored.append((total, p, card))
+
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        # Bound how many docs we peek into for cheapness
+        top = scored[:8]
+
+        # Detect MSA/market candidates from cues
+        market_candidates: dict[str, dict] = {}
+
+        import re as _re
+        msa_re = _re.compile(
+            r"\b([A-Z][A-Za-z\.\-]+(?:[\-\s][A-Z][A-Za-z\.\-]+){0,3})\s+MSA\b"
+        )
+        # Heading-only market name capture (1-3 capitalized tokens followed by HHI/share signals)
+        heading_market_re = _re.compile(
+            r"^\s*(?:[#\-\*\d\.\s]*)([A-Z][A-Za-z\.\-]+(?:[\-\s][A-Z][A-Za-z\.\-]+){0,3})\b"
+        )
+        hhi_signal_re = _re.compile(r"\bHHI\b|\bdelta\b|market share|post-merger|pre-merger", _re.I)
+
+        for score, path, card in top:
+            try:
+                text = repo.read(path) or ""
+            except Exception:
+                continue
+            if not text:
+                continue
+            # Cheap peek — bounded
+            text = text[:40000]
+
+            # Detect "<Name> MSA" patterns anywhere
+            for m in msa_re.finditer(text):
+                name = m.group(1).strip()
+                norm = self._normalize_market_name(name)
+                if not norm:
+                    continue
+                cand = market_candidates.setdefault(norm, {
+                    "display": name + " MSA",
+                    "table_evidence": False,
+                    "heading_evidence": False,
+                    "filename_evidence": False,
+                    "card_evidence": False,
+                    "occurrences": 0,
+                    "source_paths": set(),
+                })
+                cand["occurrences"] += 1
+                cand["source_paths"].add(path)
+                # Look at surrounding 200 chars for HHI/table signal
+                ctx_start = max(0, m.start() - 200)
+                ctx_end = min(len(text), m.end() + 200)
+                ctx = text[ctx_start:ctx_end]
+                if hhi_signal_re.search(ctx) and ("|" in ctx or "\t" in ctx
+                                                   or _re.search(r"\d{3,}", ctx)):
+                    cand["table_evidence"] = True
+                else:
+                    cand["heading_evidence"] = True
+                if card:
+                    cand["card_evidence"] = True
+
+        # Filename-only nudge (raise confidence when MSA-related path)
+        for norm, cand in market_candidates.items():
+            for path in cand["source_paths"]:
+                lc = candidate_paths_lc.get(path, "")
+                if any(cue in lc for cue in ("market", "msa", "hhi", "share")):
+                    cand["filename_evidence"] = True
+                    break
+
+        # Score → confidence and register slots
+        slots_registered = 0
+        for norm, cand in market_candidates.items():
+            if cand["table_evidence"]:
+                conf = 0.85
+            elif cand["heading_evidence"] and (cand["card_evidence"] or cand["occurrences"] >= 2):
+                conf = 0.75
+            elif cand["heading_evidence"] and cand["filename_evidence"]:
+                conf = 0.60
+            else:
+                # Low-confidence single mention — skip to avoid false termination blocks
+                continue
+
+            slot_key = f"collection_item:legal.market_row.v1:msa:{norm}"
+            try:
+                mm.extraction_slots.register(
+                    mm.matter_id,
+                    "collection_item",
+                    slot_key,
+                    1,
+                    artifact_family_id=None,
+                    expected_count_confidence=conf,
+                    scope_query_hash=scope_hash,
+                    schema_ref="legal.market_row.v1",
+                )
+                slots_registered += 1
+            except Exception as exc:
+                logger.debug("slot register failed for %s: %s", norm, exc)
+
+        summary = {
+            "enabled": True,
+            "scope_query_hash": scope_hash,
+            "slot_kind": "collection_item",
+            "schema_ref": "legal.market_row.v1",
+            "slots_registered": slots_registered,
+            "expected_count": slots_registered,
+            "candidate_docs_scored": len(scored),
+            "candidate_docs_peeked": len(top),
+        }
+        try:
+            state.findings["dataset_shape_profile"] = summary
+        except Exception:
+            pass
+        if slots_registered:
+            self._emit_step(
+                state, StepType.READING,
+                f"Scouted dataset shape: {slots_registered} expected market rows registered",
+            )
+        return summary
+
+    @staticmethod
+    def _normalize_market_name(name: str) -> str:
+        """Normalize an MSA/market display name into a stable slot key suffix."""
+        import re as _re
+        s = (name or "").strip().lower()
+        s = _re.sub(r"[^\w\s\-]", " ", s)
+        s = _re.sub(r"\s+", "-", s)
+        s = _re.sub(r"-+", "-", s).strip("-")
+        return s
+
+    def _slot_coverage_blocks_termination(
+        self, state: InvestigationState,
+    ) -> tuple[bool, str]:
+        """Block termination while high-confidence extraction slots remain open.
+
+        Only fires for queries that opted into slot profiling. If no slots,
+        no profiling, or no high-confidence opens, returns (False, "").
+        """
+        if self._matter_model is None:
+            return False, ""
+        if not self._should_profile_dataset_shape(state):
+            return False, ""
+        if self._is_simple_factual_lookup(state.query or ""):
+            return False, ""
+        scope_hash = self._slot_scope_query_hash(state.query)
+        try:
+            opens = self._matter_model.extraction_slots.get_open_slots(
+                self._matter_model.matter_id,
+                slot_kind="collection_item",
+                scope_query_hash=scope_hash,
+                min_confidence=0.5,
+            )
+        except Exception as exc:
+            logger.debug("slot coverage guard skipped: %s", exc)
+            return False, ""
+        blocking = [
+            s for s in opens
+            if float(s.get("expected_count_confidence") or 0.0) > 0.5
+            and s.get("coverage_state") in ("pending", "partial")
+        ]
+        if not blocking:
+            return False, ""
+        sample = ", ".join(
+            (s.get("slot_key") or "")[-40:] for s in blocking[:3]
+        )
+        return True, (
+            f"Continuing extraction: {len(blocking)} high-confidence "
+            f"dataset slot(s) unfilled ({sample})"
+        )
 
     async def _profile_document(
         self,
@@ -10601,6 +10990,110 @@ Return:
                             document_id=doc.filename,
                             confidence=0.9,
                         )
+
+            # Row-atomic market rows (PR wedge: dataset profiling)
+            _market_rows = analysis.get("market_rows")
+            if isinstance(_market_rows, list) and _market_rows and _is_regulatory_dr:
+                _mm_mr = self._matter_model
+                _scope_hash = self._slot_scope_query_hash(state.query) if _mm_mr else ""
+                for _mr in _market_rows[:100]:
+                    if not isinstance(_mr, dict):
+                        continue
+                    _mr_market = (
+                        _mr.get("market_name")
+                        or _mr.get("geographic_market")
+                        or ""
+                    )
+                    if not _mr_market:
+                        continue
+                    # Need at least one substantive HHI/share signal
+                    if not any(_mr.get(k) for k in (
+                        "pre_merger_hhi", "post_merger_hhi", "delta_hhi",
+                        "acquirer_share", "target_share", "other_shares",
+                        "risk_rating", "structural_presumption",
+                    )):
+                        continue
+                    _mr_norm = self._normalize_market_name(_mr_market)
+                    if not _mr_norm:
+                        continue
+                    _mr_hash_input = (
+                        f"{_mr_norm}|{_mr.get('post_merger_hhi') or ''}|"
+                        f"{_mr.get('delta_hhi') or ''}|{_mr.get('acquirer_share') or ''}"
+                    )
+                    _mr_hash = _hashlib.md5(_mr_hash_input.encode()).hexdigest()[:8]
+                    _mr_label = (
+                        f"{_mr_market}: HHI {_mr.get('post_merger_hhi') or 'unknown'} / "
+                        f"delta {_mr.get('delta_hhi') or 'unknown'}"
+                    )
+                    _mr_fact = (
+                        f"[MARKET_ROW] {_mr_market}: post-merger HHI "
+                        f"{_mr.get('post_merger_hhi') or 'unknown'}, delta "
+                        f"{_mr.get('delta_hhi') or 'unknown'}"
+                    )
+                    if _mr.get("structural_presumption"):
+                        _mr_fact += ", structural presumption triggered"
+                    if _mr.get("risk_rating"):
+                        _mr_fact += f", risk: {_mr['risk_rating']}"
+                    facts_to_add.append((_mr_fact, "supports", None, {
+                        "subject_ref_type": "free_text",
+                        "subject_ref_id": _mr_market,
+                        "predicate_key": "has_market_row",
+                        "object_json": json.dumps({
+                            "post_merger_hhi": _mr.get("post_merger_hhi"),
+                            "delta_hhi": _mr.get("delta_hhi"),
+                        }),
+                    }))
+                    if _mm_mr is None:
+                        continue
+                    _mr_payload = {
+                        "schema_ref": "legal.market_row.v1",
+                        "market_name": _mr_market,
+                        "product_market": _mr.get("product_market"),
+                        "geographic_market": _mr.get("geographic_market") or _mr_market,
+                        "acquirer_share": _mr.get("acquirer_share"),
+                        "target_share": _mr.get("target_share"),
+                        "other_shares": _mr.get("other_shares") or [],
+                        "pre_merger_hhi": _mr.get("pre_merger_hhi"),
+                        "post_merger_hhi": _mr.get("post_merger_hhi"),
+                        "delta_hhi": _mr.get("delta_hhi"),
+                        "structural_presumption": bool(_mr.get("structural_presumption")),
+                        "risk_rating": _mr.get("risk_rating"),
+                        "source_detail": _mr.get("source_detail"),
+                        "source_quote": _mr.get("source_quote"),
+                        "source_document": doc.filename,
+                    }
+                    _record_id, _ = _mm_mr.typed_evidence.upsert(
+                        "market_row",
+                        f"market:{_mr_norm}:{doc.filename}:{_mr_hash}",
+                        payload=_mr_payload,
+                        label=_mr_label,
+                        document_id=doc.filename,
+                        confidence=0.9,
+                    )
+                    # Mark a matching slot filled. Prefer exact key, fall back to
+                    # normalized substring match against any open collection_item slot.
+                    try:
+                        _slot_key = f"collection_item:legal.market_row.v1:msa:{_mr_norm}"
+                        _open = _mm_mr.extraction_slots.get_open_slots(
+                            _mm_mr.matter_id,
+                            slot_kind="collection_item",
+                            scope_query_hash=_scope_hash,
+                        )
+                        _matched = next(
+                            (s for s in _open if s.get("slot_key") == _slot_key),
+                            None,
+                        )
+                        if _matched is None:
+                            for s in _open:
+                                _sk = s.get("slot_key") or ""
+                                if (s.get("schema_ref") == "legal.market_row.v1"
+                                    and _mr_norm and _mr_norm in _sk):
+                                    _matched = s
+                                    break
+                        if _matched is not None:
+                            _mm_mr.extraction_slots.mark_filled(_matched["id"], _record_id)
+                    except Exception as _slot_exc:
+                        logger.debug("slot mark_filled failed: %s", _slot_exc)
 
             # Adverse evidence (hot documents, admissions, problematic language)
             _adv_ev = analysis.get("adverse_evidence")
@@ -12896,6 +13389,12 @@ Return:
         if _prov_summary:
             ordered.append(("provision_comparisons", _prov_summary, True))
 
+        # Row-atomic extraction-slot summary (PR wedge: market_row first).
+        # This is answer ingredients, not gap metadata — only filled rows.
+        _slot_row_summary = self._build_extraction_slot_row_summary(state)
+        if _slot_row_summary:
+            ordered.append(("extraction_slot_rows", _slot_row_summary, True))
+
         # Regulatory data summary for antitrust/regulatory tasks
         _reg_summary = self._build_regulatory_data_summary(state)
         if _reg_summary:
@@ -14279,6 +14778,10 @@ Return:
             return False, simple_lookup_detail
         if state.max_depth_reached < min_depth:
             return True, "Building minimum evidence base"
+
+        slot_blocks, slot_detail = self._slot_coverage_blocks_termination(state)
+        if slot_blocks:
+            return True, slot_detail
 
         mode_label = self._research_mode_label(budget.mode)
 

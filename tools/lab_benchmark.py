@@ -593,43 +593,45 @@ async def run_benchmark(args):
     print()
 
     results = []
-    for i, task_id in enumerate(task_ids, 1):
-        print(f"[{i}/{len(task_ids)}] {task_id}")
-        try:
-            task = load_task(lab_root, task_id)
-            result = await run_task(
-                task=task,
-                lab_root=lab_root,
-                research_mode=args.research_mode,
-                api_key=args.api_key,
-            )
-            results.append(result)
+    completed_count = 0
+    sem = asyncio.Semaphore(getattr(args, "concurrency", 1))
 
-            status_icon = "OK" if result["success"] else "FAIL"
-            elapsed = result.get("elapsed", 0)
-            output_len = result.get("output_length", 0)
-            print(f"  {status_icon} — {elapsed:.1f}s, {output_len} chars")
-
-            if args.auto_score and result["success"]:
-                print("  Scoring...")
-                scores = score_run(
-                    lab_root, result["run_id"], task_id,
-                    judge_model=args.judge_model,
+    async def _process(idx: int, task_id: str):
+        nonlocal completed_count
+        async with sem:
+            try:
+                task = load_task(lab_root, task_id)
+                result = await run_task(
+                    task=task,
+                    lab_root=lab_root,
+                    research_mode=args.research_mode,
+                    api_key=args.api_key,
                 )
-                if scores:
-                    result["scores"] = scores
-                    print(f"  Score: {scores['n_passed']}/{scores['n_criteria']} criteria passed")
+                if args.auto_score and result["success"]:
+                    scores = score_run(
+                        lab_root, result["run_id"], task_id,
+                        judge_model=args.judge_model,
+                    )
+                    if scores:
+                        result["scores"] = scores
+            except Exception as e:
+                result = {
+                    "task_id": task_id,
+                    "status": "error",
+                    "success": False,
+                    "error": str(e),
+                }
+        completed_count += 1
+        results.append(result)
+        status_icon = "OK" if result.get("success") else ("ERR" if result.get("status") == "error" else "FAIL")
+        elapsed = result.get("elapsed", 0)
+        score_str = ""
+        if "scores" in result:
+            s = result["scores"]
+            score_str = f"  score={s['n_passed']}/{s['n_criteria']}"
+        print(f"[{completed_count}/{len(task_ids)}] {task_id}  {status_icon}  {elapsed:.1f}s{score_str}")
 
-        except Exception as e:
-            print(f"  ERROR: {e}")
-            results.append({
-                "task_id": task_id,
-                "status": "error",
-                "success": False,
-                "error": str(e),
-            })
-
-        print()
+    await asyncio.gather(*(_process(i, t) for i, t in enumerate(task_ids, 1)))
 
     # Summary
     print("=" * 60)
@@ -686,6 +688,8 @@ def main():
     parser.add_argument("--auto-score", action="store_true", help="Score each task after running")
     parser.add_argument("--judge-model", default="claude-sonnet-4-6", help="LLM judge for scoring")
     parser.add_argument("--run-id", help="Run ID to score (with --score)")
+    parser.add_argument("--concurrency", type=int, default=1,
+                        help="Number of tasks to run in parallel (default: 1)")
     parser.add_argument("--verbose", action="store_true")
 
     args = parser.parse_args()

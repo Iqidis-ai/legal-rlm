@@ -286,8 +286,9 @@ async def run_benchmark(
     split: str,
     limit: int | None = None,
     api_key: str | None = None,
+    concurrency: int = 1,
 ) -> dict:
-    logger.info("Loading %s/%s (limit=%s)...", name, split, limit)
+    logger.info("Loading %s/%s (limit=%s, concurrency=%d)...", name, split, limit, concurrency)
     rows = load_benchmark(name, split, limit)
     logger.info("Loaded %d examples", len(rows))
 
@@ -309,18 +310,23 @@ async def run_benchmark(
     results = []
     total_score = 0.0
     scored_count = 0
+    completed = 0
+    write_lock = asyncio.Lock()
+    sem = asyncio.Semaphore(concurrency)
 
     with tempfile.TemporaryDirectory(prefix=f"irys_bench_{name}_") as tmp:
         tmp_base = Path(tmp)
-        for i, row in enumerate(rows):
+
+        async def _process(i: int, row: dict):
+            nonlocal total_score, scored_count, completed
             query, context, expected = adapter(row)
             if not query:
                 logger.warning("Example %d has no query, skipping", i)
-                continue
-
-            t0 = time.monotonic()
-            output = await run_single(irys, query, context, tmp_base, i)
-            elapsed = time.monotonic() - t0
+                return
+            async with sem:
+                t0 = time.monotonic()
+                output = await run_single(irys, query, context, tmp_base, i)
+                elapsed = time.monotonic() - t0
 
             score, detail = scorer(output, expected)
             entry = {
@@ -332,21 +338,21 @@ async def run_benchmark(
                 "detail": detail,
                 "elapsed": round(elapsed, 1),
             }
-            results.append(entry)
+            async with write_lock:
+                results.append(entry)
+                if score >= 0:
+                    total_score += score
+                    scored_count += 1
+                completed += 1
+                status = "PASS" if score >= 0.5 else ("SKIP" if score < 0 else "FAIL")
+                logger.info(
+                    "[%d/%d] %s  score=%.2f  (%.1fs)  %s",
+                    completed, len(rows), status, score, elapsed, detail,
+                )
+                with (out_dir / "results.jsonl").open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-            if score >= 0:
-                total_score += score
-                scored_count += 1
-
-            status = "PASS" if score >= 0.5 else ("SKIP" if score < 0 else "FAIL")
-            logger.info(
-                "[%d/%d] %s  score=%.2f  (%.1fs)  %s",
-                i + 1, len(rows), status, score, elapsed, detail,
-            )
-
-            # Write incremental results
-            with (out_dir / "results.jsonl").open("a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        await asyncio.gather(*(_process(i, row) for i, row in enumerate(rows)))
 
     irys.close_all_matter_models()
 
@@ -389,6 +395,8 @@ def main():
     parser.add_argument("--split", default="test")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--api-key", default=None)
+    parser.add_argument("--concurrency", type=int, default=1,
+                        help="Number of examples to run in parallel (default: 1)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -422,6 +430,7 @@ def main():
                 split=split,
                 limit=args.limit,
                 api_key=args.api_key,
+                concurrency=args.concurrency,
             ))
             summaries.append(summary)
         except FileNotFoundError as e:
