@@ -1748,14 +1748,12 @@ class ReadFamilyHandler:
             doc = str(r.get("primary_document_id") or "").strip() or "unknown"
             line = f"- [{role}] {prop[:200]}  (doc: {doc})"
             if self._assertion_is_verified(mm, str(r.get("id"))):
-                if len(verified_lines) < 25:
-                    verified_lines.append(line)
-                    visible_verified_ids.append(str(r.get("id")))
-                    if doc and doc != "unknown":
-                        visible_docs_set.add(doc)
+                verified_lines.append(line)
+                visible_verified_ids.append(str(r.get("id")))
+                if doc and doc != "unknown":
+                    visible_docs_set.add(doc)
             else:
-                if len(candidate_lines) < 15:
-                    candidate_lines.append(line)
+                candidate_lines.append(line)
         return (
             "\n".join(verified_lines),
             "\n".join(candidate_lines),

@@ -219,11 +219,11 @@ class PacketBudget:
       caps so mandatory sections cannot be crowded out
     """
 
-    coverage_tokens: int = 256
-    gap_tokens: int = 256
-    orientation_tokens: int = 800
-    per_optional_section_tokens: int = 384
-    synthesis_total_tokens: int = 3000
+    coverage_tokens: int = 0  # 0 = unlimited (use model's full context)
+    gap_tokens: int = 0
+    orientation_tokens: int = 0
+    per_optional_section_tokens: int = 0
+    synthesis_total_tokens: int = 0  # No cap — let the model use its full context window
 
 
 @dataclass
@@ -4120,7 +4120,7 @@ class RLMEngine:
         if self._matter_model is None:
             return
         try:
-            recent = self._matter_model.assertions.list_recent_for_hydration(limit=200)
+            recent = self._matter_model.assertions.list_recent_for_hydration(limit=2000)
         except Exception as _e:
             logger.warning("Matter model hydration failed — proceeding without prior facts: %s", _e)
             return
@@ -4135,7 +4135,7 @@ class RLMEngine:
         # classification — without this, a matter with many stale rows
         # pushes 600+ facts into accumulated_facts and blows the prompt
         # budget. Cap is the same 200-slot budget the old code used.
-        HYDRATION_CAP = 200
+        HYDRATION_CAP = 2000
         loaded = 0
         _strip_role_prefix = __import__("re").compile(r'^\[[A-Z_]+\]\s*').sub
         # P0.2: bucket partitioning. Engine consumers read the
@@ -6701,7 +6701,13 @@ Return:
         # Operative/authoritative facts appear first so the LLM weights them more heavily.
         facts = state.findings.get("accumulated_facts", [])
         facts = self._sort_facts_by_trust(facts)
-        findings_text = "\n".join(f"• {fact}" for fact in facts[:75])
+
+        # Evidence relevance filter: LITE pass reads the full fact set and drops
+        # only clearly irrelevant items. This replaces hard caps — the model decides
+        # what matters based on the query, not an arbitrary number.
+        if len(facts) > 50:
+            facts = await self._filter_facts_for_relevance(state.query, facts)
+        findings_text = "\n".join(f"• {fact}" for fact in facts)
 
         # Store citations and entities as structured metadata for UI panels.
         state.findings["metadata_citations"] = state.get_citations_formatted()
@@ -7493,6 +7499,57 @@ Return:
 
         return sorted(facts, key=_rank)
 
+    async def _filter_facts_for_relevance(
+        self, query: str, facts: list[str],
+    ) -> list[str]:
+        """Use a LITE-tier LLM call to filter facts for relevance to the query.
+
+        Receives the full fact set and returns only those that are relevant
+        to answering the user's question. This replaces hard numeric caps —
+        the model decides what matters based on semantic relevance, not arbitrary
+        truncation. Keeps everything on failure (fail-open, never lose evidence).
+        """
+        numbered = "\n".join(f"{i}: {f}" for i, f in enumerate(facts))
+        prompt = (
+            "You are filtering evidence for a synthesis step. Given the user's query "
+            "and a numbered list of facts extracted during investigation, return ONLY "
+            "the indices of facts that are RELEVANT to answering the query. A fact is "
+            "relevant if it directly supports, contradicts, or contextualizes the answer. "
+            "Drop only facts that are clearly unrelated to the query.\n\n"
+            "IMPORTANT: When in doubt, KEEP the fact. It is far better to include a "
+            "marginally relevant fact than to drop a needed one.\n\n"
+            f"USER QUERY: {query}\n\n"
+            f"FACTS (numbered):\n{numbered}\n\n"
+            "Return a JSON array of integer indices to KEEP. Example: [0, 1, 3, 5, 7]\n"
+            "Return ONLY the JSON array, nothing else."
+        )
+        try:
+            response = await self.client.complete(
+                prompt=prompt,
+                tier=ModelTier.LITE,
+                timeout=30.0,
+                usage_label="evidence_relevance_filter",
+            )
+            import json as _json
+            text = response.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            indices = _json.loads(text)
+            if isinstance(indices, list) and all(isinstance(i, int) for i in indices):
+                filtered = [facts[i] for i in indices if 0 <= i < len(facts)]
+                if filtered:
+                    logger.info(
+                        "Evidence filter: %d/%d facts kept for query",
+                        len(filtered), len(facts),
+                    )
+                    return filtered
+        except Exception as exc:
+            logger.warning(
+                "Evidence relevance filter failed (keeping all %d facts): %s",
+                len(facts), exc,
+            )
+        return facts
+
     # ------------------------------------------------------------------
     # PR.3: mandatory capped coverage and missingness for synthesis context
     # ------------------------------------------------------------------
@@ -7529,9 +7586,9 @@ Return:
         or key:value lines; char-trim only kicks in when a single line
         does not fit. An ellipsis marker records omitted content.
         """
-        if not text or cap_tokens <= 0:
+        if not text:
             return ""
-        if self._estimate_tokens(text) <= cap_tokens:
+        if cap_tokens <= 0 or self._estimate_tokens(text) <= cap_tokens:
             return text
         kept: list[str] = []
         used = 0
@@ -7651,7 +7708,7 @@ Return:
                 f"{verified} verified, {candidate} candidate{gap_flag}"
             )
             cost = self._estimate_tokens(line + "\n")
-            if used + cost > cap and shown > 0:
+            if cap > 0 and used + cost > cap and shown > 0:
                 omitted = len(ordered) - shown
                 break
             lines.append(line)
@@ -7760,7 +7817,7 @@ Return:
             if forced is not None:
                 rendered = _render(forced)
                 cost = sum(self._estimate_tokens(l + "\n") for l in rendered)
-                if used + cost > cap:
+                if cap > 0 and used + cost > cap:
                     # Hard-trim the description to fit.
                     mat = float(forced.get("materiality_score") or 0.0)
                     label = "HIGH" if mat >= 0.7 else "MED" if mat >= 0.4 else "LOW"
@@ -7777,7 +7834,7 @@ Return:
         for gap in candidates:
             rendered = _render(gap)
             cost = sum(self._estimate_tokens(l + "\n") for l in rendered)
-            if used + cost > cap:
+            if cap > 0 and used + cost > cap:
                 break
             lines.extend(rendered)
             used += cost
@@ -7932,9 +7989,11 @@ Return:
         if quant:
             _add_optional("quantitative", "Quantitative Summary:\n" + quant)
         citations_text = state.get_citations_formatted()
+        _citations_block = ""
         if citations_text:
-            _add_optional(
-                "citations", "Documentary Citations:\n" + citations_text
+            _citations_block = self._cap_text_by_tokens(
+                "Documentary Citations:\n" + citations_text,
+                budget.per_optional_section_tokens * 2,
             )
 
         # Use LITE to decide which of the capped + allowed optional
@@ -7990,27 +8049,35 @@ Return:
             "evidence", "Evidence Gathered:\n" + clean_findings, True,
         ))
 
+        # Citations are mandatory — synthesis needs document references for
+        # grounded answers. Without them, findings lose provenance.
+        if _citations_block:
+            clean_citations = _citations_block
+            if policy_audience == "clean" and self._matter_model is not None:
+                clean_citations = self._scrub_privileged_references(clean_citations)
+            ordered.append(("citations", clean_citations, True))
+
         # Optional sections in stable order behind mandatory ones so the
         # total-cap pass drops them first.
         _ORDER = [
             "source_calibration", "decision_context", "entities",
-            "relationships", "quantitative", "citations",
+            "relationships", "quantitative",
         ]
         for key in _ORDER:
             if key in selected_keys and key in candidates:
                 ordered.append((key, candidates[key], False))
 
-        # Total-cap pass. Mandatory sections always go in. Optional
-        # sections drop (recorded) once the accumulator would exceed
-        # synthesis_total_tokens. If a single mandatory section alone
-        # exceeds the cap, it still goes in — we never drop mandatory.
+        # Total-cap pass. When synthesis_total_tokens is 0 (unlimited),
+        # include everything — let the model use its full context window.
+        # Otherwise, mandatory sections always go in and optional sections
+        # drop once the accumulator would exceed the cap.
         sections: list[str] = []
         used_tokens = 0
         omitted: list[str] = []
         total_cap = budget.synthesis_total_tokens
         for key, text, mandatory in ordered:
             cost = self._estimate_tokens(text + "\n\n")
-            if mandatory or used_tokens + cost <= total_cap:
+            if total_cap <= 0 or mandatory or used_tokens + cost <= total_cap:
                 sections.append(text)
                 used_tokens += cost
             else:

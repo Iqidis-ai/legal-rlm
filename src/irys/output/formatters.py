@@ -56,7 +56,7 @@ class MarkdownFormatter:
                 "## Key Findings",
                 "",
             ])
-            for i, fact in enumerate(facts[:15], 1):
+            for i, fact in enumerate(facts, 1):
                 lines.append(f"{i}. {fact}")
             lines.append("")
 
@@ -66,11 +66,11 @@ class MarkdownFormatter:
                 "## Citations",
                 "",
             ])
-            for c in state.citations[:20]:
+            for c in state.citations:
                 verified = "✓" if c.verified else "○"
                 page = f", p. {c.page}" if c.page else ""
                 lines.append(f"- [{verified}] **{c.document}**{page}")
-                lines.append(f"  > \"{c.text[:100]}...\"")
+                lines.append(f"  > \"{c.text}\"")
                 lines.append(f"  - *{c.relevance}*")
                 lines.append("")
 
@@ -146,11 +146,11 @@ class HTMLFormatter:
 
     <h2>Key Findings</h2>
     <ol>
-        {"".join(f"<li>{html.escape(f)}</li>" for f in facts[:15])}
+        {"".join(f"<li>{html.escape(f)}</li>" for f in facts)}
     </ol>
 
     <h2>Citations</h2>
-    {"".join(self._format_citation_html(c) for c in state.citations[:20])}
+    {"".join(self._format_citation_html(c) for c in state.citations)}
 
     <h2>Key Entities</h2>
     {"".join(f'<span class="entity">{html.escape(e.name)} ({e.mentions})</span>' for e in state.get_top_entities(10))}
@@ -178,7 +178,7 @@ class HTMLFormatter:
         <div class="citation">
             <span class="{verified_class}">{verified_icon}</span>
             <strong>{html.escape(citation.document)}</strong>{page}
-            <blockquote>{html.escape(citation.text[:150])}...</blockquote>
+            <blockquote>{html.escape(citation.text)}</blockquote>
             <em>{html.escape(citation.relevance)}</em>
         </div>"""
 
@@ -226,7 +226,7 @@ class PlainTextFormatter:
                 "KEY FINDINGS",
                 "-" * 40,
             ])
-            for i, fact in enumerate(facts[:15], 1):
+            for i, fact in enumerate(facts, 1):
                 lines.append(f"  {i}. {fact}")
             lines.append("")
 
@@ -236,11 +236,11 @@ class PlainTextFormatter:
                 "CITATIONS",
                 "-" * 40,
             ])
-            for c in state.citations[:15]:
+            for c in state.citations:
                 verified = "[V]" if c.verified else "[ ]"
                 page = f", p. {c.page}" if c.page else ""
                 lines.append(f"{verified} {c.document}{page}")
-                lines.append(f"      \"{c.text[:80]}...\"")
+                lines.append(f"      \"{c.text}\"")
             lines.append("")
 
         final_output = state.findings.get("final_output")
