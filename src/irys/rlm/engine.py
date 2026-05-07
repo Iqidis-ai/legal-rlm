@@ -1833,6 +1833,25 @@ ANALYTICAL FRAMEWORK COMPLETENESS: When producing a risk assessment, strategy me
 
 Omit a section ONLY if the user's query clearly does not call for it (e.g., a pure extraction task needs no recommendations).
 
+DELIVERABLE FORMAT AWARENESS: If the user's query asks for a SPECIFIC deliverable type, format your output as that type of document in its proper professional form. The Required Output Sections above are a default analytical framework — adapt them to match the requested deliverable format:
+- **Commitments proposal / remedy proposal**: Use formal numbered paragraphs (1.1, 1.2, 2.1), defined terms in capitals (e.g., "Divestiture Business", "Monitoring Trustee"), and include ALL standard procedural provisions (review/modification clause, governing law, effective date, Commission approval mechanisms)
+- **Gap memorandum / compliance gap report**: Organize by condition precedent with status tracking (Satisfied / Outstanding / Partially Satisfied) and include a summary table
+- **Due diligence report**: Organize by workstream with executive summary, key findings matrix, and purchase price impact recommendations
+- **Term sheet / markup analysis**: Organize by provision category with original vs. proposed comparison columns
+- **Board memorandum / investment committee memo**: Include executive summary, deal overview, key risks, recommendations, and vote/approval request
+If the requested deliverable has standard professional conventions (e.g., EU merger commitments use numbered paragraphs with defined terms), follow those conventions even if they differ from the default sections above. The goal is a document the user can deploy professionally.
+
+GRANULAR SPECIFICITY REQUIREMENT: When the evidence contains specific quantitative details, you MUST include ALL of them — not generalizations. This includes:
+- Exact facility names, locations, and sizes (e.g., "Grenoble manufacturing facility, 23,000 sq.m., 340 employees")
+- Exact team sizes and compositions (e.g., "85 R&D engineers at Sophia Antipolis")
+- Exact counts (e.g., "all 17 currently supported third-party PLC platforms")
+- Exact financial figures from the documents, not rounded approximations
+- Named individuals with their titles and roles
+- Specific contract names, clause numbers, and effective dates
+Do not generalize ("key personnel") when specific data is available ("340 manufacturing employees at Grenoble and 85 R&D engineers at Sophia Antipolis"). The goal is that every factual detail in the source documents that is relevant to the analysis appears in the output.
+
+TABLE OUTPUT REQUIREMENT: If the user's query describes data tables, worksheets, workbooks, spreadsheet deliverables, schedules, or reconciliations, you MUST include the requested data as properly formatted markdown tables using | Column | Header | format. Each table should be preceded by a ## heading naming it. Ensure numeric values are in their own cells. Include ALL data points referenced in the analysis. Tables will be converted to Excel spreadsheets — structure them accordingly with clear column headers and complete data rows.
+
 Final Check Before Responding
 
 Before finalizing, check:
@@ -1853,6 +1872,9 @@ Before finalizing, check:
 - Did you flag ALL internal documents with adversarially problematic language, with exact quotes?
 - Did you address standard defenses and counterarguments (even if to dismiss them)?
 - Did you compare strategic alternatives with specific pros and cons?
+- Did you format the output as the SPECIFIC deliverable type requested (e.g., formal commitments proposal, gap memorandum, board memo) rather than defaulting to an analysis memo?
+- Did you include EVERY specific name, number, facility, team size, and count from the evidence — not generalizations?
+- If the task requires tables/spreadsheets/workbooks, did you include properly formatted markdown tables with complete data?
 
 Original Query: {query}
 
@@ -2751,6 +2773,9 @@ class RLMEngine:
             "draft", "strategy", "review", "antitrust", "hsr", "merger",
             "credit facility", "credit agreement", "term sheet",
             "loan agreement", "commitment letter",
+            "cross-reference", "cross reference", "discrepancy", "memorandum",
+            "disclosure", "gap analysis", "compliance program",
+            "abstract", "prepare", "produce",
         )
         is_extraction = any(signal in q for signal in extraction_signals)
         is_analysis = any(signal in q for signal in analysis_signals)
@@ -2908,6 +2933,56 @@ class RLMEngine:
                 "6. For PPA: show each intangible asset category with fair value, useful life, and amortization\n"
                 "7. Compute all variances and flag items exceeding materiality thresholds\n"
                 "8. Cross-reference figures across reports (management vs auditor vs QoE provider)\n"
+            )
+        _is_commitments = any(w in q for w in (
+            "commitment", "remedy", "remedies", "divestiture",
+            "merger control", "phase ii", "statement of objections",
+        ))
+        if _is_commitments:
+            base += (
+                "\nMERGER REMEDY / COMMITMENTS PROPOSAL INSTRUCTIONS:\n"
+                "This task involves EU or antitrust merger remedy commitments. You MUST:\n"
+                "1. Use formal numbered paragraphs (1.1, 1.2, 2.1) with defined terms in CAPITALS\n"
+                "2. Include an EXECUTIVE SUMMARY section referencing ALL relevant markets by name\n"
+                "3. For EACH relevant market: state the specific structural or behavioral remedy proposed\n"
+                "4. Include ALL standard commitments proposal sections:\n"
+                "   - Divestiture perimeter (IP, facilities by name/location/size, customer contracts, R&D teams with headcount)\n"
+                "   - Purchaser suitability criteria (financial resources, independence, expertise, no prima facie concerns)\n"
+                "   - Hold-separate and ring-fencing obligations\n"
+                "   - Monitoring trustee provisions (appointment subject to Commission approval, reporting frequency, access rights)\n"
+                "   - Divestiture trustee provisions (trigger conditions, mandate, timeline)\n"
+                "   - Key personnel retention (identify specific teams, facilities, and headcounts)\n"
+                "   - TSA terms (duration, pricing, scope)\n"
+                "   - Crown jewel provision (trigger, enhanced package, timeline)\n"
+                "   - Review and modification procedure (how parties request Commission to waive/modify commitments)\n"
+                "   - Compliance reporting and dispute resolution\n"
+                "5. Reference the governing regulation by name and number (e.g., Council Regulation (EC) No 139/2004)\n"
+                "6. Reference the Commission Remedies Notice or equivalent guidance\n"
+                "7. For licensing commitments (FRAND, etc.), specify concrete parameters:\n"
+                "   royalty rate range/methodology, definition of eligible licensees, dispute resolution mechanism,\n"
+                "   non-discrimination benchmarks, response timelines, and scope of licensed technology\n"
+                "8. Name EVERY specific facility, team, and asset count from the evidence\n"
+                "   (e.g., 'Grenoble manufacturing facility (23,000 sq.m., 340 employees)')\n"
+                "9. For interoperability commitments, specify the exact scope\n"
+                "   (e.g., 'all 17 currently supported third-party PLC platforms')\n"
+                "10. Include anti-bundling and standalone availability commitments for software products\n"
+            )
+        _is_disclosure = any(w in q for w in (
+            "borrower disclos", "due diligence finding",
+            "disclosure", "dd finding",
+        ))
+        if _is_disclosure:
+            base += (
+                "\nDISCLOSURE COMPARISON INSTRUCTIONS:\n"
+                "This task compares borrower disclosures against independent findings. You MUST:\n"
+                "1. For EACH item in the DD findings: state whether the borrower disclosed it, partially disclosed it, or omitted it\n"
+                "2. Identify EVERY undisclosed item by name (subsidiaries, litigation, liens, contracts, etc.)\n"
+                "3. For each undisclosed item, state the specific dollar exposure or risk\n"
+                "4. Organize findings by category: undisclosed subsidiaries, undisclosed litigation,\n"
+                "   undisclosed indebtedness, undisclosed liens, undisclosed material contracts,\n"
+                "   expired/lapsed items, regulatory issues, employee/benefit discrepancies\n"
+                "5. State both the borrower's claimed position AND the DD-discovered actual position\n"
+                "6. Include ALL entity names, dollar amounts, dates, and geographic details from the evidence\n"
             )
         return base
 
