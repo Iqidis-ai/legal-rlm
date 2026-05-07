@@ -730,7 +730,21 @@ Respond in JSON (be thorough — include ALL relevant provisions, section number
         "risk_rating_candidate": "Critical|High|Moderate|Low with one-sentence reason",
         "action_items": ["pre-closing consent, waiver, amendment, payoff, replacement policy, review missing dependency"],
         "missing_expected_provisions": ["provision type expected but absent"]
-    }}
+    }},
+    "provision_comparisons": [
+        {{"provision": "provision name (e.g. Interest Rate Floor, Leverage Ratio)",
+          "value": "exact value from this document (number, percentage, threshold)",
+          "section_ref": "Section X.Y or clause reference",
+          "source_role": "original|markup|playbook|commitment_letter|credit_memo",
+          "value_type": "threshold|cap|rate|period|presence|basket|trigger"}}
+    ],
+    "regulatory_data": [
+        {{"category": "market_share|hhi|hot_doc|barrier|remedy|timeline|jurisdiction|overlap|synergy|accretion|valuation",
+          "entity": "company or market name",
+          "value": "exact data point (number, percentage, or quote)",
+          "source_detail": "page/slide/section reference",
+          "significance": "brief note on why this matters"}}
+    ]
 }}
 """
 
