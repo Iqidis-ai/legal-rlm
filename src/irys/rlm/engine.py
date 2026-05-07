@@ -1818,7 +1818,7 @@ Your analysis MUST include ALL of the following sections when applicable to the 
 
 6. **Next Steps** — Prioritized action items with suggested sequence.
 
-COMPLETENESS REQUIREMENT: For document comparison tasks, you must identify a MINIMUM of 10 specific deviations. If you found fewer, systematically re-examine each major section of both documents for provisions you may have missed: pricing, fees, covenants, baskets, events of default, change of control, assignment, prepayment, representations, conditions precedent, negative covenants, and reporting.
+COMPLETENESS REQUIREMENT: For document comparison tasks, you must identify EVERY specific deviation — aim for 20-30+ distinct provisions. If a PROVISION COMPARISON DATA table is provided in the evidence, you MUST address EVERY row in that table as a separate deviation finding. Do NOT summarize or group multiple provisions — each gets its own section with original value, changed value, risk rating, dollar impact, and recommendation. If you have identified fewer than 15 deviations, systematically re-examine EVERY major section of both documents: pricing, fees, margin grids, commitment fees, financial covenants (each separately), EBITDA add-backs, synergy caps, acquisition baskets, restricted payments, ECF sweep, events of default, change of control, assignment, MFN/anti-layering, prepayment, reinvestment, MAE, reporting, representations, conditions precedent, negative covenants, and cure rights.
 
 ANALYTICAL FRAMEWORK COMPLETENESS: When producing a risk assessment, strategy memo, or analytical memorandum, you MUST address ALL standard analytical frameworks applicable to the subject matter. This means:
 - Identify and apply the governing legal framework (statute, regulation, or guideline) by name and citation
@@ -1847,7 +1847,7 @@ Before finalizing, check:
 - Did you show explicit calculations for quantitative analysis (not just mention numbers)?
 - Did you provide specific recommendations with primary AND fallback positions?
 - Did you assess the practical impact with specific dollar amounts where possible?
-- For document comparisons: did you identify at least 10 specific deviations with original vs. changed values?
+- For document comparisons: did you address EVERY provision in the PROVISION COMPARISON DATA table? Did you identify at least 15-20 specific deviations with original vs. changed values?
 - Did you address ALL standard analytical frameworks applicable to this subject matter?
 - Did you analyze EVERY geographic market, product category, or item in the evidence (not just the top examples)?
 - Did you flag ALL internal documents with adversarially problematic language, with exact quotes?
