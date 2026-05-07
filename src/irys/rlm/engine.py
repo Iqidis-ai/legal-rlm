@@ -6350,59 +6350,64 @@ class RLMEngine:
         facts: "list[str]",
         ledger_items: "list[str]",
     ) -> str:
-        """Check synthesis output against coverage ledger; repair if >40% items missing.
+        """Check synthesis output against coverage ledger; repair if many items missing.
 
         For extraction tasks, the synthesis often identifies evidence but fails
         to incorporate all findings into the formal memo structure. This pass
-        identifies specific missed items and asks the LLM to produce additional
+        identifies specific missed facts and asks the LLM to produce additional
         analysis sections covering them.
         """
         if not ledger_items or len(ledger_items) < 10:
             return response
         response_lower = response.lower()
-        missed: list[str] = []
+        missed_indices: list[int] = []
         for item in ledger_items:
             _vals = item.split("] ", 1)[-1] if "] " in item else item
             _parts = [v.strip() for v in _vals.split(";") if v.strip()]
             _found = any(p.lower() in response_lower for p in _parts if len(p) > 3)
             if not _found:
-                missed.append(item)
-        coverage_pct = 1.0 - len(missed) / len(ledger_items)
+                _idx_str = item.split("]")[0].strip("[") if item.startswith("[") else ""
+                try:
+                    _idx = int(_idx_str) - 1
+                    if 0 <= _idx < len(facts):
+                        missed_indices.append(_idx)
+                except (ValueError, IndexError):
+                    pass
+        coverage_pct = 1.0 - len(missed_indices) / len(ledger_items) if ledger_items else 1.0
         state.findings["synthesis_coverage_pct"] = round(coverage_pct * 100, 1)
-        state.findings["synthesis_missed_ledger_count"] = len(missed)
-        if coverage_pct >= 0.6:
+        state.findings["synthesis_missed_ledger_count"] = len(missed_indices)
+        if coverage_pct >= 0.5 or len(missed_indices) < 8:
             return response
         logger.info(
             "Synthesis coverage %.0f%% (%d/%d items missing) — running repair pass",
-            coverage_pct * 100, len(missed), len(ledger_items),
+            coverage_pct * 100, len(missed_indices), len(ledger_items),
         )
-        self._emit_step(state, StepType.SYNTHESIS, f"Coverage repair: {len(missed)} items missing from output")
-        missed_facts_text = "\n".join(
-            f"- {facts[int(item.split(']')[0].strip('['))]} " if item[0] == '[' and item.split(']')[0].strip('[').isdigit() else f"- {item}"
-            for item in missed[:100]
-        )
+        self._emit_step(state, StepType.SYNTHESIS, f"Coverage repair: {len(missed_indices)} items missing from output")
+        missed_facts = [facts[i] for i in missed_indices[:80]]
+        missed_facts_text = "\n".join(f"{i+1}. {f}" for i, f in enumerate(missed_facts))
         repair_prompt = (
-            "You previously produced a legal analysis memo, but it missed many specific findings "
-            "from the evidence. Below is your original output followed by a list of MISSED findings "
-            "that MUST be incorporated.\n\n"
-            "TASK: Produce ADDITIONAL analysis sections covering ONLY the missed items below. "
-            "For each missed item, provide:\n"
-            "1. The specific provision/issue identified\n"
-            "2. The original vs. proposed/actual terms (with exact figures)\n"
-            "3. Risk assessment (RED/YELLOW/GREEN)\n"
-            "4. A specific recommendation (reject/counter/accept with fallback)\n\n"
-            "Do NOT repeat content already in the original output. Only add new sections.\n"
-            "Maintain the same format and style as the original output.\n\n"
-            f"ORIGINAL OUTPUT (abbreviated to last 2000 chars):\n{response[-2000:]}\n\n"
-            f"MISSED ITEMS THAT MUST BE COVERED ({len(missed)} items):\n{missed_facts_text}\n\n"
-            "Produce the additional sections now. Be exhaustive — cover EVERY missed item."
+            "You produced a legal analysis memo but MISSED the following evidence items. "
+            "These are COMPLETE findings extracted during investigation — each one describes "
+            "a specific provision change, discrepancy, or issue that MUST be in the output.\n\n"
+            "TASK: For EACH missed finding below, produce a row in an issues table and a brief "
+            "analysis paragraph. Format each as:\n\n"
+            "### [Issue Title]\n"
+            "- **Provision**: [section reference]\n"
+            "- **Original**: [exact original terms/value]\n"
+            "- **Proposed/Actual**: [exact changed terms/value]\n"
+            "- **Risk**: [RED/YELLOW/GREEN]\n"
+            "- **Impact**: [quantitative impact with dollar calculation if numeric]\n"
+            "- **Recommendation**: [specific action with primary and fallback positions]\n\n"
+            "Do NOT skip any finding. Each one is a separate issue.\n\n"
+            f"MISSED FINDINGS ({len(missed_facts)} items):\n{missed_facts_text}\n\n"
+            "Produce the additional analysis now. Cover EVERY finding above."
         )
         try:
             state.llm_calls_required += 1
             repair_text = await self.client.complete(
                 repair_prompt,
                 tier=ModelTier.FLASH,
-                timeout=120.0,
+                timeout=180.0,
                 usage_label="synthesis_coverage_repair",
             )
             if repair_text and len(repair_text.strip()) > 100:
