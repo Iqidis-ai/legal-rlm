@@ -49,8 +49,8 @@ logger = logging.getLogger("irys")
 class IrysConfig:
     """Configuration for the Irys system."""
     api_key: Optional[str] = None
-    max_depth: int = 5
-    max_leads_per_level: int = 5
+    max_depth: int = 8
+    max_leads_per_level: int = 12
     checkpoint_dir: Optional[str] = None
     output_format: str = "markdown"
     log_level: str = "INFO"
