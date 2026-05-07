@@ -226,8 +226,11 @@ class SearchResults:
     total_matches: int
 
     def top(self, n: int = 10) -> list[SearchHit]:
-        """Get top N results by score."""
-        return sorted(self.hits, key=lambda h: h.score, reverse=True)[:n]
+        """Get top N results by score, with deterministic tie-breaking."""
+        return sorted(
+            self.hits,
+            key=lambda h: (-h.score, h.file_path, getattr(h, 'page_num', 0) or 0, h.line_num, h.match_text),
+        )[:n]
 
     def by_file(self) -> dict[str, list[SearchHit]]:
         """Group results by file."""

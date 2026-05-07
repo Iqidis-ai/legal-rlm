@@ -359,7 +359,7 @@ Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "10"
+_ORIENTATION_CACHE_VERSION = "11"
 
 
 def _format_matter_context(ctx) -> str:
@@ -1557,17 +1557,30 @@ Required Output Sections
 
 Your analysis MUST include ALL of the following sections when applicable to the query:
 
-1. **Issues Identified** — Every material issue, deviation, risk, or finding. Be EXHAUSTIVE — list every specific item, not just the top 3-5 themes. Include specific provision references (e.g., "Section 6.2(a)"), defined terms, and clause language.
+1. **Issues Identified** — Every material issue, deviation, risk, or finding. Be EXHAUSTIVE — list every specific item, not just the top 3-5 themes. Each issue MUST include:
+   - Specific provision reference (e.g., "Section 6.2(a)")
+   - The EXACT original language or value (e.g., "Original: flat 0.30% commitment fee")
+   - The EXACT changed/proposed language or value (e.g., "Markup: grid-based 0.30%/0.40%/0.50% at leverage tiers")
+   - If comparing documents, state BOTH sides explicitly for every deviation
 
-2. **Risk Assessment** — For each material issue, assign a risk rating: Critical / High / Moderate / Low. Explain WHY in one sentence per rating. Do not skip this section.
+2. **Risk Assessment** — For EVERY material issue, assign a risk rating using this scale:
+   - **Red** — Material adverse change requiring immediate pushback or rejection
+   - **Yellow** — Concerning deviation requiring negotiation or modification
+   - **Green** — Acceptable, market-standard, or immaterial change
+   You MUST use Red/Yellow/Green for EVERY issue. Do not skip any issue. Do not use other rating scales.
 
-3. **Quantitative Analysis** — Where numbers exist in the evidence, perform the calculation or comparison. Include specific dollar amounts, percentages, ratios, thresholds, dates, and numeric comparisons. Show the math when comparing terms across documents or against standards. If two documents differ on a number, state both numbers explicitly.
+3. **Quantitative Analysis** — Where numbers exist in the evidence, perform the calculation or comparison. Include specific dollar amounts, percentages, ratios, thresholds, dates, and numeric comparisons. Show the math explicitly (e.g., "$175,000,000 × 0.25% = $437,500 per year additional interest cost"). If two documents differ on a number, state both numbers and compute the delta. Use the entity's actual financial data when available.
 
-4. **Impact Analysis** — For each material finding, explain the practical impact. What does this deviation/risk/issue actually mean for the parties? What is the financial exposure, legal consequence, or strategic implication?
+4. **Impact Analysis** — For each material finding, explain the practical impact in concrete terms. What does this deviation/risk/issue actually mean for the parties? What is the financial exposure (in dollars), legal consequence, or strategic implication? Connect to the entity's specific situation (e.g., "Given Ridgeline's $17.5M equipment financing, a $1M cross-default threshold could trigger on routine equipment disputes").
 
-5. **Recommendations** — Specific, actionable recommendations for each material issue. Not generic advice — state exactly what should be done (e.g., "Negotiate to restore the FCCR holiday through FY2026" or "Request deletion of the inter-agency sharing carve-out in Section 4.3").
+5. **Recommendations** — For EVERY material issue, provide a specific, actionable recommendation with:
+   - Primary position (e.g., "Restore original $25M individual basket")
+   - Fallback/compromise position (e.g., "Negotiate to $20M if $25M rejected")
+   - Do NOT give generic advice like "discuss with counterparty"
 
 6. **Next Steps** — Prioritized action items with suggested sequence.
+
+COMPLETENESS REQUIREMENT: For document comparison tasks, you must identify a MINIMUM of 10 specific deviations. If you found fewer, systematically re-examine each major section of both documents for provisions you may have missed: pricing, fees, covenants, baskets, events of default, change of control, assignment, prepayment, representations, conditions precedent, negative covenants, and reporting.
 
 Omit a section ONLY if the user's query clearly does not call for it (e.g., a pure extraction task needs no recommendations).
 
@@ -1581,10 +1594,11 @@ Before finalizing, check:
 - Did you surface the real weaknesses and risks?
 - Did you give the user the most useful next steps or clarifying question where needed?
 - Is this strong enough that a demanding senior lawyer would trust it?
-- Did you include risk ratings for each material issue?
-- Did you include specific quantitative analysis where numbers exist?
-- Did you provide actionable recommendations, not just observations?
-- Did you assess the practical impact of each finding?
+- Did you assign a Red/Yellow/Green risk rating to EVERY material issue?
+- Did you show explicit calculations for quantitative analysis (not just mention numbers)?
+- Did you provide specific recommendations with primary AND fallback positions?
+- Did you assess the practical impact with specific dollar amounts where possible?
+- For document comparisons: did you identify at least 10 specific deviations with original vs. changed values?
 
 Original Query: {query}
 
@@ -5012,6 +5026,7 @@ class RLMEngine:
                 json_mode=True,
                 usage_label="orientation",
                 conversation_history=state.conversation_history,
+                temperature=0.0,
             )
             plan = self._parse_json_safe(response, _plan_defaults)
             # Persist for future warm runs
@@ -5224,23 +5239,36 @@ class RLMEngine:
                 focus_issue_id=_fallback_issue_id,
             )
 
-        # Add predicate-driven leads for the weakest issue (SO-4).
+        # Add predicate-driven leads for ALL issues, not just the weakest.
         # Predicates are more specific than issue titles — each one is a concrete
         # searchable element (e.g. "failure to perform" vs "Breach of contract").
-        # Limit to 3 predicates per orientation to stay within lead budget.
+        # 2 predicates per issue, across all issues, ensures broad initial coverage.
         if self._matter_model is not None and _orient_issue_ids:
-            _pred_target_id = weakest_id or _orient_issue_ids[0]
-            _issue_predicates = self._matter_model.issues.get_predicates(_pred_target_id, limit=3)
-            for _pred_row in _issue_predicates:
-                _pred_text = _pred_row.get("description", "").strip()
-                if _pred_text:
-                    state.add_lead(
-                        description=f"Evidence for: {_pred_text}",
-                        source="predicate",
-                        priority=0.75,
-                        search_term=_pred_text,
-                        focus_issue_id=_pred_target_id,
-                    )
+            _pred_budget = max(6, len(_orient_issue_ids) * 2)
+            _pred_added = 0
+            _ordered_issues = []
+            if weakest_id and weakest_id in _orient_issue_ids:
+                _ordered_issues.append(weakest_id)
+            for _oid in _orient_issue_ids:
+                if _oid not in _ordered_issues:
+                    _ordered_issues.append(_oid)
+            for _pred_target_id in _ordered_issues:
+                if _pred_added >= _pred_budget:
+                    break
+                _issue_predicates = self._matter_model.issues.get_predicates(_pred_target_id, limit=2)
+                for _pred_row in _issue_predicates:
+                    if _pred_added >= _pred_budget:
+                        break
+                    _pred_text = _pred_row.get("description", "").strip()
+                    if _pred_text:
+                        state.add_lead(
+                            description=f"Evidence for: {_pred_text}",
+                            source="predicate",
+                            priority=0.75,
+                            search_term=_pred_text,
+                            focus_issue_id=_pred_target_id,
+                        )
+                        _pred_added += 1
 
         # Generate SPO predicate graph leads (SO-2 → SO-4): convert top assertion
         # predicate_keys to human-readable search terms. This directly uses the
@@ -5304,6 +5332,10 @@ class RLMEngine:
         iteration = 0
         budget = self._get_research_profile(state)
         max_iterations = budget.max_iterations
+        contract = getattr(state, "execution_contract", None)
+        if contract is not None:
+            _contract_max = int(getattr(contract, "max_iter", max_iterations))
+            max_iterations = max(max_iterations, _contract_max)
 
         while iteration < max_iterations:
             # Check user stop request before each iteration
@@ -6218,6 +6250,7 @@ class RLMEngine:
                 tier=ModelTier.LITE,
                 json_mode=True,
                 usage_label="search_extract",
+                temperature=0.0,
             )
             stage1 = self._parse_json_safe(stage1_response, {
                 "key_facts": [],
@@ -6301,6 +6334,7 @@ class RLMEngine:
                     tier=ModelTier.FLASH,
                     json_mode=True,
                     usage_label="search_reason",
+                    temperature=0.0,
                 )
                 stage2 = self._parse_json_safe(stage2_response, {
                     "fact_issue_relations": [],
@@ -7693,6 +7727,7 @@ Return:
                 tier=_read_tier,
                 json_mode=True,
                 usage_label="document_deep_read",
+                temperature=0.0,
             )
 
             analysis = self._parse_json_safe(response, {
@@ -11489,24 +11524,30 @@ Return:
             if frac >= 0.85 and not has_any_gap:
                 continue
             try:
-                preds = self._matter_model.issues.get_predicates(iid, limit=1)
+                preds = self._matter_model.issues.get_predicates(iid, limit=8)
             except Exception:
                 preds = []
-            pred_text = ""
-            if preds:
-                pred_text = (preds[0].get("description") or "").strip()
-            term = (pred_text or (row.get("title") or "")).strip()
-            if not term:
-                continue
-            # adv#11 review fix #1b: term-level dedup against prior
-            # planner leads for this issue — don't burn budget on the
-            # same (issue, normalized_term) twice.
-            norm_term = " ".join(term.lower().split())
-            if (iid, norm_term) in planner_issue_terms:
-                continue
             weakness = max(0.0, 1.0 - float(frac))
-            score = weakness * 0.55 + (0.25 if has_any_gap else 0.0) + materiality * 0.20
-            candidates.append((score, iid, row.get("title") or "", term))
+            base_score = weakness * 0.55 + (0.25 if has_any_gap else 0.0) + materiality * 0.20
+            _added_any = False
+            for _pi, _pred in enumerate(preds):
+                pred_text = (_pred.get("description") or "").strip()
+                if not pred_text:
+                    continue
+                norm_term = " ".join(pred_text.lower().split())
+                if (iid, norm_term) in planner_issue_terms:
+                    continue
+                _pred_score = base_score - (_pi * 0.02)
+                candidates.append((_pred_score, iid, row.get("title") or "", pred_text))
+                _added_any = True
+            if not _added_any:
+                term = (row.get("title") or "").strip()
+                if not term:
+                    continue
+                norm_term = " ".join(term.lower().split())
+                if (iid, norm_term) in planner_issue_terms:
+                    continue
+                candidates.append((base_score, iid, row.get("title") or "", term))
         if not candidates:
             return 0
         candidates.sort(reverse=True)
@@ -11638,6 +11679,7 @@ Respond as JSON only:
                 tier=_ModelTier.LITE,
                 json_mode=True,
                 usage_label="sufficiency_probe",
+                temperature=0.0,
             )
         except Exception as exc:
             logger.warning("sufficiency_probe call failed: %s", exc)

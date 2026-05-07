@@ -113,7 +113,7 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
         cost_per_1m_output=1.50,
     ),
     ModelTier.PRO: ModelConfig(
-        model_id="gemini-3.1-pro-preview",
+        model_id="gemini-3.1-flash-lite-preview",
         thinking_level="",
         max_output_tokens=65536,
         cost_per_1m_input=2.00,
@@ -330,6 +330,7 @@ class GeminiClient:
 
     DEFAULT_TIMEOUT = 120.0  # 2 minutes
     MAX_RETRIES = 3
+    MAX_RATE_LIMIT_RETRIES = 3
     DEFAULT_RPM = 60  # Requests per minute
     DEFAULT_BURST = 10  # Burst size
 
@@ -515,6 +516,7 @@ class GeminiClient:
         json_mode: bool = False,
         usage_label: Optional[str] = None,
         conversation_history: Optional[list[dict[str, str]]] = None,
+        temperature: Optional[float] = None,
     ) -> str:
         """Generate completion using specified tier with timeout.
 
@@ -529,9 +531,12 @@ class GeminiClient:
                 Gemini charges only the 10% cache-read rate instead of full input cost.
                 Use for hot reusable prefixes: system instructions, matter summaries,
                 active issue tree. Do NOT cache individual document content.
+            temperature: Override model temperature (0.0 for deterministic structured calls).
         """
         mc = MODEL_CONFIGS[tier]
         config = self._get_config(tier, json_mode=json_mode)
+        if temperature is not None:
+            config.temperature = temperature
         request_timeout = timeout or self.timeout
 
         if tools:
@@ -576,86 +581,103 @@ class GeminiClient:
         await self._rate_limiter.acquire()
         started_at = time.perf_counter()
 
-        try:
-            if conversation_history:
-                history = self._build_chat_history(conversation_history)
-                chat = self.client.chats.create(
-                    model=mc.model_id,
-                    config=config,
-                    history=history,
-                )
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        chat.send_message,
-                        request_text,
-                    ),
-                    timeout=request_timeout,
-                )
-            else:
-                contents = [
-                    types.Content(
-                        role="user",
-                        parts=[types.Part(text=request_text)],
-                    )
-                ]
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.client.models.generate_content,
+        _rate_limit_attempt = 0
+        while True:
+            try:
+                if conversation_history:
+                    history = self._build_chat_history(conversation_history)
+                    chat = self.client.chats.create(
                         model=mc.model_id,
-                        contents=contents,
                         config=config,
-                    ),
-                    timeout=request_timeout,
+                        history=history,
+                    )
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            chat.send_message,
+                            request_text,
+                        ),
+                        timeout=request_timeout,
+                    )
+                else:
+                    contents = [
+                        types.Content(
+                            role="user",
+                            parts=[types.Part(text=request_text)],
+                        )
+                    ]
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.client.models.generate_content,
+                            model=mc.model_id,
+                            contents=contents,
+                            config=config,
+                        ),
+                        timeout=request_timeout,
+                    )
+                break
+            except asyncio.TimeoutError:
+                latency_ms = int((time.perf_counter() - started_at) * 1000)
+                self._record_call(
+                    LLMCallRecord(
+                        model_tier=tier.value,
+                        model_id=mc.model_id,
+                        usage_label=usage_label,
+                        input_tokens=0,
+                        cache_read_tokens=0,
+                        tool_use_prompt_tokens=0,
+                        thinking_tokens=0,
+                        output_tokens=0,
+                        total_prompt_tokens=0,
+                        estimated_cost_usd=0.0,
+                        latency_ms=latency_ms,
+                        success=False,
+                        error_kind="TimeoutError",
+                        call_id=_call_id,
+                        prompt_hash=_prompt_hash,
+                    )
                 )
-        except asyncio.TimeoutError:
-            latency_ms = int((time.perf_counter() - started_at) * 1000)
-            self._record_call(
-                LLMCallRecord(
-                    model_tier=tier.value,
-                    model_id=mc.model_id,
-                    usage_label=usage_label,
-                    input_tokens=0,
-                    cache_read_tokens=0,
-                    tool_use_prompt_tokens=0,
-                    thinking_tokens=0,
-                    output_tokens=0,
-                    total_prompt_tokens=0,
-                    estimated_cost_usd=0.0,
-                    latency_ms=latency_ms,
-                    success=False,
-                    error_kind="TimeoutError",
-                    call_id=_call_id,
-                    prompt_hash=_prompt_hash,
+                label = f" ({usage_label})" if usage_label else ""
+                logger.error(
+                    f"API call to {mc.model_id}{label} timed out after "
+                    f"{request_timeout}s with {len(prompt)} prompt chars"
                 )
-            )
-            label = f" ({usage_label})" if usage_label else ""
-            logger.error(
-                f"API call to {mc.model_id}{label} timed out after "
-                f"{request_timeout}s with {len(prompt)} prompt chars"
-            )
-            raise TimeoutError(f"API call timed out after {request_timeout}s")
-        except Exception as exc:
-            latency_ms = int((time.perf_counter() - started_at) * 1000)
-            self._record_call(
-                LLMCallRecord(
-                    model_tier=tier.value,
-                    model_id=mc.model_id,
-                    usage_label=usage_label,
-                    input_tokens=0,
-                    cache_read_tokens=0,
-                    tool_use_prompt_tokens=0,
-                    thinking_tokens=0,
-                    output_tokens=0,
-                    total_prompt_tokens=0,
-                    estimated_cost_usd=0.0,
-                    latency_ms=latency_ms,
-                    success=False,
-                    error_kind=type(exc).__name__,
-                    call_id=_call_id,
-                    prompt_hash=_prompt_hash,
+                raise TimeoutError(f"API call timed out after {request_timeout}s")
+            except Exception as exc:
+                _exc_str = str(exc)
+                _is_rate_limit = "429" in _exc_str or "RESOURCE_EXHAUSTED" in _exc_str
+                if _is_rate_limit and _rate_limit_attempt < self.MAX_RATE_LIMIT_RETRIES:
+                    _rate_limit_attempt += 1
+                    import re as _re_mod
+                    _delay_match = _re_mod.search(r"retryDelay.*?(\d+)", _exc_str)
+                    _wait = int(_delay_match.group(1)) + 5 if _delay_match else 45
+                    logger.warning(
+                        f"Rate limited on {mc.model_id} (attempt {_rate_limit_attempt}/"
+                        f"{self.MAX_RATE_LIMIT_RETRIES}), waiting {_wait}s"
+                    )
+                    await asyncio.sleep(_wait)
+                    await self._rate_limiter.acquire()
+                    continue
+                latency_ms = int((time.perf_counter() - started_at) * 1000)
+                self._record_call(
+                    LLMCallRecord(
+                        model_tier=tier.value,
+                        model_id=mc.model_id,
+                        usage_label=usage_label,
+                        input_tokens=0,
+                        cache_read_tokens=0,
+                        tool_use_prompt_tokens=0,
+                        thinking_tokens=0,
+                        output_tokens=0,
+                        total_prompt_tokens=0,
+                        estimated_cost_usd=0.0,
+                        latency_ms=latency_ms,
+                        success=False,
+                        error_kind=type(exc).__name__,
+                        call_id=_call_id,
+                        prompt_hash=_prompt_hash,
+                    )
                 )
-            )
-            raise
+                raise
 
         (
             actual_input,
