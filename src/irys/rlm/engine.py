@@ -398,7 +398,7 @@ Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "14"
+_ORIENTATION_CACHE_VERSION = "15"
 
 
 def _format_matter_context(ctx) -> str:
@@ -3187,6 +3187,59 @@ class RLMEngine:
                 ("HSR filing mechanics and timeline", ["filing threshold", "waiting period", "Second Request", "outside date"]),
                 ("Deal timeline and regulatory risk", ["outside date", "extension", "reverse breakup fee", "timing risk"]),
             ])
+        _is_dd = any(w in q for w in (
+            "due diligence", "dd summary", "investment committee",
+            "diligence report", "summary memo",
+        ))
+        if _is_dd:
+            issues.extend([
+                ("Financial DD — EBITDA quality and adjustments", ["EBITDA", "add-back", "non-recurring", "pro forma"]),
+                ("Financial DD — working capital", ["working capital", "NWC", "peg", "target"]),
+                ("Legal DD — litigation and claims", ["litigation", "claim", "lawsuit", "contingent liability"]),
+                ("Legal DD — material contracts", ["material contract", "consent", "assignment", "termination right"]),
+                ("Tax DD — exposures and positions", ["tax", "IRS", "nexus", "transfer pricing"]),
+                ("Environmental DD — contamination and compliance", ["environmental", "Phase I", "remediation", "UST"]),
+                ("Insurance DD — coverage gaps", ["insurance", "policy", "coverage gap", "expired"]),
+                ("IP DD — licenses and ownership", ["intellectual property", "license", "patent", "trademark"]),
+                ("Employee DD — benefits and ERISA", ["employee", "ERISA", "benefit plan", "pension"]),
+                ("Real property DD — leases and title", ["lease", "title", "survey", "encumbrance"]),
+            ])
+        _is_cp = any(w in q for w in (
+            "conditions precedent", "closing document", "gap memorand",
+            "closing condition", "restructuring condition",
+        ))
+        if _is_cp:
+            issues.extend([
+                ("Title insurance policies", ["title policy", "allocated loan amount", "ALTA"]),
+                ("Survey review and staleness", ["survey", "ALTA", "date", "staleness"]),
+                ("Appraisal review and staleness", ["appraisal", "valuation", "date", "120 days"]),
+                ("Good standing certificates", ["good standing", "certificate", "secretary of state"]),
+                ("Secretary's certificates and resolutions", ["secretary's certificate", "authorizing resolution", "board"]),
+                ("Insurance certificates", ["insurance", "certificate", "named insured", "coverage amount"]),
+                ("Solvency certificates", ["solvency", "certificate", "balance sheet"]),
+                ("Compliance certificates", ["compliance certificate", "financial covenant", "ratio"]),
+                ("UCC filings", ["UCC", "filing", "financing statement", "jurisdiction"]),
+                ("Legal opinions", ["legal opinion", "enforceability", "qualification"]),
+                ("Signature block authority", ["signature", "authority", "signatory", "authorized officer"]),
+            ])
+        _is_disclosure_dd = any(w in q for w in (
+            "disclosure",
+        )) and any(w in q for w in ("due diligence", "dd", "findings"))
+        if _is_disclosure_dd:
+            issues.extend([
+                ("Undisclosed subsidiaries and affiliates", ["subsidiary", "affiliate", "Schedule 5.04"]),
+                ("Understated litigation exposure", ["litigation", "claim", "Schedule 5.06", "exposure"]),
+                ("Undisclosed liens and UCC filings", ["lien", "UCC", "encumbrance", "Schedule 5.08"]),
+                ("Environmental issues not disclosed", ["environmental", "contamination", "UST", "Phase I"]),
+                ("Insurance coverage gaps vs representations", ["insurance", "expired", "in full force"]),
+                ("Indebtedness discrepancies", ["indebtedness", "debt", "equipment financing"]),
+                ("Tax liens and assessments", ["tax", "IRS", "lien", "assessment"]),
+                ("Employee and ERISA discrepancies", ["employee", "headcount", "ERISA", "benefit"]),
+                ("Financial misstatements", ["EBITDA", "revenue", "financial", "adjustment"]),
+                ("Real property and lease issues", ["lease", "property", "facility", "real estate"]),
+                ("Intercompany transaction gaps", ["intercompany", "related party", "affiliate transaction"]),
+                ("Material contract compliance", ["material contract", "consent", "non-renewal"]),
+            ])
         return issues
 
     @staticmethod
@@ -4954,6 +5007,121 @@ class RLMEngine:
         )
         return "\n".join(lines)
 
+    def _build_task_type_format_enforcement(
+        self, state: "InvestigationState",
+    ) -> str:
+        """Inject task-type-specific output format requirements.
+
+        Based on the execution contract's task_type and query signals, adds
+        mandatory format sections that tell synthesis EXACTLY what structure
+        the output must have. This runs before extraction instructions so
+        synthesis knows the target format first.
+        """
+        contract = getattr(state, "execution_contract", None)
+        task_spec = {}
+        if contract:
+            oc = getattr(contract, "output_contract", None) or {}
+            if isinstance(oc, dict):
+                task_spec = oc.get("task_spec") or {}
+        task_type = str(task_spec.get("task_type") or "")
+        q = (getattr(state, "query", "") or "").lower()
+        sections: list[str] = []
+
+        if task_type == "document_comparison" or any(
+            w in q for w in ("markup", "redline", "change analysis")
+        ):
+            sections.append(
+                "OUTPUT FORMAT — DOCUMENT COMPARISON (MANDATORY):\n"
+                "Your output MUST contain these sections in order:\n"
+                "1. EXECUTIVE SUMMARY (3-5 sentences): Overall assessment of the markup\n"
+                "2. DEVIATION TABLE: A markdown table with columns:\n"
+                "   | # | Provision | Original Value | Markup Value | Section Ref | Risk | Dollar Impact |\n"
+                "   Include EVERY provision where values differ. Target 20-40+ rows.\n"
+                "3. DETAILED ANALYSIS: For each Red/Yellow deviation, provide:\n"
+                "   - Why it matters (practical impact on lender protections)\n"
+                "   - Specific recommendation with primary and fallback positions\n"
+                "   - Dollar impact calculation using actual facility/transaction size\n"
+                "4. RECOMMENDATIONS TABLE:\n"
+                "   | Provision | Lender Position | Compromise | Walk-Away |\n\n"
+                "CRITICAL: If a PROVISION COMPARISON DATA table appears below, you MUST\n"
+                "produce a deviation finding for EVERY row where values differ. Each row\n"
+                "in that table = one row in your deviation table. Missing rows = failure.\n"
+            )
+
+        if any(w in q for w in (
+            "due diligence", "dd summary", "investment committee",
+            "diligence report", "summary memo",
+        )):
+            sections.append(
+                "OUTPUT FORMAT — DUE DILIGENCE SUMMARY (MANDATORY):\n"
+                "Your output MUST begin with an EXECUTIVE SUMMARY containing:\n"
+                "- Transaction parties (acquirer and target by name)\n"
+                "- Enterprise value / deal size (exact dollar figure)\n"
+                "- Transaction structure (stock purchase, asset purchase, merger)\n"
+                "- Overall recommendation (proceed / proceed with conditions / do not proceed)\n"
+                "- Top 3-5 critical findings that most impact the deal\n\n"
+                "Then organize findings BY SEVERITY TIER (not by workstream):\n"
+                "1. **Deal-Breaker / Critical** — Issues that could block the transaction\n"
+                "2. **Significant** — Material issues requiring pre-closing resolution\n"
+                "3. **Moderate** — Issues requiring attention but not blocking\n"
+                "4. **Low / Administrative** — Minor items for post-closing cleanup\n\n"
+                "Within each tier, list EVERY issue with:\n"
+                "- Issue number (ISSUE_001, ISSUE_002, etc.)\n"
+                "- Workstream source (financial, legal, tax, insurance, environmental, IP)\n"
+                "- Specific finding with dollar amounts and section references\n"
+                "- Purchase price impact recommendation where quantifiable\n"
+            )
+
+        if any(w in q for w in (
+            "conditions precedent", "closing document", "gap memorand",
+            "gap report", "restructuring condition",
+        )):
+            sections.append(
+                "OUTPUT FORMAT — CLOSING/CP GAP ANALYSIS (MANDATORY):\n"
+                "Your output MUST contain:\n"
+                "1. SUMMARY TABLE at the top:\n"
+                "   | # | Issue | CP Section | Required | Actual | Gap | Severity |\n"
+                "   Include EVERY condition precedent/closing requirement.\n"
+                "2. Use THREE-TIER severity: Critical / Significant / Administrative\n"
+                "   (NOT Red/Yellow/Green for this task type)\n"
+                "3. For EACH gap, compute specific shortfalls:\n"
+                "   - Dollar shortfalls (e.g., '$34M policy vs $37M required = $3M gap')\n"
+                "   - Date staleness (e.g., 'survey dated Jan 15 = 134 days vs 90-day max')\n"
+                "   - Percentage thresholds (e.g., '95% consent achieved vs 95% required')\n"
+                "4. EVERY condition precedent section MUST be addressed, even if satisfied.\n"
+            )
+
+        if any(w in q for w in (
+            "disclosure", "borrower disclos",
+        )) and any(w in q for w in (
+            "due diligence", "dd", "findings",
+        )):
+            sections.append(
+                "OUTPUT FORMAT — DISCLOSURE vs DD COMPARISON (MANDATORY):\n"
+                "Your output MUST contain a DISCREPANCY TABLE:\n"
+                "   | # | Category | Disclosed (Schedule) | DD Finding | Impact | Severity |\n"
+                "Include EVERY discrepancy between what the borrower disclosed and what DD found.\n"
+                "Categories to cover: undisclosed entities, understated litigation, environmental,\n"
+                "liens/UCC, insurance gaps, indebtedness, real property, tax, employee/labor,\n"
+                "contract compliance, regulatory, financial misstatements, intercompany transactions.\n"
+                "Target 15-40+ discrepancy rows. Each DD finding that contradicts or exceeds\n"
+                "a disclosure gets its own numbered row.\n"
+            )
+
+        if any(w in q for w in ("reconcil", "workbook", "qoe", "quality of earnings")):
+            sections.append(
+                "OUTPUT FORMAT — RECONCILIATION/WORKBOOK (MANDATORY):\n"
+                "For each workbook deliverable, produce MULTIPLE markdown tables.\n"
+                "Each table MUST be preceded by a ### heading naming the worksheet tab.\n"
+                "Each table MUST use | Column | Header | format with 5+ data rows.\n"
+                "Include ALL specific numbers from the source documents — do not summarize.\n"
+                "For EBITDA bridges: line-by-line adjustment items with Management vs Buyer values.\n"
+                "For working capital: each component (AR, AP, inventory, accruals) with amounts.\n"
+                "For PPA: each intangible asset class with fair value and useful life.\n"
+            )
+
+        return "\n".join(sections) if sections else ""
+
     def _build_regulatory_data_summary(
         self, state: "InvestigationState",
     ) -> str:
@@ -6637,6 +6805,9 @@ class RLMEngine:
         if any(w in _q_lower for w in (
             "reconcil", "workbook", "spreadsheet", "conditions precedent",
             "closing document", "disclosure", "checklist", "cross-reference",
+            "due diligence", "dd summary", "summary memo", "markup",
+            "redline", "change analysis", "credit agreement",
+            "restructuring condition", "gap memorand", "covenant compliance",
         )):
             _search_cap = 30
         _raw_searches = (_ps if isinstance(_ps, list) else [])[:_search_cap]
@@ -10365,9 +10536,16 @@ Return:
             _dollar = _re_ledger.findall(r'\$[\d,.]+[MBKmkb]?\b', _f)
             _pct = _re_ledger.findall(r'[\d.]+%', _f)
             _section = _re_ledger.findall(r'Section\s+[\d.]+\([a-z]\)', _f)
-            if _dollar or _pct or _section:
-                _detail = "; ".join(_dollar + _pct + _section)
+            _ratio = _re_ledger.findall(r'\d+\.\d+x\b', _f)
+            _bps = _re_ledger.findall(r'\d+\s*(?:bps|basis points)', _f)
+            _all_vals = _dollar + _pct + _section + _ratio + _bps
+            if _all_vals:
+                _detail = "; ".join(_all_vals)
                 _ledger_items.append(f"[{_fi+1}] {_detail}")
+            elif _f.startswith("[PROVISION]") or _f.startswith("[DEVIATION]"):
+                _ledger_items.append(f"[{_fi+1}] {_f[:120]}")
+            elif _f.startswith("[DISCREPANCY]") or _f.startswith("[DD-FINDING]"):
+                _ledger_items.append(f"[{_fi+1}] {_f[:120]}")
         _coverage_ledger = ""
         if len(_ledger_items) > 5:
             _coverage_ledger = (
@@ -11939,6 +12117,23 @@ Return:
         # cannot crowd out mandatory sections.
         ordered: list[tuple[str, str, bool]] = []  # (key, text, mandatory)
 
+        # Task-type-aware output format enforcement: inject BEFORE other
+        # instructions so synthesis knows the expected output structure first.
+        _task_format = self._build_task_type_format_enforcement(state)
+        if _task_format:
+            ordered.append(("task_format_enforcement", _task_format, True))
+
+        # Provision comparison summary for comparison tasks — inject EARLY
+        # so synthesis sees the structured data before extraction instructions.
+        _prov_summary = self._build_provision_comparison_summary(state)
+        if _prov_summary:
+            ordered.append(("provision_comparisons", _prov_summary, True))
+
+        # Regulatory data summary for antitrust/regulatory tasks
+        _reg_summary = self._build_regulatory_data_summary(state)
+        if _reg_summary:
+            ordered.append(("regulatory_evidence", _reg_summary, True))
+
         # Extraction-task detection: if the query asks for comprehensive extraction,
         # inject instructions that ensure exhaustive output with section refs and calculations.
         mna_checklist = self._build_mna_coc_completion_checklist(
@@ -11956,16 +12151,6 @@ Return:
 
         if quant and _quant_is_mandatory:
             ordered.append(("quantitative", "Quantitative Summary:\n" + quant, True))
-
-        # Provision comparison summary for comparison tasks
-        _prov_summary = self._build_provision_comparison_summary(state)
-        if _prov_summary:
-            ordered.append(("provision_comparisons", _prov_summary, True))
-
-        # Regulatory data summary for antitrust/regulatory tasks
-        _reg_summary = self._build_regulatory_data_summary(state)
-        if _reg_summary:
-            ordered.append(("regulatory_evidence", _reg_summary, True))
 
         # Adverse evidence / hot documents
         _adv_summary = self._build_adverse_evidence_summary(state)
