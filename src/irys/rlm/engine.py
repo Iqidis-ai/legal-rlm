@@ -3688,18 +3688,24 @@ class RLMEngine:
         results: list[str] = []
 
         def _extract_number(val_str: str) -> "Optional[float]":
-            """Extract a numeric value from a provision value string."""
+            """Extract a numeric value from a provision value string.
+
+            BPS values are converted to percentages (25 bps → 0.25).
+            """
             if not val_str:
                 return None
             import re
-            val_str = val_str.replace(",", "").replace("$", "").strip()
-            m = re.search(r'([\d.]+)\s*[%x]', val_str)
+            val_str_clean = val_str.replace(",", "").replace("$", "").strip()
+            m = re.search(r'([\d.]+)\s*(?:bps|basis\s*point)', val_str_clean, re.IGNORECASE)
+            if m:
+                return float(m.group(1)) / 100.0
+            m = re.search(r'([\d.]+)\s*[%x]', val_str_clean)
             if m:
                 return float(m.group(1))
-            m = re.search(r'([\d.]+)\s*(M|million|mm)', val_str, re.IGNORECASE)
+            m = re.search(r'([\d.]+)\s*(M|million|mm)', val_str_clean, re.IGNORECASE)
             if m:
                 return float(m.group(1)) * 1_000_000
-            m = re.search(r'([\d.]+)', val_str)
+            m = re.search(r'([\d.]+)', val_str_clean)
             if m:
                 return float(m.group(1))
             return None
@@ -4400,7 +4406,7 @@ class RLMEngine:
             return ""
         if not rows:
             return ""
-        by_provision: dict[str, dict[str, str]] = {}
+        by_provision: dict[str, dict[str, list[str]]] = {}
         for row in rows:
             payload = row.get("payload_json")
             if isinstance(payload, str):
@@ -4421,7 +4427,7 @@ class RLMEngine:
             entry = val
             if sec:
                 entry += f" ({sec})"
-            by_provision[prov][role] = entry
+            by_provision[prov].setdefault(role, []).append(entry)
         if not by_provision:
             return ""
         all_roles = sorted({r for roles in by_provision.values() for r in roles})
@@ -4435,7 +4441,7 @@ class RLMEngine:
             sep,
         ]
         for prov, roles in sorted(by_provision.items()):
-            cols = " | ".join(roles.get(r, "—") for r in all_roles)
+            cols = " | ".join("; ".join(roles.get(r, ["—"])) for r in all_roles)
             lines.append(f"| {prov} | {cols} |")
         lines.append("")
         lines.append(
@@ -8771,8 +8777,8 @@ Return:
                 domain_numeric_subject_id_example=_dr_ex["numeric_subject_id_example"],
             )
 
-            # Use FLASH for high-priority docs (contracts, agreements) for better
-            # extraction quality; LITE for lower-priority docs to control cost.
+            from ..core.search import get_document_priority
+            _doc_priority = get_document_priority(doc.filename)
             _read_tier = ModelTier.FLASH if _doc_priority >= 1.3 else ModelTier.LITE
             response = await self.client.complete(
                 prompt,
@@ -8919,9 +8925,10 @@ Return:
                         "object_json": json.dumps({"value": _val, "section": _sec, "source_role": _role}),
                     }))
                     if _mm_pc is not None:
+                        _val_hash = _hashlib.md5(f"{_val}:{_sec}".encode()).hexdigest()[:8]
                         _mm_pc.typed_evidence.upsert(
                             "provision_comparison",
-                            f"prov:{_prov}:{doc.filename}:{_role}",
+                            f"prov:{_prov}:{doc.filename}:{_role}:{_val_hash}",
                             payload={
                                 "provision": _prov,
                                 "value": _val,
@@ -8959,9 +8966,10 @@ Return:
                         "object_json": json.dumps({"value": _rdval, "source": _src_detail}),
                     }))
                     if _mm_rd is not None:
+                        _rdval_hash = _hashlib.md5(f"{_rdval}:{_src_detail}".encode()).hexdigest()[:8]
                         _mm_rd.typed_evidence.upsert(
                             "regulatory_data",
-                            f"reg:{_cat}:{_entity}:{doc.filename}",
+                            f"reg:{_cat}:{_entity}:{doc.filename}:{_rdval_hash}",
                             payload={
                                 "category": _cat,
                                 "entity": _entity,
