@@ -749,6 +749,12 @@ Respond in JSON (be thorough — include ALL relevant provisions, section number
           "source_detail": "page/slide/section reference",
           "significance": "brief note on why this matters"}}
     ],
+    "adverse_evidence": [
+        {{"quote": "exact verbatim quote from the document",
+          "speaker": "name/role of the person who said/wrote it",
+          "section_ref": "section, slide, or page reference",
+          "adverse_theory": "one-line explanation of why this is problematic"}}
+    ],
     "extraction_completeness": [
         {{"group": "name of the table/list/schedule (e.g. 'MSA market shares', 'covenant grid')",
           "items_in_source": "integer: how many items are in the source table/list",
@@ -4529,6 +4535,57 @@ class RLMEngine:
         lines.append(
             "Use this evidence for your analysis. Cite specific data points "
             "with source references. Compute HHI where market shares are available."
+        )
+        return "\n".join(lines)
+
+    def _build_adverse_evidence_summary(self, state: "InvestigationState") -> str:
+        """Build adverse evidence table for synthesis context."""
+        if self._matter_model is None:
+            return ""
+        try:
+            rows = self._matter_model.typed_evidence.list_by_kind(
+                "adverse_evidence", limit=50,
+            )
+        except Exception:
+            return ""
+        if not rows:
+            return ""
+        lines = [
+            "ADVERSE EVIDENCE / HOT DOCUMENTS (flag these in your analysis):",
+        ]
+        for row in rows:
+            payload = row.get("payload_json")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    continue
+            if not isinstance(payload, dict):
+                continue
+            quote = payload.get("quote", "")
+            speaker = payload.get("speaker", "")
+            sec = payload.get("section_ref", "")
+            theory = payload.get("adverse_theory", "")
+            doc_name = payload.get("source_document", "")
+            if not quote:
+                continue
+            entry = f'- "{quote}"'
+            if speaker:
+                entry += f" — {speaker}"
+            if doc_name:
+                entry += f" [{doc_name}]"
+            if sec:
+                entry += f" ({sec})"
+            if theory:
+                entry += f" → {theory}"
+            lines.append(entry)
+        if len(lines) <= 1:
+            return ""
+        lines.append("")
+        lines.append(
+            "You MUST address each adverse item above in your analysis: "
+            "identify the risk it creates, recommend how to handle it, "
+            "and flag it prominently."
         )
         return "\n".join(lines)
 
@@ -8983,6 +9040,48 @@ Return:
                             confidence=0.9,
                         )
 
+            # Adverse evidence (hot documents, admissions, problematic language)
+            _adv_ev = analysis.get("adverse_evidence")
+            if isinstance(_adv_ev, list) and _adv_ev:
+                for _ae in _adv_ev[:30]:
+                    if not isinstance(_ae, dict):
+                        continue
+                    _ae_quote = _ae.get("quote", "")
+                    _ae_speaker = _ae.get("speaker", "")
+                    _ae_sec = _ae.get("section_ref", "")
+                    _ae_theory = _ae.get("adverse_theory", "")
+                    if not _ae_quote:
+                        continue
+                    _ae_fact = f"[ADVERSE] \"{_ae_quote}\""
+                    if _ae_speaker:
+                        _ae_fact += f" — {_ae_speaker}"
+                    if _ae_sec:
+                        _ae_fact += f" ({_ae_sec})"
+                    if _ae_theory:
+                        _ae_fact += f" [Risk: {_ae_theory}]"
+                    facts_to_add.append((_ae_fact, "attacks", None, {
+                        "subject_ref_type": "free_text",
+                        "subject_ref_id": _ae_speaker or "unknown",
+                        "predicate_key": "admitted_or_stated",
+                        "object_json": json.dumps({"quote": _ae_quote, "theory": _ae_theory}),
+                    }))
+                    if self._matter_model is not None:
+                        _ae_hash = _hashlib.md5(_ae_quote[:100].encode()).hexdigest()[:8]
+                        self._matter_model.typed_evidence.upsert(
+                            "adverse_evidence",
+                            f"adv:{doc.filename}:{_ae_hash}",
+                            payload={
+                                "quote": _ae_quote,
+                                "speaker": _ae_speaker,
+                                "section_ref": _ae_sec,
+                                "adverse_theory": _ae_theory,
+                                "source_document": doc.filename,
+                            },
+                            label=f"Adverse: {_ae_quote[:80]}",
+                            document_id=doc.filename,
+                            confidence=0.85,
+                        )
+
             # Extraction completeness verification: if the LLM reports incomplete
             # extraction for any table/list, log a warning so we can track coverage.
             _ec = analysis.get("extraction_completeness")
@@ -11126,6 +11225,11 @@ Return:
         _reg_summary = self._build_regulatory_data_summary(state)
         if _reg_summary:
             ordered.append(("regulatory_evidence", _reg_summary, True))
+
+        # Adverse evidence / hot documents
+        _adv_summary = self._build_adverse_evidence_summary(state)
+        if _adv_summary:
+            ordered.append(("adverse_evidence", _adv_summary, True))
 
         contract_coverage = self._build_material_contract_coverage_section(state)
         if contract_coverage:
