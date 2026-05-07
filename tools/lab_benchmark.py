@@ -387,12 +387,22 @@ async def run_task(
         status = result.status
         success = result.success
 
+        # Extract the raw synthesis output (final_output) for deliverables.
+        # The formatted output wraps synthesis with investigation metadata
+        # (Key Findings, Citations, Entities) that shouldn't be in deliverables.
+        synthesis_text = ""
+        if hasattr(result, "state") and result.state:
+            synthesis_text = result.state.findings.get("final_output", "")
+        if not synthesis_text:
+            synthesis_text = output_text
+
         # Write output for each expected deliverable in the expected format.
-        # For multi-deliverable tasks, try to split the output by section headers.
+        # Use synthesis_text (raw synthesis) for deliverables, not the full
+        # investigation report wrapper which contains metadata sections.
         if deliverables:
-            per_deliverable = _split_output_by_deliverable(output_text, deliverables)
+            per_deliverable = _split_output_by_deliverable(synthesis_text, deliverables)
             for name, filename in deliverables.items():
-                section_text = per_deliverable.get(name, output_text)
+                section_text = per_deliverable.get(name, synthesis_text)
                 ext = Path(filename).suffix.lower()
                 if ext == ".docx":
                     docx_path = output_dir / filename
