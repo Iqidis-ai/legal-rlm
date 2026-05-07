@@ -229,8 +229,8 @@ class PacketBudget:
 @dataclass
 class RLMConfig:
     """Configuration for RLM engine."""
-    max_depth: int = 5
-    max_leads_per_level: int = 5
+    max_depth: int = 8
+    max_leads_per_level: int = 12
     max_documents_per_search: int = 10
     min_lead_priority: float = 0.3
     excerpt_chars: int = 8000
@@ -290,16 +290,20 @@ Total files: {total_files}
 
 User Query: {query}
 {matter_context}
-Your task is to create a strategic research plan. Think like an experienced investigator.
+Your task is to create a COMPREHENSIVE and EXHAUSTIVE research plan. Think like a senior partner conducting final due diligence review — you must identify EVERY material issue, not just the top 3-5.
 
 {research_alignment_guidance}
 
+CRITICAL INSTRUCTION — EXHAUSTIVE COVERAGE:
+Do NOT produce a high-level summary of 3-5 major themes. You must identify EVERY specific provision, deviation, requirement, risk, obligation, and material detail that the query asks about. If analyzing a contract, list EVERY material term — not just "key financial terms" but each specific one (interest rate, commitment fee, leverage covenants, financial reporting, events of default, change of control, assignment restrictions, etc.). If comparing documents, identify EVERY point of difference, not just the most obvious ones.
+
 Consider:
 1. READ THE DOCUMENT LISTING CAREFULLY. File names reveal what each document IS (e.g., "Master_Service_Agreement.pdf" is a contract, "Complaint_Filed_2024.pdf" is a pleading, "Invoice_March.xlsx" is financial). Use file names to identify the MOST IMPORTANT documents.
-2. What are the CORE issues that need to be established?
-3. Which specific documents from the listing are MOST LIKELY to contain direct evidence? Name them explicitly in your search terms.
-4. What SPECIFIC search terms will find relevant passages? Use party names, document-specific terms, and key phrases you expect to find IN those documents.
-5. What is your preliminary hypothesis based on the query and the document names?
+2. What are ALL the issues that need to be established? List 8-15 issues minimum, not 3-5.
+3. For each issue, what SPECIFIC provisions, sections, or data points must be found?
+4. Which specific documents from the listing are MOST LIKELY to contain direct evidence? Name them explicitly in your search terms.
+5. What SPECIFIC search terms will find relevant passages? Generate 8-12 targeted searches covering different aspects of the query. Use party names, document-specific terms, financial terms, defined terms, and key phrases you expect to find IN those documents.
+6. What is your preliminary hypothesis based on the query and the document names?
 
 PRIORITIZE:
 {domain_document_priorities}
@@ -307,6 +311,9 @@ PRIORITIZE:
 - Files mentioning specific parties or amounts
 - Existing Matter Intelligence about open gaps, missing evidence, and weakly supported issues
 - If a PRIORITY FOCUS issue is listed in Existing Matter Intelligence, direct the first 2-3 `initial_searches` specifically toward that issue before broadening to general exploration
+- QUANTITATIVE DATA: specific dollar amounts, percentages, dates, thresholds, ratios
+- DEFINED TERMS: capitalized terms that have specific contractual meaning
+- CROSS-REFERENCES: provisions that reference other sections or documents
 
 Respond in JSON format:
 {{
@@ -324,6 +331,8 @@ Respond in JSON format:
     "target_documents": ["exact_filename_1.pdf", "exact_filename_2.docx"],
     "hypothesis": "Your initial hypothesis based on query analysis"
 }}
+
+Generate 8-12 initial_searches minimum. Each search should target a DIFFERENT aspect of the query.
 
 For target_documents: list the EXACT filenames from the Document Listing above that you
 believe are the highest-value retrieval targets. These should be specific files, not types.
@@ -350,7 +359,7 @@ Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "9"
+_ORIENTATION_CACHE_VERSION = "10"
 
 
 def _format_matter_context(ctx) -> str:
@@ -545,40 +554,13 @@ Content:
 Query Context: {query}
 Current Investigation Focus: {focus}
 {domain_vocabulary}
-
-M&A / CHANGE-OF-CONTROL RELEVANCE EXPANSION:
-If the query involves change of control, merger, acquisition, assignment, or material-contract review, treat these as relevant even when the phrase "change of control" is absent:
-- assignment, transfer, delegation, deemed assignment, assignment by operation of law
-- merger, consolidation, successor, assignee, affiliate transfer
-- direct or indirect ownership/control, ultimate ownership/control
-- consent, prior written consent, approval, not unreasonably withheld
-- termination rights, acceleration, run-off coverage, pricing/buy-out formula, carve-out
-- early termination fee, prepayment, event of default, cure period
-
-For leases, Section-style assignment/transfer clauses are CoC-relevant when tenant ownership/control changes are deemed assignments, landlord consent is required, a consent standard applies, landlord may terminate, or a fee/rent formula applies.
-
-Every matching provision MUST be extracted as a key_fact with exact section number, trigger family, consent requirement, consequence, and any fee/timing formula.
-
-M&A MATERIAL-CONTRACT MUST-CAPTURE DETAILS:
-When reviewing acquisition, merger, change-of-control, assignment, or material-contract diligence documents:
-- Preserve legally operative phrases verbatim when short, especially "whether by operation of law or otherwise", "direct or indirect", and "ultimate ownership or control".
-- Treat schedules, exhibits, tables, side letters, declarations pages, and pricing/revenue schedules as first-class evidence; do not stop at the main body of the agreement.
-- CRITICAL: When a schedule lists counterparty-specific revenue (e.g., "approximately $X million in trailing twelve-month revenue attributable to this agreement"), extract that as the ACTUAL revenue operand — it takes precedence over minimum purchase commitments stated in the agreement body.
-- Separate actual counterparty/product TTM revenue from minimum purchase commitments, facility commitments, sample calculations, and limits. The schedule/disclosure figure is the real revenue; the body's minimum commitment is a floor, not actual revenue.
-- For credit agreements, extract both facility/commitment size and current outstanding/drawn amount; label which amount is the mandatory prepayment exposure.
-- For default provisions, state whether a Change of Control is an Event of Default and extract acceleration, termination of commitments, and prepayment consequences.
-- For consent/termination mechanics, preserve conditional timing chains (e.g. consent not obtained within X days after closing -> termination on Y days' notice).
-- For carve-outs, extract every condition and threshold, then extract facts needed to test whether the condition is satisfied.
-- For equity awards, extract unvested award count, exchange ratio, per-share value, rollover/continuing-vesting treatment, and any automatic acceleration conflict.
-- For insurance, extract run-off/tail mechanics, aggregate limits, successor/new-product exclusions, and post-closing go-forward coverage gaps.
-- For embedded products, technology, and ERP/software systems, extract the dependent product line, revenue exposure if available, vendor/licensor name, and whether the underlying dependency contract is missing or unreviewed.
-
+{mna_section}
 CONDUCT A THOROUGH ANALYSIS. Extract ALL relevant information — do not truncate or omit details.
 
 1. KEY FACTS (extract ALL relevant facts — no artificial limit): Extract facts that are:
    - Directly relevant to the query/focus
    - Specific (include EXACT section numbers, clause references, dollar amounts, percentages, thresholds, defined terms, time periods)
-   - Keep each fact under 150 characters — include section numbers and specific values
+   - Keep each fact under 250 characters — include section numbers, specific values, and comparison points
    - Format each fact as: {{"fact": "...", "page": N, "issue_relation": "supports|attacks|neutral", "effective_date": "YYYY-MM-DD or null", "subject": "entity_name", "predicate": "snake_case_verb", "object": "value_or_target"}}
    - issue_relation: whether the fact SUPPORTS the investigation focus, ATTACKS/undermines it, or is NEUTRAL
    - effective_date: ISO date when this fact became effective/occurred (null if not temporally scoped)
@@ -588,7 +570,7 @@ CONDUCT A THOROUGH ANALYSIS. Extract ALL relevant information — do not truncat
    - Omit subject/predicate/object ONLY when the fact has no entity relationship (purely procedural)
 {domain_deep_read_examples}
 
-2. CRITICAL QUOTES (extract up to 10 most important passages): Identify the most important passages:
+2. CRITICAL QUOTES (extract up to 25 most important passages): Identify the most important passages:
    - Direct admissions or acknowledgments
    - Terms that define obligations or rights
    - Statements of fact that support/contradict claims
@@ -620,7 +602,7 @@ CONDUCT A THOROUGH ANALYSIS. Extract ALL relevant information — do not truncat
    - Prior agreements or communications mentioned
    - Events that require corroboration elsewhere
 
-6. FACT RELATIONSHIPS (SO-2 — up to 5 most important): Identify logical relationships
+6. FACT RELATIONSHIPS (SO-2 — up to 10 most important): Identify logical relationships
    BETWEEN the key_facts you listed above, using their 0-based indices.
    Relation types: "supports" (A reinforces B), "attacks" (A undermines B),
    "contradicts" (A directly conflicts with B), "corroborates" (A independently confirms B),
@@ -679,7 +661,7 @@ Respond in JSON (be thorough — include ALL relevant provisions, section number
     "purpose": "One-sentence description of what this document does",
     "rhetorical_posture": "neutral|adversarial|cooperative|protective|informational",
     "unresolved_flags": ["any open questions about this document"],
-    "contract_card": {{
+    {transaction_context_schema}"contract_card": {{
         "contract_name": "Full contract/agreement name",
         "counterparty": "Other party name",
         "assignment_clause": "Section X.Y — exact language or null",
@@ -691,18 +673,69 @@ Respond in JSON (be thorough — include ALL relevant provisions, section number
         "termination_rights": "Who can terminate, under what conditions, with what notice",
         "event_of_default_consequences": "Event of Default / acceleration / prepayment consequences, or null",
         "carve_outs": ["carve-out 1 with specific conditions", "carve-out 2"],
-        "product_or_system_dependencies": ["product/technology names dependent on this contract"],
+        "dependency_relationships": [
+            {{"component": "embedded/licensed product or technology",
+              "host_product": "product line or system that uses it",
+              "relationship_type": "embedded_in|licensed_to|integrated_with|depends_on",
+              "revenue_attribution": "dollar amount and period if stated, or null",
+              "source_section": "Section X.Y or Schedule X",
+              "contract_or_vendor": "licensor/vendor name or contract governing this dependency, or null"}}
+        ],
         "unreviewed_dependency_contracts": ["third-party product/software/license contracts mentioned but not reviewed"],
+        "schedule_entries": [
+            {{"schedule_ref": "Schedule X.XX",
+              "row_index": 0,
+              "target_label": "counterparty or contract name",
+              "metric": "revenue|commitment|obligation|other",
+              "value": "dollar amount or description",
+              "period": "TTM|annual|quarterly|as-of-date or null",
+              "linked_contract": "contract name if identifiable, or null"}}
+        ],
         "revenue_exposure": "dollar amount and percentage if calculable, or null",
         "financial_operands": ["specific operands for calculations: TTM revenue, drawn debt, RSU count, share price, coverage limit"],
         "coverage_limits": ["per-occurrence / aggregate / tail limits"],
         "post_closing_coverage_gaps": ["coverage gap for successor, parent, affiliate, or post-closing new products"],
-        "downstream_indirect_risks": ["future parent/acquirer ownership changes that may re-trigger consent/default"],
+        "downstream_indirect_risks": [{{"contract_name": "specific contract",
+            "provision_section": "Section X.Y",
+            "trigger_language": "direct or indirect ownership/control language",
+            "affected_actor_role": "acquirer|target|parent",
+            "re_trigger_scenario": "description of what future event could re-trigger"}}],
         "risk_rating_candidate": "Critical|High|Moderate|Low with one-sentence reason",
         "action_items": ["pre-closing consent, waiver, amendment, payoff, replacement policy, review missing dependency"],
         "missing_expected_provisions": ["provision type expected but absent"]
     }}
 }}
+"""
+
+_MNA_DEEP_READ_SECTION = """
+M&A / CHANGE-OF-CONTROL RELEVANCE EXPANSION:
+If the query involves change of control, merger, acquisition, assignment, or material-contract review, treat these as relevant even when the phrase "change of control" is absent:
+- assignment, transfer, delegation, deemed assignment, assignment by operation of law
+- merger, consolidation, successor, assignee, affiliate transfer
+- direct or indirect ownership/control, ultimate ownership/control
+- consent, prior written consent, approval, not unreasonably withheld
+- termination rights, acceleration, run-off coverage, pricing/buy-out formula, carve-out
+- early termination fee, prepayment, event of default, cure period
+
+For leases, Section-style assignment/transfer clauses are CoC-relevant when tenant ownership/control changes are deemed assignments, landlord consent is required, a consent standard applies, landlord may terminate, or a fee/rent formula applies.
+
+Every matching provision MUST be extracted as a key_fact with exact section number, trigger family, consent requirement, consequence, and any fee/timing formula.
+
+M&A MATERIAL-CONTRACT MUST-CAPTURE DETAILS:
+When reviewing acquisition, merger, change-of-control, assignment, or material-contract diligence documents:
+- Preserve legally operative phrases verbatim when short, especially "whether by operation of law or otherwise", "direct or indirect", and "ultimate ownership or control".
+- Treat schedules, exhibits, tables, side letters, declarations pages, and pricing/revenue schedules as first-class evidence; do not stop at the main body of the agreement.
+- CRITICAL: Every row in a schedule or table that contains a party, contract, product, metric, amount, threshold, or period MUST be extracted as a schedule_entries[] item in the contract_card. Do not summarize schedules — enumerate each row.
+- CRITICAL: When a schedule lists counterparty-specific revenue (e.g., "approximately $X million in trailing twelve-month revenue attributable to this agreement"), extract that as the ACTUAL revenue operand — it takes precedence over minimum purchase commitments stated in the agreement body.
+- Separate actual counterparty/product TTM revenue from minimum purchase commitments, facility commitments, sample calculations, and limits. The schedule/disclosure figure is the real revenue; the body's minimum commitment is a floor, not actual revenue.
+- For credit agreements, extract both facility/commitment size and current outstanding/drawn amount; label which amount is the mandatory prepayment exposure.
+- For default provisions, state whether a Change of Control is an Event of Default and extract acceleration, termination of commitments, and prepayment consequences.
+- For consent/termination mechanics, preserve conditional timing chains (e.g. consent not obtained within X days after closing -> termination on Y days' notice).
+- For carve-outs, extract every condition and threshold, then extract facts needed to test whether the condition is satisfied.
+- For equity awards, extract unvested award count, exchange ratio, per-share value, rollover/continuing-vesting treatment, and any automatic acceleration conflict.
+- For insurance, extract run-off/tail mechanics, aggregate limits, successor/new-product exclusions, and post-closing go-forward coverage gaps.
+- For embedded products, technology, and ERP/software systems, extract each dependency as a dependency_relationships[] item with component, host_product, relationship_type, revenue_attribution if available, and contract_or_vendor.
+- When the document reveals the transaction structure (target, acquirer, merger subsidiary, parent), populate transaction_context. Extract actor names only from transaction/disclosure language, not from generic contract role labels.
 """
 
 _DOMAIN_DEEP_READ_VOCABULARY = {
@@ -1520,6 +1553,24 @@ Self-Reference & Disclaimers
 - Deliver the answer as complete professional work product.
 - Keep the focus on the legal task, the user's objective, and the quality of the result.
 
+Required Output Sections
+
+Your analysis MUST include ALL of the following sections when applicable to the query:
+
+1. **Issues Identified** — Every material issue, deviation, risk, or finding. Be EXHAUSTIVE — list every specific item, not just the top 3-5 themes. Include specific provision references (e.g., "Section 6.2(a)"), defined terms, and clause language.
+
+2. **Risk Assessment** — For each material issue, assign a risk rating: Critical / High / Moderate / Low. Explain WHY in one sentence per rating. Do not skip this section.
+
+3. **Quantitative Analysis** — Where numbers exist in the evidence, perform the calculation or comparison. Include specific dollar amounts, percentages, ratios, thresholds, dates, and numeric comparisons. Show the math when comparing terms across documents or against standards. If two documents differ on a number, state both numbers explicitly.
+
+4. **Impact Analysis** — For each material finding, explain the practical impact. What does this deviation/risk/issue actually mean for the parties? What is the financial exposure, legal consequence, or strategic implication?
+
+5. **Recommendations** — Specific, actionable recommendations for each material issue. Not generic advice — state exactly what should be done (e.g., "Negotiate to restore the FCCR holiday through FY2026" or "Request deletion of the inter-agency sharing carve-out in Section 4.3").
+
+6. **Next Steps** — Prioritized action items with suggested sequence.
+
+Omit a section ONLY if the user's query clearly does not call for it (e.g., a pure extraction task needs no recommendations).
+
 Final Check Before Responding
 
 Before finalizing, check:
@@ -1530,6 +1581,10 @@ Before finalizing, check:
 - Did you surface the real weaknesses and risks?
 - Did you give the user the most useful next steps or clarifying question where needed?
 - Is this strong enough that a demanding senior lawyer would trust it?
+- Did you include risk ratings for each material issue?
+- Did you include specific quantitative analysis where numbers exist?
+- Did you provide actionable recommendations, not just observations?
+- Did you assess the practical impact of each finding?
 
 Original Query: {query}
 
@@ -2122,11 +2177,11 @@ class RLMEngine:
             if self._is_extraction_task(getattr(state, "query", "")):
                 return ResearchBudgetProfile(
                     mode=mode,
-                    max_depth=min(self.config.max_depth, 3),
-                    min_depth=2,
-                    max_iterations=min(self.config.max_iterations, 12),
+                    max_depth=min(self.config.max_depth, 5),
+                    min_depth=3,
+                    max_iterations=min(self.config.max_iterations, 20),
                     depth_citation_threshold=min(self.config.depth_citation_threshold, 15),
-                    confidence_threshold=70,
+                    confidence_threshold=75,
                     min_citations=8,
                     diminishing_returns_fact_threshold=5,
                     diminishing_returns_min_citations=4,
@@ -2135,15 +2190,15 @@ class RLMEngine:
                 )
             return ResearchBudgetProfile(
                 mode=mode,
-                max_depth=min(self.config.max_depth, 2),
-                min_depth=min(self.config.max_depth, 1),
-                max_iterations=min(self.config.max_iterations, 5),
-                depth_citation_threshold=min(self.config.depth_citation_threshold, 8),
-                confidence_threshold=60,
-                min_citations=5,
-                diminishing_returns_fact_threshold=3,
-                diminishing_returns_min_citations=2,
-                diminishing_returns_min_confidence=35,
+                max_depth=min(self.config.max_depth, 4),
+                min_depth=min(self.config.max_depth, 2),
+                max_iterations=min(self.config.max_iterations, 15),
+                depth_citation_threshold=min(self.config.depth_citation_threshold, 12),
+                confidence_threshold=65,
+                min_citations=6,
+                diminishing_returns_fact_threshold=4,
+                diminishing_returns_min_citations=3,
+                diminishing_returns_min_confidence=40,
                 very_low_productivity_max_facts=1,
             )
         if mode == ResearchMode.SEBIH_SPECIAL.value:
@@ -2356,7 +2411,7 @@ class RLMEngine:
         )
         if not any(signal in q for signal in extraction_signals):
             return ""
-        return (
+        base = (
             "EXTRACTION TASK INSTRUCTIONS (MANDATORY):\n"
             "This is a comprehensive extraction task. Your output MUST:\n"
             "1. Address EVERY document/contract in the repository — do not omit any\n"
@@ -2384,31 +2439,34 @@ class RLMEngine:
             "- Risk rating with justification\n"
             "- Missing/absent provisions that would normally be expected\n"
             "\n"
-            "For M&A / change-of-control material contract reports, the final answer must explicitly cover these "
-            "recurring diligence checks when the supporting evidence appears:\n"
-            "- Supply agreements/MSAs: exact anti-assignment language, including operation-of-law wording; "
-            "reverse-triangular-merger ambiguity; UCC Section 2-210 assignment/delegation analysis; "
-            "counterparty-specific TTM revenue concentration.\n"
-            "- Credit agreements: both Change of Control definitions, Event of Default status under default provisions, "
-            "mandatory prepayment timing, automatic commitment termination, and drawn/outstanding debt exposure.\n"
-            "- JV/equity arrangements: all carve-out conditions, revenue thresholds, management-retention conditions, "
-            "successor revenue comparisons, ownership percentages, buy-out formulas, and calculate buy-out price "
-            "using the stated multiple and EBITDA. Distinguish ownership percentage from voting-equity CoC threshold.\n"
-            "- Technology and product licenses: embedded product lines, product-line revenue exposure, no-cure "
-            "termination rights, consent discretion, and dependent ERP/software systems.\n"
-            "- Customer/supply agreements with indirect language: direct/indirect ultimate ownership wording, "
-            "future acquirer-parent ownership re-trigger risk, and conditional post-closing consent/termination timing.\n"
-            "- Executive/equity documents: single-trigger acceleration, rollover or continued-vesting conflicts, "
-            "unvested award count, exchange ratio, per-share value, and acceleration cost.\n"
-            "- Real estate leases: prior written consent, deemed-assignment language, consent standards, landlord "
-            "termination/recapture rights, fees, and whether any timeline is missing.\n"
-            "- Insurance policies: automatic run-off conversion, aggregate limits, successor/new-product exclusions, "
-            "tail options, and replacement go-forward coverage action items.\n"
-            "- Unreviewed dependencies: flag named ERP, enterprise software, license, or mission-critical system "
-            "dependencies as separate contracts to review for CoC/assignment risk.\n"
-            "\n"
-            "End with: Cross-contract analysis, timing/sequencing issues, and prioritized action items.\n"
+            "End with: Cross-document analysis, timing/sequencing issues, and prioritized action items.\n"
         )
+        if self._is_mna_change_control_task(query):
+            base += (
+                "\nFor M&A / change-of-control material contract reports, the final answer must explicitly cover these "
+                "recurring diligence checks when the supporting evidence appears:\n"
+                "- Supply agreements/MSAs: exact anti-assignment language, including operation-of-law wording; "
+                "reverse-triangular-merger ambiguity; UCC Section 2-210 assignment/delegation analysis; "
+                "counterparty-specific TTM revenue concentration.\n"
+                "- Credit agreements: both Change of Control definitions, Event of Default status under default provisions, "
+                "mandatory prepayment timing, automatic commitment termination, and drawn/outstanding debt exposure.\n"
+                "- JV/equity arrangements: all carve-out conditions, revenue thresholds, management-retention conditions, "
+                "successor revenue comparisons, ownership percentages, buy-out formulas, and calculate buy-out price "
+                "using the stated multiple and EBITDA. Distinguish ownership percentage from voting-equity CoC threshold.\n"
+                "- Technology and product licenses: embedded product lines, product-line revenue exposure, no-cure "
+                "termination rights, consent discretion, and dependent ERP/software systems.\n"
+                "- Customer/supply agreements with indirect language: direct/indirect ultimate ownership wording, "
+                "future acquirer-parent ownership re-trigger risk, and conditional post-closing consent/termination timing.\n"
+                "- Executive/equity documents: single-trigger acceleration, rollover or continued-vesting conflicts, "
+                "unvested award count, exchange ratio, per-share value, and acceleration cost.\n"
+                "- Real estate leases: prior written consent, deemed-assignment language, consent standards, landlord "
+                "termination/recapture rights, fees, and whether any timeline is missing.\n"
+                "- Insurance policies: automatic run-off conversion, aggregate limits, successor/new-product exclusions, "
+                "tail options, and replacement go-forward coverage action items.\n"
+                "- Unreviewed dependencies: flag named ERP, enterprise software, license, or mission-critical system "
+                "dependencies as separate contracts to review for CoC/assignment risk.\n"
+            )
+        return base
 
     @staticmethod
     def _flatten_contract_card(card: dict, filename: str) -> list[str]:
@@ -2430,10 +2488,9 @@ class RLMEngine:
                 lines.append(f"{prefix} | {field}: ABSENT (not found in document)")
         for field in (
             "timing_windows", "carve_outs", "exact_trigger_language",
-            "product_or_system_dependencies", "unreviewed_dependency_contracts",
+            "unreviewed_dependency_contracts",
             "financial_operands", "coverage_limits", "post_closing_coverage_gaps",
-            "downstream_indirect_risks", "action_items",
-            "missing_expected_provisions",
+            "action_items", "missing_expected_provisions",
         ):
             val = card.get(field)
             if isinstance(val, list):
@@ -2442,6 +2499,59 @@ class RLMEngine:
                         lines.append(f"{prefix} | {field}: {item}")
             elif isinstance(val, str) and val and val not in {"null", "ABSENT"}:
                 lines.append(f"{prefix} | {field}: {val}")
+        # Legacy flat field — still accept for backward compatibility
+        flat_deps = card.get("product_or_system_dependencies") or []
+        if isinstance(flat_deps, list):
+            for item in flat_deps:
+                if item and isinstance(item, str):
+                    lines.append(f"{prefix} | product_dependency: {item}")
+        # Structured dependency relationships
+        dep_rels = card.get("dependency_relationships") or []
+        if isinstance(dep_rels, list):
+            for dep in dep_rels:
+                if isinstance(dep, dict):
+                    comp = dep.get("component") or ""
+                    host = dep.get("host_product") or ""
+                    rel = dep.get("relationship_type") or ""
+                    rev = dep.get("revenue_attribution") or ""
+                    desc = f"{comp} {rel} {host}".strip()
+                    if rev:
+                        desc += f" (revenue: {rev})"
+                    if desc:
+                        lines.append(f"{prefix} | dependency_relationship: {desc}")
+                elif isinstance(dep, str) and dep:
+                    lines.append(f"{prefix} | dependency_relationship: {dep}")
+        # Structured schedule entries
+        sched = card.get("schedule_entries") or []
+        if isinstance(sched, list):
+            for entry in sched:
+                if isinstance(entry, dict):
+                    ref = entry.get("schedule_ref") or ""
+                    target = entry.get("target_label") or ""
+                    val = entry.get("value") or ""
+                    period = entry.get("period") or ""
+                    desc = f"{ref} {target}: {val}".strip()
+                    if period:
+                        desc += f" ({period})"
+                    if desc.strip(": "):
+                        lines.append(f"{prefix} | schedule_entry: {desc}")
+                elif isinstance(entry, str) and entry:
+                    lines.append(f"{prefix} | schedule_entry: {entry}")
+        # Structured downstream risks (accept both dict and string)
+        downstream = card.get("downstream_indirect_risks") or []
+        if isinstance(downstream, list):
+            for risk in downstream:
+                if isinstance(risk, dict):
+                    cname = risk.get("contract_name") or ""
+                    actor = risk.get("affected_actor_role") or ""
+                    scenario = risk.get("re_trigger_scenario") or ""
+                    desc = f"{cname}: {scenario}".strip(": ")
+                    if actor:
+                        desc += f" [affects {actor}]"
+                    if desc:
+                        lines.append(f"{prefix} | downstream_risk: {desc}")
+                elif isinstance(risk, str) and risk:
+                    lines.append(f"{prefix} | downstream_risk: {risk}")
         return lines
 
     @staticmethod
@@ -2620,11 +2730,22 @@ class RLMEngine:
                 if co and isinstance(co, str):
                     add(f"{prefix} | Carve-out condition: {co[:400]}")
 
-        # 7. Downstream/indirect risks
+        # 7. Downstream/indirect risks (accepts both dicts and strings)
         downstream = card.get("downstream_indirect_risks") or []
         if isinstance(downstream, list):
             for risk in downstream:
-                if risk and isinstance(risk, str):
+                if isinstance(risk, dict):
+                    cname = risk.get("contract_name") or prefix
+                    actor = risk.get("affected_actor_role") or "acquirer"
+                    scenario = risk.get("re_trigger_scenario") or ""
+                    section = risk.get("provision_section") or ""
+                    desc = f"{cname}"
+                    if section:
+                        desc += f" ({section})"
+                    desc += f": {scenario}" if scenario else ""
+                    desc += f" [affects {actor}]"
+                    add(f"{prefix} | Downstream risk: {desc[:400]}")
+                elif risk and isinstance(risk, str):
                     add(f"{prefix} | Downstream risk: {risk[:300]}")
 
         # 8. Unreviewed dependency contracts
@@ -2649,20 +2770,19 @@ class RLMEngine:
                 if m and isinstance(m, str):
                     add(f"{prefix} | Missing expected provision: {m[:200]}")
 
-        # 11. Detect reverse triangular merger structure from text
-        if ("merger sub" in lower or "merger subsidiary" in lower) and (
-            "merge with and into" in lower or "merged with and into" in lower
-        ):
-            add(f"{prefix} | Transaction structure detected: reverse triangular merger "
-                "(target survives as subsidiary). Entity survival means anti-assignment "
-                "clauses may not be triggered but this is jurisdiction-dependent.")
-
-        # 12. UCC 2-210 applicability for supply/goods agreements
-        doc_subtype = (card.get("doc_subtype") or "").lower()
-        if any(t in doc_subtype for t in ("supply", "services", "msa", "goods")):
-            if "assign" in lower:
-                add(f"{prefix} | UCC Section 2-210 may apply: distinguish assignment "
-                    "of rights from delegation of duties for this supply/services agreement.")
+        # 11-12: M&A-specific structural analysis (gated)
+        if self._is_mna_change_control_task(query):
+            if ("merger sub" in lower or "merger subsidiary" in lower) and (
+                "merge with and into" in lower or "merged with and into" in lower
+            ):
+                add(f"{prefix} | Transaction structure detected: reverse triangular merger "
+                    "(target survives as subsidiary). Entity survival means anti-assignment "
+                    "clauses may not be triggered but this is jurisdiction-dependent.")
+            doc_subtype = (card.get("doc_subtype") or "").lower()
+            if any(t in doc_subtype for t in ("supply", "services", "msa", "goods")):
+                if "assign" in lower:
+                    add(f"{prefix} | UCC Section 2-210 may apply: distinguish assignment "
+                        "of rights from delegation of duties for this supply/services agreement.")
 
         return facts
 
@@ -2722,7 +2842,7 @@ class RLMEngine:
                 ll = line.lower()
                 has_schedule = "schedule" in ll or "attributable" in ll
                 has_revenue = "revenue" in ll or "sales" in ll
-                if has_revenue and has_schedule and "ttm" in ll or "trailing" in ll:
+                if has_revenue and has_schedule and ("ttm" in ll or "trailing" in ll):
                     amt = RLMEngine._first_amount_millions_near(
                         line, ("revenue",), preferred_terms=("attributable", "trailing", "ttm")
                     )
@@ -2902,7 +3022,11 @@ class RLMEngine:
         ("actual_counterparty_ttm_revenue", ("ttm", "attributable")),
         ("actual_counterparty_ttm_revenue", ("trailing", "revenue", "attributable")),
         ("actual_counterparty_ttm_revenue", ("revenue", "attributable")),
-        ("actual_counterparty_ttm_revenue", ("ttm revenue",)),
+        ("actual_counterparty_ttm_revenue", ("ttm revenue", "attributable")),
+        # Product-line revenue (for dependency chain resolution)
+        ("actual_product_line_ttm_revenue", ("product line", "revenue")),
+        ("actual_product_line_ttm_revenue", ("product", "ttm", "revenue")),
+        ("actual_product_line_ttm_revenue", ("product", "trailing", "revenue")),
         # Minimum purchase (the wrong numerator for revenue exposure)
         ("minimum_purchase_commitment", ("minimum", "purchase")),
         ("minimum_purchase_commitment", ("minimum", "commitment")),
@@ -2922,6 +3046,12 @@ class RLMEngine:
         # Buy-out
         ("buyout_multiple", ("ebitda", "multiple")),
         ("buyout_multiple", ("buy-out", "multiple")),
+        # Acquirer / buyer revenue (for threshold tests against carve-outs)
+        ("acquirer_revenue", ("acquirer", "revenue")),
+        ("acquirer_revenue", ("buyer", "revenue")),
+        ("acquirer_revenue", ("parent", "revenue")),
+        ("acquirer_segment_revenue", ("acquirer", "segment", "revenue")),
+        ("acquirer_segment_revenue", ("buyer", "segment", "revenue")),
         # Thresholds and limits
         ("threshold_amount", ("threshold",)),
         ("coverage_limit", ("coverage", "limit")),
@@ -3022,6 +3152,141 @@ class RLMEngine:
                         "source_document": filename,
                     },
                     label=f"carve_out:{contract_name}",
+                    document_id=filename,
+                    confidence=0.85,
+                )
+
+        dep_rels = card.get("dependency_relationships") or []
+        schedule_entries = card.get("schedule_entries") or []
+        if isinstance(schedule_entries, list):
+            for i, entry in enumerate(schedule_entries):
+                if not isinstance(entry, dict):
+                    continue
+                target = entry.get("target_label") or ""
+                sched_ref = entry.get("schedule_ref") or ""
+                if not target and not sched_ref:
+                    continue
+                se_key = f"sched:{filename}:{i}"
+                value_raw = entry.get("value") or ""
+                value_m = self._extract_operand_value_millions(str(value_raw)) if value_raw else None
+                te.upsert(
+                    "schedule_entry", se_key,
+                    payload={
+                        "schedule_ref": sched_ref,
+                        "row_index": entry.get("row_index", i),
+                        "target_label": target,
+                        "metric": entry.get("metric") or "",
+                        "value_raw": str(value_raw)[:300],
+                        "value_millions": value_m,
+                        "period": entry.get("period") or "",
+                        "linked_contract": entry.get("linked_contract") or "",
+                        "source_document": filename,
+                    },
+                    label=f"{sched_ref}:{target}",
+                    document_id=filename,
+                    confidence=0.85,
+                )
+                if value_m and target:
+                    metric = (entry.get("metric") or "").lower()
+                    period = (entry.get("period") or "").lower()
+                    if "revenue" in metric or "ttm" in period or "trailing" in period:
+                        sched_role = "actual_counterparty_ttm_revenue"
+                        tgt_lower = target.lower()
+                        for dep in dep_rels:
+                            if not isinstance(dep, dict):
+                                continue
+                            dc = (dep.get("component") or "").lower()
+                            dh = (dep.get("host_product") or "").lower()
+                            if dc and len(dc) > 2 and (dc in tgt_lower or tgt_lower in dc):
+                                sched_role = "actual_product_line_ttm_revenue"
+                                break
+                            if dh and len(dh) > 2 and (dh in tgt_lower or tgt_lower in dh):
+                                sched_role = "actual_product_line_ttm_revenue"
+                                break
+                        op_key = f"op:sched:{filename}:{i}"
+                        te.upsert(
+                            "calculation_operand", op_key,
+                            payload={
+                                "operand_role": sched_role,
+                                "value_millions": value_m,
+                                "subject_label": target,
+                                "raw_text": f"{sched_ref} {target}: {value_raw}"[:500],
+                                "source_document": filename,
+                                "source_priority": "schedule_disclosed",
+                            },
+                            label=f"schedule_operand:{target}",
+                            document_id=filename,
+                            confidence=0.9,
+                        )
+
+        if isinstance(dep_rels, list):
+            for i, dep in enumerate(dep_rels):
+                if not isinstance(dep, dict):
+                    continue
+                component = dep.get("component") or ""
+                host = dep.get("host_product") or ""
+                if not component and not host:
+                    continue
+                dep_key = f"dep:{filename}:{i}"
+                te.upsert(
+                    "product_dependency", dep_key,
+                    payload={
+                        "component": component,
+                        "host_product": host,
+                        "relationship_type": dep.get("relationship_type") or "unknown",
+                        "revenue_attribution": dep.get("revenue_attribution") or "",
+                        "source_section": dep.get("source_section") or "",
+                        "contract_or_vendor": dep.get("contract_or_vendor") or "",
+                        "source_document": filename,
+                        "contract_name": contract_name,
+                    },
+                    label=f"{component}->{host}",
+                    document_id=filename,
+                    confidence=0.85,
+                )
+                rev_attr = dep.get("revenue_attribution") or ""
+                if rev_attr:
+                    rev_val = self._extract_operand_value_millions(str(rev_attr))
+                    if rev_val:
+                        op_key = f"op:dep:{filename}:{i}"
+                        te.upsert(
+                            "calculation_operand", op_key,
+                            payload={
+                                "operand_role": "actual_product_line_ttm_revenue",
+                                "value_millions": rev_val,
+                                "subject_label": host or component,
+                                "raw_text": f"{component} in {host}: {rev_attr}"[:500],
+                                "source_document": filename,
+                                "source_priority": "schedule_disclosed",
+                            },
+                            label=f"product_revenue:{host or component}",
+                            document_id=filename,
+                            confidence=0.85,
+                        )
+
+        downstream_risks = card.get("downstream_indirect_risks") or []
+        if isinstance(downstream_risks, list):
+            for i, risk in enumerate(downstream_risks):
+                if isinstance(risk, str):
+                    risk = {"re_trigger_scenario": risk}
+                if not isinstance(risk, dict):
+                    continue
+                scenario = risk.get("re_trigger_scenario") or ""
+                if not scenario:
+                    continue
+                dr_key = f"prov:downstream:{filename}:{i}"
+                te.upsert(
+                    "contract_provision", dr_key,
+                    payload={
+                        "provision_kind": "downstream_risk",
+                        "contract_name": risk.get("contract_name") or contract_name,
+                        "provision_section": risk.get("provision_section") or "",
+                        "trigger_language": risk.get("trigger_language") or "",
+                        "affected_actor_role": risk.get("affected_actor_role") or "acquirer",
+                        "re_trigger_scenario": scenario[:500],
+                        "source_document": filename,
+                    },
+                    label=f"downstream_risk:{risk.get('contract_name') or contract_name}",
                     document_id=filename,
                     confidence=0.85,
                 )
@@ -3218,6 +3483,58 @@ class RLMEngine:
                         company_ttm = amounts[0]
                         break
 
+        # Resolve product-line revenue through dependency graph.
+        # If a product_dependency links component->host_product with revenue,
+        # and a license contract references that component, the product-line
+        # revenue becomes available as a numerator for that license's exposure.
+        try:
+            dep_records = te.list_by_kind("product_dependency", limit=50)
+            for dep_rec in dep_records:
+                dp = dep_rec.get("payload_json")
+                if isinstance(dp, str):
+                    import json as _json_mod
+                    try:
+                        dp = _json_mod.loads(dp)
+                    except Exception:
+                        continue
+                if not isinstance(dp, dict):
+                    continue
+                rev_attr = dp.get("revenue_attribution") or ""
+                host = (dp.get("host_product") or "").lower().strip()
+                component = (dp.get("component") or "").lower().strip()
+                src_doc = (dp.get("source_document") or "").lower().strip()
+                if not rev_attr or not (host and component):
+                    continue
+                rev_val = self._extract_operand_value_millions(str(rev_attr))
+                if not rev_val:
+                    continue
+                for contract_key, entry in contract_registry.items():
+                    cp = entry["payload"]
+                    cname = (cp.get("contract_name") or "").lower()
+                    fname = (cp.get("filename") or "").lower()
+                    matches_component = len(component) > 2 and (component in cname or component in fname)
+                    matches_source = src_doc and (src_doc == fname or src_doc in contract_key)
+                    if matches_component or matches_source:
+                        subject_label = (cp.get("counterparty") or host or component).lower().strip()
+                        already_exists = any(
+                            o.get("operand_role") == "actual_product_line_ttm_revenue"
+                            and o.get("value_millions") == rev_val
+                            for o in parsed_operands
+                        )
+                        if already_exists:
+                            break
+                        parsed_operands.append({
+                            "operand_role": "actual_product_line_ttm_revenue",
+                            "value_millions": rev_val,
+                            "subject_label": subject_label,
+                            "raw_text": f"product-line revenue for {host} via {component}: {rev_attr}"[:500],
+                            "source_document": src_doc,
+                            "source_priority": "dependency_resolved",
+                        })
+                        break
+        except Exception:
+            pass
+
         # Compute revenue exposure for each counterparty
         # Group operands by subject_label and pick preferred operand per subject.
         # ONLY emit a calculation when we have actual_counterparty_ttm_revenue —
@@ -3227,7 +3544,8 @@ class RLMEngine:
         subject_operands: "dict[str, list[dict]]" = {}
         for op in parsed_operands:
             role = op.get("operand_role", "")
-            if role in ("actual_counterparty_ttm_revenue", "minimum_purchase_commitment"):
+            if role in ("actual_counterparty_ttm_revenue", "actual_product_line_ttm_revenue",
+                        "minimum_purchase_commitment"):
                 subject = (op.get("subject_label") or "").lower().strip()
                 if subject and subject not in ("", "null", "company", "total"):
                     subject_operands.setdefault(subject, []).append(op)
@@ -3236,7 +3554,8 @@ class RLMEngine:
             if not company_ttm:
                 break
             # Only proceed if we have a high-confidence actual TTM operand
-            ttm_ops = [o for o in ops if o.get("operand_role") == "actual_counterparty_ttm_revenue"]
+            ttm_ops = [o for o in ops if o.get("operand_role") in (
+                "actual_counterparty_ttm_revenue", "actual_product_line_ttm_revenue")]
             if not ttm_ops:
                 continue
             best = ttm_ops[0]
@@ -3300,6 +3619,144 @@ class RLMEngine:
                     f"Mandatory prepayment exposure is {self._format_millions(drawn_val)}, "
                     f"not the {self._format_millions(commit_val)} facility maximum."
                 )
+
+        # Threshold tests from carve-out provisions.
+        # Carve-outs may reference acquirer/parent revenue thresholds.
+        # If the required subject's operand isn't in the documents,
+        # emit blocked_missing_operand instead of substituting a wrong value.
+        try:
+            carve_out_provisions = te.list_by_kind("contract_provision", limit=50)
+            _threshold_keywords = ("threshold", "exceed", "greater than", "less than",
+                                   "more than", "not less than", "revenue of", "annual revenue")
+            _acquirer_keywords = ("acquirer", "buyer", "purchasing party", "parent",
+                                  "successor", "ultimate parent")
+            for prov in carve_out_provisions:
+                pp = prov.get("payload_json")
+                if isinstance(pp, str):
+                    import json as _json_mod
+                    try:
+                        pp = _json_mod.loads(pp)
+                    except Exception:
+                        continue
+                if not isinstance(pp, dict):
+                    continue
+                if pp.get("provision_kind") != "carve_out":
+                    continue
+                raw = (pp.get("raw_text") or "").lower()
+                if not any(k in raw for k in _threshold_keywords):
+                    continue
+                requires_acquirer = any(k in raw for k in _acquirer_keywords)
+                if not requires_acquirer:
+                    continue
+                threshold_amounts = self._money_amounts_in_millions(pp.get("raw_text") or "")
+                if not threshold_amounts:
+                    continue
+                threshold_val = threshold_amounts[0]
+                contract_name_prov = pp.get("contract_name") or ""
+                negated_less = any(k in raw for k in (
+                    "not less than", "no less than", "at least",
+                ))
+                if negated_less:
+                    use_less_than = False
+                else:
+                    use_less_than = any(
+                        k in raw for k in (
+                            "less than", "does not exceed", "not greater than",
+                            "not more than", "below", "under", "fewer than",
+                        )
+                    )
+                comparator_label = "<=" if use_less_than else ">="
+                acquirer_ops = [
+                    o for o in parsed_operands
+                    if o.get("operand_role") in ("acquirer_revenue", "acquirer_segment_revenue")
+                ]
+                if acquirer_ops:
+                    obs_val = acquirer_ops[0].get("value_millions")
+                    if obs_val:
+                        if use_less_than:
+                            test_result = "PASS" if obs_val <= threshold_val else "FAIL"
+                        else:
+                            test_result = "PASS" if obs_val >= threshold_val else "FAIL"
+                        results.append(
+                            f"[THRESHOLD_TEST] {contract_name_prov} carve-out: acquirer revenue "
+                            f"{self._format_millions(obs_val)} {comparator_label} threshold "
+                            f"{self._format_millions(threshold_val)} — {test_result}"
+                        )
+                else:
+                    results.append(
+                        f"[BLOCKED_CALC] {contract_name_prov} carve-out threshold test: "
+                        f"threshold is {self._format_millions(threshold_val)} but acquirer/parent "
+                        f"revenue is NOT available in the reviewed documents. Cannot determine "
+                        f"whether the carve-out applies. This is a missing-input gap."
+                    )
+                    try:
+                        te.upsert(
+                            "calculation_result",
+                            f"calc:threshold_blocked:{contract_name_prov}",
+                            payload={
+                                "calculation_type": "threshold_test",
+                                "status": "blocked_missing_operand",
+                                "threshold_value": threshold_val,
+                                "required_subject_role": "acquirer_revenue",
+                                "contract_name": contract_name_prov,
+                                "carve_out_text": (pp.get("raw_text") or "")[:300],
+                            },
+                            label=f"blocked_threshold:{contract_name_prov}",
+                            confidence=0.9,
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Resolve downstream risk actor bindings.
+        # Use transaction_context to bind generic roles (acquirer/target) to
+        # actual entity names from the documents.
+        try:
+            actor_names: dict[str, str] = {}
+            txn_records = te.list_by_kind("transaction_context", limit=10)
+            for txn_rec in txn_records:
+                tp = txn_rec.get("payload_json")
+                if isinstance(tp, str):
+                    import json as _json_mod
+                    try:
+                        tp = _json_mod.loads(tp)
+                    except Exception:
+                        continue
+                if not isinstance(tp, dict):
+                    continue
+                for role_key in ("target", "acquirer", "merger_sub", "parent"):
+                    name = (tp.get(role_key) or "").strip()
+                    if name and role_key not in actor_names:
+                        actor_names[role_key] = name
+
+            all_provisions = te.list_by_kind("contract_provision", limit=50)
+            for prov in all_provisions:
+                pp = prov.get("payload_json")
+                if isinstance(pp, str):
+                    import json as _json_mod
+                    try:
+                        pp = _json_mod.loads(pp)
+                    except Exception:
+                        continue
+                if not isinstance(pp, dict):
+                    continue
+                if pp.get("provision_kind") != "downstream_risk":
+                    continue
+                actor_role = pp.get("affected_actor_role") or "acquirer"
+                actor_name = actor_names.get(actor_role, actor_role)
+                contract_name_dr = pp.get("contract_name") or ""
+                scenario = pp.get("re_trigger_scenario") or ""
+                section = pp.get("provision_section") or ""
+                if scenario:
+                    results.append(
+                        f"[DOWNSTREAM_RISK] {contract_name_dr}"
+                        + (f" ({section})" if section else "")
+                        + f": future ownership change of {actor_name} ({actor_role}) "
+                        + f"could re-trigger this provision. {scenario[:200]}"
+                    )
+        except Exception:
+            pass
 
         return results
 
@@ -4675,7 +5132,7 @@ class RLMEngine:
         # and legacy string form for backward compatibility.
         # Use `or []` to handle null from LLM (MEDIUM guard).
         _ps = plan.get("initial_searches")
-        _raw_searches = (_ps if isinstance(_ps, list) else [])[:5]
+        _raw_searches = (_ps if isinstance(_ps, list) else [])[:12]
         _initial_searches: list[tuple[str, int | None]] = []
         for _s in _raw_searches:
             if isinstance(_s, str) and _s.strip():
@@ -7202,6 +7659,18 @@ Return:
             _vocab = _DOMAIN_DEEP_READ_VOCABULARY.get(_domain, _DOMAIN_DEEP_READ_VOCABULARY["legal"])
             _dr_ex = _DOMAIN_DEEP_READ_EXAMPLES.get(_domain, _DOMAIN_DEEP_READ_EXAMPLES["legal"])
 
+            _is_mna = self._is_mna_change_control_task(state.query)
+            _mna_section = _MNA_DEEP_READ_SECTION if _is_mna else ""
+            _txn_ctx = (
+                '"transaction_context": {{\n'
+                '        "structure": "reverse triangular merger|forward merger|asset purchase|stock purchase|other|null",\n'
+                '        "target": "target company name or null",\n'
+                '        "acquirer": "acquiring company name or null",\n'
+                '        "merger_sub": "merger subsidiary name or null",\n'
+                '        "parent": "ultimate parent entity name or null",\n'
+                '        "source_section": "Section or recital where transaction structure is described, or null"\n'
+                '    }},\n    '
+            ) if _is_mna else ""
             prompt = DEEP_READ_PROMPT.format(
                 filename=doc.filename,
                 page_range=f"1-{doc.page_count}",
@@ -7209,6 +7678,8 @@ Return:
                 query=state.query,
                 focus=state.hypothesis or state.query,
                 domain_vocabulary=_vocab,
+                mna_section=_mna_section,
+                transaction_context_schema=_txn_ctx,
                 domain_deep_read_examples=_dr_ex["deep_read_examples"],
                 domain_numeric_subjects=_dr_ex["numeric_subjects"],
                 domain_numeric_subject_id_example=_dr_ex["numeric_subject_id_example"],
@@ -7235,7 +7706,7 @@ Return:
             })
 
             # Add quotes as citations
-            for quote in analysis.get("quotes", [])[:10]:
+            for quote in analysis.get("quotes", [])[:25]:
                 if isinstance(quote, dict) and "text" in quote:
                     citation = state.add_citation(
                         document=doc.filename,
@@ -7285,117 +7756,144 @@ Return:
                                 "object_json": json.dumps(str(_obj)) if _obj else None,
                             }
                         facts_to_add.append((fact_item["fact"], issue_rel, effective_date, spo))
-                # Flatten contract_card into additional facts for synthesis visibility
-                _cc = analysis.get("contract_card")
-                if isinstance(_cc, dict):
-                    _cc_lines = self._flatten_contract_card(_cc, doc.filename)
-                    for _cc_line in _cc_lines:
-                        _cc_rel = "neutral" if "ABSENT" in _cc_line or "missing" in _cc_line.lower() else "supports"
-                        facts_to_add.append((_cc_line, _cc_rel, None, None))
 
-                # General provision reinforcement from contract card data.
-                # Emits synthesis-visible facts for operative provisions,
-                # financial operands, and structural issues detected in text.
-                if isinstance(_cc, dict):
-                    _reinforce_lines = self._contract_card_provision_reinforcement(
-                        _cc, doc.filename, content, state.query
-                    )
-                    for _r_line in _reinforce_lines:
-                        facts_to_add.append((_r_line, "supports", None, None))
-                    # Persist contract card + operands to graph for structural linking
-                    self._persist_contract_evidence(_cc, doc.filename)
+            # Flatten contract_card into additional facts for synthesis visibility.
+            # This is OUTSIDE the key_facts block so cards persist even when
+            # the model returns no key facts.
+            _cc = analysis.get("contract_card")
+            if isinstance(_cc, dict):
+                _cc_lines = self._flatten_contract_card(_cc, doc.filename)
+                for _cc_line in _cc_lines:
+                    _cc_rel = "neutral" if "ABSENT" in _cc_line or "missing" in _cc_line.lower() else "supports"
+                    facts_to_add.append((_cc_line, _cc_rel, None, None))
 
-                # SO-2 validation: if any facts lack SPO triples, retry to recover them.
-                # Threshold >= 1: fire even for single facts; FLASH retry is cheap.
-                if facts_to_add:
-                    _dr_spo_count = sum(1 for _, _, _, _s in facts_to_add if _s is not None)
-                    if _dr_spo_count < len(facts_to_add) and len(facts_to_add) >= 1:
-                        self._emit_step(
-                            state, StepType.REPLAN,
-                            f"SPO extraction yielded {_dr_spo_count}/{len(facts_to_add)} structured triples "
-                            f"(deep-read: '{doc.filename[:60]}'). Retrying for missing.",
-                        )
-                        _dr_retry_texts = [f for f, _, _, _ in facts_to_add]
-                        state.llm_calls_required += 1
-                        _dr_retry_spo = await self._retry_spo_extraction(_dr_retry_texts)
-                        if _dr_retry_spo:
-                            facts_to_add = [
-                                (f, rel, eff, _dr_retry_spo.get(i) if spo is None else spo)
-                                for i, (f, rel, eff, spo) in enumerate(facts_to_add)
-                            ]
-                # SO-5: resolve source role using content-based classification first,
-                # then fall back to filename heuristic.  The LLM classifies by document
-                # content (not filename) so adversarial naming cannot spoof calibration.
-                # _CONTENT_ROLE_MAP and _SourceRole are module-level constants.
-                _llm_role_str = (analysis.get("doc_source_role") or "").lower().strip()
-                _content_role = _CONTENT_ROLE_MAP.get(_llm_role_str, _SourceRole.UNKNOWN)
-                # Effective role: content-based when available; filename heuristic as fallback
-                _effective_role = (
-                    _content_role
-                    if _content_role != _SourceRole.UNKNOWN
-                    else _infer_source_role(doc.filename)
+                _reinforce_lines = self._contract_card_provision_reinforcement(
+                    _cc, doc.filename, content, state.query
                 )
-                _src_label = _effective_role.value.upper()
-                _new_facts = [f"[{_src_label}] {f}" for f, _, _d, _spo in facts_to_add]
-                state.add_facts(_new_facts)
-                if self.on_fact:
-                    for _f in _new_facts:
-                        self.on_fact(_f)
-                # Also record into matter model if enabled; pass issue_id if from targeted lead.
-                # Use record_facts_batch() so N facts → 1 outer transaction (savepoints inside).
-                adapter = getattr(state, "_matter_adapter", None)
-                if adapter is not None:
-                    # _rel_path: repo-relative stable path (not basename) to prevent
-                    # same-name files in different dirs aliasing in assertion_occurrence.
-                    # Use dict form for facts with SPO triples (SO-2), tuple form otherwise.
-                    _dr_batch = []
-                    for f, issue_rel, eff_date, spo in facts_to_add:
-                        if spo:
-                            _dr_batch.append({
-                                "proposition_text": f,
-                                "document_id": _rel_path,
-                                "issue_link_type": issue_rel,
-                                "temporal_scope_start": eff_date,
-                                **spo,
-                            })
-                        else:
-                            _dr_batch.append((f, _rel_path, issue_rel, eff_date))
-                    _recorded_ids.extend(
-                        adapter.record_facts_batch(
-                            _dr_batch,
-                            issue_id=focus_issue_id,
-                            default_source_role=_effective_role,
-                        )
-                    )
+                for _r_line in _reinforce_lines:
+                    facts_to_add.append((_r_line, "supports", None, None))
+                self._persist_contract_evidence(_cc, doc.filename)
 
-                    # Build assertion dependency graph from LLM-identified relationships (SO-2)
-                    # Uses 0-based indices into facts_to_add / _recorded_ids
-                    _rels = analysis.get("fact_relationships") or []
-                    for _rel in _rels[:5]:  # cap to 5 edges per document
-                        if not isinstance(_rel, dict):
-                            continue
-                        _fi = _rel.get("from_idx")
-                        _ti = _rel.get("to_idx")
-                        _rt = _rel.get("relation", "")
-                        if _rt and _rt not in _VALID_ASSERTION_LINK_TYPES:
-                            # SO-3: dropped relation must not be silently hidden.
-                            # Debug-level to avoid spamming ledger with LLM noise.
-                            logger.debug(
-                                "Dropped invalid assertion relation '%s' from deep-read "
-                                "(not in _VALID_ASSERTION_LINK_TYPES)", _rt
-                            )
-                        if (isinstance(_fi, int) and isinstance(_ti, int)
-                                and 0 <= _fi < len(_recorded_ids)
-                                and 0 <= _ti < len(_recorded_ids)
-                                and _fi != _ti
-                                and _recorded_ids[_fi]
-                                and _recorded_ids[_ti]
-                                # Same proposition text deduplicates to same assertion_id
-                                and _recorded_ids[_fi] != _recorded_ids[_ti]
-                                and _rt in _VALID_ASSERTION_LINK_TYPES):
-                            adapter.record_assertion_link(
-                                _recorded_ids[_fi], _recorded_ids[_ti], _rt
-                            )
+            # Persist transaction context (target/acquirer/merger_sub) as typed evidence
+            _txn = analysis.get("transaction_context")
+            if isinstance(_txn, dict) and self._matter_model is not None:
+                _target = (_txn.get("target") or "").strip()
+                _acquirer = (_txn.get("acquirer") or "").strip()
+                _structure = (_txn.get("structure") or "").strip()
+                if _target or _acquirer:
+                    te = self._matter_model.typed_evidence
+                    txn_key = f"txn:{doc.filename}"
+                    te.upsert(
+                        "transaction_context", txn_key,
+                        payload={
+                            "structure": _structure,
+                            "target": _target,
+                            "acquirer": _acquirer,
+                            "merger_sub": (_txn.get("merger_sub") or "").strip(),
+                            "parent": (_txn.get("parent") or "").strip(),
+                            "source_section": (_txn.get("source_section") or "").strip(),
+                            "source_document": doc.filename,
+                        },
+                        label=f"txn:{_target or 'unknown'}->{_acquirer or 'unknown'}",
+                        document_id=doc.filename,
+                        confidence=0.85,
+                    )
+                    if _target:
+                        facts_to_add.append((
+                            f"[TRANSACTION] Target: {_target}"
+                            + (f", Acquirer: {_acquirer}" if _acquirer else "")
+                            + (f", Structure: {_structure}" if _structure else ""),
+                            "neutral", None, None
+                        ))
+
+            # SO-2 validation: if any facts lack SPO triples, retry to recover them.
+            # Threshold >= 1: fire even for single facts; FLASH retry is cheap.
+            if facts_to_add:
+                _dr_spo_count = sum(1 for _, _, _, _s in facts_to_add if _s is not None)
+                if _dr_spo_count < len(facts_to_add) and len(facts_to_add) >= 1:
+                    self._emit_step(
+                        state, StepType.REPLAN,
+                        f"SPO extraction yielded {_dr_spo_count}/{len(facts_to_add)} structured triples "
+                        f"(deep-read: '{doc.filename[:60]}'). Retrying for missing.",
+                    )
+                    _dr_retry_texts = [f for f, _, _, _ in facts_to_add]
+                    state.llm_calls_required += 1
+                    _dr_retry_spo = await self._retry_spo_extraction(_dr_retry_texts)
+                    if _dr_retry_spo:
+                        facts_to_add = [
+                            (f, rel, eff, _dr_retry_spo.get(i) if spo is None else spo)
+                            for i, (f, rel, eff, spo) in enumerate(facts_to_add)
+                        ]
+            # SO-5: resolve source role using content-based classification first,
+            # then fall back to filename heuristic.  The LLM classifies by document
+            # content (not filename) so adversarial naming cannot spoof calibration.
+            # _CONTENT_ROLE_MAP and _SourceRole are module-level constants.
+            _llm_role_str = (analysis.get("doc_source_role") or "").lower().strip()
+            _content_role = _CONTENT_ROLE_MAP.get(_llm_role_str, _SourceRole.UNKNOWN)
+            # Effective role: content-based when available; filename heuristic as fallback
+            _effective_role = (
+                _content_role
+                if _content_role != _SourceRole.UNKNOWN
+                else _infer_source_role(doc.filename)
+            )
+            _src_label = _effective_role.value.upper()
+            _new_facts = [f"[{_src_label}] {f}" for f, _, _d, _spo in facts_to_add]
+            state.add_facts(_new_facts)
+            if self.on_fact:
+                for _f in _new_facts:
+                    self.on_fact(_f)
+            # Also record into matter model if enabled; pass issue_id if from targeted lead.
+            # Use record_facts_batch() so N facts → 1 outer transaction (savepoints inside).
+            adapter = getattr(state, "_matter_adapter", None)
+            if adapter is not None:
+                # _rel_path: repo-relative stable path (not basename) to prevent
+                # same-name files in different dirs aliasing in assertion_occurrence.
+                # Use dict form for facts with SPO triples (SO-2), tuple form otherwise.
+                _dr_batch = []
+                for f, issue_rel, eff_date, spo in facts_to_add:
+                    if spo:
+                        _dr_batch.append({
+                            "proposition_text": f,
+                            "document_id": _rel_path,
+                            "issue_link_type": issue_rel,
+                            "temporal_scope_start": eff_date,
+                            **spo,
+                        })
+                    else:
+                        _dr_batch.append((f, _rel_path, issue_rel, eff_date))
+                _recorded_ids.extend(
+                    adapter.record_facts_batch(
+                        _dr_batch,
+                        issue_id=focus_issue_id,
+                        default_source_role=_effective_role,
+                    )
+                )
+
+                # Build assertion dependency graph from LLM-identified relationships (SO-2)
+                # Uses 0-based indices into facts_to_add / _recorded_ids
+                _rels = analysis.get("fact_relationships") or []
+                for _rel in _rels[:5]:  # cap to 5 edges per document
+                    if not isinstance(_rel, dict):
+                        continue
+                    _fi = _rel.get("from_idx")
+                    _ti = _rel.get("to_idx")
+                    _rt = _rel.get("relation", "")
+                    if _rt and _rt not in _VALID_ASSERTION_LINK_TYPES:
+                        logger.debug(
+                            "Dropped invalid assertion relation '%s' from deep-read "
+                            "(not in _VALID_ASSERTION_LINK_TYPES)", _rt
+                        )
+                    if (isinstance(_fi, int) and isinstance(_ti, int)
+                            and 0 <= _fi < len(_recorded_ids)
+                            and 0 <= _ti < len(_recorded_ids)
+                            and _fi != _ti
+                            and _recorded_ids[_fi]
+                            and _recorded_ids[_ti]
+                            and _recorded_ids[_fi] != _recorded_ids[_ti]
+                            and _rt in _VALID_ASSERTION_LINK_TYPES):
+                        adapter.record_assertion_link(
+                            _recorded_ids[_fi], _recorded_ids[_ti], _rt
+                        )
 
             # Extract and store structured numeric facts (SO-6).
             # Ground each quant fact to an assertion_id by searching the already-recorded
@@ -7496,7 +7994,10 @@ Return:
                                         _op_role = "actual_counterparty_ttm_revenue"
                             if _op_role in ("actual_counterparty_ttm_revenue",
                                             "company_total_ttm_revenue",
-                                            "drawn_outstanding"):
+                                            "drawn_outstanding",
+                                            "acquirer_revenue",
+                                            "acquirer_segment_revenue",
+                                            "actual_product_line_ttm_revenue"):
                                 _val_m = _q_val / 1_000_000.0 if _q_val > 1000 else _q_val
                                 if _val_m > 0.5:
                                     _subj_label = _q_subj_id or self._extract_operand_subject(_q_raw, doc.filename)
@@ -7859,18 +8360,17 @@ Return:
 
         # Cross-document analysis pass: for extraction tasks, derive calculations,
         # flag inconsistencies, and identify missing provisions BEFORE synthesis.
-        if self._is_extraction_task(state.query) and len(facts) > 20:
-            # Graph-derived calculations: deterministic operand resolution
-            # runs BEFORE the LLM pass so correct operands are already chosen.
+        if self._is_extraction_task(state.query):
             graph_calcs = self._resolve_operand_graph_calculations(facts=facts)
             if graph_calcs:
                 facts.extend(graph_calcs)
 
-            _quant_ctx = self._build_quant_summary() if self._matter_model else ""
-            derived_facts = await self._cross_document_analysis(state.query, facts, _quant_ctx)
-            if derived_facts:
-                facts.extend(derived_facts)
-                state.findings["accumulated_facts"] = facts
+            if len(facts) > 5:
+                _quant_ctx = self._build_quant_summary() if self._matter_model else ""
+                derived_facts = await self._cross_document_analysis(state.query, facts, _quant_ctx)
+                if derived_facts:
+                    facts.extend(derived_facts)
+                    state.findings["accumulated_facts"] = facts
 
         # Evidence relevance filter: LITE pass reads the full fact set and drops
         # only clearly irrelevant items. This replaces hard caps — the model decides
@@ -8697,57 +9197,68 @@ Return:
                 f"{operand_locks}\n"
                 "If a possible derived finding conflicts with these locks, omit the conflicting finding.\n"
             )
+        is_mna = self._is_mna_change_control_task(query)
+        if is_mna:
+            persona = (
+                "You are a senior M&A attorney performing cross-document analysis on "
+                "extracted contract provisions."
+            )
+        else:
+            persona = (
+                "You are an expert analyst performing cross-document analysis on "
+                "extracted findings."
+            )
+        mna_categories = ""
+        mna_operand_discipline = ""
+        if is_mna:
+            mna_categories = (
+                "5. STRUCTURAL ANALYSIS:\n"
+                "   - Identify the transaction structure (e.g., reverse triangular merger).\n"
+                "   - In a reverse triangular merger, the TARGET survives as a wholly-owned subsidiary.\n"
+                "     Entity survival means anti-assignment clauses may NOT be triggered because no 'assignment'\n"
+                "     occurs — but this is JURISDICTION-DEPENDENT and must be flagged as uncertain.\n"
+                "   - For EACH contract with 'assignment by operation of law' language, separately analyze\n"
+                "     whether entity survival avoids the trigger, citing the specific section.\n"
+                "6. DOWNSTREAM RISKS: For EACH contract with 'indirect' change of control or 'direct or\n"
+                "   indirect' ownership language, flag that a future change of the ACQUIRER's ownership\n"
+                "   could re-trigger the provision. Name the specific contract and section.\n"
+                "7. LEGAL FRAMEWORK: For EACH supply agreement or MSA with an anti-assignment clause,\n"
+                "   apply UCC § 2-210 SPECIFICALLY to that contract — distinguish assignment of rights\n"
+                "   from delegation of duties. Do not emit generic UCC analysis.\n"
+                "8. OWNERSHIP STAKES: Report exact ownership percentages from JV/partnership/subsidiary\n"
+                "   agreements. Distinguish ownership stakes from voting-equity CoC thresholds.\n\n"
+            )
+            mna_operand_discipline = (
+                "OPERAND DISCIPLINE FOR CALCULATIONS:\n"
+                "   - RSU acceleration: use the EXACT unvested RSU count from the employment agreement.\n"
+                "     Use per-share transaction price or implied share price — do NOT use JV buy-out EBITDA multiples.\n"
+                "   - Credit facility: use the DRAWN/OUTSTANDING amount, not the commitment/facility maximum.\n"
+                "   - Revenue exposure: pair counterparty-specific TTM revenue (from schedules/disclosures)\n"
+                "     with company total TTM revenue. Do NOT use minimum purchase commitments as the numerator.\n"
+                "   - Carve-outs: compare the acquirer's product-specific or segment revenue to the threshold;\n"
+                "     state whether it exceeds the threshold or falls short, and the consequence.\n"
+                "   - If a contract card says 'ABSENT' for a provision, note that explicitly.\n\n"
+            )
         prompt = (
-            "You are a senior M&A attorney performing cross-document analysis on "
-            "extracted contract provisions. Given the facts and numeric data below "
-            "(extracted from multiple contracts), produce DERIVED FINDINGS that "
+            f"{persona} Given the facts and numeric data below "
+            "(extracted from multiple documents), produce DERIVED FINDINGS that "
             "require comparing across documents or performing calculations.\n\n"
             "Produce findings in these categories:\n"
             "1. MANDATORY CALCULATIONS (perform ALL that the data supports):\n"
             "   - revenue exposure percent = counterparty TTM revenue / company TTM revenue × 100\n"
             "     (compute for EVERY counterparty where both figures are available)\n"
-            "   - RSU acceleration cost = unvested RSU count × per-share transaction price\n"
-            "   - buy-out price = EBITDA × contract multiple (e.g., 4.5x)\n"
-            "     (if a buy-out multiple is ≤5.0x EBITDA, flag potential below-market pricing/value leakage)\n"
-            "   - lease termination fee = annual base rent ÷ 12 × termination notice months\n"
-            "   - drawn credit exposure = actual drawn amount on facility\n"
-            "   - carve-out threshold test: compare acquirer's relevant revenue to the stated threshold\n"
-            "     and conclude whether the carve-out applies or does not apply\n"
+            "   - Any other quantitative comparison the extracted data supports.\n"
             "   Do NOT state that operands are unavailable if they appear in EXTRACTED FACTS or QUANTITATIVE DATA.\n"
             "   CRITICAL: Use schedule-disclosed TTM revenue (not minimum purchase commitments from the contract body)\n"
             "   as the numerator for revenue exposure. If both appear in the facts, state both and use TTM for the %.\n"
-            "2. INCONSISTENCIES: Flag where different contracts define the same "
-            "concept differently (e.g., different CoC thresholds, different "
-            "trigger definitions).\n"
-            "3. TIMING CONFLICTS: Identify where consent/notification/prepayment "
-            "deadlines across contracts create sequencing problems.\n"
-            "4. ABSENCES: Note where a contract that SHOULD have a provision "
-            "(based on its type) appears to lack it — e.g., no cure period, "
-            "no explicit CoC definition, no consent standard.\n"
-            "5. STRUCTURAL ANALYSIS:\n"
-            "   - Identify the transaction structure (e.g., reverse triangular merger).\n"
-            "   - In a reverse triangular merger, the TARGET survives as a wholly-owned subsidiary.\n"
-            "     Entity survival means anti-assignment clauses may NOT be triggered because no 'assignment'\n"
-            "     occurs — but this is JURISDICTION-DEPENDENT and must be flagged as uncertain.\n"
-            "   - For EACH contract with 'assignment by operation of law' language, separately analyze\n"
-            "     whether entity survival avoids the trigger, citing the specific section.\n"
-            "6. DOWNSTREAM RISKS: For EACH contract with 'indirect' change of control or 'direct or\n"
-            "   indirect' ownership language, flag that a future change of the ACQUIRER's ownership\n"
-            "   could re-trigger the provision. Name the specific contract and section.\n"
-            "7. LEGAL FRAMEWORK: For EACH supply agreement or MSA with an anti-assignment clause,\n"
-            "   apply UCC § 2-210 SPECIFICALLY to that contract — distinguish assignment of rights\n"
-            "   from delegation of duties. Do not emit generic UCC analysis.\n"
-            "8. OWNERSHIP STAKES: Report exact ownership percentages from JV/partnership/subsidiary\n"
-            "   agreements. Distinguish ownership stakes from voting-equity CoC thresholds.\n\n"
-            "OPERAND DISCIPLINE FOR CALCULATIONS:\n"
-            "   - RSU acceleration: use the EXACT unvested RSU count from the employment agreement.\n"
-            "     Use per-share transaction price or implied share price — do NOT use JV buy-out EBITDA multiples.\n"
-            "   - Credit facility: use the DRAWN/OUTSTANDING amount, not the commitment/facility maximum.\n"
-            "   - Revenue exposure: pair counterparty-specific TTM revenue (from schedules/disclosures)\n"
-            "     with company total TTM revenue. Do NOT use minimum purchase commitments as the numerator.\n"
-            "   - Carve-outs: compare the acquirer's product-specific or segment revenue to the threshold;\n"
-            "     state whether it exceeds the threshold or falls short, and the consequence.\n"
-            "   - If a contract card says 'ABSENT' for a provision, note that explicitly.\n\n"
+            "2. INCONSISTENCIES: Flag where different documents define the same "
+            "concept differently.\n"
+            "3. TIMING CONFLICTS: Identify where deadlines across documents "
+            "create sequencing problems.\n"
+            "4. ABSENCES: Note where a document that SHOULD have a provision "
+            "(based on its type) appears to lack it.\n"
+            f"{mna_categories}"
+            f"{mna_operand_discipline}"
             f"QUERY CONTEXT: {query}\n\n"
             f"EXTRACTED FACTS:\n{facts_text}\n"
             f"{quant_section}\n"
@@ -10745,14 +11256,14 @@ Return:
                 return True, f"{len(state.citations)} citations, no open issues"
             return False, ""
         # Floor: high-materiality issues (>=0.5) must each have
-        # coverage >= 0.6 AND no open proof gap to call the target
+        # coverage >= 0.85 AND no open proof gap to call the target
         # "sufficient". Non-material issues don't block.
         blocking = []
         for row in coverage_rows:
             if (row.get("materiality") or 0) < 0.5:
                 continue
             frac = float(row.get("coverage_fraction") or 0.0)
-            if row.get("has_proof_gap") or frac < 0.6:
+            if row.get("has_proof_gap") or frac < 0.85:
                 blocking.append(row.get("title", "?"))
         if not blocking:
             total_issues = sum(

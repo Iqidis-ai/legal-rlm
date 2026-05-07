@@ -207,8 +207,8 @@ async def run_task(
 
     irys = Irys(IrysConfig(
         api_key=api_key or os.environ.get("GEMINI_API_KEY"),
-        max_depth=5,
-        max_leads_per_level=5,
+        max_depth=8,
+        max_leads_per_level=12,
         output_format="markdown",
         enable_matter_model=True,
     ))
