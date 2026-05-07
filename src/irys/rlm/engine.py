@@ -795,6 +795,17 @@ This is a document comparison task. For EVERY provision below, extract the EXACT
 values from THIS document. Do not paraphrase or approximate — use the exact numbers,
 percentages, thresholds, and defined terms as written.
 
+DOCUMENT FORMAT GUIDANCE:
+- If this is a REDLINE/MARKUP document, it contains BOTH original text and proposed changes
+  in the same document (strikethroughs = deleted, underline/bold = added).
+  Extract BOTH the original value AND the changed value as separate provision_comparisons
+  entries with source_role "original" and "markup" respectively.
+- If this is a CLEAN original document, extract all values with source_role "original".
+- If this is a BORROWER'S markup, values in the markup that differ from the original/commitment
+  letter are the PROPOSED changes. Extract both the baseline and the proposal.
+- If this is a COMMITMENT LETTER, its terms are the baseline — extract as "commitment_letter".
+- If this is a CREDIT MEMO, its terms are internal lender analysis — extract as "credit_memo".
+
 CRITICAL: Extract EVERY provision that differs between documents, not just the ones
 listed below. The list below is a minimum — if you find additional provisions with
 specific values, extract those too. If a provision has a GRID or TIER structure,
@@ -806,18 +817,27 @@ CRITICAL PROVISIONS TO EXTRACT (with expected value types):
 3. Commitment Fee: flat rate OR each tier with leverage breakpoints
 4. Financial Covenants — FCCR: exact minimum ratio (e.g. 1.25x, 1.35x)
 5. Financial Covenants — Leverage Ratio: each step-down date and threshold
-6. EBITDA Add-backs: non-recurring cap ($/year AND $/lifetime), synergy cap (% AND months)
-7. Permitted Acquisitions: individual basket ($), aggregate basket ($), pro forma cushion (x)
-8. Restricted Payments: hard dollar cap ($), ECF percentage, pro forma leverage test threshold
-9. ECF Sweep: percentage at EACH leverage tier (step-downs vs flat)
-10. Cross-Default Threshold: exact dollar amount
-11. Change of Control: exact ownership percentage trigger
-12. MAE/MAC Definition: presence of "taken as a whole", "material" qualifiers in sub-clauses
-13. Extension Options: number of extensions, duration, fee, notice period
-14. Anti-Layering Covenant: present/absent, specific restrictions
-15. MFN (Most Favored Nation): present/absent, scope, margin adjustment trigger
-16. Reinvestment Period: exact number of days for asset sale reinvestment
-17. Reporting Requirements: financial statement delivery deadlines
+6. Financial Covenants — Revolver Testing Threshold: % of commitment and dollar amount
+7. Financial Covenants — Testing Holiday: number of quarters, conditions
+8. EBITDA Add-backs: non-recurring cap ($/year AND $/lifetime), synergy cap (% AND months),
+   EACH individually named add-back category (business interruption, restructuring, etc.)
+9. Cash Netting Cap: exact dollar amount for leverage calculation AND for ECF sweep
+10. Permitted Acquisitions: individual basket ($), aggregate basket ($), pro forma cushion (x)
+11. Restricted Payments: hard dollar cap ($), ECF percentage, pro forma leverage test threshold
+12. ECF Sweep: percentage at EACH leverage tier (step-downs vs flat)
+13. Cross-Default Threshold: exact dollar amount
+14. Change of Control: exact ownership percentage trigger
+15. MAE/MAC Definition: presence of "taken as a whole", "material" qualifiers in sub-clauses
+16. Extension Options: number of extensions, duration, fee, notice period
+17. Anti-Layering Covenant: present/absent, specific restrictions
+18. MFN (Most Favored Nation): present/absent, scope, margin adjustment trigger (bps)
+19. Reinvestment Period: exact number of days for asset sale reinvestment
+20. Reporting Requirements: financial statement delivery deadlines
+21. Prepayment Provisions: soft call period, prepayment premium %, repricing protection
+
+MANDATORY: For EACH provision, create TWO entries in provision_comparisons when you can
+identify both the original and the changed value — one with source_role "original" and
+one with source_role "markup". This is critical for generating the deviation analysis.
 
 For EACH provision found, create a key_fact with:
 - The EXACT value (not "changed" or "modified" — the actual number)
@@ -832,7 +852,8 @@ If this document is a NEGOTIATION PLAYBOOK, extract for each provision:
 Include a "provision_comparisons" array in your JSON response with structured rows:
 "provision_comparisons": [
     {"provision": "name", "value": "exact value from this document", "section_ref": "Section X.Y",
-     "source_role": "original|markup|playbook", "value_type": "threshold|cap|rate|period|presence"}
+     "source_role": "original|markup|playbook|commitment_letter|credit_memo",
+     "value_type": "threshold|cap|rate|period|presence|basket|trigger"}
 ]
 """
 
