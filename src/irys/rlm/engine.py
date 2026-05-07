@@ -2468,6 +2468,23 @@ class RLMEngine:
             )
         return obligations
 
+    def _sync_workflow_obligations_from_contract(
+        self, state: InvestigationState,
+    ) -> None:
+        """Refresh obligations after orientation enriches the execution contract."""
+        contract = getattr(state, "execution_contract", None)
+        if contract is None:
+            return
+        existing = {
+            item.validator or item.obligation_type
+            for item in state.workflow_obligations
+        }
+        for obligation in self._workflow_obligations(contract):
+            key = obligation.validator or obligation.obligation_type
+            if key not in existing:
+                state.workflow_obligations.append(obligation)
+                existing.add(key)
+
     @staticmethod
     def _is_extraction_task(query: str) -> bool:
         """Detect extraction/inventory/diligence tasks that need deeper investigation."""
@@ -4420,24 +4437,31 @@ class RLMEngine:
             )
 
         if validator == "issue_coverage_matrix":
-            contract = getattr(state, "execution_contract", None)
-            output_contract = dict(getattr(contract, "output_contract", {}) or {})
-            task_spec = dict(output_contract.get("task_spec") or {})
-            required = task_spec.get("required_evidence") or []
-            lowered = output_text.lower()
-            covered = sum(
-                1 for item in required
-                if str(item).lower().strip() in lowered
-                or any(word in lowered for word in str(item).lower().split()[:3])
-            )
-            total = max(1, len(required))
-            passed = covered >= total * 0.7
+            manifest = state.findings.get("task_evidence_manifest") or {}
+            if isinstance(manifest, dict):
+                covered_kinds = set(manifest.get("covered_evidence_kinds") or [])
+                missing_kinds = set(manifest.get("missing_evidence_kinds") or [])
+                contract_obj = getattr(state, "execution_contract", None)
+                _oc = dict(getattr(contract_obj, "output_contract", {}) or {})
+                _ts = dict(_oc.get("task_spec") or {})
+                required_kinds = set(_ts.get("required_evidence") or [])
+                if required_kinds:
+                    addressed = required_kinds & (covered_kinds | missing_kinds)
+                    total = max(1, len(required_kinds))
+                    passed = len(addressed) >= total * 0.7
+                    score = len(addressed) / total
+                else:
+                    passed = True
+                    score = 1.0
+            else:
+                passed = bool(output_text.strip())
+                score = 1.0 if passed else 0.0
             return ValidationResult(
                 validator=validator,
                 passed=passed,
-                score=covered / total,
+                score=score,
                 blocking_issues=[] if passed else [
-                    f"issue coverage: {covered}/{total} required evidence items addressed"
+                    f"issue coverage: evidence manifest missing required kinds"
                 ],
                 obligation_status={
                     oid: passed for oid in matching_obligation_ids
@@ -5519,6 +5543,9 @@ class RLMEngine:
                     ][:10]
                     _ec.output_contract = _oc
 
+        # Sync workflow obligations after orientation enriched the contract
+        self._sync_workflow_obligations_from_contract(state)
+
         # Log orientation summary to reasoning ledger (SO-3 user visibility)
         adapter = getattr(state, "_matter_adapter", None)
         if adapter is not None:
@@ -5535,11 +5562,11 @@ class RLMEngine:
         """Phase 2: Iterative investigation with recursive lead following."""
         iteration = 0
         budget = self._get_research_profile(state)
-        max_iterations = budget.max_iterations
+        max_iterations = max(0, int(budget.max_iterations))
         contract = getattr(state, "execution_contract", None)
         if contract is not None:
-            _contract_max = int(getattr(contract, "max_iter", max_iterations))
-            max_iterations = max(0, _contract_max)
+            _contract_max = max(0, int(getattr(contract, "max_iter", max_iterations)))
+            max_iterations = min(max_iterations, _contract_max)
 
         while iteration < max_iterations:
             # Check user stop request before each iteration
