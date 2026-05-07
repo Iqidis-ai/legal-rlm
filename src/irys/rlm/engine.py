@@ -233,7 +233,7 @@ class RLMConfig:
     max_leads_per_level: int = 12
     max_documents_per_search: int = 10
     min_lead_priority: float = 0.3
-    excerpt_chars: int = 32000
+    excerpt_chars: int = 64000
     parallel_reads: int = 5
     max_initial_deep_read_documents: int = 20
     checkpoint_dir: Optional[str] = None  # Directory for checkpoints
@@ -640,6 +640,10 @@ extraction is complete.
    - Missing expected provisions
    - Contradictions within the document
    - Issues requiring interpretation or expert judgment
+   - ADVERSE EVIDENCE: Any statement, admission, or language that could be used adversarially
+     (e.g., anticompetitive intent, awareness of deficiencies, retaliatory motive, willful
+     noncompliance, or pricing power). For each: extract the EXACT quote, speaker/author,
+     section/page reference, and a one-line explanation of why it is adverse.
 
 8. DOC SOURCE ROLE (SO-5 — classify this document by its content, NOT its filename):
    Choose exactly one of: advocacy, operative, authoritative, procedural, informal, draft, post_hoc, unknown
@@ -3845,7 +3849,7 @@ class RLMEngine:
 
         for market, shares in market_shares.items():
             if len(shares) >= 2:
-                total_hhi = sum(s ** 2 * 100 for _, s in shares)
+                total_hhi = sum(s ** 2 for _, s in shares)
                 results.append(
                     f"[CALCULATED] HHI for {market}: {total_hhi:,.0f} "
                     f"(from {len(shares)} competitors: "
@@ -8867,7 +8871,7 @@ Return:
             _prov_comps = analysis.get("provision_comparisons")
             if isinstance(_prov_comps, list) and _prov_comps:
                 _mm_pc = self._matter_model
-                for _pc in _prov_comps[:30]:
+                for _pc in _prov_comps[:80]:
                     if not isinstance(_pc, dict):
                         continue
                     _prov = _pc.get("provision", "")
@@ -8909,7 +8913,7 @@ Return:
             _reg_data = analysis.get("regulatory_data")
             if isinstance(_reg_data, list) and _reg_data:
                 _mm_rd = self._matter_model
-                for _rd in _reg_data[:30]:
+                for _rd in _reg_data[:80]:
                     if not isinstance(_rd, dict):
                         continue
                     _cat = _rd.get("category", "")
@@ -10433,7 +10437,7 @@ Return:
                 "5. MARKET CONCENTRATION ANALYSIS (MANDATORY when market share data exists):\n"
                 "   For EACH geographic market where overlap exists:\n"
                 "   - State both parties' market shares\n"
-                "   - Compute HHI = sum of (share × 100)² for all competitors\n"
+                "   - Compute HHI = sum of (share%)² for all competitors (e.g., 30% → 900)\n"
                 "   - Compute post-merger HHI and delta (change in HHI)\n"
                 "   - Flag markets where post-merger HHI > 1,800 AND delta > 200 (structural presumption)\n"
                 "   - Rank markets by severity (highest HHI/delta first)\n"
@@ -10471,6 +10475,14 @@ Return:
             "create sequencing problems.\n"
             "4. ABSENCES: Note where a document that SHOULD have a provision "
             "(based on its type) appears to lack it.\n"
+            "5. ADVERSE EVIDENCE: Flag specific quotes, admissions, or language from "
+            "internal documents (emails, memos, board decks, strategy docs) that could be "
+            "used adversarially in litigation, negotiation, or regulatory proceedings. "
+            "For each, state: exact quote, speaker/author, document, and why it's problematic.\n"
+            "6. STRATEGIC RECOMMENDATIONS: For each material issue identified, propose at "
+            "least TWO alternative courses of action (e.g., renegotiate vs. accept, fix-it-first "
+            "vs. consent decree, litigate vs. settle) with specific pros/cons referencing the "
+            "extracted evidence. Include deadlines, target provisions, and dollar impacts where data supports it.\n"
             f"{mna_categories}"
             f"{mna_operand_discipline}"
             f"{comparison_categories}"
