@@ -101,15 +101,17 @@ class DocumentReader:
         )
 
     def _read_docx(self, path: Path) -> DocumentContent:
-        """Extract text from DOCX."""
+        """Extract text from DOCX, preserving tracked changes as [DELETED]/[ADDED] markers."""
         doc = Document(path)
 
-        # DOCX doesn't have real pages, treat as single page
-        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+        paragraphs = []
+        for p in doc.paragraphs:
+            para_text = self._extract_paragraph_with_revisions(p)
+            if para_text.strip():
+                paragraphs.append(para_text)
         text = "\n\n".join(paragraphs)
         text = self._clean_text(text)
 
-        # Also extract tables
         for table in doc.tables:
             table_text = []
             for row in table.rows:
@@ -127,6 +129,35 @@ class DocumentReader:
             pages=pages,
             total_chars=len(text),
         )
+
+    @staticmethod
+    def _extract_paragraph_with_revisions(paragraph) -> str:
+        """Extract paragraph text preserving tracked changes as markup markers."""
+        from lxml import etree
+        nsmap = {
+            'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+        }
+        parts = []
+        try:
+            for elem in paragraph._element.iter():
+                tag = etree.QName(elem.tag).localname if isinstance(elem.tag, str) else ""
+                if tag == "delText":
+                    parts.append(f"[DELETED: {elem.text or ''}]")
+                elif tag == "t":
+                    parent_tag = ""
+                    if elem.getparent() is not None:
+                        parent_tag = etree.QName(elem.getparent().tag).localname if isinstance(elem.getparent().tag, str) else ""
+                    grandparent_tag = ""
+                    if elem.getparent() is not None and elem.getparent().getparent() is not None:
+                        gp = elem.getparent().getparent()
+                        grandparent_tag = etree.QName(gp.tag).localname if isinstance(gp.tag, str) else ""
+                    if grandparent_tag == "ins":
+                        parts.append(f"[ADDED: {elem.text or ''}]")
+                    else:
+                        parts.append(elem.text or "")
+        except Exception:
+            return paragraph.text or ""
+        return "".join(parts) if parts else (paragraph.text or "")
 
     def _read_txt(self, path: Path) -> DocumentContent:
         """Read plain text file."""
