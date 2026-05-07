@@ -1801,11 +1801,11 @@ Your analysis MUST include ALL of the following sections when applicable to the 
    - The EXACT changed/proposed language or value (e.g., "Markup: grid-based 0.30%/0.40%/0.50% at leverage tiers")
    - If comparing documents, state BOTH sides explicitly for every deviation
 
-2. **Risk Assessment** — For EVERY material issue, assign a risk rating using this scale:
+2. **Risk Assessment** — For EVERY material issue, assign a risk rating. Default scale:
    - **Red** — Material adverse change requiring immediate pushback or rejection
    - **Yellow** — Concerning deviation requiring negotiation or modification
    - **Green** — Acceptable, market-standard, or immaterial change
-   You MUST use Red/Yellow/Green for EVERY issue. Do not skip any issue. Do not use other rating scales.
+   You MUST assign a severity to EVERY issue. Do not skip any issue. If the task instructions below specify a different severity scale (e.g., Critical/Significant/Administrative), use that scale instead.
 
 3. **Quantitative Analysis** — Where numbers exist in the evidence, perform the calculation or comparison. Include specific dollar amounts, percentages, ratios, thresholds, dates, and numeric comparisons. Show the math explicitly (e.g., "$175,000,000 × 0.25% = $437,500 per year additional interest cost"). If two documents differ on a number, state both numbers and compute the delta. Use the entity's actual financial data when available.
 
@@ -1843,7 +1843,7 @@ Before finalizing, check:
 - Did you surface the real weaknesses and risks?
 - Did you give the user the most useful next steps or clarifying question where needed?
 - Is this strong enough that a demanding senior lawyer would trust it?
-- Did you assign a Red/Yellow/Green risk rating to EVERY material issue?
+- Did you assign a severity rating to EVERY material issue (using the task-specific scale if one was specified)?
 - Did you show explicit calculations for quantitative analysis (not just mention numbers)?
 - Did you provide specific recommendations with primary AND fallback positions?
 - Did you assess the practical impact with specific dollar amounts where possible?
@@ -2846,7 +2846,10 @@ class RLMEngine:
             base += (
                 "\nGAP MEMORANDUM SPECIFIC INSTRUCTIONS:\n"
                 "This is a conditions-precedent or closing-document gap analysis. You MUST:\n"
-                "1. Use a three-tier severity system: Critical / Significant / Administrative\n"
+                "1. OVERRIDE: For this task, use a three-tier severity system instead of Red/Yellow/Green:\n"
+                "   - **Critical** — Blocking issue that prevents closing or creates material legal risk\n"
+                "   - **Significant** — Non-blocking but requires immediate attention before closing\n"
+                "   - **Administrative** — Minor or procedural issue, easily remedied\n"
                 "2. For EACH condition precedent in the credit agreement/reference document:\n"
                 "   a. State the EXACT section reference (e.g., Section 5.01(f))\n"
                 "   b. State the EXACT requirement (e.g., 'title policy in amount not less than allocated loan amount')\n"
@@ -4118,6 +4121,171 @@ class RLMEngine:
                 f"[CALCULATED] Reverse breakup fee ${breakup_fee:,.0f} = "
                 f"{pct:.1f}% of deal value ${deal_value:,.0f}"
             )
+
+        return results
+
+    def _derive_closing_document_calculations(
+        self, facts: "list[str]",
+    ) -> "list[str]":
+        """Deterministic calculations for closing document / CP gap tasks.
+
+        Scans accumulated facts for dates, dollar amounts, and CP requirements.
+        Pre-computes date staleness, dollar shortfalls, and LTV ratios so the
+        synthesis LLM receives [CALCULATED] facts instead of doing arithmetic.
+        """
+        import re as _re_cp
+        from datetime import datetime, timedelta
+
+        results: list[str] = []
+        full_text = "\n".join(facts)
+
+        closing_date: "Optional[datetime]" = None
+        _cd_patterns = [
+            r'(?:closing\s*date|dated\s*as\s*of|credit\s*agreement\s*dated)[:\s]*(\w+\s+\d{1,2},?\s+\d{4})',
+            r'(?:closing\s*date|dated\s*as\s*of)[:\s]*(\d{1,2}/\d{1,2}/\d{4})',
+            r'(?:closing\s*date|dated\s*as\s*of)[:\s]*(\d{4}-\d{2}-\d{2})',
+        ]
+        for pat in _cd_patterns:
+            m = _re_cp.search(pat, full_text, _re_cp.IGNORECASE)
+            if m:
+                try:
+                    for fmt in ("%B %d, %Y", "%B %d %Y", "%m/%d/%Y", "%Y-%m-%d"):
+                        try:
+                            closing_date = datetime.strptime(m.group(1).strip().rstrip(","), fmt)
+                            break
+                        except ValueError:
+                            continue
+                except Exception:
+                    pass
+                if closing_date:
+                    break
+
+        doc_dates: list[tuple[str, datetime]] = []
+        _date_patterns = [
+            (r'(?:dated|as\s*of|certificate\s*dated|effective)[:\s]*(\w+\s+\d{1,2},?\s+\d{4})', None),
+            (r'(?:dated|as\s*of|certificate_dated)[:\s]*(\d{1,2}/\d{1,2}/\d{4})', None),
+            (r'(?:dated|as\s*of|certificate_dated|effective_date)[:\s]*(\d{4}-\d{2}-\d{2})', None),
+        ]
+        for fact in facts:
+            for pat, _ in _date_patterns:
+                for m in _re_cp.finditer(pat, fact, _re_cp.IGNORECASE):
+                    date_str = m.group(1).strip().rstrip(",")
+                    parsed = None
+                    for fmt in ("%B %d, %Y", "%B %d %Y", "%m/%d/%Y", "%Y-%m-%d",
+                                "%b %d, %Y", "%b %d %Y"):
+                        try:
+                            parsed = datetime.strptime(date_str, fmt)
+                            break
+                        except ValueError:
+                            continue
+                    if parsed:
+                        label = fact[:120].strip()
+                        doc_dates.append((label, parsed))
+
+        if closing_date and doc_dates:
+            staleness_requirements = {
+                "good standing": 30,
+                "certificate of good standing": 30,
+                "alta survey": 90,
+                "survey": 90,
+                "appraisal": 120,
+                "mai appraisal": 120,
+                "phase i": 180,
+                "environmental": 180,
+                "insurance": 365,
+                "compliance certificate": 5,
+            }
+            for label, doc_date in doc_dates:
+                days_old = (closing_date - doc_date).days
+                if days_old < 0:
+                    continue
+                label_lower = label.lower()
+                for req_name, max_days in staleness_requirements.items():
+                    if req_name in label_lower:
+                        status = "STALE" if days_old > max_days else "CURRENT"
+                        results.append(
+                            f"[CALCULATED] Date staleness — {label[:80]}: "
+                            f"dated {doc_date.strftime('%B %d, %Y')}, "
+                            f"closing {closing_date.strftime('%B %d, %Y')}, "
+                            f"{days_old} days old vs {max_days}-day limit → {status}"
+                            + (f" (exceeds by {days_old - max_days} days)" if days_old > max_days else "")
+                        )
+                        break
+
+        dollar_amounts: dict[str, float] = {}
+        _dollar_pat = _re_cp.compile(
+            r'\$\s*([\d,]+(?:\.\d+)?)\s*(?:million|M|,000,000)?',
+            _re_cp.IGNORECASE,
+        )
+        for fact in facts:
+            for m in _dollar_pat.finditer(fact):
+                raw = m.group(1).replace(",", "")
+                try:
+                    val = float(raw)
+                    if "million" in fact[m.start():m.end()+20].lower() or "M" in fact[m.start():m.end()+5]:
+                        if val < 1000:
+                            val *= 1_000_000
+                    ctx = fact[:100].strip().lower()
+                    if any(w in ctx for w in ("title", "policy", "insurance", "apprais",
+                                               "loan", "facility", "commitment", "aggregate")):
+                        dollar_amounts[fact[:80]] = val
+                except ValueError:
+                    continue
+
+        loan_amount: "Optional[float]" = None
+        appraised_value: "Optional[float]" = None
+        title_amounts: list[tuple[str, float]] = []
+        for label, val in dollar_amounts.items():
+            ll = label.lower()
+            if any(w in ll for w in ("loan amount", "facility", "commitment", "aggregate commitment")):
+                if loan_amount is None or val > loan_amount:
+                    loan_amount = val
+            if any(w in ll for w in ("appraised", "aggregate appraised", "appraisal value")):
+                if appraised_value is None or val > appraised_value:
+                    appraised_value = val
+            if "title" in ll or "policy" in ll:
+                title_amounts.append((label, val))
+
+        if loan_amount and appraised_value and appraised_value > 0:
+            ltv = (loan_amount / appraised_value) * 100
+            results.append(
+                f"[CALCULATED] LTV ratio: loan ${loan_amount:,.0f} / "
+                f"appraised ${appraised_value:,.0f} = {ltv:.1f}%"
+                + (" — EXCEEDS 75% MAXIMUM" if ltv > 75 else " — within 75% limit")
+            )
+
+        try:
+            quant_rows = (
+                self._matter_model.quant.list_all(limit=300)
+                if self._matter_model else []
+            )
+        except Exception:
+            quant_rows = []
+
+        for qr in quant_rows:
+            ctx = (qr.get("context") or "").lower()
+            raw_text = (qr.get("raw_text") or "").lower()
+            combined = ctx + " " + raw_text
+            val = qr.get("amount_value")
+            if not val or val <= 0:
+                continue
+            if any(w in combined for w in ("title", "policy amount")):
+                title_amounts.append((ctx[:80], float(val)))
+            if loan_amount is None and any(
+                w in combined for w in ("loan amount", "total facility", "aggregate commitment")
+            ):
+                loan_amount = float(val)
+            if appraised_value is None and "appraised" in combined:
+                appraised_value = float(val)
+
+        if loan_amount and appraised_value and appraised_value > 0:
+            ltv = (loan_amount / appraised_value) * 100
+            if not any("[CALCULATED] LTV ratio" in r for r in results):
+                results.append(
+                    f"[CALCULATED] LTV ratio: loan ${loan_amount:,.0f} / "
+                    f"appraised ${appraised_value:,.0f} = {ltv:.1f}%"
+                    + (" — EXCEEDS 75% MAXIMUM" if ltv > 75 else " — within 75% limit")
+                )
 
         return results
 
@@ -8998,10 +9166,12 @@ Return:
                 "reconcil",
             ))
             _task_section = ""
-            if _is_comparison_dr:
-                _task_section = _COMPARISON_DEEP_READ_SECTION
+            if _is_regulatory_dr and _is_comparison_dr:
+                _task_section = _REGULATORY_DEEP_READ_SECTION + "\n" + _COMPARISON_DEEP_READ_SECTION
             elif _is_regulatory_dr:
                 _task_section = _REGULATORY_DEEP_READ_SECTION
+            elif _is_comparison_dr:
+                _task_section = _COMPARISON_DEEP_READ_SECTION
 
             _cross_ref_ctx = ""
             _existing_facts = state.findings.get("accumulated_facts", [])
@@ -9994,6 +10164,17 @@ Return:
             reg_calcs = self._derive_regulatory_calculations()
             if reg_calcs:
                 facts.extend(reg_calcs)
+
+            # Deterministic closing document / CP calculations (Codex R10 #9)
+            _q_lower = state.query.lower()
+            if any(w in _q_lower for w in (
+                "conditions precedent", "closing document", "gap memorand",
+                "gap report", "compliance gap", "compliance certificate",
+                "covenant compliance", "closing condition",
+            )):
+                cp_calcs = self._derive_closing_document_calculations(facts)
+                if cp_calcs:
+                    facts.extend(cp_calcs)
 
             if len(facts) > 2:
                 _quant_ctx = self._build_quant_summary() if self._matter_model else ""
@@ -13756,6 +13937,59 @@ Respond as JSON only:
             lines.append("---")
         return "\n".join(lines)
 
+    @staticmethod
+    def _repair_truncated_json(text: str) -> "Optional[str]":
+        """Attempt to repair JSON truncated by model output limits.
+
+        When a large JSON response hits the token limit, the output is cut
+        mid-stream. This rescues the valid prefix by closing open arrays,
+        objects, and strings so json.loads() succeeds on the partial data.
+        """
+        if not text or "{" not in text:
+            return None
+        start = text.index("{")
+        s = text[start:]
+        stack: list[str] = []
+        in_string = False
+        escape = False
+        last_valid = 0
+        for i, ch in enumerate(s):
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if in_string:
+                if ch == '"':
+                    in_string = False
+                    last_valid = i
+                continue
+            if ch == '"':
+                in_string = True
+                continue
+            if ch in "{[":
+                stack.append("}" if ch == "{" else "]")
+                continue
+            if ch in "}]":
+                if stack:
+                    stack.pop()
+                last_valid = i
+                continue
+            if ch in ",: \t\n\r":
+                continue
+            last_valid = i
+
+        if not stack:
+            return None
+
+        trimmed = s[:last_valid + 1].rstrip().rstrip(",")
+        if in_string:
+            trimmed += '"'
+        while stack:
+            trimmed += stack.pop()
+        return trimmed
+
     def _parse_json_safe(self, text: str, defaults: dict) -> dict:
         """Parse JSON from LLM response with safe fallback to defaults."""
         try:
@@ -13782,6 +14016,21 @@ Respond as JSON only:
                     result[key] = value
             return result
         except (json.JSONDecodeError, ValueError) as e:
+            repaired = self._repair_truncated_json(text)
+            if repaired:
+                try:
+                    result = json.loads(repaired)
+                    if isinstance(result, dict):
+                        for key, value in defaults.items():
+                            if key not in result:
+                                result[key] = value
+                        logger.info(
+                            "Repaired truncated JSON (rescued %d chars of %d)",
+                            len(repaired), len(text),
+                        )
+                        return result
+                except (json.JSONDecodeError, ValueError):
+                    pass
             logger.warning(f"JSON parse failed: {e}, response preview: {text[:200] if text else 'empty'}")
             return defaults
 
