@@ -4675,8 +4675,13 @@ class RLMEngine:
 
         lines.append("")
         lines.append(
-            "Use this evidence for your analysis. Cite specific data points "
-            "with source references. Compute HHI where market shares are available."
+            "MANDATORY: You MUST analyze EVERY geographic market listed above separately. "
+            "For each market: (1) compute or state HHI and delta, (2) state whether "
+            "structural presumption is triggered (HHI>1800 AND delta>100), (3) assign "
+            "a separate risk rating. You MUST also: cite EVERY hot document with exact "
+            "verbatim quotes, analyze EVERY legal defense and state whether available, "
+            "and address ALL procedural timeline dates. Breadth of coverage across all "
+            "markets and evidence categories is more important than depth on any one."
         )
         return "\n".join(lines)
 
