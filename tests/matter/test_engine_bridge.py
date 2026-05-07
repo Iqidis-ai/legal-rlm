@@ -2843,7 +2843,7 @@ def test_expand_query_splits_boolean_terms_and_keeps_context_terms_separate():
 def test_orientation_cache_version_bumped():
     """_ORIENTATION_CACHE_VERSION must be '11' after round-2 orientation changes."""
     from irys.rlm.engine import _ORIENTATION_CACHE_VERSION
-    assert _ORIENTATION_CACHE_VERSION == "11", (
+    assert _ORIENTATION_CACHE_VERSION == "12", (
         "_ORIENTATION_CACHE_VERSION must be bumped to '11' after round-2 orientation changes"
     )
 
@@ -4958,7 +4958,7 @@ def test_mvp6_opt_in_registry_blocks_unregistered_sections():
         return list(candidates.keys())
     engine._select_relevant_sections = _permissive_selector
 
-    state = InvestigationState.create("analyze", "/repo")
+    state = InvestigationState.create("summarize findings", "/repo")
     build = asyncio.run(engine._assemble_context_packet(state, findings_text=""))
     packet = build.text if hasattr(build, "text") else build
 

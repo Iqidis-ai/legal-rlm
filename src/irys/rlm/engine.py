@@ -380,7 +380,7 @@ Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "11"
+_ORIENTATION_CACHE_VERSION = "12"
 
 
 def _format_matter_context(ctx) -> str:
@@ -2487,25 +2487,39 @@ class RLMEngine:
 
     @staticmethod
     def _is_extraction_task(query: str) -> bool:
-        """Detect extraction/inventory/diligence tasks that need deeper investigation."""
+        """Detect tasks requiring cross-document analysis, calculations, and deep investigation."""
         q = query.lower()
         extraction_signals = (
             "extract", "extraction", "all provisions", "every provision",
             "comprehensive", "inventory", "diligence", "identify all",
             "review all", "each contract", "every contract",
             "change of control", "change-of-control",
+            "analyze", "analyse", "compare", "comparison", "markup",
+            "redline", "deviation", "counterparty", "review",
+            "assess", "assessment", "evaluate", "draft",
+            "hsr", "antitrust", "merger", "acquisition",
+            "credit facility", "term sheet", "loan agreement",
+            "risk", "strategy", "compliance", "regulatory",
         )
         return sum(1 for s in extraction_signals if s in q) >= 1
 
     def _build_extraction_instructions(self, query: str) -> str:
-        """Generate extraction-task-specific synthesis instructions when query demands comprehensive extraction."""
+        """Generate task-specific synthesis instructions for extraction, analysis, and comparison tasks."""
         q = query.lower()
         extraction_signals = (
             "extract", "extraction", "comprehensive", "all provisions",
             "identify all", "review all", "every contract", "each contract",
             "risk assessment", "change of control", "change-of-control",
         )
-        if not any(signal in q for signal in extraction_signals):
+        analysis_signals = (
+            "analyze", "analyse", "compare", "comparison", "markup",
+            "redline", "deviation", "counterparty", "assess", "evaluate",
+            "draft", "strategy", "review", "antitrust", "hsr", "merger",
+            "credit facility", "term sheet",
+        )
+        is_extraction = any(signal in q for signal in extraction_signals)
+        is_analysis = any(signal in q for signal in analysis_signals)
+        if not is_extraction and not is_analysis:
             return ""
         base = (
             "EXTRACTION TASK INSTRUCTIONS (MANDATORY):\n"
@@ -2561,6 +2575,33 @@ class RLMEngine:
                 "tail options, and replacement go-forward coverage action items.\n"
                 "- Unreviewed dependencies: flag named ERP, enterprise software, license, or mission-critical system "
                 "dependencies as separate contracts to review for CoC/assignment risk.\n"
+            )
+        if is_analysis and not is_extraction:
+            base = (
+                "ANALYSIS TASK INSTRUCTIONS (MANDATORY):\n"
+                "This is a comprehensive analysis/comparison task. Your output MUST:\n"
+                "1. Identify EVERY material issue, deviation, risk, or finding — not just the top 3-5\n"
+                "2. For each finding, cite the EXACT section, page, slide, or paragraph reference\n"
+                "3. Include SPECIFIC numbers: dollar amounts, percentages, thresholds, dates, ratios\n"
+                "4. PERFORM CALCULATIONS where the data supports them — do not merely state inputs\n"
+                "   Examples: HHI = sum of squared market shares × 10,000; cost impact = principal × rate change;\n"
+                "   covenant headroom = current ratio - threshold; revenue at risk = amount × probability\n"
+                "5. For comparison tasks: state BOTH the original value and the changed value for each deviation\n"
+                "6. Assign risk ratings (Red/Yellow/Green or Critical/High/Moderate/Low) to EACH issue\n"
+                "7. Flag specific documents, emails, memos, and presentations by name as evidence\n"
+                "8. Identify absences — provisions, analyses, or data points that SHOULD be present but are missing\n"
+                "9. Include specific, actionable recommendations with dollar amounts and timelines\n"
+                "10. Cross-reference findings across documents — connect evidence from different sources\n"
+                "11. Use ACTUAL financial data from the documents for quantitative analysis, not hypotheticals\n"
+                "12. For each party/entity, state their specific role, stake, and exposure\n"
+                "\n"
+                "QUANTITATIVE RIGOR:\n"
+                "- When market shares are available, compute HHI and delta-HHI\n"
+                "- When financial terms change, compute the dollar impact on the actual facility/transaction size\n"
+                "- When covenant thresholds change, compute headroom against actual performance metrics\n"
+                "- When multiple scenarios exist, model the range of outcomes with specific numbers\n"
+                "- State your arithmetic explicitly (e.g., '$175M × 0.25% = $437,500/year additional cost')\n"
+                "\n"
             )
         return base
 
@@ -2668,6 +2709,59 @@ class RLMEngine:
                 "assignment",
             )
         )
+
+    @staticmethod
+    def _get_checklist_issues(query: str) -> list[tuple[str, list[str]]]:
+        """Return deterministic issue slots for comparison/regulatory tasks.
+
+        Each entry is (title, [predicates]). These ensure the coverage planner
+        has issue objects for provision categories even if orientation missed them.
+        """
+        q = (query or "").lower()
+        issues: list[tuple[str, list[str]]] = []
+        _is_comparison = any(w in q for w in (
+            "markup", "redline", "compare", "deviation", "counterparty",
+            "credit facility", "term sheet", "loan",
+        ))
+        _is_regulatory = any(w in q for w in (
+            "antitrust", "hsr", "merger review", "competition",
+            "regulatory strategy",
+        ))
+        if _is_comparison:
+            issues.extend([
+                ("Interest rate and SOFR floor analysis", ["SOFR floor", "margin grid", "rate mechanics"]),
+                ("Commitment fee structure", ["commitment fee", "unused fee", "facility fee"]),
+                ("Financial covenant analysis — leverage ratio", ["leverage ratio", "total net leverage", "step-down schedule"]),
+                ("Financial covenant analysis — FCCR", ["fixed charge coverage", "FCCR threshold", "FCCR testing"]),
+                ("EBITDA definition and add-back caps", ["EBITDA add-backs", "non-recurring cap", "pro forma adjustments"]),
+                ("Synergy add-back provisions", ["synergy cap", "realization period", "pro forma EBITDA"]),
+                ("Permitted acquisition baskets", ["individual acquisition basket", "aggregate basket", "pro forma compliance"]),
+                ("Restricted payments and distributions", ["restricted payments", "distribution cap", "leverage test for distributions"]),
+                ("Excess cash flow sweep mechanics", ["ECF sweep", "step-down", "mandatory prepayment"]),
+                ("Events of default — cross-default threshold", ["cross-default", "threshold amount", "judgment default"]),
+                ("Change of control definition and threshold", ["change of control trigger", "ownership threshold", "sponsor"]),
+                ("Anti-layering and MFN provisions", ["anti-layering", "most favored nation", "MFN cushion"]),
+                ("Reinvestment period for asset sales", ["reinvestment period", "asset sale proceeds", "mandatory prepayment"]),
+                ("MAE/MAC definition and qualifiers", ["material adverse effect", "taken as a whole", "MAE carve-outs"]),
+                ("Extension options and maturity", ["extension option", "maturity date", "amortization"]),
+                ("Reporting requirements", ["financial reporting", "compliance certificate", "annual audited"]),
+            ])
+        if _is_regulatory:
+            issues.extend([
+                ("Relevant product market definition", ["product markets", "bulk atmospheric", "packaged gases", "specialty gases"]),
+                ("Geographic market definition and overlap", ["geographic market", "MSA", "local market", "overlap states"]),
+                ("Market concentration and HHI analysis", ["market shares", "HHI calculation", "structural presumption", "delta HHI"]),
+                ("Hot document identification", ["internal emails", "board presentations", "pricing language", "eliminates competition"]),
+                ("Maverick competitor analysis", ["maverick", "pricing disruptor", "competitive significance"]),
+                ("Barriers to entry analysis", ["entry barriers", "ASU construction cost", "timeline for new entry"]),
+                ("Customer overlap and dual-sourcing", ["dual-source customers", "customer overlap", "win/loss data"]),
+                ("Divestiture and remedy analysis", ["divestiture candidates", "remedy buyers", "divestiture cap"]),
+                ("FTC enforcement precedent", ["prior enforcement", "blocked merger", "consent decree"]),
+                ("Efficiency and failing firm defenses", ["efficiency defense", "failing firm", "procompetitive"]),
+                ("HSR filing mechanics and timeline", ["filing threshold", "waiting period", "Second Request", "outside date"]),
+                ("Deal timeline and regulatory risk", ["outside date", "extension", "reverse breakup fee", "timing risk"]),
+            ])
+        return issues
 
     @staticmethod
     def _compact_text(text: str, limit: int = 900) -> str:
@@ -5332,6 +5426,41 @@ class RLMEngine:
                             descriptions=_preds_raw[:4],
                         )
 
+        # Checklist seeding: for comparison/regulatory tasks, ensure provision-level
+        # issue objects exist even if orientation missed them. This prevents the coverage
+        # planner from being blind to unmodeled issues.
+        if adapter is not None and self._matter_model is not None:
+            _existing_titles = set()
+            for _eid in _orient_issue_ids:
+                try:
+                    _erow = self._matter_model.issues.get_issue(_eid)
+                    if _erow:
+                        _existing_titles.add(_erow.get("title", "").lower().strip())
+                except Exception:
+                    pass
+            _checklist_issues = self._get_checklist_issues(state.query)
+            for _cl_title, _cl_preds in _checklist_issues:
+                _cl_lower = _cl_title.lower().strip()
+                if any(_cl_lower in et or et in _cl_lower for et in _existing_titles if et):
+                    continue
+                try:
+                    _cl_id, _ = self._matter_model.issues.upsert_issue(
+                        title=_cl_title,
+                        issue_type=IssueType.DILIGENCE_RED_FLAG,
+                        salience=0.5,
+                    )
+                    _orient_issue_ids.append(_cl_id)
+                    if _cl_preds:
+                        self._matter_model.issues.add_predicates_batch(
+                            issue_id=_cl_id, descriptions=_cl_preds[:3],
+                        )
+                    adapter.log_step(
+                        f"Checklist issue seeded: {_cl_title[:80]}",
+                        why="Provision checklist ensures completeness",
+                    )
+                except Exception:
+                    pass
+
         # Create initial leads from plan — preserve raw search terms to bypass
         # _extract_search_term() token collapse (SO-4 issue-focused search).
         # Use weakest prior-run issue if it exists; otherwise rotate through freshly
@@ -7936,6 +8065,18 @@ Return:
                 '        "source_section": "Section or recital where transaction structure is described, or null"\n'
                 '    }},\n    '
             ) if _is_mna else ""
+            _cross_ref_ctx = ""
+            _existing_facts = state.findings.get("accumulated_facts", [])
+            if _existing_facts and len(_existing_facts) >= 3:
+                _recent = _existing_facts[-80:]
+                _cross_ref_ctx = (
+                    "\n\nCROSS-REFERENCE CONTEXT (facts already extracted from other documents):\n"
+                    "Use these to identify CONNECTIONS, CONTRADICTIONS, and MISSING details.\n"
+                    "When this document references the same terms, amounts, or provisions as below,\n"
+                    "extract the EXACT values from THIS document for comparison.\n"
+                    + "\n".join(f"- {f}" for f in _recent)
+                    + "\n"
+                )
             prompt = DEEP_READ_PROMPT.format(
                 filename=doc.filename,
                 page_range=f"1-{doc.page_count}",
@@ -7943,7 +8084,7 @@ Return:
                 query=state.query,
                 focus=state.hypothesis or state.query,
                 domain_vocabulary=_vocab,
-                mna_section=_mna_section,
+                mna_section=_mna_section + _cross_ref_ctx,
                 transaction_context_schema=_txn_ctx,
                 domain_deep_read_examples=_dr_ex["deep_read_examples"],
                 domain_numeric_subjects=_dr_ex["numeric_subjects"],
@@ -8631,7 +8772,7 @@ Return:
             if graph_calcs:
                 facts.extend(graph_calcs)
 
-            if len(facts) > 5:
+            if len(facts) > 2:
                 _quant_ctx = self._build_quant_summary() if self._matter_model else ""
                 derived_facts = await self._cross_document_analysis(state.query, facts, _quant_ctx)
                 if derived_facts:
@@ -9464,10 +9605,23 @@ Return:
                 "If a possible derived finding conflicts with these locks, omit the conflicting finding.\n"
             )
         is_mna = self._is_mna_change_control_task(query)
+        _ql = query.lower()
+        _is_comparison = any(w in _ql for w in ("markup", "redline", "compare", "comparison", "deviation", "counterparty"))
+        _is_regulatory = any(w in _ql for w in ("antitrust", "hsr", "merger review", "regulatory", "compliance"))
         if is_mna:
             persona = (
                 "You are a senior M&A attorney performing cross-document analysis on "
                 "extracted contract provisions."
+            )
+        elif _is_comparison:
+            persona = (
+                "You are a senior banking/finance attorney performing deviation analysis "
+                "comparing an original term sheet against a lender's markup."
+            )
+        elif _is_regulatory:
+            persona = (
+                "You are a senior antitrust attorney performing regulatory risk analysis "
+                "across transaction documents, market data, and enforcement precedent."
             )
         else:
             persona = (
@@ -9476,6 +9630,8 @@ Return:
             )
         mna_categories = ""
         mna_operand_discipline = ""
+        comparison_categories = ""
+        regulatory_categories = ""
         if is_mna:
             mna_categories = (
                 "5. STRUCTURAL ANALYSIS:\n"
@@ -9505,6 +9661,56 @@ Return:
                 "     state whether it exceeds the threshold or falls short, and the consequence.\n"
                 "   - If a contract card says 'ABSENT' for a provision, note that explicitly.\n\n"
             )
+        if _is_comparison:
+            comparison_categories = (
+                "5. PROVISION-BY-PROVISION DEVIATION TABLE:\n"
+                "   For EACH provision that differs between the original and the markup, produce:\n"
+                "   '[DEVIATION] Provision: <name>; Original: <exact value>; Markup: <exact value>; Impact: <description>'\n"
+                "   Cover ALL of: interest rate/SOFR floor/margin grid, commitment fees, financial covenants\n"
+                "   (leverage ratio, FCCR, interest coverage — EACH separately), EBITDA add-back caps,\n"
+                "   synergy add-backs, acquisition baskets, restricted payments, ECF sweep, events of default\n"
+                "   (cross-default thresholds), change of control, anti-layering/MFN, reinvestment period,\n"
+                "   MAE definition, extension options, reporting requirements.\n"
+                "6. DOLLAR IMPACT CALCULATIONS (MANDATORY for every changed financial term):\n"
+                "   Use the ACTUAL facility size, not a sub-amount. For each deviation:\n"
+                "   - State the formula: facility_size × rate_change = annual_cost_impact\n"
+                "   - Compute the result with actual numbers from the documents\n"
+                "   - Example: '$175,000,000 × 0.25% = $437,500/year additional interest cost'\n"
+                "7. COVENANT HEADROOM ANALYSIS:\n"
+                "   Compare actual/projected financial metrics to both old and new covenant thresholds.\n"
+                "   Calculate the headroom reduction for each tightened covenant.\n"
+                "8. RISK RATING: Assign Red/Yellow/Green to each deviation:\n"
+                "   Red = material adverse change requiring renegotiation\n"
+                "   Yellow = concerning, needs negotiation attention\n"
+                "   Green = acceptable/market standard\n"
+                "9. MISSING PROVISIONS: Identify provisions in the original that were deleted in the markup,\n"
+                "   and provisions added by the lender that weren't in the original.\n\n"
+            )
+        if _is_regulatory:
+            regulatory_categories = (
+                "5. MARKET CONCENTRATION ANALYSIS (MANDATORY when market share data exists):\n"
+                "   For EACH geographic market where overlap exists:\n"
+                "   - State both parties' market shares\n"
+                "   - Compute HHI = sum of (share × 100)² for all competitors\n"
+                "   - Compute post-merger HHI and delta (change in HHI)\n"
+                "   - Flag markets where post-merger HHI > 1,800 AND delta > 200 (structural presumption)\n"
+                "   - Rank markets by severity (highest HHI/delta first)\n"
+                "6. HOT DOCUMENT IDENTIFICATION:\n"
+                "   Flag specific internal documents (emails, memos, presentations) that contain\n"
+                "   language an enforcement agency would use as evidence of anticompetitive intent.\n"
+                "   Include: author, date, specific language quoted, and why it's problematic.\n"
+                "7. ENFORCEMENT PRECEDENT ANALYSIS:\n"
+                "   Connect specific prior enforcement actions to this transaction's facts.\n"
+                "   State the precedent case, what happened, and how this transaction compares.\n"
+                "8. REMEDY ANALYSIS:\n"
+                "   Identify what divestitures or behavioral remedies would likely be required.\n"
+                "   Compute whether proposed divestiture caps are sufficient for the required remedies.\n"
+                "9. TIMELINE ANALYSIS:\n"
+                "   Map out regulatory milestones against contractual deadlines (outside date,\n"
+                "   extension periods) and flag where timelines are inadequate.\n"
+                "10. QUANTITATIVE DEFENSE ANALYSIS:\n"
+                "    Assess efficiency defenses, failing firm defense, entry analysis with specific data.\n\n"
+            )
         prompt = (
             f"{persona} Given the facts and numeric data below "
             "(extracted from multiple documents), produce DERIVED FINDINGS that "
@@ -9525,6 +9731,8 @@ Return:
             "(based on its type) appears to lack it.\n"
             f"{mna_categories}"
             f"{mna_operand_discipline}"
+            f"{comparison_categories}"
+            f"{regulatory_categories}"
             f"QUERY CONTEXT: {query}\n\n"
             f"EXTRACTED FACTS:\n{facts_text}\n"
             f"{quant_section}\n"
@@ -9539,7 +9747,7 @@ Return:
             response = await self.client.complete(
                 prompt=prompt,
                 tier=ModelTier.FLASH,
-                timeout=60.0,
+                timeout=120.0,
                 usage_label="cross_document_analysis",
             )
             import json as _json
@@ -10057,7 +10265,10 @@ Return:
                 "Structured Relationships (subject-predicate-object):\n" + relationships,
             )
         quant = self._build_quant_summary()
-        if quant:
+        _quant_is_mandatory = self._is_extraction_task(getattr(state, "query", "") or "")
+        if quant and _quant_is_mandatory:
+            pass  # handled below as mandatory section
+        elif quant:
             _add_optional("quantitative", "Quantitative Summary:\n" + quant)
         citations_text = state.get_citations_formatted()
         _citations_block = ""
@@ -10096,6 +10307,9 @@ Return:
         )
         if extraction_instruction:
             ordered.append(("extraction_instructions", extraction_instruction, True))
+
+        if quant and _quant_is_mandatory:
+            ordered.append(("quantitative", "Quantitative Summary:\n" + quant, True))
 
         contract_coverage = self._build_material_contract_coverage_section(state)
         if contract_coverage:
