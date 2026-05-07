@@ -11121,6 +11121,26 @@ Return:
                                 if _slot_msa == _mr_norm:
                                     _matched = s
                                     break
+                        if _matched is None:
+                            # Lazy registration: deep-read found a row scout
+                            # missed. Register a slot and immediately fill it
+                            # so the synthesis row table picks it up. Use
+                            # medium confidence (0.7) — the row exists and
+                            # was extracted, so the slot is "real" but not
+                            # scout-confirmed.
+                            try:
+                                _new_sid, _ = _mm_mr.extraction_slots.register(
+                                    _mm_mr.matter_id,
+                                    "collection_item",
+                                    _slot_key,
+                                    1,
+                                    expected_count_confidence=0.70,
+                                    scope_query_hash=_scope_hash,
+                                    schema_ref="legal.market_row.v1",
+                                )
+                                _matched = {"id": _new_sid}
+                            except Exception as _reg_exc:
+                                logger.debug("lazy slot register failed: %s", _reg_exc)
                         if _matched is not None:
                             _mm_mr.extraction_slots.mark_filled(_matched["id"], _record_id)
                     except Exception as _slot_exc:
