@@ -2799,7 +2799,11 @@ class RLMEngine:
             "loan agreement", "commitment letter",
             "cross-reference", "cross reference", "discrepancy", "memorandum",
             "disclosure", "gap analysis", "compliance program",
-            "abstract", "prepare", "produce",
+            "abstract", "prepare", "produce", "reconcil",
+            "workbook", "spreadsheet", "schedule", "checklist",
+            "inventory", "diligence", "risk", "closing",
+            "condition", "precedent", "covenant", "certificate",
+            "board", "resolution", "opinion", "memo",
         )
         is_extraction = any(signal in q for signal in extraction_signals)
         is_analysis = any(signal in q for signal in analysis_signals)
@@ -2957,6 +2961,23 @@ class RLMEngine:
                 "6. For PPA: show each intangible asset category with fair value, useful life, and amortization\n"
                 "7. Compute all variances and flag items exceeding materiality thresholds\n"
                 "8. Cross-reference figures across reports (management vs auditor vs QoE provider)\n"
+                "\nWORKBOOK TAB STRUCTURE (CRITICAL for XLSX deliverables):\n"
+                "When producing spreadsheet workbooks, use a SEPARATE markdown heading (## or ###) for EACH tab.\n"
+                "Name each heading to match the required tab. Examples:\n"
+                "  - For an EBITDA bridge workbook: produce tables headed:\n"
+                "    ### Line-by-Line Comparison\n"
+                "    ### Recommended EBITDA Bridge\n"
+                "    ### Implied Multiples\n"
+                "  - For a working capital workbook: produce tables headed:\n"
+                "    ### Closing NWC Reconciliation\n"
+                "    ### Peg Analysis\n"
+                "    ### SPA Revisions Summary\n"
+                "  - For a PPA workbook: produce tables headed:\n"
+                "    ### Corrected PPA Allocation\n"
+                "    ### Goodwill Calculation\n"
+                "    ### Intangible Asset Summary\n"
+                "Each heading MUST be followed by a markdown table with | column | headers |.\n"
+                "Include at least 5-10 rows per table with specific numbers from the evidence.\n"
             )
         _is_commitments = any(w in q for w in (
             "commitment", "remedy", "remedies", "divestiture",
@@ -10327,7 +10348,7 @@ Return:
         # what matters based on the query, not an arbitrary number.
         if len(facts) > 50 and not self._is_extraction_task(state.query):
             facts = await self._filter_facts_for_relevance(state.query, facts)
-        findings_text = "\n".join(f"• {fact}" for fact in facts)
+        findings_text = "\n".join(f"{i}. {fact}" for i, fact in enumerate(facts, 1))
 
         # Store citations and entities as structured metadata for UI panels.
         state.findings["metadata_citations"] = state.get_citations_formatted()

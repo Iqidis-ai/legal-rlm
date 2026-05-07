@@ -325,7 +325,7 @@ class RateLimiter:
 class GeminiClient:
     """Tiered Gemini client for RLM operations with timeout, retry, and rate limiting."""
 
-    DEFAULT_TIMEOUT = 120.0  # 2 minutes
+    DEFAULT_TIMEOUT = 300.0  # 5 minutes — preview models need headroom
     MAX_RETRIES = 3
     MAX_RATE_LIMIT_RETRIES = 8
     DEFAULT_RPM = 60  # Requests per minute
@@ -634,6 +634,17 @@ class GeminiClient:
                     )
                 )
                 label = f" ({usage_label})" if usage_label else ""
+                if _rate_limit_attempt < 2:
+                    _rate_limit_attempt += 1
+                    import random as _rand_t
+                    _wait = 15 + _rand_t.uniform(0, 10)
+                    logger.warning(
+                        f"API call to {mc.model_id}{label} timed out after "
+                        f"{request_timeout}s (attempt {_rate_limit_attempt}/2), retrying in {_wait:.0f}s"
+                    )
+                    await asyncio.sleep(_wait)
+                    started_at = time.perf_counter()
+                    continue
                 logger.error(
                     f"API call to {mc.model_id}{label} timed out after "
                     f"{request_timeout}s with {len(prompt)} prompt chars"

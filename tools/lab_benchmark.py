@@ -125,6 +125,7 @@ def _markdown_to_xlsx(md_text: str, output_path: Path):
     """Convert markdown tables to an Excel workbook.
 
     Extracts all markdown tables from the text and writes each as a sheet.
+    Uses the nearest preceding heading as the sheet name.
     Non-table text goes into a 'Summary' sheet.
     """
     from openpyxl import Workbook
@@ -137,9 +138,17 @@ def _markdown_to_xlsx(md_text: str, output_path: Path):
     lines = md_text.split("\n")
     summary_lines: list[str] = []
     table_count = 0
+    last_heading = ""
+    used_names: set[str] = set()
     i = 0
     while i < len(lines):
         stripped = lines[i].strip()
+        heading_match = re.match(r'^#{1,4}\s+(.+)', stripped)
+        if heading_match:
+            last_heading = heading_match.group(1).strip().rstrip("#").strip()
+            summary_lines.append(stripped)
+            i += 1
+            continue
         if "|" in stripped and stripped.startswith("|"):
             table_rows: list[list[str]] = []
             while i < len(lines) and "|" in lines[i].strip() and lines[i].strip().startswith("|"):
@@ -152,7 +161,11 @@ def _markdown_to_xlsx(md_text: str, output_path: Path):
                 i += 1
             if table_rows:
                 table_count += 1
-                sheet_name = f"Table {table_count}"
+                raw_name = last_heading if last_heading else f"Table {table_count}"
+                sheet_name = re.sub(r'[\\/*?\[\]:]', '', raw_name)[:31]
+                if sheet_name in used_names:
+                    sheet_name = f"{sheet_name[:27]} ({table_count})"
+                used_names.add(sheet_name)
                 if table_count == 1:
                     ws = ws_summary
                     ws.title = sheet_name
@@ -334,11 +347,26 @@ async def run_task(
         deliverable_desc = ", ".join(
             f"`{fn}`" for fn in deliverables.values()
         )
+        xlsx_files = [fn for fn in deliverables.values() if fn.endswith((".xlsx", ".xls"))]
         instructions += (
             f"\n\nYou must produce content for {len(deliverables)} separate deliverables: "
             f"{deliverable_desc}. Structure your output with a clear top-level "
             f"heading (# or ##) for each deliverable so they can be separated."
         )
+        if xlsx_files:
+            instructions += (
+                "\n\nCRITICAL — XLSX WORKBOOK REQUIREMENTS:\n"
+                "For each .xlsx deliverable, you must produce MULTIPLE markdown tables, "
+                "each preceded by a ### heading that names the worksheet tab. "
+                "Each table must use | Column | Header | format with data rows below.\n"
+            )
+            for xf in xlsx_files:
+                stem = Path(xf).stem.replace("-", " ").replace("_", " ").title()
+                instructions += (
+                    f"- `{xf}`: Under the `# {stem}` section, produce at least 3 tables "
+                    f"with ### headings for each tab. Each table needs 5+ data rows with "
+                    f"actual numbers from the source documents.\n"
+                )
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_id = f"{task_id}/irys-rlm-{research_mode}/{ts}"
