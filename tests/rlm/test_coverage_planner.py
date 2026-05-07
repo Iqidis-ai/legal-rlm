@@ -94,9 +94,10 @@ def test_planner_respects_per_iteration_cap(engine, model):
 
 def test_planner_respects_per_run_cap(engine, model):
     """Across many iterations the planner must never exceed
-    _PLANNER_LEADS_PER_RUN=6 per run. Between iterations we simulate
-    the engine consuming leads (marking them investigated) so the
-    issue-quota deficit reopens — mirrors the real loop.
+    _PLANNER_LEADS_PER_RUN per run. With round-robin dedup, each issue
+    gets at most one predicate lead and one title fallback. Once all
+    unique (issue, term) pairs are exhausted, the planner stops even if
+    budget remains.
     """
     for i in range(10):
         _seed_weak_issue(model, f"Issue {i}")
@@ -109,14 +110,10 @@ def test_planner_respects_per_run_cap(engine, model):
         total += added
         if added == 0:
             continue
-        # Simulate engine dispatch — mark every pending planner lead
-        # as investigated so the deficit reopens for the next call.
         for l in s.get_pending_leads():
             s.mark_lead_investigated(l.id, "test dispatch")
-    assert total == engine._PLANNER_LEADS_PER_RUN
-    assert s.planner_leads_added == engine._PLANNER_LEADS_PER_RUN
-    # After hitting the per-run cap, further calls must be no-ops
-    # even if we keep consuming leads.
+    assert total <= engine._PLANNER_LEADS_PER_RUN
+    assert total == s.planner_leads_added
     assert engine._coverage_planner(s, cov_map) == 0
 
 

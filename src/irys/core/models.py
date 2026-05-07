@@ -116,11 +116,8 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
         model_id="gemini-3.1-flash-lite-preview",
         thinking_level="",
         max_output_tokens=65536,
-        cost_per_1m_input=2.00,
-        cost_per_1m_output=12.00,
-        large_context_threshold=200_000,
-        cost_per_1m_input_large=4.00,
-        cost_per_1m_output_large=18.00,
+        cost_per_1m_input=0.25,
+        cost_per_1m_output=1.50,
     ),
 }
 

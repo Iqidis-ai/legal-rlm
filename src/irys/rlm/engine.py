@@ -5220,17 +5220,20 @@ class RLMEngine:
             )
 
         # Target documents: preserve specific filenames from orientation as
-        # high-priority search leads. These are exact filename strings that the
-        # LLM identified as highest-value retrieval targets from the listing.
+        # high-priority search leads. Semantically match each to the best issue
+        # rather than always attributing to the first issue.
         _target_docs = plan.get("target_documents") or []
         for _td in (_target_docs if isinstance(_target_docs, list) else [])[:10]:
             if isinstance(_td, str) and _td.strip():
+                _target_focus = None
+                if _issue_profiles:
+                    _target_focus = self._best_semantic_issue(_td.strip(), _issue_profiles)
                 state.add_lead(
                     description=f"Target document: {_td.strip()}",
                     source="orientation_target",
                     priority=0.85,
                     search_term=_td.strip(),
-                    focus_issue_id=_biased_pool[0] if _biased_pool else None,
+                    focus_issue_id=_target_focus,
                 )
 
         # If no valid searches were produced (either planner returned none or all were
@@ -5260,12 +5263,11 @@ class RLMEngine:
                 focus_issue_id=_fallback_issue_id,
             )
 
-        # Add predicate-driven leads for ALL issues, not just the weakest.
-        # Predicates are more specific than issue titles — each one is a concrete
-        # searchable element (e.g. "failure to perform" vs "Breach of contract").
-        # 2 predicates per issue, across all issues, ensures broad initial coverage.
+        # Add predicate-driven leads: one predicate per issue, capped by issue lane.
+        # Coverage planner adds remaining predicates later based on live gaps.
         if self._matter_model is not None and _orient_issue_ids:
-            _pred_budget = max(6, len(_orient_issue_ids) * 2)
+            _issue_lane = max(1, (self.config.max_leads_per_level + 1) // 2)
+            _pred_budget = min(len(_orient_issue_ids), _issue_lane)
             _pred_added = 0
             _ordered_issues = []
             if weakest_id and weakest_id in _orient_issue_ids:
@@ -5276,7 +5278,7 @@ class RLMEngine:
             for _pred_target_id in _ordered_issues:
                 if _pred_added >= _pred_budget:
                     break
-                _issue_predicates = self._matter_model.issues.get_predicates(_pred_target_id, limit=2)
+                _issue_predicates = self._matter_model.issues.get_predicates(_pred_target_id, limit=1)
                 for _pred_row in _issue_predicates:
                     if _pred_added >= _pred_budget:
                         break
@@ -5356,7 +5358,7 @@ class RLMEngine:
         contract = getattr(state, "execution_contract", None)
         if contract is not None:
             _contract_max = int(getattr(contract, "max_iter", max_iterations))
-            max_iterations = max(max_iterations, _contract_max)
+            max_iterations = max(0, _contract_max)
 
         while iteration < max_iterations:
             # Check user stop request before each iteration
@@ -11528,6 +11530,7 @@ Return:
             for l in state.leads
             if l.source == "coverage_planner" and l.focus_issue_id
         }
+        planner_issue_ids: set[str] = {t[0] for t in planner_issue_terms}
         candidates: list[tuple[float, str, str, str]] = []
         for row in rows:
             iid = row.get("id")
@@ -11551,10 +11554,12 @@ Return:
             weakness = max(0.0, 1.0 - float(frac))
             base_score = weakness * 0.55 + (0.25 if has_any_gap else 0.0) + materiality * 0.20
             _added_any = False
+            _had_preds = False
             for _pi, _pred in enumerate(preds):
                 pred_text = (_pred.get("description") or "").strip()
                 if not pred_text:
                     continue
+                _had_preds = True
                 norm_term = " ".join(pred_text.lower().split())
                 if (iid, norm_term) in planner_issue_terms:
                     continue
@@ -11562,6 +11567,8 @@ Return:
                 candidates.append((_pred_score, iid, row.get("title") or "", pred_text))
                 _added_any = True
             if not _added_any:
+                if _had_preds and iid in planner_issue_ids:
+                    continue
                 term = (row.get("title") or "").strip()
                 if not term:
                     continue
@@ -11571,9 +11578,32 @@ Return:
                 candidates.append((base_score, iid, row.get("title") or "", term))
         if not candidates:
             return 0
-        candidates.sort(reverse=True)
+        # Round-robin by issue: take best predicate from each issue first,
+        # then second-best from each, etc. Prevents one weak issue from
+        # consuming all planner slots.
+        from collections import defaultdict
+        _by_issue: dict[str, list[tuple[float, str, str, str]]] = defaultdict(list)
+        for cand in candidates:
+            _by_issue[cand[1]].append(cand)
+        for _iid_cands in _by_issue.values():
+            _iid_cands.sort(reverse=True)
+        _issue_order = sorted(_by_issue.keys(), key=lambda k: -_by_issue[k][0][0])
+        _selected: list[tuple[float, str, str, str]] = []
+        _round = 0
+        while len(_selected) < capacity:
+            _added_this_round = False
+            for _iid_key in _issue_order:
+                if len(_selected) >= capacity:
+                    break
+                _iid_cands = _by_issue[_iid_key]
+                if _round < len(_iid_cands):
+                    _selected.append(_iid_cands[_round])
+                    _added_this_round = True
+            if not _added_this_round:
+                break
+            _round += 1
         added = 0
-        for score, iid, title, term in candidates[:capacity]:
+        for score, iid, title, term in _selected:
             # Description includes the issue short-hash so
             # state.add_lead's string-similarity dedup (>0.8 word
             # overlap) can't collapse two genuinely-different planner

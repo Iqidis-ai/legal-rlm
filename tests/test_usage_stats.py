@@ -6,9 +6,9 @@ from irys.core.models import UsageStats, ModelTier, MODEL_CONFIGS, GeminiClient
 
 class TestUsageStatsCostEstimation:
     def test_pro_tier_uses_current_model_limit(self):
-        """PRO uses Gemini 3.1 Pro's documented output cap."""
+        """PRO tier uses current model's documented output cap."""
         mc = MODEL_CONFIGS[ModelTier.PRO]
-        assert mc.model_id == "gemini-3.1-pro-preview"
+        assert mc.model_id == "gemini-3.1-flash-lite-preview"
         assert mc.max_output_tokens == 65_536
 
     def test_nano_tier_uses_lite_pricing(self):
@@ -54,21 +54,24 @@ class TestUsageStatsCostEstimation:
         stats.add(input_tokens=100, output_tokens=50)
         assert stats.cache_read_tokens == 0
 
-    def test_pro_large_context_uses_high_rate(self):
-        """Gemini 3.1 Pro prices prompts >200k tokens at the higher standard rate."""
+    def test_pro_uses_flash_lite_flat_pricing(self):
+        """PRO tier (currently Flash-Lite) uses flat pricing, no large-context premium."""
+        mc = MODEL_CONFIGS[ModelTier.PRO]
+        assert mc.large_context_threshold is None
         stats = UsageStats(tier=ModelTier.PRO)
         stats.add(input_tokens=250_000, output_tokens=100_000)
         expected = (
-            250_000 * 4.00 / 1_000_000
-            + 100_000 * 18.00 / 1_000_000
+            250_000 * mc.cost_per_1m_input / 1_000_000
+            + 100_000 * mc.cost_per_1m_output / 1_000_000
         )
         assert abs(stats.estimated_cost - expected) < 1e-9
 
-    def test_pro_large_context_cache_reads_follow_high_input_rate(self):
-        """Cache reads stay at 10% of the active Pro input rate above 200k tokens."""
+    def test_pro_cache_reads_at_10_percent(self):
+        """PRO cache reads at 10% of flat input rate."""
+        mc = MODEL_CONFIGS[ModelTier.PRO]
         stats = UsageStats(tier=ModelTier.PRO)
         stats.add(input_tokens=0, output_tokens=0, cache_read_tokens=250_000)
-        expected = 250_000 * 0.40 / 1_000_000
+        expected = 250_000 * mc.cost_per_1m_input * 0.10 / 1_000_000
         assert abs(stats.estimated_cost - expected) < 1e-9
 
     def test_fallback_cost_when_tier_is_none(self):

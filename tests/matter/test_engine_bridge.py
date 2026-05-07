@@ -2841,10 +2841,10 @@ def test_expand_query_splits_boolean_terms_and_keeps_context_terms_separate():
 
 
 def test_orientation_cache_version_bumped():
-    """_ORIENTATION_CACHE_VERSION must be '9' after domain-parameterized orientation prompt."""
+    """_ORIENTATION_CACHE_VERSION must be '11' after round-2 orientation changes."""
     from irys.rlm.engine import _ORIENTATION_CACHE_VERSION
-    assert _ORIENTATION_CACHE_VERSION == "9", (
-        "_ORIENTATION_CACHE_VERSION must be bumped to '9' after domain-parameterized orientation prompt"
+    assert _ORIENTATION_CACHE_VERSION == "11", (
+        "_ORIENTATION_CACHE_VERSION must be bumped to '11' after round-2 orientation changes"
     )
 
 
@@ -5362,4 +5362,207 @@ def test_resolve_operand_graph_skips_minimum_only_revenue(model):
 
     # Should NOT produce revenue exposure — minimum commitment is the wrong operand
     revenue_calcs = [r for r in results if "Revenue exposure" in r]
+    assert len(revenue_calcs) == 0
+
+
+def test_persist_schedule_entries_creates_typed_evidence(model):
+    """schedule_entries from contract_card should persist as schedule_entry records."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    card = {
+        "contract_name": "Revolving Credit Facility",
+        "counterparty": "Regional Bank NA",
+        "schedule_entries": [
+            {
+                "schedule_ref": "Schedule 4.12",
+                "row_index": 0,
+                "target_label": "Acme Widgets",
+                "metric": "revenue",
+                "value": "$18.5 million",
+                "period": "TTM",
+                "linked_contract": "Acme Supply Agreement",
+            },
+            {
+                "schedule_ref": "Schedule 4.12",
+                "row_index": 1,
+                "target_label": "Beta Corp",
+                "metric": "revenue",
+                "value": "$7.2 million",
+                "period": "TTM",
+                "linked_contract": "Beta Services Contract",
+            },
+        ],
+        "financial_operands": [],
+    }
+    engine._persist_contract_evidence(card, "credit-facility.docx")
+
+    te = model.typed_evidence
+    sched = te.list_by_kind("schedule_entry", limit=10)
+    assert len(sched) == 2
+
+    ops = te.list_by_kind("calculation_operand", limit=10)
+    sched_ops = [o for o in ops if "schedule_operand" in (o.get("label") or "")]
+    assert len(sched_ops) == 2
+
+
+def test_persist_dependency_relationships_creates_typed_evidence(model):
+    """dependency_relationships should persist as product_dependency records."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    card = {
+        "contract_name": "Technology License Agreement",
+        "counterparty": "Innovatech Inc",
+        "dependency_relationships": [
+            {
+                "component": "PredictiveML algorithm",
+                "host_product": "SensorPro X200",
+                "relationship_type": "embedded_in",
+                "revenue_attribution": "$42.7 million TTM",
+                "source_section": "Exhibit B",
+                "contract_or_vendor": "Innovatech License",
+            },
+        ],
+        "financial_operands": [],
+    }
+    engine._persist_contract_evidence(card, "license-agreement.docx")
+
+    te = model.typed_evidence
+    deps = te.list_by_kind("product_dependency", limit=10)
+    assert len(deps) == 1
+
+    ops = te.list_by_kind("calculation_operand", limit=10)
+    prod_ops = [o for o in ops if "product_revenue" in (o.get("label") or "")]
+    assert len(prod_ops) == 1
+
+
+def test_persist_downstream_risks_creates_typed_evidence(model):
+    """Structured downstream_indirect_risks should persist as contract_provision records."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+
+    card = {
+        "contract_name": "Master Supply Agreement",
+        "counterparty": "GlobalChem Ltd",
+        "downstream_indirect_risks": [
+            {
+                "contract_name": "Master Supply Agreement",
+                "provision_section": "Section 14.2(b)",
+                "trigger_language": "direct or indirect change in ultimate ownership",
+                "affected_actor_role": "acquirer",
+                "re_trigger_scenario": "Future sale of the acquirer itself triggers consent requirement",
+            },
+        ],
+        "financial_operands": [],
+    }
+    engine._persist_contract_evidence(card, "supply-agreement.docx")
+
+    te = model.typed_evidence
+    provs = te.list_by_kind("contract_provision", limit=10)
+    downstream = [p for p in provs if "downstream_risk" in (p.get("label") or "")]
+    assert len(downstream) == 1
+
+
+def test_product_line_revenue_resolves_through_dependency_graph(model):
+    """Product-line revenue from dependency should resolve to a revenue exposure calc."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    te = model.typed_evidence
+
+    te.upsert("contract_card", "card:license.docx", payload={
+        "contract_name": "Algorithm License",
+        "counterparty": "TechVendor Inc",
+        "filename": "license.docx",
+    }, label="Algorithm License", document_id="license.docx")
+
+    te.upsert("product_dependency", "dep:license.docx:0", payload={
+        "component": "predictiveml",
+        "host_product": "SensorPro X200",
+        "relationship_type": "embedded_in",
+        "revenue_attribution": "$42.7 million TTM",
+        "source_section": "Exhibit B",
+        "contract_or_vendor": "TechVendor License",
+        "source_document": "license.docx",
+        "contract_name": "Algorithm License",
+    }, label="predictiveml->SensorPro X200", document_id="license.docx")
+
+    te.upsert("calculation_operand", "op:credit.docx:company_ttm", payload={
+        "operand_role": "company_total_ttm_revenue",
+        "value_millions": 250.0,
+        "subject_label": "company",
+        "raw_text": "Company consolidated TTM revenue: $250M",
+        "source_document": "credit-agreement.docx",
+        "source_priority": "body_stated",
+    }, label="company_total_ttm_revenue:company", document_id="credit-agreement.docx")
+
+    results = engine._resolve_operand_graph_calculations()
+
+    revenue_calcs = [r for r in results if "Revenue exposure" in r]
+    assert len(revenue_calcs) >= 1
+    assert "42.7" in revenue_calcs[0] or "$42.7M" in revenue_calcs[0]
+
+
+def test_blocked_missing_operand_for_acquirer_threshold(model):
+    """Carve-out with acquirer threshold but no acquirer data should emit blocked_missing_operand."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    te = model.typed_evidence
+
+    te.upsert("contract_card", "card:supply.docx", payload={
+        "contract_name": "Distribution Agreement",
+        "counterparty": "RegionalDist Co",
+        "filename": "supply.docx",
+    }, label="Distribution Agreement", document_id="supply.docx")
+
+    te.upsert("contract_provision", "prov:carve_out:supply.docx:0", payload={
+        "provision_kind": "carve_out",
+        "raw_text": "The consent requirement does not apply if the acquirer has annual revenue exceeding $500 million",
+        "contract_name": "Distribution Agreement",
+        "source_document": "supply.docx",
+    }, label="carve_out:Distribution Agreement", document_id="supply.docx")
+
+    results = engine._resolve_operand_graph_calculations()
+
+    blocked = [r for r in results if "BLOCKED_CALC" in r]
+    assert len(blocked) == 1
+    assert "acquirer" in blocked[0].lower()
+    assert "$500" in blocked[0] or "500" in blocked[0]
+
+
+def test_empty_component_does_not_match_all_contracts(model):
+    """Empty component string in product_dependency must not match every contract."""
+    engine = RLMEngine.__new__(RLMEngine)
+    engine._matter_model = model
+    te = model.typed_evidence
+
+    te.upsert("contract_card", "card:supply.docx", payload={
+        "contract_name": "Supply Agreement",
+        "counterparty": "Supplier Inc",
+        "filename": "supply.docx",
+    }, label="Supply Agreement", document_id="supply.docx")
+
+    te.upsert("product_dependency", "dep:other.docx:0", payload={
+        "component": "",
+        "host_product": "SomeProduct",
+        "relationship_type": "depends_on",
+        "revenue_attribution": "$100 million",
+        "source_section": "Schedule 1",
+        "source_document": "other.docx",
+        "contract_name": "Other Agreement",
+    }, label="->SomeProduct", document_id="other.docx")
+
+    te.upsert("calculation_operand", "op:credit.docx:company", payload={
+        "operand_role": "company_total_ttm_revenue",
+        "value_millions": 500.0,
+        "subject_label": "company",
+        "raw_text": "Company TTM revenue: $500M",
+        "source_document": "credit.docx",
+        "source_priority": "body_stated",
+    }, label="company_total_ttm_revenue:company", document_id="credit.docx")
+
+    results = engine._resolve_operand_graph_calculations()
+
+    # Should NOT produce a revenue calc from the empty-component dependency
+    revenue_calcs = [r for r in results if "Revenue exposure" in r and "100" in r]
     assert len(revenue_calcs) == 0
