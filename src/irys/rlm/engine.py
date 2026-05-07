@@ -4559,7 +4559,8 @@ class RLMEngine:
         lines = ["REGULATORY EVIDENCE SUMMARY (extracted from documents):"]
         cat_order = ["market_share", "hhi", "hot_doc", "barrier",
                      "remedy", "timeline", "jurisdiction", "overlap",
-                     "synergy", "accretion", "valuation"]
+                     "synergy", "accretion", "valuation", "framework",
+                     "defense"]
         seen_cats = set()
         for cat in cat_order:
             if cat not in by_category:
@@ -8783,12 +8784,7 @@ Return:
             state.documents_read += 1
             state.llm_calls_required += 1  # SO-1 telemetry: cold-path doc read
 
-            # Deep reads always use full document text — Gemini models have 1M+
-            # token contexts. Truncating non-priority docs caused tables at the end
-            # to be lost (e.g., HHI data in market analysis memos, covenant grids
-            # in credit committee presentations). Cap at 200K chars (~50K tokens)
-            # to keep well within context limits while ensuring complete extraction.
-            _excerpt_chars = min(len(doc.full_text), 200_000)
+            _excerpt_chars = min(len(doc.full_text), 500_000)
             content = doc.get_excerpt(_excerpt_chars)
 
             _domain = self._resolve_active_domain(state)
@@ -8845,6 +8841,13 @@ Return:
                     + _cross_ref_text
                     + "\n"
                 )
+
+            # Inject tracked change manifest for comparison tasks
+            _tc_manifest = ""
+            if _is_comparison_dr and hasattr(doc, "tracked_changes") and doc.tracked_changes:
+                _tc_manifest = doc.get_tracked_change_manifest()
+                if _tc_manifest:
+                    content = _tc_manifest + "\n\n" + content
 
             # Build enhanced focus for comparison/regulatory tasks
             _base_focus = state.hypothesis or state.query
@@ -9023,7 +9026,7 @@ Return:
             _prov_comps = analysis.get("provision_comparisons")
             if isinstance(_prov_comps, list) and _prov_comps:
                 _mm_pc = self._matter_model
-                for _pc in _prov_comps[:80]:
+                for _pc in _prov_comps[:200]:
                     if not isinstance(_pc, dict):
                         continue
                     _prov = _pc.get("provision", "")
@@ -9066,7 +9069,7 @@ Return:
             _reg_data = analysis.get("regulatory_data")
             if isinstance(_reg_data, list) and _reg_data:
                 _mm_rd = self._matter_model
-                for _rd in _reg_data[:80]:
+                for _rd in _reg_data[:200]:
                     if not isinstance(_rd, dict):
                         continue
                     _cat = _rd.get("category", "")

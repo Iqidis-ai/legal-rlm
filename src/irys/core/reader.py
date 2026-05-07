@@ -21,6 +21,14 @@ class PageContent:
 
 
 @dataclass
+class TrackedChange:
+    """A single tracked change extracted from DOCX XML."""
+    deleted_text: str
+    added_text: str
+    context: str  # surrounding paragraph text for location
+
+
+@dataclass
 class DocumentContent:
     """Full document content with metadata."""
     path: str
@@ -29,6 +37,7 @@ class DocumentContent:
     page_count: int
     pages: list[PageContent]
     total_chars: int
+    tracked_changes: list[TrackedChange] | None = None
 
     @property
     def full_text(self) -> str:
@@ -54,6 +63,27 @@ class DocumentContent:
         if len(text) <= max_chars:
             return text
         return text[:max_chars] + f"\n\n[...truncated, {self.total_chars - max_chars} more chars...]"
+
+    def get_tracked_change_manifest(self) -> str:
+        """Build a structured manifest of all tracked changes for LLM consumption."""
+        if not self.tracked_changes:
+            return ""
+        lines = [
+            f"TRACKED CHANGE MANIFEST — {len(self.tracked_changes)} changes extracted from {self.filename}:",
+            "Each entry shows text DELETED from the original and text ADDED by the markup.",
+            "You MUST create a provision_comparison entry for EVERY change below.",
+            "",
+        ]
+        for i, tc in enumerate(self.tracked_changes, 1):
+            lines.append(f"Change #{i}:")
+            if tc.deleted_text:
+                lines.append(f"  DELETED: \"{tc.deleted_text[:300]}\"")
+            if tc.added_text:
+                lines.append(f"  ADDED:   \"{tc.added_text[:300]}\"")
+            if tc.context:
+                lines.append(f"  CONTEXT: ...{tc.context[:150]}...")
+            lines.append("")
+        return "\n".join(lines)
 
 
 class DocumentReader:
@@ -125,6 +155,8 @@ class DocumentReader:
 
         pages = [PageContent(page_num=1, text=text)]
 
+        tracked = self._extract_tracked_changes(doc)
+
         return DocumentContent(
             path=str(path),
             filename=path.name,
@@ -132,6 +164,7 @@ class DocumentReader:
             page_count=1,
             pages=pages,
             total_chars=len(text),
+            tracked_changes=tracked if tracked else None,
         )
 
     @staticmethod
@@ -162,6 +195,52 @@ class DocumentReader:
         except Exception:
             return paragraph.text or ""
         return "".join(parts) if parts else (paragraph.text or "")
+
+    @staticmethod
+    def _extract_tracked_changes(doc: "Document") -> list[TrackedChange]:
+        """Walk DOCX XML to extract every tracked change as structured data."""
+        from lxml import etree
+        W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        changes: list[TrackedChange] = []
+
+        for para in doc.paragraphs:
+            elem = para._element
+            del_runs = elem.findall(f".//{{{W}}}del")
+            ins_runs = elem.findall(f".//{{{W}}}ins")
+            if not del_runs and not ins_runs:
+                continue
+            deleted_parts: list[str] = []
+            for d in del_runs:
+                for dt in d.findall(f".//{{{W}}}delText"):
+                    if dt.text:
+                        deleted_parts.append(dt.text)
+            added_parts: list[str] = []
+            for i in ins_runs:
+                for t in i.findall(f".//{{{W}}}t"):
+                    if t.text:
+                        added_parts.append(t.text)
+            deleted = "".join(deleted_parts).strip()
+            added = "".join(added_parts).strip()
+            if not deleted and not added:
+                continue
+            plain_parts: list[str] = []
+            for t in elem.findall(f".//{{{W}}}t"):
+                parent = t.getparent()
+                gp = parent.getparent() if parent is not None else None
+                p_tag = etree.QName(parent.tag).localname if parent is not None and isinstance(parent.tag, str) else ""
+                gp_tag = etree.QName(gp.tag).localname if gp is not None and isinstance(gp.tag, str) else ""
+                if gp_tag == "ins" or gp_tag == "del":
+                    continue
+                if t.text:
+                    plain_parts.append(t.text)
+            context = "".join(plain_parts).strip()[:200]
+            changes.append(TrackedChange(
+                deleted_text=deleted,
+                added_text=added,
+                context=context,
+            ))
+
+        return changes
 
     def _read_txt(self, path: Path) -> DocumentContent:
         """Read plain text file."""
