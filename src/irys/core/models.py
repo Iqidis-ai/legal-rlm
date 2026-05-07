@@ -331,7 +331,8 @@ class GeminiClient:
     DEFAULT_TIMEOUT = 300.0  # 5 minutes — preview models need headroom
     MAX_RETRIES = 3
     MAX_RATE_LIMIT_RETRIES = 8
-    CIRCUIT_BREAKER_THRESHOLD = 2
+    CIRCUIT_BREAKER_THRESHOLD = 5
+    CIRCUIT_BREAKER_RESET_SECONDS = 300  # try primary again after 5 min
     DEFAULT_RPM = 60  # Requests per minute
     DEFAULT_BURST = 10  # Burst size
 
@@ -351,6 +352,7 @@ class GeminiClient:
         self._usage: dict[ModelTier, UsageStats] = {t: UsageStats(tier=t) for t in ModelTier}
         self._rate_limiter = RateLimiter(requests_per_minute, burst_size)
         self._circuit_breaker: dict[str, int] = {}
+        self._circuit_breaker_ts: dict[str, float] = {}
         self._usage_context: ContextVar[dict[str, Any] | None] = ContextVar(
             "gemini_usage_context",
             default=None,
@@ -585,6 +587,11 @@ class GeminiClient:
 
         _rate_limit_attempt = 0
         _cb_count = self._circuit_breaker.get(mc.model_id, 0)
+        _cb_ts = self._circuit_breaker_ts.get(mc.model_id, 0.0)
+        if _cb_count >= self.CIRCUIT_BREAKER_THRESHOLD and (time.perf_counter() - _cb_ts) > self.CIRCUIT_BREAKER_RESET_SECONDS:
+            logger.info("Circuit breaker half-open for %s — retrying primary after %.0fs cooldown", mc.model_id, time.perf_counter() - _cb_ts)
+            self._circuit_breaker[mc.model_id] = 0
+            _cb_count = 0
         if _cb_count >= self.CIRCUIT_BREAKER_THRESHOLD and mc.fallback_model_id:
             logger.warning(
                 f"Circuit breaker open for {mc.model_id} "
@@ -725,6 +732,7 @@ class GeminiClient:
                 _is_overloaded = "503" in _exc_str or "UNAVAILABLE" in _exc_str
                 if _is_rate_limit or _is_overloaded:
                     self._circuit_breaker[mc.model_id] = self._circuit_breaker.get(mc.model_id, 0) + 1
+                    self._circuit_breaker_ts[mc.model_id] = time.perf_counter()
                 if (_is_rate_limit or _is_overloaded) and _rate_limit_attempt < self.MAX_RATE_LIMIT_RETRIES:
                     _rate_limit_attempt += 1
                     import re as _re_mod

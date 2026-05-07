@@ -1815,6 +1815,7 @@
     "deliverable_sub_intent",
     "cross_document_analysis",
     "evidence_relevance_filter",
-    "extraction_repair"
+    "extraction_repair",
+    "synthesis_coverage_repair"
   ]
 }

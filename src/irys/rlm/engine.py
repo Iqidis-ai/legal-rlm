@@ -398,7 +398,7 @@ Bad: "breach AND contract", "\"termination\" OR \"cancellation\""
 # Including it in the cache key ensures old cached plans (which may lack
 # new fields like "predicates") are automatically invalidated after a
 # prompt update (SO-1 stale-cache prevention).
-_ORIENTATION_CACHE_VERSION = "16"
+_ORIENTATION_CACHE_VERSION = "17"
 
 
 def _format_matter_context(ctx) -> str:
@@ -6343,6 +6343,75 @@ class RLMEngine:
                 conversation_history=state.conversation_history,
             )
 
+    async def _repair_synthesis_coverage(
+        self,
+        state: InvestigationState,
+        response: str,
+        facts: "list[str]",
+        ledger_items: "list[str]",
+    ) -> str:
+        """Check synthesis output against coverage ledger; repair if >40% items missing.
+
+        For extraction tasks, the synthesis often identifies evidence but fails
+        to incorporate all findings into the formal memo structure. This pass
+        identifies specific missed items and asks the LLM to produce additional
+        analysis sections covering them.
+        """
+        if not ledger_items or len(ledger_items) < 10:
+            return response
+        response_lower = response.lower()
+        missed: list[str] = []
+        for item in ledger_items:
+            _vals = item.split("] ", 1)[-1] if "] " in item else item
+            _parts = [v.strip() for v in _vals.split(";") if v.strip()]
+            _found = any(p.lower() in response_lower for p in _parts if len(p) > 3)
+            if not _found:
+                missed.append(item)
+        coverage_pct = 1.0 - len(missed) / len(ledger_items)
+        state.findings["synthesis_coverage_pct"] = round(coverage_pct * 100, 1)
+        state.findings["synthesis_missed_ledger_count"] = len(missed)
+        if coverage_pct >= 0.6:
+            return response
+        logger.info(
+            "Synthesis coverage %.0f%% (%d/%d items missing) — running repair pass",
+            coverage_pct * 100, len(missed), len(ledger_items),
+        )
+        self._emit_step(state, StepType.SYNTHESIS, f"Coverage repair: {len(missed)} items missing from output")
+        missed_facts_text = "\n".join(
+            f"- {facts[int(item.split(']')[0].strip('['))]} " if item[0] == '[' and item.split(']')[0].strip('[').isdigit() else f"- {item}"
+            for item in missed[:100]
+        )
+        repair_prompt = (
+            "You previously produced a legal analysis memo, but it missed many specific findings "
+            "from the evidence. Below is your original output followed by a list of MISSED findings "
+            "that MUST be incorporated.\n\n"
+            "TASK: Produce ADDITIONAL analysis sections covering ONLY the missed items below. "
+            "For each missed item, provide:\n"
+            "1. The specific provision/issue identified\n"
+            "2. The original vs. proposed/actual terms (with exact figures)\n"
+            "3. Risk assessment (RED/YELLOW/GREEN)\n"
+            "4. A specific recommendation (reject/counter/accept with fallback)\n\n"
+            "Do NOT repeat content already in the original output. Only add new sections.\n"
+            "Maintain the same format and style as the original output.\n\n"
+            f"ORIGINAL OUTPUT (abbreviated to last 2000 chars):\n{response[-2000:]}\n\n"
+            f"MISSED ITEMS THAT MUST BE COVERED ({len(missed)} items):\n{missed_facts_text}\n\n"
+            "Produce the additional sections now. Be exhaustive — cover EVERY missed item."
+        )
+        try:
+            state.llm_calls_required += 1
+            repair_text = await self.client.complete(
+                repair_prompt,
+                tier=ModelTier.FLASH,
+                timeout=120.0,
+                usage_label="synthesis_coverage_repair",
+            )
+            if repair_text and len(repair_text.strip()) > 100:
+                state.findings["synthesis_repair_applied"] = True
+                return response + "\n\n---\n\n## Additional Analysis — Provisions Not Covered Above\n\n" + repair_text
+        except Exception as exc:
+            logger.warning("Synthesis coverage repair failed: %s", exc)
+        return response
+
     async def investigate(
         self,
         query: str,
@@ -10986,6 +11055,14 @@ Return:
                         self._matter_model.cache.put("synthesis", _syn_key, response)
                 except Exception:
                     pass
+
+        # Coverage repair: for extraction tasks with large evidence sets, check if the
+        # synthesis incorporated the key ledger items. If coverage <60%, run a targeted
+        # repair pass to add the missing analysis.
+        if self._is_extraction_task(state.query) and _ledger_items:
+            response = await self._repair_synthesis_coverage(
+                state, response, facts, _ledger_items,
+            )
 
         # SO-5: Post-synthesis advocacy gate.
         # If any open issues rely exclusively on advocacy sources, force-append a
