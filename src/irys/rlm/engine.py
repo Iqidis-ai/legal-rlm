@@ -4140,6 +4140,11 @@ class RLMEngine:
                 raw = (qr.get("raw_text") or "").lower()
                 combined = ctx + " " + raw
                 val = qr.get("amount_value")
+                if isinstance(val, str):
+                    try:
+                        val = float(val.replace(",", "").replace("$", "").strip())
+                    except (TypeError, ValueError):
+                        continue
                 if not val or val <= 0:
                     continue
                 if _facility_size is None and any(
@@ -4225,11 +4230,12 @@ class RLMEngine:
             _bv_str = str(_rv.get("baseline_value") or "")
             _pv_str = str(_rv.get("proposed_value") or "")
             _bv_num = _rv.get("normalized_baseline")
-            if _bv_num is None:
-                _bv_num = _extract_number(_bv_str)
+            if not isinstance(_bv_num, (int, float)):
+                # LLM may have emitted a stringified number; recoerce.
+                _bv_num = _extract_number(str(_bv_num) if _bv_num is not None else _bv_str)
             _pv_num = _rv.get("normalized_proposed")
-            if _pv_num is None:
-                _pv_num = _extract_number(_pv_str)
+            if not isinstance(_pv_num, (int, float)):
+                _pv_num = _extract_number(str(_pv_num) if _pv_num is not None else _pv_str)
             if _bv_num is None or _pv_num is None:
                 continue
             _delta_r = _pv_num - _bv_num

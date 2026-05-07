@@ -225,18 +225,35 @@ def _split_output_by_deliverable(
         stem_words = stem.split()
         return sum(1 for w in stem_words if w in ht) >= max(1, len(stem_words) // 2)
 
-    sections: list[tuple[str, int, int]] = []
+    # A deliverable section runs from its boundary heading to the NEXT
+    # heading at the same or shallower depth. Sub-headings (deeper levels)
+    # are part of the same section. Without this, "# Title" followed by
+    # "## Subhead" closes the section after only the title line.
+    sections: list[tuple[str, int, int, int]] = []
     for i, match in enumerate(headings):
+        level = len(match.group(1))
         start = match.start()
-        end = headings[i + 1].start() if i + 1 < len(headings) else len(output_text)
-        sections.append((match.group(2).strip(), start, end))
+        end = len(output_text)
+        for j in range(i + 1, len(headings)):
+            next_level = len(headings[j].group(1))
+            if next_level <= level:
+                end = headings[j].start()
+                break
+        sections.append((match.group(2).strip(), start, end, level))
 
     for name, stem in stem_map.items():
         best_section = None
-        for heading_text, start, end in sections:
-            if _fuzzy_match(heading_text, stem):
-                best_section = output_text[start:end].strip()
-                break
+        # Prefer the shallowest matching heading (a deliverable boundary
+        # is typically `#` level-1, not a buried subsection).
+        candidates = [
+            (level, start, end)
+            for heading_text, start, end, level in sections
+            if _fuzzy_match(heading_text, stem)
+        ]
+        if candidates:
+            candidates.sort(key=lambda c: (c[0], c[1]))
+            _, s, e = candidates[0]
+            best_section = output_text[s:e].strip()
         result[name] = best_section if best_section else output_text
 
     return result
