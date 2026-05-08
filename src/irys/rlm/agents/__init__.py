@@ -35,11 +35,13 @@ from .personas import Persona, PersonaPolicy, PersonaRegistry, PersonaSelection,
 from .hhi_calculator import HhiMarketShareCalculator
 from .numerical_reconciliation import NumericalReconciliationAgent
 from .cp_section_extractor import CpSectionExtractorAgent
+from .file_reader import DocumentFileReader
 
 
 def default_registry() -> SubAgentRegistry:
     """Registry pre-populated with the deterministic built-in operators."""
     return SubAgentRegistry(agents=(
+        DocumentFileReader(),
         HhiMarketShareCalculator(),
         NumericalReconciliationAgent(),
         CpSectionExtractorAgent(),
@@ -83,6 +85,7 @@ __all__ = (
     "default_persona_registry",
     "default_registry",
     "CpSectionExtractorAgent",
+    "DocumentFileReader",
     "HhiMarketShareCalculator",
     "NumericalReconciliationAgent",
     "AgentInputRef",

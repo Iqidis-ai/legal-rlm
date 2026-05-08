@@ -191,12 +191,11 @@ def test_cp_extractor_capability_tags():
 
 
 def test_cp_extractor_in_default_registry():
-    """The default registry should pre-register all 3 operators."""
+    """The default registry pre-registers all built-in operators."""
     from irys.rlm.agents import default_registry
     reg = default_registry()
     ids = {a.agent_id for a in reg.list()}
-    assert ids == {
-        "antitrust.hhi_market_share.v1",
-        "finance.numerical_reconciliation.v1",
-        "banking.cp_section_extractor.v1",
-    }
+    assert "banking.cp_section_extractor.v1" in ids
+    assert "antitrust.hhi_market_share.v1" in ids
+    assert "finance.numerical_reconciliation.v1" in ids
+    assert "document.file_reader.v1" in ids
