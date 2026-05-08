@@ -33,11 +33,13 @@ from .dispatcher import SubAgentDispatcher
 from .runtime import AgentRuntime
 from .personas import Persona, PersonaPolicy, PersonaRegistry, PersonaSelection, PolicyDecision
 from .hhi_calculator import HhiMarketShareCalculator
+from .numerical_reconciliation import NumericalReconciliationAgent
 
 __all__ = (
     "AgentArtifact",
     "AgentDispatch",
     "HhiMarketShareCalculator",
+    "NumericalReconciliationAgent",
     "AgentInputRef",
     "AgentInvocation",
     "AgentInvocationResult",
