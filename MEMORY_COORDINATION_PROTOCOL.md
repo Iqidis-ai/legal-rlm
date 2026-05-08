@@ -352,6 +352,9 @@ Required namespaces:
 - quants
 - typed_evidence
 - extraction_slots
+- agents
+- personas
+- synthesis
 - objective_nodes
 - criteria
 - support_edges
@@ -454,6 +457,10 @@ python tools\check_memory_namespace_coverage.py
 | `extraction_slot_evidence` | `extraction_slots:*`, `extraction_slots:<slot_id>`, `typed_evidence:<typed_evidence_id>` |
 | `slot_override` | `extraction_slots:*`, `extraction_slots:<slot_id>`, `guidance:*` when source='user' or 'attorney' |
 | `slot_issue_link` | `extraction_slots:*`, `extraction_slots:<slot_id>`, `objective_nodes:<issue_id>`, `criteria:<predicate_id>` when linked, `support_edges:*` |
+| `persona_selection` | `personas:*`, `personas:<persona_id>`, `personas:run:<run_id>` |
+| `sub_agent_invocation` | `agents:*`, `agents:<agent_id>`, `agents:invocation:<id>`, `agents:run:<run_id>` |
+| `agent_artifact` | `agents:*`, `agents:invocation:<invocation_id>`, `typed_evidence:*` when typed_evidence_refs_json is non-empty |
+| `synthesis_input_artifact` | `agents:*`, `agents:artifact:<artifact_id>`, `synthesis:run:<run_id>:<context_section_key>` |
 | `metric_alias` | `metric_aliases:*`, `metric_aliases:<domain_profile_id>` when domain-scoped |
 | `knowledge_seed` | `knowledge_seeds:*`, `knowledge_seeds:<domain_profile_id>` when domain-scoped |
 | `scenario_branch` | `scenario_branches:*` |

@@ -136,6 +136,34 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
             "creation lands in Phase 4."
         ),
     ),
+    "persona_selection": TableCoverageSpec(
+        deferred_until="pr3_phase4_persona_registry",
+        reason=(
+            "v72 sub-agent substrate. Persona registry + selection writer "
+            "lands in PR#3 phase 4."
+        ),
+    ),
+    "sub_agent_invocation": TableCoverageSpec(
+        deferred_until="pr3_phase2_dispatcher",
+        reason=(
+            "v72 sub-agent substrate. Dispatcher writes invocation rows "
+            "in PR#3 phase 2."
+        ),
+    ),
+    "agent_artifact": TableCoverageSpec(
+        deferred_until="pr3_phase3_first_agent",
+        reason=(
+            "v72 sub-agent substrate. First concrete agent (HHI Calculator) "
+            "writes artifacts in PR#3 phase 3."
+        ),
+    ),
+    "synthesis_input_artifact": TableCoverageSpec(
+        deferred_until="pr3_phase5_engine_integration",
+        reason=(
+            "v72 sub-agent substrate. Synthesis-context provenance writer "
+            "lands when engine consumes agent artifacts in PR#3 phase 5."
+        ),
+    ),
     "document_actor_role": TableCoverageSpec(
         writers=("irys.matter.graph:DocumentActorRoleStore.upsert",),
         readers=("irys.matter.graph:DocumentActorRoleStore.list_by_document",),

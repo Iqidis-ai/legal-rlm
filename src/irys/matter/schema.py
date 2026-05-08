@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 71
+SCHEMA_VERSION = 72
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -31,6 +31,7 @@ _MIGRATION_NAMES: dict[int, str] = {
     69: "typed_evidence_records",
     70: "extraction_slots",
     71: "slot_profiles_and_truth",
+    72: "sub_agent_runtime_substrate",
 }
 
 
@@ -1061,6 +1062,118 @@ CREATE INDEX IF NOT EXISTS ix_slot_issue_link_slot
 
 CREATE INDEX IF NOT EXISTS ix_slot_issue_link_issue
     ON slot_issue_link(matter_id, issue_id);
+"""
+
+_DDL_PERSONA_SELECTION = """
+CREATE TABLE IF NOT EXISTS persona_selection (
+    id                              TEXT PRIMARY KEY,
+    matter_id                       TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    run_id                          TEXT,
+    persona_id                      TEXT NOT NULL,
+    persona_version                 INTEGER NOT NULL,
+    selected_at                     TEXT NOT NULL,
+    selection_score                 REAL NOT NULL DEFAULT 0.0,
+    reasons_json                    TEXT NOT NULL DEFAULT '[]',
+    task_view_json                  TEXT NOT NULL DEFAULT '{}',
+    execution_family                TEXT NOT NULL,
+    workflow_kind                   TEXT NOT NULL,
+    allowed_tags_json               TEXT NOT NULL DEFAULT '[]',
+    denied_tags_json                TEXT NOT NULL DEFAULT '[]',
+    explicit_agent_overrides_json   TEXT NOT NULL DEFAULT '{}'
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_persona_selection_run
+    ON persona_selection(matter_id, run_id, selected_at DESC);
+"""
+
+_DDL_SUB_AGENT_INVOCATION = """
+CREATE TABLE IF NOT EXISTS sub_agent_invocation (
+    id                          TEXT PRIMARY KEY,
+    matter_id                   TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    run_id                      TEXT,
+    agent_id                    TEXT NOT NULL,
+    agent_version               INTEGER NOT NULL,
+    persona_id                  TEXT,
+    phase                       TEXT NOT NULL,
+    requirement                 TEXT NOT NULL
+        CHECK (requirement IN ('optional','required','blocking_validator')),
+    invocation_at               TEXT NOT NULL,
+    input_hash                  TEXT NOT NULL,
+    output_artifact_id          TEXT,
+    dependency_manifest_hash    TEXT,
+    latency_ms                  INTEGER NOT NULL DEFAULT 0,
+    cost_estimate               REAL NOT NULL DEFAULT 0.0,
+    llm_calls                   INTEGER NOT NULL DEFAULT 0,
+    success_bool                INTEGER NOT NULL DEFAULT 0
+        CHECK (success_bool IN (0,1)),
+    status                      TEXT NOT NULL,
+    error_class                 TEXT,
+    error_message               TEXT,
+    capability_tags_json        TEXT NOT NULL DEFAULT '[]',
+    token_estimate              INTEGER NOT NULL DEFAULT 0,
+    budget_breach_reason        TEXT
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_sub_agent_invocation_agent
+    ON sub_agent_invocation(matter_id, agent_id, invocation_at DESC);
+
+CREATE INDEX IF NOT EXISTS ix_sub_agent_invocation_run
+    ON sub_agent_invocation(matter_id, run_id, phase, invocation_at DESC);
+
+CREATE INDEX IF NOT EXISTS ix_sub_agent_invocation_manifest
+    ON sub_agent_invocation(matter_id, dependency_manifest_hash);
+"""
+
+_DDL_AGENT_ARTIFACT = """
+CREATE TABLE IF NOT EXISTS agent_artifact (
+    id                          TEXT PRIMARY KEY,
+    matter_id                   TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    invocation_id               TEXT NOT NULL REFERENCES sub_agent_invocation(id) ON DELETE CASCADE,
+    artifact_kind               TEXT NOT NULL,
+    artifact_key                TEXT NOT NULL,
+    label                       TEXT,
+    payload_json                TEXT NOT NULL DEFAULT '{}',
+    synthesis_visibility        TEXT NOT NULL DEFAULT 'audit_only'
+        CHECK (synthesis_visibility IN ('none','answer_ingredient','audit_only')),
+    confidence                  REAL NOT NULL DEFAULT 0.0
+        CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    source_refs_json            TEXT NOT NULL DEFAULT '[]',
+    typed_evidence_refs_json    TEXT NOT NULL DEFAULT '[]',
+    memory_packet_id            TEXT,
+    dependency_manifest_hash    TEXT,
+    verification_state          TEXT NOT NULL DEFAULT 'candidate',
+    created_at                  TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_agent_artifact_invocation
+    ON agent_artifact(matter_id, invocation_id);
+
+CREATE INDEX IF NOT EXISTS ix_agent_artifact_kind_key
+    ON agent_artifact(matter_id, artifact_kind, artifact_key, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS ix_agent_artifact_manifest
+    ON agent_artifact(matter_id, dependency_manifest_hash);
+"""
+
+_DDL_SYNTHESIS_INPUT_ARTIFACT = """
+CREATE TABLE IF NOT EXISTS synthesis_input_artifact (
+    id                      TEXT PRIMARY KEY,
+    matter_id               TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    run_id                  TEXT,
+    synthesis_output_id     TEXT,
+    context_section_key     TEXT NOT NULL,
+    context_section_hash    TEXT,
+    artifact_id             TEXT NOT NULL REFERENCES agent_artifact(id) ON DELETE CASCADE,
+    inclusion_reason        TEXT NOT NULL DEFAULT '',
+    included_at             TEXT NOT NULL,
+    UNIQUE(matter_id, run_id, context_section_key, artifact_id)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_synthesis_input_artifact_section
+    ON synthesis_input_artifact(matter_id, run_id, context_section_key);
+
+CREATE INDEX IF NOT EXISTS ix_synthesis_input_artifact_artifact
+    ON synthesis_input_artifact(matter_id, artifact_id);
 """
 
 # Full DDL in apply order
@@ -3746,6 +3859,29 @@ def _migration_v71(conn) -> None:
                 pass
 
 
+def _migration_v72(conn) -> None:
+    """Sub-agent runtime substrate (operator substrate thesis).
+
+    Adds:
+      - persona_selection: which persona ran for which investigation
+      - sub_agent_invocation: every operator call (cost, latency, status,
+        capability tags, token estimate, budget breach reason)
+      - agent_artifact: durable agent outputs with broker provenance
+      - synthesis_input_artifact: which artifacts flowed into synthesis
+        and why (Synthesis Context Principle audit trail)
+    """
+    for ddl in (
+        _DDL_PERSONA_SELECTION,
+        _DDL_SUB_AGENT_INVOCATION,
+        _DDL_AGENT_ARTIFACT,
+        _DDL_SYNTHESIS_INPUT_ARTIFACT,
+    ):
+        for stmt in ddl.split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                conn.execute(stmt)
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -3821,6 +3957,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (69, _migration_v69),
     (70, _migration_v70),
     (71, _migration_v71),
+    (72, _migration_v72),
 ]
 
 
