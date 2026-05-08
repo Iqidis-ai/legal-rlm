@@ -36,12 +36,14 @@ from .hhi_calculator import HhiMarketShareCalculator
 from .numerical_reconciliation import NumericalReconciliationAgent
 from .cp_section_extractor import CpSectionExtractorAgent
 from .file_reader import DocumentFileReader
+from .cross_doc_linker import CrossDocLinker
 
 
 def default_registry() -> SubAgentRegistry:
     """Registry pre-populated with the deterministic built-in operators."""
     return SubAgentRegistry(agents=(
         DocumentFileReader(),
+        CrossDocLinker(),
         HhiMarketShareCalculator(),
         NumericalReconciliationAgent(),
         CpSectionExtractorAgent(),
@@ -85,6 +87,7 @@ __all__ = (
     "default_persona_registry",
     "default_registry",
     "CpSectionExtractorAgent",
+    "CrossDocLinker",
     "DocumentFileReader",
     "HhiMarketShareCalculator",
     "NumericalReconciliationAgent",
