@@ -7741,11 +7741,19 @@ class ExtractionSlotStore:
                 ),
             )
 
-    def mark_not_observable(self, slot_id: str) -> None:
+    def mark_not_observable(
+        self,
+        slot_id: str,
+        *,
+        reason: str = "targeted_reads_exhausted_no_answerable_evidence",
+        source: str = "system",
+    ) -> None:
         """Mark a slot unfillable from this corpus.
 
         Use only after targeted reads/searches have exhausted candidate docs;
         prevents infinite loops without pretending the row was extracted.
+        Records the reason and source on the slot and emits a slot_override
+        row for provenance.
         """
         sid = str(slot_id or "").strip()
         if not sid:
@@ -7754,10 +7762,280 @@ class ExtractionSlotStore:
         with self.db.transaction():
             self.db.execute(
                 """UPDATE extraction_slot
-                   SET coverage_state='not_observable', updated_at=?
+                   SET coverage_state='not_observable',
+                       coverage_state_reason=?,
+                       updated_at=?
                    WHERE matter_id=? AND id=? AND coverage_state IN ('pending','partial')""",
-                (now, self.matter_id, sid),
+                (reason, now, self.matter_id, sid),
             )
+
+    # ------------------------------------------------------------------
+    # v71: live truth from evidence + user steering
+    # ------------------------------------------------------------------
+
+    def link_evidence(
+        self,
+        slot_id: str,
+        typed_evidence_id: str,
+        *,
+        link_role: str = "fills",
+        profile_id: "Optional[str]" = None,
+    ) -> "Optional[str]":
+        """Link a typed_evidence row to a slot via extraction_slot_evidence.
+
+        Returns the link row id, or None if inputs invalid. Idempotent on the
+        unique (matter_id, slot_id, typed_evidence_id, link_role) constraint.
+        Recomputes coverage_state for the slot before returning.
+        """
+        sid = str(slot_id or "").strip()
+        eid = str(typed_evidence_id or "").strip()
+        role = (link_role or "fills").strip()
+        if not sid or not eid:
+            return None
+        if role not in {"fills", "candidate", "contradicts", "supersedes"}:
+            raise ValueError(f"invalid link_role: {role!r}")
+        now = _now()
+        with self.db.transaction():
+            # Resolve profile_id from the slot if not provided
+            pid = (profile_id or "").strip()
+            if not pid:
+                row = self.db.execute(
+                    "SELECT profile_id, schema_ref FROM extraction_slot"
+                    " WHERE matter_id=? AND id=?",
+                    (self.matter_id, sid),
+                ).fetchone()
+                if row:
+                    pid = row["profile_id"] or row["schema_ref"] or ""
+            link_id = _id()
+            self.db.execute(
+                """INSERT OR IGNORE INTO extraction_slot_evidence
+                   (id, matter_id, slot_id, typed_evidence_id, link_role,
+                    profile_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (link_id, self.matter_id, sid, eid, role, pid, now),
+            )
+        # Trigger live-truth recompute
+        self.recompute_coverage_state(sid)
+        return link_id
+
+    def unlink_evidence(self, slot_id: str, typed_evidence_id: str) -> None:
+        """Remove all link rows for (slot, typed_evidence). Recomputes state."""
+        sid = str(slot_id or "").strip()
+        eid = str(typed_evidence_id or "").strip()
+        if not sid or not eid:
+            return
+        with self.db.transaction():
+            self.db.execute(
+                """DELETE FROM extraction_slot_evidence
+                   WHERE matter_id=? AND slot_id=? AND typed_evidence_id=?""",
+                (self.matter_id, sid, eid),
+            )
+        self.recompute_coverage_state(sid)
+
+    def _has_out_of_scope_override(self, slot_id: str) -> bool:
+        row = self.db.execute(
+            """SELECT 1 FROM slot_override
+               WHERE matter_id=? AND slot_id=? AND override_state='out_of_scope'
+               LIMIT 1""",
+            (self.matter_id, slot_id),
+        ).fetchone()
+        return row is not None
+
+    def _count_answerable_evidence(self, slot_id: str) -> int:
+        """Count linked typed_evidence_record rows that are not rejected/stale.
+
+        Verification status comes from verification_state with target_kind that
+        includes the typed_evidence record's verification target. Since
+        TypedEvidenceStore.upsert maps unknown record_kind to
+        VerificationTargetKind.ARTIFACT (graph.py:7396), we union that target
+        kind plus all known typed-evidence target kinds when joining.
+        """
+        row = self.db.execute(
+            """SELECT COUNT(*) AS n
+               FROM extraction_slot_evidence se
+               JOIN typed_evidence_record te
+                 ON te.matter_id = se.matter_id
+                AND te.id = se.typed_evidence_id
+               LEFT JOIN verification_state vs
+                 ON vs.matter_id = te.matter_id
+                AND vs.target_id = te.id
+               WHERE se.matter_id=?
+                 AND se.slot_id=?
+                 AND se.link_role='fills'
+                 AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')""",
+            (self.matter_id, slot_id),
+        ).fetchone()
+        return int(row["n"] or 0) if row else 0
+
+    def recompute_coverage_state(self, slot_id: str) -> str:
+        """Derive coverage_state from the join table + verification.
+
+        Returns the new coverage_state ("" if slot not found). Skips slots in
+        terminal sticky states (out_of_scope) but transitions filled <-> partial
+        <-> pending based on answerable count vs expected_count.
+        """
+        sid = str(slot_id or "").strip()
+        if not sid:
+            return ""
+        row = self.db.execute(
+            "SELECT id, expected_count, coverage_state FROM extraction_slot"
+            " WHERE matter_id=? AND id=?",
+            (self.matter_id, sid),
+        ).fetchone()
+        if row is None:
+            return ""
+        current = row["coverage_state"]
+        # out_of_scope is driven by the slot_override table, so we
+        # always re-evaluate based on whether the override is present.
+        # not_observable is sticky and only cleared by an explicit
+        # reactivate (handled below by re-derived link evidence).
+        if self._has_out_of_scope_override(sid):
+            new_state, reason = "out_of_scope", "user_or_policy_override"
+        else:
+            answerable = self._count_answerable_evidence(sid)
+            expected = row["expected_count"]
+            if answerable <= 0:
+                # If currently not_observable, leave it sticky.
+                if current == "not_observable":
+                    return current
+                new_state, reason = "pending", "no_answerable_evidence"
+            elif expected is None or int(expected) <= 1 or answerable >= int(expected):
+                new_state, reason = "filled", "answerable_evidence_count_satisfies_expected"
+            else:
+                new_state, reason = "partial", "answerable_evidence_count_below_expected"
+        if new_state == current:
+            return new_state
+        now = _now()
+        with self.db.transaction():
+            self.db.execute(
+                """UPDATE extraction_slot
+                   SET coverage_state=?, coverage_state_reason=?,
+                       last_truth_recomputed_at=?, updated_at=?
+                   WHERE matter_id=? AND id=?""",
+                (new_state, reason, now, now, self.matter_id, sid),
+            )
+        return new_state
+
+    def get_answerable_rows_for_profile(
+        self, profile_id: str,
+    ) -> list[dict]:
+        """Return slot rows whose linked typed_evidence is verified and live.
+
+        Used by the synthesis row renderer instead of get_filled_slots() so
+        that contradicted/rejected/stale evidence does not flow into the
+        answer ingredient table.
+        """
+        pid = str(profile_id or "").strip()
+        if not pid:
+            return []
+        rows = self.db.execute(
+            """SELECT
+                  s.*,
+                  te.id AS typed_evidence_id,
+                  te.record_kind,
+                  te.record_key,
+                  te.label AS evidence_label,
+                  te.document_id,
+                  te.span_id,
+                  te.payload_json,
+                  te.confidence AS evidence_confidence,
+                  COALESCE(vs.status, 'candidate') AS verification_status
+               FROM extraction_slot s
+               JOIN extraction_slot_evidence se
+                 ON se.matter_id = s.matter_id
+                AND se.slot_id = s.id
+                AND se.link_role = 'fills'
+               JOIN typed_evidence_record te
+                 ON te.matter_id = s.matter_id
+                AND te.id = se.typed_evidence_id
+               LEFT JOIN verification_state vs
+                 ON vs.matter_id = te.matter_id
+                AND vs.target_id = te.id
+               WHERE s.matter_id = ?
+                 AND s.profile_id = ?
+                 AND s.coverage_state IN ('partial', 'filled')
+                 AND COALESCE(vs.status, 'candidate') NOT IN ('rejected','stale')
+                 AND NOT EXISTS (
+                   SELECT 1 FROM slot_override so
+                   WHERE so.matter_id = s.matter_id
+                     AND so.slot_id = s.id
+                     AND so.override_state = 'out_of_scope'
+                 )
+               ORDER BY s.slot_key ASC, te.updated_at DESC""",
+            (self.matter_id, pid),
+        ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["payload"] = _json_mod.loads(d.get("payload_json") or "{}")
+            except (TypeError, ValueError):
+                d["payload"] = {}
+            out.append(d)
+        return out
+
+    def mark_out_of_scope(
+        self,
+        slot_id: str,
+        *,
+        reason: str,
+        source: str = "user",
+    ) -> "Optional[str]":
+        """Mark a slot as out-of-scope per user/attorney/system policy.
+
+        Inserts a slot_override row and updates the slot's coverage_state.
+        Returns the override row id (or None if input invalid).
+        """
+        sid = str(slot_id or "").strip()
+        rsn = str(reason or "").strip()
+        src = (source or "user").strip()
+        if not sid or not rsn:
+            return None
+        if src not in {"user", "attorney", "system", "policy"}:
+            raise ValueError(f"invalid override source: {src!r}")
+        now = _now()
+        ovr_id = _id()
+        with self.db.transaction():
+            self.db.execute(
+                """INSERT OR IGNORE INTO slot_override
+                   (id, matter_id, slot_id, override_state, reason, source, created_at)
+                   VALUES (?, ?, ?, 'out_of_scope', ?, ?, ?)""",
+                (ovr_id, self.matter_id, sid, rsn, src, now),
+            )
+        # Recompute pulls in the override
+        self.recompute_coverage_state(sid)
+        return ovr_id
+
+    def reactivate_slot(
+        self,
+        slot_id: str,
+        *,
+        reason: str = "user_reactivated",
+        source: str = "user",
+    ) -> "Optional[str]":
+        """Reverse an out_of_scope override and recompute state."""
+        sid = str(slot_id or "").strip()
+        if not sid:
+            return None
+        if source not in {"user", "attorney", "system", "policy"}:
+            raise ValueError(f"invalid reactivate source: {source!r}")
+        now = _now()
+        ovr_id = _id()
+        with self.db.transaction():
+            # Remove out_of_scope overrides; record a reactivate row for audit
+            self.db.execute(
+                """DELETE FROM slot_override
+                   WHERE matter_id=? AND slot_id=? AND override_state='out_of_scope'""",
+                (self.matter_id, sid),
+            )
+            self.db.execute(
+                """INSERT OR IGNORE INTO slot_override
+                   (id, matter_id, slot_id, override_state, reason, source, created_at)
+                   VALUES (?, ?, ?, 'reactivate', ?, ?, ?)""",
+                (ovr_id, self.matter_id, sid, reason, source, now),
+            )
+        self.recompute_coverage_state(sid)
+        return ovr_id
 
     def coverage_summary(self, matter_id: str) -> dict:
         """Return coverage counts grouped by slot_kind.

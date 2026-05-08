@@ -110,18 +110,23 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
         ),
     ),
     "extraction_slot_evidence": TableCoverageSpec(
-        deferred_until="pr2_phase2_store_methods",
-        reason=(
-            "v71 join table introduced for slot-truth-from-evidence "
-            "recompute. Schema lands first; ExtractionSlotStore.link_evidence/"
-            "unlink_evidence/get_answerable_rows methods land in Phase 2."
+        writers=(
+            "irys.matter.graph:ExtractionSlotStore.link_evidence",
+            "irys.matter.graph:ExtractionSlotStore.unlink_evidence",
+        ),
+        readers=(
+            "irys.matter.graph:ExtractionSlotStore.get_answerable_rows_for_profile",
+            "irys.matter.graph:ExtractionSlotStore._count_answerable_evidence",
         ),
     ),
     "slot_override": TableCoverageSpec(
-        deferred_until="pr2_phase3_user_steering",
-        reason=(
-            "v71 SO-3 user-steering table. Engine path for "
-            "_apply_slot_steering_from_query lands in Phase 3."
+        writers=(
+            "irys.matter.graph:ExtractionSlotStore.mark_out_of_scope",
+            "irys.matter.graph:ExtractionSlotStore.reactivate_slot",
+        ),
+        readers=(
+            "irys.matter.graph:ExtractionSlotStore._has_out_of_scope_override",
+            "irys.matter.graph:ExtractionSlotStore.get_answerable_rows_for_profile",
         ),
     ),
     "slot_issue_link": TableCoverageSpec(

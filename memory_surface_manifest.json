@@ -1508,6 +1508,70 @@
     {
       "source": "src/irys/matter/graph.py",
       "writes": [
+        "extraction_slots",
+        "typed_evidence"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ExtractionSlotStore.link_evidence"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "extraction_slots",
+        "typed_evidence"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ExtractionSlotStore.unlink_evidence"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "extraction_slots"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ExtractionSlotStore.recompute_coverage_state"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "extraction_slots",
+        "guidance"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ExtractionSlotStore.mark_out_of_scope"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
+        "extraction_slots",
+        "guidance"
+      ],
+      "broker_status": "legacy_direct_writer",
+      "migration_owner": "memory_broker",
+      "hard_expiry": "2026-05-31",
+      "taint_behavior": "legacy_unknown_until_brokered",
+      "profile_behavior": "legacy_unknown_until_profile_bound",
+      "surface": "ExtractionSlotStore.reactivate_slot"
+    },
+    {
+      "source": "src/irys/matter/graph.py",
+      "writes": [
         "cache_records",
         "workspaces"
       ],
