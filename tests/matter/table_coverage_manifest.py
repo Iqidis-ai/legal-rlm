@@ -109,6 +109,28 @@ TABLE_COVERAGE_MANIFEST: dict[str, TableCoverageSpec] = {
             "irys.matter.graph:ExtractionSlotStore.coverage_summary",
         ),
     ),
+    "extraction_slot_evidence": TableCoverageSpec(
+        deferred_until="pr2_phase2_store_methods",
+        reason=(
+            "v71 join table introduced for slot-truth-from-evidence "
+            "recompute. Schema lands first; ExtractionSlotStore.link_evidence/"
+            "unlink_evidence/get_answerable_rows methods land in Phase 2."
+        ),
+    ),
+    "slot_override": TableCoverageSpec(
+        deferred_until="pr2_phase3_user_steering",
+        reason=(
+            "v71 SO-3 user-steering table. Engine path for "
+            "_apply_slot_steering_from_query lands in Phase 3."
+        ),
+    ),
+    "slot_issue_link": TableCoverageSpec(
+        deferred_until="pr2_phase4_issue_tree",
+        reason=(
+            "v71 SO-4 issue-tree integration. Profile-driven issue link "
+            "creation lands in Phase 4."
+        ),
+    ),
     "document_actor_role": TableCoverageSpec(
         writers=("irys.matter.graph:DocumentActorRoleStore.upsert",),
         readers=("irys.matter.graph:DocumentActorRoleStore.list_by_document",),

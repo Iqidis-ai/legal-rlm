@@ -451,6 +451,9 @@ python tools\check_memory_namespace_coverage.py
 | `quant_fact` | `quants:*`, `quants:<target_kind>:<target_id>` when target-linked |
 | `typed_evidence_record` | `typed_evidence:*`, `typed_evidence:<record_kind>:<record_key>`, `artifacts:artifact:<document_id>` when document-linked, `spans:artifact:<span_id>` when span-linked |
 | `extraction_slot` | `extraction_slots:*`, `extraction_slots:<slot_kind>:<slot_key>`, `extraction_slots:scope:<scope_query_hash>` when scope-bound |
+| `extraction_slot_evidence` | `extraction_slots:*`, `extraction_slots:<slot_id>`, `typed_evidence:<typed_evidence_id>` |
+| `slot_override` | `extraction_slots:*`, `extraction_slots:<slot_id>`, `guidance:*` when source='user' or 'attorney' |
+| `slot_issue_link` | `extraction_slots:*`, `extraction_slots:<slot_id>`, `objective_nodes:<issue_id>`, `criteria:<predicate_id>` when linked, `support_edges:*` |
 | `metric_alias` | `metric_aliases:*`, `metric_aliases:<domain_profile_id>` when domain-scoped |
 | `knowledge_seed` | `knowledge_seeds:*`, `knowledge_seeds:<domain_profile_id>` when domain-scoped |
 | `scenario_branch` | `scenario_branches:*` |

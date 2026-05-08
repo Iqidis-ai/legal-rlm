@@ -6,7 +6,7 @@ WAL mode, foreign_keys=ON, STRICT tables, JSON1, FTS5.
 
 import sqlite3
 
-SCHEMA_VERSION = 70
+SCHEMA_VERSION = 71
 
 # Human-readable names for the schema_migration ledger, keyed by version.
 # Versions not listed here record as legacy_v<N>.
@@ -30,6 +30,7 @@ _MIGRATION_NAMES: dict[int, str] = {
     65: "knowledge_seed_promotion",
     69: "typed_evidence_records",
     70: "extraction_slots",
+    71: "slot_profiles_and_truth",
 }
 
 
@@ -1004,6 +1005,62 @@ CREATE INDEX IF NOT EXISTS ix_extraction_slot_scope
 
 CREATE INDEX IF NOT EXISTS ix_extraction_slot_family
     ON extraction_slot(matter_id, artifact_family_id, slot_kind);
+"""
+
+_DDL_EXTRACTION_SLOT_EVIDENCE = """
+CREATE TABLE IF NOT EXISTS extraction_slot_evidence (
+    id                  TEXT PRIMARY KEY,
+    matter_id           TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    slot_id             TEXT NOT NULL REFERENCES extraction_slot(id) ON DELETE CASCADE,
+    typed_evidence_id   TEXT NOT NULL REFERENCES typed_evidence_record(id) ON DELETE CASCADE,
+    link_role           TEXT NOT NULL DEFAULT 'fills'
+        CHECK (link_role IN ('fills','candidate','contradicts','supersedes')),
+    profile_id          TEXT NOT NULL,
+    created_at          TEXT NOT NULL,
+    UNIQUE(matter_id, slot_id, typed_evidence_id, link_role)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_slot_evidence_slot
+    ON extraction_slot_evidence(matter_id, slot_id, link_role);
+
+CREATE INDEX IF NOT EXISTS ix_slot_evidence_record
+    ON extraction_slot_evidence(matter_id, typed_evidence_id);
+"""
+
+_DDL_SLOT_OVERRIDE = """
+CREATE TABLE IF NOT EXISTS slot_override (
+    id              TEXT PRIMARY KEY,
+    matter_id       TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    slot_id         TEXT NOT NULL REFERENCES extraction_slot(id) ON DELETE CASCADE,
+    override_state  TEXT NOT NULL CHECK (override_state IN ('out_of_scope','reactivate')),
+    reason          TEXT NOT NULL,
+    source          TEXT NOT NULL CHECK (source IN ('user','attorney','system','policy')),
+    created_at      TEXT NOT NULL,
+    UNIQUE(matter_id, slot_id, override_state, source)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_slot_override_slot
+    ON slot_override(matter_id, slot_id, override_state);
+"""
+
+_DDL_SLOT_ISSUE_LINK = """
+CREATE TABLE IF NOT EXISTS slot_issue_link (
+    id              TEXT PRIMARY KEY,
+    matter_id       TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+    slot_id         TEXT NOT NULL REFERENCES extraction_slot(id) ON DELETE CASCADE,
+    issue_id        TEXT NOT NULL REFERENCES issue(id) ON DELETE CASCADE,
+    predicate_id    TEXT REFERENCES issue_predicate(id) ON DELETE SET NULL,
+    relation        TEXT NOT NULL DEFAULT 'supports',
+    profile_id      TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    UNIQUE(matter_id, slot_id, issue_id, relation)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_slot_issue_link_slot
+    ON slot_issue_link(matter_id, slot_id);
+
+CREATE INDEX IF NOT EXISTS ix_slot_issue_link_issue
+    ON slot_issue_link(matter_id, issue_id);
 """
 
 # Full DDL in apply order
@@ -3551,6 +3608,144 @@ def _migration_v70(conn) -> None:
             conn.execute(stmt)
 
 
+def _migration_v71(conn) -> None:
+    """Profile registry + slot-truth-from-evidence support.
+
+    Adds:
+      - extraction_slot.profile_id, coverage_state_reason, last_truth_recomputed_at
+      - extraction_slot.coverage_state CHECK adds 'out_of_scope'
+      - extraction_slot_evidence join table (slot fills derived from typed_evidence + verification)
+      - slot_override table (SO-3 user steering)
+      - slot_issue_link table (SO-4 issue tree integration)
+      - Backfills extraction_slot_evidence from existing evidence_refs_json
+    """
+    import json as _json
+
+    # 1) Add new columns to extraction_slot. Need to rebuild for the CHECK
+    # constraint update, but ADD COLUMN is enough for the value-only fields.
+    existing_cols = {
+        r["name"] for r in conn.execute("PRAGMA table_info(extraction_slot)").fetchall()
+    }
+    if "profile_id" not in existing_cols:
+        conn.execute(
+            "ALTER TABLE extraction_slot ADD COLUMN profile_id TEXT NOT NULL DEFAULT ''"
+        )
+    if "coverage_state_reason" not in existing_cols:
+        conn.execute(
+            "ALTER TABLE extraction_slot ADD COLUMN coverage_state_reason TEXT NOT NULL DEFAULT ''"
+        )
+    if "last_truth_recomputed_at" not in existing_cols:
+        conn.execute(
+            "ALTER TABLE extraction_slot ADD COLUMN last_truth_recomputed_at TEXT"
+        )
+
+    # 2) Rebuild CHECK constraint on coverage_state to include out_of_scope.
+    table_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='extraction_slot'"
+    ).fetchone()
+    table_sql = (table_sql_row[0] or "") if table_sql_row else ""
+    if "out_of_scope" not in table_sql:
+        # Drop dependent indexes
+        conn.execute("DROP INDEX IF EXISTS ix_extraction_slot_kind_state")
+        conn.execute("DROP INDEX IF EXISTS ix_extraction_slot_scope")
+        conn.execute("DROP INDEX IF EXISTS ix_extraction_slot_family")
+        conn.execute("ALTER TABLE extraction_slot RENAME TO extraction_slot_old")
+        conn.execute("""
+            CREATE TABLE extraction_slot (
+                id                          TEXT PRIMARY KEY,
+                matter_id                   TEXT NOT NULL REFERENCES matter(id) ON DELETE CASCADE,
+                slot_kind                   TEXT NOT NULL,
+                slot_key                    TEXT NOT NULL,
+                artifact_family_id          TEXT,
+                expected_count              INTEGER
+                    CHECK (expected_count IS NULL OR expected_count >= 0),
+                expected_count_confidence   REAL NOT NULL DEFAULT 0.0
+                    CHECK (expected_count_confidence >= 0.0 AND expected_count_confidence <= 1.0),
+                scope_query_hash            TEXT,
+                schema_ref                  TEXT NOT NULL,
+                coverage_state              TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (coverage_state IN ('pending', 'partial', 'filled', 'not_observable', 'out_of_scope')),
+                evidence_refs_json          TEXT NOT NULL DEFAULT '[]',
+                profile_id                  TEXT NOT NULL DEFAULT '',
+                coverage_state_reason       TEXT NOT NULL DEFAULT '',
+                last_truth_recomputed_at    TEXT,
+                created_at                  TEXT NOT NULL,
+                updated_at                  TEXT NOT NULL,
+                UNIQUE(matter_id, slot_key)
+            ) STRICT
+        """)
+        conn.execute("""
+            INSERT INTO extraction_slot
+              (id, matter_id, slot_kind, slot_key, artifact_family_id,
+               expected_count, expected_count_confidence, scope_query_hash, schema_ref,
+               coverage_state, evidence_refs_json, profile_id, coverage_state_reason,
+               last_truth_recomputed_at, created_at, updated_at)
+            SELECT id, matter_id, slot_kind, slot_key, artifact_family_id,
+                   expected_count, expected_count_confidence, scope_query_hash, schema_ref,
+                   coverage_state, evidence_refs_json,
+                   COALESCE(profile_id, ''),
+                   COALESCE(coverage_state_reason, ''),
+                   last_truth_recomputed_at,
+                   created_at, updated_at
+            FROM extraction_slot_old
+        """)
+        conn.execute("DROP TABLE extraction_slot_old")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_extraction_slot_kind_state"
+            " ON extraction_slot(matter_id, slot_kind, coverage_state, expected_count_confidence DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_extraction_slot_scope"
+            " ON extraction_slot(matter_id, scope_query_hash, slot_kind, coverage_state)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_extraction_slot_family"
+            " ON extraction_slot(matter_id, artifact_family_id, slot_kind)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_extraction_slot_profile"
+            " ON extraction_slot(matter_id, profile_id, coverage_state)"
+        )
+
+    # 3) Create new tables.
+    for ddl in (_DDL_EXTRACTION_SLOT_EVIDENCE, _DDL_SLOT_OVERRIDE, _DDL_SLOT_ISSUE_LINK):
+        for stmt in ddl.split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                conn.execute(stmt)
+
+    # 4) Backfill extraction_slot_evidence from existing evidence_refs_json.
+    rows = conn.execute(
+        "SELECT id, matter_id, profile_id, schema_ref, evidence_refs_json"
+        " FROM extraction_slot"
+    ).fetchall()
+    now_sql = "datetime('now')"
+    for r in rows:
+        try:
+            refs = _json.loads(r["evidence_refs_json"] or "[]")
+            if not isinstance(refs, list):
+                continue
+        except (TypeError, ValueError):
+            continue
+        for ref in refs:
+            if not isinstance(ref, str) or not ref.strip():
+                continue
+            # link_role='fills' for backfill
+            link_id = f"{r['id']}:{ref}".encode("utf-8").hex()[:32]
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO extraction_slot_evidence"
+                    " (id, matter_id, slot_id, typed_evidence_id, link_role,"
+                    "  profile_id, created_at)"
+                    f" VALUES (?, ?, ?, ?, 'fills', ?, {now_sql})",
+                    (link_id, r["matter_id"], r["id"], ref,
+                     r["profile_id"] or r["schema_ref"] or ""),
+                )
+            except Exception:
+                # Tolerate orphaned refs (no matching typed_evidence row)
+                pass
+
+
 # Ordered migrations: (target_version, callable).
 # Each migration brings the DB from (target_version - 1) to target_version.
 # Never remove or reorder entries — append new ones for future changes.
@@ -3625,6 +3820,7 @@ _MIGRATIONS: list[tuple[int, object]] = [
     (68, _migration_v68),
     (69, _migration_v69),
     (70, _migration_v70),
+    (71, _migration_v71),
 ]
 
 
