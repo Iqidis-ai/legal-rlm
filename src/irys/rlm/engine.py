@@ -12262,15 +12262,16 @@ Return:
         state.findings["metadata_entities"] = state.get_entities_formatted()
 
         # Operator substrate (PR#3): run deterministic operators before
-        # synthesis — they verify LLM-extracted values, do real math the
-        # LLM gets wrong, and produce answer-ingredient artifacts that
-        # synthesis consumes alongside typed evidence. Wrapped in
-        # try/except per the no-silent-fallback rule: failures log but do
-        # not crash investigation.
-        try:
-            await self._run_pre_synthesis_operators(state)
-        except Exception as _op_exc:  # noqa: BLE001
-            logger.debug("pre-synthesis operators failed: %s", _op_exc)
+        # synthesis. Gated behind IRYS_ENABLE_OPERATORS env flag while
+        # async-safety of sync repo I/O is being hardened. With it OFF,
+        # the engine behaves identically to pre-PR#3 except registry/
+        # schema are present (latent until activated).
+        import os as _os_op
+        if _os_op.environ.get("IRYS_ENABLE_OPERATORS", "0") == "1":
+            try:
+                await self._run_pre_synthesis_operators(state)
+            except Exception as _op_exc:  # noqa: BLE001
+                logger.debug("pre-synthesis operators failed: %s", _op_exc)
 
         # Dynamically assemble the context packet — only include sections that
         # have real content. PRO gets exactly what's useful, nothing empty.
