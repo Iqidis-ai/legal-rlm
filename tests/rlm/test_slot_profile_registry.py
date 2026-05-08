@@ -5,7 +5,9 @@ from __future__ import annotations
 import pytest
 
 from irys.rlm.slot_profiles import (
+    LegalCpGapProfile,
     LegalMarketRowProfile,
+    LegalQoeLineItemProfile,
     ProfileMatch,
     SlotProfile,
     SlotProfileContext,
@@ -233,3 +235,175 @@ def test_market_row_render_orders_presumption_first():
 def test_market_row_render_empty_returns_empty():
     p = LegalMarketRowProfile()
     assert p.render_answer_rows([]) == ""
+
+
+# ---------------------------------------------------------------------------
+# Built-in: legal.cp_gap.v1
+# ---------------------------------------------------------------------------
+
+
+def test_cp_gap_match_banking_compare_terms():
+    p = LegalCpGapProfile()
+    matched_queries = [
+        "compare credit agreement against term sheet",
+        "compare closing documents against conditions precedent",
+        "compare borrower disclosures against due diligence findings",
+        "compliance certificate review",
+    ]
+    for q in matched_queries:
+        m = p.match(SlotProfileContext.empty(query=q))
+        assert m is not None, f"failed: {q}"
+        assert m.profile_id == "legal.cp_gap.v1"
+
+
+def test_cp_gap_skips_non_compare_queries():
+    p = LegalCpGapProfile()
+    for q in ["antitrust hsr", "review the contract", "extract entities"]:
+        assert p.match(SlotProfileContext.empty(query=q)) is None
+
+
+def test_cp_gap_parse_returns_one_row_per_requirement():
+    p = LegalCpGapProfile()
+    class _Doc:
+        filename = "credit_agreement.pdf"
+    analysis = {"cp_gaps": [
+        {"cp_id": "4.01(a)", "requirement_text": "secretary cert",
+         "status": "missing", "severity": "critical",
+         "required_by_document": "Credit Agreement.pdf"},
+        {"cp_id": "4.01(b)", "requirement_text": "opinion letter",
+         "status": "met"},
+        {"cp_id": "", "requirement_text": ""},  # empty — skipped
+    ]}
+    writes = p.parse_evidence(
+        analysis=analysis, document=_Doc(), context=SlotProfileContext.empty(),
+    )
+    assert len(writes) == 2
+    # Slot key uses requirement identity, not status (so two revisions of
+    # the same CP collapse to the same slot)
+    assert all(w.slot_key.startswith("obligation:legal.cp_gap.v1:cp:") for w in writes)
+
+
+def test_cp_gap_slot_key_dedupes_by_requirement_only():
+    """R5 patch: drop status from slot_key — two revisions of same CP fill same slot."""
+    p = LegalCpGapProfile()
+    class _Doc:
+        filename = "credit_agreement.pdf"
+    analysis = {"cp_gaps": [
+        {"cp_id": "4.01(a)", "requirement_text": "secretary cert",
+         "status": "missing", "required_by_document": "Credit Agreement.pdf"},
+        {"cp_id": "4.01(a)", "requirement_text": "secretary cert",
+         "status": "met", "required_by_document": "Credit Agreement.pdf"},
+    ]}
+    writes = p.parse_evidence(
+        analysis=analysis, document=_Doc(), context=SlotProfileContext.empty(),
+    )
+    assert writes[0].slot_key == writes[1].slot_key
+    # Typed evidence keys differ (different generations)
+    assert writes[0].record_key != writes[1].record_key
+
+
+def test_cp_gap_render_orders_missing_first():
+    p = LegalCpGapProfile()
+    rows = [
+        {"payload": {"cp_id": "M", "requirement_text": "met item",
+                     "status": "met", "severity": "high"}},
+        {"payload": {"cp_id": "X", "requirement_text": "missing item",
+                     "status": "missing", "severity": "critical"}},
+        {"payload": {"cp_id": "P", "requirement_text": "partial item",
+                     "status": "partial", "severity": "high"}},
+    ]
+    out = p.render_answer_rows(rows)
+    assert out.index("| X |") < out.index("| P |") < out.index("| M |")
+
+
+def test_cp_gap_issue_link_relation_attacks_when_missing():
+    p = LegalCpGapProfile()
+    class _Doc:
+        filename = "ca.pdf"
+    writes = p.parse_evidence(
+        analysis={"cp_gaps": [
+            {"cp_id": "1", "requirement_text": "x", "status": "missing"},
+            {"cp_id": "2", "requirement_text": "y", "status": "met"},
+        ]},
+        document=_Doc(), context=SlotProfileContext.empty(),
+    )
+    assert writes[0].issue_link.relation == "attacks"
+    assert writes[1].issue_link.relation == "supports"
+
+
+# ---------------------------------------------------------------------------
+# Built-in: legal.qoe_line_item.v1
+# ---------------------------------------------------------------------------
+
+
+def test_qoe_match_qoe_terms():
+    p = LegalQoeLineItemProfile()
+    for q in ["analyze qoe reconciliation", "ebitda bridge analysis",
+              "purchase price allocation review"]:
+        m = p.match(SlotProfileContext.empty(query=q))
+        assert m is not None, f"failed: {q}"
+
+
+def test_qoe_skips_non_qoe_queries():
+    p = LegalQoeLineItemProfile()
+    for q in ["antitrust", "review credit agreement", "compare cp"]:
+        assert p.match(SlotProfileContext.empty(query=q)) is None
+
+
+def test_qoe_parse_returns_one_row_per_line_item():
+    p = LegalQoeLineItemProfile()
+    class _Doc:
+        filename = "qoe.pdf"
+    analysis = {"qoe_line_items": [
+        {"category": "EBITDA bridge", "line_item_label": "Owner comp",
+         "period": "FY2024", "schedule": "EBITDA Bridge",
+         "currency": "USD", "seller_value": "$0.8M", "buyer_value": "$1.3M"},
+        {"category": "NWC", "line_item_label": "Inventory reserve",
+         "period": "LTM Mar 2025", "schedule": "NWC schedule"},
+    ]}
+    writes = p.parse_evidence(
+        analysis=analysis, document=_Doc(), context=SlotProfileContext.empty(),
+    )
+    assert len(writes) == 2
+    # R5 patch: slot key includes artifact_family/schedule/currency/category/period/label
+    assert all("measurement:legal.qoe_line_item.v1:" in w.slot_key for w in writes)
+
+
+def test_qoe_slot_key_distinguishes_periods():
+    """Same label, different periods should produce different slot keys."""
+    p = LegalQoeLineItemProfile()
+    class _Doc:
+        filename = "qoe.pdf"
+    writes = p.parse_evidence(
+        analysis={"qoe_line_items": [
+            {"category": "EBITDA bridge", "line_item_label": "Owner comp",
+             "period": "FY2023"},
+            {"category": "EBITDA bridge", "line_item_label": "Owner comp",
+             "period": "FY2024"},
+        ]},
+        document=_Doc(), context=SlotProfileContext.empty(),
+    )
+    assert writes[0].slot_key != writes[1].slot_key
+
+
+def test_default_registry_includes_three_profiles():
+    reg = default_registry()
+    ids = {p.profile_id for p in reg.all()}
+    assert ids == {
+        "legal.market_row.v1",
+        "legal.cp_gap.v1",
+        "legal.qoe_line_item.v1",
+    }
+
+
+def test_dispatcher_routes_to_correct_profile():
+    reg = default_registry()
+    cases = [
+        ("compare expert market share data", "legal.market_row.v1"),
+        ("compare credit agreement against term sheet", "legal.cp_gap.v1"),
+        ("analyze qoe reconciliation", "legal.qoe_line_item.v1"),
+    ]
+    for query, expected_profile in cases:
+        disp = reg.dispatch(SlotProfileContext.empty(query=query))
+        ids = [p.profile_id for p in disp.selected]
+        assert expected_profile in ids, f"{query} -> {ids}"

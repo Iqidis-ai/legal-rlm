@@ -585,10 +585,464 @@ class LegalMarketRowProfile:
 
 
 # ---------------------------------------------------------------------------
+# Built-in profile: legal.cp_gap.v1
+# ---------------------------------------------------------------------------
+
+
+_CP_QUERY_TERMS = (
+    "conditions precedent", "closing condition", "closing checklist",
+    "compare closing", "borrower disclos", "compliance certificate",
+    "covenant compliance", "missing cp", "missing condition",
+    "closing deliverable", "credit agreement vs", "term sheet vs",
+    "credit agreement against", "term sheet against",
+    "compare credit agreement", "restructuring condition",
+    "due diligence findings",
+)
+
+
+_CP_PROMPT = """
+ROW-ATOMIC EXTRACTION (legal.cp_gap.v1):
+
+For every condition precedent / closing deliverable / covenant requirement
+in the source agreement, emit ONE structured "cp_gap" row indicating
+whether the requirement is met, partial, or missing in the closing set or
+counterparty disclosure. Do NOT collapse requirements into narrative —
+each requirement is its own row.
+
+"cp_gaps": [
+    {"cp_id": "4.01(a)",
+     "cp_section": "Credit Agreement Section 4.01(a)",
+     "requirement_text": "Borrower must deliver executed secretary certificate.",
+     "observed_evidence": "Closing set contains officer certificate but no secretary certificate.",
+     "status": "met|missing|partial",
+     "severity": "critical|high|medium|low",
+     "required_by_document": "Credit Agreement.pdf",
+     "evidence_document": "Closing Checklist.xlsx",
+     "source_detail": "Section 4.01(a); checklist item 7",
+     "source_quote": "optional short verbatim excerpt"}
+]
+
+CRITICAL: emit one cp_gap per requirement, even when status=met. Missing
+requirements (status=missing) are the highest-value rows; never omit them.
+""".strip()
+
+
+def _normalize_cp_id(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = re.sub(r"[^\w\.\(\)\-]", " ", s)
+    s = re.sub(r"\s+", "-", s)
+    s = re.sub(r"-+", "-", s).strip("-")
+    return s or "unknown"
+
+
+def _normalize_doc_name(s: str) -> str:
+    s = (s or "").strip().lower()
+    # Strip extension
+    s = re.sub(r"\.(pdf|docx|doc|xlsx|xls|txt)$", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"[^\w\-]", "-", s)
+    s = re.sub(r"-+", "-", s).strip("-")
+    return s or "unknown"
+
+
+@dataclass
+class LegalCpGapProfile:
+    """Built-in: condition-precedent / closing-condition gap analysis."""
+    profile_id: str = "legal.cp_gap.v1"
+    profile_version: int = 1
+    domain_profile_ids: tuple[str, ...] = ("legal:1",)
+    schema_ref: str = "legal.cp_gap.v1"
+    record_kind: str = "cp_gap"
+    slot_kind: str = "obligation"
+    priority: int = 100
+    exclusive_group: Optional[str] = "obligation_compare"
+    supports_mixed_corpus: bool = True
+    enabled: bool = True
+    prompt_token_budget: int = 450
+    min_match_score: float = 0.55
+
+    def match(self, context: SlotProfileContext) -> Optional[ProfileMatch]:
+        q = (context.query or "").lower().strip()
+        if not q:
+            return None
+        family = (context.task_spec.get("family") or "").lower()
+        if family in {"inventory_lookup", "metadata_lookup"}:
+            return None
+        score = 0.0
+        reasons: list[str] = []
+        for term in _CP_QUERY_TERMS:
+            if term in q:
+                score = max(score, 0.65) + 0.1
+                reasons.append(f"q_term:{term}")
+                if score >= 1.0:
+                    break
+        score = min(score, 1.0)
+        if score < self.min_match_score:
+            return None
+        return ProfileMatch(
+            profile_id=self.profile_id,
+            score=score,
+            reasons=tuple(reasons),
+        )
+
+    def scout(
+        self, context: SlotProfileContext, runtime: Any,
+    ) -> Sequence[SlotRegistration]:
+        """CP scouting requires a section/numbering parse — costly. For
+        v1, defer to lazy-registration during deep-read parse."""
+        return ()
+
+    def prompt_addendum(self, context: SlotProfileContext) -> str:
+        return _CP_PROMPT
+
+    def parse_evidence(
+        self,
+        *,
+        analysis: Mapping[str, Any],
+        document: Any,
+        context: SlotProfileContext,
+    ) -> Sequence[TypedEvidenceWrite]:
+        rows = analysis.get("cp_gaps")
+        if not isinstance(rows, list):
+            return ()
+        doc_id = getattr(document, "filename", None) or "unknown"
+        out: list[TypedEvidenceWrite] = []
+        import hashlib as _hashlib
+        for r in rows[:200]:
+            if not isinstance(r, dict):
+                continue
+            cp_id = (r.get("cp_id") or r.get("cp_section") or "").strip()
+            requirement = (r.get("requirement_text") or "").strip()
+            if not cp_id and not requirement:
+                continue
+            required_doc = r.get("required_by_document") or doc_id
+            requirement_id = cp_id or requirement[:60]
+            req_norm = _normalize_cp_id(requirement_id)
+            doc_norm = _normalize_doc_name(required_doc)
+            slot_key = f"obligation:{self.schema_ref}:cp:{doc_norm}:{req_norm}"
+            # Typed evidence key includes a generation hash so multiple
+            # revisions per requirement (e.g., status flip from missing to
+            # met after a closing-set update) don't collide.
+            gen_input = (
+                f"{r.get('status') or ''}|{r.get('observed_evidence') or ''}|"
+                f"{r.get('evidence_document') or ''}|{doc_id}"
+            )
+            gen_id = _hashlib.md5(gen_input.encode()).hexdigest()[:10]
+            evidence_key = f"cp_gap_revision:{doc_norm}:{req_norm}:{gen_id}"
+            payload = {
+                "schema_ref": self.schema_ref,
+                "cp_id": cp_id,
+                "cp_section": r.get("cp_section"),
+                "requirement_text": requirement,
+                "observed_evidence": r.get("observed_evidence"),
+                "status": (r.get("status") or "unknown").lower(),
+                "severity": (r.get("severity") or "medium").lower(),
+                "required_by_document": required_doc,
+                "evidence_document": r.get("evidence_document"),
+                "source_document": doc_id,
+                "source_detail": r.get("source_detail"),
+                "source_quote": r.get("source_quote"),
+            }
+            label_status = payload["status"]
+            short_req = (requirement or cp_id)[:80]
+            out.append(TypedEvidenceWrite(
+                record_kind=self.record_kind,
+                record_key=evidence_key,
+                payload=payload,
+                label=f"[{label_status.upper()}] {cp_id or requirement[:30]}: {short_req}",
+                schema_ref=self.schema_ref,
+                profile_id=self.profile_id,
+                document_id=doc_id,
+                confidence=0.9,
+                slot_key=slot_key,
+                issue_link=IssueLinkSpec(
+                    issue_title="Closing condition coverage",
+                    predicate_description=(
+                        f"{cp_id or 'requirement'}: {label_status}"
+                    ),
+                    relation="supports" if label_status == "met" else "attacks",
+                    issue_type="diligence_red_flag",
+                ),
+            ))
+        return tuple(out)
+
+    def render_answer_rows(self, rows: Sequence[Mapping[str, Any]]) -> str:
+        if not rows:
+            return ""
+
+        # Sort: missing first (highest severity), then partial, then met.
+        # Within each, sort by severity descending.
+        severity_rank = {
+            "critical": 0, "high": 1, "medium": 2, "low": 3,
+        }
+        status_rank = {"missing": 0, "partial": 1, "met": 2, "unknown": 3}
+
+        def _key(r: Mapping[str, Any]):
+            p = r.get("payload") or {}
+            return (
+                status_rank.get(str(p.get("status") or "unknown").lower(), 3),
+                severity_rank.get(str(p.get("severity") or "medium").lower(), 2),
+                str(p.get("cp_id") or ""),
+            )
+
+        rows_sorted = sorted(rows, key=_key)[:80]
+
+        def _fmt(v):
+            if v is None or v == "":
+                return "—"
+            return str(v)
+
+        out = [
+            "CP GAP SUMMARY (one row per condition precedent / requirement):",
+            "",
+            "| CP | Requirement | Observed Evidence | Status | Severity | Required Doc | Evidence Doc |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for r in rows_sorted:
+            p = r.get("payload") or {}
+            req = (p.get("requirement_text") or "")[:120]
+            obs = (p.get("observed_evidence") or "")[:120]
+            out.append(
+                "| " + " | ".join([
+                    _fmt(p.get("cp_id") or p.get("cp_section")),
+                    _fmt(req) if req else "—",
+                    _fmt(obs) if obs else "—",
+                    _fmt(p.get("status")),
+                    _fmt(p.get("severity")),
+                    _fmt(p.get("required_by_document")),
+                    _fmt(p.get("evidence_document")),
+                ]) + " |"
+            )
+        return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# Built-in profile: legal.qoe_line_item.v1
+# ---------------------------------------------------------------------------
+
+
+_QOE_QUERY_TERMS = (
+    "qoe", "quality of earnings", "ebitda bridge",
+    "working capital reconciliation", "nwc reconciliation",
+    "ppa reconciliation", "ppa allocation", "purchase price allocation",
+    "qoe reconciliation", "ebitda reconciliation",
+)
+
+_QOE_PROMPT = """
+ROW-ATOMIC EXTRACTION (legal.qoe_line_item.v1):
+
+For every financial adjustment / reconciliation line item in the QoE
+documents, emit ONE structured "qoe_line_items" row. Preserve dollar
+amounts exactly. Do NOT summarize bridges into prose; each line item is
+its own row.
+
+"qoe_line_items": [
+    {"category": "EBITDA bridge",
+     "line_item_label": "Owner compensation normalization",
+     "period": "FY2024",
+     "schedule": "EBITDA Bridge Reconciliation",
+     "currency": "USD",
+     "seller_value": "$0.8M",
+     "buyer_value": "$1.3M",
+     "delta": "-$0.5M",
+     "recommended_value": "$1.3M",
+     "unit": "USD millions",
+     "source_detail": "EBITDA bridge schedule, row 12",
+     "source_quote": "optional short verbatim excerpt"}
+]
+
+CRITICAL: every adjustment is a row. Owner comp, legal settlement,
+inventory write-down, rent normalization, etc. — each as its own line.
+""".strip()
+
+
+def _normalize_qoe_token(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = re.sub(r"[^\w]+", "-", s)
+    s = re.sub(r"-+", "-", s).strip("-")
+    return s or "unknown"
+
+
+@dataclass
+class LegalQoeLineItemProfile:
+    """Built-in: QoE / EBITDA bridge / reconciliation line items."""
+    profile_id: str = "legal.qoe_line_item.v1"
+    profile_version: int = 1
+    domain_profile_ids: tuple[str, ...] = ("legal:1", "finance:1")
+    schema_ref: str = "legal.qoe_line_item.v1"
+    record_kind: str = "qoe_line_item"
+    slot_kind: str = "measurement"
+    priority: int = 100
+    exclusive_group: Optional[str] = "financial_reconciliation"
+    supports_mixed_corpus: bool = True
+    enabled: bool = True
+    prompt_token_budget: int = 450
+    min_match_score: float = 0.55
+
+    def match(self, context: SlotProfileContext) -> Optional[ProfileMatch]:
+        q = (context.query or "").lower().strip()
+        if not q:
+            return None
+        family = (context.task_spec.get("family") or "").lower()
+        if family in {"inventory_lookup", "metadata_lookup"}:
+            return None
+        score = 0.0
+        reasons: list[str] = []
+        for term in _QOE_QUERY_TERMS:
+            if term in q:
+                score = max(score, 0.65) + 0.1
+                reasons.append(f"q_term:{term}")
+                if score >= 1.0:
+                    break
+        score = min(score, 1.0)
+        if score < self.min_match_score:
+            return None
+        return ProfileMatch(
+            profile_id=self.profile_id,
+            score=score,
+            reasons=tuple(reasons),
+        )
+
+    def scout(
+        self, context: SlotProfileContext, runtime: Any,
+    ) -> Sequence[SlotRegistration]:
+        # QoE expected counts come from the workbook tab structure and
+        # adjustments-list layout. v1 defers to lazy-registration; the
+        # scout layer can be added when we have per-tab parsing.
+        return ()
+
+    def prompt_addendum(self, context: SlotProfileContext) -> str:
+        return _QOE_PROMPT
+
+    def parse_evidence(
+        self,
+        *,
+        analysis: Mapping[str, Any],
+        document: Any,
+        context: SlotProfileContext,
+    ) -> Sequence[TypedEvidenceWrite]:
+        rows = analysis.get("qoe_line_items")
+        if not isinstance(rows, list):
+            return ()
+        doc_id = getattr(document, "filename", None) or "unknown"
+        artifact_family = getattr(document, "family_id", None) or doc_id
+        out: list[TypedEvidenceWrite] = []
+        import hashlib as _hashlib
+        for r in rows[:200]:
+            if not isinstance(r, dict):
+                continue
+            label = (r.get("line_item_label") or "").strip()
+            category = (r.get("category") or "").strip()
+            period = (r.get("period") or "").strip()
+            if not label and not category:
+                continue
+            schedule = (r.get("schedule") or category or "").strip()
+            currency = (r.get("currency") or r.get("unit") or "USD").strip()
+            af_norm = _normalize_qoe_token(artifact_family)
+            sched_norm = _normalize_qoe_token(schedule)
+            curr_norm = _normalize_qoe_token(currency)
+            cat_norm = _normalize_qoe_token(category)
+            period_norm = _normalize_qoe_token(period)
+            label_norm = _normalize_qoe_token(label)
+            slot_key = (
+                f"measurement:{self.schema_ref}:"
+                f"{af_norm}:{sched_norm}:{curr_norm}:"
+                f"{cat_norm}:{period_norm}:{label_norm}"
+            )
+            row_hash_input = (
+                f"{r.get('seller_value') or ''}|{r.get('buyer_value') or ''}|"
+                f"{r.get('recommended_value') or ''}|{r.get('delta') or ''}"
+            )
+            row_hash = _hashlib.md5(row_hash_input.encode()).hexdigest()[:8]
+            evidence_key = (
+                f"qoe_line:{af_norm}:{sched_norm}:{curr_norm}:"
+                f"{cat_norm}:{period_norm}:{label_norm}:{doc_id}:{row_hash}"
+            )
+            payload = {
+                "schema_ref": self.schema_ref,
+                "category": category,
+                "line_item_label": label,
+                "period": period,
+                "schedule": schedule,
+                "currency": currency,
+                "seller_value": r.get("seller_value"),
+                "buyer_value": r.get("buyer_value"),
+                "delta": r.get("delta"),
+                "recommended_value": r.get("recommended_value"),
+                "unit": r.get("unit") or currency,
+                "source_document": doc_id,
+                "source_detail": r.get("source_detail"),
+                "source_quote": r.get("source_quote"),
+            }
+            out.append(TypedEvidenceWrite(
+                record_kind=self.record_kind,
+                record_key=evidence_key,
+                payload=payload,
+                label=f"{category} | {period} | {label}: delta={r.get('delta') or '—'}",
+                schema_ref=self.schema_ref,
+                profile_id=self.profile_id,
+                document_id=doc_id,
+                confidence=0.9,
+                slot_key=slot_key,
+                issue_link=IssueLinkSpec(
+                    issue_title="Purchase price reconciliation",
+                    predicate_description=f"{category} {period}: {label}",
+                    relation="supports",
+                    issue_type="financial_reconciliation",
+                ),
+            ))
+        return tuple(out)
+
+    def render_answer_rows(self, rows: Sequence[Mapping[str, Any]]) -> str:
+        if not rows:
+            return ""
+
+        def _key(r: Mapping[str, Any]):
+            p = r.get("payload") or {}
+            return (
+                str(p.get("category") or ""),
+                str(p.get("period") or ""),
+                str(p.get("line_item_label") or ""),
+            )
+
+        rows_sorted = sorted(rows, key=_key)[:120]
+
+        def _fmt(v):
+            if v is None or v == "":
+                return "—"
+            return str(v)
+
+        out = [
+            "QOE LINE ITEM SUMMARY (one row per adjustment):",
+            "",
+            "| Category | Period | Line Item | Seller | Buyer | Delta | Recommended | Source |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+        for r in rows_sorted:
+            p = r.get("payload") or {}
+            out.append(
+                "| " + " | ".join([
+                    _fmt(p.get("category")),
+                    _fmt(p.get("period")),
+                    _fmt(p.get("line_item_label")),
+                    _fmt(p.get("seller_value")),
+                    _fmt(p.get("buyer_value")),
+                    _fmt(p.get("delta")),
+                    _fmt(p.get("recommended_value")),
+                    _fmt(p.get("source_detail") or p.get("source_document")),
+                ]) + " |"
+            )
+        return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
 # Default registry factory
 # ---------------------------------------------------------------------------
 
 
 def default_registry() -> SlotProfileRegistry:
     """Registry with built-in profiles installed."""
-    return SlotProfileRegistry(profiles=(LegalMarketRowProfile(),))
+    return SlotProfileRegistry(profiles=(
+        LegalMarketRowProfile(),
+        LegalCpGapProfile(),
+        LegalQoeLineItemProfile(),
+    ))
