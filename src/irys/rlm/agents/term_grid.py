@@ -401,40 +401,70 @@ class StructuredTermGridExtractor:
 
         wp = invocation.work_profile or {}
         n_section_maps = int(wp.get("document_section_map_count", -1))
+        n_schedule_index = int(wp.get("schedule_index_count", -1))
+        n_table_index = int(wp.get("table_index_count", -1))
+        n_schedule_entries = int(wp.get("schedule_entry_count", -1))
         n_obligation_rows = int(wp.get("obligation_row_count", -1))
         n_term_grid_oblig = int(wp.get("term_grid_obligation_count", -1))
         n_contract_provisions = int(wp.get("contract_provision_count", -1))
 
+        # ANY source-kind that loadable now contributes signal. Reviewer
+        # r2 blocker: a matter with only `schedule_entry` /
+        # `document.schedule_index` / `document.table_index` could load
+        # but never be selected. Now any of them gates the operator.
+        n_any_source = max(
+            n_section_maps, n_schedule_index, n_table_index,
+            n_schedule_entries, n_contract_provisions,
+        )
+
         # Strong signal: an obligation row explicitly expects a term_grid
-        # artifact, OR there are existing contract_provision typed evidence.
-        if n_term_grid_oblig > 0 or n_contract_provisions > 0:
+        # artifact, OR contract_provision typed evidence already exists,
+        # OR schedule_entry typed evidence is present (high-value source).
+        if (
+            n_term_grid_oblig > 0
+            or n_contract_provisions > 0
+            or n_schedule_entries > 0
+        ):
             return AgentMatch(
                 agent_id=self.agent_id, score=0.95,
                 reasons=(
                     f"term_grid_obligations:{n_term_grid_oblig},"
-                    f"contract_provisions:{n_contract_provisions}",
+                    f"contract_provisions:{n_contract_provisions},"
+                    f"schedule_entries:{n_schedule_entries}",
                 ),
                 requirement=AgentRequirement.REQUIRED,
                 phase="pre_synthesis",
             )
 
-        # Medium signal: section maps exist AND user query matches
+        # Medium signal: any source kind exists AND user query matches
         # term-extraction intent.
         intent_match = self._query_indicates_term_intent(invocation)
-        if n_section_maps > 0 and intent_match:
+        if n_any_source > 0 and intent_match:
             return AgentMatch(
                 agent_id=self.agent_id, score=0.85,
-                reasons=(f"section_maps:{n_section_maps},intent_match",),
+                reasons=(
+                    f"sources:section_map:{n_section_maps},"
+                    f"schedule_index:{n_schedule_index},"
+                    f"table_index:{n_table_index},intent_match",
+                ),
                 requirement=AgentRequirement.REQUIRED,
                 phase="pre_synthesis",
             )
 
-        # Weak signal: section maps exist + obligation rows expect
-        # something (could be related). Run as optional.
-        if n_section_maps > 0 and n_obligation_rows > 0:
+        # Weak signal: section maps OR schedule_index OR table_index
+        # exist + obligation rows expect something. Run as optional.
+        has_any_structure = (
+            n_section_maps > 0
+            or n_schedule_index > 0
+            or n_table_index > 0
+        )
+        if has_any_structure and n_obligation_rows > 0:
             return AgentMatch(
                 agent_id=self.agent_id, score=0.55,
-                reasons=(f"section_maps:{n_section_maps},obligations_present",),
+                reasons=(
+                    f"structure_sources:{has_any_structure},"
+                    f"obligations:{n_obligation_rows}",
+                ),
                 requirement=AgentRequirement.OPTIONAL,
                 phase="pre_synthesis",
             )
@@ -774,6 +804,7 @@ class StructuredTermGridExtractor:
                         "document_id": doc_id, "title": title,
                         "text": text[:self.max_section_chars],
                         "_source_kind": "contract_provision",
+                        "record_key": r["record_key"],
                     })
         except Exception as exc:
             warnings.append(f"contract_provision_load_failed:{type(exc).__name__}")
@@ -798,6 +829,7 @@ class StructuredTermGridExtractor:
                         "document_id": doc_id, "title": title,
                         "text": text[:self.max_section_chars],
                         "_source_kind": "schedule_entry",
+                        "record_key": r["record_key"],
                     })
         except Exception as exc:
             warnings.append(f"schedule_entry_load_failed:{type(exc).__name__}")
@@ -836,11 +868,25 @@ class StructuredTermGridExtractor:
         """Call the LLM for one section batch. Returns (parsed, tokens)."""
         sections_payload = []
         for s in sections:
-            sections_payload.append({
+            section_payload = {
                 "document_id": s.get("document_id", ""),
                 "section_ref": s.get("title") or s.get("label") or s.get("ref") or "",
                 "text": (s.get("text") or s.get("body") or "")[:self.max_section_chars],
-            })
+            }
+            # Reviewer r2 fix: preserve typed-evidence record_key /
+            # span_id into the prompt so the LLM can return stable
+            # source ids (`record_key:..` / `span:..`) rather than
+            # falling back to section refs alone.
+            if s.get("record_key"):
+                section_payload["source_id"] = f"record:{s['record_key']}"
+            elif s.get("span_id"):
+                section_payload["source_id"] = f"span:{s['span_id']}"
+            else:
+                section_payload["source_id"] = (
+                    f"{section_payload['document_id']}:{section_payload['section_ref']}"
+                    if section_payload["section_ref"] else section_payload["document_id"]
+                )
+            sections_payload.append(section_payload)
         prompt = _TERM_GRID_PROMPT_TEMPLATE.format(
             user_query=(user_query or "")[:2000],
             domain=domain,

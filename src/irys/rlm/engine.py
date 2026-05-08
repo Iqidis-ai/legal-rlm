@@ -5538,6 +5538,7 @@ class RLMEngine:
             # work-profile declarations should move toward operator-
             # owned metadata; this is a transitional step).
             ("document.section_map", "document_section_map_count"),
+            ("document.table_index", "table_index_count"),
             ("term_grid.v1", "term_grid_count"),
             ("conditional_rule_tree.v1", "conditional_rule_tree_count"),
         ):

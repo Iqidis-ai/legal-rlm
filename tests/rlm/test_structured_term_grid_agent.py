@@ -439,6 +439,96 @@ def test_invoke_works_on_fuzzy_prompt_no_metadata():
 # ---------------------------------------------------------------------------
 
 
+def test_operator_runs_on_schedule_entry_only_path():
+    """Reviewer r2 blocker: a matter with ONLY `schedule_entry` typed
+    evidence (no document.section_map) must still select + invoke the
+    operator. Previously only section_map gated the match."""
+    agent = StructuredTermGridExtractor()
+    matter = MatterModel.open_in_memory()
+    # Seed a schedule_entry typed evidence row (no section maps)
+    matter.typed_evidence.upsert(
+        "schedule_entry", "sched:1",
+        payload={
+            "schema_ref": "legal.schedule_entry.v1",
+            "schedule_ref": "Schedule 5.1",
+            "text": "Borrower shall not incur additional debt above $10M without consent. "
+                    "Exception: working capital revolver permitted up to $2M.",
+        },
+        document_id="doc1", confidence=0.9,
+    )
+    # match() should fire on schedule_entry_count alone
+    inv = _invocation(matter, work_profile={
+        "document_section_map_count": 0,
+        "schedule_index_count": 0,
+        "table_index_count": 0,
+        "schedule_entry_count": 1,
+        "obligation_row_count": 0,
+        "term_grid_obligation_count": 0,
+        "contract_provision_count": 0,
+        "query_text_normalized": "extract the covenants",
+    })
+    m = agent.match(inv)
+    assert m is not None, "schedule_entry-only matter must select the operator"
+    assert m.requirement == AgentRequirement.REQUIRED
+
+    # invoke() should produce a matrix from the schedule_entry source
+    fake = _FakeLLMClient(json_response={
+        "schema_ref": "term_grid.v1",
+        "rows": [{
+            "document_id": "doc1", "section_ref": "Schedule 5.1",
+            "topic": "debt_covenant", "actor": "Borrower",
+            "obligation_or_right": "shall not incur additional debt above $10M",
+            "trigger": "additional debt above $10M",
+            "exception": "working capital revolver permitted up to $2M",
+            "amount": "$10M", "confidence": 0.85,
+            "source_refs": ["record:sched:1"],
+        }],
+        "rules": [],
+    })
+    rt = _Runtime(matter, llm_client=fake, query="extract the covenants")
+    result = asyncio.run(agent.invoke(inv, rt))
+    assert result.status == "success"
+    assert any(a.artifact_kind == ARTIFACT_KIND_TERM_GRID for a in result.artifacts)
+
+
+def test_operator_runs_on_table_index_only_path():
+    """Same idea but for table_index sources."""
+    agent = StructuredTermGridExtractor()
+    matter = MatterModel.open_in_memory()
+    # Seed a table_index agent_artifact (no section maps)
+    matter.db.execute(
+        "INSERT INTO sub_agent_invocation (id, matter_id, run_id, agent_id, "
+        "agent_version, phase, status, requirement, invocation_at, input_hash) "
+        "VALUES ('inv-prior', ?, 'run-prior', 'doc.file_reader', 1, "
+        "'pre_synthesis', 'success', 'optional', '2026-05-08T00:00:00', 'h0')",
+        (matter.matter_id,),
+    )
+    matter.db.execute(
+        "INSERT INTO agent_artifact (id, matter_id, invocation_id, "
+        "artifact_kind, artifact_key, payload_json, created_at) "
+        "VALUES ('a-tbl', ?, 'inv-prior', 'document.table_index', 'tbl:1', ?, "
+        "'2026-05-08T00:00:00')",
+        (matter.matter_id, json.dumps({
+            "document_id": "doc1",
+            "tables": [{"caption": "Termination Triggers",
+                        "text": "If revenue < $5M and ARR drop > 30%, "
+                                "term: 60 days notice."}],
+        })),
+    )
+    inv = _invocation(matter, work_profile={
+        "document_section_map_count": 0,
+        "schedule_index_count": 0,
+        "table_index_count": 1,
+        "schedule_entry_count": 0,
+        "obligation_row_count": 0,
+        "term_grid_obligation_count": 0,
+        "contract_provision_count": 0,
+        "query_text_normalized": "extract the termination triggers",
+    })
+    m = agent.match(inv)
+    assert m is not None, "table_index-only matter must select the operator"
+
+
 def test_registry_filters_by_domain_profile():
     """Reviewer round 1 blocker B5: registry must filter agents whose
     `supported_domain_profiles` doesn't include the invocation's
