@@ -5752,6 +5752,18 @@ class RLMEngine:
             # blocking_validator escalation — surface a structured halt
             # finding and re-raise so the engine's outer synthesis path
             # can short-circuit into a validator-failure response.
+            # Surface the halt in the thinking trace so the UI / debug
+            # view shows it prominently.
+            try:
+                from .state import StepType as _StepType
+                state.add_step(
+                    _StepType.ERROR,
+                    f"Operator validation halted: {str(exc)[:200]}",
+                    details={"phase": "pre_synthesis",
+                              "kind": "blocking_validator_halt"},
+                )
+            except Exception:
+                pass
             try:
                 state.findings["blocking_validator_halt"] = {
                     "phase": "pre_synthesis",
@@ -5775,6 +5787,114 @@ class RLMEngine:
             }
         except Exception:
             pass
+
+        # Surface operator activity in the thinking trace so the UI's
+        # Reasoning Trace tab and any debugging view shows what each
+        # operator did. Per-domain-professional language: "operator"
+        # not "sub-agent"; "produced X artifacts" not "emitted X rows".
+        try:
+            from .state import StepType as _StepType
+            for agent, result in phase_result.invocations:
+                summary = self._operator_thinking_summary(agent, result)
+                if summary:
+                    step_kind = (
+                        _StepType.ERROR
+                        if result.status in ("error", "invalid", "timeout")
+                        else _StepType.THINKING
+                    )
+                    state.add_step(
+                        step_kind, summary,
+                        details={
+                            "phase": "pre_synthesis",
+                            "agent_id": agent.agent_id,
+                            "status": result.status,
+                            "n_artifacts": len(result.artifacts),
+                            "elapsed_ms": result.elapsed_ms,
+                            "llm_calls": result.llm_calls,
+                            "warnings": list(result.warnings)[:5],
+                        },
+                    )
+            # If nothing produced an artifact, note that operators ran
+            # but were dormant — useful for debugging "why didn't X fire?"
+            if n_artifacts == 0 and phase_result.invocations:
+                names = ", ".join(a.agent_id for a, _ in phase_result.invocations[:5])
+                state.add_step(
+                    _StepType.THINKING,
+                    f"Operators ran but produced no artifacts ({names})",
+                    details={"phase": "pre_synthesis"},
+                )
+        except Exception as _trace_exc:
+            logger.debug("thinking-trace operator summary failed: %s", _trace_exc)
+
+    @staticmethod
+    def _operator_thinking_summary(agent: Any, result: Any) -> str:
+        """Compose a one-line professional summary of an operator's run
+        for the thinking trace. Cross-domain — never benchmark-specific.
+        """
+        agent_id = getattr(agent, "agent_id", "operator")
+        status = getattr(result, "status", "unknown")
+        artifacts = list(getattr(result, "artifacts", ()) or ())
+        if status not in ("success", "invalid", "error", "timeout"):
+            status = "unknown"
+        # Domain-professional names per agent
+        display = {
+            "antitrust.hhi_market_share.v1": "HHI calculator",
+            "finance.numerical_reconciliation.v1": "Numerical reconciliation",
+            "banking.cp_section_extractor.v1": "CP section extractor",
+            "document.file_reader.v1": "Document parser",
+            "link.cross_document_linker.v1": "Cross-document linker",
+            "obligation_coverage_matrix": "Obligation coverage",
+            "structured_term_grid_extractor.v1": "Term grid extractor",
+        }.get(agent_id, agent_id)
+
+        if status != "success":
+            return f"Operator {display}: {status}"
+
+        if not artifacts:
+            return f"Operator {display}: ran (no artifacts)"
+
+        # Compose artifact-specific summaries
+        bits: list[str] = []
+        for a in artifacts:
+            kind = getattr(a, "artifact_kind", "")
+            payload = getattr(a, "payload", {}) or {}
+            if kind == "obligation.coverage_matrix.v1":
+                n_total = payload.get("n_total", 0)
+                n_critical = payload.get("n_critical_missing", 0)
+                src = payload.get("criteria_source", "")
+                bits.append(
+                    f"{n_total} obligations ({n_critical} critical missing, source={src})"
+                )
+            elif kind == "term_grid.v1":
+                n_rows = payload.get("n_rows", 0)
+                topics = payload.get("topics", [])
+                bits.append(
+                    f"{n_rows} term rows across {len(topics)} topics"
+                )
+            elif kind == "conditional_rule_tree.v1":
+                bits.append(f"{payload.get('n_rules', 0)} conditional rules")
+            elif kind == "hhi.calculation":
+                market = payload.get("market_name", "")
+                bits.append(f"HHI for {market}" if market else "HHI calculation")
+            elif kind == "cp.coverage_report":
+                doc = payload.get("required_document", "")
+                bits.append(
+                    f"CP coverage [{doc}]: {payload.get('n_met', 0)}/"
+                    f"{payload.get('n_total', 0)} met"
+                )
+            elif kind == "numeric.reconciliation":
+                bits.append(
+                    f"reconciliation [{payload.get('category', '')}/"
+                    f"{payload.get('period', '')}]"
+                )
+            elif kind == "validator_failure.obligation_coverage.v1":
+                n = len(payload.get("blocking_rows", []))
+                bits.append(f"VALIDATOR FAILURE — {n} blocking obligations")
+            elif kind.startswith("document.") or kind.startswith("link."):
+                bits.append(kind.split(".", 1)[1])
+            else:
+                bits.append(kind)
+        return f"Operator {display}: " + "; ".join(bits)
 
     def _build_agent_artifact_summary(
         self, state: "InvestigationState",
