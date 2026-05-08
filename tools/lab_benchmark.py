@@ -600,8 +600,20 @@ async def run_benchmark(args):
         task_ids = discover_tasks(lab_root, practice_area=args.practice_area)
     elif args.all:
         task_ids = discover_tasks(lab_root)
+    elif getattr(args, "tasks_file", None):
+        tf_path = Path(args.tasks_file)
+        if not tf_path.exists():
+            print(f"Error: tasks file not found: {tf_path}")
+            sys.exit(1)
+        task_ids = [
+            line.strip() for line in tf_path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        if not task_ids:
+            print(f"Error: tasks file empty: {tf_path}")
+            sys.exit(1)
     else:
-        print("Error: specify --task, --practice-area, or --all")
+        print("Error: specify --task, --practice-area, --all, or --tasks-file")
         sys.exit(1)
 
     print(f"LAB root: {lab_root}")
@@ -696,6 +708,7 @@ def main():
     group.add_argument("--practice-area", help="Run all tasks in a practice area")
     group.add_argument("--all", action="store_true", help="Run the full benchmark")
     group.add_argument("--score", action="store_true", help="Score an existing run (use with --run-id)")
+    group.add_argument("--tasks-file", help="Path to a file with one task_id per line")
 
     parser.add_argument("--lab-root", default=str(DEFAULT_LAB_ROOT),
                         help="Path to harvey-labs repo (default: ../harvey-labs)")

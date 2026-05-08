@@ -5457,6 +5457,17 @@ class RLMEngine:
             OperatorBudget,
             SubAgentDispatcher,
         )
+        from ..core.repository import MatterRepository
+
+        # Construct a repo handle so DocumentFileReader can read documents.
+        # state.repository_path is set at investigation start.
+        repo = None
+        try:
+            repo_path = getattr(state, "repository_path", None)
+            if repo_path:
+                repo = MatterRepository(repo_path)
+        except Exception:
+            repo = None
         # Per-mode budget keeps simple-mode cost bounded
         mode = self._research_mode_label(state) if hasattr(state, "research_mode") else "simple"
         try:
@@ -5496,6 +5507,7 @@ class RLMEngine:
             registry=registry,
             matter_model=self._matter_model,
             llm_client=getattr(self, "_llm_client", None),
+            runtime_extras={"_repo": repo} if repo is not None else None,
         )
         try:
             phase_result = await dispatcher.run_phase(

@@ -189,44 +189,42 @@ def run_tasks(
     concurrency: int = 6,
     log_path: Optional[Path] = None,
 ) -> int:
-    """Drive lab_benchmark.py once per task. Returns aggregate exit code."""
+    """Run all tasks in ONE lab_benchmark.py process via --tasks-file.
+
+    Single-process means: one matter init, one Gemini client, one agent
+    registry, one async event loop with N concurrent investigations.
+    Saves ~60s/task of Python startup overhead vs the per-task approach.
+    """
     runner = PROJECT_ROOT / "tools" / "lab_benchmark.py"
     log_path = log_path or (PROJECT_ROOT / "tools" / "lab_smoke_run.log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Write task list to a temp file for --tasks-file
+    tasks_file = PROJECT_ROOT / "tools" / "lab_smoke_tasks.txt"
+    tasks_file.write_text("\n".join(task_ids) + "\n", encoding="utf-8")
+
     with log_path.open("w", encoding="utf-8") as logf:
         logf.write(f"=== smoke run {_now_iso()} ===\n")
-        logf.write(f"tasks: {len(task_ids)}\n")
-        logf.write(f"mode: {research_mode}, judge: {judge_model}, concurrency: {concurrency}\n\n")
+        logf.write(f"tasks: {len(task_ids)} (single process, asyncio.gather)\n")
+        logf.write(
+            f"mode: {research_mode}, judge: {judge_model}, "
+            f"concurrency: {concurrency}\n\n"
+        )
 
-    # The lab_benchmark.py script does not accept --task-list, so we run
-    # tasks one at a time but with concurrent investigations through the
-    # internal --concurrency flag (which is a no-op for single tasks).
-    # For better parallelism, group same-area tasks per call.
-    by_area: dict[str, list[str]] = {}
-    for tid in task_ids:
-        area = tid.split("/", 1)[0]
-        by_area.setdefault(area, []).append(tid)
-
-    fail_count = 0
-    for area, ids in by_area.items():
-        for tid in ids:
-            cmd = [
-                sys.executable, str(runner),
-                "--task", tid,
-                "--research-mode", research_mode,
-                "--auto-score",
-                "--concurrency", str(concurrency),
-                "--judge-model", judge_model,
-            ]
-            with log_path.open("a", encoding="utf-8") as logf:
-                logf.write(f"\n--- running: {tid} ---\n")
-            r = subprocess.run(
-                cmd, cwd=str(PROJECT_ROOT),
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            if r.returncode != 0:
-                fail_count += 1
-    return fail_count
+    cmd = [
+        sys.executable, str(runner),
+        "--tasks-file", str(tasks_file),
+        "--research-mode", research_mode,
+        "--auto-score",
+        "--concurrency", str(concurrency),
+        "--judge-model", judge_model,
+    ]
+    with log_path.open("a", encoding="utf-8") as logf:
+        logf.write(f"command: {' '.join(cmd)}\n\n")
+        r = subprocess.run(
+            cmd, cwd=str(PROJECT_ROOT), stdout=logf, stderr=subprocess.STDOUT,
+        )
+    return r.returncode
 
 
 def run_full_sweep(

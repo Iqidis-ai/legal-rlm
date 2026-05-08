@@ -67,11 +67,16 @@ class SubAgentDispatcher:
         matter_model: Any,
         llm_client: Any = None,
         telemetry: Optional[Callable[..., None]] = None,
+        runtime_extras: Optional[dict] = None,
     ) -> None:
         self.registry = registry
         self.matter_model = matter_model
         self.llm_client = llm_client
         self.telemetry = telemetry or (lambda **_kw: None)
+        # runtime_extras: attributes set on each AgentRuntime so agents can
+        # access non-default things (e.g. _repo for DocumentFileReader,
+        # _test_doc_text for tests).
+        self.runtime_extras = dict(runtime_extras or {})
         self._usage = _BudgetUsage()
 
     # ------------------------------------------------------------------
@@ -146,6 +151,8 @@ class SubAgentDispatcher:
                 invocation=invocation_template,
                 llm_client=self.llm_client,
             )
+            for _attr, _val in self.runtime_extras.items():
+                setattr(runtime, _attr, _val)
             t0 = _time.perf_counter()
             try:
                 result = await _asyncio.wait_for(
