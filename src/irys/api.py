@@ -12,6 +12,7 @@ import logging
 from .core.models import GeminiClient, ModelTier
 from .core.repository import MatterRepository
 from .core.cache import ResponseCache, LRUCache
+from .core.tracing import TracingProvider, NoOpProvider
 from .core.utils import (
     setup_logging,
     TelemetryCollector,
@@ -65,12 +66,13 @@ class Irys:
         print(result.output)
     """
 
-    def __init__(self, config: Optional[IrysConfig] = None, **kwargs):
+    def __init__(self, config: Optional[IrysConfig] = None, tracing_provider: Optional[TracingProvider] = None, **kwargs):
         """
         Initialize Irys.
 
         Args:
             config: IrysConfig object or individual parameters as kwargs
+            tracing_provider: Optional TracingProvider for observability (e.g. LangfuseProvider)
         """
         if config:
             self.config = config
@@ -85,6 +87,7 @@ class Irys:
         self._engine: Optional[RLMEngine] = None
         self._cache: Optional[ResponseCache] = None
         self._telemetry = TelemetryCollector()
+        self._tracing_provider: TracingProvider = tracing_provider or NoOpProvider()
 
         # Callbacks
         self._on_progress: Optional[Callable] = None
@@ -121,6 +124,7 @@ class Irys:
                 on_progress=self._on_progress,
                 on_citation=self._on_citation,
                 on_fact=self._on_fact,
+                tracing_provider=self._tracing_provider,
             )
 
     def on_progress(self, callback: Callable[[dict], None]):
@@ -220,12 +224,16 @@ class Irys:
         output = formatter.format(state)
 
         # Post-processing: inline citation injection (optional)
+        # Grab trace_ctx BEFORE finalize so citation LLM call is in the trace
+        trace_ctx = self._engine.get_trace_ctx() if self._engine else None
+
         if self.config.enable_inline_citations:
             from .service.inline_citation_service import InlineCitationService
             output, reordered_citations, injection_diag = await InlineCitationService.inject(
                 answer=output,
                 citations=state.citations,
                 config=self.config,
+                trace_ctx=trace_ctx,
             )
 
             state.citations[:] = reordered_citations
@@ -233,6 +241,10 @@ class Irys:
             # Attach injection diagnostics to telemetry for DB persistence
             if injection_diag and state.telemetry_summary is not None:
                 state.telemetry_summary["citation_injection"] = injection_diag
+
+        # Finalize the Langfuse trace after all post-processing is done
+        if self._engine:
+            self._engine.finalize_trace(state)
 
         return InvestigationResult(
             state=state,
